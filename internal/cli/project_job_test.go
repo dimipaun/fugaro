@@ -49,7 +49,7 @@ type projectJobFixture struct {
 // serving github, and every repository of the fixture's owner admitted to it.
 // The profile lists no Claude account, so its job runs as no account and the
 // job's account segment is empty (config.ProjectJobAccounts).
-const projectJobPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
+const projectJobPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 
 // projectJobTimeout is the profile's task timeout: what a project job's
@@ -677,7 +677,7 @@ const projectJobAccountConfig = "claude_accounts:\n" +
 // and the accounts block carries one exact list per account — the document that
 // says which repositories each token may be used by, derived at publish from
 // the local config above (projectpolicy.DeriveAccounts).
-const projectJobAccountsPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
+const projectJobAccountsPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"claude_accounts":["acme-personal","default"],"allow_repos":["github/acme/app"]}},` +
 	`"accounts":{"acme-personal":{"allow_repos":["github/acme/app"]},` +
@@ -1112,7 +1112,7 @@ func TestProjectJobOAuthRefusedAccountNotListed(t *testing.T) {
 // the claim, minted the budget token and reached Cloud Run on a job that does
 // not exist, and every run of the profile halted with cannotPlaceJob, which
 // blames a stale module version instead of the profile.
-const projectJobReservedTokenPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
+const projectJobReservedTokenPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"secrets":["claude-oauth-token"]}}}`
 
@@ -1259,7 +1259,7 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 	f := newProjectJobFixture(t)
 	// The project admits both of the fixture's repositories; the profile
 	// admits one of them.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":3,"allow_repos":["github/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
 		`"allow_repos":["github/acme/other"]}}}`)
 	projectJobCheckout(t)
@@ -1343,7 +1343,7 @@ func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
 	// github standard profile, and the Bitbucket one a Bitbucket workflow
 	// selects. The project admits the Bitbucket repository, and the Bitbucket
 	// profile admits it too — nothing below is about an admission.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":3,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
 		`"standard-bitbucket":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`)
 	// The job a buggy launcher would compute, added to the fake so the failure

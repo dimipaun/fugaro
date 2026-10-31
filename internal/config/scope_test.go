@@ -62,6 +62,25 @@ defaults:
 	}
 }
 
+// TestGitAuthorIsRepoOnly pins git.author's row (A2a, D604/D606) and its
+// consequence: the key is the repository's own opt-in, so a project layer
+// that writes defaults.git.author is refused for being out of scope and not
+// for naming a key the project layer does not know — the distinction the row
+// itself makes, since an unlisted key falls through to the wrong sentence.
+func TestGitAuthorIsRepoOnly(t *testing.T) {
+	i := slices.IndexFunc(Scopes, func(r ScopeRow) bool { return r.Key == "git.author" })
+	if i < 0 {
+		t.Fatal("git.author has no Scopes row: a project layer that writes it is refused as an unknown key")
+	}
+	if Scopes[i].In != InRepo {
+		t.Errorf("git.author scope = %v, want InRepo alone", Scopes[i].In)
+	}
+	_, ps := ParseProjectLayer([]byte("defaults:\n  git:\n    author: launcher\n"), LayerAnchor{Project: "example", GCPProject: "example-1a2b3c"})
+	if !slices.ContainsFunc(ps, func(p Problem) bool { return strings.Contains(p.Message, "may only be set in") }) {
+		t.Errorf("the project layer refused defaults.git.author for the wrong reason: %+v", ps)
+	}
+}
+
 // TestReviewAllowForksScopeRemoved (owner ruling 2026-10-12): the key no
 // longer exists at all (review mode is trusted-author-only; there is no
 // opt-in for untrusted ones to remove a scope row for), so it must not be
@@ -87,6 +106,7 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 
 		"git.provider":       InProject | InRepo,
 		"git.base_branch":    InRepo,
+		"git.author":         InRepo,
 		"git.pr.labels":      InProject | InRepo,
 		"git.pr.reviewers":   InRepo,
 		"git.pr.early_draft": InProject | InRepo,
@@ -141,6 +161,7 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"workflows.*.image.skip_build_scripts":  InProfile | InRepo,
 		"workflows.*.checkout":                  InProfile | InRepo,
 		"workflows.*.image.tools":               InProfile | InRepo,
+		"workflows.*.image.key_files":           InRepo,
 		"workflows.*.dockerfile":                InRepo,
 		"workflows.*.commands.build":            InProfile | InRepo,
 		"workflows.*.commands.test":             InProfile | InRepo,

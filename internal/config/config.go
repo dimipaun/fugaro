@@ -47,7 +47,16 @@ type Config struct {
 	// Rigor the pointer is what keeps an absent block out of the resolved
 	// config's hash, which SHA256 takes over this struct.
 	Governance *Governance `yaml:"governance,omitempty" json:"governance,omitempty"`
-	Followup   Followup    `yaml:"followup"`
+	// AB is the repository's A/B opt-out (docs/model-ab-testing, D556): a
+	// file that writes no ab: block sets nothing, and one that writes it may
+	// carry ab.rate: 0 alone — the block is otherwise the project layer's,
+	// because a repository author could name a challenger model and send
+	// that repository's code to a provider the owner opened only to others
+	// (D556, F18). Validate is where a file that writes more is refused. The
+	// pointer is what keeps an absent block out of the resolved config's
+	// hash, as Governance's does.
+	AB       *AB      `yaml:"ab,omitempty" json:"ab,omitempty"`
+	Followup Followup `yaml:"followup"`
 	// Rigor is the repository's rigor mode and its named area rules
 	// (docs/rigor-modes/spec.md, reconciliation D20): how much cost a run
 	// accepts to reduce risk. A file that writes no rigor: block sets none —
@@ -86,6 +95,15 @@ type Config struct {
 	// refuses the key alone. Like the fields above it is never part of the
 	// file or of SHA256.
 	RepoGovernanceSet bool `yaml:"-" json:"-"`
+	// RepoGitAuthorSet is whether the repository's own file wrote the
+	// git.author key at all, at any value: the question RepoRigorSet answers
+	// for rigor:, and Git.Author cannot answer it — the key written empty
+	// (`git.author:`) decodes to the same GitAuthorFugaro as the key being
+	// absent, and the key written `fugaro` decodes to the same value as that
+	// key absent too, while a runner older than gitAuthorSince refuses the key
+	// itself. Like the fields above it is never part of the file or of
+	// SHA256.
+	RepoGitAuthorSet bool `yaml:"-" json:"-"`
 }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
@@ -302,11 +320,48 @@ type Followup struct {
 	AllowPublic bool `yaml:"allow_public"`
 }
 
+// GitAuthorFugaro and GitAuthorLauncher are the two values git.author may
+// take: "fugaro" is a run's own identity authoring its commits, and
+// "launcher" is the person who launched it (D604, D606). "" is neither of
+// them and means the same as GitAuthorFugaro — the key absent, which is what
+// every file written before the key said.
+const (
+	GitAuthorFugaro   = "fugaro"
+	GitAuthorLauncher = "launcher"
+)
+
+// GitAuthors is git.author's closed vocabulary, the sentence a misspelling
+// reads (Validate) and the list schemas/fugaro.schema.json's enum mirrors.
+// The empty value is not in it: a file that spells it out is the key absent,
+// and is accepted as such.
+var GitAuthors = []string{GitAuthorFugaro, GitAuthorLauncher}
+
 // Git describes the repository's git provider and pull request settings.
 type Git struct {
 	Provider   string     `yaml:"provider"`
 	BaseBranch string     `yaml:"base_branch"`
 	PR         PRSettings `yaml:"pr"`
+	// Author is who a run's commits are authored by: GitAuthorLauncher, the
+	// person who launched it as a stated claim (D604), or GitAuthorFugaro,
+	// the run's own identity — the same as the key being absent, which is
+	// what every repository has today (D606). It is the repository's own
+	// opt-in and no other layer sets it: Scopes gives it InRepo alone, so a
+	// project layer or a profile that writes it is refused for being out of
+	// scope, and a repository decides for itself whose name goes into its
+	// history.
+	//
+	// It selects a behaviour and mints no identity: the launcher fills the
+	// address from its own local identity and writes it into the task
+	// (internal/task's Spec.Author), which is what a fugaro at the release
+	// that reads this key does with it (fugaro.yaml's git.author is gated on
+	// gitAuthorSince, and the field on authorSince, in internal/cli).
+	//
+	// The json tag is what keeps an absent key out of the resolved config's
+	// hash, as Rigor's and Governance's are: SHA256 marshals this struct
+	// (resolve.go), so a string with no json name would write author: "" into
+	// every repository's config and move the hash — and so the derived image —
+	// of a file that did not change.
+	Author string `yaml:"author,omitempty" json:"author,omitempty"`
 }
 
 // PRSettings are applied to every pull request Fugaro opens.
@@ -546,16 +601,34 @@ type Workflow struct {
 	// installation's own base image (fugaro-base) has been published — a
 	// separate, person-run step. Use checkout: baked for a workflow that
 	// needs a system package, a service or a Dockerfile.
+	//
+	// shared (design forge-authorship-images/shared-images.md §6, route A)
+	// is the third kind: the job runs a shared dependency-layer image — one
+	// image per resolved dependency set, holding no repository's source —
+	// and the run clones the repository's own source at launch, the way a
+	// clone run does, from the same two job variables. It accepts the keys
+	// that describe that layer (image.apt, image.tools, image.key_files,
+	// image.skip_build_scripts) and refuses the per-repository ones
+	// (image.setup, dockerfile), which is what it exists for: a clone
+	// workflow has no build to honor them with.
 	Checkout string `yaml:"checkout,omitempty"`
 	// Inputs caps what a launcher may attach to a run of this workflow
 	// (design artifact-runs.md §4). Binaries before 0.8.0 refuse the key.
 	Inputs Inputs `yaml:"inputs"`
 }
 
-// Checkout values of a workflow (design generic-tool.md §2, G3).
+// Checkout values of a workflow (design generic-tool.md §2, G3;
+// checkout: shared is design forge-authorship-images/shared-images.md §6,
+// route A).
 const (
 	CheckoutBaked = "baked"
 	CheckoutClone = "clone"
+	// CheckoutShared runs a shared dependency-layer image — one image per
+	// resolved dependency set, holding no repository's source — and clones
+	// the repository's own source at launch. The kind exists because such
+	// a job must be clone-shaped while still declaring the
+	// dependency-layer keys a build honors, which checkout: clone refuses.
+	CheckoutShared = "shared"
 )
 
 // BaseKind is the base kind w builds on: always BaseKind, the one Fugaro
@@ -651,11 +724,25 @@ type Image struct {
 	// mise config for a repository without a mise config of its own (design
 	// base-image.md section 4). The Fugaro base only.
 	Tools MiseTools `yaml:"tools"`
+	// KeyFiles are repository-relative paths — a file or a directory — the
+	// dependency install reads and the lockfiles do not carry: the early
+	// layer of the derived image checks them out before the source layer,
+	// and a change to one of them rebuilds the image, exactly as a lockfile
+	// change does (design §7.2). A repository that patches dependencies at
+	// install time (patch-package, a vendored toolchain) declares them here;
+	// validateImage refuses anything that could leave the repository or
+	// match more than the path it names.
+	//
+	// The json tag keeps an absent key out of the resolved config's hash, as
+	// Author's does: without it every repository's hash would gain
+	// "KeyFiles":null and move.
+	KeyFiles []string `yaml:"key_files" json:"key_files,omitempty"`
 }
 
 // IsZero reports whether the image block sets nothing.
 func (i Image) IsZero() bool {
-	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0 && !i.SkipBuildScripts && len(i.Tools) == 0
+	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0 && !i.SkipBuildScripts && len(i.Tools) == 0 &&
+		len(i.KeyFiles) == 0
 }
 
 // Commands are the repository's build and test commands, run through `sh -c`.

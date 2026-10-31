@@ -18,10 +18,9 @@ const (
 	termsSource = "docs/licensing/subscription-terms.md"
 	termsPage   = "website/content/subscription-terms.md"
 
-	// termsStatus is the line the page shows above the agreement while the
-	// text is a draft. It changes when counsel approves the text, together
-	// with the draft banner it replaces.
-	termsStatus = "Draft: under counsel review; not yet in force"
+	// termsStatus is the line the page shows above the agreement. It named a
+	// draft until counsel approved the text (the owner's word of 2026-10-30).
+	termsStatus = "Approved by counsel"
 )
 
 var termsHeaderBlock = securityHeader + "\n<!-- source: " + termsSource + " -->\n\n"

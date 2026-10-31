@@ -11,7 +11,7 @@
 // ENOTEMPTY flake. Every build is network-free: `npm ci` is not run, and the only executable
 // started is the site's own installed Astro.
 
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -65,6 +65,23 @@ export function copyRepository(root) {
   const site = path.join(root, 'website')
   linkNodeModules(path.join(site, 'node_modules'))
   return site
+}
+
+/**
+ * Take the campaigns' screenshots out of a copy's `website/data/landing.yaml`, and return whether
+ * the file carried any. A fixture that replaces `website/data/console-screens.yaml` with rows of
+ * its own leaves the four campaign heroes naming screens that file no longer carries, and the
+ * campaign loader refuses a name no row carries at build time — a rule of its own
+ * (`website/test/landing-data.mjs` reads it) rather than the subject of the fixture. On such a
+ * copy each campaign hero renders the campaign's own drawing instead, and the console's page,
+ * which is what those fixtures read, is built as the fixture meant it.
+ */
+export function dropCampaignScreenshots(site) {
+  const file = path.join(site, 'data', 'landing.yaml')
+  const before = readFileSync(file, 'utf8')
+  const after = before.replace(/^ {4}screenshot: .+$/gm, '')
+  if (after !== before) writeFileSync(file, after)
+  return after !== before
 }
 
 /** Copy the repository, let `mutate` change the copy, build it, and clean up after `t`. */

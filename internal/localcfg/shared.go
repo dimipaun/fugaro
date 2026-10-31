@@ -12,7 +12,7 @@ const SharedMaxBytes = 64 << 10
 
 // Shared is the installation-wide, non-secret part of the config, the part
 // that is published to the runs bucket. It drops what is owner-only
-// (terraform:), personal (user:, endpoints:), derived (bucket_url, the
+// (terraform:), personal (user:, commit_name:, commit_email:, endpoints:), derived (bucket_url, the
 // legacy registry), deprecated (build.service_account) or local-only:
 // providers:, whose base_url is where a key and a repository's code are
 // sent, routing:, which is that same decision from the other side — the Claude
@@ -46,18 +46,27 @@ const SharedMaxBytes = 64 << 10
 // the anchor's GCP project when the file is read back
 // (internal/cli's ParseShared), like registry_host, base_images, log_view and
 // budget.firebase_project. **mailbox: is published as well**, and for the same
-// reason batch: is: the keychain item's name is the installation's (mobile
-// P4.1, M5), and a machine whose own config has no mailbox: block must not
-// erase the name another machine recorded. What it holds is the name and never
-// the key — the key lives in the operator's OS keychain and is never written to
-// disk, so nothing published here is a secret. The receiver is not modified. The
-// copy is shallow except for repos: its other maps, slices and pointers
-// alias the receiver's, which is safe because the result is only
-// marshalled, and Marshal only reads.
+// reason batch: is: a keychain item's name is a fact of the installation's own
+// config and not of the machine that reads the key out (mobile P4.1, M5), and a
+// machine whose own config has no mailbox: block must not erase the names
+// another machine recorded — one per pairing since decision 9, which is why
+// MergeShared unions this block's entries rather than taking it whole. What it
+// holds is the name and never the key — the key lives in the operator's OS
+// keychain and is never written to disk, so nothing published here is a secret.
+// The receiver is not modified. The copy is shallow except for repos: its other
+// maps, slices and pointers alias the receiver's, which is safe because the
+// result is only marshalled, and Marshal only reads.
 func (c *Config) Shared() *Config {
 	s := *c
 	s.Terraform = Terraform{}
 	s.User = ""
+	// commit_name and commit_email are personal for the reason user: is
+	// (D604, D606): they are the identity one machine's launches sign commits
+	// with, and a launcher who could write them into the runs bucket would be
+	// choosing whose name every teammate's commits carry — and, for
+	// commit_email, whose forge account the history links to (D649).
+	s.CommitName = ""
+	s.CommitEmail = ""
 	s.Endpoints = Endpoints{}
 	s.Bucket = ""
 	s.Registry = ""
@@ -65,6 +74,12 @@ func (c *Config) Shared() *Config {
 	s.Routing = nil
 	s.ClaudeAccounts = nil
 	s.ProjectSecrets = nil
+	// BitbucketAPIRoots is the owner's policy as well, and it travels the same
+	// way ProjectSecrets does: `fugaro project policy publish` copies it into
+	// the policy node, which the runner reads and fails closed on. A launcher
+	// who could write this key into the runs bucket's shared file would be
+	// choosing where a run sends the Bitbucket token.
+	s.BitbucketAPIRoots = nil
 	// Profiles are the owner's policy, published through `fugaro project
 	// policy publish` into the policy node — not through the shared config a
 	// launcher can write (the node is what the runner reads and fails closed
@@ -74,6 +89,14 @@ func (c *Config) Shared() *Config {
 	s.UpdateCheck = nil
 	s.Build.ServiceAccount = ""
 	s.BaseBranch = ""
+	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
+	// through `fugaro project policy publish` into the policy node. It is
+	// dropped here for a sharper reason than the keys above it: the floor is
+	// what stops a launcher turning review off, so a floor a launcher could
+	// write into the runs bucket's shared file would be that launcher setting
+	// its own floor — and ParseShared refuses the key besides, because a
+	// shared config carrying it was not written by the converge.
+	s.ReviewFloor = nil
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }
@@ -102,10 +125,11 @@ func SameInstallation(published, local *Config) bool {
 // already holds (nil when absent) and local is this machine's config: the
 // shared subset of local (Shared), filled in from published so that a
 // machine that lacks what another onboarded does not erase it. Map fields
-// (repos, base_images, model_prices, compute_prices) are unioned, the local
-// entry winning a key clash; scalar and pointer fields take the local value
-// when it is non-zero, else the published one; name, gcp_project,
-// runs_bucket and version always come from local. What Shared drops is
+// (repos, base_images, model_prices, compute_prices, mailbox.keychain_item)
+// are unioned, the local entry winning a key clash; scalar and pointer fields
+// take the local value when it is non-zero, else the published one; name,
+// gcp_project, runs_bucket and version always come from local. What Shared
+// drops is
 // never taken from published either. A published object of another
 // installation (SameInstallation) is ignored. Neither argument is modified.
 func MergeShared(published, local *Config) *Config {
@@ -149,15 +173,29 @@ func MergeShared(published, local *Config) *Config {
 	if out.Watch == nil {
 		out.Watch = published.Watch
 	}
-	if out.Mailbox == nil {
+	if published.Mailbox != nil || out.Mailbox != nil {
 		// The mailbox block is published for the reason batch: and watch: are
-		// (T2's plan, §13): the keychain item's name is the installation's, not
+		// (T2's plan, §13): the item names are the installation's record and not
 		// one machine's, and a publisher whose own config has no mailbox: block
 		// — a machine that onboarded before the pairing existed — would
-		// otherwise erase the item name another machine recorded. What it is
-		// NOT is the key: the key never leaves the OS keychain it was generated
-		// into (M5), so nothing published here is a secret.
-		out.Mailbox = published.Mailbox
+		// otherwise erase the names another machine recorded. What it is NOT is
+		// the key: the key never leaves the OS keychain it was generated into
+		// (M5), so nothing published here is a secret.
+		//
+		// Its entries are unioned the way repos and base_images are, and not
+		// taken wholesale: decision 9 made the block one item per pairing, so
+		// the names in it are several machines' — a laptop that paired its own
+		// phone would otherwise publish a file naming its phone and no other
+		// machine's, which is exactly the erasure the paragraph above is about,
+		// one entry at a time. Local wins a clash (one uid is one phone). A
+		// fresh block rather than either argument's, so neither is modified.
+		items := func(m *Mailbox) map[string]string {
+			if m == nil {
+				return nil
+			}
+			return m.KeychainItem
+		}
+		out.Mailbox = &Mailbox{KeychainItem: unionMaps(items(published.Mailbox), items(out.Mailbox))}
 	}
 	if out.CredentialsService == nil {
 		// The credentials service block is published for the same reason, and
@@ -220,13 +258,29 @@ func SharedDiff(published, local *Config) []string {
 	// These maps are a union across machines when published, while a local
 	// config holds only its own entries: only the keys present locally are
 	// compared, so an entry only the published object has is no difference.
-	union := map[string]bool{"repos": true, "base_images": true, "model_prices": true, "compute_prices": true}
+	// mailbox is the same rule one level down — MergeShared unions
+	// keychain_item's entries — so a pairing another machine recorded is no
+	// difference either, while a local entry the published object lacks is one
+	// (decision 9; without this the pairing on the next desk is reported as a
+	// difference on every machine, for a file that publishing again cannot
+	// change).
+	union := map[string]bool{"repos": true, "base_images": true, "model_prices": true, "compute_prices": true, "mailbox": true}
 	differs := func(k string, lv, pv any) bool {
 		lm, lok := lv.(map[string]any)
 		if !union[k] || !lok {
 			return !reflect.DeepEqual(lv, pv)
 		}
 		pm, _ := pv.(map[string]any)
+		if k == "mailbox" {
+			li, _ := lm["keychain_item"].(map[string]any)
+			pi, _ := pm["keychain_item"].(map[string]any)
+			for uid, v := range li {
+				if !reflect.DeepEqual(v, pi[uid]) {
+					return true
+				}
+			}
+			return false
+		}
 		for name, v := range lm {
 			if !reflect.DeepEqual(v, pm[name]) {
 				return true

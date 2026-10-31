@@ -104,8 +104,8 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"job's environment was deployed with.\n\n" +
 			"Publishing refuses without the rules marker (config/limits/policyRules): a\n" +
 			"policy published before the rules are deployed is one the runs it bounds\n" +
-			"cannot read, so run fugaro update --firebase-project with a Fugaro that deploys them\n" +
-			"first. It also refuses a node written by a newer Fugaro.\n\n" +
+			"cannot read, so run fugaro update with a Fugaro that deploys them first. It\n" +
+			"also refuses a node written by a newer Fugaro.\n\n" +
 			"allow_repos is seeded from this machine's repos: map and from the shared\n" +
 			"config's repository list, and only when the node is absent or --seed-repos is\n" +
 			"passed: a later publish never re-adds a name an operator removed. It is never\n" +
@@ -319,7 +319,14 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 		// deserves its own sentence: there is nothing to be older than, and a
 		// message naming a node that does not exist sends the operator
 		// looking for it.
-		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; re-run 'fugaro update --firebase-project' with fugaro >= %s first",
+		//
+		// The move is plain `fugaro update`, not `--firebase-project`: the
+		// rules stage of the converge deploys this binary's generation over
+		// rules whose marker is absent, and it does so in the same run as the
+		// migration this refusal blocks (init_rules_stage.go, the owner's rule
+		// of 2026-10-30). `--firebase-project` is the door that adopts a
+		// Firebase project, which an installation that has one does not need.
+		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; run 'fugaro update' with fugaro >= %s first, which deploys this Fugaro's rules under the policy",
 			projectpolicy.PathRulesMarker(), policySince)
 	}
 	var gen int
@@ -344,14 +351,15 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 
 // rulesSkewText is the one sentence for "the deployed rules are older than
 // the marker": the marker records this generation, and the *document* deployed
-// at .settings/rules is not the one this generation generates. `fugaro update
-// --firebase-project` redeploys over it (infra.DB.Plan compares the same way), and
-// doctor's policy-rules-skew check prints the sentence (plan task 1.6 step 4's
-// fifth check), so the state reads the same whether the operator met it as a
-// report or in the deploy's own words. It is a plain sentence and not an
+// at .settings/rules is not the one this generation generates. `fugaro update`
+// redeploys over it — the rules stage of the converge (init_rules_stage.go)
+// deploys this binary's generation for the state, and infra.DB.Plan compares the
+// same way — and doctor's policy-rules-skew check prints the sentence (plan task
+// 1.6 step 4's fifth check), so the state reads the same whether the operator met
+// it as a report or in the deploy's own words. It is a plain sentence and not an
 // error, because doctor has no error to wrap it in.
 func rulesSkewText() string {
-	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro update --firebase-project' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
+	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro update' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
 		projectpolicy.PathRulesMarker(), policySince)
 }
 
@@ -380,7 +388,7 @@ func rulesSkewText() string {
 // nothing made (the review of PR #402 found the two texts disagreeing; this is
 // one text per state, shared by both readers).
 func rulesMarkerPrePolicyText(gen int) string {
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro update --firebase-project' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro update' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.PolicyRulesVersion, policySince, projectpolicy.RulesVersion)
 }
 
@@ -403,10 +411,10 @@ const rulesDeviceGeneration = 3
 // coordinator's read grant (coordinator plan P3).
 func rulesMarkerOlderText(gen int) string {
 	if gen >= rulesDeviceGeneration {
-		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of %s/ until it is deployed; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of %s/ until it is deployed; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, coordpath.PathRoot, projectpolicy.RulesVersion)
 	}
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, rules.PathDevices, projectpolicy.RulesVersion)
 }
 
@@ -463,8 +471,15 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 	case !found:
 		return nil, nil
 	case len(p.UnknownKeys) > 0:
-		return nil, userErr("%s lists %s, which this Fugaro does not know: publishing would drop them; upgrade Fugaro (fugaro upgrade), or fix the node by hand",
-			projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
+		// The count is named and the values never are: what a key nobody
+		// models holds is the node's, and the publisher prints it in no
+		// message (the keys themselves are printed escaped, which only
+		// says which names were not understood). The remedy is the one
+		// that works, and for the owner's rule of 2026-10-30 it is two
+		// commands: a newer Fugaro knows the keys, and `fugaro update` is
+		// what carries the node over without a deletion.
+		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (fugaro upgrade), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
+			projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, nil
 }
@@ -729,15 +744,64 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	if err != nil {
 		return nil, false, userErr("%v", err)
 	}
+	// The Bitbucket block is derived the same way and for the same reason: it
+	// is the operator's project_secrets.bitbucket-token.allow_data_to, and no
+	// command writes it by hand (D473, D493). It is derived whether or not a
+	// profile mounts the token — a proxied run's job holds no credential at
+	// all and this block is its whole admission — so the derivation reads the
+	// profiles for nothing, and the two states that mean "this token reaches no
+	// repository" publish no block at all (DeriveBitbucketToken). The profiles
+	// are then judged against it by the node's own rule, in the same
+	// checkPolicyBytes call that judges them against the accounts block.
+	//
+	// bitbucket_api_roots is the operator's own allow-list (D474) and the node
+	// is where the run reads it. It is copied rather than derived, and it is
+	// held to the node's rule (projectpolicy.validBitbucketAPIRoots, applied by
+	// that same decode) rather than to a copy of it here: one rule, at the one
+	// point a root can be written.
+	token, err := projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)
+	if err != nil {
+		return nil, false, userErr("%v", err)
+	}
+	// The review-level floor is copied rather than derived, and it is held to
+	// the same rule the loader applies (localcfg's ReviewFloorPolicy, which is
+	// policy.ParseFloor and also what validate calls), so a floor the
+	// operator's file spells wrong cannot reach the node half-read: the floor
+	// is a minimum, and a level lost on the way to the node is a run reviewing
+	// less than the owner asked for. A project that sets none publishes no
+	// member at all, so its node is byte for byte what it was before the key
+	// existed.
+	floor, err := lc.ReviewFloorPolicy()
+	if err != nil {
+		return nil, false, userErr("%v", err)
+	}
+	// A config that says nothing about the floor does not take the node's
+	// away: the floor is the one member of this node that binds the operator's
+	// own future runs, and the publish that would drop it is the one he did
+	// not mean — a second machine whose config predates the key, or a key
+	// deleted while tidying a file. He says the floor goes on purpose by
+	// writing the key with no mode under it, and the two spellings reach here
+	// differently: the key absent is a nil map (keep what the node has), the
+	// key written empty a non-nil one (`review_floor: {}` is no floor, so the
+	// member goes). A config that writes a floor replaces the member with what
+	// it writes, the way routing does — that edit is the operator's own, and
+	// the diff prints it either way.
+	keepReviewFloor := lc.ReviewFloor == nil && old != nil && len(old.ReviewFloor) > 0
+	if keepReviewFloor {
+		floor = old.ReviewFloor
+	}
 	pol := &projectpolicy.Policy{
-		Version:    projectpolicy.Version,
-		Budget:     projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
-		AllowRepos: nonNil(allow),
-		BaseBranch: lc.BaseBranch,
-		Providers:  policyProviders(lc),
-		Prices:     policyPrices(lc),
-		Profiles:   profiles,
-		Accounts:   accounts,
+		Version:           projectpolicy.Version,
+		Budget:            projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
+		AllowRepos:        nonNil(allow),
+		BaseBranch:        lc.BaseBranch,
+		Providers:         policyProviders(lc),
+		Prices:            policyPrices(lc),
+		Profiles:          profiles,
+		Accounts:          accounts,
+		BitbucketToken:    token,
+		BitbucketAPIRoots: lc.BitbucketAPIRoots,
+		ReviewFloor:       floor,
 	}
 	switch {
 	case !silent:
@@ -1543,6 +1607,16 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// that grew is one more repository whose runs hold that token, and one
 	// that shrank is a run that will be refused.
 	diffLines(out, accountLines(old), accountLines(new))
+	// The Bitbucket block and the API-root allow-list are derived from this
+	// machine's local config, so they are replaced on every publish — and a
+	// replacement is what the operator has to read, because both are decisions
+	// about where a credential may go: the block is the token's whole reach,
+	// and a root off this list is a run that sends the token elsewhere or is
+	// refused. A node another operator's config wrote carries values this
+	// machine cannot re-derive, and those lines are the difference between a
+	// publish that says what it removed and one that quietly narrowed the
+	// installation (the review of #1329).
+	diffLines(out, bitbucketLines(old), bitbucketLines(new))
 	// The routing switch moves with this publish: it comes from the operator's
 	// config, so a route that appeared or changed is a line an operator reading
 	// money-and-data-sharing changes must see — a route that quietly starts
@@ -1572,9 +1646,20 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.Credentials != nil {
 		fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
 	}
-	// And the two members that stop older readers (the plan's C1.2 skew
+	// The floor is the one member a publish keeps when the config is silent
+	// about it (buildProjectPolicy), and a kept member that prints nothing is
+	// the diff an operator who deleted the key reads as "it is gone": the
+	// value is unchanged, so no +/- line of the diff above mentions it. It is
+	// printed whenever the node carried a floor and still carries the same
+	// one, which is both the silent case and the case of a config that writes
+	// what the node already had — in either, the floor the runs read is the
+	// floor that was there before this publish, which is the fact to state.
+	if old != nil && len(new.ReviewFloor) > 0 && before["review_floor"] == now["review_floor"] {
+		fmt.Fprintf(out, "  review_floor kept: %s\n", reviewFloorText(new))
+	}
+	// And the members that stop older readers (the plan's C1.2 skew
 	// section, which hands this warning to the review of this task; the review
-	// asked for it): publishing either is a decision with a cost that is paid
+	// asked for it): publishing one is a decision with a cost that is paid
 	// by every run of the project until the CLI and the runner image are
 	// upgraded, and a diff that named the values without naming that cost would
 	// be a diff an operator can read and still not know what they are
@@ -1632,11 +1717,12 @@ func credentialsText(c *projectpolicy.Credentials) string {
 // section: "the review of this task decides whether `fugaro project policy
 // publish` warns before publishing either"; the review asked for the line, and
 // the placement it settled on is the one below — the warning goes out with the
-// diff, once the write has landed). Both are members an older reader refuses
-// rather than ignores, so this is not a version-skew nicety — it is the
-// difference between a project that publishes and a project whose every launch,
-// every publish and every run stops until the CLI and the runner image are
-// upgraded:
+// diff, once the write has landed). Each is a member an older reader cannot
+// apply, so this is not a version-skew nicety — it is the difference between a
+// project that publishes and a project whose every launch, every publish and
+// every run stops until the CLI and the runner image are upgraded (or, for the
+// floor, one whose runs go on reviewing less than the owner required, which is
+// the worse of the two and is why that line says so):
 //
 //   - a `credentials` member: an older CLI does not know the key, lists it and
 //     refuses every launch of the project, cascade or not, and refuses to
@@ -1646,12 +1732,22 @@ func credentialsText(c *projectpolicy.Credentials) string {
 //     refuses launch and publish, and an older runner refuses the policy it
 //     reads, which halts the run with that routing error rather than a skew
 //     sentence.
+//   - `review_floor`: a member an older reader does not know at all, and the
+//     two directions differ. An older CLI lists it in the keys it does not
+//     know and refuses every launch and every publish of the project, the way
+//     it does a `credentials` block. An older *runner image* lists it, warns
+//     once that the key has no effect, and runs the levels its rigor mode and
+//     the repository ask for — so the floor is published and does not bind,
+//     which is the direction that matters (the plan's L1.2, a launcher's gate
+//     on the *resolved* levels, is what refuses that image; it is not in this
+//     change, so until it ships the operator upgrades the image himself).
 //
 // The lines are printed as part of the diff, after the shared node's write
 // (printPolicyDiff is called once that write has landed), so they are claims
 // about the node as it now is: "before this publish" would be advice about a
-// moment that has already passed. What is still ahead is the next launch, which
-// is what an older reader refuses, so each line ends there.
+// moment that has already passed. What is still ahead is the next launch —
+// refused by an older reader, or, for the floor, run by an image that does not
+// apply it — so each line ends there.
 //
 // The line names the requirement and not a version number: this binary has no
 // version to name (the release that carries the cascade decides that), and a
@@ -1666,6 +1762,9 @@ func skewWarning(p *projectpolicy.Policy) []string {
 	}
 	if p.Routing != nil && p.Routing.Claude != nil && p.Routing.Claude.ViaValue() == projectpolicy.RouteCascade {
 		out = append(out, "  warning: this node now carries routing.claude.via: cascade, which a Fugaro older than the one publishing it refuses whole: an older CLI refuses every launch and every publish of this project, and an older runner halts every run it launches with that routing error — upgrade the CLI and the runner image before the next launch")
+	}
+	if len(p.ReviewFloor) > 0 {
+		out = append(out, "  warning: this node now carries a review_floor member, which a Fugaro older than the one publishing it does not know: an older CLI refuses every launch and every publish of this project, and an older runner image warns that the key has no effect and runs the levels anyway, so the floor does not bind there — upgrade the CLI, and the runner image before the next run that has to be held to the floor")
 	}
 	return out
 }
@@ -1688,6 +1787,39 @@ func accountLines(p *projectpolicy.Policy) map[string]string {
 // of what an accounts entry carries.
 func accountText(a projectpolicy.Account) string {
 	return fmt.Sprintf("allow_repos %s", strings.Join(a.AllowRepos, ", "))
+}
+
+// bitbucketLines is the Bitbucket block and the API-root allow-list as lines,
+// for the diff and for `policy show` — one function for both, so the command an
+// operator audits the node with and the diff a publish prints cannot disagree
+// about what the node carries. A policy that carries neither — which is every
+// project without a project_secrets.bitbucket-token entry — has no lines, so a
+// publish that has nothing to say about them says nothing: a "none" row would
+// announce, on every publish, two blocks that are not there.
+func bitbucketLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := map[string]string{}
+	if bt := p.BitbucketToken; bt != nil {
+		out["bitbucket_token.allow_repos"] = strings.Join(bt.AllowRepos, ", ")
+		out["bitbucket_token.proxy"] = proxyText(bt.Proxy)
+	}
+	if len(p.BitbucketAPIRoots) > 0 {
+		out["bitbucket_api_roots"] = strings.Join(p.BitbucketAPIRoots, ", ")
+	}
+	return out
+}
+
+// proxyText is the operator's per-installation switch (D493) as one line. Both
+// readings are printed, and neither is left out: "the block is here" and "the
+// token is forwarded" are two different statements, and a switch that is off
+// is what a node with no proxy says without writing the member at all.
+func proxyText(proxy bool) string {
+	if proxy {
+		return "on (the credentials service forwards this token)"
+	}
+	return "off (the jobs that mount this token hold it)"
 }
 
 // profileLines is one line per value of every profile, and one per job it
@@ -1871,7 +2003,30 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
 		"profiles":              profilesText(p),
 		"accounts":              accountsText(p),
+		"review_floor":          reviewFloorText(p),
 	}
+}
+
+// reviewFloorText is the owner's review-level floor as one line, mode by mode
+// (D722, G1). It is a row of the diff and of `policy show` for the reason the
+// Bitbucket block is: it is a value this publish decides, and a floor that
+// appeared, changed or went away is exactly what an operator reading the diff
+// has to see — the member bounds how much review a launcher-written layer may
+// turn off, so a diff that did not name it would leave him unable to tell
+// whether the floor he published is the floor the runs now read.
+func reviewFloorText(p *projectpolicy.Policy) string {
+	if len(p.ReviewFloor) == 0 {
+		return "none (a run reviews what its rigor mode and the repository ask for)"
+	}
+	modes := make([]string, 0, len(p.ReviewFloor))
+	for _, mode := range slices.Sorted(maps.Keys(p.ReviewFloor)) {
+		levels := make([]string, 0, len(p.ReviewFloor[mode]))
+		for _, l := range p.ReviewFloor[mode] {
+			levels = append(levels, string(l))
+		}
+		modes = append(modes, fmt.Sprintf("%s: %s", mode, strings.Join(levels, ", ")))
+	}
+	return strings.Join(modes, "; ")
 }
 
 // profilesText is the policy's profile names as one line, for the diff's
@@ -2385,6 +2540,18 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	// member prints as no line.
 	if p.Credentials != nil {
 		fmt.Fprintf(out, "  credentials: %s\n", credentialsText(p.Credentials))
+	}
+	// The Bitbucket block and the API-root allow-list, on the credentials rule:
+	// a policy that carries neither prints neither. They are the same lines the
+	// publish diff prints (bitbucketLines), because they answer the question
+	// this command exists to answer for the project's one long-lived forge
+	// credential — which repositories it may reach (D473) and whether the
+	// credentials service holds it instead of the job (D493) — and a block the
+	// node carries that this command does not print is a setting nobody can
+	// audit.
+	lines := bitbucketLines(p)
+	for _, key := range slices.Sorted(maps.Keys(lines)) {
+		fmt.Fprintf(out, "  %s: %s\n", key, lines[key])
 	}
 	// One line per clone URL, under the canonical repository name the runner
 	// looks up (plan task 3.3 step 3). Like routing: this Fugaro reads the

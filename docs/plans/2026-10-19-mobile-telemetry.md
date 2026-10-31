@@ -1218,6 +1218,8 @@ either, and 123 onward is left free.**
 | `docs/licensing/README.md` | Names D260 once, as the top of the highest open decision block when that work took its own numbers: a read-only reference, not an edit of this plan's block |
 | `docs/licensing/reconciliation.md` | Names D260 once, as the top of the highest open decision block when that work took its own numbers: a read-only reference, not an edit of this plan's block |
 | `docs/task-governance/README.md` | Names D260 once, as the top of the highest open decision block when that work took its own numbers: a read-only reference, not an edit of this plan's block |
+| `docs/review-levels-ab-jobmax/reconciliation.md` | Cites D253, D255, D257 and D259 as the owner's earlier answers on crash reports and analytics, which the owner's ruling of 2026-10-30 (D731) supersedes: read-only references to this plan's block, not an edit of it |
+| `docs/review-levels-ab-jobmax/implementation-plan.md` | Cites D255 for the same superseded ruling: a read-only reference, not an edit of this plan's block |
 
 **Not touched by this change:** `internal/cli/docs_mobile_plan_test.go` — **and that is the point
 of the approval.** Its Phase 6 pin bans `NOT APPROVED` anywhere in the plan, as a stand-in for

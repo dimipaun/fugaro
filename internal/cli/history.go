@@ -175,7 +175,7 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 	for _, r := range rep.Removed {
 		fmt.Fprintf(cmd.OutOrStdout(), "removed %s\n", oneLine(r))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "sweep: %d removed, %d kept, %d run users deleted\n", len(rep.Removed), rep.Kept, rep.UsersDeleted)
+	fmt.Fprintf(cmd.OutOrStdout(), "sweep: %d removed, %d kept, %d users deleted, %d pairing nodes deleted\n", len(rep.Removed), rep.Kept, rep.UsersDeleted, rep.PairingNodesDeleted)
 	return remote(err)
 }
 

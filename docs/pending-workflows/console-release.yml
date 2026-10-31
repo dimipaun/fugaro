@@ -11,20 +11,16 @@
 # the same pipeline released from the CLI's `v*` tag: that file's staged copy and
 # the applied copy under .github/workflows/ are byte-identical today, and this
 # one is that text with the three changes below and nothing else. The file it
-# replaces is staged *and* applied at once, and both copies stay staged after the
-# copy-in (docs/pending-workflows/README.md), so the copy-in is a three-command
-# sequence:
-#
-#     cp docs/pending-workflows/console-release-tag.yml docs/pending-workflows/console-release.yml
-#     cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
-#     git rm docs/pending-workflows/console-release-tag.yml
-#     git add -A
-#     git commit -m "console: the console releases from its own console-vX.Y.Z tag"
-#
-# That leaves `.github/workflows/console-release.yml` and the staged
-# docs/pending-workflows/console-release.yml byte-identical again -- which is
-# what TestDocsConsoleReleaseWorkflowIsStagedAndPinned asserts, and why the first
-# command above exists rather than copying straight over the applied file: a
+# replaces is staged *and* applied at once, and the staged copy stays after the
+# copy-in (docs/pending-workflows/README.md), so the copy-in writes this file
+# over the staged `console-release.yml` **before** it writes the applied one.
+# There is one copy-in procedure here and not two: the three commands are with
+# the update-feed paragraph below, and the ones this file inherited named a
+# `console-release-tag.yml` that was applied and removed on 2026-10-23, so they
+# were unrunnable. What the copy-in leaves is `.github/workflows/console-release.yml`
+# and the staged docs/pending-workflows/console-release.yml byte-identical again,
+# which is what TestDocsConsoleReleaseWorkflowIsStagedAndPinned asserts, and why
+# the staged copy is written from this file rather than from the applied one: a
 # staged copy that differs from the file that runs puts `main` in the state the
 # staging directory exists to avoid, where the byte-identity clause is red and
 # scripts/release-gate.sh therefore refuses *every* tag, the CLI's included.
@@ -93,6 +89,48 @@
 # exist, TestDocsConsoleReleaseWorkflowIsStagedAndPinned asserts they are
 # byte-identical, so an edit to one without the other fails a named test rather
 # than drifting silently.
+#
+# **What the update feed adds, in one paragraph.** The step is Task 4.4 of
+# docs/plans/2026-10-15-desktop-console.md, which names the staged
+# docs/pending-workflows/console-release.yml in its own file list, and the design
+# it serves is section 7.3 of docs/design/desktop-console.md, which is where
+# electron-builder's companion electron-updater and the `latest-mac.yml` manifest
+# are named as the feed client and its format. electron-builder
+# publishes nothing here -- `build.publish` stays `null` in console/package.json
+# -- so the manifest electron-updater reads, `latest-mac.yml`, is written by the
+# release job beside the .zip it describes, out of the bytes that step has just
+# verified: the tag's X.Y.Z, the .zip's name **as GitHub stores it** (the
+# packer's default macOS artifact name carries a space and GitHub renders it as
+# a dot, so the feed names the form electron-updater will actually fetch), its
+# base64 SHA-512, its size, and the RFC 3339 UTC time of the run. That file's
+# own SHA-256 joins the job's `console-sha256sums.txt`, so it travels under the
+# one keyless cosign signature over the merged sums file; `publish` requires
+# exactly one of it, checks it against the sums and attaches it with the rest.
+# One console release therefore feeds the console's own stream, and nothing
+# else about this file moves: no new action, no new secret, no new environment,
+# and no change to the trigger, to the permissions each job holds or to the
+# draft-then-publish order. No `blockmap` either: the differential download is a
+# later decision that is off by default, so the feed carries the fields a full
+# download needs and nothing else.
+#
+# **One consequence belongs to the website, and it is written here because the
+# step that meets it is a different run.** The feed's own SHA-256 joins the job's
+# console-sha256sums.txt, so the release's sums file names one asset that is not
+# a download. `website/data/console-sha256sums.txt` is that file copied verbatim
+# when the site's console downloads are turned on (W3.1), and
+# TestWebsiteConsoleReleaseFactsAreComplete requires every name in it to resolve
+# to an entry in website/content/downloads.json -- so the run that refreshes the
+# site after this change has to offer `latest-mac.yml` there, or leave the sums
+# file alone until it does. Neither this workflow nor this directory can decide
+# that, and a reader who copies the sums file without reading this line gets a
+# red `main` instead of a quiet gap between the release and the page.
+#
+# The three commands that copy this file in, and the staged copy of
+# console-release.yml stays after them:
+#
+#     cp docs/pending-workflows/console-release-feed.yml docs/pending-workflows/console-release.yml
+#     cp docs/pending-workflows/console-release-feed.yml .github/workflows/console-release.yml
+#     git rm docs/pending-workflows/console-release-feed.yml
 #
 # THE REAL CONTROL IS THE ENVIRONMENT'S REVIEWER AND A TAG RULESET, NOT THIS
 # FILE'S GATE. A tag push runs the workflow file *at the tagged commit*, so a
@@ -657,6 +695,7 @@ jobs:
         env:
           DMG: ${{ steps.signed.outputs.dmg }}
           ZIP: ${{ steps.signed.outputs.zip }}
+          VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
           RECORD="$RUNNER_TEMP/console-verification.txt"
@@ -730,10 +769,27 @@ jobs:
           record retry_apple_network xcrun stapler validate "$DMG"
           record spctl --assess --type open --context context:primary-signature -v "$DMG"
           record hdiutil detach "$MOUNT"
+          # The update feed: the manifest electron-updater reads
+          # from this release. electron-builder cannot write it -- build.publish
+          # is null in console/package.json -- so it is built here, out of the
+          # bytes this step has just verified. `url` and `path` name the .zip
+          # the way GitHub stores it and not the way the packer named it: the
+          # default macOS artifact name carries a space and GitHub renders it
+          # as a dot, so a feed in the packer's own spelling would point
+          # electron-updater at an asset that does not exist.
+          FEED_ASSET="$(basename "$ZIP" | tr ' ' '.')"
+          ZIP_SHA512="$(openssl dgst -sha512 -binary "$ZIP" | base64 | tr -d '\n')"
+          ZIP_SIZE="$(stat -f%z "$ZIP")"
+          FEED="$(dirname "$ZIP")/latest-mac.yml"
+          printf 'version: %s\nfiles:\n  - url: %s\n    sha512: %s\n    size: %s\npath: %s\nsha512: %s\nreleaseDate: %s\n' "$VERSION" "$FEED_ASSET" "$ZIP_SHA512" "$ZIP_SIZE" "$FEED_ASSET" "$ZIP_SHA512" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$FEED"
+          (cd "$(dirname "$FEED")" && shasum -a 256 "$(basename "$FEED")") >> "$SUMS"
+          record cat "$FEED"
+          record cat "$SUMS"
           cat "$RECORD"
           ASSETS="$RUNNER_TEMP/console-assets"
           mkdir -p "$ASSETS"
           cp "$DMG" "$ZIP" "$RECORD" "$SUMS" "$ASSETS/"
+          cp "$FEED" "$ASSETS/"
 
       # The finished assets go to the `publish` job as a workflow artifact:
       # this job never holds a token that can write a release. The key
@@ -1090,6 +1146,14 @@ jobs:
               exit 1
             fi
           done
+          if [ ! -s latest-mac.yml ]; then
+            echo "::error::want exactly one non-empty latest-mac.yml beside the console's zip and the artifact carries none: electron-updater reads that file from this release, so a release without it is a console that can never update"
+            exit 1
+          fi
+          if ! grep -qF "  latest-mac.yml" console-sha256sums.txt; then
+            echo "::error::latest-mac.yml is not listed in console-sha256sums.txt: the feed ships under the sums file cosign signs, and a feed the sums file does not cover is a manifest nothing vouches for"
+            exit 1
+          fi
           sha256sum --strict --check console-sha256sums.txt
 
       # The same, for the Linux leg, in the same words -- and it is not a
@@ -1217,6 +1281,8 @@ jobs:
           LINUX_RECORD="console-linux-verification.txt"
           SUMS="console-sha256sums.txt"
           BUNDLE="console-sha256sums.txt.sigstore.json"
+          FEED="latest-mac.yml"
+          test -s "$FEED"
           test -s "$LINUX_RECORD"
           test -s "$BUNDLE"
           existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$CONSOLE_TAG\") | if .draft then \"draft\" else \"published\" end")"
@@ -1278,6 +1344,6 @@ jobs:
           gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \
             --title "Fugaro Console $VERSION" \
             --notes-file "$BODY" \
-            "$DMG" "$APP_ZIP" "$APPIMAGE" "$DEB" "$RECORD" "$LINUX_RECORD" "$SUMS" "$BUNDLE"
+            "$DMG" "$APP_ZIP" "$APPIMAGE" "$DEB" "$RECORD" "$LINUX_RECORD" "$SUMS" "$BUNDLE" "$FEED"
           gh release edit "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
           echo "published $CONSOLE_TAG"

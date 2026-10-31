@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -58,6 +60,8 @@ func TestParseImageSkipBuildScripts(t *testing.T) {
 var imageFieldReasons = map[string]string{
 	"Node": "removed in 0.7.0; refused unconditionally by validateImage, never run as shell",
 	"JDK":  "removed in 0.7.0; refused unconditionally by validateImage, never reaches a Dockerfile",
+	"KeyFiles": "repository paths the image checks out before the source layer, each written as one " +
+		"single-quoted word into the checkout loop; validateImage refuses anything but a clean relative path",
 }
 
 // TestImageFieldsAreClassified is decision L7's reflection-style guard: a
@@ -126,6 +130,7 @@ func TestCloneRefusesImageBuildKeys(t *testing.T) {
 		{"image.setup", "    image: { setup: [\"make deps\"] }\n", "workflows.web.image.setup"},
 		{"image.tools", "    image: { tools: { node: \"24\" } }\n", "workflows.web.image.tools"},
 		{"image.skip_build_scripts", "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts"},
+		{"image.key_files", "    image: { key_files: [patches] }\n", "workflows.web.image.key_files"},
 		{"dockerfile", "    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile"},
 	}
 	for _, tc := range cases {
@@ -188,10 +193,106 @@ func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
 	}
 }
 
-// TestCheckoutInvalidValue pins that checkout: is an enum of baked and clone.
+// sharedYAML is webYAML with the dependency-layer keys a checkout: shared
+// workflow declares: the layer the shared image holds is the tools, the
+// packages, the key files and the warm-up (design
+// forge-authorship-images/shared-images.md §1, §12), and every one of them
+// is refused under checkout: clone, so this is the shape only the new kind
+// makes expressible.
+const sharedYAML = webYAML + `    checkout: shared
+    image:
+      apt: [libvips-dev]
+      tools: { node: "24.19.0" }
+      key_files: [patches]
+      skip_build_scripts: true
+`
+
+// sharedShipped turns the 0.15.0 launch gate on for the duration of one test
+// and restores it: validation refuses every checkout: shared today
+// (TestValidateRefusesCheckoutSharedUntil0150), so the rules the release that
+// ships shared images will apply are reachable only behind the flag. The
+// release that flips sharedCheckoutShipped makes these tests run it open.
+func sharedShipped(t *testing.T) {
+	t.Helper()
+	was := sharedCheckoutShipped
+	sharedCheckoutShipped = true
+	t.Cleanup(func() { sharedCheckoutShipped = was })
+}
+
+// TestValidateCheckoutSharedAllowsDependencyKeys (design
+// forge-authorship-images/shared-images.md §6, route A): checkout: shared
+// runs a shared dependency-layer image — one image per resolved dependency
+// set, holding no repository's source — and clones the repository's own
+// source at launch, so the keys that describe that layer are exactly the
+// ones it accepts. Behind sharedShipped, because the kind is refused until
+// 0.15.0 ships the images it would run.
+func TestValidateCheckoutSharedAllowsDependencyKeys(t *testing.T) {
+	sharedShipped(t)
+	cfg, problems := Parse([]byte(sharedYAML))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutShared {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutShared)
+	}
+}
+
+// TestValidateRefusesCheckoutSharedUntil0150: nothing in 0.14.0 builds or
+// refreshes a shared dependency-layer image, so a repository that declares
+// checkout: shared would get a job that cannot run. Validation refuses the
+// key where the repository typed it, names the release that lifts the
+// refusal, and names the two kinds that work today — including for a
+// workflow that also declares the dependency-layer keys, which are the ones
+// only this kind accepts and so the ones a reader reaches for first.
+func TestValidateRefusesCheckoutSharedUntil0150(t *testing.T) {
+	for _, tc := range []struct{ name, yaml string }{
+		{"bare", webYAML + "    checkout: shared\n"},
+		{"with the dependency-layer keys", sharedYAML},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(tc.yaml))
+			if !hasProblem(problems, "workflows.web.checkout", "shared images arrive in 0.15.0", 0) {
+				t.Fatalf("problems = %v, want a refusal at workflows.web.checkout naming 0.15.0", problems)
+			}
+			for _, want := range []string{"checkout: baked", "checkout: clone"} {
+				if p := problems[0]; !strings.Contains(p.Message, want) {
+					t.Errorf("the refusal %q does not name %q", p.Message, want)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateCheckoutSharedRefusesSetup (design
+// forge-authorship-images/shared-images.md §1, §2.2): a shared image is run
+// by every repository on the same dependency set, so a key that would put
+// this repository's own content into it is refused — image.setup, which
+// runs in the repository's checkout, and a workflow's own dockerfile, which
+// builds a per-repository image at all. Each refusal names its key (the
+// problem's path) and the reason, in one sentence, and names checkout:
+// baked as the way out — which is how a workflow gets a per-repository
+// step at all. Behind sharedShipped for the same reason as the test above.
+func TestValidateCheckoutSharedRefusesSetup(t *testing.T) {
+	sharedShipped(t)
+	const msg = "checkout: shared runs an image shared by every repository on the same dependency set, which holds no repository's own content; use checkout: baked to build a per-repository image"
+	for _, tc := range []struct{ name, extra, path string }{
+		{"image.setup", "    image: { setup: [\"npx playwright install --with-deps chromium\"] }\n", "workflows.web.image.setup"},
+		{"dockerfile", "    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(webYAML + "    checkout: shared\n" + tc.extra))
+			if !hasProblem(problems, tc.path, msg, 0) {
+				t.Errorf("problems = %v, want one at %s: %s", problems, tc.path, msg)
+			}
+		})
+	}
+}
+
+// TestCheckoutInvalidValue pins that checkout: is an enum of baked, clone
+// and shared.
 func TestCheckoutInvalidValue(t *testing.T) {
 	_, problems := Parse([]byte(webYAML + "    checkout: sometimes\n"))
-	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone", 0) {
+	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone or shared; shared runs a shared dependency-layer image", 0) {
 		t.Fatalf("problems = %v", problems)
 	}
 }
@@ -391,4 +492,119 @@ func TestServicesCorpusGetsUniformDefaults(t *testing.T) {
 		!slices.Equal(w.Commands.Reports, []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}) {
 		t.Errorf("defaults = %+v, reports %v", w.Resources, w.Commands.Reports)
 	}
+}
+
+// keyFilesYAML is webYAML with an image.key_files list, each entry written as
+// the JSON string a YAML parser reads back as itself (so a control character
+// or a backslash is the one under test, not a YAML escape).
+func keyFilesYAML(entries ...string) string {
+	quoted := make([]string, len(entries))
+	for i, e := range entries {
+		quoted[i] = strconv.Quote(e)
+	}
+	return webYAML + "    image: { key_files: [" + strings.Join(quoted, ", ") + "] }\n"
+}
+
+// TestValidateImageKeyFilesRefusesEscapes: an image.key_files entry is one
+// path inside the repository, and validateImage refuses everything that could
+// name something else: an absolute path, a .. segment, .git, the repository
+// root, a path that is not clean, a backslash (git reads it as an escape in a
+// pathspec) and a control character (the entry reaches a Dockerfile line).
+// Each refusal names the entry by its index, and never echoes the value.
+func TestValidateImageKeyFilesRefusesEscapes(t *testing.T) {
+	for _, tc := range []struct{ name, entry, msg string }{
+		{"absolute", "/etc/passwd", "not an absolute one"},
+		{"a parent segment", "../outside", ".. segment"},
+		{"a parent segment in the middle", "a/../../etc/passwd", ".. segment"},
+		{"a bare parent", "..", ".. segment"},
+		{".git/config", ".git/config", "inside .git"},
+		{"the .git directory", ".git", "inside .git"},
+		{"the repository root", ".", "repository root"},
+		{"a trailing slash", "patches/", "clean path"},
+		{"a doubled slash", "a//b", "clean path"},
+		{"a dot segment", "./patches", "clean path"},
+		{"a dot segment in the middle", "a/./b", "clean path"},
+		{"empty", "", "must not be empty"},
+		{"only spaces", "   ", "must not be empty"},
+		{"a backslash", `a\b`, "no backslash"},
+		{"an escape sequence", "a\x1bb", "control character"},
+		{"a newline", "a\nb", "control character"},
+		{"over the length cap", strings.Repeat("a", maxImageKeyFilePath+1), "at most 200 characters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(keyFilesYAML(tc.entry)))
+			if !hasProblem(problems, "workflows.web.image.key_files[0]", tc.msg, 0) {
+				t.Fatalf("problems = %v, want one at image.key_files[0] ~ %q", problems, tc.msg)
+			}
+			for _, p := range problems {
+				if strings.ContainsAny(p.Message, "\x1b\n\r") {
+					t.Errorf("the refusal echoes the value into the message: %q", p.Message)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateImageKeyFilesRefusesGlobsAndDuplicates: an entry is the path it
+// is, not a pattern (the rebuild key turns it into a doublestar glob, so a
+// pattern would key the image on files the install never reads), and the list
+// carries each path once, within its cap. A path that is only unusual is
+// accepted: the point is a strict shape, not a short list of blessed names.
+func TestValidateImageKeyFilesRefusesGlobsAndDuplicates(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		entries []string
+		msg     string
+	}{
+		{"a star", []string{"*.patch"}, "no glob"},
+		{"a doublestar", []string{"**/*.patch"}, "no glob"},
+		{"a character class", []string{"p[abc]"}, "no glob"},
+		{"a brace group", []string{"p{a,b}"}, "no glob"},
+		{"a question mark", []string{"patch?"}, "no glob"},
+		{"a duplicate", []string{"patches", "vendor/x", "patches"}, "duplicates image.key_files[0]"},
+		{"over the cap", caps(maxImageKeyFiles + 1), "at most 32 entries"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(keyFilesYAML(tc.entries...)))
+			if !hasProblem(problems, "workflows.web.image.key_files", tc.msg, 0) &&
+				!hasProblem(problems, "workflows.web.image.key_files[2]", tc.msg, 0) &&
+				!hasProblem(problems, "workflows.web.image.key_files[0]", tc.msg, 0) {
+				t.Fatalf("problems = %v, want one ~ %q", problems, tc.msg)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name    string
+		entries []string
+	}{
+		{"a directory", []string{"patches"}},
+		{"a file in a directory", []string{".yarn/patches/left-pad.patch"}},
+		{"several", []string{"patches", "vendor/toolchain.toml", ".pnpmfile.cjs"}},
+		{"a space", []string{"vendor/my tool"}},
+		{"a non-ASCII path", []string{"vendor/café/tool"}},
+		{"at the cap", caps(maxImageKeyFiles)},
+		{"at the length cap", []string{strings.Repeat("a", maxImageKeyFilePath)}},
+	} {
+		t.Run("valid "+tc.name, func(t *testing.T) {
+			cfg, problems := Parse([]byte(keyFilesYAML(tc.entries...)))
+			if len(problems) > 0 {
+				t.Fatalf("unexpected problems: %v", problems)
+			}
+			if !slices.Equal(cfg.Workflows["web"].Image.KeyFiles, tc.entries) {
+				t.Fatalf("image.key_files = %v, want %v", cfg.Workflows["web"].Image.KeyFiles, tc.entries)
+			}
+			if cfg.Workflows["web"].Image.IsZero() {
+				t.Fatal("image.key_files alone leaves Image.IsZero")
+			}
+		})
+	}
+}
+
+// caps is n distinct key-file entries, each valid.
+func caps(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("patches/%02d.patch", i)
+	}
+	return out
 }

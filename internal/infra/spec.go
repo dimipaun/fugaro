@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -63,19 +64,24 @@ const (
 	RTDBURLEnv        = runner.RTDBURLEnv
 	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
 	BudgetGraceEnv    = runner.BudgetGraceEnv
-	// CheckoutEnv, set to config.CheckoutClone on a checkout: clone
-	// workflow's job (never on a baked one, whose spec stays exactly what
-	// it was before clone existed), tells the runner's bootstrap to make a
-	// blobless clone at start instead of moving a baked-in one, and to
-	// install the checkout's mise tools (design generic-tool.md §2, G4;
-	// plan Task 17). The runner reads it, so the constant lives there
-	// (runner.CheckoutEnv), the same way the budget variables do.
+	// CheckoutEnv, set to the workflow's own config.Checkout value on a
+	// checkout: clone or checkout: shared workflow's job (never on a baked
+	// one, whose spec stays exactly what it was before clone existed), tells
+	// the runner's bootstrap to make a blobless clone at start instead of
+	// moving a baked-in one, and to install the checkout's mise tools
+	// (design generic-tool.md §2, G4; plan Task 17). A shared job needs it
+	// for the same reason a clone job does: its image holds the dependency
+	// layer alone, so the source can only come from the clone (design
+	// forge-authorship-images/shared-images.md §1, §6). The runner reads it,
+	// so the constant lives there (runner.CheckoutEnv), the same way the
+	// budget variables do.
 	CheckoutEnv = runner.CheckoutEnv
 	// RemoteEnv, set to the repository's credential-free clone URL on a
-	// checkout: clone workflow's job (and on no other): the job's image
-	// carries no checkout, so fugaro exec clones one from this URL — its
-	// --remote flag defaults to it (runner.RemoteEnv). Without it the
-	// clone job would have no remote to clone at all (review C1).
+	// checkout: clone or checkout: shared workflow's job (and on no other):
+	// the job's image carries no checkout, so fugaro exec clones one from
+	// this URL — its --remote flag defaults to it (runner.RemoteEnv).
+	// Without it the clone job would have no remote to clone at all (review
+	// C1).
 	RemoteEnv = runner.RemoteEnv
 )
 
@@ -134,6 +140,21 @@ type Inputs struct {
 	// Installation are the installation root's outputs. Fields left empty
 	// take the values Go gives a new installation.
 	Installation InstallationOutputs
+	// Policy is the published policy node, as the caller read it
+	// (internal/cli's policyReadOnce, over budget.rtdb_url): whether a
+	// repository is proxied has ONE source, this node's bitbucket_token
+	// block (G15), and RepoSpec.BitbucketProxied is read from it and from
+	// nothing else.
+	//
+	// nil means the caller read no node at all: then nothing is proxied and
+	// no local project_secrets entry is judged against a document this
+	// caller never saw — a command that does not read the node (fugaro
+	// image, fugaro doctor, --print-vars) must not refuse one over it. A
+	// caller that DID read the node passes what it read, and an empty Policy
+	// when the project has published none: "read, and the node admits
+	// nothing" is a different answer from "not read", and only the first one
+	// refuses a local entry that proxies a repository the node does not.
+	Policy *projectpolicy.Policy
 }
 
 // InstallationOutputs are the installation root's outputs, as `terraform
@@ -141,11 +162,17 @@ type Inputs struct {
 type InstallationOutputs struct {
 	// ProjectName is the Fugaro project's name; empty in the outputs of an
 	// installation applied before M9a.
-	ProjectName             string   `json:"project_name"`
-	RunsBucket              string   `json:"runs_bucket"`
-	RegistryHost            string   `json:"registry_host"`
-	BaseRegistry            string   `json:"base_registry"`
-	GhcrRegistry            string   `json:"ghcr_registry"`
+	ProjectName  string `json:"project_name"`
+	RunsBucket   string `json:"runs_bucket"`
+	RegistryHost string `json:"registry_host"`
+	BaseRegistry string `json:"base_registry"`
+	GhcrRegistry string `json:"ghcr_registry"`
+	// SharedRegistry is the installation's one shared image registry: the
+	// Artifact Registry repository every repository's shared images live in
+	// (design docs/forge-authorship-images/shared-images.md §2.6). Empty in
+	// the outputs of an installation applied before it existed, which
+	// withDefaults fills with the name Go gives a new one.
+	SharedRegistry          string   `json:"shared_registry"`
 	LegacyRegistry          string   `json:"legacy_registry"`
 	SchedulerServiceAccount string   `json:"scheduler_service_account"`
 	RoleIDs                 RoleIDs  `json:"role_ids"`
@@ -265,9 +292,12 @@ type WorkflowSpec struct {
 	// LegacyImage is the M4 image path in the local config's legacy
 	// registry, untagged as M4 printed it; empty without one.
 	LegacyImage string `json:"-"`
-	// Checkout is the workflow's config.Checkout (baked or clone): clone
-	// runs the installation's base image directly (Image is base_images.base,
-	// not a derived image), with no per-repository build or daily check.
+	// Checkout is the workflow's config.Checkout (baked, clone or shared):
+	// clone runs the installation's base image directly (Image is
+	// base_images.base, not a derived image), with no per-repository build
+	// or daily check; shared runs a shared dependency-layer image and
+	// clones the repository's own source at launch (design
+	// forge-authorship-images/shared-images.md §6, route A).
 	Checkout string `json:"-"`
 }
 
@@ -327,6 +357,7 @@ type RepoInstallation struct {
 	RegistryHost            string      `json:"registry_host"`
 	BaseRegistry            string      `json:"base_registry"`
 	GhcrRegistry            string      `json:"ghcr_registry"`
+	SharedRegistry          string      `json:"shared_registry"`
 	SchedulerServiceAccount string      `json:"scheduler_service_account"`
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
@@ -358,6 +389,24 @@ type RepoSpec struct {
 	BuildBucketCondition Condition               `json:"build_bucket_condition"`
 	Check                *CheckSpec              `json:"check"`
 	Workflows            map[string]WorkflowSpec `json:"workflows"`
+	// BitbucketProxied is the per-repository fact of the flip (D500, D502):
+	// this repository's git credential is one the credentials service
+	// brokers for it, so each of its jobs gives up the accessor on and the
+	// mount of every name in config.ProxiedGitSecretNames (Readiness drops
+	// the mount, modules/workflow/sa.tf the accessor), while every other
+	// Bitbucket repository — of an installation that opted in or not —
+	// keeps both (G9). It is true only when the installation has opted in to
+	// the service AND the published node admits this repository with
+	// proxy: true (G15, proxiedRepository), and it is written into the
+	// tfvars' repo object as the workflow module's bitbucket_proxied input.
+	//
+	// It is omitted when false, which is what every tfvars written before
+	// the input existed means: the module declares bitbucket_proxied
+	// optional and false (roots/repo and modules/repo's own repo object), so
+	// a plan cannot tell an omitted fact from a false one, and no golden
+	// plan moves for a repository nobody proxied.
+	BitbucketProxied bool `json:"bitbucket_proxied,omitempty"`
+
 	// ProjectSecretCandidates are the logical names this repository may use
 	// project-wide, mapped to the secret ID they would resolve to
 	// (gcp.ProjectSecretID). Candidate data only: being here says nothing
@@ -400,6 +449,10 @@ type repoCtx struct {
 	gitSecret    string
 	gitUser      string
 	inst         InstallationOutputs // with defaults filled in
+	// bitbucketProxied is the per-repository fact of the flip, decided once
+	// for the repository by resolveBitbucketProxied: RepoSpec.BitbucketProxied
+	// is this, and nothing else reads it.
+	bitbucketProxied bool
 }
 
 var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
@@ -482,7 +535,90 @@ func resolve(in Inputs) (*repoCtx, error) {
 	default:
 		return nil, userErr("git.provider %q is not bitbucket or github", c.provider)
 	}
+	if err := c.resolveBitbucketProxied(); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// resolveBitbucketProxied decides the per-repository fact of the flip
+// (RepoSpec.BitbucketProxied) and refuses a local project_secrets entry that
+// answers differently for this repository.
+//
+// The fact has two halves and it needs both. The installation must have opted
+// in to the credentials service (D146, D147): with it off nothing changes,
+// whatever the node admits and whatever the operator's entry says (G9). And
+// the published node must admit this repository with proxy: true — the node is
+// the ONE source of that half (G15), because it is the document the
+// credentials service itself reads when a job asks it for the token (G3), so
+// the fact this spec is built from and the admission a run is granted come
+// from the same place and cannot disagree.
+//
+// The node is read through the operator's credentials by the caller
+// (internal/cli's policyReadOnce, over budget.rtdb_url) and handed in as
+// Inputs.Policy: internal/infra holds no client that could read it, and Repo
+// is a pure function of its Inputs. nil Policy therefore means the caller read
+// no node — fugaro image, fugaro doctor, --print-vars — and then nothing is
+// proxied and no entry is judged against a document this caller never saw. An
+// empty Policy is the different answer "read, and the project has published
+// no block", which proxies nothing either but does judge an entry that says
+// otherwise.
+//
+// The refusal is the flip's one place where the two documents can disagree,
+// and it is worth a refusal rather than a precedence rule: the entry is what
+// `fugaro project policy publish` derives the node's block from, so a local
+// entry that proxies a repository the node does not (or stopped proxying one
+// it does) means the next publish from this config would move the fact under a
+// running installation — the runs would read one answer and the next update
+// another. Both fixes are named, because both are legitimate: publish the
+// config the entry is in, or correct the entry to say what the node says.
+//
+// An entry that is not there is not a disagreement: the node is then the only
+// answer, and it is the answer this fact takes. Neither is an entry judged
+// while the opt-in is off, or when no node was read.
+//
+// Nor is a GitHub repository's, and the provider check below is what says so.
+// The node's allow_repos is bitbucket-qualified by construction
+// (projectpolicy.validBitbucketTokenBlock refuses any other provider, and
+// MatchRepo compares segment against segment), so this repository can never be
+// admitted by it and the fact is false whatever the node says. The local
+// entry, on the other hand, holds bare owner/name slugs, so a GitHub
+// repository whose name matches one of them would read as proxied and be
+// refused over a Bitbucket credential it does not use — a GitHub repository's
+// git credential is the App key, and project_secrets.bitbucket-token is not
+// it.
+func (c *repoCtx) resolveBitbucketProxied() error {
+	if c.provider != gitprov.KindBitbucket || c.inst.CredentialsService == nil || c.in.Policy == nil {
+		return nil
+	}
+	canonical, err := projectpolicy.Canonical(c.provider, c.in.Repo)
+	if err != nil {
+		// Unreachable: resolve has already put the same pair through
+		// task.Slug, which validates the provider kind and the repository with
+		// these very functions.
+		return userErr("%v", err)
+	}
+	var nodeProxies bool
+	if b := c.in.Policy.BitbucketToken; b != nil {
+		nodeProxies = b.Proxy && projectpolicy.AdmitRepo(b.AllowRepos, canonical)
+	}
+	c.bitbucketProxied = nodeProxies
+
+	entry, hasEntry := c.lc.ProjectSecrets[config.BitbucketSecret]
+	if !hasEntry {
+		return nil
+	}
+	localProxies := entry.Proxy && entry.AllowsData(c.in.Repo)
+	if localProxies == nodeProxies {
+		return nil
+	}
+	says := func(proxied bool) string {
+		if proxied {
+			return "admits it with proxy: true"
+		}
+		return "does not admit it with proxy: true"
+	}
+	return userErr("the local config's project_secrets.%s entry and the project's published policy disagree about %s: the entry %s, and the published node %s. Whether a repository's git credential is brokered has one source, the published node, because that node is what the credentials service reads when the repository's job asks it for the token — so make the two agree: publish this config with 'fugaro project policy publish', which derives the node's bitbucket_token block from this entry, or correct the entry to say what the node says", config.BitbucketSecret, c.in.Repo, says(localProxies), says(nodeProxies))
 }
 
 // localRepo is the local config's entry for repo, matched as fugaro run
@@ -541,7 +677,7 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 // package's: the deployer and the runner (a project job's clone URL, plan task
 // 3.3 step 3) must give the same answer, so a URL one of them refuses cannot
 // be one the other accepts. A per-repository job's FUGARO_REMOTE is written
-// from here (cloneJobEnv) and a project job's URL is computed there.
+// from here (cloneShapedJobEnv) and a project job's URL is computed there.
 func repoURL(provider, repo, given string) (string, error) {
 	u, err := repourl.CloneURL(provider, repo, given)
 	if err != nil {
@@ -563,6 +699,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
 	def(&o.GhcrRegistry, GhcrRegistry)
+	def(&o.SharedRegistry, gcp.SharedRegistryRepoID())
 	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
@@ -788,7 +925,14 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// generic-tool.md §2, G3): there is no per-repository derived image, so
 	// the job's image is base_images.base, not a :latest tag in the
 	// repository's own registry. Every token variant of the workflow runs
-	// the same image.
+	// the same image. A checkout: shared workflow keeps the derived tag:
+	// the image its job runs is a shared dependency-layer digest from the
+	// lock, which only the operator's machine writes onto the job (design
+	// forge-authorship-images/shared-images.md §6), and no spec can know it.
+	// Until C8b1's refresh writes that digest, the two markers below make a
+	// shared job clone-shaped while this tag — the per-repository image
+	// readiness.go's non-clone branch asks the operator to build — is what
+	// it runs; C8b1 owns replacing both.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
 	if w.Checkout == config.CheckoutClone {
 		image = lc.BaseImage(config.BaseKind)
@@ -824,8 +968,13 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
 	}
-	if w.Checkout == config.CheckoutClone {
-		ws.Env[CheckoutEnv] = config.CheckoutClone
+	// One writer for the job's clone shape: a job whose image holds no
+	// repository's source — clone, which runs the installation's base image,
+	// and shared, which runs the dependency layer alone — carries the two
+	// markers the run needs to fetch the source itself, and the value is the
+	// workflow's own kind, which is what the runner switches on.
+	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
+		ws.Env[CheckoutEnv] = w.Checkout
 		// Where the run clones from: the repository's own URL, which
 		// c.repoURL already checked is https, credential-free and this
 		// repository's (see repoURL).
@@ -1004,12 +1153,15 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,
 			GhcrRegistry:            c.inst.GhcrRegistry,
+			SharedRegistry:          c.inst.SharedRegistry,
 			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
 			Operators:               c.inst.Operators,
 			CredentialsService:      repoCredentialsService(c.inst.CredentialsService),
 		},
+		BitbucketProxied: c.bitbucketProxied,
+
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,
 		BaseBranch:               c.baseBranch,
@@ -1313,6 +1465,15 @@ func (rs RepoSpec) Addresses() []string {
 	for _, member := range operators {
 		add(root + "google_artifact_registry_repository_iam_member.operator_images[" + q(member) + "]")
 	}
+	// The installation's shared image registry (design
+	// docs/forge-authorship-images/shared-images.md §2.6, §11): this
+	// repository's build account writes it, and each of its job accounts
+	// reads it. Both grants are declared without a gate, so they are
+	// addresses of every repository root.
+	add(root + "google_artifact_registry_repository_iam_member.build_shared")
+	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
+		add(root + "google_artifact_registry_repository_iam_member.job_shared[" + q(key) + "]")
+	}
 	// modules/repo/build.tf
 	add(root + "google_service_account.build")
 	for _, logical := range rs.BuildSecrets {
@@ -1359,7 +1520,7 @@ func (rs RepoSpec) Addresses() []string {
 			// that survives a retirement. The App key's half is inert until
 			// config.ServiceHeldSecretNames names it (C2.2's release, review
 			// finding F1).
-			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical) {
+			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical, rs.BitbucketProxied) {
 				continue
 			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
@@ -1392,6 +1553,15 @@ func (rs RepoSpec) Addresses() []string {
 // C2.2's release (review finding F1), so this answers false for it today and
 // the job keeps the accessor it needs to read the key.
 //
+// proxied is the repository's own fact (RepoSpec.BitbucketProxied), and it is
+// the second way a mount comes to be held: a name config.ProxiedGitSecretNames
+// lists is the credentials service's for a repository the published node
+// admits with proxy: true (B1.8, D500), and for that repository alone — the
+// same name in another repository's spec, proxied false, keeps its accessor
+// (G9). It is a parameter rather than a read of the spec so that this function
+// stays the one statement of the module's rule, and so that the rule is
+// visible where it is called.
+//
 // It is the same question modules/workflow/sa.tf's job_secret_names asks, one
 // mount at a time, and it is written the same way — a name survives if ANY
 // entry that mounts it is not one the service holds — so the mirror
@@ -1399,14 +1569,17 @@ func (rs RepoSpec) Addresses() []string {
 // the spec produces. One secret mounted under two variables, one of them a
 // credential the service holds, is a shape config already refuses
 // (ReservedSecrets, ProviderBySecret), and this answers the same way either
-// way.
-func mountsServiceHeldSecret(ws WorkflowSpec, name string) bool {
+// way. The proxied clause is the module's is_proxied_git, folded in: it reads
+// the logical name and the repository's fact and never the variable, so it is
+// the same answer for every entry naming the name.
+func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool) bool {
+	proxiedGit := proxied && slices.Contains(config.ProxiedGitSecretNames, name)
 	held := false
 	for env, logical := range ws.SecretEnv {
 		if logical != name {
 			continue
 		}
-		if !config.IsServiceHeldSecretEnv(env, name) {
+		if !config.IsServiceHeldSecretEnv(env, name) && !proxiedGit {
 			return false
 		}
 		held = true

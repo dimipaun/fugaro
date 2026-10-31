@@ -18,8 +18,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 const testSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
@@ -131,6 +134,133 @@ func TestRunRequestedByInClaim(t *testing.T) {
 	}
 	if c := claimsOf(t, f, unsealed(t, lastLaunchKey(t, f.cloudFixture), data, spec.RunID)); c["rb"] != "retrier@example.com" {
 		t.Fatalf("rb = %v", c["rb"])
+	}
+}
+
+// mintedClaimsFor is the claim set of the token a direct mint sealed for
+// spec's run: what the launcher bound this run's identity to.
+func mintedClaimsFor(t *testing.T, f *launchBudgetFixture, env *cloudEnv, spec *task.Spec) map[string]any {
+	t.Helper()
+	key, err := env.mintBudgetToken(context.Background(), appSlug, spec, nil)
+	if err != nil || key == nil {
+		t.Fatalf("mintBudgetToken: key %v, err %v", key, err)
+	}
+	data, _, err := env.bucket.Read(context.Background(), token.ObjectKey(appSlug, spec.RunID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return claimsOf(t, f, unsealed(t, key, data, spec.RunID))
+}
+
+// claimPRs reads the fpr claim of a claim set, failing the test if it is not
+// there or not an array of numbers.
+func claimPRs(t *testing.T, c map[string]any) []int {
+	t.Helper()
+	arr, ok := c["fpr"].([]any)
+	if !ok {
+		t.Fatalf("fpr = %v, want an array", c["fpr"])
+	}
+	out := make([]int, 0, len(arr))
+	for _, v := range arr {
+		n, ok := v.(json.Number)
+		if !ok {
+			t.Fatalf("fpr holds %T, want a number", v)
+		}
+		i, err := n.Int64()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, int(i))
+	}
+	return out
+}
+
+// TestLaunchMintsTheTaskBranchAndPRs: the launcher binds a run that pushes to
+// its branch — the branch it creates on a first run, the one it continues on a
+// follow-up — and to the pull request a follow-up continues (fb and fpr, G6).
+// A first run names no pull request: it opens its own.
+func TestLaunchMintsTheTaskBranchAndPRs(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+
+	first := &task.Spec{Version: 1, RunID: "20991231-000000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	c := mintedClaimsFor(t, f, env, first)
+	if c["fb"] != "fugaro/20991231-000000-abcd" {
+		t.Errorf("fb = %v, want the run's own branch fugaro/%s", c["fb"], first.RunID)
+	}
+	if _, ok := c["fpr"]; ok {
+		t.Errorf("a first run named pull requests: %v", c["fpr"])
+	}
+
+	follow := &task.Spec{Version: 1, RunID: "20991231-120000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Branch: "fugaro/20991231-000000-abcd", PR: 42, PreviousRun: "20991231-000000-abcd"}
+	c = mintedClaimsFor(t, f, env, follow)
+	if c["fb"] != follow.Branch {
+		t.Errorf("fb = %v, want the branch it continues %q", c["fb"], follow.Branch)
+	}
+	if prs := claimPRs(t, c); len(prs) != 1 || prs[0] != 42 {
+		t.Errorf("fpr = %v, want [42]", prs)
+	}
+}
+
+// TestLaunchMintsNoBranchForReviewOrArtifact: a review run writes only
+// comments on its pull requests and an artifact run pushes nothing, so neither
+// carries a branch — the proxy refuses every push of theirs (G6). A review
+// run still names the pull requests it reviews.
+func TestLaunchMintsNoBranchForReviewOrArtifact(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+
+	review := &task.Spec{Version: 1, RunID: "20991231-000000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		ReviewPRs: []int{5, 6}}
+	c := mintedClaimsFor(t, f, env, review)
+	if _, ok := c["fb"]; ok {
+		t.Errorf("a review run carries a branch: %v", c["fb"])
+	}
+	if prs := claimPRs(t, c); len(prs) != 2 || prs[0] != 5 || prs[1] != 6 {
+		t.Errorf("fpr = %v, want the pull requests it reviews [5 6]", prs)
+	}
+
+	artifact := &task.Spec{Version: 1, RunID: "20991231-000000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Mode: recipe.ModeArtifact, Task: "x"}
+	c = mintedClaimsFor(t, f, env, artifact)
+	if _, ok := c["fb"]; ok {
+		t.Errorf("an artifact run carries a branch: %v", c["fb"])
+	}
+	if _, ok := c["fpr"]; ok {
+		t.Errorf("an artifact run names pull requests: %v", c["fpr"])
+	}
+}
+
+// TestLaunchRefusesAStaleRunIDOnAFollowUp: a follow-up continues the branch a
+// run created, so its run id must sort after that run's. --run-id is the
+// operator's own text and prSpec holds it to its shape alone, so a run id that
+// sorts BEFORE the branch's would mint an identity naming a branch created
+// after the run itself — which the credentials service refuses at the run's
+// first call, halting a launch that used to work. The pairing is refused here,
+// before anything is signed and before anything is written to the bucket.
+func TestLaunchRefusesAStaleRunIDOnAFollowUp(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+	stale := &task.Spec{Version: 1, RunID: "20991231-000000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Branch: "fugaro/20991231-120000-abcd", PR: 42, PreviousRun: "20991231-120000-abcd"}
+	key, err := env.mintBudgetToken(context.Background(), appSlug, stale, nil)
+	if err == nil || key != nil {
+		t.Fatalf("mintBudgetToken: key %v, err %v, want a refusal", key, err)
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("signJwt was called %d times for a refused launch", n)
+	}
+	if raw := readToken(t, f.cloudFixture, stale.RunID); raw != "" {
+		t.Fatal("a refused launch left a token object in the bucket")
+	}
+
+	// The same follow-up under a run id after that run's is admitted, and its
+	// identity names the branch it continues.
+	fresh := *stale
+	fresh.RunID = "20991231-130000-abcd"
+	if c := mintedClaimsFor(t, f, env, &fresh); c["fb"] != stale.Branch {
+		t.Fatalf("fb = %v, want the branch it continues %q", c["fb"], stale.Branch)
 	}
 }
 
@@ -332,7 +462,7 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
 	// no repository would refuse the launch before the mint decision these
 	// subtests are about.
-	policy := `{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
+	policy := `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
 
 	t.Run("no policy, no token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
@@ -414,7 +544,7 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
-	publishPolicy(t, f, `{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +579,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	f.db.DenyRead(projectpolicy.PathShared())
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -477,7 +607,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":3,"allow_repo":["acme/*"]}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"allow_repo":["acme/*"]}`))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
 		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
@@ -501,7 +631,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 // for a policy he wrote himself.
 func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
 	for name, node := range map[string]string{
-		"a budget the decoder refuses": `{"version":3,"budget":{"mode":"nonsense"}}`,
+		"a budget the decoder refuses": `{"version":4,"budget":{"mode":"nonsense"}}`,
 		"a node with no version":       `{"budget":{"mode":"enforce"}}`,
 		"not a JSON object":            `["budget"]`,
 	} {
@@ -1048,5 +1178,32 @@ func TestLaunchNotesAZeroCapInObserve(t *testing.T) {
 	}
 	if !launchedAny(f) {
 		t.Fatal("observe must still launch")
+	}
+}
+
+// TestProxiedRepoPolicyInput: update --repo hands infra.Repo the node it read,
+// an empty node when it read that the project published none, and nil when it
+// read nothing — a failed read, or a config with no database address, where
+// projectPolicyRead also answers not-found. Only the empty node judges the
+// operator's project_secrets entry, so the no-address case must stay nil.
+func TestProxiedRepoPolicyInput(t *testing.T) {
+	withDB := &localcfg.Config{Budget: &localcfg.Budget{RTDBURL: "http://127.0.0.1:1"}}
+	node := &projectpolicy.Policy{BitbucketToken: &projectpolicy.BitbucketToken{Proxy: true}}
+	if got := repoPolicyInput(withDB, node, true, nil); got != node {
+		t.Errorf("a node read = %v, want the node", got)
+	}
+	if got := repoPolicyInput(withDB, nil, false, nil); got == nil || got.BitbucketToken != nil {
+		t.Errorf("no node published = %v, want an empty node", got)
+	}
+	if got := repoPolicyInput(withDB, nil, false, errors.New("unreachable")); got != nil {
+		t.Errorf("a failed read = %v, want nil", got)
+	}
+	for name, lc := range map[string]*localcfg.Config{
+		"no budget block":     {},
+		"no database address": {Budget: &localcfg.Budget{}},
+	} {
+		if got := repoPolicyInput(lc, nil, false, nil); got != nil {
+			t.Errorf("%s = %v, want nil: no node was read", name, got)
+		}
 	}
 }

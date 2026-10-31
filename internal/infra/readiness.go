@@ -279,6 +279,22 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			for _, logical := range config.ServiceHeldSecretNames {
 				dropMount(ws, logical)
 			}
+			// A proxied repository's git credential is the second family the
+			// service holds, and the one whose condition is the repository's
+			// rather than the installation's (B1.8, D500, G15): the drop is
+			// gated on the fact, so this repository's job alone gives the
+			// mount up and every other Bitbucket repository keeps it (G9).
+			// Both halves are read — the fact from the published node, the
+			// names from config.ProxiedGitSecretNames — because either alone
+			// would be a drop nobody asked for. The list is empty on this
+			// branch, which is B1.13 part two's switch: this loop is inert
+			// until that release fills it, and the accessor half in
+			// modules/workflow/sa.tf turns on with it.
+			if spec.BitbucketProxied {
+				for _, logical := range config.ProxiedGitSecretNames {
+					dropMount(ws, logical)
+				}
+			}
 		}
 		type gate struct {
 			kind   MissingKind

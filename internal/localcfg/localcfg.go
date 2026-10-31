@@ -32,6 +32,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -141,6 +142,23 @@ type Config struct {
 	// can collide with a ReservedSecrets key in the first place, so
 	// ValidateProjectSecrets checks membership in ReservedSecrets only.
 	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
+	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
+	// (D474), for an installation that sends its Bitbucket token to a root of
+	// its own rather than to Bitbucket's: a cloud run refuses any
+	// FUGARO_BITBUCKET_API_URL outside this list (projectpolicy's
+	// bitbucket_api_roots, which `fugaro project policy publish` copies this
+	// into — the run reads the node, so this file is where the owner writes
+	// it). Only the owner sets it, here, never in fugaro.yaml, and the shared
+	// config never carries it: whoever can write the runs bucket must not be
+	// able to widen where a credential is sent.
+	//
+	// It is a copy and not a derivation, and it is held to the node's rule
+	// alone (projectpolicy.validBitbucketAPIRoots): an https root that reaches
+	// one host, without a query, a fragment or userinfo. There is no second
+	// copy of that rule here on purpose — a root that the node would refuse is
+	// refused by the publish that builds the node, before anything is written,
+	// with a sentence naming the entry.
+	BitbucketAPIRoots []string `yaml:"bitbucket_api_roots,omitempty"`
 	// Profiles are the project's job profiles (design
 	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
 	// deployed as, and what a repository's workflow selects with job_profile.
@@ -199,8 +217,27 @@ type Config struct {
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
 	// leaves it on. Operator-only, like claude_accounts: never published to
 	// the runs bucket (Shared).
-	UpdateCheck *bool     `yaml:"update_check,omitempty"`
-	User        string    `yaml:"user,omitempty"`
+	UpdateCheck *bool  `yaml:"update_check,omitempty"`
+	User        string `yaml:"user,omitempty"`
+	// CommitName and CommitEmail are the name and address a run's commits are
+	// authored by when the repository opted in (git.author: launcher, D604,
+	// D606): the launcher's own identity, which `fugaro run` reads from here
+	// and writes into the task (internal/task's Spec.Author, A2a), and which
+	// A3's stamp environment then writes into the agent's git environment.
+	//
+	// CommitEmail is deliberately not free-form (D649): the launcher accepts
+	// it only when it is the launcher's own recorded identity or a forge
+	// noreply address, so one person cannot write a colleague's address into a
+	// history the forge links to that colleague's account. CommitName is the
+	// display half of the same claim and has no such rule beyond the shape a
+	// commit's own header holds (task.AuthorProblem).
+	//
+	// Neither is published (Shared blanks both, like user:): they are one
+	// machine's person, not the installation's fact, and a launcher who could
+	// write them into the runs bucket could choose whose name every teammate's
+	// commits carry.
+	CommitName  string    `yaml:"commit_name,omitempty"`
+	CommitEmail string    `yaml:"commit_email,omitempty"`
 	MaxParallel int       `yaml:"max_parallel"`
 	Endpoints   Endpoints `yaml:"endpoints,omitempty"`
 	// BaseBranch is the project's default base branch: the one repositories
@@ -214,29 +251,93 @@ type Config struct {
 	// node, which is where the runner reads it, while the value itself never
 	// travels in the shared config a launcher can write (Shared drops it,
 	// like each repo's).
-	BaseBranch string          `yaml:"base_branch,omitempty"`
-	Repos      map[string]Repo `yaml:"repos"`
+	BaseBranch string `yaml:"base_branch,omitempty"`
+	// ReviewFloor is the owner's review-level floor (D722, G1): per rigor
+	// mode, the levels a run of that mode must run, whatever a lower layer
+	// asks for. It travels the way BaseBranch does, and the reason is the
+	// same one: `fugaro project policy publish` copies it into the policy
+	// node, which only the owner writes and the runner fails closed on, and
+	// the value itself never enters the shared config a launcher can write
+	// (Shared drops it, and the publisher refuses the key). A floor a
+	// launcher could write — in the published shared config, in the project
+	// layer or in the task (docs/design/bucket-iam.md §10 L1, L2) — would be
+	// that launcher deciding how much review it gets, which is the one thing
+	// the floor exists to prevent.
+	//
+	// A mode that is not one of rigor's, a level outside l1/l2/l3, and a
+	// repeated level are refused at load (validate), never dropped: a
+	// misspelt floor is a run that reviews less than the owner asked for.
+	//
+	// A publish keeps the node's floor when this file sets none (see
+	// internal/cli's buildProjectPolicy): a floor is the one value a publish
+	// must not lower by accident, so silence about it is not a request to
+	// remove it. Taking a published floor away on purpose is therefore a
+	// written empty object — `review_floor: {}` — and not an absent key. The
+	// two spellings are told apart here (a written empty object is a non-nil
+	// empty map, an absent key a nil one) and mean the same floor, none.
+	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
+	Repos       map[string]Repo     `yaml:"repos"`
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
-// operator's own machine.
+// operator's own machine, one entry per pairing.
 type Mailbox struct {
-	// KeychainItem is the OS keychain item the pairing key lives at (M5,
-	// D113b). It is configuration and it is not a secret — it may be printed,
-	// and the diagnostic a missing key produces names it — but its shape is
-	// fixed, because it becomes an argv element of a keychain program: at most
-	// 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', carrying this project's
-	// name, so a config file cannot name an arbitrary keychain query and two
-	// projects on one machine cannot be made to read each other's key.
+	// KeychainItem names the OS keychain item each pairing's MAC key lives at
+	// (M5, D113b, decision 9): the key is one per pairing, so the item is one
+	// per pairing, and this map is keyed by the uid that names the pairing.
 	//
+	// The key is the uid `fugaro pair` wrote for the phone — `m~…`, which is
+	// what `pair ls` prints and `pair revoke` names — so that a revoke deletes
+	// exactly one phone's item, and a pairing session's `p~…` is accepted too,
+	// because a session is what a partially written config would hold. Both
+	// halves are the shape a uid has (§2 (e)), and not the same one: a device's
+	// is 16 random bytes in unpadded base64url behind `m~` and a session's is 32
+	// behind `p~`, which is why pairUIDRE carries a length per prefix. A key
+	// that is neither is refused rather than kept as a name nothing will ever
+	// look up.
+	//
+	// The value is the item's name: configuration, and not a secret — it may
+	// be printed, and the diagnostic a missing key produces names it — but its
+	// shape is fixed, because it becomes an argv element of a keychain program:
+	// at most 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', carrying this
+	// project's name, so a config file cannot name an arbitrary keychain query
+	// and two projects on one machine cannot be made to read each other's key.
 	// The shape is keychain.ParseItem's, not a second copy of the rule:
 	// validate refuses a name that package refuses, with that package's
 	// sentence.
-	KeychainItem string `yaml:"keychain_item,omitempty"`
+	KeychainItem map[string]string `yaml:"keychain_item,omitempty"`
 }
+
+// pairUIDRE is the shape of the uid a mailbox entry may be keyed by, and it is
+// two shapes, because the installation mints two uids and they are two lengths.
+//
+// **The key `fugaro pair` asks the operator to record is the device's `m~` uid**
+// — the command prints `mailbox.keychain_item[<device uid>]`, `pair ls` lists
+// that same uid and `pair revoke` names it, and decision 9 derives the item's
+// name from the 22-character body behind `m~`. So the `m~` branch, 22 unpadded
+// base64url characters standing for the 16 random bytes of token's
+// deviceUIDBytes, is the one every entry a pairing looks up is keyed by.
+//
+// The `p~` branch is the pairing session's uid — PairingPrefix and the 43
+// characters 32 random bytes spell (pairing.go's draw, §2 (e)) — and it is
+// admitted **while nothing ever looks such an entry up**: the session's node is
+// deleted at the end of the same `fugaro pair`, its Auth user is the sweep's,
+// and the durable identity is the device's `m~`. It is admitted because a config
+// written while a session is open holds one (Mailbox's own comment says so),
+// and the cost is stated rather than hidden: a `p~` key is a line that reads no
+// key, not one that reads the wrong key — the item's name is still
+// keychain.ParseItem's and the pairing it would have named no longer exists.
+//
+// It is this file's copy of the shapes and not the token package's function,
+// because the token package mints uids and this one only recognises them, and
+// its byte counts are unexported; TestMailboxKeyedByARealPairingUIDLoads mints
+// one of each through that package and loads them here, which is what keeps the
+// two from drifting. A key that is neither shape is refused, which is the only
+// way an operator learns of a typo.
+var pairUIDRE = regexp.MustCompile(`^(?:p~[A-Za-z0-9_-]{43}|m~[A-Za-z0-9_-]{22})$`)
 
 // CredentialsService is the credentials service block: the installation's own
 // Cloud Run service, as the launcher needs it (docs/credentials-service,
@@ -1010,6 +1111,27 @@ func legacyBaseImageKey(kind string) string {
 // configs, whose project: was the GCP project.
 const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/design/m9-budget-and-dashboard.md §13.1"
 
+// oldMailboxKeychainItem refuses the shape decision 9 replaced: one item name
+// for the project, where the block now holds one per pairing. It is read off
+// the raw document for the reason oldProjectKey is: decoded into the map the
+// field is now, a scalar is yaml's own type error, which says nothing about
+// what to do — and there is no shim to write, because a single name names no
+// pairing and which phone's key it held is exactly what it does not say
+// (pre-1.0, no compatibility).
+func oldMailboxKeychainItem(mailbox *yaml.Node) string {
+	if mailbox.Kind != yaml.MappingNode {
+		return ""
+	}
+	for i := 0; i+1 < len(mailbox.Content); i += 2 {
+		k, v := mailbox.Content[i], mailbox.Content[i+1]
+		if k.Value != "keychain_item" || v.Kind == yaml.MappingNode || v.Tag == "!!null" {
+			continue
+		}
+		return fmt.Sprintf("local config: `mailbox.keychain_item: %s` is now one item per pairing — a mapping of the uid `fugaro pair` wrote (m~…) to the OS keychain item's name; run `fugaro pair` and record the item name it prints, and delete that line", v.Value)
+	}
+	return ""
+}
+
 // Parse decodes the config strictly, applies defaults and validates it.
 func Parse(data []byte) (*Config, error) {
 	var top map[string]yaml.Node
@@ -1019,6 +1141,11 @@ func Parse(data []byte) (*Config, error) {
 		}
 		if n, ok := top["base_image"]; ok {
 			return nil, errors.New(oldBaseImageKey(n.Value))
+		}
+		if n, ok := top["mailbox"]; ok {
+			if msg := oldMailboxKeychainItem(&n); msg != "" {
+				return nil, errors.New(msg)
+			}
 		}
 	}
 	var c Config
@@ -1061,6 +1188,22 @@ func profileNames(profiles map[string]config.JobProfile) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ReviewFloorPolicy is the owner's floor in the policy package's vocabulary:
+// the form `fugaro project policy publish` writes into the node, and nil when
+// the file sets no floor — the key left out and an empty object alike, which
+// is what leaves the published node without the member. The rule itself is
+// policy.ParseFloor, the one the node's own decoder applies, so the file the
+// operator writes and the node the runner reads cannot disagree about what a
+// written floor means.
+//
+// A name outside either vocabulary is an error rather than a value dropped:
+// the floor is a minimum, so a level lost on the way to the node would be a
+// run reviewing less than the file says, which is the direction this key must
+// never move.
+func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
+	return policy.ParseFloor(c.ReviewFloor)
 }
 
 func (c *Config) validate() error {
@@ -1213,14 +1356,26 @@ func (c *Config) validate() error {
 			bad("watch.burn_alert_usd_per_hour: %v (a finite dollar amount, 0 or more)", err)
 		}
 	}
-	// The mailbox block's one field is a keychain item name, and the rule is
-	// keychain.ParseItem's: this file is the one place the name is written, and
-	// the package that turns it into an argv is the one that says what shape it
-	// may have. A name refused here is refused before `fugaro mailbox` can read
-	// a key, which is the run-level refusal §8's row 1 names.
+	// The mailbox block's one field is a keychain item name per pairing, and
+	// the rule for the name is keychain.ParseItem's: this file is the one place
+	// the name is written, and the package that turns it into an argv is the
+	// one that says what shape it may have. A name refused here is refused
+	// before `fugaro mailbox` can read a key, which is the run-level refusal
+	// §8's row 1 names. A block with no entry is refused for the same reason a
+	// block with no name was: it is a mailbox that can read nothing, and the
+	// operator wrote it.
 	if m := c.Mailbox; m != nil {
-		if _, err := keychain.ParseItem(m.KeychainItem, c.Name); err != nil {
-			bad("mailbox.keychain_item: %v", err)
+		if len(m.KeychainItem) == 0 {
+			bad("mailbox.keychain_item: the block names no pairing's item, so `fugaro mailbox` would have no key to read; run `fugaro pair` and record the item name it prints")
+		}
+		for _, uid := range slices.Sorted(maps.Keys(m.KeychainItem)) {
+			if !pairUIDRE.MatchString(uid) {
+				bad("mailbox.keychain_item.%s: the key is not a pairing's uid (%q followed by 22 unpadded base64url characters is the device uid `fugaro pair` prints, and %q followed by 43 is a pairing session's), so no pairing would ever look this item up", uid, "m~", "p~")
+				continue
+			}
+			if _, err := keychain.ParseItem(m.KeychainItem[uid], c.Name); err != nil {
+				bad("mailbox.keychain_item.%s: %v", uid, err)
+			}
 		}
 	}
 	// The credentials service block is the installation's own URL, and its
@@ -1287,6 +1442,17 @@ func (c *Config) validate() error {
 	}
 	if c.BaseBranch != "" && !config.ValidBranchName(c.BaseBranch) {
 		bad("base_branch %q is not a plain git branch name (the project's default base branch)", c.BaseBranch)
+	}
+	// The floor is a closed vocabulary twice over — the modes rigor names and
+	// the three levels — and this file is where it is written. Its one rule is
+	// ReviewFloorPolicy's, which is policy.ParseFloor, the rule
+	// projectpolicy.Decode holds the node to: called here so that the load and
+	// the publish cannot disagree about what a written floor means, and so that
+	// neither can disagree with the node. A name it refuses is a run that would
+	// review less than the owner asked for, and nothing downstream can tell a
+	// misspelt mode from one the owner meant to leave alone.
+	if _, err := c.ReviewFloorPolicy(); err != nil {
+		bad("%v", err)
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -595,7 +598,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// that can still refuse this launch, so a refused launch leaves
 		// nothing in the bucket under a run id that never gets a task. A
 		// launch with no --attach does nothing here at all.
-		agentRecipe, kind, clone := "", "", false
+		agentRecipe, kind, clone, shared := "", "", false, false
 		// mode is the same answer for baseBranchSkew, and nil where clone is
 		// false for the other gates because nothing was read: a launch for
 		// another repository from a checkout that is not its own reads no
@@ -607,6 +610,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if w, ok := co.Workflows[spec.Workflow]; ok {
 				kind = w.BaseKind()
 				clone = w.Checkout == config.CheckoutClone
+				shared = w.Checkout == config.CheckoutShared
 				m := clone
 				mode = &m
 			}
@@ -799,6 +803,23 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			// The digest drift, last of this branch's image reads, and the
+			// only one that never refuses: a checkout: clone workflow has no
+			// derived image and so no record to compare (the branch above),
+			// and nothing here can stop a launch D619 ruled may not be
+			// pinned.
+			warnImageDigestDrift(ctx, env, slug, spec, warn)
+		}
+		// A checkout: shared workflow's job runs a shared dependency-layer
+		// image, not a per-repository one: it is judged on the image the lock
+		// says its job is on (checkSharedImageSince), in neither branch above —
+		// the clone branch's judge is the local config's base image, which is
+		// not what built the shared one, and the other branch's is a build
+		// record a repository that adopted a sibling's image never wrote.
+		if shared {
+			if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince, warn); err != nil {
+				return launchResult{}, err
+			}
 		}
 		if spec.Mode == recipe.ModeArtifact {
 			// The mode: artifact gate: a task carrying mode is refused
@@ -816,6 +837,14 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
 				return launchResult{}, err
 			}
+		}
+		// The author, last of the fields this launch decides: the key that
+		// opted the repository in is judged first and refuses an image that
+		// cannot read it, the field is dropped rather than refused where the
+		// image is not known to read it (authorSkew), and only then is the
+		// identity resolved from this machine's local config.
+		if err := authorGates(ctx, env, slug, spec, kind, mode, warn); err != nil {
+			return launchResult{}, err
 		}
 		// The seal's gate (D19): a launch that mints hands its execution the
 		// seal key in the marker, which only a runner at sealSince or later
@@ -891,6 +920,97 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
 	return res, nil
+}
+
+// warnImageDigestDrift warns, once, when the workflow's image is no longer at
+// the digest its build record names: the record and the registry's latest tag
+// disagree, so what the job runs and what the record says it runs are not the
+// same image. It is a warning and never a refusal, and it pins nothing: Cloud
+// Run cannot vary the image per execution, so a launch has no way to run the
+// recorded digest (D619) — it only tells the operator, whose fix is the daily
+// image check or fugaro image refresh. Neither side's read can refuse the
+// launch either: a workflow with no build record at all — a checkout: clone
+// workflow runs the installation's base image and is never built — is silent,
+// anything else the launcher cannot read is a warning, and an identity the
+// registry refuses is silent too (registryDenied).
+//
+// The reference it reads is the installation's own image for this workflow —
+// the same derivation the job spec uses (Workflow's registryPath and
+// ImageName) — and never the record's own Image field: the record comes from
+// the runs bucket, so building the outbound read's host out of it would let a
+// hand-edited or forged record choose where the launcher connects, and a
+// registry-path change after the build would leave the record naming an image
+// this installation no longer has. A record naming no digest of its own is
+// nothing to compare, so the registry is not read at all.
+func warnImageDigestDrift(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, warn io.Writer) {
+	skip := func(why string) {
+		fmt.Fprintf(warn, "warning: the image digest of %s workflow %s is not compared with its build record: %s\n", spec.Repo, spec.Workflow, why)
+	}
+	host, err := infra.RegistryHost(env.lc)
+	if err != nil {
+		skip(oneLine(err.Error()))
+		return
+	}
+	image := gcp.ImageName(host+"/"+gcp.RegistryRepoID(slug), slug, spec.Workflow)
+	b, err := env.recordBucket(ctx)
+	if err != nil {
+		skip(oneLine(err.Error()))
+		return
+	}
+	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, spec.Workflow))
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		return
+	case err != nil:
+		skip(oneLine(err.Error()))
+		return
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil {
+		skip("the record is unreadable (" + oneLine(err.Error()) + ")")
+		return
+	}
+	if rec.ImageDigest == "" {
+		return
+	}
+	live, err := checkRegistry().Digest(ctx, image+":latest")
+	switch {
+	// A launchers-only identity holds no artifactregistry read (the
+	// operator role has it): every launch would otherwise warn about a
+	// permission it was never meant to have, which is not drift and not
+	// anything its reader can act on. Silence here says "not compared" by
+	// saying nothing, exactly as a workflow with no build record does.
+	case registryDenied(err):
+		return
+	// The tag the build promoted the recorded digest to is gone — the
+	// daily check's own latest-drift case (LatestMissing) — which is the
+	// one read failure the operator can act on, so it is named as such.
+	case errors.Is(err, imagecheck.ErrManifestUnknown):
+		fmt.Fprintf(warn, "warning: the registry has no %s:latest, so the digest the build record of %s workflow %s names (%s) is not the one that tag resolves to\n", image, spec.Repo, spec.Workflow, oneLine(rec.ImageDigest))
+		return
+	case err != nil:
+		skip(oneLine(err.Error()))
+		return
+	}
+	if rec.DigestMismatch(live) {
+		fmt.Fprintf(warn, "warning: the image of %s workflow %s is at digest %s, not the %s its build record names\n", spec.Repo, spec.Workflow, oneLine(live), oneLine(rec.ImageDigest))
+	}
+}
+
+// registryDenied reports whether err is the registry refusing the launcher's
+// identity rather than failing to answer: a 401 or 403 from the manifest read.
+// The launcher role is granted run.jobs, run.executions, run.operations.get
+// and secretmanager.list, and artifactregistry read goes to operators alone
+// (deploy/terraform/gcp/modules/repo/registry.tf), so a principal that may
+// launch and may not read the registry is the expected state rather than a
+// fault. The check is textual because the error crosses the OCI client, which
+// reports the status in its message and wraps nothing a caller can match on.
+func registryDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403")
 }
 
 // taskText is the task from exactly one of TEXT and --task-file. With
@@ -1101,6 +1221,9 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	}
 	if _, err := task.CanonicalRepo(repo); err != nil {
 		return nil, userErr("--repo: %v", err)
+	}
+	if err := refuseSharedCheckout(ctx, repo); err != nil {
+		return nil, err
 	}
 	checkout := checkoutOf(ctx, repo)
 	slug, err := env.repoSlug(repo, checkout)
@@ -1380,6 +1503,9 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	}
 	if _, err := task.CanonicalRepo(repo); err != nil {
 		return "", nil, userErr("--repo: %v", err)
+	}
+	if err := refuseSharedCheckout(ctx, repo); err != nil {
+		return "", nil, err
 	}
 	checkout := checkoutOf(ctx, repo)
 	slug, err := env.repoSlug(repo, checkout)
@@ -2958,4 +3084,136 @@ func claimHolder() string {
 // from the installation's config, so it is escaped like other such text.
 func noteLine(note string) string {
 	return "note: " + pluginwire.Printable(oneLineCLI(note)) + "\n"
+}
+
+// authorGates is the launch's half of the authorship gates, run where
+// finishLaunch knows the workflow's kind and checkout mode and before the task
+// is written: the git.author key, whatever it says (gitAuthorSince), is judged
+// first and refuses the launch, the field this launch would write (authorSince)
+// is dropped rather than refused, and only then is the author resolved from
+// this machine's local config — for a file that opted in by spelling the key
+// launcher.
+//
+// clone is the workflow's checkout mode, nil where the launch could not read
+// it: the key gate then takes the derived-image judge, as checkRigorImage and
+// checkGovernanceImage do, and reaches no gate at all when the file itself
+// could not be read. The key is judged for every mode — a review or artifact
+// run's runner decodes the same file strictly — while the author is recorded
+// for neither: neither pushes, so the identity such a task carried would be a
+// claim about commits that are never made (D605). That is the two shapes
+// budgetBranch reads as "pushes nothing" — a review run carries review_prs
+// rather than a mode, and only an artifact recipe writes mode.
+//
+// Nothing is recorded without the opt-in: git.author is the repository's own
+// decision whose name goes into its history (D606), and a repository that did
+// not write the key keeps the run's own identity, as every repository does
+// today, whether or not the launcher has an identity to offer.
+func authorGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, clone *bool, warn io.Writer) error {
+	// The file is read once and both questions are asked of it here: the key
+	// (which images may run it) and the value (whether a run records an
+	// author). Each read may run git, so a launch that opted in reads it once,
+	// as checkRigorImage resolves its answer once for its own gate.
+	cfg := launchFileConfig(ctx, env, spec)
+	if gitAuthorSet(cfg) {
+		if clone != nil && *clone {
+			if err := checkCloneGitAuthorImage(ctx, env, spec, cfg, warn); err != nil {
+				return err
+			}
+		} else if err := checkGitAuthorImage(ctx, env, slug, spec, kind, cfg, warn); err != nil {
+			return err
+		}
+	}
+	if !gitAuthorLauncher(cfg) || spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
+		return nil
+	}
+	author, err := launchAuthor(ctx, env.lc, spec.RequestedBy)
+	if err != nil {
+		return err
+	}
+	spec.Author = author
+	authorSkew(ctx, env, slug, spec, clone, warn)
+	return nil
+}
+
+// launchAuthor is the identity a launch records as its commits' author
+// (task.Spec.Author, D604): the local config's commit_email when it is set,
+// else the launcher's own identity me — the user: key, else git config
+// user.email, which is what localcfg.Me answered — with, as the name, the local
+// config's commit_name, else git's own user.name on this machine, else the
+// address's local part.
+//
+// nil means the launch records nobody, so the run's commits author and commit
+// under the run's own identity, which is what every run does today (D605): me
+// is not an address (user: alice, a CI box, a bot account). A commit_email the
+// launcher may not claim is the one case answered with a refusal instead of an
+// omission (D649): it has to be the address the launcher launches as, or a
+// forge noreply address, and anything else is a colleague's address — the one
+// thing this rule exists to keep out of a history the forge links to that
+// colleague's account.
+func launchAuthor(ctx context.Context, lc *localcfg.Config, me string) (*task.Person, error) {
+	email := me
+	if lc.CommitEmail != "" {
+		if lc.CommitEmail != me && !forgeNoreply(lc.CommitEmail) {
+			return nil, userErr("the local config's commit_email %s is neither the address you launch as (%s) nor a forge noreply address, so a run must not author its commits with it: one launcher must not attribute commits to somebody else. Set user: to that address to launch as it, or leave commit_email out",
+				pluginwire.Printable(lc.CommitEmail), pluginwire.Printable(me))
+		}
+		email = lc.CommitEmail
+	}
+	if !isAddress(email) {
+		return nil, nil
+	}
+	name := lc.CommitName
+	if name == "" {
+		name = gitUserName(ctx)
+	}
+	if name == "" {
+		name = email[:strings.IndexByte(email, '@')]
+	}
+	author := &task.Person{Name: name, Email: email}
+	// The shape Spec.Validate enforces when the runner reads the task back
+	// (task.AuthorProblem): the two fields become git's own header values, so a
+	// commit_name holding a line break would forge the rest of the header
+	// block, and a task the runner refuses empty-handed is worse than a launch
+	// that says which key to fix.
+	if p := task.AuthorProblem(*author); p != "" {
+		return nil, userErr("the commit author this launch would record has a %s; fix the local config's commit_name or commit_email, or this machine's git config user.name, which is what the name falls back to", p)
+	}
+	return author, nil
+}
+
+// isAddress reports whether s is a commit address: the rule task.AuthorProblem
+// applies to a Person's email — one @ with a local part and a domain around it
+// — and the one D605's "not an email" means, so a launcher whose recorded
+// identity is a bare name (user: alice) records no author at all rather than
+// one git cannot read.
+func isAddress(s string) bool {
+	at := strings.IndexByte(s, '@')
+	return at > 0 && at == strings.LastIndexByte(s, '@') && at < len(s)-1
+}
+
+// forgeNoreply reports whether email is one of a forge's own noreply addresses
+// — GitHub's <id>+<login>@users.noreply.github.com and GitLab's
+// <id>-<login>@users.noreply.gitlab.com — which a launcher may set commit_email
+// to without claiming somebody else's address (D649): such an address is
+// routed to the account that owns it and to no mailbox, which is the whole of
+// what a launcher can arrange for itself. Only the domain is judged: the id and
+// the login in the local part are the person's own, and nothing before E's
+// authenticated identity could verify which login a launcher holds.
+func forgeNoreply(email string) bool {
+	dom := email[strings.IndexByte(email, '@')+1:]
+	return dom == "users.noreply.github.com" || dom == "users.noreply.gitlab.com"
+}
+
+// gitUserName is this machine's git config user.name, "" when it is unset or
+// git cannot be asked: a commit's display name is a nicety next to its address,
+// and the address's local part stands in when git has none (launchAuthor), so a
+// missing or slow git costs the author its name and never the launch.
+func gitUserName(ctx context.Context) string {
+	cmd := exec.CommandContext(ctx, "git", "config", "user.name")
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

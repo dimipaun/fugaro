@@ -10,44 +10,49 @@
  * read from `website/data/landing.yaml`, and it is the section the supporting lines under the
  * four headlines describe: a reader who wants to know what the promise rests on gets it here.
  *
- * **Each step is an item of an ordered list, with its own heading and its own icon.** The list
- * is the order a reader reads them in and the order they happen in; the headings are what a
- * screen reader lists the steps by; and the icons are decoration — each one carries
- * `aria-hidden="true"` — because a step named "Caps keep spend in check" beside a picture of a
- * shield says nothing the heading does not, and a picture announced as a picture would put
- * three unnamed images between the reader and the three steps.
+ * **Each step is an item of an ordered list, with its own heading and its own line.** The list
+ * is the order a reader reads them in and the order they happen in, and the headings are what a
+ * screen reader lists the steps by. There is no icon on top of a step (the owner's feedback of
+ * 2026-10-30, finding 4): the heading already says what the step is, and a mark above it was a
+ * second thing to read for one fact — three of them in a row being the reason the section read
+ * as three identical cards rather than as one composition.
  *
- * **The icons are drawn here, from the palette.** Each is one inline `svg` in `currentColor`
- * on the section's own colour, so no icon font, no image file and no third-party request is
- * added to the page, and nothing is fetched that the build did not produce (F14).
+ * **The section is as wide as the page.** Each step is a row of the band at the wide viewport —
+ * the heading on the reading start in the narrower column and the line beside it in the wider
+ * one, on one baseline — rather than a third of a three-column row, so the type is set at the
+ * size the page's own scale gives a section rather than at the size three columns leave room
+ * for. The band is a field one tone step above the ground (`--panel`, the field the homepage's
+ * own stage is drawn in) and it carries no rule between the steps: the air does the separating.
+ * **Its corners are rounded generously** (the owner's feedback of 2026-10-30, D412's finding 2):
+ * the panel was a hard-cornered field, and it is cut at `--radius-xl` — the site's largest radius
+ * step, the panel radius the token scale draws for a panel (`src/styles/tokens.css`) — which is
+ * the same corner as the closing field below it. No token is added for that: the scale has the
+ * step, and the two bands are one shape. It is the one radius this file names; the hero's frame
+ * and the slider's frame are controls and cards, and they stay at `--radius-lg`.
+ *
+ * **Its parts rise into place once.** The band is a `data-reveal-block`, so `site.js`'s own
+ * entrance holds back the heading and each step's two parts while they are below the first
+ * screen and shows them in reading order as the band enters — with no script nothing is ever
+ * held back, and a reader who asked their system for less motion is served the section still
+ * (`public/scripts/site.js`). The travel is the 24 px the owner asked the campaign's sections
+ * for rather than the home page's 12 px, and it is declared inside the same `no-preference`
+ * query the rest of the campaign's motion is: the reader's answer, and not a rule elsewhere
+ * neutralising it.
  */
 ---
 
-<section class="campaign-steps" data-section="how-it-works">
-  <h2 class="campaign-steps-title display-md">How it works</h2>
+<section class="campaign-steps" data-section="how-it-works" data-reveal-block>
+  <h2 class="campaign-steps-title display-lg">How it works</h2>
   <ol class="campaign-steps-list">
     <li class="campaign-step">
-      <svg class="campaign-step-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <ellipse cx="12" cy="6" rx="7" ry="3" />
-        <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
-        <path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
-      </svg>
       <h3 class="campaign-step-name">Cheap models do the work</h3>
       <p class="campaign-step-line">Every run drafts on the cheap models, and each call is priced as it is made.</p>
     </li>
     <li class="campaign-step">
-      <svg class="campaign-step-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <circle cx="11" cy="11" r="6" />
-        <path d="m15.6 15.6 4.4 4.4" />
-      </svg>
       <h3 class="campaign-step-name">A premium model reviews it</h3>
       <p class="campaign-step-line">The review and the fixing rounds go to the model the recipe names, so the policy is the same on every developer's machine.</p>
     </li>
     <li class="campaign-step">
-      <svg class="campaign-step-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <path d="M12 3.5 19 6v6c0 4.2-2.9 7.4-7 8.5-4.1-1.1-7-4.3-7-8.5V6z" />
-        <path d="m9 12 2.2 2.2L15.5 10" />
-      </svg>
       <h3 class="campaign-step-name">Caps keep spend in check</h3>
       <p class="campaign-step-line">A run stops at the cap you set, and nothing past it is spent.</p>
     </li>
@@ -56,51 +61,63 @@
 
 <style>
   /* Tokens only (W1.2). The steps stack on a phone — the order is the list's, and a phone reads
-     them one at a time — and sit in a row from the wide breakpoint, which is the layout the
-     static half of `website/test/landing-pages.mjs` reads; the rendered reading at both widths
-     is the owner's check (G2.5). */
+     them one at a time — and each becomes a row of the band from the wide breakpoint, which is
+     the layout the static half of `website/test/landing-pages.mjs` reads; the rendered reading
+     at both widths is the owner's check (G2.5). */
   .campaign-steps {
     padding-block: var(--space-xl);
     padding-inline: var(--frame-gutter);
+    border-radius: var(--radius-xl);
+    background: var(--panel);
   }
 
+  /* The section's own size, scaled with the viewport and always under the hero's headline: the
+     headline runs at 5.5 vw and stops at `--font-size-4xl`, so 4.4 vw under `--font-size-3xl`
+     is a step below it at every width — 20 px under a 21.4 px headline on a phone, 44 px under
+     56 px at 1440. `--font-size-lg` is the floor, so the heading never falls to the body's size
+     on a narrow viewport. The `.display-lg` class still carries the family, the weight and the
+     tracking; this rule is the size, and `base-styles.mjs` reads the pair. */
   .campaign-steps-title {
     margin: 0;
+    max-width: var(--measure);
+    font-size: clamp(var(--font-size-lg), 4.4vw, var(--font-size-3xl));
   }
 
   .campaign-steps-list {
     display: grid;
-    gap: var(--space-lg);
-    margin: var(--space-lg) 0 0;
+    gap: var(--space-xl);
+    margin: var(--space-2xl) 0 0;
     padding: 0;
     list-style: none;
   }
 
-  .campaign-step-icon {
-    color: var(--accent-on-dark);
-  }
-
+  /* The step's name is a heading, not a card's title: it scales with the viewport too, on the
+     slope below the section's heading (3.6 vw under 4.4 vw, `--font-size-2xl` under
+     `--font-size-3xl` where the two stop, and the same `--font-size-lg` floor on a phone), so at
+     1440 the three names are 32 px and the eye takes them in before the lines beside them. */
   .campaign-step-name {
-    margin: var(--space-sm) 0 0;
-    font-size: var(--font-size-lg);
+    margin: 0;
+    font-size: clamp(var(--font-size-lg), 3.6vw, var(--font-size-2xl));
     line-height: var(--leading-snug);
   }
 
+  /* The line under a name is the body's size on a phone and the body's larger step once the
+     viewport has room for it, and it stays under the name at every width: it is the pair that
+     makes a step a heading and a line rather than two paragraphs. */
   .campaign-step-line {
-    margin: var(--space-2xs) 0 0;
+    margin: var(--space-sm) 0 0;
+    max-width: var(--measure);
     color: var(--text-muted);
+    font-size: clamp(var(--font-size-base), 1.9vw, var(--font-size-lg));
+    line-height: var(--leading-snug);
   }
 
   @media (max-width: 30rem) {
-    /* The phone's own block: the step's line is set at the body size with a little less air
-       under the icon, so three steps and their headings fit the narrow column without the
-       section becoming a scroll of its own. */
+    /* The phone's own block: the section's air is a step smaller at both ends, so the three
+       steps and their headings fit the narrow column without the band becoming a scroll of its
+       own. */
     .campaign-steps {
       padding-block: var(--space-lg);
-    }
-
-    .campaign-step-name {
-      margin-block-start: var(--space-xs);
     }
   }
 
@@ -110,8 +127,48 @@
     }
 
     .campaign-steps-list {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: var(--space-xl);
+      gap: var(--space-2xl);
+      margin-block-start: var(--space-3xl);
+    }
+
+    /* The row: the heading on the reading start and the line beside it, on one baseline, so the
+       three steps read down the band rather than across it. */
+    .campaign-step {
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      column-gap: var(--space-xl);
+      align-items: baseline;
+    }
+
+    .campaign-step-line {
+      margin-block-start: 0;
+    }
+  }
+
+  /* The campaign's own travel, which is the owner's 16–32 px for these four pages rather than
+     the home page's 12 px, and is declared only for a reader who has not asked their system for
+     less motion: `site.js` sets no `data-reveal` under `reduce` at all, and nothing here needs
+     the layout's universal rule to undo it. `screen` keeps a printed page at its own place —
+     `base.css` shows every held-back part at `transform: none` for print. */
+  @media screen and (prefers-reduced-motion: no-preference) {
+    .campaign-steps [data-reveal]:not([data-revealed]) {
+      transform: translateY(24px);
+    }
+
+    /* The row is not one of the parts that move. `site.js` marks the `li` `data-reveal` along
+       with the `h3` and the `p` inside it, so the travel rule above reaches the row too — and a
+       row that translates with its own parts inside it doubles the rise to 48 px, past the
+       16–32 px the owner asked for. The row is therefore neutralised: it is still the observer's
+       target and still the box its parts move in, and only the parts enter. The rule sits *after*
+       the travel rule and outranks it — `.campaign-steps .campaign-step[data-reveal]:not(…)` is
+       one class more specific than `.campaign-steps [data-reveal]:not(…)` — because order alone
+       would leave the more specific travel rule winning, which is what the first cut of this
+       did; `base-styles.mjs` now reads the two selectors' specificity rather than trusting the
+       comment. `opacity: 1` is half of it: `base.css` hides every unrevealed part, and the row
+       holding the parts must not be the thing that is hidden. */
+    .campaign-steps .campaign-step[data-reveal]:not([data-revealed]) {
+      opacity: 1;
+      transform: none;
     }
   }
 </style>

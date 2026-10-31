@@ -2,11 +2,13 @@ package image
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,25 +49,39 @@ RUN apt-get update \
 USER fugaro
 
 WORKDIR /work/repo
+# The root mise config, the workflow's key files, the registry configuration
+# and the manifests of the workspace are all of the repository that the
+# toolchains and the dependency warm-up read, so they are the whole of this
+# layer: the clone keeps no worktree, and only those files are checked out, at
+# the commit the source layer below is reset to. Key files before source is
+# D620 (docs/forge-authorship-images/reconciliation.md); §7.2 of the design is
+# the derived image's shape, and does not record this order. What sits above
+# here is the dependency install and no other file of the repository.
+#
+# Each path is checked out as the path it is, not as a pattern, so a name
+# holding a glob character is still the one file, and only a file: a path that
+# is a directory at the commit is skipped, so a directory never drags its
+# whole subtree into this layer. A key that names a directory — .yarn/patches,
+# an image.key_files entry — reaches this list as the files under it, which is
+# what imagecheck.KeyFiles returns.
+#
 # A push to the branch after the render step must not change what is baked
-# in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
-# when it is no longer on the branch. When it can't be fetched either, the
-# build fails, saying so.
+# in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is
+# no longer on the branch. When it can't be fetched either, the build
+# fails, saying so.
 ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
     case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
  && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
- && if [ -n "$FUGARO_COMMIT" ]; then \
-      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
-        || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
-             -c credential.helper='store --file=/run/secrets/git-credentials' \
-             fetch --quiet origin "$FUGARO_COMMIT"; } \
-      && git reset --quiet --hard "$FUGARO_COMMIT" \
-      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
-    fi \
+      clone --quiet --no-checkout --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && commit="${FUGARO_COMMIT:-HEAD}" \
+ && { git cat-file -e "$commit^{commit}" 2>/dev/null \
+      || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+           -c credential.helper='store --file=/run/secrets/git-credentials' \
+           fetch --quiet origin "$commit" \
+      || { echo "commit $commit is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; } \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
 # The runtimes: the repository's root mise config and image.tools, installed
@@ -77,6 +93,13 @@ RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,g
 
 # Dependency warm-up for yarn.lock.
 RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; yarn install --immutable
+
+# The source layer: the rest of the checkout, at the commit the key files
+# were taken from, on top of the dependency install (D620).
+# Nothing above reads a remote, since the clone holds the commit's objects,
+# and image.setup comes after this, because a setup step may read any file
+# of the repository.
+RUN git reset --quiet --hard "${FUGARO_COMMIT:-HEAD}"
 
 # Setup steps run as fugaro but may use sudo, for example for
 # playwright install --with-deps. The rule is removed below.
@@ -138,26 +161,47 @@ ARG REPO_ORIGIN=${REPO_URL}
 ARG BASE_BRANCH
 
 WORKDIR /work/repo
+# The root mise config, the workflow's key files, the registry configuration
+# and the manifests of the workspace are all of the repository that the
+# toolchains and the dependency warm-up read, so they are the whole of this
+# layer: the clone keeps no worktree, and only those files are checked out, at
+# the commit the source layer below is reset to. Key files before source is
+# D620 (docs/forge-authorship-images/reconciliation.md); §7.2 of the design is
+# the derived image's shape, and does not record this order. What sits above
+# here is the dependency install and no other file of the repository.
+#
+# Each path is checked out as the path it is, not as a pattern, so a name
+# holding a glob character is still the one file, and only a file: a path that
+# is a directory at the commit is skipped, so a directory never drags its
+# whole subtree into this layer. A key that names a directory — .yarn/patches,
+# an image.key_files entry — reaches this list as the files under it, which is
+# what imagecheck.KeyFiles returns.
+#
 # A push to the branch after the render step must not change what is baked
-# in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
-# when it is no longer on the branch. When it can't be fetched either, the
-# build fails, saying so.
+# in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is
+# no longer on the branch. When it can't be fetched either, the build
+# fails, saying so.
 ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
     case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
  && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
- && if [ -n "$FUGARO_COMMIT" ]; then \
-      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
-        || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
-             -c credential.helper='store --file=/run/secrets/git-credentials' \
-             fetch --quiet origin "$FUGARO_COMMIT"; } \
-      && git reset --quiet --hard "$FUGARO_COMMIT" \
-      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
-    fi \
+      clone --quiet --no-checkout --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && commit="${FUGARO_COMMIT:-HEAD}" \
+ && { git cat-file -e "$commit^{commit}" 2>/dev/null \
+      || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+           -c credential.helper='store --file=/run/secrets/git-credentials' \
+           fetch --quiet origin "$commit" \
+      || { echo "commit $commit is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; } \
  && git remote set-url origin -- "$REPO_ORIGIN"
+
+# The source layer: the rest of the checkout, at the commit the key files
+# were taken from, on top of the dependency install (D620).
+# Nothing above reads a remote, since the clone holds the commit's objects,
+# and image.setup comes after this, because a setup step may read any file
+# of the repository.
+RUN git reset --quiet --hard "${FUGARO_COMMIT:-HEAD}"
 
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
@@ -563,17 +607,10 @@ func TestTemplateWritesImageJSON(t *testing.T) {
 	}
 }
 
-// The clone step bakes in exactly the commit Cloud Build's source step
-// read (FUGARO_COMMIT), so a push to the branch between the two clones
-// changes nothing, and a commit no longer on the branch is fetched by
-// itself. With no FUGARO_COMMIT (a local build) it keeps the branch's
-// head. The step is run here against a scratch repository.
-func TestTemplatePinsTheCommit(t *testing.T) {
-	rendered, err := Render(RenderInput{Workflow: "app", Base: "base", Version: "dev"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var step []string
+// cloneStep extracts the clone step's lines and the source layer's command
+// from a rendered Dockerfile, the two pieces of shell the tests below run.
+func cloneStep(t *testing.T, rendered []byte) (step []string, sourceLine string) {
+	t.Helper()
 	in := false
 	for _, line := range strings.Split(string(rendered), "\n") {
 		if strings.HasPrefix(line, "RUN --mount=type=bind,target=/src") {
@@ -589,11 +626,34 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 			break
 		}
 	}
+	if i := strings.Index(string(rendered), sourceReset); i >= 0 {
+		sourceLine, _, _ = strings.Cut(string(rendered)[i:], "\n")
+		sourceLine = strings.TrimPrefix(sourceLine, "RUN ")
+	}
+	return step, sourceLine
+}
+
+// The clone step bakes in exactly the commit Cloud Build's source step
+// read (FUGARO_COMMIT), so a push to the branch between the two clones
+// changes nothing, and a commit no longer on the branch is fetched by
+// itself. With no FUGARO_COMMIT (a local build) it keeps the branch's
+// head. The clone keeps no worktree, so the source layer's reset is what
+// materializes it, and the key files are checked out between the two. All
+// of that runs here, in order, against a scratch repository.
+func TestTemplatePinsTheCommit(t *testing.T) {
+	rendered, err := Render(RenderInput{Workflow: "app", Base: "base", Version: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, sourceLine := cloneStep(t, rendered)
 	if len(step) == 0 || !strings.Contains(strings.Join(step, "\n"), "FUGARO_COMMIT") {
 		t.Fatalf("the clone step does not use FUGARO_COMMIT:\n%s", strings.Join(step, "\n"))
 	}
 	if strings.Index(string(rendered), `ARG FUGARO_COMMIT=""`) > strings.Index(string(rendered), "RUN --mount=type=bind,target=/src") {
 		t.Fatal("FUGARO_COMMIT is declared after the clone step")
+	}
+	if !strings.Contains(sourceLine, "FUGARO_COMMIT") {
+		t.Fatalf("the source layer does not take the clone's commit: %q", sourceLine)
 	}
 	sh, err := exec.LookPath("sh")
 	if err != nil {
@@ -602,6 +662,11 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 	testutil.IsolateGit(t)
 	src := t.TempDir()
 	testutil.Git(t, src, "init", "--quiet", "-b", "main", src)
+	testutil.WriteFiles(t, src, map[string]string{
+		"package.json":      `{"name":"app","private":true}`,
+		"package-lock.json": `{"name":"app","lockfileVersion":3}`,
+		"src/app.js":        "console.log(1)\n",
+	})
 	commit := func(name string) string {
 		testutil.WriteFiles(t, src, map[string]string{name: name + "\n"})
 		testutil.Git(t, src, "add", "-A")
@@ -615,16 +680,55 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 	head := commit("two")
 	const origin = "https://example.com/acme/app.git"
 
+	// The clone step as the build renders it, with the checkout's own key
+	// files filled in, so the loop that checks them out is the one that runs
+	// below.
+	rendered, _, err = Dockerfile(src, parseConfig(t, renderYAML), "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, _ = cloneStep(t, rendered)
+	if s := strings.Join(step, "\n"); !strings.Contains(s, ":(literal)$f") {
+		t.Fatalf("the clone step checks out no key file:\n%s", s)
+	}
+	run := func(script, dir, pin string) ([]byte, error) {
+		cmd := exec.Command(sh, "-c", strings.ReplaceAll(script, "/work/repo", dir))
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "REPO_URL=file://"+src, "REPO_ORIGIN="+origin, "BASE_BRANCH=main", "FUGARO_COMMIT="+pin)
+		return cmd.CombinedOutput()
+	}
+	runOK := func(script, dir, pin string) {
+		t.Helper()
+		if out, err := run(script, dir, pin); err != nil {
+			t.Fatalf("FUGARO_COMMIT=%q: %v\n%s", pin, err, out)
+		}
+	}
+
+	// The clone step on its own: the files the install reads are checked out,
+	// and no other file of the repository is, since the source layer is what
+	// brings the rest.
+	keys := t.TempDir()
+	runOK(strings.Join(step, "\n"), keys, head)
+	for _, want := range []string{"package.json", "package-lock.json"} {
+		if _, err := os.Stat(filepath.Join(keys, want)); err != nil {
+			t.Errorf("the clone step does not check out %s: %v", want, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(keys, "src", "app.js")); err == nil {
+		t.Error("the clone step checks out a file the dependency install does not read")
+	}
+	runOK(sourceLine, keys, head)
+	if _, err := os.Stat(filepath.Join(keys, "src", "app.js")); err != nil {
+		t.Errorf("the source layer does not bring the rest of the checkout: %v", err)
+	}
+
 	// A commit that exists nowhere, as after a force-push that dropped it
 	// and a gc on the host: the build fails, saying why.
 	const nowhere = "0123456789abcdef0123456789abcdef01234567"
 	for _, c := range []struct{ pin, want, msg string }{{"", head, ""}, {first, first, ""}, {offBranch, offBranch, ""},
 		{"--upload-pack=touch x", "", "not a commit ID"}, {nowhere, "", "commit " + nowhere + " is no longer reachable: the branch was force-pushed; re-run the build"}} {
 		dir := t.TempDir()
-		cmd := exec.Command(sh, "-c", strings.ReplaceAll(strings.Join(step, "\n"), "/work/repo", dir))
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "REPO_URL=file://"+src, "REPO_ORIGIN="+origin, "BASE_BRANCH=main", "FUGARO_COMMIT="+c.pin)
-		out, err := cmd.CombinedOutput()
+		out, err := run(strings.Join(step, "\n")+"\n"+sourceLine, dir, c.pin)
 		if c.want == "" {
 			if err == nil {
 				t.Errorf("FUGARO_COMMIT=%q was accepted:\n%s", c.pin, out)
@@ -642,6 +746,58 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 		if got := testutil.Git(t, dir, "remote", "get-url", "origin"); got != origin {
 			t.Errorf("FUGARO_COMMIT=%q: origin = %s", c.pin, got)
 		}
+	}
+}
+
+// TestCloneStepChecksOutFilesOnly: the key-file layer holds the files the
+// dependency install reads and nothing else. A path that is a directory at
+// the commit is skipped, so it never drags a whole subtree into a layer meant
+// to hold only key files, and a path the commit does not have is skipped too.
+func TestCloneStepChecksOutFilesOnly(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	testutil.IsolateGit(t)
+	src := t.TempDir()
+	testutil.Git(t, src, "init", "--quiet", "-b", "main", src)
+	testutil.WriteFiles(t, src, map[string]string{
+		"package.json":  `{"name":"app","private":true}`,
+		"keep.txt":      "keep\n",
+		"dir/inner.txt": "inner\n",
+	})
+	testutil.Git(t, src, "add", "-A")
+	testutil.Git(t, src, "commit", "--quiet", "-m", "one")
+	head := testutil.Git(t, src, "rev-parse", "HEAD")
+	rendered, err := Render(RenderInput{Workflow: "app", Base: "base", Version: "dev",
+		KeyFiles: []string{"package.json", "dir", "gone.txt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, sourceLine := cloneStep(t, rendered)
+	work := t.TempDir()
+	run := func(script string) {
+		t.Helper()
+		cmd := exec.Command(sh, "-c", strings.ReplaceAll(script, "/work/repo", work))
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "REPO_URL=file://"+src, "REPO_ORIGIN=https://example.com/acme/app.git",
+			"BASE_BRANCH=main", "FUGARO_COMMIT="+head)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+	}
+	run(strings.Join(step, "\n"))
+	if _, err := os.Stat(filepath.Join(work, "package.json")); err != nil {
+		t.Errorf("the clone step does not check out package.json: %v", err)
+	}
+	for _, absent := range []string{"keep.txt", "dir", filepath.Join("dir", "inner.txt")} {
+		if _, err := os.Stat(filepath.Join(work, absent)); err == nil {
+			t.Errorf("the clone step checks out %s", absent)
+		}
+	}
+	run(sourceLine)
+	if _, err := os.Stat(filepath.Join(work, "dir", "inner.txt")); err != nil {
+		t.Errorf("the source layer does not bring what the key-file layer skipped: %v", err)
 	}
 }
 
@@ -746,5 +902,441 @@ func TestDockerfileOnTheBaseInstallsMiseForImageToolsAlone(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "mise install") {
 		t.Errorf("image.tools alone (no mise config file) does not install mise tools:\n%s", got)
+	}
+}
+
+// keyFileCheckout is a checkout whose dependency install reads mise.toml,
+// package.json, package-lock.json and .npmrc, and whose src/ no step below
+// the source layer reads.
+func keyFileCheckout(t *testing.T) (string, *config.Config) {
+	t.Helper()
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{
+		"mise.toml":         "[tools]\nnode = \"24\"\n",
+		"package.json":      `{"name":"app","private":true}`,
+		"package-lock.json": `{"name":"app","lockfileVersion":3}`,
+		".npmrc":            "//registry.example.com/:_authToken=${NPM_TOKEN}\n",
+		"src/app.js":        "console.log(1)\n",
+	})
+	return root, parseConfig(t, renderYAML)
+}
+
+// sourceReset is the RUN that materializes the rest of the checkout.
+const sourceReset = `RUN git reset --quiet --hard "${FUGARO_COMMIT:-HEAD}"`
+
+// TestRenderPutsKeyFilesBeforeSource: mise install and the warm-up read the
+// root mise config, the workflow's key files and the manifest the warm-up was
+// chosen from, and nothing else of the repository, so those files are checked
+// out in a layer of their own, before the dependency install, and the full
+// source layer comes after it (D620).
+func TestRenderPutsKeyFilesBeforeSource(t *testing.T) {
+	root, cfg := keyFileCheckout(t)
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	clone := strings.Index(s, "clone --quiet --no-checkout")
+	keyFiles := strings.Index(s, `git checkout --quiet "$commit" -- ":(literal)$f"`)
+	mise := strings.Index(s, "mise install")
+	warmUp := strings.Index(s, "# Dependency warm-up for package-lock.json.")
+	source := strings.Index(s, sourceReset)
+	if clone < 0 || keyFiles < 0 || mise < 0 || warmUp < 0 || source < 0 ||
+		!(clone < keyFiles && keyFiles < mise && mise < warmUp && warmUp < source) {
+		t.Fatalf("the key files are not checked out before the dependency install, with the source after it (clone %d, key files %d, mise %d, warm-up %d, source %d):\n%s",
+			clone, keyFiles, mise, warmUp, source, s)
+	}
+	for _, want := range []string{"mise.toml", "package.json", "package-lock.json", ".npmrc"} {
+		if !strings.Contains(s, "'"+want+"'") {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "'src/app.js'") {
+		t.Errorf("the key-file layer checks out a file the dependency install does not read:\n%s", s)
+	}
+	// A Yarn Berry checkout: .yarnrc.yml is what detection read to decide the
+	// cache mode, and it is checked out with the key files, as package.json is
+	// with every Node warm-up (npm ci refuses a lock file with no package.json
+	// beside it, and the install that reads it runs above the source layer).
+	berry := t.TempDir()
+	testutil.WriteFiles(t, berry, map[string]string{
+		"package.json": `{"name":"app","packageManager":"yarn@4.5.0"}`,
+		"yarn.lock":    "# yarn lockfile v1\n",
+		".yarnrc.yml":  "enableGlobalCache: true\n",
+	})
+	got, _, err = Dockerfile(berry, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"'package.json'", "'.yarnrc.yml'", "'yarn.lock'"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, got)
+		}
+	}
+	// A pnpm workspace: the install links the members and checks the lockfile
+	// against them, so their manifests and the workspace definition are key
+	// files, and nothing else of a member is.
+	mono := t.TempDir()
+	testutil.WriteFiles(t, mono, map[string]string{
+		"package.json":              `{"name":"app","workspaces":["packages/*"]}`,
+		"pnpm-lock.yaml":            "lockfileVersion: '9.0'\n",
+		"pnpm-workspace.yaml":       "packages:\n  - 'packages/*'\n  - '!packages/old'\n",
+		"packages/a/package.json":   `{"name":"a"}`,
+		"packages/a/src/index.js":   "export const a = 1\n",
+		"packages/old/package.json": `{"name":"old"}`,
+	})
+	got, _, err = Dockerfile(mono, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"'package.json'", "'pnpm-workspace.yaml'", "'packages/a/package.json'"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"'packages/a/src/index.js'", "'packages/old/package.json'"} {
+		if strings.Contains(string(got), unwanted) {
+			t.Errorf("the key-file layer checks out %s, which the install does not read:\n%s", unwanted, got)
+		}
+	}
+}
+
+// TestWorkspaceManifests: the manifests of a workspace's members come from the
+// two places a repository declares them, in the shapes npm, Yarn and pnpm
+// write, and only from members that have one.
+func TestWorkspaceManifests(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		want  []string
+	}{
+		{"npm workspaces, list", map[string]string{
+			"package.json":            `{"name":"app","workspaces":["packages/*"]}`,
+			"packages/a/package.json": "{}", "packages/b/package.json": "{}"},
+			[]string{"packages/a/package.json", "packages/b/package.json"}},
+		{"npm workspaces, object", map[string]string{
+			"package.json":          `{"name":"app","workspaces":{"packages":["apps/*"]}}`,
+			"apps/web/package.json": "{}"},
+			[]string{"apps/web/package.json"}},
+		{"a member named as its manifest", map[string]string{
+			"package.json":        `{"name":"app","workspaces":["libs/*/package.json"]}`,
+			"libs/x/package.json": "{}"},
+			[]string{"libs/x/package.json"}},
+		{"pnpm-workspace.yaml, with an exclusion", map[string]string{
+			"pnpm-workspace.yaml":       "packages:\n  - 'packages/*'\n  - '!packages/old'\n",
+			"packages/a/package.json":   "{}",
+			"packages/old/package.json": "{}"},
+			[]string{"packages/a/package.json"}},
+		{"a matched directory with no manifest", map[string]string{
+			"package.json":         `{"name":"app","workspaces":["packages/*"]}`,
+			"packages/a/README.md": "a\n"},
+			nil},
+		{"no workspace", map[string]string{"package.json": `{"name":"app"}`}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFiles(t, root, tc.files)
+			got, err := workspaceManifests(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("workspaceManifests = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// A pnpm-workspace.yaml that is not YAML is the repository's problem, not
+	// a silently member-less install.
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{"pnpm-workspace.yaml": "packages: [\n"})
+	if _, err := workspaceManifests(root); err == nil {
+		t.Error("invalid pnpm-workspace.yaml was accepted")
+	}
+}
+
+// TestRenderSetupStaysAfterSource: an image.setup step may read any file of
+// the repository, so it runs on the source layer, not on the key files.
+func TestRenderSetupStaysAfterSource(t *testing.T) {
+	root, _ := keyFileCheckout(t)
+	cfg := parseConfig(t, strings.Replace(renderYAML, "  web:\n", "  web:\n    image: { setup: [\"npm run prepare\"] }\n", 1))
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	source := strings.Index(s, sourceReset)
+	setup := strings.Index(s, "# image.setup steps.")
+	if source < 0 || setup < 0 || source > setup {
+		t.Fatalf("image.setup is not after the source layer (source %d, setup %d):\n%s", source, setup, s)
+	}
+}
+
+// TestRenderAddsNoSecretMount: the key-file layer and the source layer add
+// no secret mount, so a rendered Dockerfile mounts exactly the secrets it
+// mounted before them — the git credential on the clone and each workflow
+// secret on the steps that read it.
+func TestRenderAddsNoSecretMount(t *testing.T) {
+	got, err := Render(fullInput(config.NodePM{Name: "yarn", Berry: true, Lockfile: "yarn.lock", Install: "yarn install --immutable"}, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	mounts := regexp.MustCompile(`--mount=type=secret,\S*`).FindAllString(s, -1)
+	if len(mounts) != 5 { // git-credentials, then NPM_TOKEN on the mise, warm-up and two setup steps
+		t.Fatalf("secret mounts = %q", mounts)
+	}
+	source := strings.Index(s, sourceReset)
+	if source < 0 {
+		t.Fatalf("no source layer:\n%s", s)
+	}
+	if line := s[source : strings.Index(s[source:], "\n")+source]; strings.Contains(line, "--mount") {
+		t.Errorf("the source layer mounts something: %q", line)
+	}
+}
+
+// TestRenderCopiesYarnAndPnpmInstallFilesBeforeSource: the files Yarn's and
+// pnpm's installs read, which no lockfile carries, are checked out with the
+// key files, before the dependency install: .yarnrc is Yarn 1's own
+// configuration, .pnpmfile.cjs holds pnpm's hooks, and a Yarn Berry
+// repository commits the Yarn build .yarnrc.yml's yarnPath names, the plugins
+// it loads and the patches it applies. A key that is a directory reaches the
+// layer as the files under it.
+func TestRenderCopiesYarnAndPnpmInstallFilesBeforeSource(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{
+		"package.json":                        `{"name":"app","packageManager":"yarn@4.9.2"}`,
+		"yarn.lock":                           "# yarn lockfile v4\n",
+		".yarnrc.yml":                         "yarnPath: .yarn/releases/yarn-4.9.2.cjs\nplugins:\n  - path: .yarn/plugins/@yarnpkg/plugin-x.cjs\n",
+		".yarnrc":                             "registry \"https://registry.example.com\"\n",
+		".pnpmfile.cjs":                       "module.exports = { hooks: {} }\n",
+		".yarn/releases/yarn-4.9.2.cjs":       "#!/usr/bin/env node\n",
+		".yarn/plugins/@yarnpkg/plugin-x.cjs": "module.exports = {}\n",
+		".yarn/patches/left-pad.patch":        "patch\n",
+		"src/app.js":                          "export {}\n",
+	})
+	got, _, err := Dockerfile(root, parseConfig(t, renderYAML), "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	clone := strings.Index(s, "clone --quiet --no-checkout")
+	keyFiles := strings.Index(s, `git checkout --quiet "$commit" -- ":(literal)$f"`)
+	warmUp := strings.Index(s, "# Dependency warm-up for yarn.lock.")
+	source := strings.Index(s, sourceReset)
+	if !(clone >= 0 && keyFiles > clone && warmUp > keyFiles && source > warmUp) {
+		t.Fatalf("the install files are not checked out between the clone and the warm-up, with the source after it (clone %d, key files %d, warm-up %d, source %d):\n%s",
+			clone, keyFiles, warmUp, source, s)
+	}
+	for _, want := range []string{"'.yarnrc'", "'.pnpmfile.cjs'", "'.yarn/releases/yarn-4.9.2.cjs'",
+		"'.yarn/plugins/@yarnpkg/plugin-x.cjs'", "'.yarn/patches/left-pad.patch'"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "'src/app.js'") {
+		t.Errorf("the key-file layer checks out a file no install reads:\n%s", s)
+	}
+	// A checkout with none of them names none of them: the layer is the
+	// repository's files, not a fixed list.
+	plain, cfg := keyFileCheckout(t)
+	got, _, err = Dockerfile(plain, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{".yarnrc", ".pnpmfile.cjs", ".yarn/releases", ".yarn/plugins", ".yarn/patches"} {
+		if strings.Contains(string(got), "'"+unwanted) {
+			t.Errorf("a checkout without %s still lists it:\n%s", unwanted, got)
+		}
+	}
+}
+
+// TestRenderCopiesPnpmPatchedDependencies: pnpm applies the patch files
+// patchedDependencies names while it installs, so they are key files: the map
+// lives in package.json's pnpm field or in pnpm-workspace.yaml, and a
+// directory of patches that neither names is not one.
+func TestRenderCopiesPnpmPatchedDependencies(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{"package.json", map[string]string{
+			"package.json": `{"name":"app","packageManager":"pnpm@9.15.0","pnpm":{"patchedDependencies":{"left-pad@1.3.0":"patches/left-pad.patch"}}}`,
+		}},
+		{"pnpm-workspace.yaml", map[string]string{
+			"package.json":        `{"name":"app","packageManager":"pnpm@9.15.0"}`,
+			"pnpm-workspace.yaml": "packages:\n  - 'packages/*'\npatchedDependencies:\n  left-pad@1.3.0: patches/left-pad.patch\n",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{
+				"pnpm-lock.yaml":         "lockfileVersion: '9.0'\n",
+				"patches/left-pad.patch": "patch\n",
+				"patches/unused.patch":   "patch\n",
+				"src/app.js":             "export {}\n",
+			}
+			for k, v := range tc.files {
+				files[k] = v
+			}
+			testutil.WriteFiles(t, root, files)
+			got, _, err := Dockerfile(root, parseConfig(t, renderYAML), "web", "dev")
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := string(got)
+			if !strings.Contains(s, "'patches/left-pad.patch'") {
+				t.Errorf("the key-file layer does not check out the patch pnpm applies:\n%s", s)
+			}
+			if strings.Contains(s, "'patches/unused.patch'") || strings.Contains(s, "'src/app.js'") {
+				t.Errorf("the key-file layer checks out a file pnpm's manifest does not name:\n%s", s)
+			}
+			if strings.Index(s, "'patches/left-pad.patch'") > strings.Index(s, "# Dependency warm-up for pnpm-lock.yaml.") {
+				t.Errorf("the patch is checked out after the install that applies it:\n%s", s)
+			}
+		})
+	}
+}
+
+// TestRenderCopiesConfiguredKeyFilesBeforeSource: image.key_files names what
+// the built-in list cannot know — the patches a postinstall applies, a
+// vendored toolchain — and the key-file layer checks each one out before the
+// dependency install, a directory as the files under it.
+func TestRenderCopiesConfiguredKeyFilesBeforeSource(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{
+		"mise.toml":           "[tools]\nnode = \"24\"\n",
+		"package.json":        `{"name":"app","private":true}`,
+		"package-lock.json":   `{"name":"app","lockfileVersion":3}`,
+		"patches/a.patch":     "a\n",
+		"patches/sub/b.patch": "b\n",
+		"vendor/tool":         "#!/bin/sh\n",
+		"src/app.js":          "console.log(1)\n",
+	})
+	cfg := parseConfig(t, strings.Replace(renderYAML, "    secrets:",
+		"    image: { key_files: [patches, vendor/tool] }\n    secrets:", 1))
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	clone := strings.Index(s, "clone --quiet --no-checkout")
+	keyFiles := strings.Index(s, `git checkout --quiet "$commit" -- ":(literal)$f"`)
+	warmUp := strings.Index(s, "# Dependency warm-up for package-lock.json.")
+	source := strings.Index(s, sourceReset)
+	if !(clone >= 0 && keyFiles > clone && warmUp > keyFiles && source > warmUp) {
+		t.Fatalf("image.key_files is not checked out before the dependency install, with the source after it (clone %d, key files %d, warm-up %d, source %d):\n%s",
+			clone, keyFiles, warmUp, source, s)
+	}
+	for _, want := range []string{"'patches/a.patch'", "'patches/sub/b.patch'", "'vendor/tool'"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "'src/app.js'") {
+		t.Errorf("the key-file layer checks out a file image.key_files does not name:\n%s", s)
+	}
+}
+
+// TestKeyLayerRefusesControlCharacterInExpandedName: the key-file layer's
+// names come out of the repository's own tree — a glob match, the files under
+// a directory entry — and each one is written into the Dockerfile's checkout
+// RUN as itself. A name holding a newline would end that instruction, and the
+// rest of the name would then be read as a Dockerfile instruction of its own,
+// so the render refuses the name instead of writing it. The refusal quotes the
+// path, which escapes the control character, so it names the file to rename
+// without writing the injection into a log.
+func TestKeyLayerRefusesControlCharacterInExpandedName(t *testing.T) {
+	root, cfg := keyFileCheckout(t)
+	testutil.WriteFiles(t, root, map[string]string{
+		".yarn/patches/patch\nRUN touch /pwned.patch": "patch\n",
+	})
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err == nil {
+		t.Fatalf("a committed file name holding a newline was written into the Dockerfile:\n%s", got)
+	}
+	if body := err.Error(); !strings.Contains(body, `".yarn/patches/patch\nRUN touch /pwned.patch"`) {
+		t.Errorf("the refusal does not name the file to rename: %q", body)
+	}
+	if body := err.Error(); strings.ContainsAny(body, "\n\r\x1b") {
+		t.Errorf("the refusal echoes the raw name it refuses: %q", body)
+	}
+	for _, name := range []string{".yarn/patches/a\rb.patch", ".yarn/patches/a\x1bb.patch", ".yarn/patches/a\x7fb.patch"} {
+		in := RenderInput{Workflow: "app", Base: config.BaseKind, Version: "dev", KeyFiles: []string{name}}
+		if _, err := Render(in); err == nil {
+			t.Errorf("Render wrote the key-file name %q into the Dockerfile", name)
+		}
+	}
+}
+
+// TestKeyLayerWritesQuotedAndLiteralNames: shellWords single-quotes each word
+// and escapes a quote inside one, and the checkout is a literal pathspec, so a
+// committed name holding a quote, a backslash or a glob character reaches git
+// as the character it holds. Only a control character is refused, so a
+// repository whose patches are named it's.patch keeps building.
+func TestKeyLayerWritesQuotedAndLiteralNames(t *testing.T) {
+	root, cfg := keyFileCheckout(t)
+	testutil.WriteFiles(t, root, map[string]string{
+		".yarn/patches/it's.patch": "patch\n",
+		`.yarn/patches/a\b.patch`:  "patch\n",
+		".yarn/patches/a[1].patch": "patch\n",
+	})
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatalf("a key-file name holding a quote, a backslash or a glob was refused: %v", err)
+	}
+	for _, want := range []string{`'.yarn/patches/it'\''s.patch'`, `'.yarn/patches/a\b.patch'`, `'.yarn/patches/a[1].patch'`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("the checkout line does not carry %s as a shell word:\n%s", want, got)
+		}
+	}
+}
+
+// TestKeyLayerDirectoryExpansionCapped: a directory entry of the key-file
+// layer — an image.key_files entry, or a built-in path such as .yarn/patches —
+// reaches the Dockerfile as the files under it, so without a cap a
+// repository's own file count would decide the size of the checkout line. One
+// entry contributes at most maxKeyFilesPerEntry names; the next file refuses
+// the render, naming the entry and the cap.
+func TestKeyLayerDirectoryExpansionCapped(t *testing.T) {
+	patches := func(n int, dir string) map[string]string {
+		files := make(map[string]string, n)
+		for i := range n {
+			files[fmt.Sprintf("%s/%03d.patch", dir, i)] = "patch\n"
+		}
+		return files
+	}
+	for _, tc := range []struct {
+		name    string
+		dir     string
+		n       int
+		wantErr string
+	}{
+		{"a built-in directory at the cap", ".yarn/patches", maxKeyFilesPerEntry, ""},
+		{"a built-in directory over the cap", ".yarn/patches", maxKeyFilesPerEntry + 1, ".yarn/patches"},
+		{"a configured directory over the cap", "patches", maxKeyFilesPerEntry + 1, "image.key_files[0]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, cfg := keyFileCheckout(t)
+			if tc.dir == "patches" {
+				cfg = parseConfig(t, strings.Replace(renderYAML, "    secrets:",
+					"    image: { key_files: [patches] }\n    secrets:", 1))
+			}
+			testutil.WriteFiles(t, root, patches(tc.n, tc.dir))
+			got, _, err := Dockerfile(root, cfg, "web", "dev")
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("%d files under %s: %v", tc.n, tc.dir, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("%d files under %s rendered:\n%s", tc.n, tc.dir, got)
+			}
+			for _, want := range []string{tc.wantErr, fmt.Sprint(maxKeyFilesPerEntry)} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal = %v, want it to name %q and the cap of %d", err, want, maxKeyFilesPerEntry)
+				}
+			}
+		})
 	}
 }

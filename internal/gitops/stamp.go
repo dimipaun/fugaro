@@ -153,9 +153,24 @@ func stampValue(v string) bool {
 var stampHookScript string
 
 // stampChainPlaceholder is where a written hook takes the hook directory it
-// chains to. It stays a quoted string, so the embedded file is a valid shell
-// script on its own, and what replaces it is quoted the same way.
-const stampChainPlaceholder = "'@FUGARO_CHAIN@'"
+// chains to, and stampChainLaterPlaceholder whether it looks one up at the
+// commit when it was given none. Both stay quoted strings, so the embedded
+// files are valid shell scripts on their own, and what replaces each is
+// quoted the same way.
+const (
+	stampChainPlaceholder      = "'@FUGARO_CHAIN@'"
+	stampChainLaterPlaceholder = "'@FUGARO_CHAIN_LATER@'"
+)
+
+// chainLater and chainNow are the two values stampChainLaterPlaceholder takes:
+// 1 is a hook directory looked up at the commit (WriteStampHooks with no
+// chainTo), 0 is one named now and never looked up — either by the caller
+// (chainTo) or because the hooks chain nowhere at all
+// (WriteStampHooksNoChain).
+const (
+	chainLater = "1"
+	chainNow   = "0"
+)
 
 // stampHookName is the hook that stamps a commit: git runs it before the
 // commit exists, and `git commit --no-verify` does not skip it (githooks(5),
@@ -188,7 +203,14 @@ const chainHook = `#!/bin/sh
 # pointing core.hooksPath at the stamp hook directory would otherwise silence
 # the repository's own %[1]s (constraint 2).
 fugaro_chain='@FUGARO_CHAIN@'
-if [ -z "$fugaro_chain" ]; then
+fugaro_chain_later='@FUGARO_CHAIN_LATER@'
+# The machine's and the caller's configuration are in place for this one, unlike
+# the trailer step of the stamp itself: a global core.hooksPath is a legitimate
+# way to configure a repository's hooks, and dropping it here would stop a
+# repository's own hooks running (constraint 2). What it costs is that a global
+# or environment core.hooksPath an agent wrote decides the directory this execs
+# — its own code inside its own commit.
+if [ "$fugaro_chain_later" = 1 ]; then
 	fugaro_chain=$(unset GIT_CONFIG_COUNT; git rev-parse --git-path hooks) || fugaro_chain=''
 fi
 fugaro_next="$fugaro_chain/%[1]s"
@@ -216,6 +238,11 @@ fi
 // repository's in $GIT_DIR/hooks stops running without this, silently
 // (constraint 2).
 //
+// A caller whose hooks must run none of the repository's — the runner's own
+// commits — writes them with WriteStampHooksNoChain instead: an empty chainTo
+// here means the opposite, that the repository's own directory is looked up at
+// the commit.
+//
 // A chainTo that is dir is refused: every hook would exec itself. It is not
 // hypothetical, because a caller that reads the repository's core.hooksPath
 // with the stamp's environment in place reads the stamp directory — the
@@ -225,6 +252,38 @@ fi
 // warning and no failure, and a stamp that silently does not run is worse than
 // one that does not exist.
 func WriteStampHooks(dir, chainTo string) error {
+	later := chainNow
+	if chainTo == "" {
+		later = chainLater
+	}
+	return writeStampHooks(dir, chainTo, later)
+}
+
+// WriteStampHooksNoChain writes the same hooks into dir as WriteStampHooks,
+// and they chain nowhere: the stamp runs and every other hook name exits 0
+// without running anything. It is what the runner's own commits are made
+// under (A3, follow-up 2a): a hook of the repository's is a file the run's
+// agent can write, and the checkout's configuration is another the agent can
+// write, so what a runner-owned git call runs is what the runner wrote and
+// never what the checkout says.
+//
+// What this buys is the checkout's configuration and its hooks, and the
+// directory is part of it: a caller writes dir somewhere the agent's own
+// environment does not name, because an agent that could derive the directory
+// could put a hook of its own in it and have it run inside the runner's own
+// commit. It is not a boundary against an agent that goes looking for the
+// runner's processes — the two share a user and SECURITY.md's "What one run's
+// agent can reach" names that as a known limit — but nothing the agent writes
+// in the checkout, or is told by its own stamp environment, reaches here.
+//
+// It is a different call and not WriteStampHooks(dir, something): "chain to
+// nothing" and "look the repository's directory up at the commit" are two
+// meanings, and an empty string is both of them.
+func WriteStampHooksNoChain(dir string) error {
+	return writeStampHooks(dir, "", chainNow)
+}
+
+func writeStampHooks(dir, chainTo, later string) error {
 	if chainTo != "" {
 		if !stampValue(chainTo) {
 			return fmt.Errorf("hook chain directory %s carries a control character", safetext.Field(chainTo))
@@ -254,6 +313,7 @@ func WriteStampHooks(dir, chainTo string) error {
 			script = stampHookScript
 		}
 		script = strings.ReplaceAll(script, stampChainPlaceholder, chain)
+		script = strings.ReplaceAll(script, stampChainLaterPlaceholder, later)
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 			return err
 		}

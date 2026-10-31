@@ -30,7 +30,7 @@ Choose `clone` when the repository needs no system package and no service, and h
 
 A clone job has no build at all, and a run has no root, so Fugaro cannot install a system package at start-up. `fugaro validate` (and the same checks when a run reads your `fugaro.yaml`) refuses these keys under `checkout: clone`, each message naming `checkout: baked` as the way out:
 
-- `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts`
+- `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts`, `image.key_files`
 - `dockerfile:`
 
 Move the workflow back to `baked` if it needs any of them.
@@ -71,6 +71,10 @@ Check 38 of [gcp-live-checklist.md](gcp-live-checklist.md) is the option's live 
 - what `mise install` costs at every start-up, which is the price of `clone` over `baked`.
 
 Its FACT lines are the record of both, in the checklist section. `clone` is still the newer of the two options: `baked` is what every workflow existing before it, the setup skill and `fugaro image refresh`'s rebuild path assume.
+
+## `checkout: shared` arrives in 0.15.0
+
+A third kind, `checkout: shared`, is in `fugaro.yaml`'s schema and in the config format: the workflow's job runs a shared dependency-layer image — one image per resolved dependency set, holding no repository's own source — and the run clones your repository at launch, exactly as `clone` does. **No release builds or refreshes such an image before fugaro 0.15.0**, so `fugaro validate` refuses the key until then (`shared images arrive in 0.15.0`, at `workflows.<name>.checkout`) and a run of such a workflow does not start. If you have already written it, use `checkout: baked` or `checkout: clone` for now: a 0.14.0 CLI stops your runs, and 0.15.0 is the release that lifts the refusal and runs the kind.
 
 ## Known gaps
 

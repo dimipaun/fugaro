@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  p:
+    checkout: shared
+    image: { apt: [libvips-dev], tools: { node: "24.19.0" }, skip_build_scripts: true }
+    commands: { build: npm run build, test: npm test }

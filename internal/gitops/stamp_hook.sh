@@ -14,6 +14,11 @@
 set -eu
 
 fugaro_chain='@FUGARO_CHAIN@'
+# Whether to look the repository's own hook directory up at the commit, which
+# only a caller that named none does: a caller that named a directory has it,
+# and a caller that asked for no chain at all must never run one. The two are
+# not the same thing, and an empty fugaro_chain is both.
+fugaro_chain_later='@FUGARO_CHAIN_LATER@'
 
 # A line that is one of the three trailers, as git matches a key: without
 # regard to case, with the whitespace git allows around it, and with the colon
@@ -72,7 +77,43 @@ fugaro_stamp() {
 		fugaro_kept=$(grep -v -i -E "$fugaro_pattern" "$fugaro_message") || fugaro_kept=''
 		printf '%s\n' "$fugaro_kept" > "$fugaro_message"
 	fi
-	git "$@" "$fugaro_message"
+	# interpret-trailers runs outside the repository, on an absolute path:
+	# trailer.<token>.cmd and trailer.<token>.command are commands git runs,
+	# and the repository's own configuration is a file a run's agent can
+	# write (constraint 8). With no GIT_DIR, no GIT_WORK_TREE and no
+	# repository above "/", no repository is read at all.
+	case "$fugaro_message" in
+	/*) fugaro_message_abs=$fugaro_message ;;
+	*) fugaro_message_abs=$PWD/$fugaro_message ;;
+	esac
+	(
+		unset GIT_DIR GIT_WORK_TREE
+		# And no configuration of the machine's or of an environment either:
+		# this git is the child of the agent's own commit, so every one of
+		# the variables below is one the agent set for the git that ran this
+		# hook, and a trailer.<token>.command written in the user's own file
+		# or in the pairs of GIT_CONFIG_COUNT is a command the stamp would
+		# run. The rules the stamp states on the command line are the only
+		# ones left for this call.
+		GIT_CONFIG_GLOBAL=/dev/null
+		GIT_CONFIG_NOSYSTEM=1
+		export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
+		unset GIT_CONFIG_SYSTEM GIT_CONFIG_PARAMETERS
+		fugaro_config_count=${GIT_CONFIG_COUNT:-0}
+		case "$fugaro_config_count" in
+		'' | *[!0-9]*) fugaro_config_count=0 ;;
+		esac
+		fugaro_config_i=0
+		# The pairs a count numbers, one by one: a pair git never reads is
+		# still a pair, and the count itself is read before it goes.
+		while [ "$fugaro_config_i" -lt "$fugaro_config_count" ]; do
+			unset "GIT_CONFIG_KEY_$fugaro_config_i" "GIT_CONFIG_VALUE_$fugaro_config_i"
+			fugaro_config_i=$((fugaro_config_i + 1))
+		done
+		unset GIT_CONFIG_COUNT
+		cd /
+		git "$@" "$fugaro_message_abs"
+	)
 }
 
 # git runs a hook in the root of the working tree (githooks(5)), so the
@@ -87,7 +128,14 @@ fi
 # which is the repository's own configuration or git's default of
 # $GIT_DIR/hooks. A repository that configured no core.hooksPath still has its
 # hooks run, which naming nothing at all would not do (constraint 2).
-if [ -z "$fugaro_chain" ]; then
+#
+# Read with the machine's and the caller's configuration in place, unlike the
+# trailer step above: a global core.hooksPath is a legitimate way to configure
+# a repository's hooks, and dropping it here would stop a repository's own
+# hooks running (constraint 2). What it costs is that a global or environment
+# core.hooksPath an agent wrote decides the directory this execs — its own code
+# in its own commit, with nothing of the runner's behind it.
+if [ "$fugaro_chain_later" = 1 ]; then
 	fugaro_chain=$(unset GIT_CONFIG_COUNT; git rev-parse --git-path hooks) || fugaro_chain=''
 fi
 

@@ -84,6 +84,27 @@
         "items": { "type": "string", "pattern": "^anthropic/[a-z0-9][a-z0-9._-]*$", "maxLength": 100 }
       }
     },
+    "ab": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "The project's model A/B sampling (docs/model-ab-testing, D550-D573): whether its first code runs are sampled, which other models may run as the challenger, which model judges a pair, and how much extra median cost per pair a mode accepts before keeping the champion. A top-level key of the layer file, like governance and unlike defaults: a repository's own ab: block may only set rate: 0, its opt-out, so the two meet only in the merge, which takes the lower rate and nothing else of this block from the repository (D556). Nothing reads these keys to launch a pair before fugaro 0.15.0: the block is inert until then. A null block, or a key written as null or 0, sets nothing.",
+      "properties": {
+        "rate": { "type": ["number", "null"], "minimum": 0, "maximum": 0.1, "description": "The share of eligible runs sampled, sampled by a hash of the run ID below the rate. 0 (the default) is off, and 0.10 is the ceiling (D557)." },
+        "max_pairs_per_day": { "type": ["integer", "null"], "minimum": 0, "description": "The most pairs one repository is sampled for per UTC day, counted by the launcher from today's challenger records. 0 or null takes Fugaro's 5 (D557)." },
+        "challengers": {
+          "type": ["array", "null"],
+          "description": "The models the owner allows as a challenger, in priority order (D556). A repository may never name one: a repository author could otherwise send that repository's code to a provider the owner opened only to others. Each entry must be a model ID (or a prefix ending in *, the spelling a route entry uses); every model named is checked again at launch against the repository's job, its allow-list and the price table. The pattern here is the shape of an entry only: the decoder's CheckModelPattern also refuses a claim on Claude models and a prefix too broad to name, and a repository's CI checking this file has no such rule.",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*\\*?$", "maxLength": 100 }
+        },
+        "judge_model": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*\\*?$", "maxLength": 100, "description": "The model a pair's blind judge run uses (D553). The owner's alone, like challengers." },
+        "exchange_rate": {
+          "type": ["object", "null"],
+          "propertyNames": { "$ref": "#/$defs/rigorMode" },
+          "additionalProperties": { "type": ["number", "null"], "minimum": 0 },
+          "description": "The extra median cost a pair may carry, as a fraction of the champion's median cost, before the mode keeps the champion (D565). A mode left out takes the figure Fugaro ships: 0 for POC, 0.25 for Startup, 0.5 for Pro, 2 for Critical (and hotfix, which is never sampled, 0)."
+        }
+      }
+    },
     "governance": {
       "type": ["object", "null"],
       "additionalProperties": false,
@@ -188,12 +209,24 @@
               }
             }
           }
+        },
+        {
+          "if": { "required": ["checkout"], "properties": { "checkout": { "const": "shared" } } },
+          "then": {
+            "properties": {
+              "image": {
+                "properties": {
+                  "setup": { "maxItems": 0 }
+                }
+              }
+            }
+          }
         }
       ],
       "properties": {
         "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\r\\n]*$" },
         "base": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
-        "checkout": { "enum": ["baked", "clone"] },
+        "checkout": { "enum": ["baked", "clone", "shared"], "description": "The same three values as fugaro.schema.json's workflows.*.checkout: baked (default), clone, and shared, which runs a shared dependency-layer image and clones the source at launch, so a profile under it may carry image.apt, image.tools and image.skip_build_scripts but not image.setup." },
         "image": {
           "type": "object",
           "additionalProperties": false,

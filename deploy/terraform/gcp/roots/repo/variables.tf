@@ -19,6 +19,7 @@ variable "installation" {
     registry_host             = string
     base_registry             = string
     ghcr_registry             = string
+    shared_registry           = string
     scheduler_service_account = string
     role_ids = object({
       job_runner      = string
@@ -52,6 +53,12 @@ variable "repo" {
     # lets the value through: an object-typed variable drops any key it
     # does not name.
     project_secrets = optional(map(string), {})
+    # Whether the published node admits this repository with `proxy: true`
+    # (D500, D502), which the module turns into the drop of the job's git
+    # credential accessor and mount. Optional and false: an installation that
+    # never proxies a repository, and every tfvars written before the fact
+    # existed, plans exactly what it planned.
+    bitbucket_proxied = optional(bool, false)
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool

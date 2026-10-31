@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -93,16 +94,18 @@ func TestThirdPartyNoticesCoverEveryLinkedModule(t *testing.T) {
 }
 
 // TestThirdPartyNoticesUnionsTheBuildMatrix: the script asks go list -deps once
-// per target, so a module one target links and another does not still gets a
+// per target and with the release build's own tags, so a module one target links
+// and another does not -- or one only the tagged build links -- still gets a
 // section. A fake `go` on PATH answers with a module set that depends on
-// GOOS/GOARCH, and it refuses every call that is not `go list`, so the test
-// also pins the one thing the script may ask the toolchain for.
+// GOOS/GOARCH and on the tags, and it refuses every call that is not `go list`,
+// so the test also pins the one thing the script may ask the toolchain for.
 func TestThirdPartyNoticesUnionsTheBuildMatrix(t *testing.T) {
 	root := testutil.ModuleRoot()
 	bin := t.TempDir()
 	modules := t.TempDir()
 	writeModuleDir(t, modules, "everywhere", "LICENSE", "the everywhere module's licence text\n")
 	writeModuleDir(t, modules, "darwinonly", "LICENSE.txt", "the darwin-only module's licence text\n")
+	writeModuleDir(t, modules, "tagonly", "LICENSE", "the tag-only module's licence text\n")
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(fakeGo), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -113,13 +116,22 @@ func TestThirdPartyNoticesUnionsTheBuildMatrix(t *testing.T) {
 		"FAKE_MODULE_DIR=" + modules,
 	})
 
-	notices := readText(t, out)
-	for _, want := range []string{
+	want := []string{
 		"example.com/everywhere", "the everywhere module's licence text",
 		"example.com/darwinonly", "the darwin-only module's licence text",
-	} {
+	}
+	// The fake answers a tagged call with a module no untagged call links, so the
+	// tag-only module is expected exactly when this tree's release build compiles
+	// the tag: the core-without-ee workflow deletes ee/, and there the tag names
+	// no code for the script to ask for.
+	if len(releaseTags(t, root)) > 0 {
+		want = append(want, "example.com/tagonly", "the tag-only module's licence text")
+	}
+
+	notices := readText(t, out)
+	for _, want := range want {
 		if !strings.Contains(notices, want) {
-			t.Errorf("%s lacks %q: the darwin/arm64 target's modules are missing, so the script does not ask go list -deps once per target\n%s", noticesFile, want, firstLines(notices, 20))
+			t.Errorf("%s lacks %q: the darwin/arm64 target's modules, or the tagged build's, are missing, so the script does not ask go list -deps once per target and with the release build's tags\n%s", noticesFile, want, firstLines(notices, 20))
 		}
 	}
 }
@@ -161,11 +173,17 @@ func TestThirdPartyNoticesFailsWhenATargetFails(t *testing.T) {
 // fakeGo stands in for the toolchain in TestThirdPartyNoticesUnionsTheBuildMatrix
 // and TestThirdPartyNoticesFailsWhenATargetFails. The notices script may ask the
 // toolchain for the module list and nothing else, so every other call fails
-// loudly; the darwin/arm64 answer carries a module no other target links, which
-// only a per-target enumeration can find; and FAKE_FAIL_TARGET names a target it
-// cannot answer for, which is the release-time failure the script has to stop on.
+// loudly; the darwin/arm64 answer carries a module no other target links, and a
+// tagged call carries one no untagged call links, which only a per-target,
+// tagged enumeration can find; FAKE_FAIL_TARGET names a target it cannot answer
+// for, which is the release-time failure the script has to stop on; and
+// FAKE_ARGS_FILE makes it record the arguments it was called with, which is how
+// TestGoreleaserReleaseBuild reads the tag set the script asks for.
 const fakeGo = `#!/usr/bin/env bash
 set -eu
+if [ -n "${FAKE_ARGS_FILE:-}" ]; then
+  printf '%s\n' "$*" >> "$FAKE_ARGS_FILE"
+fi
 if [ "${1:-}" != "list" ]; then
   echo "fake go: the notices script called 'go $*'; it may only call 'go list'" >&2
   exit 1
@@ -178,6 +196,9 @@ printf 'example.com/everywhere\tv1.0.0\t%s/everywhere\n' "$FAKE_MODULE_DIR"
 if [ "$GOOS" = darwin ] && [ "$GOARCH" = arm64 ]; then
   printf 'example.com/darwinonly\tv1.0.0\t%s/darwinonly\n' "$FAKE_MODULE_DIR"
 fi
+case " $* " in
+  *" -tags="*) printf 'example.com/tagonly\tv1.0.0\t%s/tagonly\n' "$FAKE_MODULE_DIR" ;;
+esac
 `
 
 // writeModuleDir plants a module directory holding one licence file, which is
@@ -282,6 +303,16 @@ func TestGoreleaserReleaseBuild(t *testing.T) {
 			if tag != "ee" {
 				t.Errorf("the release build sets the build tag %q; only ee may be set, and then only with every licence label naming the Subscription Edition licence (TestEETagNeedsTheLabels)", tag)
 			}
+		}
+	})
+
+	// The archive ships the notices of the binary it carries, so the script has
+	// to ask the toolchain for the build this config declares: a module only one
+	// of the two links ships with no notice at all, or with one for code the
+	// archive does not carry.
+	t.Run("the notices are enumerated for the build this config declares", func(t *testing.T) {
+		if got, want := noticesScriptTags(t, root), releaseTags(t, root); !slices.Equal(got, want) {
+			t.Errorf("scripts/%s asks go list -deps for the build tags %v and this config's builds set %v; the release workflow's own environment is inherited by the hook either way", noticesScript, got, want)
 		}
 	})
 
@@ -391,7 +422,176 @@ func TestEETagNeedsTheLabels(t *testing.T) {
 			}
 		}
 	})
+
+	for _, gap := range imageTagLabelGaps(t, testutil.ModuleRoot()) {
+		t.Errorf("an image builds the tagged binary, so %s", gap)
+	}
+	for _, c := range imagePlants {
+		t.Run(c.name, func(t *testing.T) {
+			root := plantImages(t, c.bodies)
+			gaps := imageTagLabelGaps(t, root)
+			if !c.refused {
+				if len(gaps) > 0 {
+					t.Errorf("%s reports gaps: %v", c.name, gaps)
+				}
+				return
+			}
+			if len(gaps) == 0 {
+				t.Fatalf("%s reports no gap, so an image that publishes the tagged binary with an MIT licence label would ship", c.name)
+			}
+			if !strings.Contains(strings.Join(gaps, "\n"), c.want) {
+				t.Errorf("%s reports %v, and no gap names %q: a failure has to say which image to relabel", c.name, gaps, c.want)
+			}
+		})
+	}
 }
+
+// imagePlants are the image half of the coupling (F16c, G11): a Dockerfile that
+// compiles the tagged binary publishes ee/ code, so its licence label has to say
+// so -- and one that does not carry the tag keeps the MIT label the core's
+// licence makes true (design §8).
+var imagePlants = []struct {
+	name    string
+	bodies  map[string]string
+	refused bool
+	want    string
+}{
+	{
+		name:    "a planted tagged base image with an MIT label is refused",
+		bodies:  map[string]string{"base": dockerfilePlant(taggedBuild, mitLicenceLabel)},
+		refused: true,
+		want:    "images/base/Dockerfile",
+	},
+	{
+		name:    "a planted tagged history image with an MIT label is refused",
+		bodies:  map[string]string{"history": dockerfilePlant(taggedBuild, mitLicenceLabel)},
+		refused: true,
+		want:    "images/history/Dockerfile",
+	},
+	{
+		name:    "a planted tagged base image with no licences label is refused",
+		bodies:  map[string]string{"base": dockerfilePlant(taggedBuild, "")},
+		refused: true,
+		want:    "images/base/Dockerfile",
+	},
+	{
+		name: "a planted tree whose tagged images name the Subscription Edition licence is accepted",
+		bodies: map[string]string{
+			"base":        dockerfilePlant(taggedBuild, subscriptionLicenceLabel),
+			"history":     dockerfilePlant(taggedBuild, subscriptionLicenceLabel),
+			"credentials": dockerfilePlant("", mitLicenceLabel),
+		},
+	},
+	{
+		name:   "a planted untagged credentials image with an MIT label is accepted",
+		bodies: map[string]string{"credentials": dockerfilePlant("", mitLicenceLabel)},
+	},
+}
+
+// taggedBuild is the build tag the two images that carry ee/ code pass to go
+// build (D524, design §8).
+const taggedBuild = "ee"
+
+const (
+	mitLicenceLabel          = `LABEL org.opencontainers.image.licenses="MIT"`
+	subscriptionLicenceLabel = `LABEL org.opencontainers.image.licenses="MIT AND ` + subscriptionMarker + `"`
+)
+
+// dockerfilePlant is a Dockerfile of the shape the three published images
+// share -- one build stage running `go build`, one licence label -- written so a
+// plant can vary the tag and the label and nothing else.
+func dockerfilePlant(tags, label string) string {
+	flags := ""
+	if tags != "" {
+		flags = " -tags " + tags
+	}
+	body := "FROM golang:1.27-bookworm AS fugaro\n" +
+		"RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath" + flags + " -o /out/fugaro ./cmd/fugaro\n"
+	if label == "" {
+		return body
+	}
+	return body + label + "\n"
+}
+
+// plantImages writes a tree carrying the Dockerfiles a plant names. The reader
+// takes its list of images from the tree, so a plant writes only the image it is
+// about.
+func plantImages(t *testing.T, bodies map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range slices.Sorted(maps.Keys(bodies)) {
+		writePlant(t, root, "images/"+name+"/Dockerfile", bodies[name])
+	}
+	return root
+}
+
+// imageTagLabelGaps reports every image in the tree whose Dockerfile compiles the
+// tagged binary without a licence label naming the Subscription Edition licence.
+// The tag is what puts ee/ code into the image, and the label is the one thing a
+// person who pulls it reads before it runs (F16c, G11). The list comes from the
+// tree rather than from a list written here, so an image added later is gated
+// without anyone remembering this file -- the credentials image is the other half
+// of the gate, carrying no ee/ code and keeping its MIT label (D524, design §8).
+func imageTagLabelGaps(t *testing.T, root string) []string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(root, "images", "*", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("globbing the image Dockerfiles under %s: %v", root, err)
+	}
+	if len(paths) == 0 {
+		return []string{"the tree has no images/*/Dockerfile, so nothing gates the images that publish ee/ code"}
+	}
+	slices.Sort(paths)
+
+	var gaps []string
+	for _, path := range paths {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel = filepath.ToSlash(rel)
+		body := readText(t, path)
+		if !slices.Contains(dockerfileBuildTags(body), taggedBuild) {
+			continue
+		}
+		if label := dockerfileLicencesLabel(body); !strings.Contains(label, subscriptionMarker) {
+			gaps = append(gaps, fmt.Sprintf("%s builds the tagged binary and its org.opencontainers.image.licenses label is %q, which has to hold %s", rel, label, subscriptionMarker))
+		}
+	}
+	return gaps
+}
+
+// dockerfileBuildTags is the build tag set a Dockerfile's own `go build` command
+// passes. The RUN's continuation lines are joined first, so the flag reads the
+// same wherever it sits in the command.
+func dockerfileBuildTags(body string) []string {
+	var tags []string
+	for _, line := range strings.Split(strings.ReplaceAll(body, "\\\n", " "), "\n") {
+		if strings.Contains(line, "go build") {
+			tags = append(tags, goflagTags(line)...)
+		}
+	}
+	return tags
+}
+
+// dockerfileLicencesLabel is the value of a Dockerfile's OCI licences label, in
+// either the quoted or the bare form a LABEL may write.
+func dockerfileLicencesLabel(body string) string {
+	joined := strings.ReplaceAll(body, "\\\n", " ")
+	match := dockerfileLicenceLabel.FindStringSubmatch(joined)
+	if match == nil {
+		return ""
+	}
+	if match[1] != "" {
+		return match[1]
+	}
+	return match[2]
+}
+
+// dockerfileLicenceLabel reads the licences label out of a whole Dockerfile: the
+// label is written once, and the value ends at the quote or the whitespace that
+// closes it.
+var dockerfileLicenceLabel = regexp.MustCompile(`org\.opencontainers\.image\.licenses=(?:"([^"]*)"|(\S+))`)
 
 // eeTagLabelGaps is the coupling: when the tree's own release build sets the ee
 // tag, every licence label has to name the Subscription Edition licence, and this reports
@@ -659,6 +859,49 @@ func (e *envList) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// releaseTags is the build tag set .goreleaser.yaml's builds compile. The
+// notices file and the enumeration that checks it are both about the binary the
+// archive ships, so both ask the toolchain for this build. A tree with no ee/ --
+// the core-without-ee workflow deletes it -- has nothing for the tag to compile
+// and cannot ask for it: the assembly file the tag builds imports a package that
+// is not there.
+func releaseTags(t *testing.T, root string) []string {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(root, "ee")); err != nil {
+		return nil
+	}
+	cfg := readGoreleaser(t, filepath.Join(root, ".goreleaser.yaml"))
+	return slices.Sorted(maps.Keys(buildTagSet(t, cfg, []byte(noTagWorkflow))))
+}
+
+// noticesScriptTags is the build tag set scripts/third-party-notices.sh hands
+// go list -deps, read from the fake toolchain's own record of its arguments: the
+// script reads the tags out of the config in shell, and this is what holds that
+// reading to the config.
+func noticesScriptTags(t *testing.T, root string) []string {
+	t.Helper()
+	bin := t.TempDir()
+	args := filepath.Join(t.TempDir(), "args")
+	modules := t.TempDir()
+	writeModuleDir(t, modules, "everywhere", "LICENSE", "the everywhere module's licence text\n")
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(fakeGo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runNoticesScript(t, root, filepath.Join(t.TempDir(), noticesFile), []string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"FAKE_MODULE_DIR=" + modules,
+		"FAKE_ARGS_FILE=" + args,
+	})
+
+	tags := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(readText(t, args)), "\n") {
+		for _, tag := range goflagTags(line) {
+			tags[tag] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(tags))
+}
+
 func readGoreleaser(t *testing.T, path string) goreleaserConfig {
 	t.Helper()
 	return parseGoreleaser(t, readText(t, path))
@@ -830,8 +1073,13 @@ func runNoticesScript(t *testing.T, root, out string, extraEnv []string) {
 func linkedModules(t *testing.T, root string) map[string]string {
 	t.Helper()
 	modules := map[string]string{}
+	args := []string{"list", "-deps", "-f", moduleLine}
+	if tags := releaseTags(t, root); len(tags) > 0 {
+		args = append(args, "-tags="+strings.Join(tags, ","))
+	}
+	args = append(args, "./cmd/fugaro")
 	for _, target := range noticesTargets {
-		cmd := exec.Command("go", "list", "-deps", "-f", moduleLine, "./cmd/fugaro")
+		cmd := exec.Command("go", args...)
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "GOOS="+target.goos, "GOARCH="+target.goarch, "CGO_ENABLED=0")
 		out, err := cmd.Output()

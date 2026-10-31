@@ -194,6 +194,41 @@ func AllowedClaudeAccounts(accounts map[string]ClaudeAccount, repo string) []str
 	return out
 }
 
+// reservedAccountNameMessage is the ONE sentence both halves of the name rule
+// answer the reserved name with. The message never echoes the name (the rule
+// every message here keeps: the value that reached the check is untrusted text
+// printed to a terminal) and it names the fix, which is the operator's next
+// move.
+const reservedAccountNameMessage = "this name is reserved: the platform holds another credential under it, so an account spoken by it would leave one name meaning two credentials — pick a different account name"
+
+// reservedClaudeAccountName reports whether an account name is the bundle's own
+// reserved spelling: config.BitbucketSecret, and no other.
+//
+// It is the bundle's answer rather than this file's, and the bundle says it on
+// its own surface: an account's key in the credentials bundle is
+// ClaudeAccountSecret(name), CredentialKey resolves that key back to the bare
+// name, and for this one name it refuses it outright — because the bare name is
+// what the git entry's document key, the policy's block, the job's own mount and
+// the proxy's audit line all speak for the upstream Bitbucket credential, so the
+// account would leave one name meaning two credentials (B1.2). The published
+// bundle schema pins the same single spelling (creds-bundle.schema.json's `not`,
+// held to the loader by TestBundleSchemaMatchesTheLoader).
+//
+// Every OTHER name a credential of the platform goes by stays a legal account
+// name, and that is why this is one name and not ReservedSecrets' four:
+// the bundle holds the App key beside an account named after it
+// (Bundle.byName's own rule — an account may be named github-app-key), it
+// refuses a DOCUMENT that gives one model name to two credentials
+// (anthropic-api-key beside an account of that name) rather than the account's
+// name, and claude-oauth-token is the default account's secret, whose bundle
+// entry is named config.DefaultClaudeAccount. Refusing those would refuse
+// accounts the bundle holds.
+//
+// TestReservedAccountNamesAgreeWithTheBundle (internal/credsvc) holds the two
+// ends to each other in both directions, so a reservation added on either side
+// alone is red.
+func reservedClaudeAccountName(name string) bool { return name == BitbucketSecret }
+
 // ValidateClaudeAccounts reports every rule the local config's
 // claude_accounts block breaks, the same shape as ValidateModelProviders.
 // A name or repository slug that fails its own check is never echoed raw:
@@ -208,6 +243,8 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 		switch {
 		case name == DefaultClaudeAccount:
 			ps = append(ps, Problem{Path: at, Message: `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here`})
+		case reservedClaudeAccountName(name):
+			ps = append(ps, Problem{Path: at, Message: reservedAccountNameMessage})
 		case len(name) > MaxClaudeAccountNameLen:
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)})
 		case !ClaudeAccountNameRE.MatchString(name):
@@ -231,16 +268,21 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 // is valid here and only here (claude_accounts itself refuses to define it, the
 // account being the unsuffixed claude-oauth-token every repository already
 // has), every other name is a named account's (ClaudeAccountNameRE and
-// MaxClaudeAccountNameLen). The message never echoes the name: a value that
-// fails this check reached it exactly because it is untrusted text, and the
-// sentence is printed to a terminal (the same treatment ValidateClaudeAccounts
-// gives one).
+// MaxClaudeAccountNameLen) and is not the bundle's one reserved spelling
+// (reservedClaudeAccountName, reservedAccountNameMessage: a name the bundle
+// refuses an account of is refused here exactly as it is refused as a key of
+// claude_accounts, so a policy cannot admit an account no bundle can hold).
+// The message never echoes the name: a value that fails this check
+// reached it exactly because it is untrusted text, and the sentence is printed
+// to a terminal (the same treatment ValidateClaudeAccounts gives one).
 func ValidClaudeAccountRef(name string) string {
 	switch {
 	case name == "":
 		return `an account name must not be empty: name the account whose token this profile's runs use, or remove the entry`
 	case name == DefaultClaudeAccount:
 		return ""
+	case reservedClaudeAccountName(name):
+		return reservedAccountNameMessage
 	case len(name) > MaxClaudeAccountNameLen:
 		return fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)
 	case !ClaudeAccountNameRE.MatchString(name):

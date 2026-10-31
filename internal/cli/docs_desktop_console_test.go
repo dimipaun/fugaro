@@ -3786,11 +3786,13 @@ exit 3
 	}
 	// Every file the publish step requires, from both legs: the merged step
 	// (the state this file is in once the owner has copied the Linux change in)
-	// reads all eight, and the macOS-only step attaches four named ones and
-	// never looks at the rest, so one fixture runs the same step in both states.
+	// reads all of them, and the macOS-only step attaches the ones it names and
+	// never looks at the rest, so one fixture runs the same step in every state
+	// -- alone, with the Linux legs, and with the update feed.
 	for _, name := range []string{
 		"Fugaro Console-1.2.3-universal.dmg",
 		"Fugaro Console-1.2.3-universal-mac.zip",
+		"latest-mac.yml",
 		"console-verification.txt",
 		"console-sha256sums.txt",
 		"Fugaro.Console-1.2.3-linux-x64.AppImage",
@@ -4707,16 +4709,30 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 
 	// The design amendment C8's answer requires, in the design and not only in
 	// the plan: rule 10 and section 7.4 now name the second write, in the same
-	// words the plan's answer column uses.
+	// words the plan's answer column uses. The same pair of places carries the
+	// third write and the two updater-owned locations, added by the owner's
+	// D768/D770 answers of 2026-10-30 (auto-update U5): C8's wording stays, as
+	// the earlier amendment, and the newer one sits beside it.
 	design := readDoc(t, "docs/design/desktop-console.md")
-	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, and the installations file, and nothing else.**") {
-		t.Error("design section 5.1 rule 10 was not amended to C8's wording")
+	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file and `updates.json`, and nothing else.**") {
+		t.Error("design section 5.1 rule 10 was not amended to name the app's three writes (C8's second, D768's third)")
 	}
-	if !strings.Contains(design, "**The app writes two things to disk and nothing else (§5.1 rule 10, amended 2026-10-18)") {
-		t.Error("design section 7.4 was not amended to C8's wording")
+	if !strings.Contains(design, "(Amended 2026-10-18 by the owner's C8 answer") {
+		t.Error("design section 5.1 rule 10 lost the 2026-10-18 C8 amendment: a later amendment sits beside the earlier one rather than replacing it")
+	}
+	if !strings.Contains(design, "Amended 2026-10-30 by the owner's D768 and D770 answers") {
+		t.Error("design section 5.1 rule 10 lost the 2026-10-30 D768/D770 amendment")
+	}
+	if !strings.Contains(design, "**The app writes three things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers)") {
+		t.Error("design section 7.4 was not amended to D768/D770's wording")
 	}
 	if !strings.Contains(design, "never a credential") {
 		t.Error("design section 5.1 rule 10's installations paragraph does not say the file holds no credential")
+	}
+	for _, want := range []string{"`updates.json`", "fugaro-console-updater", "ShipIt", "hardenUpdater", "x-user-staging-id"} {
+		if !strings.Contains(design, want) {
+			t.Errorf("design section 5.1 rule 10 or 7.4 no longer names %q: D768 and D770 are the amendment that puts the update switch and the updater's two locations on the write list", want)
+		}
 	}
 
 	// Task 3.3's own section, bounded by Task 3.4's heading so the text of 3.4
@@ -6386,6 +6402,13 @@ const (
 	// removes it: after that, the text it produced is the one that runs, and it
 	// is read from appliedConsoleReleasePath.
 	consoleReleaseLinuxWorkflowPath = "docs/pending-workflows/console-release-linux.yml"
+	// consoleReleaseFeedWorkflowPath is the staged replacement of
+	// consoleReleaseWorkflowPath with the console's update feed
+	// (electron-updater's latest-mac.yml) added. Its copy-in copies it over the
+	// staged console-release.yml and into .github/workflows/, then removes it:
+	// after that the text it produced is the one that runs, and it is read from
+	// appliedConsoleReleasePath.
+	consoleReleaseFeedWorkflowPath = "docs/pending-workflows/console-release-feed.yml"
 	// consoleLinuxJobName is the job's key AND its display name: a job name
 	// with an expression in it is a check name nobody can match, which is the
 	// reason console-tests.yml's own comment gives for its static `console`.
@@ -6459,6 +6482,22 @@ func consoleReplacementText(t *testing.T, staged, applied string) (string, strin
 		return readDoc(t, staged), staged
 	}
 	return readDoc(t, applied), applied
+}
+
+// consoleFeedText is the console signing workflow's text as this tree holds the
+// update feed change: the staged supersede file
+// (consoleReleaseFeedWorkflowPath) while it is staged, and console-release.yml
+// once the owner's copy-in has written it over that file and removed it. It
+// goes through consoleReleaseEffectiveText first, so the byte-identity clause
+// between the two copies of console-release.yml stays live in every state the
+// copy-in passes through.
+func consoleFeedText(t *testing.T) (string, string) {
+	t.Helper()
+	file, path := consoleReleaseEffectiveText(t)
+	if docExists(t, consoleReleaseFeedWorkflowPath) {
+		return readDoc(t, consoleReleaseFeedWorkflowPath), consoleReleaseFeedWorkflowPath
+	}
+	return file, path
 }
 
 // consoleReleaseEffectiveText is the console signing workflow's text as the
@@ -7360,6 +7399,246 @@ func TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne(t *testing.T) {
 	}
 }
 
+// consoleFeedFileName is the update feed's own name: electron-updater's macOS
+// manifest, which the release job writes beside the .zip (design section 7.3,
+// and Task 4.4 of docs/plans/2026-10-15-desktop-console.md -- the packer cannot
+// write it: `build.publish` is `null` in console/package.json, so
+// electron-builder publishes nothing).
+const consoleFeedFileName = "latest-mac.yml"
+
+// consoleFeedTemplate is the printf that writes the feed, character for
+// character: the six fields electron-updater reads from a full download and
+// nothing else -- no `blockmap`, whose differential download is a later decision
+// that is off by default. `url` and `path` are
+// the .zip's name **as GitHub stores it**, which is not the name the packer
+// gives it: the default macOS artifact name carries a space and GitHub renders
+// it as a dot, so a feed naming the packer's own spelling would point
+// electron-updater at an asset that does not exist.
+const consoleFeedTemplate = `printf 'version: %s\nfiles:\n  - url: %s\n    sha512: %s\n    size: %s\npath: %s\nsha512: %s\nreleaseDate: %s\n' "$VERSION" "$FEED_ASSET" "$ZIP_SHA512" "$ZIP_SIZE" "$FEED_ASSET" "$ZIP_SHA512" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$FEED"`
+
+// consoleFeedSumLine appends the feed's own SHA-256 to the job's sums file, so
+// the feed travels to `publish` -- and to the release -- under the merged
+// console-sha256sums.txt that cosign signs: the feed is in the sums.
+const consoleFeedSumLine = `(cd "$(dirname "$FEED")" && shasum -a 256 "$(basename "$FEED")") >> "$SUMS"`
+
+// consoleReleaseMacosSumsStep is the publish job's check over the macOS leg's
+// artifact, which the feed joins: it refuses an artifact with no feed and a
+// feed that is not in the sums.
+const consoleReleaseMacosSumsStep = "The assets match the sums the release job recorded"
+
+// consoleSecretRefRE is one `secrets.NAME` reference anywhere in a workflow
+// file. The feed change adds none.
+var consoleSecretRefRE = regexp.MustCompile(`secrets\.[A-Za-z0-9_]+`)
+
+// consoleReleaseShape parses a workflow file text into the shape this family's
+// step readers use, naming the file it could not read rather than the one the
+// older readers remember.
+func consoleReleaseShape(t *testing.T, path, text string) consoleReleaseWorkflow {
+	t.Helper()
+	var wf consoleReleaseWorkflow
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", path, err)
+	}
+	return wf
+}
+
+// consoleOtherwiseIdentical is the part of a console release workflow the feed
+// change must leave exactly as it is: every action pin, the trigger, the
+// permissions the workflow and each job hold, the environment each job takes,
+// the job set, and every secret the file names. It is compared between the
+// staged feed file and the console-release.yml it supersedes, so a change that
+// moved a pin, a permission, the signing job's protected environment or a
+// secret reference fails here rather than in the owner's copy-in.
+func consoleOtherwiseIdentical(t *testing.T, text string) string {
+	t.Helper()
+	var raw struct {
+		Permissions map[string]any            `yaml:"permissions"`
+		Jobs        map[string]map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", consoleReleaseWorkflowPath, err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "permissions=%v\n", raw.Permissions)
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(line, "uses:") {
+			b.WriteString(trimmed + "\n")
+		}
+	}
+	b.WriteString(consoleTriggerBlock(t, text) + "\n")
+	names := make([]string, 0, len(raw.Jobs))
+	for name := range raw.Jobs {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		job := raw.Jobs[name]
+		fmt.Fprintf(&b, "job %s environment=%v permissions=%v\n", name, job["environment"], job["permissions"])
+	}
+	for _, ref := range consoleSecretRefRE.FindAllString(text, -1) {
+		b.WriteString(ref + "\n")
+	}
+	return b.String()
+}
+
+// consoleLinesDropped is the lines base carries and text does not, as a
+// multiset. The feed change adds; the only lines it may take away are the
+// comment lines of the file's own header, which gains a paragraph describing
+// it.
+func consoleLinesDropped(base, text string) []string {
+	remaining := map[string]int{}
+	for _, line := range strings.Split(text, "\n") {
+		remaining[line]++
+	}
+	var dropped []string
+	for _, line := range strings.Split(base, "\n") {
+		if remaining[line] > 0 {
+			remaining[line]--
+			continue
+		}
+		dropped = append(dropped, line)
+	}
+	return dropped
+}
+
+// TestDocsConsoleReleaseFeedIsStagedAndPinned holds the staged update feed to
+// what the console's auto-update needs and to nothing else (the owner's go of
+// 2026-10-30; Task 4.4 of docs/plans/2026-10-15-desktop-console.md, design
+// section 7.3). The macOS `release` job writes `latest-mac.yml`
+// beside the .zip it has just verified, from the tag's version and the .zip's
+// own bytes, sums it into the job's console-sha256sums.txt and uploads it with
+// the other assets; `publish` requires it, checks it against the sums and
+// attaches it. Everything that makes this file safe to run -- the pins, the
+// trigger, the permissions, the protected environment the Apple secrets live
+// behind and every secret the file names -- is what runs today.
+//
+// It reads the feed text the way this family reads a supersede file: from
+// docs/pending-workflows/console-release-feed.yml while it is staged, and from
+// console-release.yml once the owner's copy-in has written it over that file
+// and removed it, so the same suite is green on both sides of the copy-in. The
+// mutation that proves the first half: the same test against a tree with no
+// feed file, where console-release.yml writes, sums and attaches no
+// latest-mac.yml at all.
+func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
+	text, path := consoleFeedText(t)
+
+	for _, want := range []string{
+		`FEED_ASSET="$(basename "$ZIP" | tr ' ' '.')"`,
+		`ZIP_SHA512="$(openssl dgst -sha512 -binary "$ZIP" | base64 | tr -d '\n')"`,
+		`ZIP_SIZE="$(stat -f%z "$ZIP")"`,
+		`FEED="$(dirname "$ZIP")/` + consoleFeedFileName + `"`,
+		consoleFeedTemplate,
+		consoleFeedSumLine,
+		`record cat "$FEED"`,
+		`cp "$FEED" "$ASSETS/"`,
+		`-s ` + consoleFeedFileName,
+		`grep -qF "  ` + consoleFeedFileName + `" console-sha256sums.txt`,
+		`FEED="` + consoleFeedFileName + `"`,
+		`test -s "$FEED"`,
+		`"$FEED"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s does not carry %q: the release job writes the update feed beside the zip from the bytes it just verified, sums it, uploads it with the other assets, and publish refuses a release that would ship without it", path, want)
+		}
+	}
+	// The feed's line in the release's sums file has a second reader, and this
+	// file is where the next run learns it: the site's copy of that file is
+	// checked name by name against the downloads it offers, so a sums file
+	// carrying the feed is a website step that has to decide something. The
+	// note lives in the header, which the copy-in carries into the workflow
+	// itself -- the one place a run that refreshes the site will look.
+	for _, want := range []string{"website/data/console-sha256sums.txt", "website/content/downloads.json"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s does not name %q: the feed joins console-sha256sums.txt, and the release's sums file is copied verbatim into the site, where every name in it has to resolve to an offered download (TestWebsiteConsoleReleaseFactsAreComplete) -- so the run that refreshes the site after this change has to be told, or it meets a red `main` it cannot explain", path, want)
+		}
+	}
+
+	wf := consoleReleaseShape(t, path, text)
+	for _, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			for _, line := range consoleRunLines(step.Run) {
+				if strings.Contains(line, "blockmap") {
+					t.Errorf("%s's %q step runs %q: the feed carries the fields electron-updater needs from a full download and nothing else, and the differential download is a later decision that is off by default", path, step.Name, line)
+				}
+			}
+		}
+	}
+
+	release, ok := wf.Jobs["release"]
+	if !ok {
+		t.Fatalf("%s has no release job: there is nowhere for the feed to be written", path)
+	}
+	_, verify := consoleStepNamed(t, release, "release", consoleReleaseVerifyStep)
+	if verify.Env["VERSION"] != "${{ steps.tag.outputs.version }}" {
+		t.Errorf("%s's verification step VERSION = %q, want the tag step's output: the feed's `version` is the tag's X.Y.Z, the same one stamped on every pack, and a feed built from anything else offers an update to a version that was never released", path, verify.Env["VERSION"])
+	}
+	vlines := consoleRunLines(verify.Run)
+	zipVerified := consoleLineIndex(vlines, `record retry_apple_network xcrun stapler validate "$IN_ZIP"`, false)
+	feed := consoleLineIndex(vlines, consoleFeedTemplate, false)
+	summed := consoleLineIndex(vlines, consoleFeedSumLine, false)
+	if !(zipVerified >= 0 && zipVerified < feed && feed < summed) {
+		t.Errorf("%s writes the feed at %d, sums it at %d, and verifies the .zip's copy at %d: the feed describes the bytes of a .zip that has been verified, and its digest has to be in the sums file before that file is uploaded (%v)", path, feed, summed, zipVerified, vlines)
+	}
+	if consoleLineIndex(vlines, `cp "$FEED" "$ASSETS/"`, false) <= consoleLineIndex(vlines, `cp "$DMG" "$ZIP" "$RECORD" "$SUMS" "$ASSETS/"`, false) {
+		t.Errorf("%s copies the feed into the uploaded artifact before the artifacts it belongs beside: the artifact is what publish reads, and every file in the release is in it", path)
+	}
+
+	pub, ok := wf.Jobs["publish"]
+	if !ok {
+		t.Fatalf("%s has no publish job: the feed would be built and never published", path)
+	}
+	_, sumsStep := consoleStepNamed(t, pub, "publish", consoleReleaseMacosSumsStep)
+	slines := consoleRunLines(sumsStep.Run)
+	if consoleLineIndex(slines, `if [ ! -s `+consoleFeedFileName+` ]; then`, false) < 0 {
+		t.Errorf("%s's %q step does not require exactly one non-empty %s: a macOS artifact with no feed is a console release that can never update itself, and the check that refuses it belongs with the sums check it has to pass anyway", path, consoleReleaseMacosSumsStep, consoleFeedFileName)
+	}
+	if consoleLineIndex(slines, `grep -qF "  `+consoleFeedFileName+`" console-sha256sums.txt`, true) < 0 {
+		t.Errorf("%s's %q step does not check the feed against console-sha256sums.txt: the signature over that file is what vouches for the feed, so a feed the sums file does not list is a manifest nothing signs", path, consoleReleaseMacosSumsStep)
+	}
+	_, publish := consoleStepNamed(t, pub, "publish", consoleReleasePublishStep)
+	plines := consoleRunLines(publish.Run)
+	if consoleLineIndex(plines, `FEED="`+consoleFeedFileName+`"`, false) < 0 || consoleLineIndex(plines, `test -s "$FEED"`, false) < 0 {
+		t.Errorf("%s's publish step does not read the feed with a non-empty check of its own: every other asset there is `test -s`'d before the release is created, and a release that ships an empty manifest is worse than one with none", path)
+	}
+	assets := -1
+	for i, line := range plines {
+		if strings.HasPrefix(line, `"$DMG" "$APP_ZIP"`) {
+			assets = i
+		}
+	}
+	if assets < 0 || !strings.Contains(plines[assets], `"$FEED"`) {
+		t.Errorf("%s's publish step does not attach the update feed with the rest of the release: the manifest is the one file electron-updater fetches directly, and an uploaded-but-unattached feed is a feed no client can see (%v)", path, plines)
+	}
+
+	// The both-states half: while the feed file is staged it has to be a change
+	// to the file it supersedes, and a change to nothing else.
+	if !docExists(t, consoleReleaseFeedWorkflowPath) {
+		return
+	}
+	base, basePath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
+	if text == base {
+		t.Errorf("%s is byte-identical to %s: then it is not a change, and its copy-in commands are instructions to do nothing", consoleReleaseFeedWorkflowPath, basePath)
+		return
+	}
+	if got, want := consoleOtherwiseIdentical(t, text), consoleOtherwiseIdentical(t, base); got != want {
+		t.Errorf("%s and %s differ outside the feed: the action pins, the trigger, the permissions, every job's environment and every `secrets.` reference have to be identical, because this change adds a manifest and touches nothing that decides who may run it or what it may read.\nfeed:\n%s\n%s:\n%s", consoleReleaseFeedWorkflowPath, basePath, got, basePath, want)
+	}
+	// The diff is additions, plus the one line the feed joins the release's
+	// asset list on. Anything else that went missing is a line of the pipeline
+	// this change had no business rewriting.
+	for _, line := range consoleLinesDropped(base, text) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.Contains(text, trimmed+` "$FEED"`) {
+			continue
+		}
+		t.Errorf("%s drops %q, which %s carries: the feed change adds a step's worth of shell, a paragraph of header, and `\"$FEED\"` on the release's asset list -- it rewrites nothing else", consoleReleaseFeedWorkflowPath, trimmed, basePath)
+	}
+}
+
 // TestStagedLinuxFilesSurviveTheCopyIn is the proof of the property every test
 // in this family is written for: **the copy-in the owner does by hand does not
 // turn `main` red.** The tests above read the two Linux files through
@@ -7493,7 +7772,8 @@ func TestStagedLinuxFilesSurviveTheCopyIn(t *testing.T) {
 const consoleCopyInRunPattern = `Console|Docs|Lint`
 
 // consoleCopyInSensitive is what a copy-in changes, as a test source spells it:
-// the two staged files by name, the constants that name their four homes, and
+// the staged files by name, the constants that name their homes and the readers
+// this family goes through them with, and
 // the two helpers this file reads the staging README's opening line through
 // (`pendingWorkflows` derives the pending set from the directory, and
 // `pendingReadmeOpening` is the paragraph that states it). A test whose body
@@ -7508,7 +7788,7 @@ const consoleCopyInRunPattern = `Console|Docs|Lint`
 // It is a regular expression with word boundaries rather than a list of
 // substrings: `pendingWorkflows` is a helper here and `pendingWorkflowsReadmePath`
 // is a constant in another file, and a substring search cannot tell them apart.
-var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
+var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|console-release-feed\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseFeedWorkflowPath|consoleFeedText|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
 
 // consoleCopyInUncoveredTests is every test in this package whose source
 // mentions what a copy-in changes and which consoleCopyInRunPattern does not
@@ -8192,9 +8472,9 @@ func TestCheck59IsSplitIntoAAndB(t *testing.T) {
 		"NOT RUNNABLE",
 		"published feed",
 		"Task 4.4",
-		"0.111.0",
+		"0.116.0",
 		"second",
-		"console-v0.110.0",
+		"installed by hand",
 	} {
 		if !strings.Contains(head, want) {
 			t.Errorf("Check 59b's first lines do not say %q: the section's opening is where the two preconditions that stop it running today have to be read", want)
@@ -8223,8 +8503,76 @@ func TestCheck59IsSplitIntoAAndB(t *testing.T) {
 	if !strings.Contains(rows["| 59a |"], "0.110.0") {
 		t.Error("the `| 59a |` row does not name the published release 59a runs against, which is the fact that makes it runnable today")
 	}
-	if !strings.Contains(rows["| 59b |"], "0.111.0") {
-		t.Error("the `| 59b |` row does not name the release that has to publish the feed before 59b can run")
+	if !strings.Contains(rows["| 59b |"], "0.116.0") {
+		t.Error("the `| 59b |` row does not name 0.116.0, the build the check installs by hand and updates away from (D771)")
+	}
+}
+
+// TestCheck59bPreconditionsAreTheUpdaterBuilds pins D771 -- the owner's ruling
+// of 2026-10-30 -- as the section's own preconditions: the check runs against
+// `OLD` = 0.116.0, the first build that carries an updater and so the first that
+// can be updated, installed by hand because it cannot update itself, and `NEW` =
+// the first console release after it. No release is cut only for the check. The
+// pair the section carried before -- `console-v0.110.0` and `console-v0.111.0`
+// -- named a build with no updater at all and a release that is not the one
+// after the first updater build, so naming either here again fails this test.
+//
+// The same ruling's U3 and U3b, and D768 and D770, are the section's new
+// assertions, each pinned as the fact a reader has to find: no `.updaterId`
+// under `userData` and no `x-user-staging-id` on any request; the app's own off
+// switch stops the checks; nothing installs on quit, and an update installs only
+// through the notice's "Restart to update"; and the two updater-owned locations
+// appear only after a download.
+func TestCheck59bPreconditionsAreTheUpdaterBuilds(t *testing.T) {
+	_, _, b := check59Sections(t)
+
+	head := b
+	if len(head) > 2400 {
+		head = head[:2400]
+	}
+	for _, want := range []string{
+		"0.116.0",
+		"installed by hand",
+		"first console release after",
+		"release is cut only for this check",
+	} {
+		if !strings.Contains(head, want) {
+			t.Errorf("Check 59b's opening does not say %q: D771 is what the check's two preconditions are, and the section's opening is where a reader meets them", want)
+		}
+	}
+
+	for _, bad := range []string{"0.111.0", "console-v0.110.0", "Mango", "Cherry"} {
+		if strings.Contains(b, bad) {
+			t.Errorf("Check 59b still names %q: D771's two builds are 0.116.0 and the first console release after it, and the section may not carry the pair the ruling replaces", bad)
+		}
+	}
+
+	for _, want := range []string{
+		"OLD=0.116.0",
+		".updaterId",
+		"x-user-staging-id",
+		"hardenUpdater",
+		"fugaro-console-updater",
+		"ShipIt",
+		"Restart to update",
+		"on quit",
+		"`updates.json`",
+		"Check for Updates Automatically",
+		"appear only after a download",
+	} {
+		if !strings.Contains(b, want) {
+			t.Errorf("Check 59b does not carry %q: D768, D770, U3 and U3b are what the check now asserts, and an assertion a reader cannot find is one nobody runs", want)
+		}
+	}
+
+	// The two opt-outs the console actually honours are the environment variable
+	// and the app's own switch -- never the CLI's `update_check`, which the
+	// console does not read (D769).
+	if !strings.Contains(b, "FUGARO_NO_UPDATE_CHECK=1") {
+		t.Error("Check 59b does not name `FUGARO_NO_UPDATE_CHECK=1` as one of the two opt-outs it exercises")
+	}
+	if strings.Contains(b, "update_check: false") {
+		t.Error("Check 59b still exercises a local `update_check: false`: the console never reads the CLI's `update_check` (D769), so the switch it honours is its own")
 	}
 }
 

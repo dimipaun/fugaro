@@ -305,11 +305,12 @@ describe('the dashboard the entry mounts', () => {
   })
 
   it('draws the unavailable state, and no figure, for a live.watch reply it cannot decode', async () => {
-    // A document the schema refuses: it carries a key this console does not
-    // read. The console's answer is the refusal screen with the schema's own
-    // sentence -- never a dashboard of zeros, which is what a screen handed an
-    // unread document would draw.
-    const unknown = { ...(syntheticDocuments()[0] as Record<string, unknown>), mystery: 1 }
+    // A document the schema refuses: a field it reads arrives retyped, which is
+    // a format change and not an addition (a key it does not know is ignored).
+    // The console's answer is the refusal screen with the schema's own sentence
+    // naming the read and the field -- never a dashboard of zeros, which is what
+    // a screen handed an unread document would draw.
+    const unknown = { ...(syntheticDocuments()[0] as Record<string, unknown>), now: 1 }
     const decoded = decodeSnapshot(unknown, 'live.watch')
     expect(decoded.ok, 'the planted document must be one the schema refuses').toBe(false)
     const because = decoded.ok ? '' : decoded.skew.because
@@ -1153,6 +1154,70 @@ describe('the launch the entry wires', () => {
     const removed = /onRecordRemoved: \(project\) => \{[\s\S]*?\n    \},\n/.exec(body)
     if (removed === null) throw new Error('the entry has no onRecordRemoved to read')
     expect(removed[0]).toContain('launchRunner.cancelFor(project)')
+  })
+
+  it('brings the update policy up with the launcher it defers to, and stops it on the way out', () => {
+    // The auto-update policy (Task 4.4) is the second thing this entry starts,
+    // and the one thing it starts that is not a child process. The claims are
+    // read off the text, as above.
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    const main = /async function main\(\): Promise<void> \{[\s\S]*?\n\}\n/.exec(index)
+    if (main === null) throw new Error('the scan found no main(): it would pass by finding nothing')
+    const body = withoutComments(main[0])
+
+    // The policy is built **after** the launcher, because the launcher is what
+    // it asks: `isLaunchFlowIdle` is read at every prompt and every install, and
+    // a policy built over the module-scope default would be asking a runner that
+    // answers for no launches at all.
+    expect(body).toContain('startUpdates(')
+    expect(body.indexOf('createLaunchRunner(')).toBeLessThan(body.indexOf('startUpdates('))
+
+    // The two halves of the same fact: the policy asks `isIdle()` when it is
+    // about to prompt or install, and the flow tells it through `onIdle` when a
+    // launch that was in flight settles -- so a download that finished mid-launch
+    // is offered the moment the launch ends rather than at the next check.
+    expect(body).toContain('isLaunchFlowIdle: () => launchRunner.isIdle()')
+    expect(body).toContain('launchRunner.onIdle(')
+    expect(body).toContain('launchFlowIdle()')
+
+    // Exactly the one: a second `startUpdates` would be a second controller --
+    // its own timer, its own feed URL, its own listeners on the update client.
+    expect(withoutComments(index).match(/startUpdates\(/g) ?? []).toHaveLength(1)
+
+    // The controller is module scope, because `before-quit` is not inside
+    // `main`, and the quit stops it: its timer is a live handle and its
+    // generation counter is what abandons a check whose listing is in flight.
+    if (/let updates: UpdateController \| null = null/.exec(index) === null) {
+      throw new Error('the entry has no module-scope `updates` to read')
+    }
+    const quit = /app\.on\('before-quit', \(event\) => \{[\s\S]*?\n\}\)\n/.exec(index)
+    if (quit === null) throw new Error('the entry has no before-quit to read')
+    expect(quit[0]).toContain('updates?.stop()')
+  })
+
+  it('gives the switch its one source, and the menu its two items only while a controller runs (U4)', () => {
+    // The off switch of D768 (a): `<userData>/updates.json` is what the policy's
+    // gate reads, and the two menu items are handed to the picker over the same
+    // settings -- so the checkbox and the gate are one value rather than two
+    // that could disagree.
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    const main = /async function main\(\): Promise<void> \{[\s\S]*?\n\}\n/.exec(index)
+    if (main === null) throw new Error('the scan found no main(): it would pass by finding nothing')
+    const body = withoutComments(main[0])
+
+    expect(body).toContain('switchOn: () => updateSettings.auto')
+    expect(body).toContain('controller: () => updates')
+    // The settings are built **before** the policy, which reads them for the
+    // first check `startUpdates` runs, and read afresh after that.
+    expect(body.indexOf('createUpdateSettings(')).toBeLessThan(body.indexOf('startUpdates('))
+    // The items go over only when there is a controller: `startUpdates` answered
+    // null on everything that is not a packaged macOS app, which is the whole of
+    // "macOS only" here -- nothing repeats that admission test.
+    expect(body).toContain('updates === null')
+    expect(body).toContain('updateMenu: {')
+    expect(body).toContain('setAuto: (on) => updateSettings.setAuto(on)')
+    expect(body).toContain('checkNow: () => updateSettings.checkNow()')
+    expect(withoutComments(index).match(/updateMenu:/g) ?? []).toHaveLength(1)
   })
 })
 

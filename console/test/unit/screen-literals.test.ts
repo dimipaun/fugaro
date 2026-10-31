@@ -17,6 +17,11 @@
 //     literal, a template with no interpolation, a module constant
 //     (`SCREAMING_CASE`, declared `const` at the top of the same file), or a
 //     ternary between two string literals;
+//   - a drawer that hands its text on instead of writing it -- `shared/version.ts`
+//     composes the version-skew notice and `shared/notice.ts` writes it -- is
+//     held to the same rule one step back, at the properties that carry the
+//     text (`specTextValues` below), because a parameter is all the scan over
+//     sinks can see;
 //   - anything else must be on `CLOSED_VOCABULARY` below, by file and by its
 //     exact source text, with the reason it is the console's own word (a table
 //     the console wrote, or a word a document sent that the model already
@@ -67,9 +72,10 @@ import { describe, expect, it } from 'vitest'
 
 const SCREENS = join(__dirname, '..', '..', 'src', 'renderer', 'screens')
 
-/** SHARED is the other directory that may draw: `src/shared` already holds one
- * drawer (`version.ts`), and a module added there with a `literal` of its own
- * would be a place this scan exists for. */
+/** SHARED is the other directory that may draw: `src/shared` holds the notice
+ * card (`notice.ts`), which writes text slots, and the module that composes the
+ * version-skew notice's text for it (`version.ts`). A module added there with a
+ * `literal` of its own would be a place this scan exists for. */
 const SHARED = join(__dirname, '..', '..', 'src', 'shared')
 
 /** RENDERER is the whole renderer tree. The `literal` scan above reads the
@@ -135,7 +141,13 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     },
     'series.title': '`ACCOUNT_TITLES[account]`, the console\'s headings',
     'scope.name': '`scopeOf` maps the wire word through `SCOPES` and draws `UNKNOWN_SCOPE_NAME` for a word it does not know',
+    word: {
+      within: 'capFigure',
+      reason:
+        'the caps panel\'s own word for what a figure is (`CAPS_BILLED_WORD` and its neighbours, this file\'s constants: the panel draws no column headers, so every figure carries one), and the caller passes those constants and nothing else',
+    },
     note: 'model.notes holds only the console\'s own sentences (`buildSpendModel`), the one interpolation being a count the console computed',
+    'series.empty': "the console's own sentence for an account with no point to draw, written by `buildSeries`/`withheldSeries` -- or `null`, the branch that draws no cell at all",
   },
   'projects.ts': {
     text: { within: 'note', reason: 'the parameter of the `note` helper itself; its call sites are checked as a sink (SINKS)' },
@@ -154,26 +166,24 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
         '`rigorModeWord(view.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `textCell` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
     },
   },
-  // The one drawer outside `src/renderer/screens`: `src/shared/version.ts` draws
-  // the version skew banner and the refusal screen (Task 3.2), because the main
-  // process runs the handshake with it and a screen is not the only thing that
-  // writes to the console's document. It is keyed by the path `join(SCREENS, ...)`
-  // resolves, which is how every read in this file finds it.
-  '../../shared/version.ts': {
-    'SKEW_HEADLINES[compatibility.mode]':
-      "`SKEW_HEADLINES`, the console's own heading table, keyed by the closed `CliCompatibilityMode` union (`ok`, `reduced`, `refused`)",
-    'skewSentence(compatibility)':
-      "`skewSentence`, which composes the sentence from this console's own constants -- the version it was built against, the supported range, the hard floor, the CLI's own brew command -- and never from the version the binary reported",
-    'HIDDEN_VIEW_WORDS[view]':
-      "`HIDDEN_VIEW_WORDS`, the console's own word for a withheld view, keyed by the closed `ReducedView` union",
-    label: {
-      within: 'versionRow',
-      reason: 'the parameter of the `versionRow` helper itself; both call sites pass a string literal',
-    },
-    'version === null ? UNREADABLE_VERSION : versionText(version, field)':
-      "`UNREADABLE_VERSION`, a console constant, or `versionText`: the version line **through `sanitizeText`** (the `label` class), which returns the sanitized text or the console's own sentence -- so the raw line a binary printed never reaches the sink",
-    because:
-      "`unreadableReason(compatibility)`: the reader's own reason for a failed read, **through `sanitizeText`** (the `sentence` class) inside that function, and `null` when there is none or the sanitizer refuses it -- in which case `renderVersionSkew` creates no element at all, so nothing raw and nothing empty reaches the sink",
+  // The drawers outside `src/renderer/screens`: `src/shared/notice.ts` writes
+  // the notice card's text slots, and `src/shared/version.ts` composes the
+  // version-skew notice's text and hands it to that card (Task 3.2). Both live
+  // in `shared/` because the main process runs the handshake with them and a
+  // screen is not the only thing that writes to the console's document. They are
+  // keyed by the path `join(SCREENS, ...)` resolves, which is how every read in
+  // this file finds them.
+  '../../shared/notice.ts': {
+    'spec.title':
+      'the card\'s title, which is the caller\'s own text: the skew notice passes `SKEW_HEADLINES[mode]` (this console\'s heading table) and every later caller passes a constant of its own',
+    'spec.reason':
+      'the card\'s reason. The version-skew notice passes `noticeReason(compatibility)`, which answers one of this console\'s own `NOTICE_REASONS` sentences -- no version, range or command reaches it -- and the reasons are the caller\'s own words for the same reason the title is',
+    'item.text':
+      'a list value\'s row, and the caller builds the list: the skew notice passes `HIDDEN_VIEW_WORDS[view]`, this console\'s word for a withheld view, keyed by the closed `ReducedView` union',
+    'detail.label':
+      'a fact\'s `dt`, the console\'s own word for what the row is ("what happened", "why", "withheld"), written by the caller as a string literal',
+    'detail.text':
+      'a fact\'s `dd`, which is the caller\'s own string: the skew notice passes `skewSentence(compatibility)` (composed from this console\'s constants), `versionCell(...)`, which is `versionText` -- the version line **through `sanitizeText`** (the `label` class), answering this console\'s `UNREADABLE_VERSION` when the sanitizer refuses it -- or `unreadableReason(...)`, the reader\'s reason **through `sanitizeText`** (the `sentence` class), or `null`, which is the branch that creates no row at all. The raw line a binary printed reaches none of them, and the spec-text case below is what says so',
   },
   'graph.ts': {
     'value.text': {
@@ -528,30 +538,66 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
         'the same coordinate for one tick: `positionOf` of a record\'s own stamp, clamped to the window, written as the tick line\'s `x1`/`x2`. Geometry, and the tick carries no text of its own',
     },
   },
-  '../../shared/version.ts': {
+  '../../shared/notice.ts': {
     "classes.join(' ')": { within: 'cell', reason: 'the class list of the `cell` helper; every call site passes string-literal class names' },
+    'spec.severity': { within: 'renderNotice', reason: 'a `NoticeSeverity`, the closed two-word tone union (`warning`, `info`)' },
+    '[NOTICE_ROOT_CLASS, ...spec.classes].join(\' \')': {
+      within: 'renderNotice',
+      reason:
+        'the card root\'s class list: this file\'s own constant plus the caller\'s extra class, and the caller passes a string-literal list (the skew notice passes `console-skew`). The write before it stamps `NOTICE_ROOT_CLASS` alone, because a list the theme\'s selector scan cannot evaluate would leave `section.notice` unlicensed',
+    },
+    value: { within: 'attribute', reason: 'the parameter of the `attribute` helper itself: it is handed one value per entry of a caller\'s own closed table (`data-hidden`\'s `ReducedView`), never a document string' },
+    'ids.title': {
+      within: 'renderNotice',
+      reason:
+        'the card\'s own title id (`noticeIds`): the prefix is this file\'s constant and the number is a counter this module keeps, so nothing a document or a caller passes is in it. It is an id and not text -- `aria-labelledby` resolves it to an element, it is never read as words on screen',
+    },
+    'ids.details': {
+      within: 'renderNotice',
+      reason:
+        'the card\'s own details-region id, built by the same `noticeIds` call as the title\'s, so `aria-controls` names the region of **this** card and not of the first one drawn',
+    },
+  },
+  '../../shared/version.ts': {
     theme: { within: 'renderVersionSkew', reason: 'a `SkewTheme`, the closed two-word theme union' },
     'compatibility.mode': { within: 'renderVersionSkew', reason: '`CliCompatibilityMode`, the closed union of the three things the console can do about a skew' },
     'compatibility.skew': { within: 'renderVersionSkew', reason: '`CliSkewName`, the closed list of the six ways a version line can be placed' },
-    view: { within: 'renderVersionSkew', reason: 'a `ReducedView`, from the closed `REDUCED_VIEWS` tuple' },
   },
   'spend.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     'entry.dimension': '`SPEND_DIMENSIONS`, the console\'s table',
     'entry.note': '`PERSON_OFF_NOTE`, a console constant, or null',
-    'drawn.reading.state': 'a Reading\'s `state`, the closed `ReadingState` union',
-    "formatReading(drawn.height, 'percent')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     'drawnKey(keyed)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     'series.account': '`SpendAccount`, a closed union',
-    "formatReading(series.peak, 'usd')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
-    'String(series.segments)': 'a count the model computed',
-    'none.state': 'a Reading\'s `state`, the closed `ReadingState` union',
-    "formatReading(none, 'percent')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     'drawnKey(name)': 'read back from a cell `putText` wrote, so it is the sanitized text',
-    "scope.known ? scope.source : 'unknown'": 'a known scope\'s word is on the console\'s `SCOPES` table; an unknown one is drawn as `unknown`',
+    "scope.known ? scope.source : 'unknown'": "a known scope's word is on the console's `SCOPES` table; an unknown one is drawn as `unknown`",
     'people.view': '`PeopleView`, the closed three words `peopleViewOf` resolves (`all`, `own`, and `unknown` for a word this build does not know)',
     'drawnKey(currency)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     theme: { within: 'renderSpend', reason: 'a `SpendTheme`, the closed theme tuple' },
+    'chartUnits(SPEND_CHART_SIZE - (share / 100) * SPEND_CHART_SIZE)': {
+      within: 'gridline',
+      reason:
+        "a gridline's own y: `share` is one of `SPEND_GRIDLINE_SHARES`, a table in this file, and `chartUnits` rounds the arithmetic into the chart's drawing units -- so the value is a number this console computed and no document string is in it",
+    },
+    'shape.x': { within: 'barRect', reason: "a bar's own box, in the chart's drawing units: `barShape` computes it from the bar's share of the shared axis and `chartUnits` rounds it" },
+    'shape.y': { within: 'barRect', reason: "a bar's own box, in the chart's drawing units: `barShape` computes it from the bar's share of the shared axis and `chartUnits` rounds it" },
+    'shape.width': { within: 'barRect', reason: "a bar's own box, in the chart's drawing units: `barShape` computes it from the bar's share of the shared axis and `chartUnits` rounds it" },
+    'shape.height': { within: 'barRect', reason: "a bar's own box, in the chart's drawing units: `barShape` computes it from the bar's share of the shared axis and `chartUnits` rounds it" },
+    'capsBarUnits(counted / cap)': {
+      within: 'capsBar',
+      reason:
+        "the caps panel's daily-cap bar: `counted_usd` over `daily_cap_usd`, as a length on the bar's own hundred-unit box, clamped to the box -- geometry this console computed from two figures the document carries, and nothing a document can spell",
+    },
+    'column.x': { within: 'gapColumn', reason: "the gap column's own box, in the chart's drawing units: the full height of the plot, computed the same way a bar's is" },
+    'column.y': { within: 'gapColumn', reason: "the gap column's own box, in the chart's drawing units: the full height of the plot, computed the same way a bar's is" },
+    'column.width': { within: 'gapColumn', reason: "the gap column's own box, in the chart's drawing units: the full height of the plot, computed the same way a bar's is" },
+    'column.height': { within: 'gapColumn', reason: "the gap column's own box, in the chart's drawing units: the full height of the plot, computed the same way a bar's is" },
+    key: "the **drawn** key a bar and a gap's own column are tagged with, read back off the label `chartKey` wrote with `putText` -- so it is the sanitized text and never the document's raw key",
+    'bar.account': '`SpendAccount`, a closed union',
+    'bar.reading.state': "a Reading's `state`, the closed `ReadingState` union",
+    "formatReading(bar.share, 'percent')": "`formatReading` of a Reading: the console's own number formatting or its unavailable mark",
+    account: { within: 'seriesBars', reason: '`SpendAccount`, the closed union the loop walks (`SPEND_ACCOUNTS`)' },
+    'missing.account': 'the account whose figure the document does not carry, off the closed `SPEND_ACCOUNTS` union',
   },
   'coordinator.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -922,11 +968,12 @@ const SCREEN_FILES: readonly string[] = Object.freeze(
 )
 
 /** SHARED_FILES are the modules outside `src/renderer/screens` that may draw --
- * `src/shared/version.ts` does, and draws the version skew banner and the
- * refusal screen (Task 3.2). They are scanned exactly as a screen is, but they
- * are not required to have a sink: most of them draw nothing at all. Their paths
- * are relative to `SCREENS` (`../../shared/version.ts`), so every read and every
- * vocabulary lookup in this file finds them the way it finds a screen. */
+ * `src/shared/notice.ts` writes the notice card's text slots, and
+ * `src/shared/version.ts` composes the version-skew notice for it (Task 3.2).
+ * They are scanned exactly as a screen is, but they are not required to have a
+ * sink: most of them draw nothing at all. Their paths are relative to `SCREENS`
+ * (`../../shared/notice.ts`), so every read and every vocabulary lookup in this
+ * file finds them the way it finds a screen. */
 const SHARED_FILES: readonly string[] = Object.freeze(
   walkFiles(SHARED, SCREENS).sort((a, b) => a.localeCompare(b)),
 )
@@ -944,8 +991,17 @@ const RENDERER_FILES: readonly string[] = Object.freeze(
 )
 
 /** SHARED_DRAWER is the shared module that draws today, kept as its own name
- * because the block below is about it. */
-const SHARED_DRAWER = '../../shared/version.ts'
+ * because the block below is about it: the notice card (`shared/notice.ts`),
+ * which is the only place in `shared/` that writes a text slot any more. The
+ * skew state is drawn **through** it rather than by its own writer, so the
+ * module that composes the skew notice's text is `SKEW_MODULE` below and its
+ * half of the rule is there. */
+const SHARED_DRAWER = '../../shared/notice.ts'
+
+/** SKEW_MODULE is `shared/version.ts`, which draws the version-skew state by
+ * handing a spec to `SHARED_DRAWER`: it composes every string the card writes
+ * and writes no text slot itself. */
+const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
   it('reads the eight screens', () => {
@@ -965,6 +1021,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
     expect([...SHARED_FILES]).toEqual([
       '../../shared/availability.ts',
       '../../shared/launcher.ts',
+      '../../shared/notice.ts',
       '../../shared/replay.ts',
       '../../shared/rigor.ts',
       '../../shared/sanitize.ts',
@@ -973,6 +1030,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       '../../shared/version.ts',
     ])
     expect(FILES).toContain(SHARED_DRAWER)
+    expect(FILES).toContain(SKEW_MODULE)
   })
 
   it('walks into subdirectories and reads every module extension (MUTATION)', () => {
@@ -1081,13 +1139,96 @@ describe('a screen writes only its own vocabulary through literal', () => {
   })
 })
 
-describe('the shared drawer that draws is held to the same rules', () => {
+/** SPEC_TEXT_PROPERTY is the properties that carry a notice's **text**: the
+ * spec's title and reason, a fact's label and value, and a list row. It is read
+ * where the text is composed rather than where it is written, because the card
+ * writes it through a parameter (`detail.text`) and a parameter is all the scan
+ * above can see. */
+const SPEC_TEXT_PROPERTY = /(?:^|[{,;\s])(text|title|reason|label)\s*:\s*/gm
+
+/** SPEC_TEXT_CALLS are the functions in the skew module that may compose a
+ * notice's text: the console's own sentence for the handshake (`skewSentence`),
+ * its own reason for a state (`noticeReason`), a version line through the
+ * sanitizer (`versionCell` -> `versionText`) and a reader's own failure reason
+ * through the sanitizer (`unreadableReason`). A fifth name is a decision, not a
+ * rename: it is a new door a string from outside the console could take. */
+const SPEC_TEXT_CALLS: readonly string[] = Object.freeze([
+  'noticeReason',
+  'skewSentence',
+  'unreadableReason',
+  'versionCell',
+])
+
+/** SPEC_TEXT_TABLES are the tables a spec's text may be read out of, **by
+ * name**, and the list carries the same weight as `SPEC_TEXT_CALLS`: each entry
+ * is a table of this console's own words keyed by a closed union
+ * (`HIDDEN_VIEW_WORDS[view]`, `SKEW_HEADLINES[mode]`), so whatever key selects a
+ * row the value is the console's. A name is not a form: `WORDS_BY_RUN[row.key]`
+ * has the same shape and holds whatever a document put there, which is why the
+ * rule reads the table's name and a fifth name is a decision rather than a
+ * rename. */
+const SPEC_TEXT_TABLES: readonly string[] = Object.freeze(['HIDDEN_VIEW_WORDS', 'SKEW_HEADLINES'])
+
+/** valueAt is the source text of a property value at `at`: everything up to the
+ * next comma, newline or closing brace that is not inside a call, a list or an
+ * object -- which is where a spec's values end. */
+function valueAt(code: string, at: number): string {
+  let depth = 0
+  let index = at
+  for (; index < code.length; index += 1) {
+    const char = code[index]
+    if (char === '\'' || char === '"' || char === '`') {
+      index = skipString(code, index) - 1
+      continue
+    }
+    if (char === '(' || char === '[' || char === '{') depth += 1
+    if (char === ')' || char === ']' || char === '}') {
+      if (depth === 0) break
+      depth -= 1
+    }
+    if (depth === 0 && (char === ',' || char === '\n')) break
+  }
+  return code.slice(at, index).trim()
+}
+
+/** specTextValues is every text-carrying property of `skewNoticeSpec`, as source
+ * text, in file order. The function's body is the whole of the reach: a
+ * `reason:` in a refusal type elsewhere in the file is not a string handed to
+ * the card. */
+function specTextValues(source: string): readonly string[] {
+  const code = blankComments(source)
+  const out: string[] = []
+  for (const match of code.matchAll(SPEC_TEXT_PROPERTY)) {
+    if (!within(code, 'skewNoticeSpec', match.index)) continue
+    out.push(valueAt(code, match.index + match[0].length))
+  }
+  return out
+}
+
+/** allowedSpecText is whether a spec's text is the console's own by syntax: a
+ * string literal, a constant, a row of one of `SPEC_TEXT_TABLES` (named, because
+ * the name is the whole claim -- the table is the console's and its keys are a
+ * closed union), one of `SPEC_TEXT_CALLS`, or an identifier this file binds to
+ * one of them. Anything else -- a version line, a raw argv, a document field, a
+ * table a document filled -- is a string that came from outside. */
+function allowedSpecText(value: string, source: string): boolean {
+  if (STRING_LITERAL.test(value) || CONSTANT.test(value)) return true
+  const table = /^([A-Z][A-Z0-9_]*)\[[^\]]*\]$/.exec(value)
+  if (table !== null && SPEC_TEXT_TABLES.includes(table[1] ?? '')) return true
+  if (new RegExp(`^(?:${SPEC_TEXT_CALLS.join('|')})\\([^)]*\\)$`).test(value)) return true
+  const code = blankComments(source)
+  return new RegExp(`^[ \\t]*(?:const|let)\\s+${value}\\s*=\\s*(?:${SPEC_TEXT_CALLS.join('|')})\\(`, 'm').test(code)
+}
+
+describe('the shared drawers are held to the same rules', () => {
   const source = readFileSync(join(SCREENS, SHARED_DRAWER), 'utf8')
+  const skew = readFileSync(join(SCREENS, SKEW_MODULE), 'utf8')
 
   it('hands literal no document-controlled argument and writes no text slot outside it', () => {
     // The same scan, the same vocabulary rules, the same refusal of every
-    // bypass spelling -- over `src/shared/version.ts`, which Task 3.2 added as
-    // the file that draws the version skew banner and the refusal screen.
+    // bypass spelling -- over `src/shared/notice.ts`, the card both the reduced
+    // banner and the refusal screen are drawn through (Task 3.2, design section
+    // 2.14).
     expect(offences(SHARED_DRAWER, source)).toEqual([])
   })
 
@@ -1101,24 +1242,66 @@ describe('the shared drawer that draws is held to the same rules', () => {
     // under another name, and the five spellings the review of Task 2.3 named.
     const before = offences(SHARED_DRAWER, source).length
     const mutants: Record<string, string> = {
-      argument: `${source}\nfunction m1(p: SkewElement, line: string) {\n  literal(p, line)\n}\n`,
-      textContent: `${source}\nfunction m2(p: SkewElement, line: string) {\n  cell(p, factory, 'span', 'x').textContent = line\n}\n`,
+      argument: `${source}\nfunction m1(p: NoticeElement, line: string) {\n  literal(p, line)\n}\n`,
+      textContent: `${source}\nfunction m2(p: NoticeElement, line: string) {\n  cell(p, factory, 'span', ['x']).textContent = line\n}\n`,
       innerHTML: `${source}\nfunction m3(p: { innerHTML: string }, line: string) {\n  p.innerHTML = line\n}\n`,
-      alias: `${source}\nconst say = literal\nfunction m4(p: SkewElement, line: string) {\n  say(p, line)\n}\n`,
-      setAttribute: `${source}\nfunction m5(p: SkewElement, line: string) {\n  p.setAttribute('data-skew', line)\n}\n`,
+      alias: `${source}\nconst say = literal\nfunction m4(p: NoticeElement, line: string) {\n  say(p, line)\n}\n`,
+      setAttribute: `${source}\nfunction m5(p: NoticeElement, line: string) {\n  p.setAttribute('data-skew', line)\n}\n`,
       title: `${source}\nfunction m6(p: { title: string }, line: string) {\n  p.title = line\n}\n`,
-      computedText: `${source}\nfunction m7(p: SkewElement, line: string) {\n  p['textContent'] = line\n}\n`,
-      computedAttribute: `${source}\nfunction m8(p: SkewElement, line: string) {\n  p['setAttribute']('data-skew', line)\n}\n`,
-      optionalAttribute: `${source}\nfunction m9(p: SkewElement, line: string) {\n  p.setAttribute?.('data-skew', line)\n}\n`,
-      assignedAttribute: `${source}\nfunction m10(p: SkewElement, line: string) {\n  const write = p.setAttribute\n  write.call(p, 'data-skew', line)\n}\n`,
-      objectAssign: `${source}\nfunction m11(p: SkewElement, line: string) {\n  Object.assign(p, { textContent: line })\n}\n`,
-      reflectSet: `${source}\nfunction m12(p: SkewElement, line: string) {\n  Reflect.set(p, 'textContent', line)\n}\n`,
-      defineProperty: `${source}\nfunction m13(p: SkewElement, line: string) {\n  Object.defineProperty(p, 'textContent', { value: line })\n}\n`,
+      computedText: `${source}\nfunction m7(p: NoticeElement, line: string) {\n  p['textContent'] = line\n}\n`,
+      computedAttribute: `${source}\nfunction m8(p: NoticeElement, line: string) {\n  p['setAttribute']('data-skew', line)\n}\n`,
+      optionalAttribute: `${source}\nfunction m9(p: NoticeElement, line: string) {\n  p.setAttribute?.('data-skew', line)\n}\n`,
+      assignedAttribute: `${source}\nfunction m10(p: NoticeElement, line: string) {\n  const write = p.setAttribute\n  write.call(p, 'data-skew', line)\n}\n`,
+      objectAssign: `${source}\nfunction m11(p: NoticeElement, line: string) {\n  Object.assign(p, { textContent: line })\n}\n`,
+      reflectSet: `${source}\nfunction m12(p: NoticeElement, line: string) {\n  Reflect.set(p, 'textContent', line)\n}\n`,
+      defineProperty: `${source}\nfunction m13(p: NoticeElement, line: string) {\n  Object.defineProperty(p, 'textContent', { value: line })\n}\n`,
     }
     const missed = Object.entries(mutants)
       .filter(([, mutant]) => offences(SHARED_DRAWER, mutant).length <= before)
       .map(([name]) => name)
     expect(missed, 'mutants the scan let through').toEqual([])
+  })
+
+  it('composes the skew notice\'s text and writes no text slot of its own', () => {
+    // `src/shared/version.ts` no longer writes a text slot: it hands the card a
+    // spec, and the card writes it. That moves the whole question one step back
+    // -- a raw version line passed as a `text` would reach `literal` through a
+    // parameter the scan over sinks cannot see -- so the composition is held to
+    // the rule here, where the text is chosen.
+    expect(offences(SKEW_MODULE, skew)).toEqual([])
+    expect(sinkCalls(skew), 'the skew module writes a text slot itself').toHaveLength(0)
+    const values = specTextValues(skew)
+    expect(values.length, 'the spec-text scan read no text at all').toBeGreaterThan(5)
+    expect(values.filter((value) => !allowedSpecText(value, skew))).toEqual([])
+  })
+
+  it('fails on a string from outside handed to the card (MUTATION)', () => {
+    // The four shapes the composition rule exists for: the version line the
+    // binary printed, a line the reader echoed, a document field, and a table a
+    // document filled -- which has the shape of the console's own tables
+    // (`HIDDEN_VIEW_WORDS[view]`) and is refused because its name is not one of
+    // `SPEC_TEXT_TABLES`. Each is injected **inside** `skewNoticeSpec`, because
+    // outside it there is no spec.
+    const anchor = '  const details: NoticeDetail[] = ['
+    expect(skew, 'the mutant would land outside skewNoticeSpec').toContain(anchor)
+    const mutants: Record<string, string> = {
+      version: skew.replace(anchor, `  const leaked: NoticeDetail = { label: rawLabel, text: rawLine }\n${anchor}`),
+      title: skew.replace(anchor, `  const leakedTitle = { label: rawLabel, title: rawTitle }\n${anchor}`),
+      reason: skew.replace(anchor, `  const leakedReason = { label: rawLabel, reason: rawReason }\n${anchor}`),
+      // The label is a literal so that the only thing this mutant can be caught
+      // by is the table's name: `[A-Z][A-Z0-9_]*[...]` alone would have let it
+      // through, and the row it selects is whatever the document wrote.
+      table: skew.replace(anchor, `  const leakedRow = { label: 'x', text: WORDS_BY_RUN[row.key] }\n${anchor}`),
+    }
+    const missed = Object.entries(mutants)
+      .filter(([, mutant]) => specTextValues(mutant).every((value) => allowedSpecText(value, mutant)))
+      .map(([name]) => name)
+    expect(missed, 'mutants the spec-text scan let through').toEqual([])
+    // And the mutant is read as *more* text than the file has, so a scan that
+    // stopped reading when it hit the injection cannot pass this case.
+    for (const mutant of Object.values(mutants)) {
+      expect(specTextValues(mutant).length).toBeGreaterThan(specTextValues(skew).length)
+    }
   })
 })
 

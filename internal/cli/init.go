@@ -39,6 +39,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -397,7 +398,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	covers := "a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it)"
 	never := "creating a project, linking a billing account, the Firestore database's location, or a secret value"
 	if d.takes("forget") {
-		covers = "the Firestore database's location, " + covers
+		// update is also the door that runs the checkout's own steps, whose
+		// cloud half is the image refresh: every one of its billable builds —
+		// a rebuild of the workflow images this checkout already has — is
+		// asked for by itself, and --yes answers each of them, the same
+		// answer the door gives a repository's first build
+		// (internal/cli/image_refresh_steps.go, askBuild).
+		covers = "the Firestore database's location, a rebuild of the checkout's workflow images, " + covers
 		// The location is one of this door's covered steps, so it is not in
 		// this door's never list; the two that cannot arise here at all are
 		// still true of --yes wherever they can (they are the other door's
@@ -3115,6 +3122,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// git.author is the same kind of break on gitAuthorSince, in the
+	// repository's own file alone: the key is InRepo, so no layer can carry
+	// it.
+	if err := r.gateGitAuthor(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -3203,6 +3216,28 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	r.res.Outputs = &outs
 	in.Installation = outs
+	// The published node, read through the operator's own credentials. It is
+	// the one source of whether this repository is proxied (G15), so it is
+	// what the spec's bitbucket_proxied fact is read from, and what a local
+	// project_secrets entry that disagrees with it is refused against
+	// (internal/infra's resolveBitbucketProxied). Read here because
+	// internal/infra holds no client that could read it and Repo is a pure
+	// function of its Inputs.
+	//
+	// It is the same read planRepo makes for Readiness's D11 gate, and it is
+	// memoized, so this moves that read earlier rather than adding one. A
+	// read that FAILS is left to planRepo, which stops the run on the same
+	// error: this side passes nothing then, and passing nothing is the one
+	// answer that judges no entry — never an empty node, which would read a
+	// node the operator cannot reach as "nothing is proxied" and refuse their
+	// entry over it.
+	//
+	// None of it is conditioned on --plan-only: a disagreement is a
+	// contradiction in the configuration, not a change to make, and a plan
+	// that cannot be applied is not a plan — so the refusal lands before the
+	// plan is written, in every mode.
+	p, found, err := r.policy.read(ctx, lc)
+	in.Policy = repoPolicyInput(lc, p, found, err)
 	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {
 		return err
 	}
@@ -3513,6 +3548,25 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
 }
 
+// gateGitAuthor is fugaro update --repo's gate for gitAuthorSince:
+// refuseGitAuthorSkew, with gateRigor's escapes and for its reason. The
+// repository's half is the key being written (RepoGitAuthorSet) rather than the
+// value it holds: a runner older than gitAuthorSince refuses git.author
+// whatever it says, so git.author: fugaro and an explicit null are deployed by
+// a value test and die at bootstrap. And it is only ever the repository's half:
+// config.Scopes gives git.author InRepo alone, so a layer that wrote it was
+// refused for being out of scope long before this.
+func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseGitAuthorSkew(repo, cfg.RepoGitAuthorSet, lc.BaseImage(config.BaseKind), w)
+}
+
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
 // in enforce mode. observe and off are allowed.
@@ -3596,6 +3650,24 @@ func checkoutURL(ctx context.Context, root string) (string, error) {
 		return "", userErr("origin %s has no https form to clone from", gcp.RedactURL(u))
 	}
 	return u, nil
+}
+
+// repoPolicyInput is infra.Inputs.Policy from the memoized node read: nil when
+// no node was read — the read failed, or the config names no database address
+// for projectPolicyRead to read (which answers not-found then, the same as a
+// project that published nothing) — and an empty node when the read succeeded
+// and the project has published no policy. Only the second refuses a local
+// entry that proxies a repository the node does not admit: an operator whose
+// config has lost budget.rtdb_url has read no node, and the node they cannot
+// reach must not be taken for one that proxies nothing.
+func repoPolicyInput(lc *localcfg.Config, p *projectpolicy.Policy, found bool, err error) *projectpolicy.Policy {
+	switch {
+	case err != nil, lc.Budget == nil || lc.Budget.RTDBURL == "":
+		return nil
+	case !found:
+		return &projectpolicy.Policy{}
+	}
+	return p
 }
 
 // installationOutputs reads the installation root's outputs from its

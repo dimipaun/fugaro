@@ -4,15 +4,23 @@ package image
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"text/template"
 
+	"github.com/bmatcuk/doublestar/v4"
+	"gopkg.in/yaml.v3"
+
 	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
 // RenderInput is what the derived-image template is rendered from.
@@ -24,16 +32,58 @@ type RenderInput struct {
 	Mise     bool           // install the checkout's mise config and image.tools
 	Secrets  []string       // workflow secret variables, mounted into the warm-up and setup steps
 	Version  string         // fugaro version, for the header
+	// KeyFiles are the repository paths the dependency install reads — the
+	// root mise config, its lockfile, the workflow's key files and the paths
+	// image.key_files names, all four out of imagecheck.KeyFiles, the
+	// manifests the workspace members write, and the registry configuration —
+	// which the key-file layer checks out at FUGARO_COMMIT, before the source
+	// layer. Dockerfile fills them in from the checkout; an empty list is a
+	// checkout with nothing to check out early.
+	KeyFiles []string
 }
 
 var derived = template.Must(template.New("Dockerfile").
 	Funcs(template.FuncMap{"join": strings.Join}).
 	Parse(images.DerivedTemplate))
 
+// maxKeyFilesPerEntry bounds how many names one entry of the key-file layer
+// may contribute to the Dockerfile. Each name is one word of one RUN line, and
+// the directories this layer reads hold a handful of files in a real
+// repository — a Yarn build, a few plugins, the patches a Yarn Berry checkout
+// applies — so 256 is far above any of them, while the layer stays bounded:
+// the expansion of a committed directory is otherwise a number the
+// repository's own file count chooses, not one this render does. A directory
+// past the cap needs a workflow that renders its own Dockerfile instead
+// (docs/base-image.md, "The key-file layer").
+const maxKeyFilesPerEntry = 256
+
+// usableKeyFileName reports whether a name of the key-file layer can be
+// written into the Dockerfile as itself. Those names come out of the
+// repository's own tree — a glob match, the files under a directory entry — so
+// a committed name is input, not a name this render chose, and a newline or a
+// carriage return in one would end the checkout RUN instruction: the rest of
+// the name would then be read as a Dockerfile instruction of its own.
+// Everything else is safe here. shellWords single-quotes each word and escapes
+// a quote inside one, and the checkout is a literal pathspec, so a quote, a
+// backslash or a glob character reaches git as the character the name holds.
+func usableKeyFileName(name string) bool {
+	for i := 0; i < len(name); i++ {
+		if b := name[i]; b < 0x20 || b == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // Render renders images/derived/Dockerfile.tmpl for one workflow.
 func Render(in RenderInput) ([]byte, error) {
 	if in.Image.Node != "" {
 		return nil, fmt.Errorf("image.node was removed in 0.7.0 (%s)", config.MigrationDoc)
+	}
+	for _, name := range in.KeyFiles {
+		if !usableKeyFileName(name) {
+			return nil, fmt.Errorf("key file %q holds a control character, which would end the Dockerfile's checkout RUN and start an instruction of its own; rename it in the repository", name)
+		}
 	}
 	for i, step := range in.Image.Setup {
 		if t := strings.TrimSpace(step); strings.HasPrefix(t, "-") || strings.HasPrefix(t, "[") {
@@ -44,7 +94,9 @@ func Render(in RenderInput) ([]byte, error) {
 		RenderInput
 		WarmUp, WarmUpFor, SecretMounts, SecretEnv string
 		ToolLines                                  []string
+		ShellKeyFiles                              string
 	}{RenderInput: in}
+	data.ShellKeyFiles = shellWords(in.KeyFiles)
 	if in.PM != nil {
 		data.WarmUp, data.WarmUpFor = in.PM.WarmUp(in.Image.SkipBuildScripts), in.PM.Lockfile
 	}
@@ -113,6 +165,204 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 		return nil, "", fmt.Errorf("workflows.%s: reading the mise config: %w", name, err)
 	}
 	in.Mise = len(files) > 0 || len(w.Image.Tools) > 0
+	in.KeyFiles = files
+	// mise reads its lockfile when the checkout has one, and it pins what
+	// mise installs: MiseConfigFiles leaves it out (it declares no tool, and
+	// the image config hash covers it separately), so it is added here.
+	if hasRegular(root, config.MiseLockfile) {
+		in.KeyFiles = append(in.KeyFiles, config.MiseLockfile)
+	}
+	// package.json is what the warm-up was chosen from and what every Node
+	// install reads: npm ci refuses a checkout whose lock file has no
+	// package.json beside it ("lock file's app@1.0.0 does not satisfy
+	// app@"), and pnpm and yarn read the dependency specs and the workspace
+	// list from it. The key files alone do not carry it (a Node workflow with
+	// no cache: is keyed by its lockfile only), so the install that reads it
+	// above the source layer would otherwise have nothing to read.
+	if in.PM != nil {
+		in.KeyFiles = append(in.KeyFiles, "package.json")
+		// Every package manager's install reads each workspace member's
+		// manifest to link the workspace and to check the lockfile against it,
+		// and pnpm reads the workspace definition itself, so a monorepo's
+		// install above the source layer needs them. No other file of a
+		// workspace member is read.
+		members, err := workspaceManifests(root)
+		if err != nil {
+			return nil, "", fmt.Errorf("workflows.%s: %w", name, err)
+		}
+		in.KeyFiles = append(in.KeyFiles, members...)
+		if hasRegular(root, "pnpm-workspace.yaml") {
+			in.KeyFiles = append(in.KeyFiles, "pnpm-workspace.yaml")
+		}
+	}
+	if (in.PM != nil || in.Mise) && hasRegular(root, ".npmrc") {
+		// npm reads .npmrc for the registry and its credentials, and mise's
+		// npm backend reads it too, so a private dependency or a private
+		// `npm:` tool fails to install without it above the source layer. The
+		// workflow's secret is exported into the step that reads it; the file
+		// holds only the reference to it.
+		in.KeyFiles = append(in.KeyFiles, ".npmrc")
+	}
+	if in.PM != nil && in.PM.Name == "yarn" && in.PM.Berry {
+		// Yarn Berry reads .yarnrc.yml, and it decided the cache mode above.
+		in.KeyFiles = append(in.KeyFiles, ".yarnrc.yml")
+	}
+	keys, err := imagecheck.KeyFiles(cfg, name, imagecheck.Dir{Root: root})
+	if err != nil {
+		return nil, "", fmt.Errorf("workflows.%s: %w", name, err)
+	}
+	in.KeyFiles = append(in.KeyFiles, slices.Sorted(maps.Keys(keys))...)
+	slices.Sort(in.KeyFiles)
+	in.KeyFiles = slices.Compact(in.KeyFiles)
+	if err := checkKeyFileExpansion(w.Image, in.KeyFiles); err != nil {
+		return nil, "", err
+	}
 	data, err = Render(in)
 	return data, "", err
+}
+
+// checkKeyFileExpansion refuses an entry of the key-file layer that reaches
+// the Dockerfile as more than maxKeyFilesPerEntry names: the workflow's
+// image.key_files entries and the built-in paths a dependency install reads
+// (imagecheck.NodeInstallPaths, three .yarn directories among them), each of
+// which the layer expands into the files under it. It counts the layer's own
+// names rather than globbing the checkout a second time: what has to stay
+// bounded is the Dockerfile, and a name counts under its entry whether the
+// entry or a cache: glob of the workflow put it in the layer.
+func checkKeyFileExpansion(img config.Image, layer []string) error {
+	for i, entry := range img.KeyFiles {
+		if err := capKeyFileEntry(layer, entry, fmt.Sprintf("image.key_files[%d]", i)); err != nil {
+			return err
+		}
+	}
+	for _, entry := range imagecheck.NodeInstallPaths {
+		if err := capKeyFileEntry(layer, entry, entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// capKeyFileEntry refuses entry when the layer holds more than
+// maxKeyFilesPerEntry names at or under it. name is how the refusal names the
+// entry — the config path of an image.key_files entry, or the path of a
+// built-in one — and both forms are safe to print: config refuses an entry
+// holding a control character, and the built-ins are this package's own
+// constants.
+func capKeyFileEntry(layer []string, entry, name string) error {
+	n := 0
+	for _, f := range layer {
+		if f == entry || strings.HasPrefix(f, entry+"/") {
+			n++
+		}
+	}
+	if n > maxKeyFilesPerEntry {
+		return fmt.Errorf("%s expands to %d key files, more than the %d one entry may contribute to the image; a workflow whose directory is larger renders its own Dockerfile (docs/base-image.md)", name, n, maxKeyFilesPerEntry)
+	}
+	return nil
+}
+
+// hasRegular reports whether the checkout has a regular file at rel, the test
+// every optional key file passes: a directory or a symlink is not a key file,
+// and the key-file layer would either skip it or check out the wrong thing.
+func hasRegular(root, rel string) bool {
+	fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// workspaceManifests returns the manifest paths of the members a Node
+// workspace declares at its root, as <dir>/package.json: every glob in
+// pnpm-workspace.yaml's packages: list and in package.json's workspaces. A
+// glob is a directory or a manifest path, and one pnpm writes as !glob
+// removes what the globs before it matched.
+func workspaceManifests(root string) ([]string, error) {
+	globs, err := workspaceGlobs(root)
+	if err != nil {
+		return nil, err
+	}
+	keep := map[string]bool{}
+	for _, g := range globs {
+		pattern := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(g), "/"), "!")
+		if pattern == "" {
+			continue
+		}
+		if !strings.HasSuffix(pattern, "package.json") {
+			pattern += "/package.json"
+		}
+		matches, err := doublestar.Glob(os.DirFS(root), pattern, doublestar.WithFilesOnly(), doublestar.WithNoFollow())
+		if err != nil {
+			return nil, fmt.Errorf("workspace %q: %w", g, err)
+		}
+		for _, m := range matches {
+			keep[m] = !strings.HasPrefix(strings.TrimSpace(g), "!")
+		}
+	}
+	var out []string
+	for path, in := range keep {
+		if in {
+			out = append(out, path)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// workspaceGlobs reads the two places a repository declares its workspace
+// members. pnpm-workspace.yaml is read as YAML and package.json as JSON, as
+// each tool writes them; a workspaces field of a shape neither npm nor Yarn
+// writes contributes nothing rather than failing the render, since neither
+// tool would read it either.
+func workspaceGlobs(root string) ([]string, error) {
+	var globs []string
+	switch data, err := config.ReadRegular(filepath.Join(root, "package.json"), config.MaxCheckoutFile); {
+	case err == nil:
+		var pkg struct {
+			Workspaces json.RawMessage `json:"workspaces"`
+		}
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			return nil, fmt.Errorf("package.json: %w", err)
+		}
+		globs = append(globs, workspacesField(pkg.Workspaces)...)
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("package.json: %w", err)
+	}
+	switch data, err := config.ReadRegular(filepath.Join(root, "pnpm-workspace.yaml"), config.MaxCheckoutFile); {
+	case err == nil:
+		var doc struct {
+			Packages []string `yaml:"packages"`
+		}
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
+		}
+		globs = append(globs, doc.Packages...)
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
+	}
+	return globs, nil
+}
+
+// workspacesField reads package.json's workspaces: npm and Yarn write a list,
+// and npm also writes {"packages": [...]}.
+func workspacesField(raw json.RawMessage) []string {
+	var list []string
+	if err := json.Unmarshal(raw, &list); err == nil {
+		return list
+	}
+	var obj struct {
+		Packages []string `json:"packages"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return obj.Packages
+	}
+	return nil
+}
+
+// shellWords renders each word as one single-quoted sh word, so a path with
+// a space or a quote reaches git as itself.
+func shellWords(words []string) string {
+	out := make([]string, len(words))
+	for i, w := range words {
+		out[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+	}
+	return strings.Join(out, " ")
 }

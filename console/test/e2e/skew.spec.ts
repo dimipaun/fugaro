@@ -50,6 +50,7 @@ import {
   CLI_HARD_FLOOR_VERSION,
   CLI_VERSION_BUILT_AGAINST,
   HIDDEN_VIEW_WORDS,
+  NOTICE_REASONS,
   REDUCED_VIEWS,
   SKEW_HEADLINES,
   SUPPORTED_CLI_MINORS,
@@ -58,6 +59,7 @@ import {
   hidesView,
   skewSentence,
 } from '../../src/shared/version'
+import { NOTICE_SHOW_DETAILS } from '../../src/shared/notice'
 import { githubToken } from '../support/fakeSecrets'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
@@ -78,6 +80,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/launcher.js',
   'shared/rigor.js',
   'shared/schema.js',
+  'shared/notice.js',
   'shared/version.js',
   'renderer/app.js',
   'renderer/writes.js',
@@ -183,7 +186,7 @@ function drawSkew(line: string, theme: string): string {
   return bundle(`
 var version = load('/shared/version.js');
 var compatibility = version.classifyCliVersion(${JSON.stringify(line)});
-mount(version.renderVersionSkew(domFactory(), compatibility, ${JSON.stringify(theme)}));
+mount(version.renderVersionSkew(domFactory(), compatibility, ${JSON.stringify(theme)}).root);
 return {
   mode: compatibility.mode,
   skew: compatibility.skew,
@@ -232,6 +235,12 @@ interface Drawn {
   readonly skew: string | null
   readonly theme: string | null
   readonly headline: string | null
+  readonly headlineTag: string | null
+  readonly reason: string | null
+  readonly toggle: string | null
+  readonly folded: boolean | null
+  readonly dismissals: number
+  readonly facts: readonly string[]
   readonly sentence: string | null
   readonly consoleVersion: string | null
   readonly cliVersion: string | null
@@ -258,11 +267,21 @@ function drawn(page: Page): Promise<Drawn> {
     const all = (selector: string): HTMLElement[] =>
       Array.from(scope.querySelectorAll<HTMLElement>(selector))
     const root = scope.querySelector('#console-mount > section')
+    const headline = scope.querySelector('.skew-headline')
+    const details = scope.querySelector('.notice-details')
     return {
       mode: root?.getAttribute('data-mode') ?? null,
       skew: root?.getAttribute('data-skew') ?? null,
       theme: root?.getAttribute('data-theme') ?? null,
-      headline: scope.querySelector('.skew-headline')?.textContent ?? null,
+      headline: headline?.textContent ?? null,
+      headlineTag: headline?.tagName.toLowerCase() ?? null,
+      reason: scope.querySelector('.notice-reason')?.textContent ?? null,
+      toggle: scope.querySelector('.notice-toggle')?.textContent ?? null,
+      // The disclosure's state is the region's `hidden` attribute and not a
+      // class (design section 2.14), so it is read as one.
+      folded: details === null ? null : details.hasAttribute('hidden'),
+      dismissals: all('.notice-dismiss').length,
+      facts: all('.notice-facts dt').map((one) => one.textContent ?? ''),
       sentence: scope.querySelector('.skew-sentence')?.textContent ?? null,
       consoleVersion: scope.querySelector('.skew-console-version')?.textContent ?? null,
       cliVersion: scope.querySelector('.skew-cli-version')?.textContent ?? null,
@@ -395,8 +414,7 @@ test.describe('the version skew handshake', () => {
     expect(screen.skew).toBe('supported')
     expect(screen.theme).toBe('light')
     // The console's own version, and the range it is a claim about: the banner
-    // names both versions, and the range is the design's "the minor it was built
-    // against, plus the previous one".
+    // names both versions, and the set of minors it has read.
     expect(screen.consoleVersion).toBe(CLI_VERSION_BUILT_AGAINST)
     expect(result['consoleVersion']).toBe(CLI_VERSION_BUILT_AGAINST)
     expect(screen.sentence).toContain(CLI_VERSION_BUILT_AGAINST)
@@ -406,6 +424,10 @@ test.describe('the version skew handshake', () => {
     expect(screen.cliVersion).toBe(CLI_VERSION_BUILT_AGAINST)
     expect(screen.hidden).toEqual([])
     expect(screen.headline).toBe(SKEW_HEADLINES.ok)
+    // A supported console has nothing to put away: the dismissal exists only
+    // where there is a fact a reader may already have read (design section
+    // 2.14), and the entry does not mount this notice at all in this mode.
+    expect(screen.dismissals).toBe(0)
   })
 
   test('draws the banner, naming both versions, for a CLI below the range', async () => {
@@ -425,25 +447,53 @@ test.describe('the version skew handshake', () => {
     expect(screen.sentence).toContain(SUPPORTED_CLI_MINORS.join(', '))
   })
 
-  test('draws the banner for a CLI above the range too, and offers the console the update', async () => {
-    // The other direction of the same rule: a newer CLI is not "supported" just
-    // because it is newer, and the fix is the console's, not the CLI's.
-    const result = await mount(drawSkew('0.9.0\n', 'dark'))
+  test('draws no banner for a CLI above the set, and says the console is the older one', async () => {
+    // The owner's ruling of 2026-10-30: a newer plain release is read with the
+    // fields this console knows, so it is not a reduced mode; the fix it names
+    // is the console's update, never the CLI's upgrade.
+    const result = await mount(drawSkew('0.14.0\n', 'dark'))
     const screen = await drawn(page)
 
-    expect(screen.mode).toBe('reduced')
+    expect(result['mode']).toBe('ok')
+    expect(screen.mode).toBe('ok')
     expect(screen.skew).toBe('newer')
     expect(screen.theme).toBe('dark')
-    expect(screen.cliVersion).toBe('0.9.0')
+    expect(screen.cliVersion).toBe('0.14.0')
+    expect(screen.hidden).toEqual([])
+    expect(screen.sentence).toContain('older than the fugaro it is driving')
     expect(screen.sentence).toContain('update the console')
-    // Not the CLI's upgrade command: telling the operator to upgrade a fugaro
-    // that is *newer* than the console would be advice that breaks the console.
     expect(screen.sentence).not.toContain('brew upgrade')
+  })
+
+  test('draws the banner for a line that is not a plain release, however new', async () => {
+    const result = await mount(drawSkew('0.14.0-rc.1\n', 'dark'))
+    const screen = await drawn(page)
+
+    expect(result['mode']).toBe('reduced')
+    expect(screen.mode).toBe('reduced')
+    expect(screen.skew).toBe('irregular')
+    expect(screen.cliVersion).toBe('0.14.0-rc.1')
+    expect(screen.sentence).toContain('not a plain release number')
+    expect(screen.hidden).toEqual([...REDUCED_VIEWS])
   })
 
   test('the reduced mode hides the views it cannot support, and draws no figure', async () => {
     await mount(drawSkew('0.9.0\n', 'light'))
     const screen = await drawn(page)
+
+    // The card: one plain reason in the console's voice, the technical text
+    // folded behind a button, and a dismissal (design section 2.14).
+    expect(screen.headlineTag).toBe('h2')
+    expect(screen.reason).toBe(NOTICE_REASONS.older)
+    expect(screen.toggle).toBe(NOTICE_SHOW_DETAILS)
+    expect(screen.folded).toBe(true)
+    expect(screen.dismissals).toBe(1)
+    expect(screen.facts).toEqual([
+      'what happened',
+      'this console reads',
+      'the fugaro it is driving reports',
+      'withheld',
+    ])
 
     // Named, one by one, so a mutation to the withheld list fails a test that
     // says which view leaked.
@@ -459,11 +509,13 @@ test.describe('the version skew handshake', () => {
 
     // And the screen really is not a dashboard: no money, no cap bars, no
     // kill affordance, no link to click. The figures a reduced console refuses
-    // to draw are exactly the ones this asserts are absent.
+    // to draw are exactly the ones this asserts are absent. The two buttons are
+    // the card's own -- its disclosure and its dismissal -- and a third one
+    // would be an affordance of the dashboard the mode withholds.
     expect(screen.liveRoots).toBe(0)
     expect(screen.burnBars).toBe(0)
     expect(screen.caps).toBe(0)
-    expect(screen.buttons).toBe(0)
+    expect(screen.buttons).toBe(2)
     expect(screen.anchors).toBe(0)
     expect(screen.text).not.toContain('$')
   })
@@ -483,6 +535,15 @@ test.describe('the version skew handshake', () => {
     // own words for how it is installed (`internal/updatecheck`'s `BrewCommand`).
     expect(screen.sentence).toContain(CLI_HARD_FLOOR_VERSION)
     expect(screen.sentence).toContain('brew upgrade dimipaun/tap/fugaro')
+    // The refusal is the whole document, so its title is the document's one
+    // `h1`, and its facts are drawn open: there is no dashboard to open them
+    // from, and the range and the version line are what the operator acts on
+    // (design section 2.14).
+    expect(screen.headlineTag).toBe('h1')
+    expect(screen.reason).toBe(NOTICE_REASONS['below-floor'])
+    expect(screen.toggle).toBeNull()
+    expect(screen.folded).toBe(false)
+    expect(screen.dismissals).toBe(0)
 
     // No dashboard: not one root, not one bar, not one cap, and nothing to
     // click. `main/window.ts` is the half that makes this structural -- below the

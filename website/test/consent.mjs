@@ -69,16 +69,20 @@ import {
   REPO,
   SITE,
   builtPages,
+  cssDeclarations,
+  cssRules,
   filesUnder,
   find,
   findAll,
   parse,
+  servedFile,
   siteFacts,
   textOf,
   tokenize,
   walk,
 } from './lib/html.mjs'
 import { copyRepository } from './lib/build.mjs'
+import { controlTargetFailures } from './lib/controls.mjs'
 import { loadLanding } from '../src/lib/landing.mjs'
 
 // ---- the facts of the gate ---------------------------------------------------------------
@@ -106,11 +110,12 @@ const CAMPAIGN_ORIGINS = [CAMPAIGN.metaOrigin, CAMPAIGN.linkedinOrigin, CAMPAIGN
 // `/save/` — which is also the spelling the gate's path check has to read.
 const CAMPAIGN_PAGE = 'save/index.html'
 const CAMPAIGN_PATH = '/save/'
-// The two vendor ids the owner has not supplied. `site.yaml` ships them empty — the loader
-// switched off — so the cases that watch the pixel and the insight tag load plant plainly fake
-// values into the built page's banner rather than relying on a configuration that is not there.
+// The pixel id the cases below plant into a built page's banner, because it is the one value
+// the owner has not supplied: `site.yaml` carries it empty, which is the loader switched off,
+// so a case that watches the pixel load has to put a value there itself. The partner id needs
+// no planting — the owner supplied it (2026-10-31) and the built page carries it — and the
+// cases that read it are the shipped-state and withdrawal cases, on the page as served.
 const META_ID = 'TESTMETA0001'
-const LINKEDIN_ID = 'TESTPARTNER'
 // The consent banner's early decision (the owner's ruling of 2026-10-23, the redesign's Step 3:
 // JavaScript allowed, same-origin only; the banner must not cover the first screen's content).
 // A page that renders the banner loads it after the site's one script; it is a first-party file
@@ -1334,21 +1339,22 @@ function campaignRequests(page) {
 }
 
 /**
- * A built campaign page with the two vendor ids planted in its banner, because `site.yaml`
- * ships them empty and an empty id is the loader switched off. Nothing else about the page
- * changes: the origins, the booking link and the path are the ones the build wrote.
+ * A built campaign page with the pixel's id planted in its banner, because `site.yaml` ships
+ * that one empty and an empty id is the loader switched off. The partner id is not planted:
+ * the owner supplied it (2026-10-31), the built banner already carries it, and planting a
+ * second value would be a case watching a configuration the site does not have. Nothing else
+ * about the page changes: the origins, the booking link and the path are the ones the build
+ * wrote.
  */
-function withVendorIds(html) {
-  const planted = html
-    .replace('data-meta-pixel-id ', `data-meta-pixel-id="${META_ID}" `)
-    .replace('data-linkedin-partner-id ', `data-linkedin-partner-id="${LINKEDIN_ID}" `)
+function withPixelId(html) {
+  const planted = html.replace('data-meta-pixel-id ', `data-meta-pixel-id="${META_ID}" `)
   assert.ok(planted.includes(`data-meta-pixel-id="${META_ID}"`), 'the fixture did not plant the pixel id in the banner, so no case below could watch the pixel load')
-  assert.ok(planted.includes(`data-linkedin-partner-id="${LINKEDIN_ID}"`), 'the fixture did not plant the partner id in the banner, so no case below could watch the insight tag load')
+  assert.ok(/data-linkedin-partner-id="[^"]+"/.test(planted), 'the built campaign page carries no partner id, so no case below could watch the insight tag load')
   return planted
 }
 
-/** The campaign page the cases below run, with both vendor ids in place. */
-const CAMPAIGN_HTML = withVendorIds(pageOf(SHIPPED, CAMPAIGN_PAGE))
+/** The campaign page the cases below run, with the pixel's id in place beside the owner's. */
+const CAMPAIGN_HTML = withPixelId(pageOf(SHIPPED, CAMPAIGN_PAGE))
 
 /**
  * The cookies the campaign withdrawal deletes, read out of the script the site ships rather
@@ -1443,20 +1449,78 @@ test('the marketing grant loads the three vendors on the page they were built fo
   }
 })
 
-test('an empty vendor id is a loader that does not load, which is the state the site ships in', () => {
+test('an empty vendor id is a loader that does not load, which is the pixel\'s state today', () => {
   // No planted ids: the page the site actually serves. The booking widget has no id to need,
-  // so it loads; the pixel and the insight tag are configured but switched off, which is what
-  // the empty `site.yaml` values mean until the owner supplies them (R3).
+  // so it loads; the pixel is configured but switched off, which is what its empty `site.yaml`
+  // value means until the owner supplies one (R3); and the insight tag now loads, because the
+  // owner has supplied its id (ruling of 2026-10-31) — which is the other half of the switch.
   assert.equal(CAMPAIGN.metaPixelID, '', 'site.yaml names a pixel id, so this case is no longer the shipped state')
-  assert.equal(CAMPAIGN.linkedinPartnerID, '', 'site.yaml names a partner id, so this case is no longer the shipped state')
+  assert.notEqual(CAMPAIGN.linkedinPartnerID, '', 'site.yaml carries no partner id, so the shipped page has no insight tag and this case could not tell a switched-off loader from a missing one')
 
   const page = runPage(pageOf(SHIPPED, CAMPAIGN_PAGE), { location: CAMPAIGN_LOCATION })
   page.click('granted')
   assert.deepEqual(
     campaignRequests(page),
-    [`${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`],
-    'with both ids empty the page still asked a vendor for something other than the booking widget',
+    [
+      `${CAMPAIGN.linkedinOrigin}/li.lms-analytics/insight.min.js`,
+      `${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`,
+    ],
+    'with the pixel id empty the page still asked a vendor for something other than the insight tag and the booking widget',
   )
+  assert.ok(!page.window.fbq, 'the page queued a pixel call while `site.yaml` carries no pixel id, so a switched-off loader is not switched off')
+})
+
+test('the shipped page loads the insight tag after consent only, and the withdrawal stops it', () => {
+  // The owner's partner id is in `site.yaml` now (ruling of 2026-10-31), so the two halves the
+  // id was planted for are read off the SHIPPED page instead: nothing of LinkedIn is fetched
+  // before the visitor answers, the insight tag is fetched after a grant — handed the page's
+  // path and no query — and a withdrawal deletes the cookies its script leaves behind, exactly
+  // as it does for the planted ids above.
+  assert.notEqual(CAMPAIGN.linkedinPartnerID, '', 'site.yaml carries no partner id, so the shipped page has no insight tag to watch load')
+  const insight = `${CAMPAIGN.linkedinOrigin}/li.lms-analytics/insight.min.js`
+  const shippedCampaignPage = () => pageOf(SHIPPED, CAMPAIGN_PAGE)
+
+  // Never before the visitor answers: not on a first visit, and not on a visit that carries
+  // the site's own analytics grant from an earlier page (F17).
+  const first = runPage(shippedCampaignPage(), { location: CAMPAIGN_LOCATION })
+  assert.deepEqual(campaignRequests(first), [], 'the shipped campaign page fetched the insight tag before the visitor answered the campaign question')
+  const analyticsOnly = runPage(shippedCampaignPage(), { location: CAMPAIGN_LOCATION, storage: { [CONSENT_KEY]: 'granted' } })
+  assert.deepEqual(campaignRequests(analyticsOnly), [], 'the shipped campaign page fetched the insight tag on an analytics-only consent')
+
+  // After the grant: the insight tag, the booking widget, and nothing of a pixel whose id is
+  // empty — and the address it is handed is the page's path without its query or fragment (F22).
+  const granted = runPage(shippedCampaignPage(), { location: CAMPAIGN_LOCATION })
+  granted.click('granted')
+  assert.deepEqual(
+    campaignRequests(granted),
+    [insight, `${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`],
+    'the shipped page did not load exactly the insight tag and the booking widget after the grant',
+  )
+  assert.deepEqual(
+    (granted.window.lintrk.q ?? []).map((entry) => Array.from(entry)),
+    [['track', { page_location: `https://site.example${CAMPAIGN_PATH}` }]],
+    'the insight tag the shipped id loaded was handed an address other than the page\'s path',
+  )
+  assert.ok(!/leaked/.test(JSON.stringify(granted.window.lintrk.q)), `the insight tag was handed the page's query string or fragment: ${JSON.stringify(granted.window.lintrk.q)}`)
+
+  // The withdrawal: the stored grant loads the tag again, and declining deletes what its
+  // script left in this origin — the LinkedIn cookies the privacy statement prints.
+  const withdrawn = runPage(shippedCampaignPage(), {
+    location: CAMPAIGN_LOCATION,
+    storage: { [MARKETING_CONSENT_KEY]: 'granted' },
+    cookies: [...marketingCookies().map((name) => `${name}=planted; path=/`), '_gate=1; path=/'],
+  })
+  assert.deepEqual(campaignRequests(withdrawn), [insight, `${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`], 'the stored campaign grant did not load the insight tag, so the withdrawal below would prove nothing')
+  withdrawn.click('denied')
+  assert.equal(withdrawn.store[MARKETING_CONSENT_KEY], 'denied', 'withdrawing did not overwrite the stored campaign grant')
+  const left = withdrawn.held()
+  for (const name of marketingCookies()) {
+    assert.ok(!left.includes(name), `${name} survived the withdrawal of the shipped insight tag's consent`)
+  }
+  assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is not one of the two tags\'')
+
+  const next = runPage(shippedCampaignPage(), { location: CAMPAIGN_LOCATION, storage: withdrawn.store })
+  assert.deepEqual(campaignRequests(next), [], 'the withdrawn consent still loaded the insight tag on the next page view')
 })
 
 test('withdrawing the marketing consent stops the three and deletes the cookies the two tags set', () => {
@@ -1555,6 +1619,25 @@ test('a bar that carries the campaign key without the question grants nothing wi
 
 
 
+/**
+ * The CSS a built page ships: its own `<style>` blocks and the first-party stylesheets it links.
+ * The case below reads the consent pair's own rules out of it, rather than trusting a class list
+ * kept here, so a modifier that started changing a size would fail that case.
+ */
+function pageCSS(page) {
+  const out = []
+  for (const el of walk(parse(page.html))) {
+    if (el.name === 'style') out.push(el.raw ?? '')
+    if (el.name === 'link' && /(^|\s)stylesheet(\s|$)/i.test(el.attrs.get('rel') ?? '')) {
+      const href = el.attrs.get('href') ?? ''
+      if (/^[a-z]+:|^\/\//i.test(href)) continue
+      const served = servedFile(DIST, new URL(href, 'https://x/').pathname)
+      if (served) out.push(readFileSync(path.join(DIST, served), 'utf8'))
+    }
+  }
+  return out.join('\n')
+}
+
 test('the banner is labelled, its two choices are equal, and it is reachable by keyboard before the content', () => {
   for (const page of SHIPPED) {
     const doc = parse(page.html)
@@ -1586,13 +1669,16 @@ test('the banner is labelled, its two choices are equal, and it is reachable by 
       assert.ok(text.length > 0, `${page.rel}: a consent choice has no accessible name`)
     }
 
-    // Equal prominence, mechanically: the same element, the same class list, the same
-    // size — nothing marks one of the two as the one to press.
-    assert.equal(
-      controls[0].attrs.get('class'),
-      controls[1].attrs.get('class'),
-      `${page.rel}: the two consent choices are styled differently, so one of them is easier to press than the other`,
-    )
+    // Equal prominence, mechanically. Both choices are drawn by one shared class, and the
+    // stylesheet below is read to hold the two modifiers that tell the primary from the
+    // secondary to paint and nothing else: a modifier that also changed a height, a padding or
+    // a type size would make one of the two the easier one to press, which is the rule.
+    for (const control of controls) {
+      assert.ok(
+        (control.attrs.get('class') ?? '').split(/\s+/).includes('consent-banner__button'),
+        `${page.rel}: a consent choice does not carry the pair's shared class, so nothing gives the two the same box`,
+      )
+    }
     assert.match(textOf(controls[0]).trim(), /accept/i, `${page.rel}: the accepting choice does not say what it accepts`)
     assert.match(textOf(controls[1]).trim(), /decline/i, `${page.rel}: the refusing choice is not named as a refusal`)
 
@@ -1609,50 +1695,106 @@ test('the banner is labelled, its two choices are equal, and it is reachable by 
     const main = order.findIndex((t) => t.name === 'main')
     assert.ok(skip >= 0 && at > skip && main > at, `${page.rel}: the banner is not between the skip link and <main>, so the tab order reaches the page content first`)
   }
+
+  // And the pair's own rules, read once: one unconditional rule draws the box both choices
+  // share — the target height and the padding — and the two modifiers that tell the primary
+  // from the secondary set paint and nothing else. That is the whole of the difference the
+  // owner asked for (the feedback of 2026-10-30: a clean pair, the accept primary and the
+  // decline secondary, both the same size and both always drawn). The box is looked for by
+  // what it declares, not by a class name alone: `:active` and the hover rules are the pair's
+  // too, and a rule that only scales or repaints on a press is not the box.
+  const page = SHIPPED.find((p) => p.html.includes('consent-banner__button'))
+  assert.ok(page, 'no built page carries the consent pair for its rules to be read from')
+  const css = pageCSS(page)
+  const pair = cssRules(css).filter(
+    (rule) => typeof rule.selector === 'string' && rule.selector.includes('.consent-banner__button'),
+  )
+  const box = pair.filter(
+    (rule) =>
+      rule.conditions.length === 0 &&
+      !rule.selector.includes('--') &&
+      cssDeclarations(rule.body).some(([property]) => property === 'min-height') &&
+      cssDeclarations(rule.body).some(([property]) => property === 'padding'),
+  )
+  assert.ok(
+    box.length > 0,
+    `${page.rel}: no rule in force at every width declares both the target height and the padding of the consent pair, so nothing gives the two choices the same box — and no other gate measures the banner's buttons against the target size`,
+  )
+  // The target size itself, read by the same reading the hero's and the caps page's controls
+  // are held to (`lib/controls.mjs`), because this is the only place it is measured at all.
+  assert.deepEqual(
+    controlTargetFailures(css, [['consent-banner__button', "the consent pair's choices"]]),
+    [],
+    `${page.rel}: a consent choice is not the 44 px target the owner's brief measures every control against`,
+  )
+  const PAINT = new Set(['background', 'background-color', 'color', 'border-color', 'box-shadow'])
+  for (const rule of pair.filter((one) => one.selector.includes('.consent-banner__button--'))) {
+    for (const [property] of cssDeclarations(rule.body)) {
+      assert.ok(
+        PAINT.has(property),
+        `${page.rel}: the rule "${rule.selector}" changes ${property}, so the two consent choices are not the same box — the pair may differ in how it is filled and in nothing else, or one of them is the easier one to press`,
+      )
+    }
+  }
 })
 
-test('the banner asks one question about everything the site may load, and no vendor is said to be running', () => {
+test('the banner asks one question about everything the site may load, and names no vendor that is not loaded', () => {
   // The owner's ruling of 2026-10-29, on the finding that the privacy page's bar writes a
   // refusal into `fugaro:marketing-consent` while its words asked about analytics alone: the bar
-  // is worded for measurement as a whole — cookies, Google Analytics, and the pixel, the insight
-  // tag and the booking widget the campaign pages carry — on every page. And the three are named
-  // as things a choice admits, never as things that are running: `site.yaml` ships both ids
-  // empty (R3) and a loader with no id fetches nothing, so "this page measures with Meta" would
-  // be a sentence the artifact does not keep.
+  // is worded for measurement as a whole — cookies, Google Analytics, and the marketing trackers
+  // and the booking widget the campaign pages carry — on every page. The owner's feedback of
+  // 2026-10-30 cut it to two sentences, and left this rule standing: a vendor is NAMED only while
+  // the site is configured to load it, and the rest are described as the class they are.
+  // `site.yaml` ships both vendor ids empty (R3) and a loader with no id fetches nothing, so
+  // naming them would be a sentence the artifact does not keep. The pair is read in both
+  // directions, so supplying an id brings the name back with it.
+  const facts = siteFacts()
+  const campaignVendors = [
+    ['Meta', facts.marketing.metaPixelID],
+    ['LinkedIn', facts.marketing.linkedinPartnerID],
+    ['Calendly', loadLanding().calendlyURL],
+  ]
   for (const page of SHIPPED) {
     const banner = findAll(parse(page.html), (el) => el.attrs.get('id') === 'consent-banner')[0]
     assert.ok(banner, `${page.rel} carries no banner for the wording below to be read from`)
     const text = textOf(banner)
-    for (const named of ['cookies', 'Google Analytics', 'Meta', 'LinkedIn', 'Calendly']) {
+    for (const named of ['cookies', 'Google Analytics']) {
       assert.ok(
         text.includes(named),
         `${page.rel}: the banner does not name ${named}, so a choice made in it does not cover everything the site may load (the owner's ruling of 2026-10-29)`,
       )
     }
+    assert.match(text, /marketing trackers/i, `${page.rel}: the banner no longer describes the campaign pages' measurement, so a choice in it does not cover what those pages load`)
+    for (const [vendor, configured] of campaignVendors) {
+      const names = text.includes(vendor)
+      assert.equal(
+        names,
+        configured.length > 0,
+        configured.length > 0
+          ? `${page.rel}: the banner does not name ${vendor}, which the site is configured to load, so a choice made in it does not cover everything the site may load`
+          : `${page.rel}: the banner names ${vendor}, and nothing in this repository supplies the value that would load it: a loader with no id fetches nothing, and the wording has to stay true while that is so (the owner's feedback of 2026-10-30)`,
+      )
+    }
     assert.match(text, /until you accept/i, `${page.rel}: the banner does not say the load waits for the choice`)
-    assert.match(
-      text,
-      /once it loads/i,
-      `${page.rel}: the banner's sentence about what the vendors set is not conditional: with site.yaml's ids empty none of the three loads, and the wording has to stay true while that is so`,
-    )
   }
 
   // The bar the finding was about. The privacy page is the one page whose bar carries the
   // campaign decision's key without the campaign's configuration (`Base.astro`), so a refusal
   // there writes the campaign answer down as a refusal — taking back a grant given on a campaign
-  // page — and its accept is the analytics question alone. The bar says the first, and the
-  // statement beside it says the second, because a reader who pressed "accept measurement" on
-  // the page that names all four vendors must not be left thinking they agreed to all four.
-  const privacy = pageOf(SHIPPED, 'privacy/index.html')
+  // page — and its accept is the analytics question alone. The bar's two sentences are the same
+  // on every page since the owner's feedback of 2026-10-30, so both claims are made by the
+  // statement beside it, which the bar links: a reader who pressed "Accept all" on the page that
+  // states the campaign question must not be left thinking they agreed to it.
+  const privacy = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
   assert.match(
-    textOf(findAll(parse(privacy), (el) => el.attrs.get('id') === 'consent-banner')[0]),
-    /declining here takes that answer back/i,
-    'the privacy page\'s banner does not say what its refusal covers: that bar carries the campaign decision\'s key and writes it down as a refusal, and the wording has to say so',
+    privacy,
+    /takes the campaign answer back/i,
+    'the privacy statement no longer says what the bar\'s refusal covers: that bar carries the campaign decision\'s key and writes it down as a refusal, and the wording has to say so',
   )
   assert.match(
-    textOf(parse(privacy)),
+    privacy,
     /leaves the campaign question where it stands/i,
-    'the privacy statement no longer says its banner\'s accept is the analytics question alone, so a reader who accepted there could think the three vendors were agreed to',
+    'the privacy statement no longer says the bar\'s accept is the analytics question alone, so a reader who accepted there could think the campaign trackers were agreed to',
   )
 })
 
@@ -1851,17 +1993,35 @@ test("the privacy defaults the page states are the ones the site's script makes"
   )
 })
 
-test('the privacy statement names the campaign pages\' three vendors, as the script and the landing data have them', () => {
+test('the privacy statement names the campaign vendors the site is configured to load, and no others', () => {
   // The page is the claim and this file is the fact (W3.2), and G2.3 adds three claims to it:
-  // which three vendors the four campaign pages may load, which pages those are, and what
-  // withdrawing deletes. Each is held to the artifact that makes it true rather than to a list
-  // kept here, so a vendor, a page or a cookie that moves takes the sentence with it.
+  // which vendors the four campaign pages may load, which pages those are, and what withdrawing
+  // deletes. Each is held to the artifact that makes it true rather than to a list kept here, so
+  // a vendor, a page or a cookie that moves takes the sentence with it — including the two
+  // vendors the owner has not supplied an id for, which the page describes without naming (the
+  // owner's feedback of 2026-10-30).
   const text = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
   const script = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
 
-  for (const vendor of ['Meta', 'LinkedIn', 'Calendly']) {
-    assert.match(text, new RegExp(vendor), `the privacy page does not name ${vendor}, one of the three the campaign pages load (G2.3, D401)`)
+  const facts = siteFacts()
+  // A vendor is named only where the site is configured to load it (the owner's feedback of
+  // 2026-10-30), and both directions are held: the ids `site.yaml` ships empty name nothing, and
+  // a value supplied there is a name the page owes. The ones that are not named are still
+  // covered as a class, which is what the campaign question asks about.
+  for (const [vendor, configured] of [
+    ['Meta', facts.marketing.metaPixelID],
+    ['LinkedIn', facts.marketing.linkedinPartnerID],
+    ['Calendly', loadLanding().calendlyURL],
+  ]) {
+    assert.equal(
+      text.includes(vendor),
+      configured.length > 0,
+      configured.length > 0
+        ? `the privacy page does not name ${vendor}, which the campaign pages are configured to load (G2.3, D401)`
+        : `the privacy page names ${vendor} while nothing supplies the value that would load it: a vendor with no id is not loaded, and the page may not say it is (the owner's feedback of 2026-10-30)`,
+    )
   }
+  assert.match(text, /marketing trackers/i, 'the privacy page describes the campaign pages\' measurement as nothing at all, so a reader cannot tell what their question covers')
   for (const variant of loadLanding().variants) {
     assert.ok(text.includes(variant.path), `the privacy page does not name ${variant.path}, one of the four campaign pages the second question is asked on, so a reader cannot tell where it applies`)
   }

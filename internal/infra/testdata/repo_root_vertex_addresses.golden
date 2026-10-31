@@ -6,7 +6,9 @@ module.repo.google_artifact_registry_repository.images
 module.repo.google_artifact_registry_repository_iam_member.build_base
 module.repo.google_artifact_registry_repository_iam_member.build_ghcr
 module.repo.google_artifact_registry_repository_iam_member.build_images
+module.repo.google_artifact_registry_repository_iam_member.build_shared
 module.repo.google_artifact_registry_repository_iam_member.build_tag_mover
+module.repo.google_artifact_registry_repository_iam_member.job_shared["web"]
 module.repo.google_artifact_registry_repository_iam_member.operator_images["user:operator@example.com"]
 module.repo.google_cloud_run_v2_job.check[0]
 module.repo.google_cloud_run_v2_job_iam_member.check_invoker[0]

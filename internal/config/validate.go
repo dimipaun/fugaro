@@ -116,6 +116,12 @@ func Validate(c *Config) []Problem {
 	if !slices.Contains(Providers, c.Git.Provider) {
 		add("git.provider", "must be one of %s", strings.Join(Providers, ", "))
 	}
+	// git.author is a closed vocabulary with one legal extra value: "" is
+	// the key absent (the run's own identity authors its commits, today's
+	// behaviour), so it is accepted without being named in the sentence.
+	if c.Git.Author != "" && !slices.Contains(GitAuthors, c.Git.Author) {
+		add("git.author", "must be one of %s", strings.Join(GitAuthors, ", "))
+	}
 	if !validBranchName(c.Git.BaseBranch) {
 		add("git.base_branch", "must be a plain git branch name: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'")
 	}
@@ -177,6 +183,12 @@ func Validate(c *Config) []Problem {
 		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas)...)
 	}
 	ps = append(ps, validateGovernance("governance", c.Governance)...)
+	// A repository's ab: block may only opt out of sampling (D556, D557):
+	// every other key of it is the project layer's, and a repository that
+	// names a challenger could send its code to a provider the owner opened
+	// only to others. The rules are the same ones `fugaro config publish`
+	// holds the layer's block to, stated once in ab.go.
+	ps = append(ps, validateRepoAB(c.AB)...)
 	if len(c.Workflows) == 0 {
 		add("workflows", "must define at least one workflow")
 	}

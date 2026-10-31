@@ -34,4 +34,12 @@ module "workflow" {
   # that job's model-secret accessors. Null on an installation that has not
   # opted in, which is every installation today, and then nothing changes.
   credentials_service = var.installation.credentials_service
+
+  # The per-repository fact (D500, D502), passed to every workflow of this
+  # repository: each of a proxied repository's jobs gives the credential up,
+  # and no job of any other repository does (G9). Nothing derives it yet — the
+  # published node is the one source of whether a repository is proxied (G15),
+  # and the derivation is B1.8b's, in internal/infra — so every tfvars sent
+  # today omits the key, which means false.
+  bitbucket_proxied = var.repo.bitbucket_proxied
 }

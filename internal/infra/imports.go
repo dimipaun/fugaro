@@ -62,6 +62,7 @@ const (
 	importLegacyRegistry importKind = "legacy registry"
 	importBaseRegistry   importKind = "base registry"
 	importGhcrRegistry   importKind = "ghcr registry"
+	importSharedRegistry importKind = "shared registry"
 	importSecret         importKind = "secret"
 	importProjectSecret  importKind = "project secret"
 	importRepoRegistry   importKind = "repository registry"
@@ -94,6 +95,7 @@ var importTable = map[importKind]struct{ to, id string }{
 	importLegacyRegistry: {"module.installation.google_artifact_registry_repository.legacy[0]", "projects/{project}/locations/{region}/repositories/{name}"},
 	importBaseRegistry:   {"module.installation.google_artifact_registry_repository.base", "projects/{project}/locations/{region}/repositories/{name}"},
 	importGhcrRegistry:   {"module.installation.google_artifact_registry_repository.ghcr", "projects/{project}/locations/{region}/repositories/{name}"},
+	importSharedRegistry: {SharedRegistryAddress, "projects/{project}/locations/{region}/repositories/{name}"},
 	importSecret:         {"module.repo.google_secret_manager_secret.this[{key}]", "projects/{project}/secrets/{name}"},
 	importProjectSecret:  {"module.installation.google_secret_manager_secret.project[{key}]", "projects/{project}/secrets/{name}"},
 	importRepoRegistry:   {"module.repo.google_artifact_registry_repository.images", "projects/{project}/locations/{region}/repositories/{name}"},

@@ -118,6 +118,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `git.base_branch` | | | yes | | a project-wide branch would let a bucket writer point image builds at an unreviewed branch (the shared config refuses `repos.<r>.base_branch` and the project's top-level `base_branch` for the same reason; the latter is published to the policy node instead) |
 | `git.pr.labels`, `early_draft`, `checkpoints` | yes | | yes | | |
 | `git.pr.reviewers` | | | yes | | reviewers are people of one repository |
+| `git.author` | | | yes | | it is the repository's own opt-in: the launcher's own identity authors its commits, a choice a repository makes for itself (D604, D606) |
 | `agent.auth`, `models.*`, `first_line_review`, `first_line_rounds` | yes | | yes | | |
 | `agent.model`, `review_rounds`, `max_budget_usd`, `recipe` | yes | | yes | yes | |
 | `agent.oauth_token` | | | yes | yes | it names a credential identity that only the repository's own, PR-reviewed `fugaro.yaml` may choose among names the local config (never the project layer) allow-lists ([named-oauth-tokens.md](named-oauth-tokens.md)) |
@@ -127,7 +128,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `workflows.*.base`, `checkout`, `image.{node,apt,setup,skip_build_scripts,tools}`, `commands.*`, `cache`, `resources.*`, `timeouts.{stage,verify,render,finalize_reserve}`, `rebuild.*`, `inputs.*` | | yes | yes | | |
 | `workflows.*.timeouts.total` | | yes | yes | yes | |
 | `workflows.*.image.jdk` | | | yes | | refused on every base, as today |
-| `workflows.*.dockerfile` | | | yes | | it names a file in the repository |
+| `workflows.*.dockerfile`, `image.key_files` | | | yes | | they name files in the repository |
 | `workflows.*.secrets` | | | yes | | secrets belong to one repository's Secret Manager entries |
 | `followup.trusted`, `followup.allow_public` | | | yes | | they decide whose comments steer a run with the repository's credentials |
 | `rigor.default`, `rigor.areas` | yes | | yes | | the mode is a default and not a floor, so either layer may set it and a narrower layer may lower a wider one (D21); the two `areas` lists are a union, not a replacement, so a repository's own rules never switch off the project's (D20c) |

@@ -74,6 +74,7 @@ import { deadlineFlag } from '../../src/renderer/screens/live'
 import { viewOf } from '../../src/renderer/installations'
 import { buildRunModel, parseLogWindow } from '../../src/renderer/screens/run'
 import { SPEND_ACCOUNTS, buildSpendModel } from '../../src/renderer/screens/spend'
+import { drawnRows } from '../support/spend'
 import { parseLogEntries } from '../../src/source/cli'
 import type { JSONDoc } from '../../src/source/source'
 import { FIXTURE_COMMANDS, installScreenshotFixture, FIXTURES_RELATIVE, SEED_FILE_NAME } from '../../tools/screenshots/fixture'
@@ -434,9 +435,9 @@ describe('the fixtures are documents the console accepts', () => {
     expect(model.range.since).toBe('2026-09-21')
     expect(model.range.until).toBe('2026-10-20')
     // Thirty days, one row each: the curve the picture is of.
-    expect(model.rows.length).toBe(30)
-    expect(model.rows[0]?.key).toBe('2026-09-21')
-    expect(model.rows[29]?.key).toBe('2026-10-20')
+    expect(drawnRows(model).length).toBe(30)
+    expect(drawnRows(model)[0]?.key).toBe('2026-09-21')
+    expect(drawnRows(model)[29]?.key).toBe('2026-10-20')
     expect(model.series.map((series) => series.account)).toEqual([...SPEND_ACCOUNTS])
     const caps = model.caps
     expect(caps.available).toBe(true)
@@ -706,7 +707,7 @@ describe('the fixture CLI and the installation store it seeds', () => {
       expect(Object.keys(scenario.commands).sort()).toEqual([...Object.keys(FIXTURE_COMMANDS), 'doctor', 'version'].sort())
       // The version is the one the console was built against, so the handshake
       // lands inside the supported range and the Spend screen is offered.
-      expect((scenario.commands['version'] as { stdout: string }).stdout.trim()).toBe('0.8.1')
+      expect((scenario.commands['version'] as { stdout: string }).stdout.trim()).toBe(CLI_VERSION_BUILT_AGAINST)
       expect(installed.binary.length).toBeGreaterThan(0)
     } finally {
       rmSync(isolation.scratch, { recursive: true, force: true })
@@ -1155,9 +1156,9 @@ describe('the manifest', () => {
     const spend = SPEND_SCREEN.alt
     const report = spendModel()
     // Thirty rows, one per day of the report's range: the curve.
-    expect(report.rows.length).toBe(30)
+    expect(drawnRows(report).length).toBe(30)
     expect(report.dimension).toBe('day')
-    expect(spend).toContain(`${spelled(report.rows.length)} days`)
+    expect(spend).toContain(`${spelled(drawnRows(report).length)} days`)
     expect(spend).toContain('daily spend')
     // The caps panel's two halves, both of which the sentence names: a row per
     // repository, and the defaults an unlisted repository falls back to.
@@ -1616,8 +1617,8 @@ describe('what the run’s own documents promise about it', () => {
     // the Spend row's days are the report's rows and the picker row's
     // installations are the seed file's.
     const report = spendModel()
-    expect(report.rows.length).toBe(30)
-    expect(cell('console-spend.png')).toContain(`${spelled(report.rows.length)} days`)
+    expect(drawnRows(report).length).toBe(30)
+    expect(cell('console-spend.png')).toContain(`${spelled(drawnRows(report).length)} days`)
     const seed = JSON.parse(fixture(SEED_FILE_NAME)) as {
       installations: readonly { project: string }[]
     }

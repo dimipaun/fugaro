@@ -96,6 +96,20 @@ var tokenPermissions = map[string]string{
 // clones the repository.
 var buildTokenPermissions = map[string]string{"contents": "read", "metadata": "read"}
 
+// shadowTokenPermissions is what a challenger arm's installation token asks
+// for (A2.1, docs/model-ab-testing): the read a checkout of the repository
+// needs and nothing that could write to it. A challenger pushes nothing
+// (D554), so the run it belongs to must not hold a token that could, whatever
+// the agent did with it — this is the clone's credential and the only one that
+// run ever has (GitAuthReadOnly, which offers no GH_TOKEN).
+//
+// It is the same reach a build's token asks for, and deliberately a set of its
+// own: the build's is about what an image build reads and this one about what
+// a shadow may reach, so a later change to either must not silently widen the
+// other, and shadow_token.json pins this one's mint body as
+// coordinator_token.json pins the coordinator's.
+var shadowTokenPermissions = map[string]string{"contents": "read", "metadata": "read"}
+
 // coordinatorTokenPermissions is what the coordinator's token asks for (P2 of
 // docs/coordinator/implementation-plan.md, reconciliation Q3 answered (A)):
 // the reads the project-wide view is built from, and no value carrying a write

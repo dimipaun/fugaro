@@ -86,8 +86,8 @@ from its own download host rather than from npm, so the pin, the download and
 the checksum get the hand-bumped, documented treatment the repository already
 gives the Trivy digest and the Dockerfile frontend digest (design section 5.2).
 
-The rest of the pinned set, all exact, all build and test tooling (there is no
-runtime dependency today; see below):
+The rest of the pinned set, all exact, all build and test tooling apart from
+the one runtime dependency (`electron-updater`, below):
 
 | Package | Version | Where | Why it is here |
 |---|---|---|---|
@@ -100,13 +100,18 @@ runtime dependency today; see below):
 | `electron-builder` | `26.18.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
 | `elkjs` | `0.11.0` | `devDependencies` | the graph view's layout engine: the build copies its `elk-worker.min.js` verbatim into the served root (GV2.2); its EPL-2.0 licence is `THIRD_PARTY_NOTICES.md` |
 
-`dependencies` is empty, and that is a decision rather than a symptom: the
-renderer bundles no framework runtime and no charting library (design D9); its one third-party file is elkjs's layout worker, a devDependency whose `elk-worker.min.js` the build copies verbatim into the served root and whose EPL-2.0 licence is `console/THIRD_PARTY_NOTICES.md`, and
+`dependencies` holds exactly one entry — `electron-updater` pinned to `6.8.10`,
+the console's one runtime dependency — and that is a decision rather than a
+symptom: the renderer bundles no framework runtime and no charting library
+(design D9); its one third-party file is elkjs's layout worker, a devDependency
+whose `elk-worker.min.js` the build copies verbatim into the served root and
+whose EPL-2.0 licence is `console/THIRD_PARTY_NOTICES.md`, and
 everything a `dependencies` entry names is packed into the shipped asar. Task 1.0
 pinned `electron-updater` there for Task 4.4's auto-update; Task 4.1's review
-found it shipped in the bundle with nothing importing it, so it was removed, and
-Task 4.4 adds it back, exactly pinned, with the code that uses it. The pinning
-test asserts the `dependencies` set is exactly empty until then.
+found it shipped in the bundle with nothing importing it, so it was removed; and
+Task 4.4 added it back, exactly pinned, with the code that uses it.
+`pinning.test.ts`'s runtime allow-list holds the set to that one entry, and a
+second one is a deliberate edit there with the case for it written down.
 
 **The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
 It is the version every command in this task was run on, and it is a member of
@@ -177,6 +182,29 @@ binary again on the way into each launch and retries ETXTBSY three times, 250 ms
 apart (`test/support/textFileBusy.ts`); no other launch error is retried, and
 `test/unit/playwright.test.ts` holds both the config line and the rule that no
 spec calls `electron.launch` itself.
+
+## Automatic updates (Task 4.4)
+
+The console keeps itself up to date, and this is the whole of it. It checks the
+console's own release stream at launch and then every six hours, and downloads a
+newer version **quietly**; nothing is installed until you press **Restart to
+update** on the non-blocking notice that names the version on disk, and **nothing
+is ever installed on quit** — the update installs only the download that notice
+named. The client is `electron-updater` `6.8.10`, the console's one runtime
+dependency, pinned exactly, and `src/main/updater-electron.ts`'s `hardenUpdater`
+rewrites it where the library would otherwise identify the machine: it neither
+mints nor writes `.updaterId` under `userData`, and no request carries
+`x-user-staging-id`. The off switch is the application menu's **Check for Updates
+Automatically** (with **Check for Updates Now** beside it), whose state is the one
+boolean `<userData>/updates.json` holds, written only when the switch changes
+(`src/main/updatestore.ts`); setting `FUGARO_NO_UPDATE_CHECK=1` turns the checks
+off as well. The console honours those two and never the CLI's `update_check`
+(owner ruling D769). Two locations under `~/Library/Caches` are the updater's and
+not the app's — the download cache `fugaro-console-updater`, named by
+`hardenUpdater` through `configOnDisk`, and Squirrel.Mac's ShipIt staging
+directory — and both appear only after a download, are replaced or removed by the
+install, and hold no identifier (owner rulings D768 and D770; design sections
+5.1 rule 10, 7.3 and 7.4).
 
 ## The hardened window (Task 1.1)
 
@@ -1604,14 +1632,36 @@ Three rules a reader would not guess, all taken from the wire:
 - **Numbers are the tolerant axis and keys are not.** An absent or `null` number
   is an unavailable reading with a sentence; an absent *string* key a screen
   reads is a refusal by name (`runs[0].round`, `missing`).
-- **An unknown key is a refusal, and the key is text.** A document with a key
-  this console does not know is refused by name rather than half-drawn, and the
-  name goes through the sanitizer before it reaches a banner — a key shaped like
-  a credential is neutralised and a key no class admits is not drawn at all.
+- **An unknown key is ignored; a missing or retyped one is a refusal** (the
+  owner's ruling of 2026-10-30, which replaced "an unknown key is a refusal").
+  The CLI's compatibility rule is that its JSON only grows: a field is added,
+  never re-meant — a field whose meaning changes gets a new name — and removing
+  or retyping one is a format change. So a key a newer CLI added is skipped, and
+  the value is built from the keys the console names, so the key reaches no
+  screen; a field the console reads that is absent or of the wrong type is still
+  refused by name, on the screen whose read it is.
 
-The tests hold the plan's four claims, and three mutants die on them: reading a
-degraded document as a live one (4 tests), reading a missing number as `0` (3
-tests), and a shape that stops refusing unknown keys (2 tests).
+The tests hold the plan's claims: reading a degraded document as a live one,
+reading a missing number as `0`, carrying an unknown key into the value, and
+accepting a missing or retyped field each fail a named test.
+
+### Version skew: an older console reads a newer CLI
+
+`src/shared/version.ts` places the `fugaro version` line. A member of
+`SUPPORTED_CLI_MINORS` (`0.7`, `0.8`, `0.11`, `0.12`, `0.13`: the minors whose
+documents this console has read) **or any plain release above the newest
+member** answers `ok`, and the console draws everything it can read — it is the
+older of the two, and says so in its own words if asked. The reduced mode (a
+banner, and the spend screen, the caps and the kill/resume controls withheld)
+is for a CLI older than the newest member and above the floor (`0.9`, `0.10`,
+`0.6`), for a line that is not a plain `major.minor.patch` release number (a
+prerelease or build tail, a leading zero, a missing patch), and for a `dev`
+build; below `CLI_HARD_FLOOR_VERSION` the console refuses. A read that fails to
+decode against a newer CLI — a field removed or retyped — is refused on its own
+screen with the decoder's sentence. `version.test.ts` reads the CLI's
+`current` line from `docs/release-streams.yaml` and fails when the latest
+released CLI does not answer `ok` as a member, which is the release
+checklist's reminder to re-read that minor and add it.
 
 ### The corpus was corrected against the wire, not against itself
 
@@ -3741,14 +3791,25 @@ request says so.
 
 The console's icon is the **website's own mark**, not a second drawing of it, and there is
 one file on disk rather than two to keep in step: `console/build/icon.png` is
-byte-for-byte `brand/app-icon-1024.png`, the opaque app-icon master that
+byte-for-byte `brand/app-icon-macos-1024.png`, the macOS app-icon master that
 `scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` — the file
 `brand/README.md` and `website/README.md` both name as the source of truth for every icon
-the site serves. The website's own home-screen icon,
-`website/public/android-chrome-512x512.png`, is the same composition — the artwork cropped
-to its alpha bounding box, centred at 80 % extent on the opaque ground the generator paints
-(`--ground` of the palette in force when it last ran) — at half the size, so the console and
-a visitor's browser tab are showing the same picture.
+the site serves. Its body is the composition of the website's own home-screen icon,
+`website/public/android-chrome-512x512.png` — the artwork cropped to its alpha bounding box,
+centred at 80 % extent on the opaque ground the generator paints (`--ground` of the palette
+in force when it last ran) — so the console and a visitor's browser tab are showing the same
+picture.
+
+**The shape is macOS's (the owner's report of 2026-10-30).** Until then the file was the
+opaque square `brand/app-icon-1024.png`, and the Dock showed it as a square beside every
+rounded system icon: macOS draws an app's icon exactly as the file is and does not mask it.
+The macOS master follows Apple's icon template since Big Sur: a 1024 transparent canvas, the
+body an **824 px squircle** centred in a **100 px margin**, and a soft black shadow inside
+the margin. The outline is the superellipse |x|^n + |y|^n = 1 with n = 5.1, the
+least-squares fit to the system apps' icons on macOS 26 (Notes, Calculator; within 2.4 px
+RMS), and the shadow (10 px down, Gaussian sigma 16, 20 % black) is measured off the same
+icons. The same file is the Linux icon (`build.linux.icon`), where a rounded icon on a
+transparent ground is as usual as a square one.
 
 ### 1024, and the artwork's real size
 
@@ -3758,11 +3819,11 @@ carrying the same picture at twice the real pixels, and the mark grew with the c
 alpha bounding box of the file (alpha > 8, the generator's own `ALPHA_THRESHOLD`) is
 **1089 x 738 pixels**, with the rest transparent margin. `scripts/gen-brand-icons.py` crops
 to that box and then scales it per output, so the generator's own
-`fit(art, 1024, 0.80, ground)` — factor **0.7522**, artwork **819 x 555** — *down*scales it
-now, and the site's `android-chrome-512x512.png` (factor 0.3761, artwork 410 x 278) is the
-same artwork downscaled further. `brand/app-icon-1024.png` is therefore a
-native-resolution rendering of the mark rather than an interpolation of a smaller one, and
-the console's icon inherits exactly that.
+`fit(art, 824, 0.80, ground)` for the macOS body — factor **0.6053**, artwork **659 x 447**
+— *down*scales it now, and the site's `android-chrome-512x512.png` (factor 0.3761, artwork
+410 x 278) is the same artwork downscaled further. `brand/app-icon-macos-1024.png` is
+therefore a native-resolution rendering of the mark rather than an interpolation of a
+smaller one, and the console's icon inherits exactly that.
 
 **This section used to ask for that change, and the figures above are the answer to it.**
 Until 2026-10-20 the source was a 1024 x 1024 canvas whose mark was only **548 x 371 px**,
@@ -3788,12 +3849,13 @@ The **file choice stands**, for two reasons that never depended on the artwork's
 
 **A source change is still the only thing that moves this**, and it is a one-liner when it
 happens: replace `brand/fugaro-logo.png`, then
-`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png`,
+`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-macos-1024.png console/build/icon.png`,
 which is the whole change — `website/test/brand.mjs` and `test/unit/icon.test.ts` are what
 check it. Nothing here smooths the 512 up and calls it a 1024.
 
-`test/unit/icon.test.ts` asserts the size, the opacity (colour type 2 — a `.icns` with holes
-in it shows the desktop through the mark) and the bytes; the PR records the same figures.
+`test/unit/icon.test.ts` asserts the size, the alpha channel (colour type 6), the template's
+shape (transparent canvas corners and margin, rounded body corners, an opaque centre, the
+body's bounding box exactly 824 px at 100) and the bytes; the PR records the same figures.
 
 ### Where the packager takes it, and where a running console does
 
@@ -3828,7 +3890,7 @@ and the committed ones' ground is in any case older than `tokens.css`'s current 
 leaves the console's icon stale **until the equality test says so**:
 
 ```sh
-python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png
+python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-macos-1024.png console/build/icon.png
 ```
 
 That is the whole sync. It is a byte copy rather than a build step on purpose: electron's
@@ -3838,14 +3900,15 @@ implementation of the generator's own decision to keep in step.
 
 ### The tests, and the mutations each one was run against
 
-`test/unit/icon.test.ts` (9 tests), and every one of them was seen red against a planted
+`test/unit/icon.test.ts` (10 tests), and every one of them was seen red against a planted
 change before it was committed:
 
 | Claim | Mutation it was run against |
 |---|---|
 | the bytes are the master's | a 1024 x 1024 RGB PNG of the ground colour alone planted as `build/icon.png` — "is the app-icon master, byte for byte" red |
-| the picture is the site's | the same planted file: "is the picture the website serves…" red, naming block 421 at 218.06 against a tolerance of 8. The site's *maskable* icon, a different composition of the same mark, measures 218.87 the same way; the site's 512 measures **3.96**, which is what the tolerance is set from (see the test) |
-| it is a 1024, opaque PNG | the site's 512 icon planted in its place — the size assertion red ("expected 512 to be 1024"); that file is opaque too, so the colour-type half of the test is what the `logo.png` in `public/` would fail |
+| the picture is the site's | the same planted file: "is the picture the website serves…" red, naming block 421 at 218.06 against a tolerance of 8. The site's *maskable* icon, a different composition of the same mark, measures 218.87 the same way; the body of the macOS master against the site's 512 measures **3.65** over its 208 opaque blocks, which is what the tolerance is set from (see the test) |
+| it is a 1024 PNG with alpha | the site's 512 icon planted in its place — the size assertion red ("expected 512 to be 1024"); the opaque square `brand/app-icon-1024.png` planted — the colour type red (2, not 6) |
+| it has the macOS shape | the same opaque square planted: "has the macOS icon shape…" red on the first transparent canvas corner; it fails "is the picture the website serves…" too, because its body is at the wrong extent |
 | the packaging config names it | `build.mac.icon` pointed at `build/icon.icns` — "is the icon the packaging config names…" red |
 | the dock icon is set on macOS, unpackaged | `deps.packaged` dropped from `installDevDockIcon`'s guard — "does nothing once packaged" red; `deps.platform` dropped — "does nothing off macOS" red |
 | the entry point wires it | `packaged: app.isPackaged` in `src/main/index.ts` replaced with `packaged: true` — "is the icon the entry point actually installs" red |
@@ -3859,9 +3922,10 @@ installs it" is read off the file's text.
 Nothing under `.github/workflows/` — the release workflow is staged in
 `docs/pending-workflows/` and is the owner's to copy in, so the PNG-to-`.icns` conversion
 is asserted as *what that file's `npm run package` will do*, not as something this branch
-ran. Apple's icon shape: macOS draws its own rounded-rect mask over a full-bleed icon, and
-the mark is not redrawn, recoloured or inset to anticipate it — that would be editing the
-website's artwork. And any signed or notarised build: unchanged from Task 4.1's record
+ran. The mark itself: the macOS master puts the website's composition on Apple's body
+unchanged, and it is not redrawn or recoloured. (This paragraph used to say macOS draws its
+own rounded-rect mask over a full-bleed icon; it does not, and the square the owner saw in
+the Dock on 2026-10-30 is the evidence.) And any signed or notarised build: unchanged from Task 4.1's record
 above.
 
 ## The first run asks for nothing (the owner's ruling of 2026-10-20)

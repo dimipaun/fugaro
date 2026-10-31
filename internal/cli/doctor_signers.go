@@ -111,7 +111,10 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		msg += fmt.Sprintf("; %d principal(s) can sign as designed (the Firebase Admin SDK account; launchers and operators through the minter role on the signer account): %s",
 			len(expected), strings.Join(dedupe(expected), ", "))
 	}
-	summary := doctorCheck{ID: "token-signers", Severity: "info", Problem: msg,
+	// The project number unread is an unread state like any other: the line
+	// then names no Google service agent, and neither "each is listed as a
+	// warning" nor this summary's counts are what the project's policy says.
+	summary := doctorCheck{ID: "token-signers", Severity: "info", unread: nerr != nil, Problem: msg,
 		Fix: "to review the signer's policy: gcloud iam service-accounts get-iam-policy " + shellword.Quote(psigner) + " --project " + shellword.Quote(pfp)}
 	return append(append([]doctorCheck{summary}, info...), out...)
 }

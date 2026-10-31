@@ -222,11 +222,12 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		t.Errorf("cloneShipped is false, so a `checkout: clone` launch is refused on every image a release can build: %s may not say one reaches a shared job", releaseNotesV090)
 	}
 
-	// The policy version: the notes' rollout is a republish, and the version the
-	// node moves to is the one this release introduced.
-	if got := projectpolicy.VersionSince[projectpolicy.Version]; got != "0.9.0" {
-		t.Errorf("projectpolicy.Version is %d and VersionSince names %q for it; the notes describe this release's rollout, so the version it publishes must be the one this release introduced",
-			projectpolicy.Version, got)
+	// The policy version: the notes' rollout is a republish, and the version
+	// they move the node to is the one 0.9.0 introduced — version 3, whose row
+	// is fixed by history. A later bump raises projectpolicy.Version and adds a
+	// row above it without making these notes describe another release's node.
+	if got, ok := projectpolicy.VersionRelease(3); !ok || got != "0.9.0" {
+		t.Errorf("projectpolicy.VersionRelease(3) = (%q, %v); these notes describe 0.9.0's rollout, whose policy version is 3", got, ok)
 	}
 	if !names("`fugaro project policy publish --delete`") {
 		t.Errorf("%s does not carry the republish the version bump needs (a publish refuses to overwrite a node written in another version)", releaseNotesV090)

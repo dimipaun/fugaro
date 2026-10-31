@@ -723,9 +723,10 @@ describe('the renderer’s gate', () => {
     expect(mount.drawings).toHaveLength(0)
     const gate = await started
     // An `ok` handshake has nothing to draw: the dashboard is mounted by the
-    // caller, through the gate.
+    // caller, through the gate, and there is no notice for the entry to wire.
     expect(mount.drawings).toHaveLength(0)
     expect(gate.compatibility.mode).toBe('ok')
+    expect(gate.notice).toBeNull()
   })
 
   it('lets an `ok` console draw every view', async () => {
@@ -754,11 +755,15 @@ describe('the renderer’s gate', () => {
     expect(mount.drawings).toHaveLength(1)
     const banner = mount.drawings[0]
     expect(banner?.getAttribute('data-mode')).toBe('reduced')
-    expect(banner?.getAttribute('data-skew')).toBe('newer')
+    expect(banner?.getAttribute('data-skew')).toBe('older')
     expect(banner?.getAttribute('data-theme')).toBe('dark')
     expect(
       drawnTree(banner as SkewElement).some((node) => node.textContent === SKEW_HEADLINES.reduced),
     ).toBe(true)
+    // The drawing is handed back as well as mounted: the entry wires the
+    // disclosure and the dismissal off `gate.notice`, and the gate answers
+    // `null` in the mode that has nothing to say about versions.
+    expect(gate.notice?.root).toBe(banner)
     // The three views `hidesView` withholds are the three the gate refuses, and
     // the screen's own drawing is not called at all -- the second half of the
     // defence, in the document rather than in the main process.

@@ -1739,3 +1739,916 @@ p.run-replay-window-line {
   font-size: var(--text-xs);
   color: var(--text-2);
 }
+
+/* ---------------------------------------------------------------------------
+ * Spend -- the title row, the two segmented controls, the totals line, the
+ * grouped bar chart and the period table (console redesign, step 4b-1,
+ * `console/src/renderer/screens/spend.ts`).
+ *
+ * **Three accounts, three marks, and never a sum.** Billed is the solid
+ * `--billed` fill; notional is the `--notional-hatch-bg` ground hatched down to
+ * the panel through a mask, behind a `--notional` edge; compute is the
+ * `--estimate-outline` dash with no fill at all. The hatch is what carries the
+ * distinction when a reader cannot tell the two tones apart, and the legend
+ * beside the chart names each mark in words, so no account is ever a colour
+ * alone (styling design section 3.5). **Billed and notional are different kinds
+ * of money**: no column, no bar height and no axis top is ever their sum.
+ *
+ * **The chart is one axis of grouped bars.** A key's three bars are siblings
+ * standing side by side on the shared axis, each drawn at its own account's
+ * share of the axis top, so the drawing is a comparison and never a total. The
+ * `svg` is `aria-hidden` geometry -- the axis word, the axis top, the key labels
+ * and the legend are text, and every figure it draws is a cell of the table
+ * below it.
+ * ------------------------------------------------------------------------- */
+
+div.spend-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs) var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+/* The two segmented groups are one sunken track of words: the chosen one sits on
+ * the raised `--control-active` ground and carries `data-current` and
+ * `aria-pressed`, so the press is never the tone alone. */
+ol.spend-picker,
+ol.spend-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3xs);
+  margin: 0;
+  padding: var(--space-3xs);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+  list-style: none;
+}
+
+li.spend-item {
+  display: flex;
+}
+
+button.spend-window,
+button.spend-dim,
+span.spend-dim,
+li.spend-dim-unknown {
+  padding: var(--space-3xs) var(--space-sm);
+  border: var(--rule-width) solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+button.spend-window:hover,
+button.spend-dim:hover {
+  color: var(--text);
+}
+
+button.spend-window[data-current='true'],
+button.spend-dim[data-current='true'],
+span.spend-dim[data-current='true'] {
+  background: var(--control-active);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* A word this console may not use is a word and not a control: a `span` with no
+ * hover, no press and the reason in its `title`. */
+span.spend-dim[data-enabled='false'] {
+  color: var(--text-3);
+}
+
+li.spend-dim-unknown[data-dimension='unknown'] {
+  color: var(--warn-text);
+  border-color: var(--warn-border);
+}
+
+/* The person breakdown is a switch of its own, beside the switch it enables: its
+ * word is the view and its state word is `on`/`off`, so the switch is pressed and
+ * read the same way the two segmented groups are. */
+div.spend-knob {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+button.spend-persons {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: var(--space-3xs) var(--space-sm);
+  border: var(--rule-width) solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+}
+
+button.spend-persons:hover {
+  border-color: var(--live-border);
+}
+
+button.spend-persons[data-enabled='true'] {
+  background: var(--control-active);
+  border-color: var(--live-border);
+}
+
+button.spend-persons[data-enabled='false'] {
+  color: var(--text-3);
+}
+
+/* The totals line: four cells and the sentence that says the two kinds of money
+ * are never added. The money is mono and tabular so the four read as a column,
+ * and the notional cell is the one figure that keeps the notional tone. */
+div.spend-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-lg);
+  padding: var(--space-sm) 0;
+  border-top: var(--rule-width) solid var(--line-subtle);
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+div.spend-total {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+span.spend-totals-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+span.spend-total-model,
+span.spend-total-notional,
+span.spend-total-compute {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-stat);
+  line-height: 1;
+}
+
+span.spend-total-notional {
+  color: var(--notional);
+}
+
+span.spend-total-runs,
+span.spend-total-run-hours {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-md);
+}
+
+p.spend-totals-note {
+  grid-column: 1 / -1;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* The chart. Its canvas is the drawing's own ground, and the hatch it shows
+ * through is the mask below: a gradient of `transparent` and `currentColor`, so
+ * the stripes are cut out of the mark rather than tinted with a colour a token
+ * does not name. */
+div.spend-chart {
+  margin-bottom: var(--space-lg);
+}
+
+div.spend-axis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+span.spend-axis-word {
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+span.spend-axis-top {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+svg.spend-chart-svg {
+  display: block;
+  width: 100%;
+}
+
+/* A gridline is a share of the one axis and carries no figure of its own; the
+ * baseline is drawn over the bars' feet rather than under them. */
+line.spend-gridline {
+  stroke: var(--line-subtle);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+line.spend-axis-line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+rect.spend-bar {
+  fill: var(--billed);
+}
+
+rect.spend-bar[data-account='notional'] {
+  fill: var(--notional-hatch-bg);
+  stroke: var(--notional);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  mask-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    currentColor 2px 4px
+  );
+}
+
+/* An estimate is an outline rather than a fill -- the one mark that says a
+ * figure was worked out rather than billed -- and the dash is a device-space
+ * hairline, so it neither thickens with the window nor stretches with the axis. */
+rect.spend-bar[data-account='compute'] {
+  fill: none;
+  stroke: var(--estimate-outline);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A day with no final document yet is drawn **hollow** (design section 6.1 rule
+ * 1: "a partial day is hollow"), so today's bar is never a final day's bar at a
+ * glance: the ground shows through it and the account's own edge is what is left.
+ * The notional hatch goes with the fill -- a hollow mark is one outline, not an
+ * outline with a texture in it -- and compute is drawn hollow already, so the
+ * shared rule is the whole of its treatment and the dash that says `estimated`
+ * stays. What says `partial` for every account, in words rather than in tone, is
+ * the `(partial)` marker on the group's own key below the bars. */
+rect.spend-bar[data-hollow='true'] {
+  fill: none;
+}
+
+rect.spend-bar[data-account='model'][data-hollow='true'] {
+  stroke: var(--billed);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+rect.spend-bar[data-account='notional'][data-hollow='true'] {
+  mask-image: none;
+}
+
+/* A day the history does not hold is one hatched column and the words `no
+ * record`: a bar of no height would read as a measurement of zero, and a gap is
+ * not a zero. */
+rect.spend-gap-column {
+  fill: var(--decor);
+  mask-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    currentColor 2px 4px
+  );
+}
+
+ol.spend-chart-keys {
+  display: flex;
+  gap: var(--space-3xs);
+  margin: var(--space-2xs) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One key per group, over the group's own bars: the same flex share the bars
+ * divide the axis by, so a label sits under the columns it names. */
+li.spend-chart-key {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-3xs);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+span.spend-chart-gap {
+  color: var(--warn-text);
+}
+
+span.spend-chart-na {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+ul.spend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-md);
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+li.spend-legend-key {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+span.spend-swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-chip);
+}
+
+span.spend-swatch[data-account='model'] {
+  background: var(--billed);
+}
+
+span.spend-swatch[data-account='notional'] {
+  background: var(--notional-hatch-bg);
+  border: var(--rule-width) solid var(--notional);
+}
+
+span.spend-swatch[data-account='compute'] {
+  border: var(--rule-width) dashed var(--estimate-outline);
+}
+
+span.spend-legend-empty {
+  color: var(--text-3);
+}
+
+/* The period table: one row per key, the day a gap calls that in as many words,
+ * and the money in mono so the four columns read down. */
+table.spend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+table.spend-table th.spend-th {
+  padding: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-3);
+  border-bottom: var(--rule-width) solid var(--line);
+}
+
+table.spend-table th.spend-th:not(:first-child) {
+  text-align: right;
+}
+
+table.spend-table td {
+  padding: var(--space-2xs) var(--space-sm);
+  vertical-align: top;
+}
+
+table.spend-table tr.spend-row {
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+td.spend-key {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+td.spend-model,
+td.spend-notional,
+td.spend-compute,
+td.spend-runs,
+td.spend-run-hours,
+td.spend-tokens-in,
+td.spend-tokens-out {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+td.spend-notional {
+  color: var(--notional);
+}
+
+td.spend-compute {
+  color: var(--text-estimate);
+}
+
+td.spend-gap-cell {
+  color: var(--text-3);
+}
+
+/* ---- Caps today (console redesign, step 4b-2) -----------------------------
+ *
+ * The panel is a list of **labelled figures** rather than a table: no column
+ * header carries `billed`, `counted` or `headroom`, so every figure is drawn as
+ * the word for what it is beside the number itself, and a reader never meets a
+ * run of dollars that says nothing about which account each one belongs to.
+ * **The renderer adds nothing**: billed, notional and compute are three accounts
+ * drawn apart, and the daily-cap bar draws the CLI's own `counted_usd` against
+ * `daily_cap_usd` -- never a sum.
+ *
+ * A repository at its cap is painted amber **and says so**: `span.spend-cap-at-cap`
+ * carries the words, so the tone is never the only carrier of the fact (the
+ * styling design's section 3.5).
+ * ------------------------------------------------------------------------- */
+
+section.spend-caps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+h2.spend-caps-title {
+  margin: 0;
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* The mode is a chip: the one setting the whole panel is read under, on its own
+ * raised track rather than in the flow of the figures. */
+span.spend-caps-mode {
+  align-self: flex-start;
+  padding: var(--space-3xs) var(--space-sm);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+}
+
+/* The three blocks of figures -- the project's largest lease, the repository
+ * defaults and the global row -- are one wrapped line each, so a narrow window
+ * costs a line and never a figure (section 4.2). */
+div.spend-cap-limit,
+div.spend-cap-defaults,
+div.spend-cap-global {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-md);
+}
+
+/* The largest single lease keeps its own edge: it is a limit on one lease, not a
+ * cap, and the moved border is what says it sits outside the block whose word is
+ * `global`. */
+div.spend-cap-limit[data-limit='max_reserve'] {
+  border-left: 3px solid var(--accent);
+  padding-left: var(--space-xs);
+}
+
+/* The kill banner is a band and not a figure: it is appended into the global
+ * block, whose own line is a wrapped row of figures now, and a band that hugged
+ * its own text would read as one more figure of that row. */
+div.spend-cap-global div.spend-kill {
+  flex-basis: 100%;
+}
+
+div.spend-cap-figure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3xs);
+}
+
+span.spend-cap-word {
+  color: var(--text-3);
+  font-size: var(--font-size-xs);
+}
+
+/* The daily-cap bar: a track that is the cap and a fill that is the counted
+ * dollars, in the chart's own hundred-unit box, stretched to this window by
+ * `preserveAspectRatio="none"`. */
+div.spend-cap-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+svg.spend-cap-bar-svg {
+  width: 128px;
+  height: 8px;
+  align-self: center;
+}
+
+rect.spend-cap-bar-track {
+  fill: var(--surface-sunken);
+  stroke: var(--line-subtle);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+rect.spend-cap-bar-fill {
+  fill: var(--accent);
+}
+
+li.spend-cap-repo[data-at-cap='true'] rect.spend-cap-bar-fill {
+  fill: var(--warn);
+}
+
+span.spend-cap-at-cap {
+  color: var(--warn-text);
+  font-size: var(--font-size-xs);
+}
+
+/* ---- Projects (console redesign, step 5) ----------------------------------
+ *
+ * The caps, the switches, the repositories, the jobs and the two cards the
+ * console cannot read at all (`console/src/renderer/screens/projects.ts`). The
+ * old `screens.css` blocks for this screen are gone with the markup that met
+ * them: the caps and the jobs are tables now, the switches are rows, and the
+ * repositories are three cards.
+ *
+ * **One tone per fact, and the word always beside it** (styling design section
+ * 3.5): the killed row's ground is `--danger-tint` and its border is
+ * `--danger`, the seen-and-uncapped card is `--warn-tint` and says "Running with
+ * no cap row.", and no rule here paints a state the reader cannot also read.
+ * The killed row's banner keeps the `--halted` word `screens.css` gives it: a
+ * kill is a deliberate stop and not a failure, which is what `--halted` is for.
+ *
+ * **The locked cards are dashed, and they are the only dashed panels on this
+ * screen** (design section 2.9's `not-built` row): a card the console has no
+ * command for is a placeholder, and the dash is the shape that says so without
+ * inventing a word for a state the CLI never reported.
+ * ------------------------------------------------------------------------- */
+
+/* The panel's own state, as the word the reader meets first: `read`, `not read`
+ * or `locked`. Structure and nothing more -- the tone a state carries is the
+ * panel's left rule, and this chip is deliberately neutral so the word is what
+ * a reader is left with when every colour is gone. */
+section.projects-panel span.projects-state {
+  padding: 0 var(--space-2xs);
+  font-size: var(--text-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-chip);
+}
+
+/* A card the CLI has no command for: a dashed box, a little sunken, so it reads
+ * as a place a panel will be rather than as a panel with nothing in it. The
+ * `border-left` rule `screens.css` used to paint this state is deleted with the
+ * old markup: a dashed box and a solid left rule are two ways of saying the
+ * same thing, and only one of them can be the card. */
+section.projects-panel[data-state='not-built'] {
+  background: var(--surface-sunken);
+  border: var(--rule-width) dashed var(--line-strong);
+  color: var(--text-3);
+}
+
+/* ---- The caps table ------------------------------------------------------ */
+
+div.projects-caps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+p.projects-reserve {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3xs);
+  margin: 0;
+}
+
+span.projects-reserve-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+span.projects-reserve-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+table.projects-cap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+table.projects-cap-table th.projects-cap-head {
+  padding: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-3);
+  border-bottom: var(--rule-width) solid var(--line);
+}
+
+table.projects-cap-table th.projects-cap-head:not(:first-child) {
+  text-align: right;
+}
+
+table.projects-cap-table td.projects-cap-cell {
+  padding: var(--space-2xs) var(--space-sm);
+  text-align: right;
+  vertical-align: top;
+}
+
+table.projects-cap-table tr.projects-cap {
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+/* The scope is the row's own name: the two project-wide rows carry the CLI's
+ * word for the scope and a run's row carries the repository, so the word marks
+ * the first two as the rows the others fall back to. */
+table.projects-cap-table th.projects-cap-scope {
+  padding: var(--space-2xs) var(--space-sm);
+  font-weight: 400;
+  text-align: left;
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+table.projects-cap-table tr.projects-cap[data-scope='global'] th.projects-cap-scope,
+table.projects-cap-table tr.projects-cap[data-scope='defaults'] th.projects-cap-scope {
+  font-family: inherit;
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+span.projects-cap-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* The word the CLI gave for where this figure binds (`repo`, `default`,
+ * `global`, `none`) sits under the figure it belongs to, so a reader never has
+ * to line a number up with a column to know what it is. */
+span.projects-cap-source {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--text-3);
+}
+
+/* ---- The switches -------------------------------------------------------- */
+
+ul.projects-kill-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+li.projects-kill-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  padding: var(--space-2xs) var(--space-xs);
+  border: var(--rule-width) solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+/* A repository that is already killed is a row with a **danger tint and a
+ * border**, and the word `KILLED` in the state cell and in the banner: the tone
+ * never travels without it. */
+li.projects-kill-row[data-killed='true'] {
+  background: var(--danger-tint);
+  border-color: var(--danger-border);
+  border-left: 3px solid var(--danger);
+}
+
+span.projects-kill-state {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+li.projects-kill-row[data-killed='true'] span.projects-kill-state {
+  color: var(--danger-text);
+  font-weight: var(--weight-semibold);
+}
+
+li.projects-kill-row span.projects-kill-scope,
+li.projects-kill-row span.projects-kill-repo {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+div.projects-kills div.projects-kill {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+
+/* The two writes the design draws and this release refuses: `Kill` on a live
+ * row, `Revive` on a killed one (`disabledWrite`, `src/renderer/writes.ts`).
+ * They are real buttons -- a keyboard reader meets them and hears why they do
+ * nothing -- and they are painted as a control and not as a figure. */
+button.projects-kill-action,
+button.projects-repo-add {
+  align-self: center;
+  margin-left: auto;
+  padding: var(--space-3xs) var(--space-sm);
+  font: inherit;
+  color: var(--text-3);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--control-border);
+  border-radius: var(--radius-sm);
+  cursor: not-allowed;
+}
+
+/* ---- The three repository cards ------------------------------------------ */
+
+div.projects-repos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+article.projects-repo-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-sm);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-md);
+}
+
+h3.projects-repo-card-title {
+  margin: 0;
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+ul.projects-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+li.projects-repo-both,
+li.projects-only-enrolled-repo,
+li.projects-only-seen-repo {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+p.projects-repo-card-none,
+p.projects-repo-card-note {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-3);
+}
+
+/* The card the screen exists for: a repository running with no cap row. Amber,
+ * and the sentence "Running with no cap row." under its heading carries the
+ * fact on its own -- the tone is the second channel, never the only one. */
+article.projects-repo-card[data-kind='seen'] {
+  background: var(--warn-tint);
+  border-color: var(--warn-border);
+}
+
+article.projects-repo-card[data-kind='seen'] h3.projects-repo-card-title,
+article.projects-repo-card[data-kind='seen'] p.projects-repo-card-note,
+article.projects-repo-card[data-kind='seen'] li.projects-only-seen-repo {
+  color: var(--warn-text);
+}
+
+/* ---- The jobs table ------------------------------------------------------ */
+
+div.projects-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  overflow-x: auto;
+}
+
+table.projects-job-table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+table.projects-job-table th.projects-job-head {
+  padding: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-3);
+  border-bottom: var(--rule-width) solid var(--line);
+}
+
+table.projects-job-table td {
+  padding: var(--space-2xs) var(--space-sm);
+  vertical-align: top;
+}
+
+table.projects-job-table tr.projects-job {
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+table.projects-job-table td.projects-job-run {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+table.projects-job-table td.projects-job-model,
+table.projects-job-table td.projects-job-compute,
+table.projects-job-table td.projects-job-total {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The three accounts are told apart **by the marks the formatter writes into the
+ * cell** -- `~$` for the plan's dollars, `est.` for a figure nobody has billed
+ * yet -- and by nothing else: this table has no reading-state hook to paint, and
+ * a tone inferred from the column would paint a billed model figure like an
+ * estimate. The three cells are monospace and right-aligned so the accounts line
+ * up down the column and are never added. */
+
+/* The conditional MODE column: a cell of its own, so the table keeps its
+ * columns when only some rows carry a rigor block. */
+table.projects-job-table td.projects-job-mode-cell {
+  white-space: nowrap;
+}
+
+p.projects-jobs-note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3xs);
+  margin: 0;
+}
+
+/* ---- Accounts and the secrets inventory --------------------------------- */
+
+ul.projects-account-list,
+ul.projects-secret-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+li.projects-account {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+p.projects-account-none,
+p.projects-secrets-managed {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-3);
+}
+
+span.projects-secret-bound {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  padding-left: var(--space-2xs);
+  border-left: var(--rule-width) solid var(--line-subtle);
+}
+
+span.projects-secret-bound-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}

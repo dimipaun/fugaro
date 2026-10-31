@@ -168,14 +168,14 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
    ```
 
 3. **Store the key in your own terminal**: `fugaro secrets set openrouter-api-key` stores it once for the whole project — the default for a provider's key, and it needs no checkout, since the key reaches exactly the repositories `allow_data_to` already allows. `fugaro secrets set openrouter-api-key --repo <owner>/<repo>` stores one repository's own copy instead (a repository copy wins over the project copy), and `--project-wide` is still accepted as a synonym of the default. `fugaro update --repo` prompts for it in its secrets stage too. The value is read only from stdin or a hidden prompt: **never put a key in a file, on a command line or in a chat**, and it is never printed.
-4. **Pin the models in the repository's `fugaro.yaml`** — a repository can only name a model the owner already opened to it. The example below is the setup [docs/dogfooding.md](docs/dogfooding.md) runs: one cheap model for both roles, with the senior review kept **outside** the loop, because a cheap reviewer's own `ship` is a smoke check rather than independent review. The default shape instead keeps a Claude reviewer (`reviewer: claude-sonnet-5-5`), which goes direct to Anthropic and so also needs `fugaro secrets set anthropic-api-key`:
+4. **Pin the models in the repository's `fugaro.yaml`** — a repository can only name a model the owner already opened to it. The example below is the shape [docs/dogfooding.md](docs/dogfooding.md) runs: a cheap coder on OpenRouter, with the senior review kept **outside** the loop. That page's own `fugaro.yaml` now pins a dearer OpenRouter reviewer (`deepseek/deepseek-v4-pro`) than its coder, so the in-loop `ship` is worth more than a smoke check — the real review is still the local one. The default shape instead keeps a Claude reviewer (`reviewer: claude-sonnet-5-5`), which goes direct to Anthropic and so also needs `fugaro secrets set anthropic-api-key`:
 
    ```yaml
    agent:
      auth: api-key                     # oauth, vertex and cascade are refused with a provider model
      models:
        coder: deepseek/deepseek-v4.1-flash
-       reviewer: deepseek/deepseek-v4.1-flash
+       reviewer: deepseek/deepseek-v4-pro
    ```
 
    `fugaro validate` checks each pin against the local config — when the checkout's `project:` is the local config's, and with a warning that `allow_data_to` was not checked when the checkout has no origin remote. A model no provider claims, or one whose provider's `allow_data_to` does not name this repository, is refused: *"… is served by provider openrouter, whose allow_data_to does not name `<owner>/<repo>`: the owner must list the repository in the project config before its code may be sent there"*.
@@ -211,7 +211,7 @@ Ideas, issues, and PRs are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). The 
 
 ## Licensing
 
-Fugaro's core is released under the [MIT licence](LICENSE). [`LICENSING.md`](LICENSING.md) says which parts of the repository that licence does not cover: the desktop console (`console/`, from console 0.113.0), the mobile app (`mobile/`) and the reserved `ee/` directory are under a business licence of their own, counsel's text of 2026-10-27, which names the Subscription Terms (not published yet) and the contributor agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md, and the vendored skills under `.agents/` are third-party code. Every release before 0.11.0 is MIT, so is every console release up to and including 0.112.0, and the core stays MIT.
+Fugaro's core is released under the [MIT licence](LICENSE). [`LICENSING.md`](LICENSING.md) says which parts of the repository that licence does not cover: the desktop console (`console/`, from console 0.113.0), the mobile app (`mobile/`) and the reserved `ee/` directory are under a business licence of their own, counsel's text of 2026-10-27, which names the Subscription Terms (not published yet) and the contributor agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md, and the vendored skills under `.agents/` are third-party code. From 0.13.0 the binaries a release ships — the archive downloads and the Homebrew cask — are built with the `ee` build tag: they are the core above, under the MIT licence, plus the `ee/` code compiled in beside it, under `LicenseRef-Fugaro-Subscription` ([`ee/LICENSE`](ee/LICENSE)). A `go install` build compiles the source without that tag, so it is the core alone. Every release before 0.11.0 is MIT, so is every console release up to and including 0.112.0, and the core stays MIT.
 
 ### Trademarks
 

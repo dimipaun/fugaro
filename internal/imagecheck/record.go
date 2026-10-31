@@ -15,12 +15,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
 )
@@ -45,6 +48,11 @@ type Record struct {
 
 	KeyFiles        map[string]string `json:"key_files"` // path → git blob ID
 	ImageConfigHash string            `json:"image_config_hash"`
+	// Key is the repository's normalised dependency-set key (Key), computed
+	// from those same key files. It is empty for a repository whose key files
+	// do not reduce: such a repository is unkeyed (design §2.5), keeps its
+	// own per-(repository, workflow) image and is on no shared one.
+	Key string `json:"key,omitempty"`
 
 	BaseRef     string `json:"base_ref"`     // the base image as the build was given it
 	BaseDigest  string `json:"base_digest"`  // sha256:… of the base the build ran FROM
@@ -63,10 +71,11 @@ type Record struct {
 	// build's render step (images/derived/cloudbuild.yaml): the field says
 	// only that the base image's own build step recorded it. It does not say
 	// which fugaro the launched image runs: a dockerfile: workflow's image is
-	// the repository's to build, its fugaro included, and a job runs the
-	// repository's :latest, which no launch compares with ImageDigest (nor
-	// does base_ref's release gate). The launcher's seal gate trusts it as
-	// far as that goes; a record without it says nothing either way.
+	// the repository's to build, its fugaro included. A launch that compares
+	// ImageDigest with the image's latest tag reports drift between the two,
+	// never what binary the image carries, and base_ref's release gate judges
+	// the base image, not this one. The launcher's seal gate trusts the field
+	// as far as that goes; a record without it says nothing either way.
 	SealedBudgetToken bool   `json:"sealed_budget_token,omitempty"`
 	TemplateSalt      string `json:"template_salt"`
 	// Adopted is reserved for a record written for an image the build
@@ -89,6 +98,21 @@ func (r *Record) NewerThan(o *Record) bool {
 		return true
 	}
 	return r.SourceCommit == o.SourceCommit && r.BuiltAt.After(o.BuiltAt)
+}
+
+// DigestMismatch reports whether live, the digest the workflow's latest tag
+// resolves to now, is not the digest ImageDigest records the build
+// promoted: the drift the daily check rebuilds for (ReasonLatestDrift). A
+// launch warns about it and goes on, since Cloud Run cannot vary the image
+// per execution and nothing pins the digest a build recorded (D619). A
+// record that names no digest, and an unknown live digest, are nothing to
+// compare rather than a mismatch: neither then says anything about the
+// image a job runs.
+func (r *Record) DigestMismatch(live string) bool {
+	if r == nil || r.ImageDigest == "" || live == "" {
+		return false
+	}
+	return live != r.ImageDigest
 }
 
 // ParseRecord decodes a record. Unknown fields are ignored, so a record a
@@ -117,9 +141,99 @@ type Tree interface {
 	ReadFile(path string) ([]byte, error)
 }
 
+// NodeInstallPaths are the repository paths beyond the lockfiles that a
+// Node dependency install reads, and so the paths a change to must rebuild
+// the image exactly as a lockfile change does:
+//
+//   - .yarnrc, .yarnrc.yml and .pnpmfile.cjs, the Yarn 1, Yarn 2 and pnpm
+//     configuration files their installs read;
+//   - .yarn/releases, .yarn/plugins and .yarn/patches, which a Yarn Berry
+//     repository commits: the Yarn build .yarnrc.yml's yarnPath names, the
+//     plugins it loads, and the patches a patch: resolution applies.
+//
+// The last three are directories: installPatterns matches each path both as
+// itself and as its subtree, so a repository that keeps any of these
+// contributes every file under it.
+var NodeInstallPaths = []string{".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", ".yarn/releases", ".yarn/plugins", ".yarn/patches"}
+
+// installPatterns are the tree globs covering each path: the path itself,
+// and everything under it, since a path may name a directory. A path that
+// names a file matches the first glob only.
+func installPatterns(paths []string) []string {
+	out := make([]string, 0, 2*len(paths))
+	for _, p := range paths {
+		out = append(out, p, p+"/**")
+	}
+	return out
+}
+
+// PnpmPatches are the patch files the repository's pnpm manifests name, as
+// repository-relative paths: pnpm reads patchedDependencies from
+// pnpm-workspace.yaml or from package.json's pnpm field, and applies each
+// patch at install time, so a change to one changes what the install
+// produces.
+//
+// A manifest that does not parse contributes nothing, and a name the
+// checkout cannot use as the path it is (usablePatches) is dropped, rather
+// than failing the whole render: these names come out of a repository's own
+// dependency manifests, which validateImage's rules cannot reach, and this
+// key is computed for every workflow of a repository, Node or not. A Node
+// workflow whose manifest is unreadable still fails loudly and earlier, in
+// config.DetectNodePM and in the render's own workspace read.
+func PnpmPatches(tree Tree) ([]string, error) {
+	var out []string
+	switch data, err := tree.ReadFile("pnpm-workspace.yaml"); {
+	case err == nil:
+		var doc struct {
+			Patched map[string]string `yaml:"patchedDependencies"`
+		}
+		if err := yaml.Unmarshal(data, &doc); err == nil {
+			out = append(out, usablePatches(doc.Patched)...)
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
+	}
+	switch data, err := tree.ReadFile("package.json"); {
+	case err == nil:
+		var pkg struct {
+			Pnpm struct {
+				Patched map[string]string `json:"patchedDependencies"`
+			} `json:"pnpm"`
+		}
+		if err := json.Unmarshal(data, &pkg); err == nil {
+			out = append(out, usablePatches(pkg.Pnpm.Patched)...)
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("package.json: %w", err)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}
+
+// usablePatches are the patchedDependencies values that name one clean
+// repository-relative path: a glob character would be read as a pattern and
+// check out files the patch does not name, a newline would break the
+// generated Dockerfile's checkout loop, and an entry naming anything else
+// unusable (config.ValidKeyFilePath) would key the image on a file the early
+// layer never checks out.
+func usablePatches(patched map[string]string) []string {
+	var out []string
+	for p := range maps.Values(patched) {
+		if config.ValidKeyFilePath(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // KeyFiles are the workflow's cache key files in tree, with their blob
 // IDs: every file its cache key globs match, or, when fugaro.yaml declares
-// no cache, the key of the per-base default (config.DefaultCache).
+// no cache, the key of the per-base default (config.DefaultCache). The
+// dependency install's own inputs join them — the install files of
+// NodeInstallPaths, the patch files PnpmPatches names, and the paths
+// image.key_files asks for — whether or not the workflow declares a cache:,
+// since a change to one of them changes the image just as a lockfile change
+// does.
 func KeyFiles(cfg *config.Config, workflow string, tree Tree) (map[string]string, error) {
 	w, ok := cfg.Workflows[workflow]
 	if !ok {
@@ -132,26 +246,44 @@ func KeyFiles(cfg *config.Config, workflow string, tree Tree) (map[string]string
 			return nil, fmt.Errorf("workflows.%s: %w", workflow, err)
 		}
 	}
+	patches, err := PnpmPatches(tree)
+	if err != nil {
+		return nil, fmt.Errorf("workflows.%s: %w", workflow, err)
+	}
+	install := append(slices.Clone(NodeInstallPaths), w.Image.KeyFiles...)
+	install = append(install, patches...)
 	out := map[string]string{}
 	for _, e := range entries {
-		for _, pattern := range e.Key {
-			matches, err := tree.Glob(pattern)
-			if err != nil {
-				return nil, fmt.Errorf("cache key %q: %w", pattern, err)
-			}
-			for _, m := range matches {
-				id, err := tree.BlobID(m)
-				switch {
-				case errors.Is(err, fs.ErrNotExist):
-					continue
-				case err != nil:
-					return nil, fmt.Errorf("cache key file %s: %w", m, err)
-				}
-				out[m] = id
-			}
+		if err := addKeyFiles(out, tree, "cache key", e.Key); err != nil {
+			return nil, err
 		}
 	}
+	if err := addKeyFiles(out, tree, "install", installPatterns(install)); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// addKeyFiles records every file the patterns match in tree, with its blob
+// ID. what names the patterns in an error.
+func addKeyFiles(out map[string]string, tree Tree, what string, patterns []string) error {
+	for _, pattern := range patterns {
+		matches, err := tree.Glob(pattern)
+		if err != nil {
+			return fmt.Errorf("%s %q: %w", what, pattern, err)
+		}
+		for _, m := range matches {
+			id, err := tree.BlobID(m)
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+				continue
+			case err != nil:
+				return fmt.Errorf("%s file %s: %w", what, m, err)
+			}
+			out[m] = id
+		}
+	}
+	return nil
 }
 
 // nodeDetectFiles are the files config.DetectNodePM reads (their content
@@ -212,6 +344,7 @@ type imageSettings struct {
 	Apt              []string `json:"apt"`
 	Setup            []string `json:"setup"`
 	SkipBuildScripts bool     `json:"skip_build_scripts"`
+	KeyFiles         []string `json:"key_files"`
 }
 
 // ImageConfigHash is the hex SHA-256 of the canonical JSON of the
@@ -225,6 +358,7 @@ func ImageConfigHash(cfg *config.Config, workflow string, tree Tree) (string, er
 	c := imageConfig{Base: w.BaseKind(), Dockerfile: w.Dockerfile, Image: imageSettings{
 		SkipBuildScripts: w.Image.SkipBuildScripts,
 		Apt:              slices.Concat([]string{}, w.Image.Apt), Setup: slices.Concat([]string{}, w.Image.Setup),
+		KeyFiles: slices.Concat([]string{}, w.Image.KeyFiles),
 	}, Tools: w.Image.Tools}
 	if w.Dockerfile != "" {
 		id, err := tree.BlobID(w.Dockerfile)

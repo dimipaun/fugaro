@@ -4,25 +4,29 @@
 // website's own mark, at the size the packager wants, with nothing to keep in
 // step by hand.
 //
-// The claim this file exists for is **the two icons are one file**. The
-// console's icon is `build/icon.png` and the website's mark is
-// `brand/app-icon-1024.png` -- the app-icon master `scripts/gen-brand-icons.py`
-// writes from `brand/fugaro-logo.png`, the source of truth `brand/README.md`
-// and `website/README.md` both name for every icon the site serves. Three
-// things are asserted, and each one is a different way for them to come apart:
+// The claim this file exists for is **the console's icon is a generated
+// file, not a drawing**. The console's icon is `build/icon.png`, and it is
+// `brand/app-icon-macos-1024.png` -- the macOS app-icon master
+// `scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png`, the source
+// of truth `brand/README.md` and `website/README.md` both name for every icon
+// the site serves. Four things are asserted, and each one is a different way
+// for them to come apart:
 //
 //   1. **the bytes are equal** -- copy something else over the console's icon,
 //      or regenerate the brand master and forget the console, and the first test
-//      fails with both digests in the message. This is the "one source of
-//      truth" half: no second drawing, no second palette, no hand-edited copy.
-//   2. **the mark is the site's** -- decoded and compared, block by block,
-//      against the icon the website actually ships
-//      (`website/public/android-chrome-512x512.png`). Byte equality alone would
-//      be satisfied by a console icon that matched some *other* file in
-//      `brand/`; this says the picture is the one a visitor's browser tab and
-//      home screen get. The tolerance is a measured figure rather than a guess
-//      (see the test).
-//   3. **the packager is told about it** -- `build.mac.icon` names the file,
+//      fails. This is the "one source of truth" half: no second drawing, no
+//      second palette, no hand-edited copy.
+//   2. **the shape is macOS's** -- macOS does not mask an app's icon, so the
+//      file itself must be Apple's template: an 824 px rounded body centred in
+//      a 100 px transparent margin. An opaque full-bleed square (what this file
+//      was until the owner saw it in the Dock beside the system's squircles)
+//      fails here.
+//   3. **the mark is the site's** -- the body decoded and compared, block by
+//      block, against the icon the website actually ships
+//      (`website/public/android-chrome-512x512.png`): the same artwork on the
+//      same ground at the same extent, only with rounded corners. The
+//      tolerance is a measured figure rather than a guess (see the test).
+//   4. **the packager is told about it** -- `build.mac.icon` names the file,
 //      the file it names is this one and is a PNG the packager can convert, and
 //      the icon is not smuggled into the asar through `build.files`.
 //
@@ -48,12 +52,17 @@ import type { DockLike } from '../../src/main/icon'
 const CONSOLE_DIR = fileURLToPath(new URL('../..', import.meta.url))
 const REPO_DIR = fileURLToPath(new URL('../../..', import.meta.url))
 
-/** THE_MASTER is the file the console's icon is a copy of: the app-icon master
- * the site's icon set is generated from, opaque on the palette's `--ground`. */
-const THE_MASTER = join(REPO_DIR, 'brand', 'app-icon-1024.png')
+/** THE_MASTER is the file the console's icon is a copy of: the macOS app-icon
+ * master, the site's composition on a rounded body with a transparent margin. */
+const THE_MASTER = join(REPO_DIR, 'brand', 'app-icon-macos-1024.png')
+
+/** BODY is the macOS template's icon body in the 1024 canvas: 824 px square,
+ * 100 px of transparent margin on every side for the shadow. */
+const BODY = { x: 100, y: 100, size: 824 }
 
 /** THE_SITE_ICON is the icon the website itself serves (its manifest's 512 px
- * `any` icon), which is the same composition at half the size. */
+ * `any` icon), which is the same composition as the console's icon body, with
+ * square corners. */
 const THE_SITE_ICON = join(REPO_DIR, 'website', 'public', 'android-chrome-512x512.png')
 
 const CONSOLE_ICON = join(CONSOLE_DIR, CONSOLE_ICON_RELATIVE_PATH)
@@ -62,15 +71,17 @@ const CONSOLE_ICON = join(CONSOLE_DIR, CONSOLE_ICON_RELATIVE_PATH)
  * MEAN_CHANNEL_TOLERANCE is how far one block's average colour may sit from the
  * website's own icon's, out of 255.
  *
- * It is a *measured* figure, not a guess. The console's icon is the master at
- * 1024 and the site's is the same artwork at 512, so the two are the same
- * picture sampled at two sizes: the site's file was written by Pillow's LANCZOS
- * resampler, and this test averages 32 x 32 pixel blocks, so what is left
- * between them is the resampler's ringing along the mark's edges. Over the
- * 16 x 16 grid below that measured **3.96** at its worst block (mean 0.24), so
- * the tolerance is set at 8: twice the measured figure, and still far below
- * what any different mark, palette or crop would produce -- a block that held
- * the mark where the site's held the ground moves by tens, not by eight.
+ * It is a *measured* figure, not a guess. The console's icon body is the
+ * artwork at 80% of 824 px and the site's is the same artwork at 80% of 512, so
+ * the two are the same picture sampled at two sizes: both were written by
+ * Pillow's LANCZOS resampler, and this test averages blocks of 1/16th of the
+ * side, so what is left between them is the resampler's ringing along the
+ * mark's edges. Over the opaque blocks of the 16 x 16 grid below that measured
+ * **3.65** at its worst block (208 of the 256 blocks are opaque and compared;
+ * the rest are the rounded corners), so the tolerance is set at 8: about twice
+ * the measured figure, and still far below what any different mark, palette or
+ * crop would produce -- a block that held the mark where the site's held the
+ * ground moves by tens, not by eight.
  */
 const MEAN_CHANNEL_TOLERANCE = 8
 
@@ -167,29 +178,57 @@ function decodePng(file: string): { width: number; height: number; channels: num
   return { width, height, channels, pixels }
 }
 
-/** blockMeans averages an image into a GRID x GRID grid of channels, so two
- * images of different sizes can be compared as the same picture. */
-function blockMeans(image: { width: number; height: number; channels: number; pixels: Buffer }): number[] {
-  const { width, height, channels, pixels } = image
-  const means: number[] = []
+type Decoded = ReturnType<typeof decodePng>
+
+/** alphaAt is a pixel's alpha, 255 for an image without an alpha channel. */
+function alphaAt(image: Decoded, x: number, y: number): number {
+  return image.channels === 4 ? (image.pixels[(y * image.width + x) * 4 + 3] as number) : 255
+}
+
+/** blockMeans averages the square region (x, y, size) of an image into a
+ * GRID x GRID grid of RGB means, so two images of different sizes can be
+ * compared as the same picture. A block is `opaque` when every pixel in it is:
+ * only those are comparable with an opaque image, because the rounded body's
+ * corner blocks hold transparent pixels where the site's square icon holds
+ * ground. */
+function blockMeans(image: Decoded, region = { x: 0, y: 0, size: image.width }): { rgb: number[]; opaque: boolean }[] {
+  const { width, channels, pixels } = image
+  const blocks: { rgb: number[]; opaque: boolean }[] = []
   for (let gy = 0; gy < GRID; gy += 1) {
     for (let gx = 0; gx < GRID; gx += 1) {
-      const x0 = Math.floor((gx * width) / GRID)
-      const x1 = Math.floor(((gx + 1) * width) / GRID)
-      const y0 = Math.floor((gy * height) / GRID)
-      const y1 = Math.floor(((gy + 1) * height) / GRID)
-      const sums = new Array<number>(channels).fill(0)
+      const x0 = region.x + Math.floor((gx * region.size) / GRID)
+      const x1 = region.x + Math.floor(((gx + 1) * region.size) / GRID)
+      const y0 = region.y + Math.floor((gy * region.size) / GRID)
+      const y1 = region.y + Math.floor(((gy + 1) * region.size) / GRID)
+      const sums = [0, 0, 0]
       let count = 0
+      let opaque = true
       for (let y = y0; y < y1; y += 1) {
         for (let x = x0; x < x1; x += 1) {
-          for (let c = 0; c < channels; c += 1) sums[c] = (sums[c] as number) + (pixels[(y * width + x) * channels + c] as number)
+          for (let c = 0; c < 3; c += 1) sums[c] = (sums[c] as number) + (pixels[(y * width + x) * channels + c] as number)
+          if (alphaAt(image, x, y) !== 255) opaque = false
           count += 1
         }
       }
-      for (let c = 0; c < channels; c += 1) means.push((sums[c] as number) / count)
+      blocks.push({ rgb: sums.map((sum) => sum / count), opaque })
     }
   }
-  return means
+  return blocks
+}
+
+/** DECODE_TIMEOUT_MS is the budget of a test that decodes the console's icon:
+ * a few seconds on an idle machine, well past vitest's 5 s default on a loaded
+ * one. */
+const DECODE_TIMEOUT_MS = 60_000
+
+let decodedConsoleIcon: Decoded | undefined
+
+/** consoleIcon decodes the console's icon once for the tests that look at its
+ * pixels: the decoder is plain JavaScript, and a 1024 RGBA image is four
+ * million bytes through it. */
+function consoleIcon(): Decoded {
+  decodedConsoleIcon ??= decodePng(CONSOLE_ICON)
+  return decodedConsoleIcon
 }
 
 interface BuildConfig {
@@ -213,17 +252,15 @@ describe('the console’s icon is the website’s mark', () => {
     expect(shipped.equals(master), `${CONSOLE_ICON} is not ${THE_MASTER}`).toBe(true)
   })
 
-  it('is a valid opaque 1024 x 1024 PNG', () => {
+  it('is a valid 1024 x 1024 PNG with an alpha channel', () => {
     // 1024 rather than the 512 the site serves. The source logo's visible
     // artwork (the alpha bbox of `brand/fugaro-logo.png` at the generator's own
     // threshold, alpha > 8) is 1089 x 738 pixels since the owner replaced the
     // source with a 2048 px one on 2026-10-20, so the generator's `fit(art,
-    // 1024, 0.80, ground)` draws it at 0.7522 to about 819 x 555 -- a
-    // reduction -- and the site's 512 is the same artwork at 0.3761. The 1024
-    // master is therefore a native-resolution rendering of the mark rather than
-    // an interpolation of a smaller one, which is what the README's account of
-    // the artwork's real size used to ask for (the source was 1024 x 1024 with a
-    // 548 x 371 mark until then, and this file was an ~1.5x upscale of it).
+    // 824, 0.80, ground)` for the macOS body draws it at 0.6053 to about
+    // 659 x 447 -- a reduction -- and the site's 512 is the same artwork at
+    // 0.3761. The master is therefore a native-resolution rendering of the mark
+    // rather than an interpolation of a smaller one.
     //
     // What the size buys is the `.icns`: electron-builder refuses anything under
     // 512 for that format, and every slot from 1024 down to 16 is a downscale of
@@ -233,36 +270,91 @@ describe('the console’s icon is the website’s mark', () => {
     const icon = png(CONSOLE_ICON)
     expect(icon.width).toBe(1024)
     expect(icon.height).toBe(1024)
-    // Colour type 2 is RGB: opaque. The site's icons are opaque for the same
-    // reason (the maskable one too), and a macOS icon with holes in it shows the
-    // desktop through the mark.
-    expect(icon.colourType).toBe(2)
+    // Colour type 6 is RGBA: the rounded corners and the margin are
+    // transparent, which an RGB file (type 2) cannot be.
+    expect(icon.colourType).toBe(6)
     expect(icon.bytes).toBeGreaterThan(0)
   })
 
+  it('has the macOS icon shape: a rounded body inside a transparent margin', () => {
+    // macOS draws an app's icon as the file is, without a mask, so a full-bleed
+    // opaque square shows as a square in the Dock beside every rounded system
+    // icon. Apple's template since Big Sur is an 824 px body centred in the 1024
+    // canvas, its corners continuous, with a soft shadow inside the margin.
+    const icon = consoleIcon()
+    for (const [x, y] of [
+      [0, 0],
+      [1023, 0],
+      [0, 1023],
+      [1023, 1023],
+    ] as const) {
+      expect(alphaAt(icon, x, y), `canvas corner (${x}, ${y}) is not transparent`).toBe(0)
+    }
+    // The body's own corners: inside its square but outside the rounding.
+    for (const [x, y] of [
+      [BODY.x + 5, BODY.y + 5],
+      [BODY.x + BODY.size - 6, BODY.y + 5],
+      [BODY.x + 5, BODY.y + BODY.size - 6],
+      [BODY.x + BODY.size - 6, BODY.y + BODY.size - 6],
+    ] as const) {
+      expect(alphaAt(icon, x, y), `the body's corner (${x}, ${y}) is not rounded off`).toBeLessThan(64)
+    }
+    expect(alphaAt(icon, 512, 512), 'the centre is not opaque').toBe(255)
+    // The margin, beyond the shadow's reach, is empty on all four sides.
+    for (const [x, y] of [
+      [40, 512],
+      [983, 512],
+      [512, 40],
+      [512, 983],
+    ] as const) {
+      expect(alphaAt(icon, x, y), `margin pixel (${x}, ${y}) is not transparent`).toBe(0)
+    }
+    // The body fills exactly its 824 px square: the bounding box of the pixels
+    // more than half opaque is the template's, so the shadow (far fainter than
+    // half) neither widens it nor is mistaken for the body.
+    let [minX, minY, maxX, maxY] = [1024, 1024, -1, -1]
+    for (let y = 0; y < 1024; y += 1) {
+      for (let x = 0; x < 1024; x += 1) {
+        if (alphaAt(icon, x, y) > 128) {
+          minX = Math.min(minX, x)
+          minY = Math.min(minY, y)
+          maxX = Math.max(maxX, x)
+          maxY = Math.max(maxY, y)
+        }
+      }
+    }
+    expect([minX, minY, maxX + 1, maxY + 1]).toEqual([BODY.x, BODY.y, BODY.x + BODY.size, BODY.y + BODY.size])
+  }, DECODE_TIMEOUT_MS)
+
   it('is the picture the website serves, not merely a file of the right size', () => {
-    // The mark itself, at two sizes. The console's is the 1024 master, the
-    // site's is the 512 it ships to a browser tab and a home screen; both are
-    // the logo cropped to its artwork and centred on the palette's ground, so
-    // block averages of the two must agree closely (the tolerance above records
-    // how closely, and why).
-    const mine = blockMeans(decodePng(CONSOLE_ICON))
+    // The mark itself, at two sizes. The console's is the 824 px body of the
+    // macOS master, the site's is the 512 it ships to a browser tab and a home
+    // screen; both are the logo cropped to its artwork and centred at 80% on
+    // the palette's ground, so block averages of the two must agree closely
+    // wherever the body is opaque (the tolerance above records how closely, and
+    // why). Only the corner blocks the rounding cuts into are left out.
+    const mine = blockMeans(consoleIcon(), BODY)
     const site = blockMeans(decodePng(THE_SITE_ICON))
     expect(site.length).toBe(mine.length)
+    const compared = mine.filter((block) => block.opaque).length
+    expect(compared, 'too few opaque blocks in the body to compare').toBeGreaterThanOrEqual(GRID * GRID - 64)
     let worst = 0
     let worstBlock = -1
-    for (const [index, value] of mine.entries()) {
-      const difference = Math.abs(value - (site[index] as number))
-      if (difference > worst) {
-        worst = difference
-        worstBlock = index
+    for (const [index, block] of mine.entries()) {
+      if (!block.opaque) continue
+      for (const [c, value] of block.rgb.entries()) {
+        const difference = Math.abs(value - (site[index]?.rgb[c] as number))
+        if (difference > worst) {
+          worst = difference
+          worstBlock = index
+        }
       }
     }
     expect(
       worst,
       `block ${worstBlock} of the console's icon differs from the site's by ${worst.toFixed(2)} (tolerance ${MEAN_CHANNEL_TOLERANCE}): the console is not shipping the website's mark`,
     ).toBeLessThanOrEqual(MEAN_CHANNEL_TOLERANCE)
-  })
+  }, DECODE_TIMEOUT_MS)
 
   it('is the icon the packaging config names, and is what the packager can convert', () => {
     // The packager is told explicitly rather than left to electron-builder's

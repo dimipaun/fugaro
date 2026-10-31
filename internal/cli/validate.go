@@ -1762,6 +1762,7 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				warnings = append(warnings, rigorImageWarnings(cfg)...)
+				warnings = append(warnings, gitAuthorImageWarnings(cfg)...)
 				editionOf, note := governanceEditions(cmd.Context(), lc, cfg, offline)
 				gw, gn := governanceImageWarnings(cfg, editionOf, note)
 				warnings, notes = append(warnings, gw...), append(notes, gn...)

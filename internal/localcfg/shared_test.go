@@ -61,10 +61,13 @@ budget:
 watch:
   burn_alert_usd_per_hour: 2
 mailbox:
-  keychain_item: fugaro-mailbox-aurora
+  keychain_item:
+    m~AAECAwQFBgcICQoLDA0ODw: fugaro-mailbox-aurora
 credentials_service:
   url: https://fugaro-credentials-abcde-uc.a.run.app
 user: someone@example.com
+commit_name: Someone Else
+commit_email: someone-else@users.noreply.github.com
 providers:
   openrouter:
     kind: anthropic-compat
@@ -118,7 +121,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// batch.service_account is published (it is an installation fact, not the
 	// deprecated build one), so the forbidden word would fail on the block
 	// this file now carries.
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "update_check"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "update_check", "commit_name", "commit_email", "Someone Else", "someone-else@users.noreply.github.com"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -131,8 +134,28 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// operator's own and stays in their config after it has been published to
 	// the node (nothing here reads it again, but Shared must not be the thing
 	// that clears it).
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil || lc.CommitName == "" || lc.CommitEmail == "" {
 		t.Errorf("Shared modified its receiver: %+v", lc)
+	}
+}
+
+// TestSharedBlanksCommitIdentity: commit_name and commit_email are one
+// machine's person, like user:, and are never published — a launcher who could
+// write them into the runs bucket would be choosing whose name every
+// teammate's commits carry, and, for commit_email, which forge account the
+// history links them to (D604, D606, D649). The fields are read straight off
+// the published copy here, where the leak test above only greps its bytes.
+func TestSharedBlanksCommitIdentity(t *testing.T) {
+	lc := fullLocalConfig(t)
+	if lc.CommitName == "" || lc.CommitEmail == "" {
+		t.Fatalf("the fixture carries no commit identity to blank: %+v", lc)
+	}
+	s := lc.Shared()
+	if s.CommitName != "" || s.CommitEmail != "" {
+		t.Errorf("Shared published commit_name %q and commit_email %q, want both blank", s.CommitName, s.CommitEmail)
+	}
+	if lc.CommitName == "" || lc.CommitEmail == "" {
+		t.Error("Shared cleared the receiver's own commit identity")
 	}
 }
 
@@ -534,6 +557,36 @@ func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {
 	}
 	if len(local.ProjectSecrets) != 1 {
 		t.Error("MergeShared cleared the local project_secrets")
+	}
+}
+
+// TestMergeSharedNeverCarriesBitbucketAPIRoots: the API-root allow-list is the
+// owner's policy about where a run may send the project's Bitbucket token
+// (D474), and it travels the way project_secrets does — through the policy
+// node, which the runner reads and fails closed on, never through the runs
+// bucket's shared file, which any launcher with objectAdmin can write. Neither
+// the local nor a published config's list reaches the output.
+func TestMergeSharedNeverCarriesBitbucketAPIRoots(t *testing.T) {
+	block := "bitbucket_api_roots: [https://api.bitbucket.example/2.0]\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, "bitbucket_api_roots: [https://bucket-source.example/2.0]\n")
+	if len(existing.BitbucketAPIRoots) != 1 || len(local.BitbucketAPIRoots) != 1 {
+		t.Fatalf("fixtures: %v %v", existing.BitbucketAPIRoots, local.BitbucketAPIRoots)
+	}
+	for name, got := range map[string]*Config{"shared": local.Shared(), "merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, ""))} {
+		if got.BitbucketAPIRoots != nil {
+			t.Errorf("%s: bitbucket_api_roots = %v", name, got.BitbucketAPIRoots)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "bitbucket_api_roots") {
+			t.Errorf("%s: output carries bitbucket_api_roots:\n%s", name, out)
+		}
+	}
+	if len(local.BitbucketAPIRoots) != 1 {
+		t.Error("Shared/MergeShared cleared the local list")
 	}
 }
 

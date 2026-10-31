@@ -180,7 +180,7 @@ func probeSvc(t *testing.T, mutate func(*svc, *Config)) (*svc, *logBuf) {
 // not one of these.
 func testPolicyDocBackoff(initial, cap string) string {
 	return `{
-		"version": 3,
+		"version": 4,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {

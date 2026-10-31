@@ -103,6 +103,10 @@ func labelled(f *gcpfake.CRM, project string) {
 
 func newInitRig(t *testing.T) *initRig {
 	t.Helper()
+	// The converge runs the checkout stage, which runs fugaro upgrade's
+	// plugin step: without this, a rig would install the plugin into the
+	// developer's own Claude Code through whatever claude is on PATH.
+	noClaudeOnPath(t)
 	r := &initRig{
 		dir: t.TempDir(), gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t),
 		crm: gcpfake.NewCRM(t), run: gcpfake.NewRun(t), sm: gcpfake.NewSecrets(t),
@@ -1882,7 +1886,7 @@ func TestPlanRepoThreadsReadyToFirstBuild(t *testing.T) {
 func TestPlanRepoGatesOnAPublishedPolicy(t *testing.T) {
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	// The local config holds the database (so the policy can be read) but no
 	// web API key, so its jobs carry neither of what a run needs.
 	p := newRepoPlanRig(t, names(3), sandboxBaseRelease, "budget: { mode: off, rtdb_url: "+db.URL+" }\n", changedRepoBuild)

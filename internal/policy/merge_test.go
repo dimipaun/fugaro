@@ -4,7 +4,11 @@ import (
 	"math"
 	"math/rand"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 func TestMergePerRunMin(t *testing.T) {
@@ -160,6 +164,86 @@ func TestAllowedIgnoredPartialAndDisjoint(t *testing.T) {
 	e = Merge(Layer{AllowedModels: []string{"a", "b"}}, Layer{AllowedModels: []string{"b"}}, Layer{AllowedModels: []string{"b"}})
 	if len(e.Ignored) != 0 {
 		t.Fatalf("%+v", e.Ignored)
+	}
+}
+
+// TestReviewFloorMergesTightenOnly is D722's G1: the owner's review-level
+// floor is a union over the layers, so a layer below it can only ever add a
+// level to a rigor mode. The layers under the floor are the ones a launcher
+// writes — the project layer and the task (docs/design/bucket-iam.md §10 L1,
+// L2) — and the whole point of the floor is that neither can take a level
+// away: a merge that let a lower layer's shorter list replace the owner's
+// would be the launcher choosing how much review it gets.
+func TestReviewFloorMergesTightenOnly(t *testing.T) {
+	owner := Layer{ReviewFloor: map[rigor.Mode][]Level{
+		rigor.Pro:      {LevelL2},
+		rigor.Critical: {LevelL2, LevelL3},
+	}}
+	// A layer that asks for more review than the owner requires, and one that
+	// names no floor at all — the shape every launcher-written layer has.
+	more := Layer{ReviewFloor: map[rigor.Mode][]Level{rigor.Pro: {LevelL1, LevelL3}}}
+	none := Layer{}
+	e := Merge(owner, more, none)
+
+	if got, want := e.ReviewFloor(rigor.Pro), []Level{LevelL1, LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor(pro) = %v, want %v: a lower layer may add a level, never remove one", got, want)
+	}
+	if got, want := e.ReviewFloor(rigor.Critical), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor(critical) = %v, want %v: a mode no later layer names keeps the owner's floor", got, want)
+	}
+	if got := e.ReviewFloor(rigor.Startup); got != nil {
+		t.Errorf("ReviewFloor(startup) = %v, want nil: no layer set a floor for that mode", got)
+	}
+	// A layer that repeats a level the owner already required adds nothing.
+	e = Merge(owner, Layer{ReviewFloor: map[rigor.Mode][]Level{rigor.Critical: {LevelL3, LevelL3}}})
+	if got, want := e.ReviewFloor(rigor.Critical), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor(critical) = %v, want %v: the union holds a level once", got, want)
+	}
+	// The layers' own maps are not modified by the merge.
+	if got := owner.ReviewFloor[rigor.Pro]; !slices.Equal(got, []Level{LevelL2}) {
+		t.Errorf("the owner's layer was modified: ReviewFloor(pro) = %v", got)
+	}
+	if got := more.ReviewFloor[rigor.Pro]; !slices.Equal(got, []Level{LevelL1, LevelL3}) {
+		t.Errorf("a later layer was modified: ReviewFloor(pro) = %v", got)
+	}
+}
+
+// TestParseFloor is the one rule a written floor is held to, shared by the
+// operator's config file and the policy node (internal/localcfg and
+// internal/projectpolicy call it): the two cannot disagree about what a
+// written floor means, which is why the rule lives beside the vocabulary and
+// not in either caller. Every name outside the vocabularies is refused rather
+// than dropped, and every refusal of one document is reported at once.
+func TestParseFloor(t *testing.T) {
+	got, err := ParseFloor(map[string][]string{"critical": {"l2", "l3"}, "pro": {"l2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[rigor.Mode][]Level{rigor.Pro: {LevelL2}, rigor.Critical: {LevelL2, LevelL3}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseFloor = %v, want %v", got, want)
+	}
+
+	// A mode and a level this Fugaro does not know, in one document: both are
+	// named, because an operator fixing a file should not have to publish once
+	// per mistake.
+	_, err = ParseFloor(map[string][]string{"prod": {"l2"}, "pro": {"l4"}})
+	if err == nil {
+		t.Fatal("ParseFloor accepted a mode and a level outside the vocabulary")
+	}
+	for _, want := range []string{"prod", "is not a rigor mode", "l4", "is not a review level"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+
+	// No mode at all is no floor, whether the key is absent or written empty:
+	// the empty object is how an operator says a published floor goes away.
+	for _, written := range []map[string][]string{nil, {}} {
+		f, err := ParseFloor(written)
+		if err != nil || f != nil {
+			t.Errorf("ParseFloor(%v) = (%v, %v), want (nil, nil)", written, f, err)
+		}
 	}
 }
 
@@ -494,5 +578,53 @@ func TestPerDayMergeNeverLoosens(t *testing.T) {
 	if e.PerDayUSD != 20 || e.Sources[KeyPerDayUSD] != SourceDefaultBranch ||
 		!reflect.DeepEqual(e.Ignored, []Ignored{{KeyPerDayUSD, "500", "20", SourceDefaultBranch}}) {
 		t.Fatalf("%+v", e)
+	}
+}
+
+// TestABMergeTightenOnly pins D556/D557's rule for the one ab: key the merge
+// speaks: the project layer sets the sampling rate and a repository may only
+// lower it, to 0, which never samples that repository. A layer that writes a
+// higher rate is dropped and recorded, as a looser cap is; a layer that
+// writes no rate at all passes the earlier layers through, which is a nil
+// rate and not a 0 one, because 0 is the opt-out and not "unset". Nothing
+// else of ab is a policy.Layer field, so no other key of the block can reach
+// the merge from any layer.
+func TestABMergeTightenOnly(t *testing.T) {
+	rate := func(v float64) *float64 { return &v }
+	if e := Merge(Layer{}); e.ABRate != nil || e.Sources[KeyABRate] != "" {
+		t.Errorf("a layer with no ab rate = %v (source %q), want unset", e.ABRate, e.Sources[KeyABRate])
+	}
+	e := Merge(Layer{ABRate: rate(0.05)})
+	if e.ABRate == nil || *e.ABRate != 0.05 || e.Sources[KeyABRate] != SourceCeiling {
+		t.Errorf("the ceiling alone = %v (source %q), want 0.05 from the ceiling", e.ABRate, e.Sources[KeyABRate])
+	}
+	// The repository's opt-out is the tighter value, and it is the branch's.
+	e = Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0)})
+	if e.ABRate == nil || *e.ABRate != 0 || e.Sources[KeyABRate] != SourceDefaultBranch || len(e.Ignored) != 0 {
+		t.Errorf("a repository's 0 = %v (source %q, ignored %v), want 0 from the layer that opted out and nothing ignored", e.ABRate, e.Sources[KeyABRate], e.Ignored)
+	}
+	// A repository cannot raise it: its layer is the default branch's, the
+	// project's is the ceiling.
+	e = Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0.1)})
+	if e.ABRate == nil || *e.ABRate != 0.05 || len(e.Ignored) != 1 {
+		t.Fatalf("a repository's 0.1 = %v (ignored %v), want the ceiling's 0.05 and one ignored value", e.ABRate, e.Ignored)
+	}
+	if ig := e.Ignored[0]; ig.Key != KeyABRate || ig.Value != "0.1" || ig.Effective != "0.05" || ig.Source != SourceCeiling {
+		t.Errorf("Ignored = %+v, want ab.rate 0.1 dropped for the ceiling's 0.05", ig)
+	}
+	// A layer in between that writes no rate is not an opt-out.
+	e = Merge(Layer{ABRate: rate(0.05)}, Layer{}, Layer{ABRate: rate(0)})
+	if e.ABRate == nil || *e.ABRate != 0 || e.Sources[KeyABRate] != SourceBranch {
+		t.Errorf("a silent default branch = %v (source %q), want the branch's 0", e.ABRate, e.Sources[KeyABRate])
+	}
+	// Once a layer has opted out, a later layer cannot raise it back: the
+	// comparison is with the running effective value.
+	e = Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0)}, Layer{ABRate: rate(0.07)})
+	if e.ABRate == nil || *e.ABRate != 0 || len(e.Ignored) != 1 || e.Ignored[0].Source != SourceDefaultBranch {
+		t.Errorf("0 then 0.07 = %v (ignored %v), want 0 from the layer that opted out and the 0.07 dropped", e.ABRate, e.Ignored)
+	}
+	// Equal rates are not ignored, as for every other key.
+	if e := Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0.05)}); len(e.Ignored) != 0 {
+		t.Errorf("two equal rates = %v, want nothing ignored", e.Ignored)
 	}
 }

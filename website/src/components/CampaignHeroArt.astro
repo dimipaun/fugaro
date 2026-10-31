@@ -1,0 +1,391 @@
+---
+/**
+ * website/src/components/CampaignHeroArt.astro — the campaign hero's picture (the owner's
+ * feedback of 2026-10-30; reconciliation F14).
+ *
+ * **What it draws.** One picture, read left to right: a task, the short-lived cloud job it
+ * starts, and the pull request the job ends in — the product's own promise, drawn rather than
+ * written. The task is a filled card with a prompt mark and two lines of a request nobody has
+ * run yet; the job is a cloud of filled shapes with a live spinner cut into it in the ground's
+ * colour, so the middle of the picture is a thing that is starting up and will not be there
+ * afterwards; the dashed route either side of it is the work going in and the pull request
+ * coming out; and the third card is that pull request, filled in the palette's one "this
+ * finished" colour with a branch merging into a base drawn in the ground on it.
+ *
+ * **It is flat, and it is framed by nothing** (the owner's feedback of 2026-10-30, finding 2).
+ * What the live preview showed was a small box: a 1 px border around a panel, thin line art
+ * inside it and about a tenth of the screen spent on the one thing the page is about. The
+ * panel and its border are gone — every shape here is inset from the viewBox, and
+ * `website/test/landing-pages.mjs` reads that — and the drawing is filled shapes at weight
+ * rather than outlines at 3 px: the cloud, the two cards and the moon are fills, the strokes
+ * that are left are 6 px and up, and there is no gradient, no filter, no glow and no shadow
+ * anywhere in it, at rest or otherwise.
+ *
+ * **It is drawn, not fetched.** Everything is inline SVG in this file's own markup: no raster
+ * file, no icon set, no font, no filter and no `<use>` pointing anywhere else, so the picture
+ * costs the page one block of markup and no request at all (F14, Global Constraint 8). The
+ * colours come from the palette through the classes in the stylesheet below rather than from
+ * values in the markup, exactly as the run diagram does it, so no colour is written twice and
+ * nothing here is a literal the palette does not carry (W1.2).
+ *
+ * **The tone is the variant's, twice over: in the markup and in the paint.** `data-tone` on the
+ * `<svg>` is the variant's own word from `website/data/landing.yaml` (spec §6), and the four
+ * rules below paint the drawing's accent from it — green for `/save`, whose subject is what a
+ * run does not cost; the site's structural blue for `/control`, whose subject is the policy; the
+ * brightest cyan for `/scale`, where the same job is asked for many times at once; and green
+ * again for `/crew`, whose register the spec asks to be lighter. `playful` is lighter in the
+ * drawing rather than in a fourth colour: `--warn` is the palette's one "pay attention" tone and
+ * belongs to the caps page, so `/crew`'s lightness is spent on the motif — the two sleeping
+ * marks and the moon over the cloud — and on rounder, thicker strokes. A tone whose word the
+ * data file changes paints the drawing the same way with another accent and another motif, and
+ * no page types its own colour.
+ *
+ * **The four motifs are the four campaign's ideas, and each is one small group.** `/save` bears
+ * a percent mark, `/control` a shield with a check inside it, `/scale` three lanes of the same
+ * line, and `/crew` the sleeping marks and the moon. They sit over the cloud, in the one place
+ * every variant leaves free, so the picture is one drawing with four registers rather than four
+ * drawings.
+ *
+ * **Nothing is typed inside it, and it is named for the reader who is not shown it.** There is
+ * no `<text>` anywhere in the drawing: every word on a campaign page comes from a data file
+ * (G2.1), and a label set inside the picture would be a second copy of one of them that no page
+ * and no data file holds — `website/test/landing-pages.mjs` reads the drawing and refuses one.
+ * The `<svg>` is `role="img"` with an `aria-label` beside it, because the picture is the page's
+ * own argument rather than decoration: a reader who is not shown it is told what it says, once.
+ *
+ * **The motion is a drift and a spinner, and it is the reader's choice.** The cloud drifts on
+ * an 11 s loop — the "slow subtle drift" the owner asked for, which is a thing that breathes
+ * rather than a thing that moves — and the spinner turns; both are `transform` only, which the
+ * browser hands to the compositor, and both are inside a `prefers-reduced-motion: no-preference`
+ * block, so a reader who asked their system for less motion is served the picture still rather
+ * than with a stopped animation. The picture also rises into place on the first frame the
+ * browser draws (`@starting-style`, 300 ms after the headline and 100 ms after the button), CSS
+ * only, so nothing about it depends on a script having run. `Base.astro`'s universal reduce rule
+ * is the second half of that pair, and `website/test/a11y.mjs` is the gate that keeps both true.
+ *
+ * **Where it lands, and what takes its place.** The drawing sits inside `CampaignHero.astro`,
+ * under the words and the booking action on a phone and beside them from the wide breakpoint, in
+ * the wider of the hero's two columns — the owner's finding 2 asked for the picture to be the
+ * dominant thing on the first screen, and the headline across the top of the band is what leaves
+ * it the room to be one. Since the owner's instruction of 2026-10-30 it is the hero's **fallback
+ * picture**: the hero shows a real screen of the console while the variant names a `screenshot`
+ * in `website/data/landing.yaml`, and this drawing is what it shows instead when the variant
+ * names none — one picture in the hero, and never both. Every variant in the file names a screen
+ * today, so no page the repository builds renders this component: the hero's own entrance for the
+ * picture is therefore declared in `CampaignHero.astro` (on `.campaign-hero-shot`), and the 300 ms
+ * rise below is this component's own for the pages where it is the picture. It is not a variant's
+ * media either: `[variant].astro` renders the file a variant names — its video or its image — in
+ * the layout's `media` slot at the top of the page, and a variant that has one renders neither
+ * picture (F14, G2.5, D190; the owner's instruction that the hero shows a screen is D411).
+ */
+interface Props {
+  /** The variant's tone (`savings`, `control`, `scale`, `playful`), from `landing.yaml`. */
+  tone: string
+}
+
+const { tone } = Astro.props
+
+// What the picture is, for a reader who is not shown it. It says what the drawing says and
+// nothing the page does not promise: one task, one short-lived job, one pull request. The label
+// calls that middle thing a job, which is what the site's own copy calls a run's unit of work
+// (changes spec 2026-10-18, item 2) — and the retired word for it is nowhere in this file,
+// comments included, because the gate that keeps it out reads the sources and not only the
+// pages (`website/test/wording.mjs`).
+const ALT = 'An illustration: a task starts a short-lived cloud job, and the job ends in a pull request.'
+---
+
+<svg
+  class="campaign-hero-art"
+  data-tone={tone}
+  viewBox="0 0 480 330"
+  role="img"
+  aria-label={ALT}
+  preserveAspectRatio="xMidYMid meet"
+>
+  {/* The task, on the left: a filled card with a prompt mark and two lines of a request nobody
+      has run yet. It is the only shape the drawing leaves in the surface tone, so the two ends
+      of the line — the thing that goes in and the thing that comes out — are the two cards. */}
+  <rect class="art-card" x="8" y="120" width="136" height="180" rx="20" />
+  <path class="art-prompt" d="M34 178 l16 16 -16 16" />
+  <path class="art-bar" d="M66 194 h50" />
+  <path class="art-bar" d="M34 240 h96" />
+
+  {/* The route in: the task is handed to the job, which is the dashed line arriving at it. */}
+  <path class="art-route" d="M150 210 h22" />
+  <path class="art-arrow" d="M164 202 l10 8 -10 8" />
+
+  {/* The job itself: one cloud of filled shapes — three circles on a rounded base, which is a
+      cloud drawn at weight rather than an outline — with the spinner cut into it in the ground's
+      colour. The spinner is a ring drawn three quarters empty: nothing about it is a picture of
+      progress, so it is deliberately not a bar a reader could read a percentage off. */}
+  <g class="art-cloud">
+    <circle class="art-cloud-part" cx="206" cy="230" r="34" />
+    <circle class="art-cloud-part" cx="244" cy="202" r="46" />
+    <circle class="art-cloud-part" cx="284" cy="232" r="30" />
+    <rect class="art-cloud-part" x="172" y="230" width="136" height="34" rx="17" />
+    <circle class="art-spin" cx="244" cy="216" r="22" />
+  </g>
+
+  {/* The tone's own motif, in the band the drawing leaves free above the job. */}
+  <g class="art-motif" data-motif={tone}>
+    {tone === 'savings' && (
+      <>
+        {/* A tenth of the price: the percent mark, drawn as its two dots and its slash. */}
+        <circle class="art-motif-line" cx="222" cy="58" r="9" />
+        <circle class="art-motif-line" cx="258" cy="96" r="9" />
+        <path class="art-motif-line" d="M214 106 l52 -56" />
+      </>
+    )}
+    {tone === 'control' && (
+      <>
+        {/* One policy over every run: a shield, and the check inside it. */}
+        <path class="art-motif-line" d="M240 32 l30 12 v24 c0 18 -13 33 -30 41 -17 -8 -30 -23 -30 -41 V44 z" />
+        <path class="art-motif-line" d="M226 68 l10 12 20 -26" />
+      </>
+    )}
+    {tone === 'scale' && (
+      <>
+        {/* Many runs at once: the same line, three lanes deep. */}
+        <path class="art-lane art-lane-1" d="M204 54 h72" />
+        <path class="art-lane art-lane-2" d="M194 76 h92" />
+        <path class="art-lane art-lane-3" d="M204 98 h72" />
+      </>
+    )}
+    {tone === 'playful' && (
+      <>
+        {/* Somewhere else while it works: two sleeping marks over the cloud, and the moon. */}
+        <path class="art-motif-line art-nap" d="M216 50 h28 l-28 22 h28" />
+        <path class="art-motif-thin art-nap" d="M252 92 h15 l-15 12 h15" />
+        <path class="art-moon" d="M288 38 a16 16 0 1 0 14 26 a12 12 0 1 1 -14 -26 z" />
+      </>
+    )}
+  </g>
+
+  {/* The route out, and the pull request it arrives at: a branch merged into a base, drawn in
+      the ground's colour on the palette's one "this finished" fill. */}
+  <path class="art-route" d="M312 210 h22" />
+  <path class="art-arrow" d="M326 202 l10 8 -10 8" />
+  <rect class="art-pr" x="336" y="120" width="136" height="180" rx="20" />
+  <path class="art-pr-merge" d="M398 210 h50" />
+  <path class="art-pr-base" d="M448 152 v116" />
+  <circle class="art-pr-node" cx="398" cy="210" r="17" />
+</svg>
+
+<style>
+  /* The drawing takes the width it is given and keeps its own proportions: it scales to the
+     hero's column on every viewport rather than being sized in pixels here. */
+  .campaign-hero-art {
+    /* The tone's accent, until one of the rules below names the variant's own. It is a token
+       and not a colour: every value in this file is one of the palette's. */
+    --art-accent: var(--accent-on-dark);
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  /* The three bodies of the drawing: the task and the pull request are cards, and the job is a
+     cloud. All three are fills with no stroke at all, which is what makes the picture flat. */
+  .art-card {
+    fill: var(--surface);
+  }
+
+  .art-pr {
+    fill: var(--ok);
+  }
+
+  .art-cloud-part {
+    fill: var(--art-accent);
+  }
+
+  /* The strokes that are left are the marks drawn on the bodies, at weight: the prompt mark and
+     the request's lines on the task, the routes, the arrows and the motif. */
+  .art-prompt,
+  .art-route,
+  .art-arrow,
+  .art-motif-line,
+  .art-motif-thin,
+  .art-lane {
+    fill: none;
+    stroke: var(--art-accent);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .art-prompt {
+    stroke-width: 12;
+  }
+
+  .art-bar {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 12;
+    stroke-linecap: round;
+    opacity: 0.55;
+  }
+
+  /* The route, in and out: a dashed line a reader reads as work travelling rather than as a
+     border, and the arrowhead at the end of each one. It is static — the drift and the spinner
+     are the drawing's motion — so the picture keeps exactly the two loops the owner asked for. */
+  .art-route {
+    stroke-width: 6;
+    stroke-dasharray: 14 12;
+  }
+
+  .art-arrow {
+    stroke-width: 6;
+  }
+
+  /* The spinner, cut into the cloud in the ground's colour: a fill of the cloud with a ring
+     taken out of it. `transform-box: fill-box` is what makes `center` the circle's own centre
+     rather than the viewBox's origin, and it turns by `transform`, which the browser can hand to
+     the compositor, and not by `stroke-dashoffset`, which repaints the shape every frame. */
+  .art-spin {
+    fill: none;
+    stroke: var(--ground);
+    stroke-width: 10;
+    stroke-dasharray: 104 34;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  /* The pull request's merge, in the ground's colour on the "this finished" fill: the base
+     branch the one thick stroke in the drawing, which is what makes it read as the line
+     everything else lands on. */
+  .art-pr-merge,
+  .art-pr-base {
+    fill: none;
+    stroke: var(--ground);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .art-pr-merge {
+    stroke-width: 14;
+  }
+
+  .art-pr-base {
+    stroke-width: 16;
+  }
+
+  .art-pr-node {
+    fill: var(--ground);
+  }
+
+  .art-motif-line {
+    stroke-width: 10;
+  }
+
+  .art-motif-thin {
+    stroke-width: 7;
+  }
+
+  /* The moon is the drawing's other fill: a crescent, drawn rather than outlined. */
+  .art-moon {
+    fill: var(--art-accent);
+  }
+
+  /* The lanes of `/scale`'s motif: the same line three times, the far one faintest, so the
+     picture reads as many of one thing rather than as a stack of rules. */
+  .art-lane {
+    stroke-width: 10;
+  }
+
+  .art-lane-2 {
+    opacity: 0.6;
+  }
+
+  .art-lane-3 {
+    opacity: 0.35;
+  }
+
+  /* One accent per tone (spec §6). Three of the four are colours the palette gives a role to;
+     `/crew` takes the green again and spends its lightness on the drawing instead, because
+     `--warn` means "pay attention" and belongs to the caps page. */
+  .campaign-hero-art[data-tone='savings'] {
+    --art-accent: var(--ok);
+  }
+
+  .campaign-hero-art[data-tone='control'] {
+    --art-accent: var(--accent);
+  }
+
+  .campaign-hero-art[data-tone='scale'] {
+    --art-accent: var(--accent-on-dark);
+  }
+
+  .campaign-hero-art[data-tone='playful'] {
+    --art-accent: var(--ok);
+  }
+
+  /* `/crew` is the one the spec asks to be lighter: thicker, rounder marks, so the playful
+     register is in the drawing rather than in a colour. */
+  .campaign-hero-art[data-tone='playful'] .art-motif-line,
+  .campaign-hero-art[data-tone='playful'] .art-motif-thin,
+  .campaign-hero-art[data-tone='playful'] .art-prompt {
+    stroke-width: 13;
+  }
+
+  /* The phone's own block: the drawing is the widest thing the column holds and centred, so the
+     headline, the sentence and the booking link keep the top of the page and the picture follows
+     them (the owner's feedback of 2026-10-30, finding 2). */
+  @media (max-width: 30rem) {
+    .campaign-hero-art {
+      max-width: 24rem;
+      margin-inline: auto;
+    }
+  }
+
+  /* The wide viewport's: the picture sits on the hero's outer edge, in the wider of the two
+     columns the hero gives it, rather than floating in the middle of it. */
+  @media (min-width: 60rem) {
+    .campaign-hero-art {
+      margin-inline-start: auto;
+    }
+  }
+
+  /* The motion, and the reader's answer to it. Both loops are inside `no-preference`, so a
+     reader who asked their system for less motion gets the picture still — not a picture with a
+     stopped animation in it — and the entrance is the first frame the browser draws, which is
+     CSS only: a page with no script, or a browser without `@starting-style`, shows the drawing
+     as it is. 300 ms is the last step of the hero's stagger, after the headline, the sentence
+     and the button. */
+  @media (prefers-reduced-motion: no-preference) {
+    .art-cloud {
+      animation: art-drift 11s ease-in-out infinite;
+    }
+
+    .art-spin {
+      animation: art-spin 3.2s linear infinite;
+    }
+
+    .campaign-hero-art {
+      transition:
+        opacity var(--duration-entrance) var(--ease-out),
+        transform var(--duration-entrance) var(--ease-out);
+      transition-delay: 300ms;
+    }
+
+    @starting-style {
+      .campaign-hero-art {
+        opacity: 0;
+        transform: translateY(18px);
+      }
+    }
+  }
+
+  /* The drift: seven units of travel over eleven seconds, which is a thing that breathes rather
+     than a thing that moves, and it ends where it started so a stopped animation is the drawing
+     at rest rather than one tilted by where it stopped (D105). */
+  @keyframes art-drift {
+    50% {
+      transform: translateY(-7px);
+    }
+  }
+
+  /* A full turn: the transform `art-spin` is applied to, which the compositor can own. */
+  @keyframes art-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+</style>

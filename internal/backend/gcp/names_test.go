@@ -276,6 +276,29 @@ func TestRegistryRepoID(t *testing.T) {
 	}
 }
 
+// A shared image registry is one repository per installation, and it must
+// never be some repository's own: a name that collided with RegistryRepoID(slug)
+// would put that repository's images in the installation's shared repository
+// (design docs/forge-authorship-images/shared-images.md §2.6).
+func TestSharedRegistryRepoIDNeverEqualsARepositorysOwn(t *testing.T) {
+	id := SharedRegistryRepoID()
+	if !registryIDRE.MatchString(id) || !strings.HasPrefix(id, "fugaro-") || id == "fugaro" || id == "fugaro-base" || id == "fugaro-ghcr" {
+		t.Errorf("SharedRegistryRepoID() = %q (%d)", id, len(id))
+	}
+	if again := SharedRegistryRepoID(); again != id {
+		t.Errorf("SharedRegistryRepoID() is not stable: %q then %q", id, again)
+	}
+	// "shared-images" is the one readable part that lets a slug's own registry
+	// look like this name, so it is in the corpus on purpose: the two are
+	// separated by the hash, over "shared\x00images" against "registry\x00"+slug.
+	slugs := append(randomSlugs(t, 2000), "shared-images", "shared-images-0123456789abcdef", "shared", "images", "a")
+	for _, s := range slugs {
+		if own := RegistryRepoID(s); own == id {
+			t.Errorf("RegistryRepoID(%q) = %q = SharedRegistryRepoID(): a repository's own registry must never be the installation's shared one", s, own)
+		}
+	}
+}
+
 // Check jobs must stay out of the fugaro- job listings (ls, max_parallel).
 func TestCheckJobNameNotFugaroPrefix(t *testing.T) {
 	long := "someorganization-" + strings.Repeat("verylongrepositoryname", 12)

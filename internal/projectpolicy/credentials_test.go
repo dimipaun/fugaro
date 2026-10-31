@@ -20,8 +20,8 @@ import (
 // project that wants the permissive behaviour writes it: false, and 0.
 func TestPolicyCredentialsDefaults(t *testing.T) {
 	for _, tc := range []struct{ name, node string }{
-		{"no credentials at all", `{"version": 3}`},
-		{"a written empty block", `{"version": 3, "credentials": {}}`},
+		{"no credentials at all", `{"version": 4}`},
+		{"a written empty block", `{"version": 4, "credentials": {}}`},
 	} {
 		p, found, err := Decode([]byte(tc.node))
 		if err != nil || !found || p == nil {
@@ -64,7 +64,7 @@ func TestPolicyCredentialsDefaults(t *testing.T) {
 	// And a written value is read back as written, in each member, so the
 	// defaults above cannot be the only thing the accessors ever return.
 	p, _, err := Decode([]byte(`{
-		"version": 3,
+		"version": 4,
 		"budget": {"mode": "enforce", "per_run_usd": 5},
 		"credentials": {
 			"fallback": "auto",
@@ -95,7 +95,7 @@ func TestPolicyCredentialsDefaults(t *testing.T) {
 	// concurrency_per_token 0 is the *written* opt-out, and it is not the
 	// default: it must survive the decode as 0 rather than being folded onto
 	// the absent key's 1.
-	p, _, err = Decode([]byte(`{"version": 3, "credentials": {"concurrency_per_token": 0}}`))
+	p, _, err = Decode([]byte(`{"version": 4, "credentials": {"concurrency_per_token": 0}}`))
 	if err != nil {
 		t.Fatalf("concurrency_per_token 0 was refused: %v", err)
 	}
@@ -121,11 +121,11 @@ func TestPolicyCredentialsDefaults(t *testing.T) {
 // reading of "mode: enforce" would let through.
 func TestPolicyFallbackAutoRefusedWithoutEnforceCap(t *testing.T) {
 	for _, tc := range []struct{ name, node string }{
-		{"no budget block", `{"version": 3, "credentials": {"fallback": "auto"}}`},
-		{"budget off", `{"version": 3, "budget": {"mode": "off"}, "credentials": {"fallback": "auto"}}`},
-		{"budget observe", `{"version": 3, "budget": {"mode": "observe", "per_run_usd": 5}, "credentials": {"fallback": "auto"}}`},
-		{"enforce with no ceiling", `{"version": 3, "budget": {"mode": "enforce"}, "credentials": {"fallback": "auto"}}`},
-		{"enforce with a zero ceiling", `{"version": 3, "budget": {"mode": "enforce", "per_run_usd": 0}, "credentials": {"fallback": "auto"}}`},
+		{"no budget block", `{"version": 4, "credentials": {"fallback": "auto"}}`},
+		{"budget off", `{"version": 4, "budget": {"mode": "off"}, "credentials": {"fallback": "auto"}}`},
+		{"budget observe", `{"version": 4, "budget": {"mode": "observe", "per_run_usd": 5}, "credentials": {"fallback": "auto"}}`},
+		{"enforce with no ceiling", `{"version": 4, "budget": {"mode": "enforce"}, "credentials": {"fallback": "auto"}}`},
+		{"enforce with a zero ceiling", `{"version": 4, "budget": {"mode": "enforce", "per_run_usd": 0}, "credentials": {"fallback": "auto"}}`},
 	} {
 		p, found, err := Decode([]byte(tc.node))
 		if err == nil || !found || p != nil {
@@ -144,7 +144,7 @@ func TestPolicyFallbackAutoRefusedWithoutEnforceCap(t *testing.T) {
 	// (it names the key that is out of range). Asserted so that this rule's
 	// silence about it is a fact and not an untested path: auto is refused here
 	// either way, and the operator is sent to the ceiling.
-	if _, _, err := Decode([]byte(`{"version": 3, "budget": {"mode": "enforce", "per_run_usd": -1}, "credentials": {"fallback": "auto"}}`)); err == nil {
+	if _, _, err := Decode([]byte(`{"version": 4, "budget": {"mode": "enforce", "per_run_usd": -1}, "credentials": {"fallback": "auto"}}`)); err == nil {
 		t.Error("a negative per_run_usd with fallback: auto was accepted")
 	} else if !strings.Contains(err.Error(), "per_run_usd") {
 		t.Errorf("a negative per_run_usd refused with %q, want the budget block's own range sentence", err.Error())
@@ -153,9 +153,9 @@ func TestPolicyFallbackAutoRefusedWithoutEnforceCap(t *testing.T) {
 	// oauth-only is what an absent fallback means and spends nothing, and a
 	// written one is accepted with no budget block at all.
 	for _, tc := range []struct{ name, node string }{
-		{"enforce with a ceiling", `{"version": 3, "budget": {"mode": "enforce", "per_run_usd": 5}, "credentials": {"fallback": "auto"}}`},
-		{"oauth-only with no budget", `{"version": 3, "credentials": {"fallback": "oauth-only"}}`},
-		{"an absent fallback with no budget", `{"version": 3, "credentials": {"wait_threshold": "1m"}}`},
+		{"enforce with a ceiling", `{"version": 4, "budget": {"mode": "enforce", "per_run_usd": 5}, "credentials": {"fallback": "auto"}}`},
+		{"oauth-only with no budget", `{"version": 4, "credentials": {"fallback": "oauth-only"}}`},
+		{"an absent fallback with no budget", `{"version": 4, "credentials": {"wait_threshold": "1m"}}`},
 	} {
 		if p, found, err := Decode([]byte(tc.node)); err != nil || !found || p == nil {
 			t.Errorf("%s: Decode = (%v, %v, %v), want a policy", tc.name, p, found, err)
@@ -164,7 +164,7 @@ func TestPolicyFallbackAutoRefusedWithoutEnforceCap(t *testing.T) {
 	// And the mode is read as the budget block spells it: `enforce` written in
 	// another case is refused by the budget block itself, so it can never be
 	// what turns the spend on.
-	if _, _, err := Decode([]byte(`{"version": 3, "budget": {"mode": "Enforce", "per_run_usd": 5}, "credentials": {"fallback": "auto"}}`)); err == nil {
+	if _, _, err := Decode([]byte(`{"version": 4, "budget": {"mode": "Enforce", "per_run_usd": 5}, "credentials": {"fallback": "auto"}}`)); err == nil {
 		t.Error("a budget whose mode is spelled Enforce was accepted: the mode is compared with the documented spelling, and a case variant is a mode this Fugaro does not enforce")
 	}
 }
@@ -180,23 +180,23 @@ func TestPolicyFallbackAutoRefusedWithoutEnforceCap(t *testing.T) {
 // answers to a question the operator believes they answered.
 func TestPolicyCredentialsUnknownKeyRefused(t *testing.T) {
 	for _, tc := range []struct{ name, node, want string }{
-		{"an unknown member", `{"version": 3, "credentials": {"fallbackd": "auto"}}`, "fallbackd"},
-		{"an unknown member with a budget that would allow auto", `{"version": 3, "budget": {"mode": "enforce", "per_run_usd": 5}, "credentials": {"spend": true}}`, "spend"},
-		{"a member spelled in another case", `{"version": 3, "credentials": {"Fallback": "oauth-only"}}`, "fallback"},
-		{"a member spelled in another case beside the right one", `{"version": 3, "credentials": {"fallback": "oauth-only", "Wait_Threshold": "1m"}}`, "wait_threshold"},
-		{"a member written twice", `{"version": 3, "credentials": {"fallback": "oauth-only", "fallback": "oauth-only"}}`, "twice"},
-		{"an unknown member of backoff", `{"version": 3, "credentials": {"backoff": {"initial": "1m", "maximum": "5h"}}}`, "maximum"},
-		{"a fallback that is not a value", `{"version": 3, "credentials": {"fallback": "maybe"}}`, "oauth-only"},
-		{"a threshold that is not a duration", `{"version": 3, "credentials": {"wait_threshold": "soon"}}`, "duration"},
-		{"a threshold of no time at all", `{"version": 3, "credentials": {"wait_threshold": "0s"}}`, "positive"},
-		{"a negative threshold", `{"version": 3, "credentials": {"wait_threshold": "-5m"}}`, "positive"},
-		{"a backoff that is not an object", `{"version": 3, "credentials": {"backoff": "15m"}}`, "backoff"},
-		{"a backoff initial that is not a duration", `{"version": 3, "credentials": {"backoff": {"initial": "later"}}}`, "duration"},
-		{"a backoff cap below its initial", `{"version": 3, "credentials": {"backoff": {"initial": "2h", "cap": "1m"}}}`, "cap"},
-		{"a zero backoff cap", `{"version": 3, "credentials": {"backoff": {"cap": "0s"}}}`, "positive"},
-		{"a negative concurrency", `{"version": 3, "credentials": {"concurrency_per_token": -1}}`, "concurrency_per_token"},
-		{"a concurrency that is not a number", `{"version": 3, "credentials": {"concurrency_per_token": "2"}}`, "concurrency_per_token"},
-		{"a control that is not a boolean", `{"version": 3, "credentials": {"stop_after_exhaustion_per_window": "yes"}}`, "stop_after_exhaustion_per_window"},
+		{"an unknown member", `{"version": 4, "credentials": {"fallbackd": "auto"}}`, "fallbackd"},
+		{"an unknown member with a budget that would allow auto", `{"version": 4, "budget": {"mode": "enforce", "per_run_usd": 5}, "credentials": {"spend": true}}`, "spend"},
+		{"a member spelled in another case", `{"version": 4, "credentials": {"Fallback": "oauth-only"}}`, "fallback"},
+		{"a member spelled in another case beside the right one", `{"version": 4, "credentials": {"fallback": "oauth-only", "Wait_Threshold": "1m"}}`, "wait_threshold"},
+		{"a member written twice", `{"version": 4, "credentials": {"fallback": "oauth-only", "fallback": "oauth-only"}}`, "twice"},
+		{"an unknown member of backoff", `{"version": 4, "credentials": {"backoff": {"initial": "1m", "maximum": "5h"}}}`, "maximum"},
+		{"a fallback that is not a value", `{"version": 4, "credentials": {"fallback": "maybe"}}`, "oauth-only"},
+		{"a threshold that is not a duration", `{"version": 4, "credentials": {"wait_threshold": "soon"}}`, "duration"},
+		{"a threshold of no time at all", `{"version": 4, "credentials": {"wait_threshold": "0s"}}`, "positive"},
+		{"a negative threshold", `{"version": 4, "credentials": {"wait_threshold": "-5m"}}`, "positive"},
+		{"a backoff that is not an object", `{"version": 4, "credentials": {"backoff": "15m"}}`, "backoff"},
+		{"a backoff initial that is not a duration", `{"version": 4, "credentials": {"backoff": {"initial": "later"}}}`, "duration"},
+		{"a backoff cap below its initial", `{"version": 4, "credentials": {"backoff": {"initial": "2h", "cap": "1m"}}}`, "cap"},
+		{"a zero backoff cap", `{"version": 4, "credentials": {"backoff": {"cap": "0s"}}}`, "positive"},
+		{"a negative concurrency", `{"version": 4, "credentials": {"concurrency_per_token": -1}}`, "concurrency_per_token"},
+		{"a concurrency that is not a number", `{"version": 4, "credentials": {"concurrency_per_token": "2"}}`, "concurrency_per_token"},
+		{"a control that is not a boolean", `{"version": 4, "credentials": {"stop_after_exhaustion_per_window": "yes"}}`, "stop_after_exhaustion_per_window"},
 	} {
 		p, found, err := Decode([]byte(tc.node))
 		if err == nil {
@@ -240,7 +240,7 @@ func TestPolicyBackoffCapAboveItsEffectiveInitial(t *testing.T) {
 		{"an initial written above a written cap", `{"backoff": {"initial": "6h", "cap": "5h"}}`},
 		{"a cap written a second below the default initial", `{"backoff": {"cap": "14m59s"}}`},
 	} {
-		p, found, err := Decode([]byte(`{"version": 3, "credentials": ` + tc.node + `}`))
+		p, found, err := Decode([]byte(`{"version": 4, "credentials": ` + tc.node + `}`))
 		if err == nil {
 			t.Errorf("%s: accepted (%v), want refused: the *effective* pair is what the cascade would use", tc.name, p)
 			continue
@@ -268,13 +268,13 @@ func TestPolicyBackoffCapAboveItsEffectiveInitial(t *testing.T) {
 		{"a written pair in order", `{"backoff": {"initial": "1m", "cap": "1h"}}`},
 		{"a written pair equal", `{"backoff": {"initial": "2h", "cap": "2h"}}`},
 	} {
-		if p, found, err := Decode([]byte(`{"version": 3, "credentials": ` + tc.node + `}`)); err != nil || !found || p == nil {
+		if p, found, err := Decode([]byte(`{"version": 4, "credentials": ` + tc.node + `}`)); err != nil || !found || p == nil {
 			t.Errorf("%s: Decode = (%v, %v, %v), want a policy", tc.name, p, found, err)
 		}
 	}
 	// And the effective values are the ones the accessors answer, so this test
 	// and a reader of the block cannot disagree about which pair is meant.
-	p, _, err := Decode([]byte(`{"version": 3, "credentials": {"backoff": {"initial": "10h"}}}`))
+	p, _, err := Decode([]byte(`{"version": 4, "credentials": {"backoff": {"initial": "10h"}}}`))
 	if err == nil {
 		t.Fatalf("a node the effective comparison refuses was accepted: initial %s, cap %s", p.Credentials.BackoffInitialDuration(), p.Credentials.BackoffCapDuration())
 	}
@@ -291,16 +291,16 @@ func TestPolicyBackoffCapAboveItsEffectiveInitial(t *testing.T) {
 // said "Version stays 1" (the C1.2 test list named a test that does not exist;
 // the re-review of C1.9/this follow-up corrected the list to this name and
 // TestPlanTestListsNamesOnlyTestsThatExist holds the two together). On this base
-// the policy version is 3 (it moved at 0.8.0 and 0.9.0), so the number in the
-// test's name and in the node below is 3: what the plan is pinning is that the
+// the policy version is 4 (it moved at 0.8.0, 0.8.5, 0.9.0 and 0.14.0), so the
+// number in the node below is 4: what the plan is pinning is that the
 // *number does not move for this task*, and that is what this asserts. See the
 // pull request for the disagreement between the plan's text and the code.
 func TestPolicyCredentialsCarryNoVersionBump(t *testing.T) {
-	if Version != 3 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 3: update both together, deliberately", Version)
+	if Version != 4 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 4: update both together, deliberately", Version)
 	}
 	p, found, err := Decode([]byte(`{
-		"version": 3,
+		"version": 4,
 		"budget": {"mode": "off"},
 		"credentials": {"fallback": "oauth-only", "wait_threshold": "15m"}
 	}`))
@@ -317,7 +317,7 @@ func TestPolicyCredentialsCarryNoVersionBump(t *testing.T) {
 	// the key a *newer* Fugaro adds is tolerated and listed, and the policy
 	// around it is still read — the same answer an older runner gives for
 	// `credentials` today.
-	p, found, err = Decode([]byte(`{"version": 3, "budget": {"mode": "observe"}, "future_credentials": {"anything": 1}}`))
+	p, found, err = Decode([]byte(`{"version": 4, "budget": {"mode": "observe"}, "future_credentials": {"anything": 1}}`))
 	if err != nil || !found || p == nil {
 		t.Fatalf("a node carrying an unknown key = (%v, %v, %v), want a policy", p, found, err)
 	}

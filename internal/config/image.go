@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -27,6 +29,16 @@ var (
 	// character below is rejected by construction, not by a separate
 	// denylist, which is what TestValidMiseTool pins against regression.
 	miseVersionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~:-]*$`)
+	// imageKeyFileRE is the shape an image.key_files entry must have. It
+	// refuses by construction every character that would be read as
+	// something other than itself further down: a glob character (the entry
+	// becomes a doublestar pattern of the rebuild key), a backslash (git
+	// reads it as an escape inside a pathspec, and Windows would read it as
+	// a separator), and a control character (the entry is written into the
+	// Dockerfile's checkout loop and into the refusal message). The rules it
+	// cannot state — relative, cleaned, no "..", no ".git" — are checked one
+	// at a time below, each with its own message.
+	imageKeyFileRE = regexp.MustCompile(`^[^\x00-\x1f\x7f\\*?\[\]{}]+$`)
 )
 
 // maxMiseToolNameLen and maxMiseToolVersionLen bound an image.tools key and
@@ -36,6 +48,11 @@ var (
 const (
 	maxMiseToolNameLen    = 128
 	maxMiseToolVersionLen = 64
+	// maxImageKeyFiles and maxImageKeyFilePath bound image.key_files: at
+	// most 32 entries of at most 200 characters, so neither the Dockerfile's
+	// checkout loop nor the rebuild key can be made large from a config.
+	maxImageKeyFiles    = 32
+	maxImageKeyFilePath = 200
 )
 
 // validMiseToolName and validMiseToolVersion are ValidMiseTool's two halves,
@@ -118,6 +135,7 @@ func validateImage(p string, w Workflow) []Problem {
 			add(fmt.Sprintf("%s.image.apt[%d]", p, i), "must be a package name, optionally pinned as name=version")
 		}
 	}
+	validateKeyFiles(p, img.KeyFiles, add)
 	for i, step := range img.Setup {
 		sp := fmt.Sprintf("%s.image.setup[%d]", p, i)
 		trimmed := strings.TrimSpace(step)
@@ -140,25 +158,148 @@ func validateImage(p string, w Workflow) []Problem {
 	return ps
 }
 
+// keyFilePathRules are image.key_files' rules, in the order validateKeyFiles
+// reports them, so the first failure is the one a person reads, each with the
+// message that names it. ValidKeyFilePath asks the same list, so a path that
+// comes from somewhere else — a patch pnpm's manifest names, which the build
+// checks out and keys the image on exactly as a hand-written entry — is
+// judged by one statement of the rules and not a second copy of them.
+var keyFilePathRules = []struct {
+	ok  func(f string) bool
+	msg string
+}{
+	{func(f string) bool { return strings.TrimSpace(f) != "" }, "must not be empty"},
+	{utf8.ValidString, "must be text"},
+	{func(f string) bool { return utf8.RuneCountInString(f) <= maxImageKeyFilePath },
+		fmt.Sprintf("must be at most %d characters", maxImageKeyFilePath)},
+	{imageKeyFileRE.MatchString, "must be a repository path holding no glob (* ? [ ] { }), no backslash and no control character"},
+	{func(f string) bool { return !strings.HasPrefix(f, "/") }, "must be a relative path inside the repository, not an absolute one"},
+	{func(f string) bool { return !slices.Contains(strings.Split(f, "/"), "..") }, "must not hold a .. segment: the path is checked out inside the repository it belongs to"},
+	{func(f string) bool { return path.Clean(f) == f }, "must be a clean path: no trailing slash, no // and no . segment"},
+	{func(f string) bool { return f != "." }, "must name a file or a directory, not the repository root: the root would check the whole checkout out early"},
+	{func(f string) bool { return f != ".git" && !strings.HasPrefix(f, ".git/") }, "must not name anything inside .git, which is not part of the checkout"},
+}
+
+// ValidKeyFilePath reports whether f is a path image.key_files accepts: one
+// clean repository-relative path, inside the repository, as the path it is.
+func ValidKeyFilePath(f string) bool {
+	for _, r := range keyFilePathRules {
+		if !r.ok(f) {
+			return false
+		}
+	}
+	return true
+}
+
+// validateKeyFiles checks image.key_files: each entry names one path inside
+// the repository, as the path it is. Every message names the entry by its
+// index and never echoes its value: a value may hold a terminal escape
+// sequence, and a refusal that printed one would put it in a log.
+func validateKeyFiles(p string, files []string, add func(path, format string, args ...any)) {
+	if len(files) > maxImageKeyFiles {
+		add(p+".image.key_files", "must have at most %d entries", maxImageKeyFiles)
+	}
+	seen := make(map[string]int, len(files))
+	for i, f := range files {
+		kp := fmt.Sprintf("%s.image.key_files[%d]", p, i)
+		for _, r := range keyFilePathRules {
+			if !r.ok(f) {
+				add(kp, "%s", r.msg)
+				break
+			}
+		}
+		if j, dup := seen[f]; dup {
+			add(kp, "duplicates image.key_files[%d]", j)
+			continue
+		}
+		seen[f] = i
+	}
+}
+
+// SharedCheckoutSince is the first fugaro release that builds and refreshes a
+// shared dependency-layer image: the release validateCheckout refuses
+// checkout: shared until. It is a different fact from internal/cli's
+// sharedSince, which names the release whose *runner* clones for a shared job
+// (0.14.0): the runner half landed first, and the image such a job runs does
+// not exist before this release.
+const SharedCheckoutSince = "0.15.0"
+
+// sharedCheckoutShipped is false until the release that actually builds and
+// refreshes a shared dependency-layer image is tagged: nothing before it
+// does, so a repository that declares checkout: shared gets a job that
+// cannot run. Everything else the kind needs is already here — the
+// CheckoutShared value, its key rules in validateCheckout, the schema's enum
+// value, PlanWorkflowJob's acceptance of FUGARO_CHECKOUT=shared and the
+// sharedSince launch gate — so the release that ships shared images flips
+// this one value and nothing else, the way cloneShipped and catalogShipped
+// (internal/cli/recipes_skew.go) were flipped.
+var sharedCheckoutShipped = false
+
+// SharedCheckoutRefusal is the problem validateCheckout reports for
+// checkout: shared while sharedCheckoutShipped is false. It is exported so a
+// launch, which reads the checkout's fugaro.yaml leniently, can find it among
+// that file's problems and refuse with this sentence rather than with
+// whatever later step trips over the config it could not use.
+const SharedCheckoutRefusal = "shared images arrive in " + SharedCheckoutSince + ": no release builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch"
+
 // validateCheckout checks a workflow's checkout: (design generic-tool.md §2,
 // G3). clone runs the installation's base image directly, with no build, so
 // a key that only a build can honor is refused, naming checkout: baked.
+// shared runs a shared dependency-layer image and clones the repository's
+// own source at launch (design forge-authorship-images/shared-images.md §6,
+// route A), so it accepts exactly the keys that describe that layer — and
+// refuses the ones that would put this repository's own content into an
+// image every repository on the same dependency set runs (§1, §12).
+//
+// shared is refused outright while sharedCheckoutShipped is false: naming
+// the kinds that work today is more use to a repository than a job that
+// would fail at launch for want of an image nobody builds yet.
+//
+// image.setup is the design's own open question and this is where it is
+// taken: §2.2 and §4 have the shared layer installed by whichever
+// repository's image.setup first built the key, and accept that the others
+// inherit that step, while §12 has the image hold the dependency layer "and
+// only it". The stricter reading wins, because a setup command runs in the
+// repository's checkout and its output is therefore that repository's
+// content — the alternative lets a workflow declare shared and still bake
+// its own work into a shared image. The cost is named where it is paid: a
+// workflow moving to shared (§10) loses the step.
 func validateCheckout(p string, w Workflow) []Problem {
 	var ps []Problem
 	add := func(path, format string, args ...any) {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
-	if w.Checkout != CheckoutBaked && w.Checkout != CheckoutClone {
-		add(p+".checkout", "must be baked or clone")
+	switch w.Checkout {
+	case CheckoutBaked, CheckoutClone, CheckoutShared:
+	default:
+		// The doubled "or" is deliberate: this enum names all three values it
+		// accepts, and internal/config/layer_test.go pins the "must be baked
+		// or clone" prefix of the same message for a profile's checkout:.
+		add(p+".checkout", "must be baked or clone or shared; shared runs a shared dependency-layer image and clones the source at launch")
+		return ps
+	}
+	if w.Checkout == CheckoutShared && !sharedCheckoutShipped {
+		add(p+".checkout", SharedCheckoutRefusal)
+		return ps
+	}
+	// A base: alongside clone or shared needs no refusal of its own here:
+	// since the 0.7.0 cut every non-empty base: (legacy or not) is refused
+	// by the caller with legacyBaseMessage, so neither kind can silently
+	// ignore one.
+	if w.Checkout == CheckoutShared {
+		const msg = "checkout: shared runs an image shared by every repository on the same dependency set, which holds no repository's own content; use checkout: baked to build a per-repository image"
+		if len(w.Image.Setup) > 0 {
+			add(p+".image.setup", "%s", msg)
+		}
+		if w.Dockerfile != "" {
+			add(p+".dockerfile", "%s", msg)
+		}
 		return ps
 	}
 	if w.Checkout != CheckoutClone {
 		return ps
 	}
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
-	// A base: alongside clone needs no refusal of its own here: since the
-	// 0.7.0 cut every non-empty base: (legacy or not) is refused by the
-	// caller with legacyBaseMessage, so clone can never silently ignore one.
 	if len(w.Image.Apt) > 0 {
 		add(p+".image.apt", "%s", msg)
 	}
@@ -170,6 +311,9 @@ func validateCheckout(p string, w Workflow) []Problem {
 	}
 	if w.Image.SkipBuildScripts {
 		add(p+".image.skip_build_scripts", "%s", msg)
+	}
+	if len(w.Image.KeyFiles) > 0 {
+		add(p+".image.key_files", "%s", msg)
 	}
 	if w.Dockerfile != "" {
 		add(p+".dockerfile", "%s", msg)

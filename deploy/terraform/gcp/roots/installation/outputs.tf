@@ -21,6 +21,10 @@ output "ghcr_registry" {
   value = module.installation.ghcr_registry
 }
 
+output "shared_registry" {
+  value = module.installation.shared_registry
+}
+
 output "legacy_registry" {
   value = module.installation.legacy_registry
 }

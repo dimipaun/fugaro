@@ -322,7 +322,7 @@ func (r *run) endRefused(ctx context.Context, rej *gitops.PushRejected, prNumber
 	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
 	r.d.Log.Warn("the push was refused", "reason", reason)
 	r.storeEnded(ctx, records)
-	if prNumber != 0 && r.giveUpNoteAllowed(ctx) {
+	if prNumber != 0 && !r.shadow && r.giveUpNoteAllowed(ctx) {
 		pr := gitprov.PR{Number: prNumber}
 		if r.rec.PR != nil && r.rec.PR.Number == prNumber {
 			pr.URL = r.rec.PR.URL

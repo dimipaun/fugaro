@@ -46,9 +46,13 @@ func TestHistoryImageIsMinimal(t *testing.T) {
 			}
 		case "USER":
 			user = strings.TrimSpace(strings.TrimPrefix(l, "USER "))
+		case "LABEL":
+			if !onlyOCILabels(l) {
+				t.Errorf("final stage sets %q; the one label a run image carries is the licence its binary is under (F16c)", l)
+			}
 		case "ENTRYPOINT", "CMD":
 		default:
-			t.Errorf("final stage has %q; it may only COPY the binary, set USER, ENTRYPOINT and CMD", l)
+			t.Errorf("final stage has %q; it may only COPY the binary, set USER, LABEL, ENTRYPOINT and CMD", l)
 		}
 	}
 	if !regexp.MustCompile(`^[1-9][0-9]*(:[1-9][0-9]*)?$`).MatchString(user) {

@@ -20,10 +20,15 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+# The coordinator's sweep runs from this image (design ee-boundary-moves
+# section 8): untagged, `fugaro coordinator sweep` answers with the core stub
+# and the coordinator silently stops sweeping, so the binary is the
+# mixed-licence one, built with the ee tag from ee/ in the context.
+COPY ee ./ee
 COPY images ./images
 COPY deploy/terraform ./deploy/terraform
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags ee -trimpath \
       -ldflags "-s -w -X github.com/dimipaun/fugaro/internal/cli.Version=${FUGARO_VERSION} -X github.com/dimipaun/fugaro/internal/cli.Commit=${FUGARO_COMMIT}" \
       -o /out/fugaro ./cmd/fugaro
 
@@ -33,6 +38,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=fugaro /out/fugaro /usr/local/bin/fugaro
 USER 65532:65532
+LABEL org.opencontainers.image.licenses="MIT AND LicenseRef-Fugaro-Subscription"
 # The job sets command and args (fugaro budget history --sweep); the default
 # is a harmless usage message.
 ENTRYPOINT ["/usr/local/bin/fugaro"]

@@ -50,10 +50,57 @@ type doctorCheck struct {
 	Problem  string `json:"problem,omitempty"`
 	Fix      string `json:"fix,omitempty"`
 	Severity string `json:"severity,omitempty"`
+	// Class is which view prints the check: "actionable" (something is wrong,
+	// one fix), "update" (`fugaro update` puts it right), "decision" (the
+	// owner's choice, with the command for each), "measure" (what doctor
+	// measured, with nothing to do about it: printed by --all, counted by no
+	// view) or "audit" (a finding the default view counts in its pointer line
+	// rather than printing: the IAM and security sweep's own, and anything
+	// doctor has not classified). It is attached by classifyDoctorChecks,
+	// never by the check itself, so the human view and --json cannot disagree
+	// about what the default view hides. A check that carries none is a
+	// passing check nothing prints.
+	Class string `json:"class,omitempty"`
+	// unread marks a check whose own line says a fact could not be read, or is
+	// unknown: doctorClassOf reads it and never files such a check as a
+	// measurement, because an unknown filed as a measurement prints as part of
+	// "everything checked is ok" beside a fact nobody read — the silent pass
+	// the classes exist to prevent. Unexported and absent from --json on
+	// purpose: it is not a second class (the class stays decided in one place,
+	// and every ID keeps its meaning), only the one question a check answers
+	// about itself that the ID alone cannot.
+	unread bool
 }
 
 func fromPreflight(c preflight.Check) doctorCheck {
 	return doctorCheck{ID: c.ID, OK: c.OK, Problem: c.Problem, Fix: c.Fix}
+}
+
+// pluginSettingsChecks are what else the settings file carries, one line per
+// notice, then the caveat: informational only, whatever --strict says, because
+// it is the repository's business to review and a CI that failed on every hook
+// would be turned off. A notice is a counted audit finding — it printed in the
+// default view before doctor had classes — while the caveat is the standing
+// sentence about the file itself and is a measurement.
+func pluginSettingsChecks(settings string) []doctorCheck {
+	var out []doctorCheck
+	for i, n := range pluginwire.NoticesFor(settings) {
+		out = append(out, doctorCheck{ID: fmt.Sprintf("plugin-settings-%d", i+1), Severity: "info", Problem: n,
+			Fix: "review " + pluginwire.Printable(settings) + " (git blame it): wiring the plugin blesses the whole file"})
+	}
+	return append(out, doctorCheck{ID: "plugin-settings-caveat", Severity: "info", Problem: pluginwire.NoticesCaveat,
+		Fix: "read " + pluginwire.Printable(settings) + " and the files beside it (.claude/skills, .claude/commands, .mcp.json) yourself"})
+}
+
+// unreadRouting marks the routing checks of a switch doctor could not read —
+// the database unreachable or another project's, the policy unreadable, a node
+// no run reads. Their line says the switch is unknown rather than naming one,
+// and an unknown is a counted finding, never a measurement (doctorClassOf).
+func unreadRouting(cs []doctorCheck) []doctorCheck {
+	for i := range cs {
+		cs[i].unread = true
+	}
+	return cs
 }
 
 // doctorOpenProvidersCheck is doctor's "provider-open-to-every-repository"
@@ -182,9 +229,11 @@ func newDoctorCmd() *cobra.Command {
 		checkApp bool
 		strict   bool
 		asJSON   bool
+		showAll  bool
+		security bool
 	)
 	cmd := &cobra.Command{
-		Use:   "doctor [--json] [--plugin] [--strict]",
+		Use:   "doctor [--json] [--all] [--security] [--plugin] [--strict]",
 		Short: "Check that Fugaro is set up and ready, without changing anything",
 		Long: `doctor only ever reads: the environment, Terraform, the local project config
 and its installation's billing and IAM policy (with a budget backend, who can
@@ -214,10 +263,19 @@ fugaro doctor --plugin --strict.
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
 
+What doctor prints is a verdict and then only what to do: one sentence and one
+fix per item, each item fugaro update puts right ending in that command.
+--all prints every check, the informational lines included, and --security the
+IAM and security sweep (who can read a stored credential, who can sign a
+budget token, what a launcher may start). The default view never hides a
+security finding that is a warning, and it says how many findings it left out
+when it leaves any out. Every check, with its full text, is in --json whatever
+the flags.
+
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp)
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp, doctorView{all: showAll, security: security})
 		},
 	}
 	addCloudFlags(cmd, &cloud)
@@ -226,10 +284,12 @@ Exit 1 when a check fails, with the one-line fix to run.`,
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	cmd.Flags().BoolVar(&showAll, "all", false, "print every check, the informational and audit lines included")
+	cmd.Flags().BoolVar(&security, "security", false, "also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start)")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool) error {
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool, view doctorView) error {
 	ctx := cmd.Context()
 	// Before anything is read: the key is never read in a coding agent's session.
 	if checkApp {
@@ -247,16 +307,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			// differs", "not installed" are not evaluated (design §4.5).
 			pluginReport.Install, pluginReport.Version = "", ""
 		}
-		pluginChecks = pluginDoctorChecks(pluginReport)
-		// Informational only, whatever --strict says: what else the settings
-		// file carries is the repository's business to review, and a CI that
-		// failed on every hook would be turned off.
-		for i, n := range pluginwire.NoticesFor(loc.Settings) {
-			pluginChecks = append(pluginChecks, doctorCheck{ID: fmt.Sprintf("plugin-settings-%d", i+1), Severity: "info", Problem: n,
-				Fix: "review " + pluginwire.Printable(loc.Settings) + " (git blame it): wiring the plugin blesses the whole file"})
-		}
-		pluginChecks = append(pluginChecks, doctorCheck{ID: "plugin-settings-caveat", Severity: "info", Problem: pluginwire.NoticesCaveat,
-			Fix: "read " + pluginwire.Printable(loc.Settings) + " and the files beside it (.claude/skills, .claude/commands, .mcp.json) yourself"})
+		pluginChecks = append(pluginDoctorChecks(pluginReport), pluginSettingsChecks(loc.Settings)...)
 	} else {
 		// Not inside a checkout there is no wiring to find: a warning (so
 		// --strict fails, as update-skills --check does), never silence.
@@ -271,7 +322,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		// network call of any kind. cli-version would need one, so it is
 		// skipped here; the full run below always includes it.
 		o.OK = !checksFail(o.Checks, strict)
-		return emitDoctor(cmd, o, asJSON)
+		return emitDoctor(cmd, o, asJSON, view)
 	}
 	o.Checks = append(o.Checks, cliVersionCheck(ctx, Version, time.Now()))
 
@@ -290,7 +341,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			Problem: "no Fugaro installation is configured",
 			Fix:     "run fugaro setup"})
 		o.OK = !checksFail(o.Checks, strict)
-		return emitDoctor(cmd, o, asJSON)
+		return emitDoctor(cmd, o, asJSON, view)
 	}
 	// failed is a refusal after the checks began: --json still prints the
 	// object, with the reason; the error is returned as it was.
@@ -474,7 +525,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 
 	o.OK = !checksFail(o.Checks, strict)
-	return emitDoctor(cmd, o, asJSON)
+	return emitDoctor(cmd, o, asJSON, view)
 }
 
 // doctorBaseImage warns when the installation has no Fugaro base recorded
@@ -551,7 +602,7 @@ func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 		return nil
 	}
 	slices.Sort(names)
-	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info",
+	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info", unread: true,
 		Problem: "require_zdr is on for the provider route(s) " + strings.Join(names, ", ") + " (the default), so their models are priced at the ZDR-eligible endpoints: " +
 			"that is the conservative price, not enforcement. Whether calls are actually zero-data-retention is your OpenRouter account's privacy setting, and Fugaro cannot read it",
 		Fix: "confirm the account's data policy in the OpenRouter settings; require_zdr: false prices every endpoint the model is served by instead"}
@@ -1661,19 +1712,27 @@ func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 		if !c.OK && c.Severity != "info" {
 			failed = true
 		}
-		line := c.ID + ": "
-		if c.Severity != "" {
-			line = c.Severity + " " + line
-		}
-		line += c.Problem
-		if c.Fix != "" {
-			line += " (" + c.Fix + ")"
-		}
-		fmt.Fprintln(w, line)
+		fmt.Fprintln(w, doctorCheckLine(c))
 	}
 	if !failed {
 		fmt.Fprintln(w, "fugaro doctor: everything checked is ok")
 	}
+}
+
+// doctorCheckLine is one check in doctor's long-standing line shape: the
+// severity, the id, the whole problem and the whole fix. --all prints every
+// check this way, and --security prints the security half of the sweep this
+// way, since what it answers is long by nature and a clipped answer does not.
+func doctorCheckLine(c doctorCheck) string {
+	line := c.ID + ": "
+	if c.Severity != "" {
+		line = c.Severity + " " + line
+	}
+	line += c.Problem
+	if c.Fix != "" {
+		line += " (" + c.Fix + ")"
+	}
+	return line
 }
 
 // printDoctorSecrets prints the repository's secrets by name, never a
@@ -1694,7 +1753,10 @@ func printDoctorSecrets(w io.Writer, secrets []secretEntry) {
 	fmt.Fprintln(w, "secrets: "+strings.Join(names, ", "))
 }
 
-func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
+func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool, view doctorView) error {
+	// The class is attached here, on every path and for every reader, so the
+	// human view and --json are the same classification of the same checks.
+	o.Checks = classifyDoctorChecks(o.Checks)
 	if asJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -1703,14 +1765,24 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
 		}
 	} else {
 		out := cmd.OutOrStdout()
-		if l := releaseLine(); l != "" {
-			fmt.Fprintln(out, l)
+		// The release line is the "a tag can be moved" audit sentence, three
+		// hundred characters of it; the project line and the secret list are
+		// context, not work. All three belong to --all: the default view ends
+		// with its pointer lines, and a line after them is a line a reader who
+		// stopped at the pointer never sees (a clean installation prints the one
+		// ok line and nothing else).
+		if view.all {
+			if l := releaseLine(); l != "" {
+				fmt.Fprintln(out, l)
+			}
 		}
-		printDoctorChecks(out, o.Checks)
-		if p := o.Project; p != nil {
-			fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)
+		printDoctorReport(out, o.Checks, view)
+		if view.all {
+			if p := o.Project; p != nil {
+				fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)
+			}
+			printDoctorSecrets(out, o.Secrets)
 		}
-		printDoctorSecrets(out, o.Secrets)
 	}
 	if !o.OK {
 		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro doctor found a problem; see above")}
@@ -1808,10 +1880,10 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
-		return append([]doctorCheck{{ID: "policy-published", Severity: "info",
+		return append([]doctorCheck{{ID: "policy-published", Severity: "info", unread: true,
 			Problem: fmt.Sprintf("whether project %s publishes a policy could not be checked: %v", lc.Name, err),
 			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
-			doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database could not be reached (%v), so the published switch cannot be read", err), layer)...)
+			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database could not be reached (%v), so the published switch cannot be read", err), layer))...)
 	}
 	// And the database must be this project's own, the check every other
 	// reader and writer makes (checkDBProject): everything below — the policy,
@@ -1821,10 +1893,10 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	// accounts as this one's. A note, not a failure, like every other read
 	// that did not answer.
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return append([]doctorCheck{{ID: "policy-published", Severity: "info",
+		return append([]doctorCheck{{ID: "policy-published", Severity: "info", unread: true,
 			Problem: fmt.Sprintf("whether project %s publishes a policy could not be checked: %v", lc.Name, err),
 			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
-			doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer)...)
+			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer))...)
 	}
 	checks := doctorRulesSkew(ctx, db)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
@@ -1841,8 +1913,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// The marker is not a generation at all. doctorRulesSkew has reported it,
 		// and Read cannot get past it — neither can a run — so there is nothing
 		// further doctor can honestly say about the node.
-		return append(checks, doctorRoutingChecks(lc, nil,
-			fmt.Sprintf("%s does not record the rules generation a policy is read under, so no run reads the node and no switch can be resolved from it", projectpolicy.PathRulesMarker()), layer)...)
+		return append(checks, unreadRouting(doctorRoutingChecks(lc, nil,
+			fmt.Sprintf("%s does not record the rules generation a policy is read under, so no run reads the node and no switch can be resolved from it", projectpolicy.PathRulesMarker()), layer))...)
 	case errors.As(err, &ve):
 		// P8's release skew, both directions: Decode refuses a node of any other
 		// version, and the two remedies are opposite. A newer node needs a newer
@@ -1852,8 +1924,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// itself words (publishedPolicyOf): remove it, then publish.
 		if ve.Found > ve.Understood {
 			checks = append(checks, policyNewerThanBinaryCheck(ve, shared))
-			return append(checks, doctorRoutingChecks(lc, nil,
-				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer)...)
+			return append(checks, unreadRouting(doctorRoutingChecks(lc, nil,
+				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer))...)
 		}
 		checks = append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
 			Problem: fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood),
@@ -1862,11 +1934,11 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			fmt.Sprintf("the node at %s is a policy of version %d, which no run applies, so no switch is in force", shared, ve.Found), layer)...)
 	case err != nil:
 		// A read that failed is not "no policy": doctor says which it is.
-		checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
+		checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info", unread: true,
 			Problem: fmt.Sprintf("the project policy could not be read (%v), so whether one is published, and whether the runs are bounded by it, is unknown", err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"})
-		return append(checks, doctorRoutingChecks(lc, nil,
-			fmt.Sprintf("the policy at %s could not be read (%v), so the switch it holds is unknown", shared, err), layer)...)
+		return append(checks, unreadRouting(doctorRoutingChecks(lc, nil,
+			fmt.Sprintf("the policy at %s could not be read (%v), so the switch it holds is unknown", shared, err), layer))...)
 	case !found:
 		info := doctorCheck{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("no policy is published at %s: runs take their ceiling from the job environment", shared),
@@ -2350,8 +2422,10 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // installation whose rules were deployed by a CLI of this generation never
 // reports a skew.
 //
-// A warning, not an error: the fix is the owner's `fugaro update --firebase-project`
-// and doctor cannot perform it.
+// A warning, not an error: the fix is the owner's `fugaro update` — whose rules
+// stage deploys this binary's generation, in the same run, for every state here
+// but the hand-edited marker the stage reports instead — and doctor cannot
+// perform it.
 //
 // The same check reports the marker's other wrong values: a value that is not a
 // generation this Fugaro may read at all (not an integer, or the negative one no
@@ -2362,18 +2436,19 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // claim, and there is nothing for the rules to be older than; what an absent
 // marker does to a node is doctorPolicyChecks's line to draw.
 func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
-	marker := projectpolicy.PathRulesMarker()
-	var raw json.RawMessage
-	found, err := db.Get(ctx, marker, &raw)
-	if err != nil || !found {
-		// Unreadable, or absent: absent is generation 0, the pre-policy rules,
-		// under which no policy can have been published (publishing refuses
-		// without the marker) — there is nothing for the rules to be older
-		// than, and nothing to warn about.
+	skew := rulesSkewOf(ctx, db)
+	marker, gen := projectpolicy.PathRulesMarker(), skew.gen
+	switch skew.kind {
+	case rulesSkewCurrent, rulesSkewAbsentMarker, rulesSkewMarkerUnreadable:
+		// Absent is generation 0, the pre-policy rules, under which no policy
+		// can have been published (publishing refuses without the marker) —
+		// there is nothing for the rules to be older than, and nothing to warn
+		// about. Current is the state the check exists to find nothing in. A
+		// marker read that failed is a read like any other here: doctor's
+		// policy-published line is where a database doctor cannot read is
+		// reported, and this check has no more to add to it.
 		return nil
-	}
-	var gen int
-	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+	case rulesSkewBadMarker:
 		// Two values, one state: a node that is not an integer at all, and one
 		// that is a negative integer no deploy writes. Read reads both as a
 		// MarkerError (projectpolicy's MarkerHandEdited carries the argument),
@@ -2385,10 +2460,9 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// redeploy rules that are not what is wrong (the review finding on this
 		// change).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
+			Problem: rulesMarkerBadText(skew.raw),
 			Fix:     "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
-	}
-	if gen > projectpolicy.RulesVersion {
+	case rulesSkewNewer:
 		// A marker above this binary's RulesVersion, and the review of PR
 		// #402's point: a newer Fugaro wrote it, so the deployed rules are a
 		// generation this binary does not know. The sentence this check used
@@ -2402,12 +2476,10 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// refuses the state — and the operator who was told the policy is
 		// unreadable would look for the wrong thing.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's own rules carry: a newer Fugaro deployed them, so a policy published under them is read (a marker at or above this Fugaro's generation reads as deployed) while the rules themselves are a shape this binary cannot verify, and it cannot deploy its own over them",
-				marker, gen, projectpolicy.RulesVersion),
+			Problem: rulesMarkerNewerText(marker, gen),
 			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro update --firebase-project' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
 				projectpolicy.RulesVersion)}}
-	}
-	if gen < projectpolicy.PolicyRulesVersion {
+	case rulesSkewPrePolicy:
 		// Present and below the generation that carries the policy nodes is a
 		// state of its own, not an absent marker: it records rules that predate
 		// the policy nodes, so `fugaro project policy publish` refuses
@@ -2421,10 +2493,9 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// branch).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerPrePolicyText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+			Fix: fmt.Sprintf("re-run 'fugaro update' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				policySince, projectpolicy.RulesVersion)}}
-	}
-	if gen < projectpolicy.RulesVersion {
+	case rulesSkewOlder:
 		// The state between the two generations, and the one the bump to
 		// generation 2 created: generation 1 carries the policy nodes, so the
 		// policy this installation published is read and enforced by every run
@@ -2444,11 +2515,9 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		}
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerOlderText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document, which adds %s, and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+			Fix: fmt.Sprintf("re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document, which adds %s, and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				projectpolicy.RulesVersion, adds)}}
-	}
-	live, err := db.Rules(ctx)
-	if err != nil {
+	case rulesSkewUnreadableRules:
 		// A read that failed is not "the rules are current", and it is not the
 		// skew either: doctor cannot tell a document it was refused from one
 		// that matches what this generation generates, so it says what it
@@ -2458,12 +2527,10 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// note, never a failure, which is what the rest of the policy checks
 		// do with one (doctorPolicyChecks's "the project policy could not be
 		// read"): the remedy is a credential, not the owner's rules deploy.
-		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
-			Problem: fmt.Sprintf("the deployed rules could not be read (%v), so whether %s is the generation this Fugaro reads a project policy under, and whether the policy it carries is the one deployed, is unknown", err, marker),
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info", unread: true,
+			Problem: rulesRulesUnreadableText(skew.err, marker),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
-	}
-	want, err := rulesGenerate()
-	if err != nil {
+	case rulesSkewUngeneratable:
 		// The rules this Fugaro would generate are what the comparison needs,
 		// and not generating them is not "the rules are current": folding this
 		// into the no-skew branch below reported nothing at all, which reads
@@ -2472,16 +2539,150 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// doctor cannot tell whether the deployed rules are the generation this
 		// Fugaro reads a project policy under — so it is the same info note,
 		// naming what failed.
-		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
-			Problem: fmt.Sprintf("the rules this Fugaro would generate could not be generated (%v), so whether the deployed rules are the generation this Fugaro reads a project policy under, and whether the policy they carry is the one deployed, is unknown", err),
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info", unread: true,
+			Problem: rulesRulesUngeneratableText(skew.err),
 			Fix:     fmt.Sprintf("this binary's embedded rules template is broken, so nothing can be said about %s; report it, and check the installation with a release build (fugaro doctor from one)", marker)}}
 	}
-	if infra.SameJSON(live, want) {
-		return nil
-	}
+	// rulesSkewDocument: the marker records this generation and the deployed
+	// document is not the one this Fugaro generates.
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
-		Fix:     fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
+		Fix:     fmt.Sprintf("re-run 'fugaro update' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
+}
+
+// The sentences below are the states in which a Fugaro must not deploy its own
+// rules over the deployed ones, and each is one text for doctor's line and for
+// `fugaro update`'s rules stage, which reports the state instead of repairing it
+// (init_rules_stage.go): a refusal and a report that describe the same state in
+// different words are how the operator ends up looking for the wrong thing
+// (the reviews of PR #402).
+
+// rulesMarkerBadText is the marker's wrong value, from the one predicate that
+// reads it: a node that is not an integer, and the negative generation no
+// deploy writes, are both projectpolicy's MarkerError.
+func rulesMarkerBadText(raw string) string {
+	return "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: raw}).Error()
+}
+
+// rulesMarkerNewerText is a marker above this binary's generation: a newer
+// Fugaro wrote it, and this binary must not replace rules it cannot verify.
+func rulesMarkerNewerText(marker string, gen int) string {
+	return fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's own rules carry: a newer Fugaro deployed them, so a policy published under them is read (a marker at or above this Fugaro's generation reads as deployed) while the rules themselves are a shape this binary cannot verify, and it cannot deploy its own over them",
+		marker, gen, projectpolicy.RulesVersion)
+}
+
+// rulesRulesUnreadableText is a deployed document doctor could not read: not
+// "the rules are current" and not the skew either, since a document refused to
+// the reader cannot be told from one that matches.
+func rulesRulesUnreadableText(err error, marker string) string {
+	return fmt.Sprintf("the deployed rules could not be read (%v), so whether %s is the generation this Fugaro reads a project policy under, and whether the policy it carries is the one deployed, is unknown", err, marker)
+}
+
+// rulesRulesUngeneratableText is this binary's own rules failing to generate,
+// the unreadable-read case's sibling: the comparison has nothing to compare.
+func rulesRulesUngeneratableText(err error) string {
+	return fmt.Sprintf("the rules this Fugaro would generate could not be generated (%v), so whether the deployed rules are the generation this Fugaro reads a project policy under, and whether the policy they carry is the one deployed, is unknown", err)
+}
+
+// rulesSkewKind is which state the deployed security rules and their generation
+// marker are in, as one value. Two callers ask the same question of the same
+// two nodes and may not answer it differently: `fugaro doctor`'s
+// policy-rules-skew line, which reports the state, and `fugaro update`'s rules
+// stage, which deploys this generation over it (init_rules_stage.go). A stage
+// with a copy of this classification could deploy over rules the doctor calls
+// current, or leave alone the state the doctor sends the owner here to fix.
+type rulesSkewKind int
+
+const (
+	// rulesSkewCurrent is the marker at this generation with the deployed
+	// document equal to the one this Fugaro generates: the state every
+	// installation converges to, and the only one with nothing to report and
+	// nothing to deploy.
+	rulesSkewCurrent rulesSkewKind = iota
+	// rulesSkewAbsentMarker is no marker node at all: generation 0 without a
+	// claim. It is the rules an installation deployed before this marker
+	// existed — and, since no deploy writes the marker without the document,
+	// rules that may be any generation — which is why the rules stage deploys
+	// over it rather than reading it as "the document is current".
+	rulesSkewAbsentMarker
+	// rulesSkewMarkerUnreadable is a marker node that could not be read.
+	rulesSkewMarkerUnreadable
+	// rulesSkewBadMarker is a marker that is not a generation any deploy
+	// writes: not an integer at all, or the negative one
+	// projectpolicy.MarkerHandEdited names.
+	rulesSkewBadMarker
+	// rulesSkewNewer is a marker above this binary's generation: a newer
+	// Fugaro deployed these rules, so this binary must never deploy its own
+	// over them, whatever it would find in the document.
+	rulesSkewNewer
+	// rulesSkewPrePolicy is a marker below the generation that carries the
+	// policy nodes.
+	rulesSkewPrePolicy
+	// rulesSkewOlder is a marker between the policy generation and this one's.
+	rulesSkewOlder
+	// rulesSkewDocument is the marker at this generation and a deployed
+	// document that is not the one this Fugaro generates (a console hand-edit
+	// of /.settings/rules.json, or the redeploy an older CLI did while the
+	// marker stayed).
+	rulesSkewDocument
+	// rulesSkewUnreadableRules is a deployed document that could not be read.
+	rulesSkewUnreadableRules
+	// rulesSkewUngeneratable is rules.Generate failing: this binary's own
+	// rules cannot be produced, so there is nothing to compare the deployed
+	// document with.
+	rulesSkewUngeneratable
+)
+
+// rulesSkew is one classification, with what the sentences about the state
+// need: the marker's generation when it is one a deploy writes, its value when
+// it is not, and the error of a read or a generation that failed.
+type rulesSkew struct {
+	kind rulesSkewKind
+	gen  int
+	raw  string
+	err  error
+}
+
+// rulesSkewOf reads the generation marker and — only where the marker records
+// this generation — the deployed document, and classifies the two. The order is
+// the one the states are decided in: the marker first, because every state but
+// the last is its, and the document only where the marker claims this
+// generation, because a document read under a marker that says otherwise is not
+// what any caller acts on.
+func rulesSkewOf(ctx context.Context, db *rtdb.Client) rulesSkew {
+	marker := projectpolicy.PathRulesMarker()
+	var raw json.RawMessage
+	found, err := db.Get(ctx, marker, &raw)
+	if err != nil || !found {
+		if err != nil {
+			return rulesSkew{kind: rulesSkewMarkerUnreadable, err: err}
+		}
+		return rulesSkew{kind: rulesSkewAbsentMarker}
+	}
+	var gen int
+	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+		return rulesSkew{kind: rulesSkewBadMarker, raw: oneLine(string(raw))}
+	}
+	switch {
+	case gen > projectpolicy.RulesVersion:
+		return rulesSkew{kind: rulesSkewNewer, gen: gen}
+	case gen < projectpolicy.PolicyRulesVersion:
+		return rulesSkew{kind: rulesSkewPrePolicy, gen: gen}
+	case gen < projectpolicy.RulesVersion:
+		return rulesSkew{kind: rulesSkewOlder, gen: gen}
+	}
+	live, err := db.Rules(ctx)
+	if err != nil {
+		return rulesSkew{kind: rulesSkewUnreadableRules, err: err}
+	}
+	want, err := rulesGenerate()
+	if err != nil {
+		return rulesSkew{kind: rulesSkewUngeneratable, err: err}
+	}
+	if infra.SameJSON(live, want) {
+		return rulesSkew{kind: rulesSkewCurrent, gen: gen}
+	}
+	return rulesSkew{kind: rulesSkewDocument, gen: gen}
 }
 
 // rulesGenerate is rules.Generate, indirect so a test can drive the branch
@@ -2531,7 +2732,7 @@ func emptyPolicyNode(raw []byte) bool {
 func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	marks, err := (&creds.RTDBStore{DB: db}).Marks(ctx)
 	if err != nil {
-		return []doctorCheck{{ID: "creds-broken", Severity: "info",
+		return []doctorCheck{{ID: "creds-broken", Severity: "info", unread: true,
 			Problem: fmt.Sprintf("the credential marks could not be read (%v), so whether any admitted account is broken, or held in a state this Fugaro does not read, is unknown", err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}
@@ -2633,7 +2834,7 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	var raw json.RawMessage
 	found, err := db.Get(ctx, marker, &raw)
 	if err != nil {
-		return []doctorCheck{{ID: id, Severity: "info",
+		return []doctorCheck{{ID: id, Severity: "info", unread: true,
 			Problem: fmt.Sprintf("whether the deployed rules carry the credentials family is unknown: %s could not be read (%v)", marker, err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}

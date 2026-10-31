@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,6 +37,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/headroomproc"
@@ -209,6 +211,16 @@ type run struct {
 	env     []string
 	secrets []string
 	budget  Budget
+	// stampHooks and runnerHooks are the two hook directories bootstrap wrote
+	// for this run's commits (writeStampHooks): the agent's stages commit
+	// under stampHooks, chained to the repository's own hooks, and the
+	// runner's own commits under runnerHooks, which chain nowhere. stampAuthor
+	// is the author its commits claim, nil for a run that names none. All
+	// three are empty for a run that never stamps — a review or an artifact
+	// run, whose commits are not the run's (A3).
+	stampHooks  string
+	runnerHooks string
+	stampAuthor *gitops.Person
 	// secMu guards secrets: the budget session registers a refreshed ID
 	// token from its own goroutine.
 	secMu sync.RWMutex
@@ -354,6 +366,25 @@ type run struct {
 	reviewSession string
 	// follow is a follow-up's state; nil for a first run.
 	follow *followState
+	// shadow is whether this run is a challenger arm (shadow.go): its task
+	// carried ab.publish: none, so nothing of it reaches the developer —
+	// no push, no pull request, no comment, no git credential the agent
+	// could push with. It is set at bootstrap, before the provider is even
+	// opened, and never cleared.
+	shadow bool
+	// ab is the ab: block of the project layer this run read, nil when the
+	// layer has none (or none applied): the list a challenger must be a
+	// member of at bootstrap (applyChallenger), and what the one D522
+	// capability line is about (noteIgnoredAB).
+	ab *config.AB
+	// abSaid is whether that line has been written; guarded by mu, for the
+	// same reason as ignoredGovernanceSaid: it is about the build, so a run
+	// says it once.
+	abSaid bool
+	// championCoder is a challenger arm's champion coder model, the one the
+	// plan is derived from (applyChallenger); the routing switch rewrites it
+	// with the run's own pins (pinSlots). Empty for every other run.
+	championCoder string
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -504,6 +535,11 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		r.stopCompression()
 		r.closeGateway()
+		// The run is over and no commit of it is still to be made: the two
+		// hook directories went with it. They are the one thing a run leaves
+		// in a temporary directory every run writes to, and a directory left
+		// behind is /tmp filling up with hooks of finished runs.
+		r.removeStampHooks()
 		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
 		r.releaseLock(rctx)
 		cancelRelease()
@@ -950,9 +986,82 @@ func (r *run) redactAll(ss []string) []string {
 	return out
 }
 
+// checkBitbucketAPIRoot refuses a cloud run whose Bitbucket API root
+// (FUGARO_BITBUCKET_API_URL) is neither Bitbucket's own API nor a root the
+// owner allow-listed in the published policy (D474, T2.8). It runs before the
+// provider opens, so a launcher who overrode the job's environment -- the
+// variable is launcher-writable -- cannot have the run send the token to a
+// host of their own. A local invocation keeps the override: it runs on the
+// developer's own credentials, not the job's (Deps.Local).
+//
+// The roots are the project's published bitbucket_api_roots, read through the
+// run's one policy read (projectPolicy, memoized and already made by
+// admissionCheck): a node the run cannot read stops it there, and no node, or
+// a node with no roots, admits only the default.
+func (r *run) checkBitbucketAPIRoot(ctx context.Context) error {
+	if r.d.Local {
+		return nil
+	}
+	root := envLookup(r.d.Env, providers.EnvBitbucketAPIURL)
+	if root == "" {
+		return nil
+	}
+	canonical := canonicalAPIRoot(root)
+	if canonical != "" && canonical == canonicalAPIRoot(bitbucket.DefaultBaseURL) {
+		return nil
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	if found && p != nil {
+		for _, allowed := range p.BitbucketAPIRoots {
+			if c := canonicalAPIRoot(allowed); c != "" && c == canonical {
+				return nil
+			}
+		}
+	}
+	where := "a root with no host"
+	if u := parseAPIRoot(root); u != nil && u.Host != "" {
+		where = "the host " + strconv.Quote(u.Host)
+	}
+	return fmt.Errorf("%s names %s, which is neither Bitbucket's own API (%s) nor a root this project's published policy allows: a cloud run sends its Bitbucket token to no other root. The owner allows the root by listing it in bitbucket_api_roots and running 'fugaro project policy publish'; until then, unset %s so the run uses Bitbucket's own API",
+		providers.EnvBitbucketAPIURL, where, bitbucket.DefaultBaseURL, providers.EnvBitbucketAPIURL)
+}
+
+// canonicalAPIRoot is how a Bitbucket API root is compared: scheme and host
+// case-folded and one trailing "/" trimmed, the normalization the node's own
+// validator uses (projectpolicy.validBitbucketAPIRoots). It is an equality,
+// never a prefix test -- a root that merely begins with an allowed one
+// (https://api.bitbucket.org.evil.example/2.0) is another host and is refused.
+// A value with no scheme or host canonicalizes to "" and matches nothing.
+func canonicalAPIRoot(raw string) string {
+	u := parseAPIRoot(raw)
+	if u == nil {
+		return ""
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + strings.TrimSuffix(u.Path, "/")
+}
+
+// parseAPIRoot parses raw, nil when it is not a URL: a value's host is read
+// for the refusal's message and its parts compared by canonicalAPIRoot, and
+// neither is done on a string that is not a URL.
+func parseAPIRoot(raw string) *url.URL {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil
+	}
+	return u
+}
+
 // openProvider opens the provider of kind, which from names the source of
 // (for error messages), and fetches its first git credentials.
 func (r *run) openProvider(ctx context.Context, kind, from string) error {
+	if kind == gitprov.KindBitbucket {
+		if err := r.checkBitbucketAPIRoot(ctx); err != nil {
+			return err
+		}
+	}
 	p, secrets, err := r.d.OpenProvider(ctx, kind, r.spec.Repo)
 	for _, s := range secrets {
 		r.addSecret(s)
@@ -979,6 +1088,13 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	}
 	r.provider, r.providerKind, r.providerFrom = p, kind, from
 	if err := r.refreshGitAuth(ctx, bootstrapAuthMinValid); err != nil {
+		if errors.Is(err, errNoReadOnlyToken) {
+			// The arm's own boundary, not a provider that failed: the
+			// provider this repository runs on has no read-only credential
+			// to carry a challenger, so the run stops here, before the
+			// clone (shadow.go, mintGitAuth).
+			return r.refuseArm(err.Error())
+		}
 		return fmt.Errorf("getting git credentials from the %s provider: %w", kind, err)
 	}
 	r.resolveCommitIdentity(ctx)
@@ -1022,6 +1138,203 @@ func (r *run) resolveCommitIdentity(ctx context.Context) {
 	if r.repo != nil {
 		r.repo.Env = gitops.WithVars(r.repo.Env, identity)
 	}
+}
+
+// writeStampHooks writes the commit stamp of this run (A1, A3): two hook
+// directories outside the checkout, one for the agent's own commits and one
+// for the runner's, and the stamp the runner's own commits carry.
+//
+// Outside the checkout, because the hook directory is not part of the run's
+// work: nothing in it is the agent's to read, commit, clean or push, and a
+// directory inside the tree would put a file of the runner's in every diff of
+// a commit the agent makes while the stamp is installed.
+//
+// Two directories, because the two kinds of commit want opposite things from
+// the repository's own hooks. The agent's commits run under the directory
+// chained to the repository's configured hooks — a repository's husky or
+// lint-staged hook still runs on the agent's commits, which is the whole of
+// constraint 2 — and the runner's own commits run under one that chains
+// nowhere: the repository's configuration and $GIT_DIR/hooks are files and a
+// directory the agent can write, and no code of the agent's runs inside a git
+// call the runner makes.
+//
+// The runner's directory is made in a temporary directory of its own and not
+// beside the agent's, because the agent's environment names the agent's one
+// (StampEnv's core.hooksPath) and a sibling could be derived from it: an agent
+// that could name the runner's directory could leave a prepare-commit-msg in
+// it and have it run inside the runner's own commit. Nothing it writes in the
+// checkout, or is told by its own stamp environment, reaches it.
+//
+// The chain directory is read once, here, so the 21 pass-throughs written for
+// it each carry the answer instead of spawning a git of their own at every
+// commit: `git rev-parse --git-path hooks` with the repository's own
+// configuration, which is what core.hooksPath resolves to once the stamp's own
+// environment entry is out of the way.
+//
+// The author is the launcher's, and only when the repository opted in
+// (git.author: launcher) and the task carries one (Spec.Author, A2b): with no
+// author here the commits are authored by the identity the run resolves, as
+// every run's were before this (D606, constraint 3).
+func (r *run) writeStampHooks(ctx context.Context) error {
+	chain, err := r.repo.HooksDir(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the repository's hook directory: %w", err)
+	}
+	agentRoot, err := os.MkdirTemp("", "fugaro-stamp-")
+	if err != nil {
+		return fmt.Errorf("making a directory for the run's commit hooks: %w", err)
+	}
+	r.stampHooks = filepath.Join(agentRoot, "agent")
+	if err := gitops.WriteStampHooks(r.stampHooks, chain); err != nil {
+		return fmt.Errorf("writing the run's commit hooks: %w", err)
+	}
+	// The second root is made once the first is written, and not beside it:
+	// each root is named by the field removeStampHooks reads, so a failure
+	// between the two would otherwise leave a directory nothing removes —
+	// the one thing this pair of calls is here to prevent.
+	runnerRoot, err := os.MkdirTemp("", "fugaro-stamp-")
+	if err != nil {
+		return fmt.Errorf("making a directory for the runner's commit hooks: %w", err)
+	}
+	r.runnerHooks = filepath.Join(runnerRoot, "runner")
+	if err := gitops.WriteStampHooksNoChain(r.runnerHooks); err != nil {
+		return fmt.Errorf("writing the runner's commit hooks: %w", err)
+	}
+	if r.cfg.Git.Author == config.GitAuthorLauncher && r.spec.Author != nil {
+		r.stampAuthor = &gitops.Person{Name: r.spec.Author.Name, Email: r.spec.Author.Email}
+	}
+	r.repo.CommitHooks = r.runnerHooks
+	r.repo.CommitStamp = func() gitops.Stamp {
+		return gitops.Stamp{Author: r.stampAuthor, Trailers: r.stampTrailers("")}
+	}
+	return nil
+}
+
+// removeStampHooks takes the two hook directories writeStampHooks made back
+// out of the temporary directory, root and all — the MkdirTemp root of each
+// holds the one hook directory and nothing else. The run's last commit is
+// already made by the time it runs, and a hook of a finished run is a file
+// nothing is left to read: what the commit stamp travels in is the environment
+// of the commit, which is gone with the run. It is called from Run's deferred
+// handler, with the gateway's close and the lock's release: the paths that
+// return early out of it are the ones where another execution owns the run,
+// and those never reach bootstrap's writeStampHooks to have a directory to
+// remove.
+func (r *run) removeStampHooks() {
+	temp := filepath.Clean(os.TempDir())
+	for _, dir := range []string{r.stampHooks, r.runnerHooks} {
+		if dir == "" {
+			continue
+		}
+		// The root MkdirTemp made and nothing else: this removes the parent
+		// of the directory it is given, so a hook directory anywhere but
+		// directly under the temporary directory — a repository's own hooks,
+		// if the two fields ever named one — is refused rather than having
+		// its parent taken with it.
+		root := filepath.Dir(dir)
+		if filepath.Dir(root) != temp {
+			r.d.Log.Warn("refusing to remove a commit hook directory that is not the run's own", "dir", dir)
+			continue
+		}
+		if err := os.RemoveAll(root); err != nil {
+			r.d.Log.Warn("removing the run's commit hook directory failed", "dir", dir, "err", err)
+		}
+	}
+}
+
+// stampTrailers is the trailer set every commit a run makes carries: the run's
+// own ID and the rigor mode it has resolved (D601). model is the pin of the
+// stage that made the commit and is left out when there is none — a stage that
+// pinned no model, and every commit the runner makes itself, which belongs to
+// no stage (D602).
+func (r *run) stampTrailers(model string) []gitops.Trailer {
+	trailers := []gitops.Trailer{
+		{Key: gitops.TrailerRun, Value: r.rec.RunID},
+		{Key: gitops.TrailerRigor, Value: string(r.reachedRigor())},
+	}
+	if model != "" {
+		trailers = append(trailers, gitops.Trailer{Key: gitops.TrailerModel, Value: model})
+	}
+	return trailers
+}
+
+// stageEnv is the environment a stage's agent runs in: the run's own, the
+// stage's pins, and the stamp every commit it makes carries (A3). The model
+// trailer is this stage's pin, read the same way the record's StageTiming
+// reads it (cost.go).
+func (r *run) stageEnv(stage string, pins map[string]string) []string {
+	env := gitops.WithVars(r.env, pins)
+	if r.stampHooks == "" {
+		return env
+	}
+	stamp := gitops.Stamp{Author: r.stampAuthor,
+		Trailers: r.stampTrailers(r.cfg.Agent.ModelFor(config.StageRole(stage)))}
+	return gitops.StampEnv(stamp, r.stampHooks, env)
+}
+
+// logUnstampedCommits writes the one line finalize owes about the commits it
+// pushed: how many of the run's own commits carry no Fugaro-Run trailer
+// (D603, constraint 6). The agent can unset its environment, name a hook
+// directory of its own, or push the branch itself, so the trailers are a
+// record and never proof — and the count is how a reader tells a run whose
+// commits were stamped from one whose were not. Nothing is rewritten: a
+// commit rewritten after it was made is a commit nothing verified.
+func (r *run) logUnstampedCommits(ctx context.Context) {
+	if r.repo == nil || r.stampHooks == "" {
+		return
+	}
+	total, unstamped, err := r.unstampedCommits(ctx)
+	if err != nil {
+		r.d.Log.Warn("counting the run's commits without a Fugaro-Run trailer failed", "err", r.redactErr(err))
+		return
+	}
+	r.d.Log.Info("the run's own commits and how many carry no Fugaro-Run trailer", "commits", total, "unstamped", unstamped)
+}
+
+// unstampedCommits counts the run's own commits and how many of them lack the
+// trailer, in one git call: the boundary is guardBounds', which is the run's
+// own work and never the checkout's origin/<base>, which the agent can repoint
+// while a stage runs.
+//
+// The message is read through git's trailer placeholder rather than grepped:
+// a Fugaro-Run line anywhere in the body is not a trailer, and a commit with
+// an empty value has no run ID in it either. A trailer block prints as more
+// than one line — one per value — so the lines that do not begin with a commit
+// SHA belong to the commit before them.
+func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err error) {
+	since, except := r.guardBounds(ctx)
+	// --ignore-missing is what the other readers of the same bounds get from
+	// gitops.readableBounds: a base branch's tip that this checkout never
+	// fetched is a bound git ignores rather than a git that refuses the whole
+	// range, so a base the remote moved on to cannot cost the run its count.
+	args := []string{"--no-replace-objects", "log", "--ignore-missing",
+		"--format=%H%x09%(trailers:key=" + gitops.TrailerRun + ",valueonly)",
+		"--end-of-options", since + "..HEAD"}
+	for _, e := range except {
+		args = append(args, "^"+e)
+	}
+	out, err := sessionGit(ctx, r.repo, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	var shas []string
+	stamped := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if sha, value, ok := strings.Cut(line, "\t"); ok && gitops.ValidCommitSHA(sha) {
+			shas = append(shas, sha)
+			stamped[sha] = strings.TrimSpace(value) != ""
+			continue
+		}
+		if strings.TrimSpace(line) != "" && len(shas) > 0 {
+			stamped[shas[len(shas)-1]] = true
+		}
+	}
+	for _, sha := range shas {
+		if !stamped[sha] {
+			unstamped++
+		}
+	}
+	return len(shas), unstamped, nil
 }
 
 // serviceTokens returns the installation's credentials service as the source
@@ -1112,7 +1425,7 @@ func (r *run) runIDToken() string {
 // the caller decides how to handle the error (fail at open, warn and keep
 // the current ones mid-run).
 func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error {
-	auth, err := r.provider.GitAuth(ctx, minValid)
+	auth, err := r.mintGitAuth(ctx, minValid)
 	if err != nil {
 		return err
 	}
@@ -1134,8 +1447,11 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 	// itself, and never pushes or opens anything on its behalf. Nor an
 	// artifact run's (design artifact-runs.md §3): its deliverable goes to
 	// the runs bucket, nothing is ever pushed, and the plan stage is the
-	// only agent stage there is.
-	if r.env != nil && r.follow == nil && !r.review && !r.artifact {
+	// only agent stage there is. Nor a challenger arm's (A2.1): the runner
+	// pushes nothing for it, and a credential in its environment would be
+	// the one thing this store could still hand a developer's repository
+	// through.
+	if r.env != nil && r.follow == nil && !r.review && !r.artifact && !r.shadow {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -1315,6 +1631,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	// The task's arm, before anything else the task's text can reach: an
+	// arm refuses the run further down the very path an unsampled run
+	// takes (shadow.go, readArm).
+	if err := r.readArm(); err != nil {
+		return err
+	}
 	// Read before the sync below moves the checkout off the baked commit.
 	r.rec.Image = r.imageInfo(ctx)
 
@@ -1618,6 +1940,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	ApplyRoles(&cfg.Agent, rcp)
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
+	// The arm's coder model, after the recipe's own role mapping and before
+	// anything reads a model: the routing switch and the pins resolvePolicy
+	// applies, the stage loop, the budget session and checkBudget's
+	// allow-list, price table and provider policy all judge the challenger
+	// as the coder this run runs (shadow.go, applyChallenger).
+	if err := r.applyChallenger(&r.cfg.Agent); err != nil {
+		return err
+	}
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
@@ -1687,7 +2017,23 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// step, neither of which an artifact recipe's [plan], render shape
 		// has. Its own stage list is read directly (artifactHasPlan), and
 		// the render is the runner's (artifact.go).
-		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
+		//
+		// The plan is derived from the champion's coder, never the arm's: the
+		// arms share a shape (D555 keeps "the reviewer, recipe, mode, tier
+		// and caps" the same), and the first-line step is derived from the
+		// coder's own family — Agent.FirstLineOn asks whether the coder's
+		// model is served by a route of this run's and the reviewer's is not
+		// — so a challenger whose family is routed would otherwise gain a
+		// stage the champion never had. Two runs whose stage sets differ are
+		// not two runs that differ in the coder model, and their records,
+		// costs and review findings would not be comparable. It is read after
+		// resolvePolicy, as every other run's is, so the switch has rewritten
+		// it like any pin.
+		planAgent := r.cfg.Agent
+		if r.shadow {
+			planAgent.Models.Coder = r.championCoder
+		}
+		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
 		if err := checkPlan(plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
@@ -1699,6 +2045,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 	if err := r.checkBudget(); err != nil {
+		// These checks judged the challenger as this run's coder
+		// (applyChallenger), so the policy refusing *that* pin is the arm's
+		// own refusal and is recorded as one (D556) rather than as
+		// infrastructure that failed. Only the coder pin is the arm's: the
+		// pins both arms share, and everything else these checks can fail
+		// over — a Vertex budget, a settings directory, a price table — fails
+		// a challenger exactly as it fails a run carrying no arm, and is left
+		// to end the run infra_error (modelRefusal, gateway.go). A halt is
+		// not a refusal either: a cap the run has reached stops a shadow
+		// exactly as it stops any other run.
+		var refused *modelRefusal
+		if r.shadow && errors.As(err, &refused) && refused.coderPin {
+			return r.refuseArm(err.Error())
+		}
 		return err
 	}
 	if err := r.haltedErr(); err != nil {
@@ -1850,7 +2210,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review && !r.artifact {
+	if r.follow == nil && !r.review && !r.artifact && !r.shadow {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
@@ -1858,7 +2218,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// the checkout, and the runner never pushes or opens anything on
 		// its behalf. An artifact run's gets none for the same reason
 		// (design artifact-runs.md §3): no branch is pushed, and the
-		// deliverable is uploaded by the runner.
+		// deliverable is uploaded by the runner. A challenger arm's gets
+		// none because the arm pushes nothing at all (A2.1): the token in
+		// this environment would be one an agent could push with, which is
+		// exactly what no challenger may hold.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -1877,6 +2240,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// and before the agent's environment, which is pointed at the sidecar.
 	if err := r.startCompression(ctx); err != nil {
 		return err
+	}
+	// The commits this run makes are stamped from here on (A3): the hooks the
+	// agent's stages and the runner's own commits run under, and the author
+	// the repository's git.author opt-in names. A review run and an artifact
+	// run write no trailer: neither pushes a branch of its own, so no commit
+	// of theirs is one of this run's (A3).
+	if !r.review && !r.artifact {
+		if err := r.writeStampHooks(ctx); err != nil {
+			return err
+		}
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
@@ -2011,6 +2384,15 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		if !out.Applied {
 			r.d.Log.Info("project layer not applied: fugaro.yaml does not name its project and gcp_project", "layer_project", out.Layer.Project, "layer_gcp_project", out.Layer.GCPProject)
 		}
+	}
+	if out.Layer != nil {
+		// The layer's ab: block, read here because this is where every path
+		// that resolves a configuration comes through (bootstrap's own read,
+		// and readBaseConfig's for a follow-up or a review run). What a
+		// challenger must be a member of (applyChallenger), and the one D522
+		// line a build with no A/B feature owes the person who wrote it.
+		r.ab = out.Layer.AB
+		r.noteIgnoredAB()
 	}
 	if len(out.Problems) > 0 {
 		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
@@ -2674,7 +3056,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	}
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
-	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, gitops.WithVars(r.env, pins), tw, sw
+	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.stageEnv(name, pins), tw, sw
 	req.Model, req.MaxBudgetUSD = r.cfg.Agent.ModelFor(config.StageRole(name)), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
@@ -3019,7 +3401,20 @@ func (r *run) finalize(ctx context.Context) error {
 		// The check gate already ended the run (gate.go: endWithoutPR or
 		// failInfra), status, outcome and the stored report all theirs:
 		// there is nothing left to commit, push or open a pull request for.
+		//
+		// A challenger arm stands down here too, and before shadowFinalize:
+		// the gate ends both arms of a pair the same way, so the two records
+		// agree (D559). An arm finalized from a checkout no stage ran in
+		// would turn a clean gate's succeeded/none into "the agent made no
+		// commits" and mask the gate's own infra_error behind it.
 		return nil
+	}
+	if r.shadow {
+		// A challenger arm's finalize is its own (shadow.go,
+		// shadowFinalize): the same record it would otherwise carry, and
+		// nothing that reaches the developer — no push, no pull request, no
+		// comment, no filing.
+		return r.shadowFinalize(ctx)
 	}
 	// A report run's last word before anything is pushed: the files it commits
 	// under docs/fugaro-reviews/ are the runner's own, byte for byte
@@ -3109,6 +3504,12 @@ func (r *run) finalize(ctx context.Context) error {
 	records = r.redactRecords(records)
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
+	// Both arms' patch objects (A2.1): the run's own tree diff, from the
+	// commit it started at to the head it is about to push. sha is that head
+	// — the leftover commit, the run's own commits and the filing above are
+	// all behind it — so the champion's patch is the diff of the branch it
+	// publishes and the challenger's is the diff it holds back.
+	r.uploadPatch(ctx, sha)
 
 	pol := r.findingsPolicy()
 	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), pol)
@@ -3144,6 +3545,9 @@ func (r *run) finalize(ctx context.Context) error {
 	// posting still records that it updated its pull request.
 	r.rec.PushedHead = sha
 	r.save(ctx)
+	// What the run pushed is final from here: the commits are all made, and
+	// the count of the ones without the trailer is logged beside them (D603).
+	r.logUnstampedCommits(ctx)
 	early := r.follow == nil && r.rec.PR != nil // opened at a stage boundary: settled by its number
 	var spec gitprov.PRSpec
 	switch {

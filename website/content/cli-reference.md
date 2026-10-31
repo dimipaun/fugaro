@@ -42,6 +42,7 @@ Subcommands:
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
+- `fugaro pair` -- Pair a phone with this installation
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro reaper` -- Sweep the Batch jobs and VMs a run has leaked
@@ -56,6 +57,7 @@ Subcommands:
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Pin the Fugaro plugin in the repository's .claude/settings.json to this release
 - `fugaro upgrade` -- Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
+- `fugaro user` -- List, add and remove the installation's launchers and operators
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
@@ -1518,7 +1520,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
   anthropic-api-key                the project's Anthropic API key (tier B)
   github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
-  bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy forwards with it)
+  bitbucket-token                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro creds set claude-oauth-token < token-file), or, when stdin is a terminal, paste it
@@ -1642,14 +1644,24 @@ fugaro doctor --plugin --strict.
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
 
+What doctor prints is a verdict and then only what to do: one sentence and one
+fix per item, each item fugaro update puts right ending in that command.
+--all prints every check, the informational lines included, and --security the
+IAM and security sweep (who can read a stored credential, who can sign a
+budget token, what a launcher may start). The default view never hides a
+security finding that is a warning, and it says how many findings it left out
+when it leaves any out. Every check, with its full text, is in --json whatever
+the flags.
+
 Exit 1 when a check fails, with the one-line fix to run.
 
-Usage: `fugaro doctor [--json] [--plugin] [--strict]`
+Usage: `fugaro doctor [--json] [--all] [--security] [--plugin] [--strict]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | print every check, the informational and audit lines included |
 | `--check-github-app` | bool | `false` | no | also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |
@@ -1659,6 +1671,7 @@ Flags:
 | `--plugin` | bool | `false` | no | check only the plugin's wiring (offline, no credentials) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
 
 Subcommands:
@@ -2086,6 +2099,150 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro pair`
+
+Pair a phone with this installation
+
+Pair a phone with this installation: the operator shows a QR code, the
+phone scans it, writes its public key and shows a code derived from that
+key, and the operator types the code back to bind the two.
+
+Pairing is an admin act, and it needs both of the installation's two role
+sets: the signer account's fugaroTokenMinter role to mint the pairing
+token and the device token, and roles/firebasedatabase.admin to write the
+device node and the delivery node.
+
+Pairing is discovery, not identity: scanning the code tells the phone which
+project and database to connect to and grants it no access by itself.
+
+The code carries no key. The final credentials — the device token, the
+per-pairing MAC key and the configuration the app stores — go to the phone
+encrypted to the key it generated, and the MAC key never leaves this
+laptop's OS keychain in clear, is never printed, and is not in the code.
+
+The typed code is the binding: nothing is written to the project before the
+code the operator types matches the key the phone wrote, so a refused
+pairing leaves the project exactly as it was.
+
+The code is drawn in a terminal wide enough for it. The payload is over a
+kilobyte, so its code is over a hundred columns wide, and a narrower
+terminal gets the payload line instead of a drawing that would wrap and
+stop being a QR code; --json carries that same payload for a console.
+
+Its own state is the local config: the project, its database URL and
+Identity Toolkit API key, and the signer account. --json streams the
+pairing as one JSON object per line on stdout for a console to read.
+
+Usage: `fugaro pair`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--email` | string | "" | no | the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for pair |
+| `--json` | bool | `false` | no | stream the pairing as newline-delimited JSON events on stdout |
+| `--name` | string | "" | no | the device's name, for pair ls and the device node's own field |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: your own role, inherited; --role may only lower it) |
+| `--timeout` | duration | `2m0s` | no | how long to wait for the phone's key and the typed code (refused above 4m30s) |
+
+Subcommands:
+
+- `fugaro pair ls` -- List the devices paired with this installation
+- `fugaro pair revoke` -- Revoke a paired device
+
+## `fugaro pair ls`
+
+List the devices paired with this installation
+
+List the devices paired with this installation: one row per device node
+under config/admin/devices, with the uid (a key, and therefore printable),
+the name, the administered email, the role and the pairing time.
+
+It reads with roles/firebasedatabase.admin, and it prints no token, no key
+and no keychain item's value: the node holds none of them, and the item's
+name is not in the node either, so there is nothing else to print.
+
+It does not report whether a device's Auth user still exists. The Auth user
+is not in the database, so database admin does not reach it, and the node's
+existence is the whole of what the rules read (D166): an orphaned Auth user
+whose node is gone is the history sweep's business and is invisible to the
+rules by construction.
+
+Its own state is the local config, as it is for the rest of the command.
+
+Usage: `fugaro pair ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print the pairings as one JSON event on stdout |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro pair revoke`
+
+Revoke a paired device
+
+Revoke a paired device: the phone is off this installation's allowlist from
+its next request on.
+
+The order is the command (M4): the device node under config/admin/devices
+goes first, because the node's existence is what the rules read and its
+deletion revokes at once, without waiting for an ID token to expire; then
+this laptop's OS keychain item for that pairing's MAC key. Two deletions,
+and both are here.
+
+The pairing session's own node is not one of them. Its key is the p~ uid
+the session drew, and nothing on this laptop records that uid, so a revoke
+by device cannot name the node it would delete; the history sweep deletes
+it with the p~ user the node belongs to (mobile plan decision 2), and it
+is the sweep this command names rather than a node it did not touch.
+
+It does not delete the device's Auth user. No role a Terraform grant gives
+an operator can delete one (the history job's account is the only holder of
+roles/firebaseauth.admin), and the device node's deletion is what makes the
+orphan the history sweep's to remove — which is why this command names the
+sweep rather than pretending the account is gone.
+
+Exactly one of --uid and --name selects the device, and a --name that
+matches more than one node is refused rather than revoked ambiguously: the
+refusal says how many it matched, and `fugaro pair ls` prints the uids to
+pick one from.
+
+Its own state is the local config, as it is for the rest of the command.
+
+Usage: `fugaro pair revoke (--uid UID | --name NAME)`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for revoke |
+| `--json` | bool | `false` | no | print the revocation as one JSON event on stdout |
+| `--name` | string | "" | no | the name of the device to revoke; it must match exactly one device |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--uid` | string | "" | no | the uid of the device to revoke (m~…), which is the node's key |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro plan`
 
 Read a plan's graph artifact
@@ -2244,8 +2401,8 @@ job's environment was deployed with.
 
 Publishing refuses without the rules marker (config/limits/policyRules): a
 policy published before the rules are deployed is one the runs it bounds
-cannot read, so run fugaro update --firebase-project with a Fugaro that deploys them
-first. It also refuses a node written by a newer Fugaro.
+cannot read, so run fugaro update with a Fugaro that deploys them first. It
+also refuses a node written by a newer Fugaro.
 
 allow_repos is seeded from this machine's repos: map and from the shared
 config's repository list, and only when the node is absent or --seed-repos is
@@ -3769,7 +3926,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) update applies nothing, --yes included (except update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) update applies nothing, --yes included (except update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 
@@ -3817,7 +3974,7 @@ This command has no subcommands.
 Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
 
 upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in three
+processed one after the other, each on its own) up to this fugaro, in four
 steps, stopping that checkout at the first step that fails:
 
   pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
@@ -3846,19 +4003,31 @@ steps, stopping that checkout at the first step that fails:
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
           named-account jobs are updated by the same fugaro update --repo .
+  policy  the project's published policy node, if an earlier Fugaro wrote it
+          in an older version: migrated in place (never deleted and
+          published again), after a diff of what changes, what is kept and
+          what is derived from the local config, and the project's name typed
+          at a terminal. --yes confirms it, and is the way past the refusal a
+          run in flight makes without it. Skipped where there is no local
+          project config or the repository is not onboarded, and in a coding
+          agent's session, with the command to run in your own terminal. It
+          reads the published node, so --check makes no call here either and
+          says it cannot tell. This is what fugaro update does for the same
+          node; both doors run it.
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
 --local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud step is skipped before it reads
-anything, never attempted, with the command to run in your own terminal, so
-the exit code is 0 when the local steps succeeded. --check writes nothing,
-runs no claude command and makes no cloud call: it reads the settings file,
-Claude Code's record of installed plugins and the local project config,
-prints what each step would do and exits 1 when anything is stale (build
-records are not read). Without --yes, --local or --check it needs a real
-terminal. There is no --json.
+session (CLAUDECODE and the like) the cloud and policy steps are skipped
+before they read anything, never attempted, with the command to run in your
+own terminal, so the exit code is 0 when the local steps succeeded. --check
+writes nothing, runs no claude command and makes no cloud call: it reads the
+settings file, Claude Code's record of installed plugins and the local project
+config, prints what each step would do and exits 1 when anything is stale
+(build records are not read, and the published policy node is not either: the
+policy step says it cannot tell). Without --yes, --local or --check it needs a
+real terminal. There is no --json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files
@@ -3886,6 +4055,157 @@ Flags:
 | `--repo` | string | "" | no | owner/name of the repository; it must be the checkout's origin (one PATH only) |
 | `--workflow` | stringArray | `[]` | no | a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only) |
 | `--yes` | bool | `false` | no | confirm every step of the cloud step without asking (the base copy, the check-job update and each billable build, with no cap), and without a terminal; never in a coding agent's session |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user`
+
+List, add and remove the installation's launchers and operators
+
+List the installation's launchers and operators, and add a person to one of
+the two lists or remove them from it.
+
+The two lists are terraform.launchers and terraform.operators in this machine's own project config. They are what the operator's next
+fugaro update applies to the installation, so a change made here takes effect
+then, and nothing is applied by this command: no IAM grant is written, no
+repository is touched and no invitation is sent.
+
+A member is one person, written as user:<email>. Only user: members are
+written here: domain:, group:, serviceAccount:, allUsers,
+allAuthenticatedUsers and wildcards are refused (reconciliation F42 — the
+launcher and operator roles carry the token signer's own role, so a domain:
+member would grant a whole domain the right to mint a launcher's identity).
+fugaro setup --launcher/--operator remains the door for a whole list, group
+members included.
+
+add and rm read the installation's own outputs first and refuse when they
+disagree with this machine's config: a list written here replaces the
+installation's on the next fugaro update, so a config that has not seen the
+members another operator added would drop them.
+
+Usage: `fugaro user`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for user |
+
+Subcommands:
+
+- `fugaro user add` -- Add a person to the installation's launchers or operators
+- `fugaro user ls` -- List the installation's launchers and operators
+- `fugaro user rm` -- Remove a person from the installation's launchers or operators
+
+## `fugaro user add`
+
+Add a person to the installation's launchers or operators
+
+Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+
+The member is added to, or removed from, the list --role names, and the other
+list is left exactly as it is. --role is required and has no default: adding
+someone to the wrong list is a grant, and a default would decide that for the
+person typing.
+
+Both subcommands read the installation's own outputs before they write and
+refuse when they disagree with this machine's config, because this machine's
+lists are what the next fugaro update applies: a config that predates a member
+another operator added would revoke that member. The refusal names the list
+that differs and the command that settles it (fugaro update).
+
+It prints an invite naming the project, the install line and the fact that the
+repository's fugaro.yaml names the project, to paste wherever the person will
+read it: no email is sent.
+
+Run it in your own terminal, with your own credentials. A coding agent's
+session is refused.
+
+Usage: `fugaro user add MEMBER`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | which list to change: launcher or operator (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user ls`
+
+List the installation's launchers and operators
+
+List the members of terraform.launchers and terraform.operators in this machine's own project config, as they are written there now.
+
+It is this machine's own copy of the two lists: no member is fetched from the
+cloud and none is granted, and no Terraform runs. What the installation itself
+holds can differ — a change another operator applied, or one made here and not
+yet applied by a fugaro update — and only the outputs would tell, which is the
+read add and rm make.
+
+A machine with no project config of its own is refused rather than answered
+with two empty lists: the lists are not in the shared config, and selection's
+fallback to it is a fetch of the runs bucket that only this machine's own file
+would have made unnecessary.
+
+Usage: `fugaro user ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user rm`
+
+Remove a person from the installation's launchers or operators
+
+Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+
+The member is added to, or removed from, the list --role names, and the other
+list is left exactly as it is. --role is required and has no default: adding
+someone to the wrong list is a grant, and a default would decide that for the
+person typing.
+
+Both subcommands read the installation's own outputs before they write and
+refuse when they disagree with this machine's config, because this machine's
+lists are what the next fugaro update applies: a config that predates a member
+another operator added would revoke that member. The refusal names the list
+that differs and the command that settles it (fugaro update).
+
+Run it in your own terminal, with your own credentials. A coding agent's
+session is refused.
+
+Usage: `fugaro user rm MEMBER`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | which list to change: launcher or operator (required) |
 
 Subcommands:
 

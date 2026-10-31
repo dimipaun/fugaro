@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -44,6 +45,17 @@ followup:
   trusted: ["1234567"]
 `
 
+// sharedYAML is the fixture workflow a shared job runs, and it is written as
+// checkout: clone: the runner decides whether it clones from the job's
+// FUGARO_CHECKOUT alone and never from the checkout's config — before the
+// clone there is no checkout to read one from — so what a shared job's clone
+// needs is that env value, which sharedJob sets. The file's own checkout:
+// cannot say shared until 0.15.0 builds a shared image: validation refuses
+// the kind outright (config/image.go's sharedCheckoutShipped), and the
+// runner reads this file after cloning, so a file that says shared would
+// fail bootstrap instead of provisioning.
+var sharedYAML = cloneYAML
+
 // cloneJob makes the run's job a checkout: clone one: no checkout in
 // WorkDir (the harness never creates it) and FUGARO_CHECKOUT=clone in the
 // job's environment, with a provider token for mise's rate limit. The
@@ -51,10 +63,24 @@ followup:
 // which is what the tests below are about.
 func (h *harness) cloneJob(t *testing.T) {
 	t.Helper()
+	h.cloneShapedJob(t, "clone")
+}
+
+// sharedJob is cloneJob for the third kind: a checkout: shared workflow's
+// job runs a shared dependency-layer image, which holds no checkout either,
+// so the run clones its own repository exactly as a clone job does (design
+// forge-authorship-images/shared-images.md §1, §6, route A).
+func (h *harness) sharedJob(t *testing.T) {
+	t.Helper()
+	h.cloneShapedJob(t, config.CheckoutShared)
+}
+
+func (h *harness) cloneShapedJob(t *testing.T, kind string) {
+	t.Helper()
 	if _, err := os.Stat(h.deps.WorkDir); !os.IsNotExist(err) {
 		t.Fatalf("the harness's checkout already exists: %v", err)
 	}
-	h.deps.Env = append(h.deps.Env, runner.CheckoutEnv+"=clone")
+	h.deps.Env = append(h.deps.Env, runner.CheckoutEnv+"="+kind)
 	h.deps.ProviderKind = gitprovKindGitHub
 	h.provider.Auth = staticAuth(gitToken)
 }
@@ -211,6 +237,43 @@ func TestCloneProvisionRunsMiseInstall(t *testing.T) {
 	}
 	if v := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.partialclonefilter"); v != "blob:none" {
 		t.Fatalf("the checkout's filter = %q, want blob:none", v)
+	}
+}
+
+// TestProvisionClonesOnShared: a run whose job says FUGARO_CHECKOUT=shared
+// clones exactly as a clone job does — blobless, from the job's own remote —
+// and installs the checkout's mise tools before its first stage. The switch
+// in cloneJob() is the runner's whole side of checkout: shared (design
+// forge-authorship-images/shared-images.md §6, route A: "the runner needs no
+// change beyond the FUGARO_CHECKOUT value it already switches on"), and a
+// value it does not know would leave the run opening a checkout its image
+// does not hold.
+//
+// Mutation (run, restore): drop config.CheckoutShared from cloneJob()'s
+// switch — this test then fails: the run makes no blobless clone, opens the
+// checkout the image is expected to hold, and mise runs nothing.
+func TestProvisionClonesOnShared(t *testing.T) {
+	h := newHarnessFiles(t, sharedYAML, nil, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"})
+	log := h.fakeMise(t, 0)
+	h.sharedJob(t)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := filepath.EvalSymlinks(h.deps.WorkDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := miseCalls(t, log)
+	if len(got) != 2 || got[0].Args[0] != "install" || got[0].Dir != work ||
+		!slices.Equal(got[1].Args, []string{"ls", "--current", "--missing"}) {
+		t.Fatalf("mise calls = %+v, want `mise install` then `mise ls --current --missing` in %s", got, work)
+	}
+	if provisionTiming(rec) == nil {
+		t.Fatalf("no provision timing in %+v", rec.Stages)
+	}
+	if v := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.partialclonefilter"); v != "blob:none" {
+		t.Fatalf("the checkout's filter = %q, want blob:none: a shared job's image holds no checkout either", v)
 	}
 }
 

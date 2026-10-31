@@ -715,11 +715,11 @@ describe('validation', () => {
   })
 
   it('stores a reduced-band CLI and marks it reduced', async () => {
-    // 1.4.2 is newer than the built-against 0.8.1, which is the reduced band:
+    // 0.9.2 is in the gap below the supported set, which is the reduced band:
     // stored, and marked, because the console may drive it but withholds views.
     const directory = freshDirectory()
     const stub = installStub(directory, {
-      commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } },
+      commands: { version: { stdout: '0.9.2\n' }, doctor: { stdout: '{}\n' } },
     })
     const result = await validateInstallation(
       { project: 'fugaro', binaryPath: stub.binary },

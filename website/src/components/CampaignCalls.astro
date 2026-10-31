@@ -22,10 +22,50 @@
  * from `website/data/landing.yaml` and the repository from `website/data/site.yaml`, both passed
  * in by the page: a link typed here would be a second copy of a fact, and the copy that drifts.
  *
+ * **The band is a field of the accent** (the owner's feedback of 2026-10-30, finding 4). The
+ * closing call to action used to be three outlined buttons on the ground, and the page ended in
+ * the same colour it began in. It is now the page's one full-width field of flat colour: the
+ * band takes the accent, its words and its two quiet actions are set in the ground, and the
+ * booking is the one filled control on it. Nothing on the field carries a hairline border — the
+ * two quiet actions are text at a thumb's target size rather than boxes — so the band reads as
+ * one colour with three actions on it rather than as three controls with a background. **Its
+ * corners are rounded generously** (the owner's feedback of 2026-10-30, D412's finding 2): the field
+ * was a hard-cornered band and it is cut at `--radius-xl`, the site's largest radius step and
+ * the one the steps' panel above it carries, so the page's two fields are one shape. It is
+ * still flat colour — no gradient, no shadow at rest — and the radius is the whole of the
+ * change to its box.
+ *
+ * **The field is why the focus ring is named here.** The site's ring is the accent
+ * (`base.css`'s `:focus-visible`), and on a field of the accent a ring in it is a ring nobody
+ * can see, so this band paints its own ring in the ground — the same colour its words are in,
+ * and the pair `website/test/a11y.mjs` computes for the filled control.
+ *
+ * **Its parts rise into place once.** The band is a `data-reveal-block`, so `site.js`'s own
+ * entrance holds back the heading, the sentence and the three actions while they are below the
+ * first screen and shows them in reading order as the band enters — with no script nothing is
+ * ever held back, and a reader who asked their system for less motion is served the band still
+ * (`public/scripts/site.js`). The travel is the 24 px the owner asked the campaign's sections
+ * for rather than the home page's 12 px, declared inside the same `no-preference` query the
+ * rest of the campaign's motion is.
+ *
  * **The two ids are the events' hook** (G2.4): `site.js` knows the two links by the ids the
  * markup gives them, and presses them into GA4's `install_click` and `whatsapp_click` once the
  * visitor has granted analytics. They are the only thing about this section a script reads.
+ *
+ * **Each action carries its own small mark** (the owner's feedback of 2026-10-30, D412's finding 1).
+ * Three rows of type on a field of colour read as three lines of a paragraph rather than as
+ * three things a reader can do, so the booking has a calendar beside it, the install a
+ * download and the chat a bubble — inline SVG from `CampaignIcon.astro`, `aria-hidden` because
+ * the link's own words are the meaning, and in the control's own colour so the band paints no
+ * second one. The plate lifts 2 px on hover and each mark nudges 2 px the way its own action
+ * goes — the calendar up, the arrow down into its tray, the bubble out — which is the "small
+ * lift or icon nudge" the owner asked for, and it is 2 px of `transform` on two elements
+ * rather than a second colour. **The movement is inside the `no-preference` query with the
+ * band's other motion**, so a reader who asked their system for less is served the same band
+ * still: the hover's colour and underline are what answers them.
  */
+import CampaignIcon from './CampaignIcon.astro'
+
 interface Props {
   /** The owner's booking link, from `website/data/landing.yaml`. */
   calendlyURL: string
@@ -38,18 +78,18 @@ interface Props {
 const { calendlyURL, repository, whatsappURL } = Astro.props
 ---
 
-<section class="campaign-calls" data-section="calls-to-action">
-  <h2 class="campaign-calls-title display-md">See it run on your own repository</h2>
+<section class="campaign-calls" data-section="calls-to-action" data-reveal-block>
+  <h2 class="campaign-calls-title display-lg">See it run on your own repository</h2>
   <p class="campaign-calls-line">Book half an hour, bring a repository, and watch a task become a pull request under your own caps.</p>
   <ul class="campaign-calls-list">
     <li>
-      <a class="campaign-calls-primary" href={calendlyURL}>Book a demo</a>
+      <a class="campaign-calls-primary" href={calendlyURL}><CampaignIcon name="calendar" />Book a demo</a>
     </li>
     <li>
-      <a class="campaign-calls-secondary" id="campaign-install" href={repository} rel="noopener">Install free</a>
+      <a class="campaign-calls-secondary" id="campaign-install" href={repository} rel="noopener"><CampaignIcon name="download" />Install free</a>
     </li>
     <li>
-      <a class="campaign-calls-secondary" id="campaign-whatsapp" href={whatsappURL} rel="noopener">Chat with the founder</a>
+      <a class="campaign-calls-secondary" id="campaign-whatsapp" href={whatsappURL} rel="noopener"><CampaignIcon name="chat" />Chat with the founder</a>
     </li>
   </ul>
   {/* The booking widget's place, empty and hidden until the visitor grants the marketing
@@ -62,42 +102,56 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
 </section>
 
 <style>
-  /* Tokens only (W1.2). The two calls stack on a phone — the primary one first, at the width of
-     a thumb — and sit side by side from the wide breakpoint, which is the layout the static half
-     of `website/test/landing-pages.mjs` reads; the rendered reading at both widths is the
-     owner's check (G2.5). */
+  /* Tokens only (W1.2). The three actions stack on a phone — the booking first, at the width of
+     a thumb — and sit in a row from the wide breakpoint, which is the layout the static half of
+     `website/test/landing-pages.mjs` reads; the rendered reading at both widths is the owner's
+     check (G2.5). */
   .campaign-calls {
     padding-block: var(--space-xl) var(--space-3xl);
     padding-inline: var(--frame-gutter);
+    border-radius: var(--radius-xl);
+    background: var(--accent);
+    color: var(--ground);
   }
 
+  /* The band's words are the ground's, on the accent: the same pair the filled control below is
+     drawn in, and the one `website/test/a11y.mjs` computes at the body ratio. `.display-lg` sets
+     the site's own text colour, so the title names this band's. */
   .campaign-calls-title {
     margin: 0;
+    max-width: var(--measure);
+    color: var(--ground);
+    font-size: clamp(var(--font-size-lg), 4.4vw, var(--font-size-3xl));
   }
 
+  /* The sentence under it is the body's size on a phone and the body's larger step where the
+     viewport has room, the same pair the steps section sets: it is body copy under a heading,
+     and it stays under the heading at every width. */
   .campaign-calls-line {
     margin: var(--space-sm) 0 0;
     max-width: var(--measure);
-    color: var(--text-muted);
+    color: var(--ground);
+    font-size: clamp(var(--font-size-base), 1.9vw, var(--font-size-lg));
+    line-height: var(--leading-snug);
   }
 
   .campaign-calls-list {
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
-    margin: var(--space-lg) 0 0;
+    margin: var(--space-2xl) 0 0;
     padding: 0;
     list-style: none;
   }
 
-  /* The primary call to action: the accent as its fill and the ground as its label, the pair
-     `website/test/a11y.mjs` computes for a filled button. It is the same shape the homepage's
-     own button is, at full width in the column so a thumb finds it. */
   .campaign-calls-primary,
   .campaign-calls-secondary {
     display: flex;
     align-items: center;
     justify-content: center;
+    /* The mark and the label are one row with the site's own step between them, so the two are
+       spaced by the layout rather than by a margin on the icon. */
+    gap: var(--space-xs);
     box-sizing: border-box;
     min-height: 56px;
     padding: 0 var(--space-xl);
@@ -107,26 +161,31 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
     text-decoration: none;
   }
 
+  /* The booking, and the band's one plate: the ground as its fill and the page's own text as its
+     label, which is the inverse of the hero's filled control and the reason it reads as the
+     action the band is for. */
   .campaign-calls-primary {
-    background: var(--accent);
-    color: var(--ground);
-  }
-
-  /* The secondary one: the repository, drawn as a quiet outline so the two are told apart
-     without a second colour, and it keeps the focus ring every link has. */
-  .campaign-calls-secondary {
-    border: var(--border-width) solid var(--border);
+    background: var(--ground);
     color: var(--text);
   }
 
-  @media (hover: hover) and (pointer: fine) {
-    .campaign-calls-primary:hover {
-      background: var(--accent-on-dark);
-    }
+  /* The other two: the field's own ink, no plate and no rule, so the band is one colour with
+     three actions on it rather than three boxes. They keep the control's own target size. */
+  .campaign-calls-secondary {
+    color: var(--ground);
+  }
 
-    .campaign-calls-secondary:hover {
-      color: var(--accent-on-dark);
-    }
+  .campaign-calls-primary:active,
+  .campaign-calls-secondary:active {
+    transform: scale(0.97);
+  }
+
+  /* The ring, in the band's own ink: the site's ring is the accent, and an accent ring on the
+     accent is a ring a reader cannot see (base.css's `:focus-visible`). The `outline-color` is
+     named rather than the shorthand so the site's width and offset stand. */
+  .campaign-calls-primary:focus-visible,
+  .campaign-calls-secondary:focus-visible {
+    outline-color: var(--ground);
   }
 
   /* The booking widget's frame, once the visitor's grant has put it in the page. Calendly's
@@ -144,8 +203,8 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
   }
 
   @media (max-width: 30rem) {
-    /* The phone's own block: the section's closing air is a step smaller, so the last thing on
-       the page is the two buttons rather than a screen of empty ground under them. */
+    /* The phone's own block: the band's closing air is a step smaller, so the last thing on the
+       page is the three actions rather than a screen of empty colour under them. */
     .campaign-calls {
       padding-block: var(--space-lg) var(--space-2xl);
     }
@@ -159,6 +218,80 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
     .campaign-calls-list {
       flex-direction: row;
       align-items: center;
+      gap: var(--space-lg);
+    }
+  }
+
+  /* The feedback on the controls, and the reader's answer to the motion. The hover is for a
+     pointer that hovers and for no other kind (the site's own query); the quiet actions answer
+     by underlining, which is the site's own idiom for a link, and the plate answers by going one
+     tone step up. Both are declared only for a reader who has not asked their system for less
+     motion, so nothing here is undone by a rule elsewhere. */
+  @media screen and (prefers-reduced-motion: no-preference) {
+    .campaign-calls-primary,
+    .campaign-calls-secondary {
+      transition:
+        background-color var(--duration-fast) var(--ease-out),
+        color var(--duration-fast) var(--ease-out),
+        transform var(--duration-fast) var(--ease-out);
+    }
+
+    /* The mark's own travel, which is the second half of the controls' answer: the icon
+       transitions with the plate it sits on, so the two move as one control rather than the
+       icon arriving late. */
+    .campaign-calls-primary :global(.campaign-icon),
+    .campaign-calls-secondary :global(.campaign-icon) {
+      transition: transform var(--duration-fast) var(--ease-out);
+    }
+
+    /* The lift and the three nudges, for a pointer that hovers and for no other kind (the
+       site's own query): the plate rises 2 px and the mark moves 2 px past it the way its own
+       action goes. Both are `transform` and nothing else — the colour the control answers with
+       is the rule above this block, which every reader gets.
+       **`:not(:active)` is what keeps the press visible**: the plate's `:active` scale is
+       declared above this block at the same specificity, so without the exclusion a mouse press
+       — which is `:hover` and `:active` at once — would be answered by the lift and the press
+       would read as nothing at all. A pressed control is not a hovered one. */
+    @media (hover: hover) and (pointer: fine) {
+      .campaign-calls-primary:hover:not(:active),
+      .campaign-calls-secondary:hover:not(:active) {
+        transform: translateY(-2px);
+      }
+
+      /* One nudge each, so a mark's direction is its own action's rather than one direction the
+         three share: the booking's calendar rises with its plate, the install's arrow carries on
+         down into the tray it is drawn over, and the chat's bubble goes out. */
+      .campaign-calls-primary:hover:not(:active) :global(.campaign-icon[data-icon='calendar']) {
+        transform: translateY(-2px);
+      }
+
+      .campaign-calls-secondary:hover:not(:active) :global(.campaign-icon[data-icon='download']) {
+        transform: translateY(2px);
+      }
+
+      .campaign-calls-secondary:hover:not(:active) :global(.campaign-icon[data-icon='chat']) {
+        transform: translateX(2px);
+      }
+    }
+
+    /* The campaign's own travel: the owner asked these four pages for 16–32 px of it, and the
+       home page's 12 px is what `base.css` gives a held-back part. `site.js` sets no
+       `data-reveal` under `reduce` at all; `screen` keeps a printed page where it is, since
+       `base.css` shows every held-back part at `transform: none` for print. */
+    .campaign-calls [data-reveal]:not([data-revealed]) {
+      transform: translateY(24px);
+    }
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .campaign-calls-primary:hover {
+      background: var(--panel);
+    }
+
+    .campaign-calls-secondary:hover {
+      text-decoration: underline;
+      text-decoration-thickness: 2px;
+      text-underline-offset: 0.25em;
     }
   }
 </style>

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -25,13 +27,19 @@ import (
 //     list of executions, and only when that list was read in full.
 //   - It never releases anything. A crashed run's outstanding amount stays
 //     counted in the day's counters (errs high, never low): the sweeper writes
-//     no counter, no cap, no switch, no mode, nothing under /config. Its
+//     no counter, no cap, no switch, no mode, nothing under /config — the
+//     device allowlist under config/admin is read and never touched. Its
 //     writes are the leaves runs/<slug>/<run>/crashed, outcomes/<day>/<slug>/<run>
 //     (create only, so a recorded outcome is kept) and the deletion of
 //     agents/<slug>/<run>, one atomic update per run.
-//   - It deletes only Firebase users named r~<slug>~<run> that the Identity
-//     Toolkit says were created more than UserMaxAge ago and whose run is not
-//     in the registry any more or still live.
+//   - Its second family is the pairing's: the deletion of a pairing/<uid> node
+//     beside the p~ user it belongs to, in one atomic update, and only for the
+//     uids it is about to delete. It writes nothing under config, so the device
+//     allowlist is read and never touched (deleteUsers).
+//   - It deletes Firebase users by prefix, each by its own rule: r~<slug>~<run>
+//     when the Identity Toolkit says it was created more than UserMaxAge ago
+//     and its run is not in the registry any more or still live; m~ when its
+//     device node is gone; p~ when it is past PairingUserMaxAge.
 
 // Sweep defaults.
 const (
@@ -51,6 +59,35 @@ const (
 	// StatusInfraError is the outcome the sweeper records for a run that
 	// vanished.
 	StatusInfraError = "infra_error"
+	// SweepEvery is how often the history job runs the sweeper: the
+	// scheduler's `*/15 * * * *` (deploy/terraform/gcp/modules/installation/
+	// history.tf). It is one sweep interval, and the pairing user's grace
+	// below is measured in it.
+	SweepEvery = 15 * time.Minute
+	// PairingUserMaxAge is how old an orphaned pairing user (p~) must be
+	// before the sweep deletes it: the pairing session's own hour
+	// (token.Lifetime, which bounds a session — the ID token, not the
+	// five-minute custom token) plus one sweep interval, so a sweep never
+	// races a pairing that is still in flight (mobile plan decisions 1 and 2).
+	PairingUserMaxAge = token.Lifetime + SweepEvery
+	// devicePrefix is what a paired device's Firebase uid begins with
+	// (token.MintDevice), and pairingPrefix what a pairing session's does
+	// (token.MintPairing).
+	devicePrefix  = "m~"
+	pairingPrefix = "p~"
+	// DeviceRoot is the device allowlist of D166: the node whose existence is
+	// what the rules read, and the one `fugaro pair revoke` deletes. It must
+	// equal rules.PathDevices (internal/budget/rules/rules.go). This package
+	// can't import that one: rules' own in-package tests import
+	// internal/budget, so the import would cycle. The constant is duplicated
+	// for that reason, and TestSweepDeviceRootMatchesTheRules (package
+	// budget_test, which can import both) pins the two together.
+	DeviceRoot = "config/admin/devices"
+	// pairingRoot is the pairing session's own node, beside the run trees
+	// (internal/cli's pairPath writes and deletes it). The sweep deletes one
+	// child of it, and only when it deletes the p~ user that child belongs to:
+	// the uid is the node's key, so the node cannot outlive its uid.
+	pairingRoot = "pairing"
 )
 
 // Executions lists the project's Fugaro executions; *gcp.Backend does.
@@ -82,9 +119,15 @@ type Sweeper struct {
 
 // SweepReport says what a sweep did.
 type SweepReport struct {
-	Removed      []string // "<slug>/<run>" of the removed entries
-	Kept         int      // registry entries left alone
+	Removed []string // "<slug>/<run>" of the removed entries
+	Kept    int      // registry entries left alone
+	// UsersDeleted counts every Firebase user the sweep deleted: a run's
+	// (r~), an orphaned device's (m~, whose device node is gone) and an
+	// orphaned pairing's (p~, past PairingUserMaxAge).
 	UsersDeleted int
+	// PairingNodesDeleted counts the pairing/<uid> nodes deleted beside the
+	// p~ users they belong to: one per user whose node had survived.
+	PairingNodesDeleted int
 }
 
 // RunUID is the Firebase uid of a run (token.UID; a test holds them equal).
@@ -99,8 +142,9 @@ func (s *Sweeper) warnf(format string, args ...any) {
 }
 
 // Sweep does one pass. A failure to list executions or to read the registry
-// stops it before anything is written; a failure on one run or on the user
-// cleanup is reported at the end, after the rest was done.
+// stops it before anything is written; a failure on one run, on the user
+// cleanup or on one of the two trees that cleanup reads is reported at the end,
+// after the rest was done.
 func (s *Sweeper) Sweep(ctx context.Context) (SweepReport, error) {
 	var rep SweepReport
 	now := s.Now()
@@ -172,8 +216,8 @@ func (s *Sweeper) Sweep(ctx context.Context) (SweepReport, error) {
 		}
 	}
 
-	n, err := s.deleteUsers(ctx, now, maxAge, keep)
-	rep.UsersDeleted = n
+	n, nodes, err := s.deleteUsers(ctx, now, maxAge, keep)
+	rep.UsersDeleted, rep.PairingNodesDeleted = n, nodes
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -346,28 +390,134 @@ func clip(s string, n int) string {
 	return s
 }
 
-// deleteUsers deletes the runs' Firebase users older than maxAge.
-func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Duration, keep map[string]bool) (int, error) {
+// deleteUsers deletes the Firebase users the sweep owns, by prefix, and the
+// pairing nodes that belong to the p~ ones. The three prefixes have three
+// different rules, and the difference is the point:
+//
+//   - r~<slug>~<run>, a run's, goes when it is older than maxAge and its run is
+//     no longer in the registry.
+//   - m~, a paired device's, goes when its device node under
+//     config/admin/devices is gone: the node is the allowlist the rules read
+//     (D166), so a user whose node is gone is a phone no request is admitted
+//     from, and one whose node exists is a paired phone and is never touched —
+//     whatever its age. `fugaro pair revoke` deletes the node and leaves the
+//     user to this pass, because no role a Terraform grant gives an operator
+//     can delete an Auth user (mobile plan decision 1).
+//   - p~, a pairing session's, goes once it is past PairingUserMaxAge, and its
+//     pairing/<uid> node goes with it (decision 2): an abandoned session
+//     leaves a delivery node readable by a uid whose ID token lives an hour,
+//     and nothing else puts a clock on that node.
+//
+// Nothing else is deleted: a uid of another shape is not this sweeper's, and a
+// pairing node whose user the API did not delete stays.
+func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Duration, keep map[string]bool) (int, int, error) {
 	users, err := s.Auth.ListUsers(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("listing Firebase users: %w", err)
+		return 0, 0, fmt.Errorf("listing Firebase users: %w", err)
 	}
-	var del []string
+	// The two trees are read for the m~ and p~ rules alone, and a tree that
+	// could not be read is a family left alone rather than the whole pass: an
+	// unread allowlist reads as "every device is an orphan", and an unread
+	// pairing tree leaves no node the sweep may name. The r~ rule needs neither,
+	// so a failure here is reported and the pass goes on.
+	devices, devErr := s.deviceNodes(ctx)
+	pairings, pairErr := s.pairingNodes(ctx)
+	errs := []error{devErr, pairErr}
+	var del, nodes []string
 	for _, u := range users {
-		if strings.HasPrefix(u.UID, uidPrefix) && !keep[u.UID] && now.Sub(u.Created) > maxAge {
+		switch {
+		case strings.HasPrefix(u.UID, uidPrefix):
+			if !keep[u.UID] && now.Sub(u.Created) > maxAge {
+				del = append(del, u.UID)
+			}
+		case strings.HasPrefix(u.UID, devicePrefix):
+			if devErr == nil && !devices[u.UID] {
+				del = append(del, u.UID)
+			}
+		case strings.HasPrefix(u.UID, pairingPrefix):
+			if pairErr != nil || now.Sub(u.Created) <= PairingUserMaxAge {
+				continue
+			}
 			del = append(del, u.UID)
+			if pairings[u.UID] {
+				nodes = append(nodes, pairingRoot+"/"+u.UID)
+			}
 		}
 	}
 	sort.Strings(del)
+	sort.Strings(nodes)
+	// The node goes before the user: the node is what a p~ token reads its
+	// delivery from, and deleting it first leaves nothing readable even if the
+	// user deletion below fails. A node that cannot be deleted holds back the p~
+	// users whose payload node would outlive them, and the next interval
+	// retries -- but it does not stop the pass: the r~ and m~ users, and the p~
+	// users with no node at all, are this pass's still, and a failed node
+	// deletion that ended the whole cleanup would leave them for an interval
+	// over a subtree they have nothing to do with.
+	if len(nodes) > 0 {
+		updates := make(map[string]any, len(nodes))
+		for _, p := range nodes {
+			updates[p] = nil
+		}
+		if err := s.DB.Patch(ctx, "", updates); err != nil {
+			errs = append(errs, fmt.Errorf("deleting pairing nodes: %w", err))
+			stranded := make(map[string]bool, len(nodes))
+			for _, p := range nodes {
+				stranded[strings.TrimPrefix(p, pairingRoot+"/")] = true
+			}
+			del = slices.DeleteFunc(del, func(u string) bool { return stranded[u] })
+			nodes = nil
+		}
+	}
 	if len(del) == 0 {
-		return 0, nil
+		return 0, len(nodes), errors.Join(errs...)
 	}
 	failed, err := s.Auth.DeleteUsers(ctx, del)
+	// Both halves of the warning are another program's: the uid is the Auth
+	// directory's own and the message the API's, and a control character in
+	// either would rewrite the terminal that reads the line or open a line of
+	// its own, so both go through the sanitiser registry.go already holds
+	// untrusted database text to.
 	for _, f := range failed {
-		s.warnf("Firebase user %s was not deleted: %s", f.UID, f.Message)
+		s.warnf("Firebase user %s was not deleted: %s", clipString(f.UID), clipString(f.Message))
 	}
 	if err != nil {
-		return 0, fmt.Errorf("deleting Firebase users: %w", err)
+		// The nodes above are deleted whatever happens here, so the count goes
+		// back with the error: a report that said zero would tell an operator
+		// nothing was removed when the subtree a phone could still read is gone.
+		return 0, len(nodes), errors.Join(append(errs, fmt.Errorf("deleting Firebase users: %w", err))...)
 	}
-	return max(len(del)-len(failed), 0), nil
+	return max(len(del)-len(failed), 0), len(nodes), errors.Join(errs...)
+}
+
+// deviceNodes is the device allowlist as the sweep reads it: the uids that have
+// a node, and nothing about what the nodes hold. The node's fields are written
+// by `fugaro pair` (M13) and no rule reads one, so an entry the sweep cannot
+// decode is still an entry, and only the uid is read.
+func (s *Sweeper) deviceNodes(ctx context.Context) (map[string]bool, error) {
+	var tree map[string]json.RawMessage
+	if _, err := s.DB.Get(ctx, DeviceRoot, &tree); err != nil {
+		return nil, fmt.Errorf("reading the device allowlist: %w", err)
+	}
+	out := make(map[string]bool, len(tree))
+	for uid := range tree {
+		out[uid] = true
+	}
+	return out, nil
+}
+
+// pairingNodes is the pairing tree's own children: the uids one of which owns
+// the request node a phone writes and the delivery node the CLI writes. A
+// child the sweep cannot decode counts as present — the deletion it decides is
+// the child's whole subtree, which needs no shape.
+func (s *Sweeper) pairingNodes(ctx context.Context) (map[string]bool, error) {
+	var tree map[string]json.RawMessage
+	if _, err := s.DB.Get(ctx, pairingRoot, &tree); err != nil {
+		return nil, fmt.Errorf("reading the pairing tree: %w", err)
+	}
+	out := make(map[string]bool, len(tree))
+	for uid := range tree {
+		out[uid] = true
+	}
+	return out, nil
 }

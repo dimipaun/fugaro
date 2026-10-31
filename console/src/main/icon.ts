@@ -5,15 +5,20 @@
 //
 // **The file.** `build/icon.png` is the console's icon, and it is the
 // *website's* mark rather than a second drawing of it: it is byte-for-byte
-// `brand/app-icon-1024.png`, the app-icon master `scripts/gen-brand-icons.py`
-// writes from `brand/fugaro-logo.png` -- the file `brand/README.md` and
-// `website/README.md` both name as the source of truth every icon the site
-// serves is derived from, and the same composition (the artwork on the
-// palette's `--ground` at 80% extent) the site's own home-screen icon
-// `website/public/android-chrome-512x512.png` is. `test/unit/icon.test.ts`
-// holds it to that in two ways: the bytes must equal the master's, and the mark
-// must still be the site's (a coarse block-average comparison against the 512
-// the site ships), so the two cannot drift apart unnoticed.
+// `brand/app-icon-macos-1024.png`, the macOS app-icon master
+// `scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` -- the file
+// `brand/README.md` and `website/README.md` both name as the source of truth
+// every icon the site serves is derived from. Its body is the composition of
+// the site's own home-screen icon `website/public/android-chrome-512x512.png`
+// (the artwork on the palette's `--ground` at 80% extent), cut to Apple's
+// rounded icon shape: an 824 px squircle in a transparent 100 px margin that
+// holds a soft shadow. macOS draws an app's icon as the file is, without a
+// mask, so an opaque full-bleed square stands out in the Dock as a square.
+// `test/unit/icon.test.ts` holds it to that in three ways: the bytes must equal
+// the master's, the shape must be the template's, and the body must still be
+// the site's mark (a coarse block-average comparison against the 512 the site
+// ships), so the two cannot drift apart unnoticed. The dev-time dock below takes
+// the same file, margin and all, which is what the system's own icons carry.
 //
 // **Where the packager takes it.** `build.mac.icon` in `console/package.json`
 // names that file, and electron-builder converts the 1024 PNG to the bundle's

@@ -9,7 +9,8 @@
 #
 # `go list -deps` answers per GOOS/GOARCH pair: a module can be linked for one
 # target of the build matrix and not another, so the file is the union of the
-# four targets .goreleaser.yaml builds. The main module is left out (it carries
+# four targets .goreleaser.yaml builds, compiled with the build tags that config
+# sets. The main module is left out (it carries
 # no version), and its own LICENSE ships in the archive separately.
 #
 # `pipefail` because that enumeration is a pipeline into sort: without it a
@@ -27,6 +28,31 @@ out=${1:-THIRD_PARTY_NOTICES.md}
 # the config's own goos/goarch.
 targets="darwin/amd64 darwin/arm64 linux/amd64 linux/arm64"
 
+# The build tags that matrix is compiled with, read from the one place they are
+# set: the archive ships the notices of the binary it carries, and from 0.13.0
+# that binary is the tagged one, so a module only the tagged build links would
+# otherwise ship with no notice at all. Only a build's `tags:` key is read here;
+# notices_test.go holds the set this produces to the config's effective tag set,
+# so a tag that moves to another route (`-tags` in a build's flags, GOFLAGS)
+# fails there rather than silently dropping modules here.
+tags=$(awk '
+  /^[^[:space:]]/ { inbuilds = ($0 ~ /^builds:[[:space:]]*$/) }
+  inbuilds && /^[[:space:]]*(-[[:space:]]+)?tags:[[:space:]]*\[/ {
+    value = $0
+    sub(/^[^[]*\[/, "", value)
+    sub(/\].*$/, "", value)
+    gsub(/[[:space:]]/, "", value)
+    if (value != "") out = (out == "" ? value : out "," value)
+  }
+  END { printf "%s", out }
+' .goreleaser.yaml)
+# A tree with no ee/ (the core-without-ee workflow deletes it) has nothing for
+# the tag to compile, and go list would fail there on the assembly file that
+# imports it.
+[ -d ee ] || tags=""
+tags_flag=""
+[ -n "$tags" ] && tags_flag="-tags=$tags"
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -34,7 +60,7 @@ trap 'rm -rf "$work"' EXIT
 # has no version, which is what leaves it out.
 for target in $targets; do
   GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 \
-    go list -deps -f '{{if .Module}}{{if .Module.Version}}{{.Module.Path}}{{"\t"}}{{.Module.Version}}{{"\t"}}{{.Module.Dir}}{{end}}{{end}}' ./cmd/fugaro
+    go list -deps $tags_flag -f '{{if .Module}}{{if .Module.Version}}{{.Module.Path}}{{"\t"}}{{.Module.Version}}{{"\t"}}{{.Module.Dir}}{{end}}{{end}}' ./cmd/fugaro
 done | LC_ALL=C sort -u > "$work/modules"
 
 {

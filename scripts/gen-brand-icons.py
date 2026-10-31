@@ -22,6 +22,9 @@ What it writes, all from the one source logo:
   website/public/logo.png                  the header logo, 2x its display size
   website/public/site.webmanifest          the web app manifest
   brand/app-icon-1024.png                  opaque master for the iOS app icon
+  brand/app-icon-macos-1024.png            transparent master for the macOS app
+                                           icon (the console's): Apple's squircle
+                                           body inside a margin, with its shadow
   brand/app-icon-android-foreground-1024.png  transparent adaptive-icon
                                            foreground, art inside its safe zone
 
@@ -31,11 +34,12 @@ and the manifest follow a palette change when this script is re-run.
 """
 
 import json
+import math
 import re
 import sys
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "brand" / "fugaro-logo.png"
@@ -105,6 +109,59 @@ def _place(art, size, scale, background):
     return opaque.convert("RGB")
 
 
+# The macOS app-icon grid (Apple's template since Big Sur): a 1024 canvas whose
+# body is an 824 px squircle centred in a 100 px transparent margin, which holds
+# the drop shadow. macOS does not mask an app's icon, so an opaque full-bleed
+# square shows as a square in the Dock beside every rounded system icon.
+MACOS_CANVAS = 1024
+MACOS_BODY = 824
+# The body's outline is the superellipse |x|^n + |y|^n = 1. Apple's continuous
+# corner is not published as a formula; n = 5.1 is the least-squares fit to the
+# outline of the system apps' icons (Notes, Calculator) on macOS 26, within
+# 2.4 px RMS and indistinguishable at Dock sizes.
+MACOS_SQUIRCLE_EXPONENT = 5.1
+# The shadow, measured off the same system icons: black, offset down, Gaussian.
+MACOS_SHADOW_OFFSET = 10
+MACOS_SHADOW_SIGMA = 16
+MACOS_SHADOW_OPACITY = 0.20
+# The body outline is drawn at this multiple and reduced, for an anti-aliased edge.
+SUPERSAMPLE = 4
+
+
+def squircle_mask(size, exponent):
+    """An anti-aliased L mask of a centred superellipse filling size x size."""
+    big = size * SUPERSAMPLE
+    half = big / 2
+    steps = 4096
+    points = []
+    for i in range(steps):
+        t = 2 * math.pi * i / steps
+        c, s = math.cos(t), math.sin(t)
+        x = math.copysign(abs(c) ** (2 / exponent), c)
+        y = math.copysign(abs(s) ** (2 / exponent), s)
+        points.append((half + x * half, half + y * half))
+    mask = Image.new("L", (big, big), 0)
+    ImageDraw.Draw(mask).polygon(points, fill=255)
+    return mask.resize((size, size), Image.Resampling.BOX)
+
+
+def macos_icon(art, ground):
+    """The macOS app icon: the opaque composition of fit(art, ..., 0.80, ground)
+    drawn on the squircle body, over a soft shadow, on a transparent canvas."""
+    margin = (MACOS_CANVAS - MACOS_BODY) // 2
+    body = fit(art, MACOS_BODY, 0.80, ground).convert("RGBA")
+    mask = squircle_mask(MACOS_BODY, MACOS_SQUIRCLE_EXPONENT)
+    body.putalpha(mask)
+    shadow_alpha = Image.new("L", (MACOS_CANVAS, MACOS_CANVAS), 0)
+    shadow_alpha.paste(mask, (margin, margin + MACOS_SHADOW_OFFSET))
+    shadow_alpha = shadow_alpha.filter(ImageFilter.GaussianBlur(MACOS_SHADOW_SIGMA))
+    shadow_alpha = shadow_alpha.point(lambda a: round(a * MACOS_SHADOW_OPACITY))
+    canvas = Image.new("RGBA", (MACOS_CANVAS, MACOS_CANVAS), (0, 0, 0, 0))
+    canvas.putalpha(shadow_alpha)
+    canvas.alpha_composite(body, (margin, margin))
+    return canvas
+
+
 def save_png(img, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     # No pnginfo, no timestamps: the bytes depend only on the pixels.
@@ -148,6 +205,8 @@ def main():
 
     # App-icon masters for the future mobile app (docs/mobile).
     save_png(fit(art, 1024, 0.80, ground), BRAND / "app-icon-1024.png")
+    # The console's icon (console/build/icon.png is a byte copy of it).
+    save_png(macos_icon(art, ground), BRAND / "app-icon-macos-1024.png")
     # Android adaptive icon foreground: 108dp canvas, 66dp safe circle.
     save_png(
         _place(art, 1024, fit_diagonal(art, 1024, 0.58), None),

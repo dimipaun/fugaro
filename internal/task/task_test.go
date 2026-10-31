@@ -1084,3 +1084,89 @@ func TestSpecWithoutABIsByteIdentical(t *testing.T) {
 		t.Fatalf("a spec with no ab block is not byte-identical to the previous release's:\n got %s\nwant %s", data, want)
 	}
 }
+
+// TestSpecAuthorRoundTrips: the launcher's author survives a marshal and a
+// parse with both of its fields intact. It is the field A2b fills and A3's
+// stamp environment reads back out of the spec it parsed, so a value that
+// did not survive the round trip would silently become "the run's own
+// identity" at the one moment the author is decided.
+func TestSpecAuthorRoundTrips(t *testing.T) {
+	want := &Person{Name: "person-1", Email: "person-1@example.invalid"}
+	s := Spec{Version: 1, RunID: "20261030-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", Author: want}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"author"`) {
+		t.Fatalf("Author set but missing from marshal: %s", data)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if got.Author == nil || *got.Author != *want {
+		t.Fatalf("round trip author = %+v, want %+v", got.Author, want)
+	}
+}
+
+// TestSpecWithoutAuthorIsByteIdentical: a launch that carries no author
+// writes neither the key nor a byte the release before this field did not.
+// That is what keeps every launch readable by a runner older than the field,
+// whose Parse refuses the whole spec over an unknown key — the claim
+// Spec.BaseBranch, CompressionOff, DigestRuns and AB rest on — and it is why
+// the field is a pointer with omitempty rather than a struct the launcher
+// always writes.
+func TestSpecWithoutAuthorIsByteIdentical(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261030-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"version":1,"run_id":"20261030-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
+	if string(data) != want {
+		t.Fatalf("a spec with no author is not byte-identical to the previous release's:\n got %s\nwant %s", data, want)
+	}
+}
+
+// TestSpecAuthorRefusesControlCharacters: both fields reach git as
+// GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL on every commit the run makes (A3's
+// StampEnv), so a name carrying a line break or a control character could
+// forge the header block of a commit, and the angle brackets are the
+// `<name> <email>` form git itself prints from those two values. The email
+// is also the address a forge maps to an account, so it has to be one
+// address: exactly one '@' with a local part and a domain around it.
+func TestSpecAuthorRefusesControlCharacters(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		author Person
+		want   string
+	}{
+		{"a newline in the name", Person{Name: "person-1\nOther: x", Email: "person-1@example.invalid"}, "one line"},
+		{"a carriage return in the email", Person{Name: "person-1", Email: "person-1@example.invalid\r"}, "one line"},
+		{"a control character in the name", Person{Name: "person\x07-1", Email: "person-1@example.invalid"}, "control character"},
+		{"a control character in the email", Person{Name: "person-1", Email: "person\x1b-1@example.invalid"}, "control character"},
+		{"an angle bracket in the name", Person{Name: "person-1 <person-2>", Email: "person-1@example.invalid"}, "angle bracket"},
+		{"an angle bracket in the email", Person{Name: "person-1", Email: "person-1<@example.invalid"}, "angle bracket"},
+		{"an email with no @", Person{Name: "person-1", Email: "person-1.example.invalid"}, "exactly one"},
+		{"an email with two @", Person{Name: "person-1", Email: "person-1@example.invalid@x"}, "exactly one"},
+		{"an email with an empty local part", Person{Name: "person-1", Email: "@example.invalid"}, "exactly one"},
+		{"an email with an empty domain", Person{Name: "person-1", Email: "person-1@"}, "exactly one"},
+		{"a blank name", Person{Name: "   ", Email: "person-1@example.invalid"}, "name"},
+		{"an empty email", Person{Name: "person-1"}, "email"},
+		{"a name over the cap", Person{Name: strings.Repeat("a", MaxAuthorNameLen+1), Email: "person-1@example.invalid"}, "longer than"},
+		{"an email over the cap", Person{Name: "person-1", Email: strings.Repeat("a", MaxAuthorEmailLen) + "@example.invalid"}, "longer than"},
+	} {
+		s := Spec{Version: 1, RunID: "20261030-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", Author: &tc.author}
+		err := s.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: Validate() = %v, want a refusal mentioning %q", tc.name, err, tc.want)
+		}
+	}
+	// A person at both caps, and the two facts Validate's rule alone would
+	// not catch: a name of spaces is no name, and an unclosed pair of angle
+	// brackets is still an address form.
+	ok := Person{Name: strings.Repeat("a", MaxAuthorNameLen), Email: strings.Repeat("a", MaxAuthorEmailLen-6) + "@b.co"}
+	if err := (&Spec{Version: 1, RunID: "20261030-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", Author: &ok}).Validate(); err != nil {
+		t.Errorf("an author at both length caps was refused: %v", err)
+	}
+}

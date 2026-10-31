@@ -593,6 +593,7 @@ One object per act, always with `project`:
   "pairing": { "uid": "p~…", "state": "completed", "expires_at": "…" },
   "request": { "key_fingerprint": "K7QM-3X2B", "at": "…" },
   "device": { "uid": "m~…", "name": "…", "email": "…", "role": "admin" },
+  "keychain_item": "aurora-BBBBBBBBBBBBBBBBBBBBBB",
   "wrote": ["config/admin/devices/m~…", "pairing/p~…/delivery"],
   "refused": [],
   "warnings": []
@@ -613,7 +614,13 @@ key do appear on stdout in it. That is the exception this section's "a token nev
 said out loud rather than assumed: the payload is the code's own content, the operator's screen
 shows it anyway, the token is one-shot and dead in five minutes, and the API key is the restricted
 web key the app's config already carries — while the MAC key, the device token, the keychain item
-and the typed code stay out of every event, `qr` included.)*
+and the typed code stay out of every event, `qr` included. **Amended 2026-10-30 (T3b):**
+`keychain_item` is a field of the document, and it carries the item's **name** and never its value.
+The two rules above can both hold — "the item's value never does" is a rule about the value only if
+the name may appear — and the field is what the operator records in the local config and what a
+console screen shows: nothing else tells them what `mailbox.keychain_item` should say (§6), since
+nothing writes that file. The item's name is derived (decision 9) and is not a secret (M5), so the
+`done` document is where it belongs.)*
 
 ### 4.6 Exit codes
 
@@ -740,6 +747,30 @@ store the device token and the MAC key **in secure storage only** (P3.1's rule) 
 configuration from the payload, not the scan (D199). The code is derived per pairing and never
 stored.
 
+**"Read" means a listener attached at sign-in, and the reason is §7.1 step 9.**
+*(Amended 2026-10-30, T3b.)* The CLI's wait ends when the **operator** types the code; the delivery
+is written in that instant and the whole `pairing/$uid` subtree is deleted in the next one, because
+the payload must not sit readable for the hour the `p~` ID token lives (§7.3.3, decision 2). The
+phone is not in that instant and cannot be: it signs in as soon as it has written its request — it
+holds the pairing token from the QR and needs nothing from the CLI to exchange it — and then has no
+signal for when the code will be typed. A one-shot `get` issued *after* sign-in therefore races a
+window microseconds wide and loses it. What the contract requires is a **listener on
+`pairing/$uid` (a `value` observer) attached as soon as the token is exchanged**, holding the
+delivery out of the first snapshot that carries one: Firebase dispatches the write and the later
+delete as two events, so a client that is watching receives the payload, and a client that asks
+afterwards is told the session is over. A read that arrives late is **not** a reason to re-pair
+without an operator: the phone says the pairing expired and shows the code path again.
+
+**What this costs, stated rather than smoothed over:** the delivery's lifetime is the delete's
+latency, so a phone that is offline, backgrounded or whose listener fails to attach at that moment
+gets nothing and must be paired again. The alternative — the CLI waiting for a receipt before it
+deletes — needs a node the phone may **write**, and the merged rules give the pairing uid exactly
+two children: `request`, write-once by the pairing token, and `delivery`, which is `.write: false`
+(§2 (a) 4, M14). Adding an ack node is a rules change and a second wire contract, so it is a
+decision for the owner and a task of its own, not something this plan can assume: until then the
+listener above is the contract P6.8 implements, and the sweep's own rule (decision 1) is what
+clears a session nobody completed.
+
 ### 7.3 The three orderings that are load-bearing
 
 1. **Node before token** (M4). A delivered token with no device node is a phone that fails `USER`
@@ -749,6 +780,10 @@ stored.
 3. **Delivery before the pairing node's deletion** (step 8 before step 9), and **the deletion before
    the CLI exits**. Deleting the subtree first would make a delivered token unusable; leaving it
    behind keeps the payload readable for the life of the `p~` ID token.
+   *(Amended 2026-10-30, T3b: this ordering is what makes §7.2's "read" a listener rather than a
+   fetch. The deletion follows the write immediately, so the only reliable way for the phone to see
+   the payload is to be watching for it — and that is the phone's half of the ordering, not the
+   CLI's, which is why §7.2 states it as part of its contract rather than here.)*
 
 ---
 
@@ -1067,7 +1102,11 @@ T2, one writer per task — T2 lands the file, T3 extends it in a dependent task
 T2/T2a do for `mac.go`); `internal/cli/pair.go`'s step 8 and step 9; **`internal/localcfg/localcfg.go`** (and its test file) *(added
 2026-10-29, decision 9)*: the `mailbox.keychain_item` block widens from one item name to **one item
 per pairing uid**, validated by `keychain.ParseItem` as today, with the shared-config publish and
-merge rules kept.
+merge rules kept; **`internal/mailbox/keychain/`** *(added 2026-10-30, T3b)*: P4.1's file holds the
+reader, and T3b adds the **storing** side beside it — `Put` and `Delete`, one item per pairing, the
+key on standard input only (M11) — plus the stand-in store and the tests that put it on `PATH`.
+T3c (the darwin writer, `security -i`, and `keychain_darwin_live_test.go`, behind the darwin and
+keychain_live build tags) is that file's and is **not** a task of this §15.
 **Depends on.** T2; **D171, D199**; M5, M6, M14; §4.4, §8.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/budget/token ./internal/cli -run 'Delivery|Envelope|Pair' -count=1`:
 the payload does not open without the phone's private key; a wrong version byte, a different uid and
@@ -1075,9 +1114,13 @@ a different public key are each refused (three mutations, one per AAD part); the
 no output, no log line, no `--json` document and no fixture; the payload carries D199's
 configuration; `go.mod` gains **no module** (`crypto/ecdh` and `crypto/hkdf` only); the pairing node
 is deleted after the delivery is written; the widened block parses, round-trips and merges with
-**two** pairings holding two items, refuses an item name of the wrong shape, and a project that
-holds the old single name is migrated by re-running init (no compatibility shim, pre-1.0); the
-consumer reads each pairing's own item.
+**two** pairings holding two items, refuses an item name of the wrong shape and a key that is not a
+pairing's uid (a device's `m~` uid at 22 unpadded base64url characters, a pairing session's `p~` at
+43), and a project that holds the old single name is **refused** by the block's own check — the
+scalar there is no longer a mapping, so `mailbox.keychain_item` is now one item per pairing, and the
+operator is told to run `fugaro pair` and record the item name it prints — rather than being
+migrated by re-running init (no compatibility shim, pre-1.0); the consumer reads each pairing's own
+item.
 **Red step.** Drop the uid from the AAD and watch `TestEnvelopeBindsThePairingUID` fail.
 **Reviewer tier.** SECURITY-SENSITIVE — independent opus review. What a reviewer must confirm: that
 the envelope is claimed as **a capability, not a boundary** (§8), and that the key is never printed.
@@ -1086,7 +1129,9 @@ the envelope is claimed as **a capability, not a boundary** (§8), and that the 
 
 **Mobile task.** P6.6, part 4. **Files.** `internal/cli/pair.go`'s `ls` and `revoke`;
 `internal/budget/sweep.go` (the prefix rule and the report); `internal/budget/sweep_device_test.go`
-(new). **Depends on.** T1–T3; **D166**; M4, M13; §6; decisions 1, 2 and 6.
+(new). `internal/mailbox/keychain/` is **T3's** and not this task's: `revoke` removes the pairing's
+item through its `Delete` and edits nothing in it *(added 2026-10-30)*. **Depends on.** T1–T3;
+**D166**; M4, M13; §6; decisions 1, 2 and 6.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/budget ./internal/cli -run 'Pair|Sweep|Revoke' -count=1`
 with the fakes: `revoke` deletes the **node before** the keychain item; the Auth user is **not**
 deleted; the sweeper never deletes an `m~` user whose device node exists and does delete one whose
@@ -1194,6 +1239,7 @@ agree on every row.
 | `internal/mailbox/action.go` | T5 | new; the refusal table and the Go re-validation of `shared/confirm` |
 | `internal/mailbox/expiry.go` | T6 | new here; P4.1's T7 names the same file for its own half, so **P4.1 lands it first and T6 extends it** |
 | `internal/mailbox/mac.go` | **nobody here** | P4.1's one MAC function; this plan **calls** it and edits nothing in it |
+| `internal/mailbox/keychain/` | **T3** | *(added 2026-10-30)* P4.1's reader (`Key`, the stand-in store and `keychain_test.go`) is merged; T3b adds the **storing** side — `Put` and `Delete`, one item per pairing, the key on standard input only — and T3c (#1365) the darwin writer (`security -i`) and `keychain_darwin_live_test.go`, behind `darwin && keychain_live`. T4's `revoke` calls `Delete` and edits nothing here |
 | `shared/` | **nobody** | every module these tasks read is merged; a task that needs to edit one is a finding |
 | `internal/budget/rules/` | **nobody** | M14: no generation |
 | `website/content/cli-reference.md` | T1 | **generated** — never hand-edited |
@@ -1234,8 +1280,12 @@ P6.13 are each SECURITY-SENSITIVE** (the mobile plan's group P-F and Global Cons
    rule are the app's; §4.4 and §7.2 state the contract P6.8 consumes and nothing more.
 5. **It does not change the rules, the golden or `RulesVersion`** (M14), and it forces no owner-run
    deploy.
-6. **It does not touch `shared/`**, and it adds no dependency: `crypto/ecdh` and `crypto/hkdf` are
-   the standard library (T3 asserts `go.mod` is unchanged).
+6. **It does not touch `shared/`**, and the crypto work adds no dependency: `crypto/ecdh` and
+   `crypto/hkdf` are the standard library (T3 asserts `go.mod` is unchanged). *Amended 2026-10-30:*
+   this bullet read as a claim about the whole work and is not one. T4's brief approved **one**
+   module, `rsc.io/qr`, for the terminal QR `renderPairQR` draws; it is the only line T4 adds to
+   `go.mod`, the boundary baselines record it, and no other task here adds one. The sentences in §2
+   and §16 that say `go.mod` gains no module are the same crypto work as T3's assertion, and hold.
 7. **It does not decide the app's store forms.** §13 lists what the owner must re-answer and states
    that the named memory could not be read here; it fills in no form and runs no store command.
 8. **It adds no new command beyond `fugaro pair` and its two subcommands.** The consumer is P4.1's
@@ -1334,6 +1384,20 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
     **ANSWERED 2026-10-29 (owner): one keychain item PER PAIRING (amended).** Widen the
     `mailbox.keychain_item` config block in `internal/localcfg` and add it to T3's files (§15, §16):
     a per-pairing key lets `revoke` revoke exactly one phone.
+    **Amended 2026-10-30 (T3b): the name, and its arithmetic.** T3b derives the name as
+    `<project>-<uid without its m~ prefix>` — the project's name, one separator, and the uid's
+    22-character body — and it is **the whole of the name** because the ceiling is
+    `keychain.ParseItem`'s 64 characters, the uid's body is 22 of them, and a project name may be 40
+    (1–40 of `[a-z0-9-]`). A fixed prefix of any length — the obvious `fugaro-mailbox-` — is
+    therefore a name that cannot be built for the longest project names the local config accepts,
+    and a pairing that cannot name its item is one that cannot store a key at all. The two
+    constraints pull in opposite directions and the ceiling wins: the project's name
+    must be in the name (M5's `ParseItem` rule, so a config cannot name another project's item) and
+    the uid's body must be in it (so `revoke` finds the item from the uid, this decision's own
+    requirement), which leaves exactly one
+    character of slack. **Cost:** the name is less obviously ours in a keychain UI. **The
+    alternative** — a shorter uid body — is a change to the uid's shape (§2 (e)) for the sake of a
+    label.
 10. **Does this plan ship a pin?**
     **Recommended: no.** The owner's ruling for this change is **docs only, no code**, and a pin is a
     Go test. **Cost, stated plainly:** nothing reads this document, so its citations, its §8.4
@@ -1422,6 +1486,34 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
    is `token.Lifetime` and the ID-token persistence is UNVERIFIED U2 of the mobile reconciliation —
    so decision 1's age is derived from a documented behaviour, and a real project is what would
    confirm it.
+9. **The OS keychain's storing side exists on Linux and on macOS.** *(Rewritten 2026-10-30, T3c;
+   added the same day as T3b, which is when darwin still refused.)* The reader has a `security` row
+   and a `secret-tool` row, and so does the writer. M11 keeps the key out of every argv on both:
+   `secret-tool store` reads it from standard input, and darwin's `security` is run as `security
+   -i` — the whole argv is the single element `-i` — with one command per run on its standard
+   input, `add-generic-password -U -s "<item>" -a "<item>" -w <key>` to store and
+   `delete-generic-password -s "<item>" -a "<item>"` to remove — the removal names the account as
+   well, so that it is the exact inverse of the store rather than a match on the service alone. The
+   item's name is not a secret (M5) and is quoted into that command; the key has one spelling
+   (D171: `EncodeKey`'s unpadded base64url), whose alphabet holds no byte a command line's parser
+   can read as anything but part of the value, so nothing is ever escaped, and a key outside that
+   alphabet is refused rather than escaped — a key the parser read as something else would be
+   stored as something else while the store reported success. **`security -i` answers 0 for a
+   command it could not carry out**, so its exit status alone would read a refused store as a
+   successful one and `fugaro pair` would deliver a key that is not in the keychain: the writer
+   reads the tool's output and maps it to `ErrBackend` in this package's own sentence, never
+   repeating what the tool said, because that text can carry the command line it was given — and
+   that line carries the key. The reading fails closed: a successful add or delete prints nothing,
+   so every non-blank line is a failure, wherever in the line the message sits (a prompt or an echo
+   before it must not hide it) and whether or not this package recognises it. **What is verified where.** The invocation, the
+   quoting, the refusals and the failure reading are hermetic: `keychain_test.go` puts a stand-in
+   `security` first on `PATH` and runs the writer against it as a real child process, which is
+   where "no argv element and no environment variable carries the key" is observed at all. The real
+   tool is reached only by `internal/mailbox/keychain/keychain_darwin_live_test.go`, behind the
+   `darwin && keychain_live` tags, and **the owner runs it himself** in his own terminal — M5's
+   rule is that no agent reads a keychain — with `go test -tags keychain_live
+   ./internal/mailbox/keychain/ -run Live -count=1 -v`; without the tags the file is not compiled,
+   so a plain `go test ./...` on a Mac never touches a keychain.
 
 ---
 

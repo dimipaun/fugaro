@@ -252,6 +252,22 @@ func RegistryRepoID(slug string) string {
 	return derive(sanitize("fugaro-"+readableSlug(slug)), "registry\x00"+slug, "", maxRegistry, registryHashHex)
 }
 
+// SharedRegistryRepoID is the installation's one shared image registry: the
+// Artifact Registry repository every repository's shared images live in, so
+// that a repository's build account can push one and a sibling repository's
+// job account can pull it (design docs/forge-authorship-images/shared-images.md
+// §2.6). Its image name is the key's alone, <registry>/<this>/img-<key>, so
+// the same dependency set is the same image for every repository that needs it.
+//
+// It is derived from a fixed purpose word rather than a slug, in the "shared"
+// domain of RegistryRepoID's "registry" one: a repository's own registry
+// hashes "registry\x00"+slug and this one hashes "shared\x00images", so no
+// slug's own registry is this repository — which is what keeps one
+// repository's images out of the installation's shared one.
+func SharedRegistryRepoID() string {
+	return derive("fugaro-shared-images", "shared", "images", maxRegistry, registryHashHex)
+}
+
 // DefaultRegistryHost is the registry host, the prefix of every image
 // registry, of a new installation in region of project:
 // <region>-docker.pkg.dev/<project>.

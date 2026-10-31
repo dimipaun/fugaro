@@ -192,8 +192,8 @@ redesign step 1). The entry draws the body's two children, in this order, all fr
 in an `ok` run. The header holds the wordmark, the installation switcher, the navigation, the
 fleet gauge and Halt fleet; the switcher's menu holds the installation line and the rail's tree
 (§4.1), and the page holds the panel. **A third child precedes these two whenever the mode is
-not `ok`**: `startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1),
-and in **refused** mode it is the whole document.
+not `ok`**: `startConsole` appends the version-skew notice to the same mount first (§2.8,
+§2.14, §4.1), and in **refused** mode it is the whole document.
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
@@ -207,7 +207,8 @@ and in **refused** mode it is the whole document.
 | Page | `main.console-page` → `div.console-panel` | the page scrolls and the header does not; the panel is the page container (`max-width: var(--page-max)`, centred, padding 28 px 32 px 64 px) and holds the mounted screen's root, the installation issue view, or the onboarding view |
 | Onboarding | `section.installation-onboarding` → `h1.installation-onboarding-title`, `p.installation-onboarding-body`, `p.installation-onboarding-reason` (the CLI resolution's own sentence, only when no CLI was found), `code.installation-onboarding-command` | drawn by `drawOnboarding` into the panel when the machine has no installation at all: the picker's own words for the two onboarding screens (`ONBOARDING_COPY`) and the command the main process names (`src/main/onboarding.ts`). Nothing is read |
 | Installation issue | `section.installation-issue` → `h1.installation-issue-headline`, `p.installation-issue-sentence`, `code.installation-issue-command`, `details.installation-issue-details` (`summary.installation-issue-summary`, `pre.installation-issue-lines`), `div.installation-issue-actions` (`button.installation-issue-choose`, `button.installation-issue-remove`, `button.installation-issue-reveal`, `p.installation-issue-checkout-lead`, `button.installation-issue-checkout`) | drawn by `drawIssue` into the panel when a rail row with an issue is clicked, or at boot when no installation can be read (§4.1): the installation's name, **one plain sentence first** with the exact command, the CLI's own text behind the `details` disclosure, and the row's actions. No banner. The `data-issue` it carries is the main process's classification and no rule selects it |
-| Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the header and the page | see §2.8 |
+| Reduced/refused notice | `section.notice` with `console-skew`, drawn by `renderVersionSkew` through `renderNotice` into the mount, **first of all** — before the header and the page: `data-severity`, `span.notice-mark`, `div.notice-body` → `h1\|h2.notice-title`, `p.notice-reason`, `button.notice-toggle`, `div.notice-details` → `dl.notice-facts` → `dt`/`dd`, and `button.notice-dismiss` when it can be put away | see §2.8 and §2.14 |
+| Reduced-mode chip | `button.console-reduced-chip` (`data-severity="warning"`, `aria-describedby`) with `span.console-reduced-chip-reason` beside it, in the header **after** `div.console-switcher` and before `nav.console-views` | drawn in the reduced mode and no other: the mode's headline for a reader who reaches the chip, and what brings a dismissed notice back (§2.14) |
 
 - **`VIEWS`** is `live`, `graph` and `coordinator` (never withheld), `spend` (view `spend`)
   and `projects` (view `caps`). A view the mode withholds is **not offered**: no link is
@@ -404,39 +405,57 @@ Time constants the stylesheet's threshold rules must agree with:
 
 ### 2.4 Spend — `console/src/renderer/screens/spend.ts`
 
-Regions in tree order: header → range picker → breakdown switch → person knob →
-`div.spend-accounts` (three charts) → `ol.spend-rows` → totals → `section.spend-people`
+Regions in tree order: header → `div.spend-controls` (the range picker, the
+breakdown switch and the person knob) → `div.spend-totals` → `div.spend-chart` →
+`table.spend-table` → `section.spend-people`
 (the by-person panel, console L5b, drawn only while the person knob is on) → notes →
 warnings → the caps panel.
 
 | Group | Class hooks |
 |---|---|
-| Header | `spend-header`, `spend-project`, `spend-source`, `spend-since`, `spend-until`, `spend-weeks`, `spend-degraded`, `spend-notice` |
-| Picker & switch | `spend-picker`, `spend-window`, `spend-switch`, `spend-dim`, `spend-dim-unknown`, `spend-persons`, `spend-persons-word`, `spend-persons-state`, `spend-persons-note` |
-| Charts | `spend-accounts`, `spend-account`, `spend-account-title`, `spend-peak`, `spend-series`, `spend-point`, `spend-point-key`, `spend-point-value`, `spend-partial`, `spend-compute`, `spend-notional`, `spend-model`, `spend-key`, `spend-num` |
-| Rows | `spend-rows`, `spend-row`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out`, `spend-unreadable` |
-| Totals | `spend-totals`, `spend-totals-word`, `spend-total-model`, `spend-total-notional`, `spend-total-compute`, `spend-total-runs`, `spend-total-run-hours` |
-| Caps | `spend-caps`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-global`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-compute`, `spend-cap-headroom`, `spend-cap-defaults`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
+| Header | `spend-header`, `spend-project`, `spend-source`, `spend-since`, `spend-until`, `spend-weeks`, `spend-range-arrow`, `spend-degraded`, `spend-notice` |
+| Controls | `spend-controls`, `spend-knob`, `spend-picker`, `spend-item`, `spend-window`, `spend-switch`, `spend-dim`, `spend-dim-unknown`, `spend-persons`, `spend-persons-word`, `spend-persons-state`, `spend-persons-note` |
+| Totals | `spend-totals`, `spend-total`, `spend-totals-word`, `spend-total-model`, `spend-total-notional`, `spend-total-compute`, `spend-total-runs`, `spend-total-run-hours`, `spend-totals-note`, `spend-totals-partial`, `spend-totals-rule` |
+| Chart | `spend-chart`, `spend-axis`, `spend-axis-word`, `spend-axis-top`, `spend-chart-svg`, `spend-gridline`, `spend-axis-line`, `spend-series`, `spend-bar`, `spend-gaps`, `spend-gap-column`, `spend-chart-keys`, `spend-chart-key`, `spend-chart-gap`, `spend-chart-na`, `spend-legend`, `spend-legend-key`, `spend-swatch`, `spend-legend-word`, `spend-legend-empty` |
+| Table | `spend-table`, `spend-table-head`, `spend-table-row`, `spend-th`, `spend-table-body`, `spend-row`, `spend-key`, `spend-gap-cell`, `spend-model`, `spend-notional`, `spend-compute`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out`, `spend-partial`, `spend-unreadable`, `spend-num` |
+| Caps | `spend-caps`, `spend-caps-title`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-defaults`, `spend-cap-global`, `spend-cap-figure`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-compute`, `spend-cap-headroom`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-cap-bar`, `spend-cap-bar-svg`, `spend-cap-bar-track`, `spend-cap-bar-fill`, `spend-cap-at-cap`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
 | Notes | `spend-note`, `spend-warning` |
 | By person | `spend-people`, `spend-people-title`, `spend-people-view`, `spend-people-you`, `spend-people-operator`, `spend-people-since`, `spend-people-until`, `spend-people-bound`, `spend-people-max-runs`, `spend-people-reason`, `spend-people-note`, `spend-people-rows`, `spend-people-totals`, `spend-people-unlaunched-word`, `spend-people-unlaunched`, `spend-person`, `spend-person-user`, `spend-person-total`, `spend-person-currency`, `spend-person-runs`, `spend-person-succeeded`, `spend-person-failed`, `spend-person-halted`, `spend-person-infra`, `spend-person-other`, `spend-person-no-record`, `spend-person-counted`, `spend-person-notional`, `spend-person-counted-runs`, `spend-person-average`, `spend-person-note` |
 
 `data-*`: `data-theme`; `data-current`, `data-enabled`, `data-known` (on the
 `ol.spend-switch` itself, beside the eight words), `data-dimension`
 (`day|week|month|year|repo|model|person|mode`, or `unknown`), `data-day`,
-`data-until` (`set` \| `cli`) on the controls; `data-state`
-(`measured|notional|estimated|unavailable|gap`), `data-height`, `data-account`
-(`model|notional|compute`), `data-peak`, `data-segments` on the **chart points and their
-accounts** — an `li.spend-row` carries **none of those five**, so a `[data-state]` or
-`[data-height]` rule is a rule about the charts; `data-partial`, `data-hollow`, `data-key`
-on **both** the points and the rows (`data-partial` also on `div.spend-totals`, `data-key`
-also on the caps panel's `li.spend-cap-repo`); `data-unreadable` (`true|false`) on the
-**rows and `div.spend-totals`** — it is the honesty state of a by-mode row whose every run
-has no readable record (a record the build cannot read, or one not written yet), so a rule
-about it selects the row (or the total) and never the `span.spend-unreadable` inside it,
-which carries the marker text and no attribute;
+`data-until` (`set` \| `cli`) on the controls — `data-current` and `aria-pressed` are on
+the **`button.spend-window` and `button.spend-dim`** that were pressed, and
+`data-enabled` on the `button.spend-persons` and on a `span.spend-dim` this console
+may not use; `data-state`
+(`measured|notional|estimated`), `data-height`, `data-account`
+(`model|notional|compute`) on the **chart's bars** (`rect.spend-bar`, keyed by the
+`g.spend-series` they hang in) and on the legend's `span.spend-swatch` — a drawn bar
+only ever carries one of those three states, because a value the document does not
+carry draws no bar at all (`unavailable` and `gap` are the states of a *value*, and a
+`[data-state='unavailable']` or `[data-state='gap']` rule on `rect.spend-bar` selects
+nothing; the `n/a` of such a value is a label at the bar's foot, `span.spend-chart-na`)
+— a `tr.spend-row` and a `li.spend-chart-key` carry **none of those three**, so a
+`[data-state]` or
+`[data-height]` rule is a rule about the chart;
+`data-partial`, `data-hollow`, `data-unreadable`, `data-key` on **both** the chart's
+`li.spend-chart-key` and the table's `tr.spend-row` (`data-partial` also on
+`div.spend-totals` and on the bars, `data-key` also on the bars and the gap columns and
+on the caps panel's `li.spend-cap-repo`), and `data-gap` on the keys and the rows alone;
+an unreadable row's money was never measured, so `data-unreadable`
+(`true|false`) on the **rows and `div.spend-totals`** is the honesty state of a by-mode
+row whose every run has no readable record (a record the build cannot read, or one not
+written yet), so a rule about it selects the row (or the total) and never the
+`span.spend-unreadable` inside it, which carries the marker text and no attribute;
 `data-degraded` (`true`) on
 `span.spend-degraded`; `data-available`, `data-scope-known`, `data-daily-scope`,
-`data-per-run-scope` (a document word, or `unknown`) on the caps panel, `data-available` also
+`data-per-run-scope` (a document word, or `unknown`) on the caps panel — `data-available` on
+`section.spend-caps` itself, the two scope attributes on the **`span.spend-scope`** of the
+figure whose cap the document names a scope for — and `data-at-cap` (`true|false`) on the
+**`li.spend-cap-repo`** that owns the daily-cap bar, `true` when the document's own
+`headroom_usd` is a measured value at or below zero, or its `counted_usd` has reached its
+`daily_cap_usd`: `data-available` also
 on **`section.spend-people`**, where `data-view` (`all|own|unknown`), `data-operator`
 (`true|false`) and `data-truncated` (`true|false`) record what the CLI's own read resolved —
 the view it scoped the rows to, whether the caller is an operator of the installation, and
@@ -448,18 +467,55 @@ block; and `data-killed` (`true`) on the **kill banner `div.spend-kill`** — ne
 `div.spend-cap-global` or `li.spend-cap-repo`, so a `[data-killed]` rule scoped to the caps
 panel does select it.
 
+**The chart is grouped, never stacked, and billed and notional are never added.** Every
+bar is drawn at its own account's share of the one axis top — the largest value any
+account draws — so no bar height and no axis top is a sum of two accounts, and a key's
+three bars are siblings inside `g.spend-series` rather than segments of one column. A
+value the document does not carry draws no bar at all: its `n/a` is written at that bar's
+own foot in `span.spend-chart-na`. A day the history does not hold draws one hatched
+column (`rect.spend-gap-column`, labelled `no record` in `span.spend-chart-gap`) and the
+table's own sentence across the money columns (`td.spend-gap-cell`, which carries a
+`colspan`) — a gap is a gap and never a `$0.00`. The `svg` is `aria-hidden` geometry
+(`SPEND_CHART_SIZE` and `preserveAspectRatio="none"`), so every figure it draws is also a
+reading in the table, a label in `ol.spend-chart-keys` or a word in `ul.spend-legend`.
+
+**The caps panel is figures under their own words, and the renderer adds nothing to them.**
+No column header carries `counted`, `billed` or `headroom`, so every figure is drawn as the
+word for what it is beside the number itself (`div.spend-cap-figure` → `span.spend-cap-word`
+plus the reading), the three money accounts among them: `billed` is the document's
+`spent_usd`, `notional` its `notional_usd` (the `~$` mark) and `compute` its `compute_usd`
+(the `est.` mark, and drawn **only** when the document carries the key at all — an absent or
+`null` one is `n/a`, never `$0.00`) — three figures, never a sum, in no figure, in no total
+and in no bar. A repository's **daily-cap bar** draws the CLI's own `counted_usd` against its
+`daily_cap_usd` (`counted / daily_cap_usd`, clamped to the bar's hundred-unit box and
+stretched to the window by `preserveAspectRatio="none"`, `aria-hidden` geometry as the chart
+is), with the counted dollars, the cap and the row's `headroom` written as text beside it.
+That is the CLI's
+enforcement figure and not a sum the console made: `counted_usd` is what the installation has
+reserved and not released, a ceiling on spend, and what separates it from `spent_usd` is
+`leased_usd` — which is why no bar and no figure here is `billed + compute`, and why the
+renderer computes no sum of its own. A repository with no daily cap draws **no bar** and
+writes its cap `n/a` with its reason, never a zero-length bar and never a `$0.00` — its
+`headroom` is still drawn, because that is the figure the `at cap` word is measured from
+(below).
+
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
-(`data-partial="true"` / `data-hollow="true"` plus the `(partial)` marker text in
-`span.spend-partial`); unreadable (`data-unreadable="true"` on a `li.spend-row` or on
-`div.spend-totals` plus the marker text `no readable record` in `span.spend-unreadable`;
+(`data-partial="true"` / `data-hollow="true"` on the key, the row and the bar, plus the
+`(partial)` marker text in `span.spend-partial` — the bar itself is drawn **hollow**, the
+ground showing through it and its own account's edge left, so today's bar is never a final
+day's bar at a glance and never a gap either); unreadable (`data-unreadable="true"` on a
+`tr.spend-row` or on `div.spend-totals` plus the marker text `no readable record` in
+`span.spend-unreadable`;
 the money cells are `n/a`, never `$0.00`, and the row keeps its `runs` — a by-mode row is
 unreadable exactly when no run behind it has a readable record (a record the build cannot
 read, or one not written yet), and the totals line exactly when every row it sums is);
-gap (a day with no document → `data-state="gap"`, `data-height="—"`,
-reason in `title`); unavailable (caps absent: `data-available="false"` and the sentence
-"…every cap here is n/a, not zero"); empty per account (a `gap` reading, `data-state="gap"`);
-degraded (`span.spend-degraded` with `data-degraded="true"` and the word `degraded`);
-person view withheld (`div.spend-persons` with `data-enabled="false"`, the state text `off`,
+gap (a day with no document → `data-gap="true"` on the key and the row, one hatched
+column and the reason in `title`); unavailable (caps absent: `data-available="false"` and
+the sentence "…every cap here is n/a, not zero"); empty per account (a `gap` reading, so
+the bar is not drawn and the key writes its `n/a`); degraded (`span.spend-degraded` with
+`data-degraded="true"` and the word `degraded`);
+person view withheld (`button.spend-persons` with `data-enabled="false"` and
+`aria-pressed="false"`, the state text `off`,
 and the note drawn as the **text** of `p.spend-persons-note` — not in a `title`; the same
 sentence is in `title` on the switch's `person` item, which is the element disabled until the
 knob is on);
@@ -467,6 +523,13 @@ unknown breakdown (`li.spend-dim-unknown` with `data-dimension="unknown"`, under
 `ol.spend-switch` whose own `data-known="false"` is what says the document used a word this
 console does not know);
 unknown cap scope (`data-scope-known="false"`, "a scope this console does not know");
+at cap (`data-at-cap="true"` on the **`li.spend-cap-repo`** itself, and the word `at cap` in
+`span.spend-cap-at-cap`, drawn beside the row's own `headroom` — the room the CLI finds left
+under **whichever** cap binds, the repository's own or the project-wide one, whichever is
+tighter — and beside the counted dollars and the cap when the repository has one of its own;
+so a repository the global cap is holding back, or one whose cap nobody set at all, still
+says it is at its limit, with no bar drawn for it. The word and, where there is a bar, the
+fill go amber, and the word is what carries the fact, never the tone alone, §3.5);
 by-person read refused or never made (`section.spend-people` with `data-available="false"`,
 the whole panel muted, the sentence drawn as the **text** of `p.spend-people-reason` — the
 CLI's own refusal, or the console's reason for having made no read); by-person panel private
@@ -475,43 +538,100 @@ read was resolved for, drawing the document's totals and **no row at all**); run
 never started (a count in no row and no total, drawn after the totals as
 `span.spend-people-unlaunched` beside the word `never started` in
 `span.spend-people-unlaunched-word`).
-**There is no loading state, no stale state and no halted state on this screen**, and no
-"cap reached" marker (as on Live).
+**There is no loading state, no stale state and no halted state on this screen.** The one
+cap-reached marker it draws is the caps panel's own word `at cap` (above), beside the
+figures it was measured from; nothing else on the screen carries one, and a rule may not
+read the tone alone as the state.
 
 Formatting: money is `usd` (2 decimals, grouping, sign before `$`), shares are `percent`
 (1 decimal, used only for `data-height`), time is `hours` (2 decimals + ` h`), counts are
-`count` (0 decimals). Exported: `SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
+`count` (0 decimals). **Billed is drawn plain, notional under `formatReading`'s `~` mark and
+compute under its `est.` mark, and the totals line says in words that the first two are
+different kinds of money and are never added together** (the "Today is partial." half is
+drawn only when the document says the range includes a partial day). Exported:
+`SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
 by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
 `SPEND_DIMENSIONS` (eight), `SPEND_ACCOUNTS = ['model','notional','compute']`,
-`PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'no readable record'`.
+`PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'no readable record'`. The table's gap
+row carries the module's own `TABLE_GAP_SENTENCE` — the gap row's own sentence — which is not
+exported: it is the sentence a row draws, not a vocabulary anything reads.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 
 Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
 (where there is one) `data-operation`: `caps`, `kill`, `repositories`, `jobs`, `accounts`,
-`secrets`, `policy`, `enrollment`.
+`secrets`, `policy`, `enrollment`. **The panel's state is a word as well as a frame**:
+`span.projects-state` draws `read`, `not read`, or the design's word for a card this CLI
+cannot read at all — `locked` — so no rule has to carry a state on a tone alone (§3.5).
 
 | Group | Class hooks |
 |---|---|
-| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
+| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-state`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
 | Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches all three**, and the third is **unreachable today** — see below |
-| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
-| Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
-| Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
-| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-job-mode`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
-| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-accounts-note` |
-| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed` |
+| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-word`, `projects-reserve-value`, `projects-cap-table`, `projects-cap-head`, `projects-cap`, `projects-cap-scope`, `projects-cap-cell`, `projects-cap-value`, `projects-cap-source` |
+| Kill | `projects-kills`, `projects-kill-list`, `projects-kill-row`, `projects-kill-scope`, `projects-kill-repo`, `projects-kill-state`, `projects-kill-action`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
+| Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-both`, `projects-only-enrolled-repo`, `projects-only-seen-repo`, `projects-repo-card-none`, `projects-repo-card-note`, `projects-repo-add` |
+| Jobs | `projects-jobs`, `projects-job-table`, `projects-job-head`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-mode`, `projects-job-mode-cell`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
+| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
 `read`, `unavailable`, `not-built`**; `data-operation`
 (`budget.show|runs.list|accounts.inventory|secrets.inventory`, absent on `policy` and
-`enrollment`); `data-scope` (`global|defaults|repo`); `data-slug`; `data-killed` (`true`).
+`enrollment`); `data-scope` (`global|defaults|repo`, on a caps row and on a kill row);
+`data-slug` (the same two rows); `data-killed` (`true`|`false` on a kill row, and `true` on
+the banner a killed row carries); `data-kind` (`both|enrolled|seen`, on a repository card).
 
 The `not-built` state is the design's own honesty rule in the DOM: `policy` and
 `enrollment` carry `data-state="not-built"` and a `projects-because` sentence ("not
 readable with this CLI: …"). An `unavailable` panel carries the CLI's sentence or "no
 document arrived for …". A `read` panel carries a count and a body; **a panel in any other
 state has no body at all**, so a rule that painted an empty body would be painting nothing.
+The two `not-built` panels are the design's locked cards: a dashed frame, the state word
+`locked` beside the title, and no body, no list and no count behind it.
+
+**The caps are one table and every cell in it is labelled.** `table.projects-cap-table`
+carries a `th.projects-cap-head` per column, and each row — the project (`global`), the
+repository defaults (`defaults`) and one per repository — opens with
+`th.projects-cap-scope` naming what the caps are set for, before the two
+`td.projects-cap-cell`s. Each of those carries its figure as money
+(`span.projects-cap-value`) **with the cap's source word** (`span.projects-cap-source`, from
+`CAP_SOURCES`) beside it, because a bare column of numbers names nothing: a rule that
+right-aligned three `$` figures would align a cap the CLI derived from the project's
+defaults with one an operator typed on the repository. A source this build does not know is
+drawn as `unknown` and not guessed at. Above the table, `p.projects-reserve` carries the
+largest single lease the project has out (`span.projects-reserve-word` names it,
+`span.projects-reserve-value` is the money).
+
+**The switches are rows whose state is a word.** `ul.projects-kill-list` holds one
+`li.projects-kill-row` for the project and one per repository, each with
+`data-killed="true"` or `"false"` and a `span.projects-kill-state` that draws `KILLED` or
+`live`. A killed row carries the badge banner, `div.projects-kill` — itself
+`data-killed="true"`, with `span.projects-kill-word` (`KILLED by`) and the who, when and why
+only when the document has them, and nothing invented when it does not. The row's own action
+is drawn through `disabledWrite` (§5.1): `Kill` on a live row, `Revive` on a killed one.
+
+**The repositories are three cards**, `article.projects-repo-card`, one per state of the
+document: a repository with a cap row and a run (`data-kind="both"`), one with a cap row and
+no run yet (`data-kind="enrolled"`, saying so in `p.projects-repo-card-note`), and one that
+ran with no cap row (`data-kind="seen"`, in the warn tone, saying so, and the one card that
+draws an action: `Add cap`, through `disabledWrite`). A known but empty set says `none` in
+`p.projects-repo-card-none` rather than drawing an empty card or nothing at all. The panel's
+reason for an unread set stays `projects-because` (`repositoriesBecause`), so a set no
+document reported is never drawn as an empty one.
+
+**The jobs are a table**, `table.projects-job-table`: the run, the repository, the workflow,
+the status, the stage, the requester, the launcher, the timestamp, the mode where the column
+exists, and **the three cost accounts in three cells** — the subscription's model dollars
+(notional), the compute dollars (billed) and their total — each through `numberCell`, so
+every figure carries its own reading's state and a value the document does not carry is
+`n/a` and never `$0.00`.
+
+The accounts and secrets panels draw their rows as lists (`ul.projects-account-list`,
+`ul.projects-secret-list`). **Neither read is wired in this build**, so the two panels are
+drawn with their own "not read" sentence and no list at all — and the secrets panel's
+`p.projects-secrets-managed` sentence ("All managed by fugaro.") waits for a document whose
+every entry says so.
 
 **`projects-accounts-note` is a hook no document this CLI produces can reach.** `fugaro
 accounts ls --json` writes `note` with `omitempty` and answers `complete: false` whenever
@@ -523,12 +643,13 @@ hook is emitted by the code and reachable by no feed today; it becomes reachable
 `complete: true` and a non-empty `note` can arrive together, which is why it stays in the
 vocabulary rather than being deleted.
 
-Readings: money (`usd`) for the reserve, the caps and the job figures; counts for panel
-counts, dropped/total, enrolled/seen, secret versions. **No reading is a time on this
-screen** — every date is text.
+Readings: money (`usd`) for the reserve, the caps and the job figures; counts for the panel
+counts, the jobs panel's dropped/total line and the secret versions. **No reading is a time
+on this screen** — every date is text.
 
 **`projects-job-mode` is the jobs row's rigor mode, and the column is conditional.** The
-cell draws the mode's word — the five §2.3 names — or the record's own value when this
+cell, `td.projects-job-mode-cell`, draws the mode's word — the five §2.3 names — or the
+record's own value when this
 build does not know it, or `-` for a run whose record carries no block; and **no cell is
 drawn at all unless some listed run carries a block**, which is the rule `fugaro runs ls`
 writes for its own MODE column (`internal/cli/runs.go`'s `showMode`). A project whose runs
@@ -743,11 +864,15 @@ affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound
   `REFUSAL_UNREADABLE` ("the CLI refused this read, and its own sentence is longer than the
   console will draw").
 
-The **version-skew banner** (`renderVersionSkew` in `shared/version.ts`) is the third: the
-whole screen when the console refused, a banner a screen is mounted under when it is
-reduced. It is drawn into the mount — `document.body` — **before** the installation line,
-the nav and the panel, so it is the document's first child and their sibling rather than a
-child of `div.console-panel` (§4.1).
+The **version-skew notice** (`renderVersionSkew` in `shared/version.ts`, drawn through
+`renderNotice` in `shared/notice.ts`) is the third: the whole screen when the console
+refused, a card a screen is mounted under when it is reduced. It is `section.console-skew`
+and it carries `data-theme`, `data-mode` and `data-skew`; it is drawn into the mount —
+`document.body` — **before** the installation line, the nav and the panel, so it is the
+document's first child and their sibling rather than a child of `div.console-panel`
+(§4.1). It is a card in the flow and not a banner across the window (§2.14), and a reduced
+one can be put away — in which case it stays where it is, the body's first child, and only
+its `hidden` attribute changes.
 
 `refusal.html` itself is a **document**, not a screed: `<main>` with an `<h1>` ("Fugaro
 console") and one `<p>` ("This console will not draw a dashboard for the fugaro it
@@ -758,25 +883,25 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
+| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (a kill row, and the banner that row carries). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, on Live's repository block itself, and on Projects' kill row** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), and `li.projects-kill-row` carries `true`/`false` with the banner appended into the row, so `.live-repo[data-killed="true"]` and `li.projects-kill-row[data-killed="true"]` are rules this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
 | silent / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
 | lost / queued | Live run rows | the state chip `span.live-run-chip`'s **own word** (on a `live-run-lost` / `live-run-queued` row), the flag's reason in the chip's `title`, and — for `lost` — the pip `●`. The flag is **not** drawn as a `span.live-run-flag`: the chip already says the word, and the pipeline line above says it again, so the row says its state once |
 | stuck | Live run rows | the `live-run-stuck` class + `data-queued` + `data-flag` |
 | gap | Live, Spend | `data-state="gap"`, the mark `—`, a reason in `title` |
-| unavailable | `data-state="unavailable"`: Live (**the repository's cap bar**, `bar()` — the fleet budget panel writes no state anywhere: its cap, headroom and counts carry the `n/a` and the reason in `title` instead), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
-| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `~$` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point` (and on the single point an account with nothing to draw appends), and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is three charts, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the point copying that reading's state into the attribute (`point()`, 1521). `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
+| unavailable | `data-state="unavailable"`: Live (**the repository's cap bar**, `bar()` — the fleet budget panel writes no state anywhere: its cap, headroom and counts carry the `n/a` and the reason in `title` instead), Spend (**the caps panel's own `data-available`, and no bar of its chart** — `barRect` writes `measured`, `notional` or `estimated` and nothing else), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
+| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `~$` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `rect.spend-bar`, and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is the three accounts of one grouped chart, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 870-886) — with the bar copying that reading's state into the attribute (`barRect`, `spend.ts` 2398). A value the document does not carry draws **no bar**, so it writes no state: its `n/a` is written at the bar's own foot instead. `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
 | partial / hollow | Spend | `data-partial="true"` / `data-hollow="true"` + the `(partial)` marker |
 | unreadable | Spend | `data-unreadable="true"` on the row / `div.spend-totals` + the `no readable record` marker |
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
 | no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |
-| skew (refused / reduced) | chrome | the version-skew banner; the nav is missing the withheld buttons |
+| skew (refused / reduced) | chrome | the version-skew notice `section.console-skew` (§2.14): `data-mode`, `data-skew`, the reason, the facts, and every withheld view as an `li[data-hidden]`. The nav is missing the withheld buttons, and a dismissed notice is `[hidden]` on that same root with `button.console-reduced-chip` left in the header saying so |
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
-| empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and nothing in the document separates them — `queued_note` is absent both when the read succeeded and when it has not happened yet (§2.3) |
-| cap reached | **no attribute — not a state in the code.** The cap is a `percent` reading and the repository bar's `data-fill`; the fleet budget panel draws instead a sentence, `p.live-fleet-full` ("the cap is fully committed: new runs wait in the queue until a lease settles"), when a measured headroom is 0 | the stylesheet may colour a threshold; the code emits no flag — and a rule keyed on `p.live-fleet-full` may not read it as a state (§2.3) |
+| empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` key and row, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and nothing in the document separates them — `queued_note` is absent both when the read succeeded and when it has not happened yet (§2.3) |
+| cap reached | Live: **no attribute — not a state in the code.** The cap is a `percent` reading and the repository bar's `data-fill`; the fleet budget panel draws instead a sentence, `p.live-fleet-full` ("the cap is fully committed: new runs wait in the queue until a lease settles"), when a measured headroom is 0. Spend: `data-at-cap` (`true`\|`false`) on the caps panel's `li.spend-cap-repo`, beside the word `at cap` (§2.4) | on Live the stylesheet may colour a threshold; the code emits no flag — and a rule keyed on `p.live-fleet-full` may not read it as a state (§2.3). Spend does emit one, and it is the **row's**, not the bar's: a row whose headroom ran out under the project's cap carries it with no bar drawn |
 | loading | **none — not a state in the code** | the entry draws nothing before the handshake answers |
 
 ### 2.10 Numbers, money and time — what the stylesheet must align
@@ -1022,6 +1147,62 @@ and apart from that they carry only what `base.css`'s reset gives every `dt` and
 rule that wanted a hook on a row itself adds it here first.
 
 ---
+
+### 2.14 Notices — `console/src/shared/notice.ts` + `console/src/renderer/entry.ts`
+
+**A notice is a card in the flow, never full-bleed.** The version-skew state — the reduced
+mode's statement, and the refusal screen — is drawn by one reusable card, `renderNotice`
+(`console/src/shared/notice.ts`). That module imports no renderer module: its element and
+factory are declared structurally, the same choice `shared/version.ts` makes, so
+`src/shared` still depends on no screen, and the module attaches no listener — the entry
+that mounts the card is the only place with `nodeOf`, and it is where the disclosure, the
+dismissal and the chip are wired. **The two ids the card's ARIA names are its own** (a
+per-card number, not a fixed pair): a document may hold more than one card, and two cards
+sharing an id would each be named by the other's title and open the other's facts. **The
+version-skew notice is the only caller so far**: a second caller is a second row in its own
+section, and this is the table its hooks are added to.
+
+| Hook | Element | What it is |
+|---|---|---|
+| `section.notice` | the card's root | `display: grid` in three columns — the mark, the body, the dismiss button — on `--surface` with a 1 px `--border` edge, `--radius-md` and a 3 px left edge in the severity's colour. The root carries the caller's own extra class beside `notice` (`console-skew`), `aria-labelledby` pointing at the title, and the `data-severity` below |
+| `data-severity` | the card's root | `warning`\|`info`, and it is the **tone**: the left edge's colour and the mark's ink. §3.5 is why it is never the only carrier — the mark's shape differs, and a reader who cannot tell amber from blue reads the same card |
+| `span.notice-mark` | the mark | decoration (`aria-hidden`), drawn entirely by the stylesheet: a `!` in a triangle for a warning, an `i` in a circle for information. No rule gives it text |
+| `div.notice-body` | the card's column | the title, the reason and the disclosure |
+| `h1.notice-title` / `h2.notice-title` | the title | the console's own headline (`SKEW_HEADLINES`), one line, `--font-size-base`, semibold, ellipsised. It is an `h1` for the refused notice — the whole document, and its one `h1` — and an `h2` for a card under the window's own heading. It carries `tabindex="-1"` so the chip can put the keyboard on it |
+| `p.notice-reason` | the reason | **one plain sentence, in the console's voice** (`NOTICE_REASONS`): what is wrong and what to do about it, with no version number, range or command in it. The technical text is the facts below. The skew notice's paragraph carries `skew-reason` beside it |
+| `dl.notice-facts` → `dt`/`dd` | the facts | a real definition list: two columns, `max-content 1fr`. A value is a run of text or a real `ul` inside its `dd` — the withheld views are `li.skew-hidden` with `data-hidden`, and the reset's `list-style: none` does not reach them |
+| `dd.notice-version` | a version value | the mono face with tabular figures (§3.7): a version is compared character by character |
+| `button.notice-toggle` | the disclosure | `type="button"`, `aria-expanded` and `aria-controls` naming the details region, and its label flips between "Show details" and "Hide details". The region is `hidden` while folded — the state is the attribute, not a class |
+| `div.notice-details` | the disclosure region | the `dl.notice-facts`, and the element `aria-controls` names. `hidden` while folded |
+| `button.notice-dismiss` | the dismissal | drawn only when the notice is `dismissible`; a visible `×` that is `aria-hidden` and an `aria-label` that says what it does |
+| `button.console-reduced-chip` | the header's chip | the reduced mode's standing statement, in the header after `div.console-switcher` and before `nav.console-views`. `type="button"`, `data-severity="warning"` and the headline in `title` |
+| `span.console-reduced-chip-reason` | the chip's reason | visually hidden and **not** `aria-hidden`: the chip's visible word is two words long, so the mode's headline ("fugaro version skew: reduced mode") is what a reader who only reaches the chip is owed. `aria-describedby` on the chip names it |
+| `hidden` | any of the above | the theme's way of putting a thing away — a folded menu, a folded notice, a dismissed card. The reset maps it to `display: none !important` because it has to outrank the `display` the element's own rule sets |
+
+- **A card, and the one exception.** The card is `margin: var(--space-sm) auto 0` and
+  `max-width: var(--page-max)` — centred, inside the window's own edges, and never
+  full-bleed. The **refused** notice is the exception and it is not a card at all: it is
+  `section.notice:only-child`, the whole document, so it takes the room it is given
+  (`flex: 1 1 auto`) and drops the card's margins.
+- **The disclosure is one button and one region.** `aria-expanded` and the region's `hidden`
+  move together, and the label says which state the button is in. The refused notice has no
+  button at all: its details are drawn open (`disclosure: 'expanded'`), because the range and
+  the version line are what the operator acts on and folding them behind a button on the only
+  screen there is would hide the reason there is no dashboard.
+- **The dismissal is the session's and nothing else.** It is the card root's `hidden`
+  attribute and no storage, no IPC and no preference: a reload is a fresh window and draws
+  the notice again. The card keeps its place in the document — it stays the body's **first
+  child** (§4.1) — and clicking dismiss moves focus to the chip. **Escape does not
+  dismiss**: the card is not a dialog and has no key handling of its own.
+- **The chip is why dismissal is safe.** A reduced console withholds spend, caps and the
+  kill controls (§2.9): a window whose nav has no such button and no word about why is
+  exactly the state §4.4's first rule refuses. So the chip is drawn for as long as the mode
+  is — not for as long as the notice is — and activating it un-hides the notice and moves
+  focus to the card's title. In the `ok` mode there is no notice and no chip; in the refused
+  mode there is no dashboard and so no chip either.
+- **The tone is a shape first.** The mark's glyph and outline differ per severity
+  (`!` in a triangle, `i` in a circle), which is §3.5's rule read where it matters most: the
+  one card an operator may see before anything else they can act on.
 
 ## 3. The theme system
 
@@ -1353,14 +1534,16 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 | notional / estimated | the `~$` / `est.` prefix **in the number itself** |
 | partial | the `(partial)` marker text |
 | degraded / polling | the words `degraded` and `polling` |
-| cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence |
+| cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence. On Spend, the caps panel's **word** `at cap` in `span.spend-cap-at-cap`, drawn with the figures it was measured from — the row's `headroom`, and the `counted` dollars and the `daily cap` where the repository has a cap of its own — beside the bar and never instead of them |
 | not-built | the panel's own sentence |
 | a run's rigor mode | the mode's own **word** — `POC`, `Startup`, `Pro`, `Critical`, `Hotfix` — in the chip on a Live row (§2.3), the MODE cell on Projects (§2.5) and the Rigor row on the run detail (§2.6). **This mark carries no colour at all**, and the row is here to say so: the five modes have no colour of their own in this tree, so the word is the whole of the mark and a rule must not paint the modes apart |
 
 The rules this makes binding on the stylesheet: (1) **a colour never replaces a word**;
 (2) a state colour is used on a **fill, a rule or a badge**, and the badge keeps its text;
-(3) the one state that is a colour-only reading today — a cap bar past its threshold — is
-always drawn beside its own percentage, so the colour is redundant by construction;
+(3) the one state that was a colour-only reading — a cap bar past its threshold — is
+always drawn beside the numbers it is made of and, on Spend's caps panel, beside its own
+word: the percent reading on Live, and the row's `headroom`, its counted dollars, its cap and
+the word `at cap` on Spend, so the colour is redundant by construction;
 (4) `--ok` is used for *measured and inside the cap* **and for the rail's `running` row** —
 the installation the console is reading now, whose word is drawn beside its dot (§4.1), so
 the tone is still a state and not decoration — and never decoratively, per §6.1 rule 3
@@ -1574,7 +1757,8 @@ The entry appends up to **three** children to `document.body`, which is the moun
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ section.console-skew                               reduced mode only     │
+│ section.console-skew (section.notice)              reduced mode only     │
+│   and button.console-reduced-chip, in the header below                    │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ header.console-header   wordmark · switcher · nav · gauge · Halt fleet   │
 ├──────────────────────────────────────────────────────────────────────────┤
@@ -1585,11 +1769,14 @@ The entry appends up to **three** children to `document.body`, which is the moun
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **The version-skew banner is not in the panel.** `startConsole` appends it to the mount it
-  was handed, so the banner is the body's **first child**, appended before the header and the
-  page. It is `section.console-skew` and it carries `data-theme`, `data-mode` and `data-skew`
-  (`shared/version.ts`). In **refused** mode it is the whole document, because `bootDashboard`
-  returns straight after it and **the other two children are never appended**.
+- **The version-skew notice is not in the panel.** `startConsole` appends it to the mount it
+  was handed, so the notice is the body's **first child**, appended before the header and the
+  page. It is `section.console-skew` — a `section.notice` card (§2.14) — and it carries
+  `data-theme`, `data-mode`, `data-skew` and `data-severity` (`shared/version.ts`). A
+  dismissed notice keeps that place and takes `hidden`; the header's
+  `button.console-reduced-chip` is what says the mode is still reduced (§2.14). In
+  **refused** mode it is the whole document, because `bootDashboard` returns straight after
+  it and **the other two children are never appended**.
 - **The header is chrome and never scrolls**; the page scrolls. It wraps on a narrow window.
 - **`nav.console-views` is five tabs** (`button.console-view`, at least 44 px tall; the
   redesign draws links, and the renderer writes no `href`), the

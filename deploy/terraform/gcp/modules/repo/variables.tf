@@ -39,6 +39,7 @@ variable "installation" {
     registry_host             = string
     base_registry             = string
     ghcr_registry             = string
+    shared_registry           = string
     scheduler_service_account = string
     role_ids = object({
       job_runner      = string
@@ -73,6 +74,11 @@ variable "installation" {
   }
 
   validation {
+    condition     = can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.installation.shared_registry))
+    error_message = "installation.shared_registry must be a registry ID."
+  }
+
+  validation {
     condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9.-]+\\.iam\\.gserviceaccount\\.com$", var.installation.scheduler_service_account))
     error_message = "installation.scheduler_service_account must be a service account email."
   }
@@ -103,6 +109,12 @@ variable "repo" {
     # already-existing secret of the installation root, never one this module
     # creates. Local configs without a project copy of anything send none.
     project_secrets = optional(map(string), {})
+    # Whether the published node admits this repository with `proxy: true`
+    # (D500, D502): the one condition a job gives up its git credential's
+    # accessor and mount under. Optional and false, so a tfvars written before
+    # the fact existed — every golden one — plans exactly what it planned, and
+    # false is what an installation that never proxies a repository sends.
+    bitbucket_proxied = optional(bool, false)
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool

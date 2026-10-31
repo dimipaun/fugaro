@@ -13,11 +13,11 @@ import (
 const (
 	jobProfileSelection = "  app:\n    job_profile: big\n"
 
-	jobProfilePolicy = `{"version":3,"allow_repos":["github/acme/*"],"profiles":{` +
+	jobProfilePolicy = `{"version":4,"allow_repos":["github/acme/*"],"profiles":{` +
 		`"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},` +
 		`"big":{"provider":"github","cpu":4,"memory":"8Gi","timeout_class":"12h"}}}`
 
-	jobProfilePolicyWithoutBig = `{"version":3,"allow_repos":["github/acme/*"],"profiles":{` +
+	jobProfilePolicyWithoutBig = `{"version":4,"allow_repos":["github/acme/*"],"profiles":{` +
 		`"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 )
 
@@ -100,7 +100,7 @@ func TestRunnerRunsAWorkflowThatNamesNoJobProfile(t *testing.T) {
 		}
 	})
 	t.Run("a policy with no profiles block", func(t *testing.T) {
-		b := admissionRun(t, "github", "acme/app", "off", "", `{"version":3,"allow_repos":["github/acme/*"]}`)
+		b := admissionRun(t, "github", "acme/app", "off", "", `{"version":4,"allow_repos":["github/acme/*"]}`)
 		if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
 			t.Fatalf("rec = %+v, err = %v: a policy that sets no profile refuses nothing", rec, err)
 		}
@@ -127,7 +127,7 @@ func TestRunnerRunsAnExplicitStandardJobProfileLikeTheDefault(t *testing.T) {
 	}
 	for _, tc := range []struct{ what, policy string }{
 		{"no policy at all", ""},
-		{"a policy with no profiles block", `{"version":3,"allow_repos":["github/acme/*"]}`},
+		{"a policy with no profiles block", `{"version":4,"allow_repos":["github/acme/*"]}`},
 		{"a policy with profiles", jobProfilePolicy},
 	} {
 		t.Run(tc.what, func(t *testing.T) {

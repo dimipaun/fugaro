@@ -707,7 +707,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// (design v1.md §4.6).
 		StartSHA: strings.Repeat("c", 40),
 		PR:       &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7"},
-		Reviews:  []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 2}, {Round: 1, Tier: runstore.TierSenior, Verdict: "ship"}},
+		// The bounce is on the first-line review that followed a senior
+		// rejection, which is the only shape that carries one (a recipe with
+		// review: {bounce: first_line}, docs/recipes.md section 1), and the
+		// entry is closed: without the field the schema refused the record of
+		// a bounced run, catalog recipes included.
+		Reviews: []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 2}, {Round: 1, Tier: runstore.TierSenior, Verdict: "ship"}, {Round: 2, Tier: runstore.TierFirst, Verdict: "ship", Bounce: 1}},
 		Verify: []verify.Record{{
 			N: 1, Kind: verify.KindTest, Rerun: true, HeadSHA: "abcdef1234567", CleanTree: true, ExitCode: 1,
 			TimedOut: true, Tests: 3, Failures: 1, Skipped: 1, Failed: []string{"pkg.A"}, Flaky: []string{"pkg.B"},
@@ -974,6 +979,98 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("schema rejects a record that filed, closed and tolerated nothing: %v\n%s", err, bare)
+	}
+}
+
+// TestTierAdversarialInSchema: the review entry's tier enum is the vocabulary
+// internal/runstore writes — level 3's adversarial review included
+// (docs/review-levels-ab-jobmax L4.1, D727) — and the entry carries the head
+// the review read, bounded like the schema's other commit fields. A tier
+// added to runstore and not here is a record the runner legally wrote and its
+// own published schema refuses.
+func TestTierAdversarialInSchema(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := strings.Repeat("a", 40)
+	rec := runstore.Record{
+		Version: 1, RunID: "20261030-120000-abcd", Status: runstore.StatusSucceeded,
+		Stage: "review",
+		Reviews: []runstore.ReviewSummary{
+			{Round: 3, Tier: runstore.TierFirst, Verdict: "ship", Bounce: 1},
+			{Round: 3, Tier: runstore.TierSenior, Verdict: "ship", Head: head},
+			{Round: 3, Tier: runstore.TierAdversarial, Verdict: "ship", Head: head},
+		},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record naming the adversarial tier and its head: %v\n%s", err, data)
+	}
+
+	raw, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var reviews struct {
+		Items struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(doc.Properties["reviews"], &reviews); err != nil {
+		t.Fatal(err)
+	}
+	var tier struct {
+		Enum []string `json:"enum"`
+	}
+	if err := json.Unmarshal(reviews.Items.Properties["tier"], &tier); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{runstore.TierFirst, runstore.TierSenior, runstore.TierAdversarial}
+	if !slices.Equal(tier.Enum, want) {
+		t.Errorf("result.schema.json reviews tier enum %v != runstore's tiers %v", tier.Enum, want)
+	}
+	var headField struct {
+		Type      string `json:"type"`
+		MinLength int    `json:"minLength"`
+	}
+	if err := json.Unmarshal(reviews.Items.Properties["head"], &headField); err != nil {
+		t.Fatal(err)
+	}
+	if headField.Type != "string" || headField.MinLength != 1 {
+		t.Errorf("result.schema.json reviews head = %+v, want a string bounded at minLength 1 like the schema's other commit fields", headField)
+	}
+	lit := []byte(`"head":"` + head + `"`)
+	if !bytes.Contains(data, lit) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, lit, []byte(`"head":""`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts an empty review head")
+	}
+	bounce := []byte(`"bounce":1`)
+	if !bytes.Contains(data, bounce) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, bounce, []byte(`"bounce":-1`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts a review that followed a negative number of cheap loops")
 	}
 }
 
@@ -3196,6 +3293,20 @@ func TestResultSchemaABBlock(t *testing.T) {
 	if err := validate(t, rec); err == nil {
 		t.Error("schema accepts an unknown arm on a record")
 	}
+	// The patch object is the key it is, and the truncation flag means
+	// nothing without one: a record that stored no patch cannot say the patch
+	// it does not name was cut (patch_object's pattern and patch_truncated's
+	// dependentRequired).
+	rec = base
+	rec.AB, rec.PatchTruncated = &task.AB{PairID: base.RunID, Arm: task.ABArmChampion}, true
+	if err := validate(t, rec); err == nil {
+		t.Error("schema accepts patch_truncated with no patch_object")
+	}
+	rec = base
+	rec.AB, rec.PatchObject = &task.AB{PairID: base.RunID, Arm: task.ABArmChampion}, "patch.diff"
+	if err := validate(t, rec); err == nil {
+		t.Error("schema accepts a patch_object that is not the run's own key")
+	}
 }
 
 // TestABSchemaEnumsMatchTheGoVocabulary ties both schemas' ab enums to the Go
@@ -3247,5 +3358,552 @@ func TestABSchemaEnumsMatchTheGoVocabulary(t *testing.T) {
 				t.Errorf("%s: ab.%s enum = %v, want %v (internal/task's own constants)", file, name, got[name], e)
 			}
 		}
+	}
+}
+
+// TestSchemaCoversSpecAuthor: task.schema.json's `author` property and
+// task.Spec.Author agree, on the shape and on which documents they accept.
+// The schema is additionalProperties: false, so a property missing here
+// makes every task that carries an author schema-invalid, and only the
+// schema's consumers would notice — the defect that made the plan_task and
+// oauth_token properties necessary, one field at a time (A2a).
+//
+// The bounds and the field names are read from internal/task's own constants
+// and the marshalled struct rather than restated, so a cap moved on one side,
+// or a field renamed, stops the two agreeing.
+func TestSchemaCoversSpecAuthor(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.Properties["author"]
+	if !ok {
+		t.Fatal("task.schema.json has no author property: a task carrying one is schema-invalid (additionalProperties: false)")
+	}
+	var author struct {
+		AdditionalProperties *bool    `json:"additionalProperties"`
+		Required             []string `json:"required"`
+		Properties           map[string]struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &author); err != nil {
+		t.Fatal(err)
+	}
+	if author.AdditionalProperties == nil || *author.AdditionalProperties {
+		t.Error("author does not carry additionalProperties: false: a field inside it would be read by nobody")
+	}
+	if want := []string{"name", "email"}; !slices.Equal(author.Required, want) {
+		t.Errorf("author.required = %v, want %v (task.Person's own two fields)", author.Required, want)
+	}
+	if got := author.Properties["name"].MaxLength; got != task.MaxAuthorNameLen {
+		t.Errorf("author.name maxLength = %d, want task.MaxAuthorNameLen %d", got, task.MaxAuthorNameLen)
+	}
+	if got := author.Properties["email"].MaxLength; got != task.MaxAuthorEmailLen {
+		t.Errorf("author.email maxLength = %d, want task.MaxAuthorEmailLen %d", got, task.MaxAuthorEmailLen)
+	}
+	// The patterns are the schema's copy of AuthorProblem's own two rules, held
+	// against the Go check over a corpus rather than compared as strings: the
+	// Go rule is a loop over the fields (which is what lets it say which rule
+	// was broken), not an expression, so the two are compared by what they
+	// answer. Every case below is inside both caps, which maxLength carries
+	// above, so the pattern is the only rule in question.
+	nameRE := regexp.MustCompile(author.Properties["name"].Pattern)
+	emailRE := regexp.MustCompile(author.Properties["email"].Pattern)
+	for _, tc := range []struct {
+		name string
+		p    task.Person
+	}{
+		{"a plain pair", task.Person{Name: "person-1", Email: "person-1@example.invalid"}},
+		{"a space inside the name", task.Person{Name: "person one", Email: "person.one@example.invalid"}},
+		{"a name outside ASCII", task.Person{Name: "Jörg", Email: "jorg@example.invalid"}},
+		{"the name and the address at both caps", task.Person{Name: strings.Repeat("a", task.MaxAuthorNameLen), Email: strings.Repeat("a", task.MaxAuthorEmailLen-6) + "@b.co"}},
+		{"a blank name", task.Person{Name: "  ", Email: "person-1@example.invalid"}},
+		{"a name of one tab", task.Person{Name: "\t", Email: "person-1@example.invalid"}},
+		{"a newline in the name", task.Person{Name: "person-1\nperson-2", Email: "person-1@example.invalid"}},
+		{"an angle bracket in the name", task.Person{Name: "person-1 <person-2>", Email: "person-1@example.invalid"}},
+		{"a control character in the email", task.Person{Name: "person-1", Email: "person\x1b-1@example.invalid"}},
+		{"an email with no @", task.Person{Name: "person-1", Email: "person-1.example.invalid"}},
+		{"an email with two @", task.Person{Name: "person-1", Email: "person-1@example.invalid@x"}},
+		{"an email with an empty local part", task.Person{Name: "person-1", Email: "@example.invalid"}},
+		{"an email with an empty domain", task.Person{Name: "person-1", Email: "person-1@"}},
+	} {
+		byPattern := nameRE.MatchString(tc.p.Name) && emailRE.MatchString(tc.p.Email)
+		byGoRule := task.AuthorProblem(tc.p) == ""
+		if byPattern != byGoRule {
+			t.Errorf("%s: schema pattern accepts = %v, task.AuthorProblem accepts = %v (%s)", tc.name, byPattern, byGoRule, task.AuthorProblem(tc.p))
+		}
+	}
+
+	sch := compile(t, "task.schema.json")
+	// Both readers see the same document: the schema validates the JSON, and
+	// task.Parse is what the runner does with it. A fixture one refuses and
+	// the other accepts is the drift this test exists for, so each case
+	// asserts both.
+	agree := func(t *testing.T, raw string) (schemaErr, parseErr error) {
+		t.Helper()
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, parseErr = task.Parse([]byte(raw))
+		return sch.Validate(inst), parseErr
+	}
+	docFor := func(a *task.Person) string {
+		t.Helper()
+		s := task.Spec{Version: 1, RunID: "20261030-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", Author: a}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	for _, tc := range []struct {
+		name string
+		doc  string
+		ok   bool
+	}{
+		{"no author", docFor(nil), true},
+		{"an author", docFor(&task.Person{Name: "person-1", Email: "person-1@example.invalid"}), true},
+		{"a name over the cap", docFor(&task.Person{Name: strings.Repeat("a", task.MaxAuthorNameLen+1), Email: "person-1@example.invalid"}), false},
+		{"an email over the cap", docFor(&task.Person{Name: "person-1", Email: strings.Repeat("a", task.MaxAuthorEmailLen) + "@example.invalid"}), false},
+		{"a blank name", docFor(&task.Person{Name: "   ", Email: "person-1@example.invalid"}), false},
+		{"a missing email", `{"version":1,"run_id":"20261030-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{},"author":{"name":"person-1"}}`, false},
+		{"an email with two @", docFor(&task.Person{Name: "person-1", Email: "person-1@example.invalid@x"}), false},
+		{"an email with no @", docFor(&task.Person{Name: "person-1", Email: "person-1.example.invalid"}), false},
+		{"a newline in the name", docFor(&task.Person{Name: "person-1\nperson-2", Email: "person-1@example.invalid"}), false},
+		{"an angle bracket in the name", docFor(&task.Person{Name: "person-1 <person-2>", Email: "person-1@example.invalid"}), false},
+		{"a key the block does not have", `{"version":1,"run_id":"20261030-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{},"author":{"name":"person-1","email":"person-1@example.invalid","login":"person-1"}}`, false},
+	} {
+		schemaErr, parseErr := agree(t, tc.doc)
+		if tc.ok {
+			if schemaErr != nil {
+				t.Errorf("%s: schema rejects it: %v", tc.name, schemaErr)
+			}
+			if parseErr != nil {
+				t.Errorf("%s: task.Parse rejects it: %v", tc.name, parseErr)
+			}
+			continue
+		}
+		if schemaErr == nil {
+			t.Errorf("%s: schema accepts it", tc.name)
+		}
+		if parseErr == nil {
+			t.Errorf("%s: task.Parse accepts it", tc.name)
+		}
+	}
+	// The golden bytes: every field of a Person is written when the block is
+	// present, so a decoder reading it back cannot mistake a missing field
+	// for an empty one.
+	if got := docFor(&task.Person{Name: "person-1", Email: "person-1@example.invalid"}); !strings.Contains(got, `"author":{"name":"person-1","email":"person-1@example.invalid"}`) {
+		t.Errorf("an author is not written as its two fields: %s", got)
+	}
+}
+
+// TestSchemaCoversGitAuthor: fugaro.schema.json's git.author enum and
+// config's own vocabulary are one list, and the schema and config.Parse
+// agree on which files carry a legal value — the schema is what an editor
+// validates fugaro.yaml against, the parser is what the launcher does.
+//
+// The enum carries the empty string as well as config.GitAuthors' two
+// values: a file that spells out author: "" says what the key absent says
+// (today's behaviour, the run's own identity), and the parser accepts both,
+// so a schema that refused one of them would reject a file the CLI runs.
+func TestSchemaCoversGitAuthor(t *testing.T) {
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.Properties["git"]
+	if !ok {
+		t.Fatal("fugaro.schema.json has no git property")
+	}
+	var git struct {
+		Properties map[string]struct {
+			// []any, not []string: a JSON null in an enum of strings decodes
+			// into "" and would hide the null this test exists to check.
+			Enum []any `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &git); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := git.Properties["author"]
+	if !ok {
+		t.Fatal("fugaro.schema.json has no git.author property: a repository that opts in writes a file this schema rejects (additionalProperties: false)")
+	}
+	if want := []any{"", nil, config.GitAuthorFugaro, config.GitAuthorLauncher}; !slices.Equal(got.Enum, want) {
+		t.Errorf("git.author enum = %v, want %v (config.GitAuthors, with the empty value and an explicit null — the spells budget.mode's enum carries)", got.Enum, want)
+	}
+
+	sch := compile(t, "fugaro.schema.json")
+	const (
+		base   = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make } }\n"
+		gitKey = "git: { provider: github }"
+	)
+	for _, tc := range []struct {
+		name   string
+		author string
+		ok     bool
+	}{
+		{"the key absent", "", true},
+		{"fugaro", "author: fugaro", true},
+		{"launcher", "author: launcher", true},
+		{"the empty value", `author: ""`, true},
+		// The two null spells YAML invites and config.Parse reads as the
+		// empty value: an empty scalar after the colon, and an explicit null.
+		{"the empty scalar", "author:", true},
+		{"an explicit null", "author: null", true},
+		{"a near miss", "author: Fugaro", false},
+		{"a value that is not one of the two", "author: them", false},
+	} {
+		body := base
+		if tc.author != "" {
+			body = strings.Replace(base, gitKey, "git: { provider: github, "+tc.author+" }", 1)
+		}
+		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+		_, ps := config.Parse([]byte(body))
+		if tc.ok {
+			if schemaErr != nil {
+				t.Errorf("%s: schema rejects it: %v", tc.name, schemaErr)
+			}
+			if len(ps) > 0 {
+				t.Errorf("%s: config.Parse rejects it: %v", tc.name, ps)
+			}
+			continue
+		}
+		if schemaErr == nil {
+			t.Errorf("%s: schema accepts it", tc.name)
+		}
+		if len(ps) == 0 {
+			t.Errorf("%s: config.Parse accepts it", tc.name)
+		}
+	}
+}
+
+// TestSchemaCoversImageKeyFiles: fugaro.schema.json carries image.key_files,
+// with the bounds internal/config enforces, and the two agree — the schema is
+// what an editor reads, config.Parse is what a build refuses — over the corpus
+// below: the paths that escape the repository, the ones that are patterns
+// rather than paths, the ones that are not clean, and the caps.
+func TestSchemaCoversImageKeyFiles(t *testing.T) {
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Defs       map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var workflows struct {
+		AdditionalProperties json.RawMessage `json:"additionalProperties"`
+	}
+	if err := json.Unmarshal(doc.Properties["workflows"], &workflows); err != nil {
+		t.Fatal(err)
+	}
+	// The workflow schema is a $ref, so image: sits in $defs, not inline.
+	var ref struct {
+		Ref string `json:"$ref"`
+	}
+	if err := json.Unmarshal(workflows.AdditionalProperties, &ref); err != nil {
+		t.Fatal(err)
+	}
+	defName, ok := strings.CutPrefix(ref.Ref, "#/$defs/")
+	if !ok {
+		t.Fatalf("workflows.additionalProperties = %s, want a $ref into $defs", workflows.AdditionalProperties)
+	}
+	var def struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(doc.Defs[defName], &def); err != nil {
+		t.Fatal(err)
+	}
+	var image struct {
+		Properties map[string]struct {
+			Type        string `json:"type"`
+			MaxItems    int    `json:"maxItems"`
+			UniqueItems bool   `json:"uniqueItems"`
+			Items       struct {
+				Type      string `json:"type"`
+				MaxLength int    `json:"maxLength"`
+				Pattern   string `json:"pattern"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(def.Properties["image"], &image); err != nil {
+		t.Fatal(err)
+	}
+	got, hasKey := image.Properties["key_files"]
+	if !hasKey {
+		t.Fatal("fugaro.schema.json has no image.key_files property: a repository that writes one gets a schema error (additionalProperties: false)")
+	}
+	if got.Type != "array" || got.Items.Type != "string" || got.MaxItems != 32 || !got.UniqueItems || got.Items.MaxLength != 200 || got.Items.Pattern == "" {
+		t.Errorf("image.key_files = %+v, want an array of at most 32 unique strings of at most 200 characters matching a pattern (maxImageKeyFiles, maxImageKeyFilePath)", got)
+	}
+
+	sch := compile(t, "fugaro.schema.json")
+	const (
+		base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make } }\n"
+		head = "commands: { build: make, test: make }"
+	)
+	caps := func(n int) string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = strconv.Quote(strings.Replace("patches/00.patch", "00", string(rune('a'+i%26))+string(rune('a'+i/26)), 1))
+		}
+		return strings.Join(out, ", ")
+	}
+	for _, tc := range []struct {
+		name    string
+		entries string // the YAML flow sequence, or "" for no image block
+		ok      bool
+	}{
+		{"the key absent", "", true},
+		{"one directory", strconv.Quote("patches"), true},
+		{"a file and a directory", strconv.Quote(".yarn/patches/left-pad.patch") + ", " + strconv.Quote("vendor"), true},
+		{"a space", strconv.Quote("vendor/my tool"), true},
+		{"a non-ASCII path", strconv.Quote(strings.Repeat("é", 150)), true},
+		{"at the length cap", strconv.Quote(strings.Repeat("a", 200)), true},
+		{"at the cap", caps(32), true},
+		{"an absolute path", strconv.Quote("/etc/passwd"), false},
+		{"a parent segment", strconv.Quote("../outside"), false},
+		{"a parent segment in the middle", strconv.Quote("a/../../etc/passwd"), false},
+		{"a bare parent", strconv.Quote(".."), false},
+		{".git", strconv.Quote(".git/config"), false},
+		{"the repository root", strconv.Quote("."), false},
+		{"a trailing slash", strconv.Quote("patches/"), false},
+		{"a doubled slash", strconv.Quote("a//b"), false},
+		{"a dot segment", strconv.Quote("./patches"), false},
+		{"a star", strconv.Quote("*.patch"), false},
+		{"a doublestar", strconv.Quote("**/*.patch"), false},
+		{"a question mark", strconv.Quote("patch?"), false},
+		{"a character class", strconv.Quote("p[abc]"), false},
+		{"a brace group", strconv.Quote("p{a,b}"), false},
+		{"a backslash", strconv.Quote(`a\b`), false},
+		{"a control character", strconv.Quote("a\x1bb"), false},
+		{"empty", strconv.Quote(""), false},
+		{"a duplicate", strconv.Quote("patches") + ", " + strconv.Quote("patches"), false},
+		{"over the cap", caps(33), false},
+		{"over the length cap", strconv.Quote(strings.Repeat("a", 201)), false},
+	} {
+		body := base
+		if tc.entries != "" {
+			body = strings.Replace(base, head, "image: { key_files: ["+tc.entries+"] }, "+head, 1)
+		}
+		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+		_, ps := config.Parse([]byte(body))
+		if tc.ok {
+			if schemaErr != nil {
+				t.Errorf("%s: schema rejects it: %v", tc.name, schemaErr)
+			}
+			if len(ps) > 0 {
+				t.Errorf("%s: config.Parse rejects it: %v", tc.name, ps)
+			}
+			continue
+		}
+		if schemaErr == nil {
+			t.Errorf("%s: schema accepts it", tc.name)
+		}
+		if len(ps) == 0 {
+			t.Errorf("%s: config.Parse accepts it", tc.name)
+		}
+	}
+
+	// checkout: clone builds no image at all, so a clone workflow refuses
+	// key_files, exactly as config.Parse does: the schema's clone branch
+	// cannot leave the key out, or an editor would bless a fugaro.yaml the
+	// run then refuses.
+	for _, entries := range []string{"", strconv.Quote("patches")} {
+		body := strings.Replace(base, "  app: {", "  app: { checkout: clone,", 1)
+		if entries != "" {
+			body = strings.Replace(body, head, "image: { key_files: ["+entries+"] }, "+head, 1)
+		}
+		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+		_, ps := config.Parse([]byte(body))
+		switch {
+		case entries == "":
+			if schemaErr != nil {
+				t.Errorf("a clone workflow with no key files: schema rejects it: %v", schemaErr)
+			}
+			if len(ps) > 0 {
+				t.Errorf("a clone workflow with no key files: config.Parse rejects it: %v", ps)
+			}
+		default:
+			if schemaErr == nil {
+				t.Error("the schema accepts image.key_files under checkout: clone, which config.Parse refuses")
+			}
+			if len(ps) == 0 {
+				t.Error("config.Parse accepts image.key_files under checkout: clone")
+			}
+		}
+	}
+}
+
+// TestSchemaCoversCheckoutShared: checkout: shared is a third kind
+// (design forge-authorship-images/shared-images.md §6, route A) whose job
+// runs a shared dependency-layer image and clones the source at launch, so
+// the schema accepts the dependency-layer keys and refuses the two that
+// would put this repository's own content into an image every repository on
+// the same dependency set runs. The schema and config.Parse agree on which
+// of those two is refused, and disagree on purpose about the kind itself:
+// the kind stays in the schema's enum — an editor's user still gets the
+// shape it will have — while validation refuses checkout: shared until
+// 0.15.0 ships the image it would run (config/image.go's
+// sharedCheckoutShipped, whose rules internal/config/image_test.go pins
+// behind the flag). Nothing here reads a shared workflow's key rules out of
+// config.Parse: those live in internal/config.
+func TestSchemaCoversCheckoutShared(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { checkout: shared, commands: { build: make, test: make } }\n"
+
+	// The enum is the Go constants, so a fourth kind cannot land in one
+	// place only.
+	var doc struct {
+		Defs map[string]json.RawMessage `json:"$defs"`
+	}
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var def struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(doc.Defs["workflow"], &def); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{config.CheckoutBaked, config.CheckoutClone, config.CheckoutShared}
+	if got := def.Properties["checkout"].Enum; !slices.Equal(got, want) {
+		t.Errorf("fugaro.schema.json's checkout enum = %v, want the Go constants %v", got, want)
+	}
+
+	// The dependency layer's keys: the schema accepts them under checkout:
+	// shared, and config.Parse refuses the kind where the repository typed
+	// it, naming the release that lifts the refusal.
+	body := strings.Replace(base, "commands:", `image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches], skip_build_scripts: true }, commands:`, 1)
+	if err := sch.Validate(yamlInstance(t, []byte(body))); err != nil {
+		t.Errorf("the schema rejects checkout: shared with the dependency-layer keys: %v", err)
+	}
+	if _, ps := config.Parse([]byte(body)); len(ps) != 1 || ps[0].Path != "workflows.app.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
+		t.Errorf("config.Parse problems = %v, want exactly one refusal at workflows.app.checkout naming 0.15.0", ps)
+	}
+
+	// The per-repository keys: the schema refuses both — a schema that
+	// blessed a setup: validation refuses would send an editor's user away
+	// with a fugaro.yaml that fails at validate — and config.Parse refuses
+	// the kind before it reaches either key, so both halves still say this
+	// declaration is not one to ship.
+	for _, tc := range []struct{ name, extra, path string }{
+		{"image.setup", `image: { setup: ["make deps"] }, `, "workflows.app.image.setup"},
+		{"dockerfile", "dockerfile: .fugaro/app.Dockerfile, ", "workflows.app.dockerfile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(base, "commands:", tc.extra+"commands:", 1)
+			schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+			_, ps := config.Parse([]byte(body))
+			if schemaErr == nil {
+				t.Errorf("the schema accepts %s under checkout: shared", tc.path)
+			}
+			if len(ps) != 1 || ps[0].Path != "workflows.app.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
+				t.Errorf("config.Parse problems = %v, want exactly one refusal at workflows.app.checkout naming 0.15.0", ps)
+			}
+		})
+	}
+}
+
+// TestSchemaDescribesCheckoutSharedAsNotYetShipped: the enum keeps shared,
+// so an editor still completes the key, and the description has to say why
+// validation refuses it — a user who types it is owed the release that
+// lifts the refusal, not just the refusal.
+func TestSchemaDescribesCheckoutSharedAsNotYetShipped(t *testing.T) {
+	desc := schemaDescriptionAt(t, "fugaro.schema.json", "$defs", "workflow", "properties", "checkout")
+	for _, want := range []string{"0.15.0", "refuses checkout: shared"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("fugaro.schema.json's checkout description does not say %q: %q", want, desc)
+		}
+	}
+}
+
+// TestProjectLayerSchemaCoversCheckoutShared: the same third kind in the
+// other layer. One validateCheckout serves both (config.ParseProjectLayer's
+// validateProfile calls it), so the project layer's profile schema has to
+// accept the same three values and refuse the one per-repository key under
+// shared — left alone it refused checkout: shared in a profile while the Go
+// validator accepted it, and no corpus file caught the disagreement the
+// test above pins for fugaro.schema.json. As there, validation refuses the
+// kind itself until 0.15.0, so what config.ParseProjectLayer is asked for
+// here is that refusal.
+func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	data, err := os.ReadFile("project-layer.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Defs map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var def struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(doc.Defs["profile"], &def); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{config.CheckoutBaked, config.CheckoutClone, config.CheckoutShared}
+	if got := def.Properties["checkout"].Enum; !slices.Equal(got, want) {
+		t.Errorf("project-layer.schema.json's profile checkout enum = %v, want the Go constants %v", got, want)
+	}
+
+	a := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    checkout: shared\n    commands: { build: make, test: make }\n"
+
+	// The dependency layer's keys a profile may carry: the schema accepts
+	// them, the same shape
+	// testdata/project-layer/valid/checkout-shared-profile.yaml carries
+	// through the corpus (which internal/config runs with the flag open).
+	withKeys := strings.Replace(base, "    commands:", "    image: { apt: [libvips-dev], tools: { node: \"24.19.0\" }, skip_build_scripts: true }\n    commands:", 1)
+	if err := sch.Validate(yamlInstance(t, []byte(withKeys))); err != nil {
+		t.Errorf("the schema rejects a checkout: shared profile with the dependency-layer keys: %v", err)
+	}
+	if _, ps := config.ParseProjectLayer([]byte(withKeys), a); len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
+		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout naming 0.15.0", ps)
+	}
+
+	// image.setup is the one per-repository key a profile can carry
+	// (dockerfile and image.key_files are repo-only): refused by the schema,
+	// and by config.ParseProjectLayer through the refusal of the kind — the
+	// mirror of fugaro.schema.json's rule.
+	withSetup := strings.Replace(base, "    commands:", "    image: { setup: [\"./scripts/warm.sh\"] }\n    commands:", 1)
+	schemaErr := sch.Validate(yamlInstance(t, []byte(withSetup)))
+	_, ps := config.ParseProjectLayer([]byte(withSetup), a)
+	if schemaErr == nil {
+		t.Error("the schema accepts image.setup under a profile's checkout: shared")
+	}
+	if len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
+		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout naming 0.15.0", ps)
 	}
 }

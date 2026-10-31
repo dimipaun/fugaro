@@ -458,6 +458,25 @@ export interface LaunchRunner {
    * spawned is not cancellable from here. There is never a second `decide` for
    * one launch. */
   cancelFor(project: string): void
+  /** isIdle is the launch flow's answer about itself, and it is the whole of
+   * what the update policy is allowed to know about this file (Task 4.4): a
+   * signed update replaces the process that owns the launch write path, so
+   * nothing prompts or installs while a launch is in flight.
+   *
+   * `inFlight` is the whole of it. A launch enters that set with its
+   * **reservation** -- before its records are read, before its window opens --
+   * and leaves it when `release` frees the run id, which is the last thing the
+   * launch's own `finally` does. So "idle" means no launch is being built, none
+   * is being confirmed and none is running, which is exactly the window in which
+   * the process may be replaced. */
+  isIdle(): boolean
+  /** onIdle registers a listener called when the flow **becomes** idle -- once
+   * per transition, not once per settled launch, and never on a launch that
+   * leaves the flow idle. It is a listener rather than a poll because the
+   * moment is what the policy defers on: a download that finished while a
+   * launch was in flight is offered the instant that launch settles, and a
+   * caller that had to ask would have to ask on a timer. */
+  onIdle(listener: () => void): void
 }
 
 /** LaunchAnswer is what an open window's `decide` resolves with: the operator's
@@ -555,6 +574,10 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   /** what an already-answered run id answers with, capped at
    * `MAX_RECORDED_OUTCOMES` and written only through `recordOutcome` */
   const outcomes = new Map<string, LaunchOutcome>()
+  /** who to tell when the flow becomes idle (`isIdle`), kept in insertion
+   * order and copied before it is walked, so a listener that registers another
+   * one is not called in the same pass */
+  const idleListeners = new Set<() => void>()
 
   /** recordOutcome is the one write to `outcomes`, and it is where the cap is
    * kept. A `Map` iterates in insertion order, so the first key is the oldest
@@ -675,8 +698,15 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
    * one's hold, which would admit a third launch beside a second that is still
    * in flight. */
   function release(runId: string, project: string): void {
+    const wasBusy = inFlight.size > 0
     inFlight.delete(runId)
     if (inFlightByInstallation.get(project) === runId) inFlightByInstallation.delete(project)
+    // The idle listeners fire on the **transition**, which is why they are
+    // announced from here and not from `settle`: a release that finds the set
+    // already empty is the second half of a launch that has just been freed
+    // (the token after the run id) and tells nobody anything.
+    if (!wasBusy || inFlight.size > 0) return
+    for (const listener of [...idleListeners]) listener()
   }
 
   /**
@@ -1169,6 +1199,14 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         return
       }
       deps.confirmer.close(inFlight)
+    },
+
+    isIdle(): boolean {
+      return inFlight.size === 0
+    },
+
+    onIdle(listener: () => void): void {
+      idleListeners.add(listener)
     },
   }
 }

@@ -206,11 +206,13 @@ type websiteFactsAnalytics struct {
 // booking widget load from, on the four campaign pages only, behind the
 // consent banner's second question.
 type websiteFactsMarketing struct {
-	// MetaPixelID and LinkedinPartnerID are the two identifiers the owner has
-	// not supplied yet, and both are empty until they are: an id invented here
-	// would send a campaign page's visitors into a stranger's ad account, and
-	// an empty id is a loader switched off rather than a loader that loads
-	// something nameless (R3).
+	// MetaPixelID and LinkedinPartnerID are the pixel's and the insight tag's
+	// identifiers. The pixel's is still the owner's to supply and is empty
+	// until they do; the partner id was supplied on 2026-10-31 and is the
+	// owner's own from then on. An id invented here would send a campaign
+	// page's visitors into a stranger's ad account, and an empty id is a
+	// loader switched off rather than a loader that loads something nameless
+	// (R3).
 	MetaPixelID       string `yaml:"meta_pixel_id"`
 	LinkedinPartnerID string `yaml:"linkedin_partner_id"`
 	// The three origins, each the exact host the vendor documents rather than
@@ -954,8 +956,15 @@ func TestWebsiteConsoleReleaseFactsAreComplete(t *testing.T) {
 
 	// And the release's sums file covers nothing else: an asset the release carries
 	// and the site does not offer is a page a reader cannot get a download from,
-	// which is the other half of the same fact.
+	// which is the other half of the same fact. The one exception is the
+	// console's update feed: the release job sums latest-mac.yml into this file
+	// so the one cosign signature covers it, but electron-updater fetches it and
+	// no reader downloads it. Leaving its line in keeps the file byte for byte
+	// the signed one.
 	for name := range sums {
+		if name == consoleFeedFileName {
+			continue
+		}
 		found := false
 		for _, d := range downloads.Downloads {
 			if strings.ReplaceAll(d.File, "{version}", downloads.Release.Version) == name {
@@ -1143,15 +1152,22 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 		t.Errorf("%s: features.video is true: the explainer video does not exist, so the hero may not render a player, an iframe, a poster or a play button. W2.4 sets this flag when the video exists, in the same commit that relaxes this check (D107, finding 57, plan Task W2.4 step 1)", websiteFactsPath)
 	}
 
-	// The campaign measurement (plan Task G2.3, D401). The two ids are pinned
-	// EMPTY, and this is the pin that says so: the owner has not supplied a
-	// pixel id or a partner id, the loaders are wired and gated around them, and
-	// an id this repository invented would send the four campaign pages'
-	// visitors into a stranger's ad account. A task that fills one in is a task
-	// the owner supplied the id for, and it relaxes this check in the same
-	// commit (R3) -- exactly as the video pin above is relaxed by W2.4.
-	if facts.Marketing.MetaPixelID != "" || facts.Marketing.LinkedinPartnerID != "" {
-		t.Errorf("%s: marketing carries meta_pixel_id = %q and linkedin_partner_id = %q, and both must be empty until the OWNER supplies them: the campaign loaders are wired, gated and held by website/test/consent.mjs either way, and an id nobody supplied would point the pixel or the insight tag at an account that is not this project's (R3, plan Task G2.3)", websiteFactsPath, facts.Marketing.MetaPixelID, facts.Marketing.LinkedinPartnerID)
+	// The campaign measurement (plan Task G2.3, D401; the owner's ruling of
+	// 2026-10-31). G2.3 pinned BOTH ids empty and said the pin is relaxed in
+	// the commit that fills one in, because a task that fills one in is a task
+	// the owner supplied the id for (R3) -- exactly as the video pin above is
+	// relaxed by W2.4. The owner supplied the insight tag's partner id on
+	// 2026-10-31 and the pixel id is still theirs to supply, so the pin is now
+	// split: the pixel id stays empty, and the partner id is refused when it is
+	// empty, because the shipped page loads the insight tag only while a value
+	// is there and website/test/consent.mjs reads that off the built artifact.
+	// Neither value is printed here: the id lives in site.yaml and nowhere
+	// else, and a copy in this file would be the second one to keep in step.
+	if facts.Marketing.MetaPixelID != "" {
+		t.Errorf("%s: marketing carries meta_pixel_id = %q, and it must stay empty until the OWNER supplies one: the loader is wired and gated around it, and an id nobody supplied would point the pixel at an account that is not this project's (R3, plan Task G2.3)", websiteFactsPath, facts.Marketing.MetaPixelID)
+	}
+	if facts.Marketing.LinkedinPartnerID == "" {
+		t.Errorf("%s: marketing carries an empty linkedin_partner_id: the OWNER supplied the partner id on 2026-10-31, the four campaign pages hand it to the insight tag after the campaign consent, and an empty value is the loader switched off (R3, plan Task G2.3)", websiteFactsPath)
 	}
 	// The three origins are exact origins: scheme, host, no path, no wildcard.
 	// A wildcard is the one shape the plan refuses outright in `script-src` and
@@ -1285,9 +1301,11 @@ func TestWebsiteCanonicalHostAppearsOnlyInSiteYaml(t *testing.T) {
 			continue
 		}
 		// The Subscription Terms are generated from a document under docs/, and
-		// clause 29.1 names the address where they are published: that is the
+		// three clauses name the Licensor's own address: 29.1 where they are
+		// published, the privacy notice's URL and the notice email. That is the
 		// agreement's wording, which the page may not change.
-		if hit.file == "website/content/subscription-terms.md" && strings.Contains(hit.text, "29.1 ") {
+		if hit.file == "website/content/subscription-terms.md" &&
+			(strings.Contains(hit.text, "29.1 ") || strings.Contains(hit.text, "privacy notice at") || strings.Contains(hit.text, "Form (for the Licensor")) {
 			continue
 		}
 		t.Errorf("%s:%d names the site's host %q: the canonical URL has one source, %s, and every absolute link, the canonical <link>, the sitemap and the OpenGraph tag are built from it -- a copy here is a second source that keeps pointing at the old domain after the one line changes (D92, plan Task W2.2 step 1)\n%s", hit.file, hit.line, host, websiteFactsPath, hit.text)
