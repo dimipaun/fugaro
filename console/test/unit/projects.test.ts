@@ -685,15 +685,17 @@ describe('renderProjects', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs({ budget: null })), 'light')
     const drawn_ = panel(tree, 'repositories')
     expect(drawn_.getAttribute('data-state')).toBe('unavailable')
-    // No count, no list of either kind, and no claim about a cap nobody read.
+    // No count, no card of any of the three kinds, and no claim about a cap
+    // nobody read.
     expect(all(drawn_, 'projects-count')).toEqual([])
-    expect(all(drawn_, 'projects-enrolled-repo')).toEqual([])
-    expect(all(drawn_, 'projects-seen-repo')).toEqual([])
-    expect(all(drawn_, 'projects-only-seen')).toEqual([])
+    expect(all(drawn_, 'projects-repo-card')).toEqual([])
+    expect(all(drawn_, 'projects-only-enrolled-repo')).toEqual([])
+    expect(all(drawn_, 'projects-only-seen-repo')).toEqual([])
+    expect(all(drawn_, 'projects-repo-both')).toEqual([])
     const text = drawnText(drawn_)
     expect(text).toContain('enrolled repositories are unknown')
     expect(text).toContain('fugaro budget show --json')
-    expect(text).not.toContain('running with no cap row')
+    expect(text).not.toContain('Running with no cap row.')
   })
 
   it('draws a compute the document did not estimate as n/a, never as a free $0.00', () => {
@@ -758,8 +760,93 @@ describe('renderProjects', () => {
     const kill = one(tree, 'projects-kill')
     expect(drawn(kill)).toContain('KILLED by')
     expect(drawn(kill)).toContain('spend rate')
-    // The project's own switch reads as the measured fact it is.
-    expect(drawn(panel(tree, 'kill'))).toContain('not killed')
+    // The project's own switch reads as the measured fact it is -- the word
+    // `live` -- and never as a missing value, which `n/a` would say.
+    expect(texts(panel(tree, 'kill'), 'projects-kill-state')).toEqual(['live', 'KILLED', 'live'])
+  })
+
+  it('draws each switch\'s state as a word on its row, and the killed row\'s word twice', () => {
+    // **The mutation this case is proven against is the defect itself**: draw a
+    // killed row without its `KILLED` word and it fails. A row's state is never
+    // the frame's tone alone (design section 3.5): every row carries a word, the
+    // word and the `data-killed` hook agree, and the killed row says `KILLED` in
+    // its state cell and in its banner, which also names who killed it.
+    const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    const rows = all(tree, 'projects-kill-row')
+    expect(rows).toHaveLength(3)
+    expect(rows.map((row) => one(row, 'projects-kill-state').textContent)).toEqual(['live', 'KILLED', 'live'])
+    rows.forEach((row, at) => {
+      const killed = at === 1
+      expect(row.getAttribute('data-killed')).toBe(killed ? 'true' : 'false')
+      expect(one(row, 'projects-kill-state').textContent).toBe(killed ? 'KILLED' : 'live')
+      const banner = all(row, 'projects-kill-word')
+      if (!killed) {
+        expect(banner).toEqual([])
+        return
+      }
+      // The word, and then the three facts when the document has them.
+      expect(banner[0]?.textContent).toBe('KILLED by')
+      expect(all(row, 'projects-kill-by')).toHaveLength(1)
+      expect(all(row, 'projects-kill-at')).toHaveLength(1)
+      expect(all(row, 'projects-kill-reason')).toHaveLength(1)
+    })
+    // Every row's write is drawn and refused: Kill where the row is live,
+    // Revive where it is killed.
+    const actions = all(tree, 'projects-kill-action')
+    expect(actions.map((action) => drawn(action))).toEqual(['Kill', 'Revive', 'Kill'])
+    for (const action of actions) {
+      expect(action.getAttribute('aria-disabled')).toBe('true')
+      expect(action.getAttribute('title')).toBe('Not available in this release')
+    }
+  })
+
+  it('draws the two caps of every scope in labelled cells, with the word each binds by', () => {
+    // The table is a real one -- a column heading for each cap, a row per scope
+    // -- so no figure is a bare number in a column: each cell carries the cap
+    // and, when the CLI named one, the word `daily_cap_source` /
+    // `per_run_cap_source` gave for where it binds.
+    const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    expect(texts(tree, 'projects-cap-head')).toEqual(['scope', 'daily cap', 'per-run cap'])
+    const rows = all(tree, 'projects-cap')
+    expect(rows.map((row) => row.getAttribute('data-scope'))).toEqual(['global', 'defaults', 'repo', 'repo'])
+    expect(texts(rows[2] as FakeScreen, 'projects-cap-scope')).toEqual(['example-owner/example-repo'])
+    expect(texts(rows[2] as FakeScreen, 'projects-cap-value')).toEqual(['$20.00', '$4.00'])
+    expect(texts(rows[2] as FakeScreen, 'projects-cap-source')).toEqual(['repo', 'global'])
+    // A scope the document gives no cap for draws the console's mark and the
+    // CLI's own word for a cap that binds nowhere (`none`), and never a zero.
+    expect(texts(rows[3] as FakeScreen, 'projects-cap-value')).toEqual(['n/a', 'n/a'])
+    expect(texts(rows[3] as FakeScreen, 'projects-cap-source')).toEqual(['none', 'none'])
+    // The largest single lease sits above the table, labelled.
+    expect(drawn(one(tree, 'projects-reserve'))).toContain('largest single lease $5.00')
+  })
+
+  it('draws the repositories as three cards, and only the uncapped one asks for a cap', () => {
+    // A third run names a repository the cap document does not know: the case
+    // the third card is for.
+    const runs = {
+      ...RUNS,
+      runs: [...RUNS.runs, { ...RUNS.runs[1], run: '20261015-090000-0f0f', repo: 'example-owner/uncapped-repo' }],
+    }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    const cards = all(panel(tree, 'repositories'), 'projects-repo-card')
+    expect(cards.map((card) => card.getAttribute('data-kind'))).toEqual(['both', 'enrolled', 'seen'])
+    // Enrolled and seen: the repositories both documents know.
+    expect(texts(cards[0] as FakeScreen, 'projects-repo-both')).toEqual([
+      'example-owner/example-repo',
+      'example-owner/other-repo',
+    ])
+    // Enrolled with no run: none here, and the card says so in the console's own
+    // word rather than drawing an empty list.
+    expect(texts(cards[1] as FakeScreen, 'projects-repo-card-none')).toEqual(['none'])
+    expect(all(cards[1] as FakeScreen, 'projects-repo-card-note')).toEqual([])
+    // Seen and not enrolled: the case the screen exists for, with the write that
+    // would fix it drawn and refused.
+    expect(texts(cards[2] as FakeScreen, 'projects-only-seen-repo')).toEqual(['example-owner/uncapped-repo'])
+    expect(texts(cards[2] as FakeScreen, 'projects-repo-card-note')).toEqual(['Running with no cap row.'])
+    expect(drawn(one(cards[2] as FakeScreen, 'projects-repo-add'))).toBe('Add cap')
+    // The other two cards draw no Add cap: nothing there needs one.
+    expect(all(cards[0] as FakeScreen, 'projects-repo-add')).toEqual([])
+    expect(all(cards[1] as FakeScreen, 'projects-repo-add')).toEqual([])
   })
 
   it('draws the job rows with their stage, their requester and their cost', () => {
@@ -776,7 +863,7 @@ describe('renderProjects', () => {
     expect(drawn(rows[1] as FakeScreen)).toContain('~$')
   })
 
-  it('draws who started a job, and no cell for a job the record does not name', () => {
+  it('draws who started a job, and the console\'s mark for a job the record does not name', () => {
     // Owner request 2026-10-18: the Started-by column. `launched_by` is a
     // different fact from the `requested_by` beside it -- who started the run,
     // and who asked for it -- and it is drawn in the short form the CLI's own
@@ -787,16 +874,123 @@ describe('renderProjects', () => {
       runs: [{ ...RUNS.runs[0], launched_by: 'dana.person+fugaro@example.test' }, RUNS.runs[1]],
     }
     const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
-    expect(all(tree, 'projects-job-started-by').map((node) => node.textContent)).toEqual(['dana.person+fugaro'])
+    expect(all(tree, 'projects-job-started-by').map((node) => node.textContent)).toEqual([
+      'dana.person+fugaro',
+      'n/a',
+    ])
     // The address the record named is in no cell of the screen: the cut is the
     // column's, so no `@` -- and no domain -- reaches one.
     expect(drawn(tree)).not.toContain('dana.person+fugaro@example.test')
-    // The second job's record names nobody, and a row without a launcher draws
-    // no cell at all -- not an empty span, which would add a flex gap -- and
-    // never another person's name (the request's "fail private").
-    expect(all(tree, 'projects-job-started-by')).toHaveLength(1)
+    // The second job's record names nobody. The **cell is still drawn** -- a
+    // table row with a cell fewer shifts every column after it -- and it carries
+    // the console's own mark, never another person's name and never a blank,
+    // which would read as a launcher the console could not name.
+    const rows = all(tree, 'projects-job')
+    expect(texts(rows[1] as FakeScreen, 'projects-job-started-by')).toEqual(['n/a'])
     const untouched = renderProjects(factory, buildProjectsModel(inputs()), 'light')
-    expect(all(untouched, 'projects-job-started-by')).toHaveLength(0)
+    expect(texts(untouched, 'projects-job-started-by')).toEqual(['n/a', 'n/a'])
+  })
+
+  it('draws a job row as a table row, one cell per column and the three accounts apart', () => {
+    // The row is a `tr` with one `td` per column, and the three cost accounts
+    // are three cells: a model figure that belongs to the plan is notional, the
+    // compute figure is billed, and the two are never added into one cell.
+    const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    const table = one(panel(tree, 'jobs'), 'projects-job-table')
+    const heads = texts(table, 'projects-job-head')
+    expect(heads).toEqual([
+      'run',
+      'repository',
+      'workflow',
+      'status',
+      'stage',
+      'requested by',
+      'started by',
+      'created',
+      'model',
+      'compute',
+      'total',
+    ])
+    const rows = all(table, 'projects-job')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      // One cell per column, in the header's own order.
+      const cells = walk(row).filter((node) => node.tag === 'td')
+      expect(cells).toHaveLength(heads.length)
+    }
+    expect(texts(rows[0] as FakeScreen, 'projects-job-run')).toEqual(['20261015-110030-4a5b'])
+    expect(texts(rows[0] as FakeScreen, 'projects-job-model')).toEqual(['$1.25'])
+    expect(texts(rows[0] as FakeScreen, 'projects-job-compute')).toEqual(['est. $0.50'])
+    expect(texts(rows[0] as FakeScreen, 'projects-job-total')).toEqual(['$1.75'])
+    // The second row's model figure is the plan's: drawn as notional, in its own
+    // cell, and added to nothing.
+    expect(texts(rows[1] as FakeScreen, 'projects-job-model')).toEqual(['~$0.50'])
+  })
+
+  it('draws the MODE column only when a listed run carries a rigor block', () => {
+    // The conditional column `runs ls` itself writes (`internal/cli/runs.go`'s
+    // `showMode`): a project whose runs are all older than the field draws the
+    // table it always drew, and one run with a block puts the column on every
+    // row -- with the dash for the rows that carry none.
+    const without = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    expect(texts(one(panel(without, 'jobs'), 'projects-job-table'), 'projects-job-head')).not.toContain('mode')
+    expect(all(without, 'projects-job-mode')).toEqual([])
+    const runs = {
+      ...RUNS,
+      runs: [
+        { ...RUNS.runs[0], rigor: { mode: 'critical', from: 'default' } },
+        RUNS.runs[1],
+      ],
+    }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    const table = one(panel(tree, 'jobs'), 'projects-job-table')
+    expect(texts(table, 'projects-job-head')).toContain('mode')
+    expect(texts(table, 'projects-job-mode')).toEqual(['Critical', '-'])
+  })
+
+  it('draws the accounts panel\'s own list, its `none` and the document\'s sentence', () => {
+    const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    const accounts = panel(tree, 'accounts')
+    // A Claude account is a person: an address is drawn as the marker and never
+    // as itself.
+    expect(texts(accounts, 'projects-account')).toEqual([ADDRESS_PLACEHOLDER])
+    expect(all(accounts, 'projects-account-none')).toEqual([])
+    // A complete document with no account draws the console's own `none` -- and
+    // a sentence the document itself carries, when it carries one.
+    const empty = renderProjects(
+      factory,
+      buildProjectsModel(inputs({ accounts: { repo: null, accounts: [], complete: true, note: 'no account is stored on this project' } })),
+      'light',
+    )
+    expect(texts(empty, 'projects-account-none')).toEqual(['none'])
+    expect(texts(empty, 'projects-accounts-note')).toEqual(['no account is stored on this project'])
+    // `complete: false` is the project config that could not be selected: the
+    // document's own sentence is the **panel's reason** rather than a body line
+    // (the panel is `unavailable`), and the empty list is that sentence's fact
+    // and not a project with no accounts -- so no `none` is drawn.
+    const absent = renderProjects(
+      factory,
+      buildProjectsModel(inputs({ accounts: { repo: null, accounts: [], complete: false, note: 'the project could not be selected' } })),
+      'light',
+    )
+    expect(panel(absent, 'accounts').getAttribute('data-state')).toBe('unavailable')
+    expect(drawn(panel(absent, 'accounts'))).toContain('the project could not be selected')
+    expect(all(absent, 'projects-account-none')).toEqual([])
+  })
+
+  it('draws "all managed by fugaro" only where every entry of a document says so', () => {
+    // The sentence is a claim about every entry, so it takes the fact about
+    // every entry -- and the panel has no document at all in this build
+    // (`entry.ts` hands it `null`), which draws no body and so no sentence.
+    const managed = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    expect(texts(managed, 'projects-secrets-managed')).toEqual(['All managed by fugaro.'])
+    expect(texts(managed, 'projects-secret-bound-word')).toEqual(['bound to'])
+    const foreign = [{ ...SECRETS[0], labels: { managed_by: 'another-tool' } }]
+    const mixed = renderProjects(factory, buildProjectsModel(inputs({ secrets: foreign })), 'light')
+    expect(all(mixed, 'projects-secrets-managed')).toEqual([])
+    const none = renderProjects(factory, buildProjectsModel(inputs({ secrets: null })), 'light')
+    expect(panel(none, 'secrets').getAttribute('data-state')).toBe('unavailable')
+    expect(all(panel(none, 'secrets'), 'projects-secrets')).toEqual([])
   })
 
   it('draws no MODE column while no listed run carries a rigor block', () => {
@@ -1867,11 +2061,11 @@ describe('the shapes the CLI writes where a repository is expected (review round
     const budget = { ...BUDGET, repos: [BUDGET.repos[0], block] }
     const tree = renderProjects(factory, buildProjectsModel(inputs({ budget })), 'light')
     expect(texts(tree, 'projects-kill-repo')).toContain(slug)
-    expect(texts(tree, 'projects-enrolled-repo')).toContain(slug)
+    expect(texts(tree, 'projects-repo-both')).toEqual(['example-owner/example-repo'])
     expect(texts(tree, 'projects-only-enrolled-repo')).toContain(slug)
     // A slug-shaped value that is not a slug is still refused.
     const bad = { ...block, slug: 'Not A Slug' }
     const refused = renderProjects(factory, buildProjectsModel(inputs({ budget: { ...BUDGET, repos: [bad] } })), 'light')
-    expect(texts(refused, 'projects-enrolled-repo')).toEqual(['n/a'])
+    expect(texts(refused, 'projects-only-enrolled-repo')).toEqual(['n/a'])
   })
 })

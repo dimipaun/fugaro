@@ -101,10 +101,13 @@ func states(r *Result) map[string]State {
 func TestStageOrderMatchesDependencies(t *testing.T) {
 	names := Names()
 	// Ten stages of the installation's own plus the credentials service's
-	// owner-run apply (C1.20) and the compute backend's provisioning, which
+	// owner-run apply (C1.20), the deployed security rules generation
+	// (init_rules_stage.go), the published policy node's migration in place
+	// (init_policy_migrate.go), the checkout's own steps inside fugaro update
+	// (init_checkout_upgrade.go) and the compute backend's provisioning, which
 	// the design puts last (compute-backend §8.1 task 6).
-	if len(names) != 12 {
-		t.Fatalf("the design has twelve stages, got %v", names)
+	if len(names) != 15 {
+		t.Fatalf("the design has fifteen stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -119,7 +122,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Rules, Policy, Checkout, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -987,6 +990,48 @@ func TestAgentEnvAnEmptyEnginePlanIsDone(t *testing.T) {
 	}
 }
 
+// localStage is a stage whose writes are all on this machine (LocalUnderAgent).
+type localStage struct{ *fake }
+
+func (*localStage) LocalUnderAgent() {}
+
+// A LocalUnderAgent stage is the one thing that applies in a coding agent's
+// session: its own writes are local, so the marker does not stop them, and the
+// refusal of what reaches outside stays the stage's (an AgentError from it is
+// the same needs-you).
+func TestLocalUnderAgentStageAppliesInAnAgentSession(t *testing.T) {
+	var log []string
+	f := &localStage{fake: &fake{name: Installation, log: &log}}
+	opts := Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: &bytes.Buffer{}}
+	res, err := Run(context.Background(), []Stage{f}, opts)
+	if err != nil || res.Failed != nil {
+		t.Fatalf("err %v res %+v", err, res)
+	}
+	if count(log, "apply") != 1 || states(res)[Installation] != Changed {
+		t.Errorf("it did not apply: log %v states %v", log, states(res))
+	}
+
+	// A refusal from inside it (its cloud half) is needs-you, not a failure,
+	// and nothing else runs.
+	var log2 []string
+	g := &localStage{fake: &fake{name: Installation, log: &log2, applyErr: &AgentError{Marker: "CLAUDECODE"}}}
+	res, err = Run(context.Background(), []Stage{g}, opts)
+	if err != nil || res.Failed != nil || len(res.Left) != 1 || res.ExitCode() != 1 {
+		t.Fatalf("err %v res %+v", err, res)
+	}
+	if !strings.Contains(res.Stages[0].Detail, "coding agent") {
+		t.Errorf("the refusal's own words are missing: %+v", res.Stages[0])
+	}
+
+	// The same stage without a marker takes the ordinary path.
+	var log3 []string
+	h := &localStage{fake: &fake{name: Installation, log: &log3}}
+	res, err = Run(context.Background(), []Stage{h}, yesOpts())
+	if err != nil || count(log3, "apply") != 1 {
+		t.Fatalf("err %v log %v", err, log3)
+	}
+}
+
 func TestAgentErrorFromAStageIsNeedsYou(t *testing.T) {
 	// A refusal inside an engine (its confirmation) is the same needs-you.
 	var log []string
@@ -1093,7 +1138,7 @@ func TestPlanOnlyNeverPassesYes(t *testing.T) {
 // The run's one confirmation covers the ordinary stages and nothing that is
 // money, permanent, a secret or someone else's repository.
 func TestRunCovers(t *testing.T) {
-	want := map[string]bool{Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true}
+	want := map[string]bool{Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true}
 	for _, name := range Names() {
 		if got := RunCovers(name); got != want[name] {
 			t.Errorf("RunCovers(%s) = %v, want %v", name, got, want[name])

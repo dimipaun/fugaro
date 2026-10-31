@@ -128,6 +128,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/notice.js',
   'shared/version.js',
   'renderer/app.js',
+  'renderer/writes.js',
   'renderer/screens/projects.js',
 ])
 
@@ -234,14 +235,24 @@ interface Screen {
   readonly titles: readonly string[]
   readonly sources: readonly string[]
   readonly counts: readonly string[]
+  // The panel's state **as a word**: `read`, `not read` or `locked`, drawn
+  // beside the title so no state is carried by a frame's tone alone.
+  readonly stateWords: readonly string[]
   readonly scopes: readonly (string | null)[]
+  // The word each cap comes from, on the repository rows that carry one.
+  readonly capSources: readonly string[]
   readonly kills: readonly string[]
-  readonly notKilled: number
-  readonly enrolled: readonly string[]
-  readonly seen: readonly string[]
+  readonly killStates: readonly string[]
+  readonly killActions: readonly string[]
+  readonly killedRows: number
+  readonly repoKinds: readonly (string | null)[]
+  readonly repoNotes: readonly string[]
+  readonly both: readonly string[]
   readonly onlySeen: readonly string[]
   readonly onlyEnrolled: readonly string[]
+  readonly repoWrites: readonly string[]
   readonly jobs: number
+  readonly firstJobMoney: readonly string[]
   // The MODE column's cells, in row order: empty when no listed run carries a
   // rigor block, which is the column's own rule.
   readonly modes: readonly string[]
@@ -272,14 +283,33 @@ function screen(page: Page): Promise<Screen> {
       // The count of a panel that read a document: absent entirely on the
       // panels that did not, which is what makes a not-built panel not a zero.
       counts: texts('.projects-count'),
+      stateWords: texts('.projects-state'),
       scopes: attributes('.projects-cap', 'data-scope'),
+      capSources: texts('.projects-cap-source'),
       kills: texts('.projects-kill'),
-      notKilled: all('.projects-kill-none').length,
-      enrolled: texts('.projects-enrolled-repo'),
-      seen: texts('.projects-seen-repo'),
+      // The switch's state is a word on the row (`live` / `KILLED`), and so is
+      // the action the design puts on it -- drawn refused (`writes.ts`), which
+      // is why these are read as text rather than clicked.
+      killStates: texts('.projects-kill-state'),
+      killActions: texts('.projects-kill-action'),
+      killedRows: all('li.projects-kill-row[data-killed="true"]').length,
+      repoKinds: attributes('.projects-repo-card', 'data-kind'),
+      repoNotes: texts('.projects-repo-card-note'),
+      both: texts('.projects-repo-both'),
       onlySeen: texts('.projects-only-seen-repo'),
       onlyEnrolled: texts('.projects-only-enrolled-repo'),
+      repoWrites: texts('button.projects-repo-add'),
       jobs: all('.projects-job').length,
+      // The first row's three cost cells, in the order the table draws them:
+      // the model dollars, the compute dollars and their total, each carrying
+      // its own reading's mark.
+      firstJobMoney: (() => {
+        const row = scope.querySelector('tr.projects-job')
+        if (row === null) return []
+        return ['projects-job-model', 'projects-job-compute', 'projects-job-total'].map(
+          (one) => row.querySelector(`td.${one}`)?.textContent ?? '',
+        )
+      })(),
       modes: texts('.projects-job-mode'),
       secretNames: texts('.projects-secret-name'),
       // A screen may offer no navigation at all, and no destination attribute
@@ -548,6 +578,10 @@ test.describe('the Projects screen', () => {
     for (const source of drawn.sources) expect(source.length).toBeGreaterThan(0)
     expect(drawn.sources).toContain('fugaro budget show --json')
     expect(drawn.sources).toContain('fugaro runs ls --json')
+    // And every panel says its state in words, so the frame's tone is never the
+    // only channel: `read` on the six that read a document, the design's
+    // `locked` on the two cards this CLI cannot read at all.
+    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'read', 'locked', 'locked'])
   })
 
   test('renders the two sections with no command as not-built, and never as a zero', async () => {
@@ -579,6 +613,10 @@ test.describe('the Projects screen', () => {
     // what says where to change it.
     expect(drawn.scopes).toEqual(['global', 'defaults', 'repo', 'repo'])
     expect(drawn.text).toContain('global')
+    // A figure with no word for where it comes from is a number a reader cannot
+    // check: the repository rows carry the cap's source (`repo`, `global` or
+    // `none`), which is the vocabulary `budget show --json` binds them with.
+    expect(drawn.capSources).toEqual(['repo', 'global', 'none', 'none'])
     // A cap the document does not carry is `n/a`, never `$0.00`.
     expect(drawn.text).toContain('n/a')
     expect(drawn.text).toContain('largest single lease')
@@ -588,33 +626,42 @@ test.describe('the Projects screen', () => {
     await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
+    // The state is a word on the row and the attribute beside it, so a tone is
+    // never the only thing that carries it.
+    expect(drawn.killStates).toEqual(['live', 'live', 'KILLED'])
+    expect(drawn.killedRows).toBe(1)
     expect(drawn.kills).toHaveLength(1)
     expect(drawn.kills[0]).toContain('KILLED by')
     expect(drawn.kills[0]).toContain('spend rate')
-    // The switches that are off are drawn as "not killed" -- a measured fact --
-    // and not as a missing value, which `n/a` would say.
-    expect(drawn.notKilled).toBe(2)
+    // The switches that are off are drawn with their own word, `live` -- a
+    // measured fact -- and not as a missing value, which `n/a` would say.
+    // Each row carries the action the design puts on it, and the console does
+    // not perform it: `Kill` on a live row, `Revive` on a killed one, drawn
+    // through `disabledWrite` (`writes.ts`) with nothing behind it.
+    expect(drawn.killActions).toEqual(['Kill', 'Kill', 'Revive'])
   })
 
   test('shows the enrolled and the seen repositories, and names which is which', async () => {
     await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
-    // Enrolled is the cap document's set and seen is the run list's: they
-    // overlap in one repository and differ in one each, so a screen that drew
-    // one list twice would fail here.
-    expect(drawn.enrolled).toEqual(['example-owner/example-repo', 'example-owner/other-repo'])
-    expect(drawn.seen).toEqual(['example-owner/example-repo', 'example-owner/unenrolled-repo'])
-    expect(drawn.enrolled).not.toEqual(drawn.seen)
-    // The repository with a run and no cap row is the case worth a line of its
-    // own: it is running with no cap above it. And the cap row with no run yet
-    // is named as that, not as a repository that was seen.
-    expect(drawn.onlySeen).toEqual(['example-owner/unenrolled-repo'])
+    // Enrolled is the cap document's set and seen is the run list's. They
+    // overlap in one repository and differ in one each, and the three cards are
+    // exactly that crossing -- so a screen that drew one set twice, or that
+    // dropped a difference, fails here.
+    expect(drawn.repoKinds).toEqual(['both', 'enrolled', 'seen'])
+    expect(drawn.both).toEqual(['example-owner/example-repo'])
     expect(drawn.onlyEnrolled).toEqual(['example-owner/other-repo'])
-    expect(drawn.text).toContain('running with no cap row:')
-    expect(drawn.text).toContain('a cap row and no run yet:')
-    expect(drawn.text).toContain('enrolled (a cap row exists)')
-    expect(drawn.text).toContain('seen (a run has been recorded)')
+    expect(drawn.onlySeen).toEqual(['example-owner/unenrolled-repo'])
+    // Each card says which case it is, in words: the title names the set and the
+    // note says what the document's shape means for it.
+    expect(drawn.text).toContain('enrolled and seen')
+    expect(drawn.text).toContain('enrolled, no run yet')
+    expect(drawn.text).toContain('seen, not enrolled')
+    expect(drawn.repoNotes).toEqual(['Cap row, no run yet.', 'Running with no cap row.'])
+    // The repository running with no cap row above it is the case worth an
+    // action, and the console draws it refused like every other write.
+    expect(drawn.repoWrites).toEqual(['Add cap'])
   })
 
   test('shows the project jobs, with the three cost accounts apart', async () => {
@@ -623,7 +670,9 @@ test.describe('the Projects screen', () => {
 
     expect(drawn.jobs).toBe(2)
     // A subscription's model dollars are notional, and the job's model, compute
-    // and total are never added into one figure.
+    // and total are never added into one figure: the three accounts are three
+    // cells, and each carries the mark its own reading has.
+    expect(drawn.firstJobMoney).toEqual(['$1.25', 'est. $0.50', '$1.75'])
     expect(drawn.text).toContain('~$')
     expect(drawn.text).toContain('$1.75')
   })
@@ -652,6 +701,9 @@ test.describe('the Projects screen', () => {
 
     expect(drawn.secretNames).toEqual(['fugaro-github-token', 'fugaro-slack-webhook'])
     expect(drawn.text).toContain('managed_by')
+    // The panel says the one thing it can vouch for -- every entry in this
+    // document is fugaro's -- in a sentence of its own.
+    expect(drawn.text).toContain('All managed by fugaro.')
     // The document's own shape is drawn on the panel: an operator who sees an
     // empty inventory should know why the console reads it.
     expect(drawn.text).toContain('bare JSON array')
@@ -757,11 +809,15 @@ test.describe('the Projects screen', () => {
       const scope: ParentNode = document.getElementById('projects-mount') ?? document.createDocumentFragment()
       const all = (selector: string): HTMLElement[] =>
         Array.from(scope.querySelectorAll<HTMLElement>(selector))
-      const row = scope.querySelector('li.projects-job') ?? scope.querySelector('li.projects-cap')
+      const row = scope.querySelector('tr.projects-job') ?? scope.querySelector('tr.projects-cap')
       const computed = row === null ? null : getComputedStyle(row)
       const number = scope.querySelector('.projects-number')
       return {
         states: all('.projects-panel').map((panel) => panel.getAttribute('data-state')),
+        // The state words the panels draw beside their titles: the tone a panel
+        // is painted in is not what says which state it is.
+        words: all('.projects-state').map((one) => one.textContent ?? ''),
+        killWords: all('.projects-kill-state').map((one) => one.textContent ?? ''),
         because: all('.projects-because').map((one) => one.textContent ?? ''),
         rowVisibility: computed?.visibility ?? null,
         rowWidth: computed?.borderBottomWidth ?? null,
@@ -773,6 +829,9 @@ test.describe('the Projects screen', () => {
     // The state is in the DOM twice over: as the attribute a reader's tools read, and
     // as the sentence a reader reads.
     expect(forced.states).toContain('not-built')
+    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'read', 'locked', 'locked'])
+    // The switches' state words survive too, `KILLED` among them.
+    expect(forced.killWords).toEqual(['live', 'live', 'KILLED'])
     expect(forced.because.join(' '), 'a panel with no document lost its reason').toContain(
       'not readable with this CLI',
     )

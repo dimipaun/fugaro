@@ -3,7 +3,7 @@
 
 # What fugaro upgrade prints
 
-Each checkout starts with a line `== ` and its directory, then one line per step: the step (`pin:`, `plugin:` or `cloud:`), its state and a reason. A `summary:` closes the run with one line per checkout. A `checkout:` line means the path itself was refused (not a checkout, not a Fugaro checkout) or was the same checkout as an earlier path.
+Each checkout starts with a line `== ` and its directory, then one line per step: the step (`pin:`, `plugin:`, `cloud:` or `policy:`), its state and a reason. A `summary:` closes the run with one line per checkout. A `checkout:` line means the path itself was refused (not a checkout, not a Fugaro checkout) or was the same checkout as an earlier path.
 
 ## States
 
@@ -46,3 +46,15 @@ Each checkout starts with a line `== ` and its directory, then one line per step
 - `on this release's base image` (`done`) or `no base image to copy and no image to rebuild` (`current`): only when the user ran it in their own terminal.
 - `stopped at step N` (`failed`): the refresh stopped; its reason names the steps that finished and the rerun line.
 - a `note:` on the deployed job's whole copy of the local project config (multi-model `providers`, `model_prices`, budget settings, the region's custom compute price, the GitHub App ID): printed after a real cloud step, alongside any of the states above, whenever the copy no longer matches the local config, whatever the local config currently holds (removing every provider locally still leaves the job's old copy to find); names the fields and the one command that refreshes it, for the user to run themselves (SKILL.md step 4). Under `--check` it instead always says `--check` cannot tell, because `--check` makes no cloud call.
+
+## policy
+
+- `the published policy is version Y` (`current`): the project's published policy node is already the version this `fugaro` writes. Asked nothing.
+- `no policy is published at ...` (`current`): the project has a budget backend and no node in it; every run falls back to the ceiling its job's environment carries. Not the same line as the one above, and not something to go looking for.
+- a reason naming the version the node carries and the one this `fugaro` writes (`done` without `--check`): the node is rewritten in place, after the diff printed above `== ` for the checkout and the project's name typed (or `--yes`). Nothing is deleted, and the fields the owner edited into the node by hand are kept.
+- `--local` (`skipped`): the reason is the flag alone, because this mode runs the pin and plugin steps only and never reads the node; the upgrade command without `--local` is what migrates it (SKILL.md step 4).
+- `a coding agent's session` (`skipped`): always, in this session; the user runs the upgrade in their own terminal window.
+- `--check` (`skipped`, with a `note:`): `--check` makes no cloud call, so it cannot tell whether the node is current; the upgrade without `--check` migrates it.
+- `no local project config selects this checkout`, `not onboarded` (`skipped`): the same verdicts the cloud step's own line gives, and nothing here is the machine's to migrate.
+- `names no Firebase budget backend` (`skipped`): the node lives in that database, so there is none to read.
+- a refusal (`failed`): the node is one this `fugaro` must not rewrite — written by a newer `fugaro` (the reason names the versions and the upgrade), a version below the migration chain's first step (the reason names the removal and republish that are the way through), or carrying keys this `fugaro` does not know (the reason names their count, never their values). Nothing was written; the node is as it was.

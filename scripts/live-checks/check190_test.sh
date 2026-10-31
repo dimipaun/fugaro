@@ -521,6 +521,17 @@ elif sub == "push":
         sys.stderr.write("error: failed to push some refs to 'https://fugaro-chk190-fake.a.run.app/workspace-a/repo-a.git'\n")
         sys.exit(128)
     elif n == 3:
+        # The slow push: the GET of info/refs is answered through the proxy's
+        # own route for it, and the receive-pack that follows is what the front
+        # end holds and then ends — a 504 with no X-Chk190-Upstream, which is
+        # the only place the check can read who ended the request (git reports
+        # every failure of this kind in its own words).
+        get_exchange = ("GET /chk190-slow/workspace-a/repo-a.git/info/refs?service=git-receive-pack HTTP/1.1",
+                        ["HTTP/1.1 200 OK", "X-Chk190-Upstream: 200"])
+        post_exchange = ("POST /chk190-slow/workspace-a/repo-a.git/git-receive-pack HTTP/1.1",
+                         ["HTTP/1.1 200 OK", "X-Chk190-Upstream: 200"] if mode == "slow-completes"
+                         else ["HTTP/1.1 504 Gateway Timeout", "Server: Google Frontend"])
+        trace(get_exchange, post_exchange)
         if mode == "slow-completes":
             sys.exit(0)
         sys.stderr.write("error: RPC failed; HTTP 504 curl 22 The requested URL returned error: 504\n")
@@ -710,6 +721,11 @@ test_dry_run() {
   expect_contains "$out" "FACT token-file: PASS" "dry run: the token file"
   expect_contains "$out" "FACT dry-run: PASS" "dry run: the marker fact"
   expect_contains "$out" "FACT restore: PASS — nothing of this check's was created" "dry run: nothing to delete"
+  # The slow route, as the plan prints it: the proxy's own stall prefix on the
+  # service, and the path the proxy strips it off to — the route the timeout row
+  # is measured through, and the one the live run of 2026-10-30 got wrong.
+  expect_contains "$err" "the slow push itself: POST https://<service host>/chk190-slow/workspace-a/repo-a.git/git-receive-pack" "dry run: the slow request goes through the proxy's own prefix"
+  expect_contains "$err" "then forwarded to https://bitbucket.org/workspace-a/repo-a.git/git-receive-pack" "dry run: the path the proxy forwards the slow request with"
   expect_contains "$out" "CHECK 190 RESULT END (exit 0)" "dry run: the end line"
 
   # Nothing was created, built, deployed or deleted: only reads were made.
@@ -908,6 +924,77 @@ test_a_slow_push_that_completes_is_a_failure() {
   expect_status "$status" 1 "slow push completed: the verdict"
   expect_contains "$out" "FACT timeout-3600: FAIL" "slow push completed: the row"
   expect_contains "$out" "did not end the request" "slow push completed: the reason"
+}
+
+# The slow push is the row the whole check exists for — what Cloud Run's front
+# end does with a request held past its 3600 s timeout — and it goes through the
+# prefix the proxy is DEPLOYED with. The route the check pushes through and the
+# path the proxy strips off it before it forwards are asserted against each
+# other here, because the live run of 2026-10-30 got neither: a path that loses
+# its separator with the prefix is not a URL at all, so the proxy answered 502
+# after 0 s and the hold was never measured while the row read as a figure.
+test_the_slow_push_goes_through_the_deployed_stall_route() {
+  local dir=$work/slowroute
+  prepare "$dir"
+  run190 "$dir"
+  expect_status "$status" 0 "slow route: the verdict (a test cannot reach the front end's 3600 s limit)"
+
+  # The prefix the check pushes through is the one the deploy line gives the
+  # proxy, on the service's own host, over the repository every other step uses.
+  expect_contains "$(grep 'run deploy' "$dir/logs/gcloud.calls")" "CHK190_STALL_PREFIX=/chk190-slow/" "slow route: the prefix the proxy is deployed with"
+  local slow host
+  slow=$(grep -o 'https://[^ ]*chk190-slow/[^ ]*' "$dir/logs/git.calls" | head -n 1)
+  host=$(grep -o 'https://[^/]*/' "$dir/logs/git.calls" | head -n 1)
+  expect_contains "$slow" "${host}chk190-slow/workspace-a/repo-a.git" "slow route: the push goes through the prefix the proxy was deployed with"
+
+  # The path the proxy forwards the slow request with: the prefix off, the
+  # repository's own path on. The check states it, so the block shows which path
+  # Bitbucket is asked for.
+  expect_contains "$err" "so Bitbucket sees https://bitbucket.org/workspace-a/repo-a.git" "slow route: the upstream path the slow route maps to"
+
+  # And the row: this run's request was ended before any hold, so there is no
+  # figure — the row has to say that, rather than read as a measurement of 0 s.
+  expect_contains "$out" "FACT timeout-3600: INFO" "slow route: the row"
+  expect_contains "$out" "not measured:" "slow route: the row says the hold was not measured"
+  expect_contains "$out" "came from the front end or the proxy itself" "slow route: the row names what ended the request"
+}
+
+# The Restore deletes the branch this run pushed with the remote the pushes
+# used, and it runs the delete from the clone: `git push` needs a repository to
+# run in, and the scratch directory is deliberately not one. Run from it the
+# delete dies with "fatal: not a git repository", which the Restore swallowed
+# while the branch stayed on the sandbox repository.
+test_the_branch_delete_runs_the_way_the_push_did() {
+  local dir=$work/branchdel
+  prepare "$dir"
+  run190 "$dir"
+  expect_status "$status" 0 "branch delete: the verdict"
+  local name del
+  name=${scratch##*.}
+  [ -n "$name" ] || fail "branch delete: the script did not say where its scratch directory is"
+  del=$(grep ' push .*--delete ' "$dir/logs/git.calls" | head -n 1)
+  if [ -z "$del" ]; then
+    fail "branch delete: the Restore attempted no delete at all"
+    return 0
+  fi
+  expect_contains "$del" "git -C $scratch/full -c credential.helper= push" "branch delete: the delete runs in the clone, not in the scratch directory"
+  expect_contains "$del" "https://fugaro-chk190-fake.a.run.app/workspace-a/repo-a.git --delete chk190/${name} chk190/${name}-slow" "branch delete: the remote the pushes used and the two branches they made"
+  expect_contains "$out" "FACT branch-deleted: PASS" "branch delete: the row"
+}
+
+# A listing the Restore cannot read used to skip the delete altogether, so a
+# branch this run pushed stayed on the sandbox repository. The delete is
+# attempted whether or not the listing was read: the two names are this run's
+# own, and deleting one that is not there is harmless. What the row claims is
+# unchanged — a listing that fails is still not the answer "the branch is gone".
+test_the_branch_delete_is_attempted_even_when_the_listing_fails() {
+  local dir=$work/lsfaildelete
+  prepare "$dir"
+  run190 "$dir" FAKE_GIT_MODE=ls-remote-fails
+  expect_status "$status" 1 "failed listing: the verdict"
+  expect_contains "$(cat "$dir/logs/git.calls")" "push --quiet https://fugaro-chk190-fake.a.run.app/workspace-a/repo-a.git --delete chk190/" "failed listing: the delete was attempted anyway"
+  expect_contains "$out" "FACT branch-deleted: FAIL" "failed listing: the row claims nothing"
+  expect_absent "$out" "no branch named chk190/" "failed listing: the block does not claim the branch is gone"
 }
 
 # A large push the front end refuses is the gate this whole check exists for,
@@ -1193,6 +1280,9 @@ t test_every_advertised_knob_is_read
 t test_happy_path
 t test_a_public_iam_policy_stops_before_any_request
 t test_a_slow_push_that_completes_is_a_failure
+t test_the_slow_push_goes_through_the_deployed_stall_route
+t test_the_branch_delete_runs_the_way_the_push_did
+t test_the_branch_delete_is_attempted_even_when_the_listing_fails
 t test_a_refused_large_push_is_recorded_with_the_front_ends_answer
 t test_a_branch_listing_that_fails_is_not_the_branch_is_gone
 t test_a_service_that_answers_unauthenticated_calls_stops_the_run

@@ -27,6 +27,24 @@ func TestRoundCeilingIsTheModesTable(t *testing.T) {
 	}
 }
 
+// TestAdversarialCeilingNeverRaises: the adversarial pass may not spend more
+// rounds than the review does, at any mode (D726, L2.2). While O3 is open that
+// means the same floor of two everywhere; the second loop is the part that
+// outlives the answer, since it is the property the first one's constant
+// stands for.
+func TestAdversarialCeilingNeverRaises(t *testing.T) {
+	for _, m := range Modes {
+		if got := AdversarialCeiling(m); got > minRoundCeiling {
+			t.Errorf("AdversarialCeiling(%s) = %d; want at most minRoundCeiling %d while O3 is open", m, got, minRoundCeiling)
+		}
+	}
+	for _, m := range append(Modes, Mode(""), Mode("poc ")) {
+		if got, ceiling := AdversarialCeiling(m), RoundCeiling(m); got > ceiling {
+			t.Errorf("AdversarialCeiling(%q) = %d; want at most the review's ceiling %d", m, got, ceiling)
+		}
+	}
+}
+
 // TestRoundCeilingHasARowForEveryMode: every mode of the vocabulary has its own
 // row, so a mode added to Modes without one fails here rather than silently
 // taking the widest ceiling RoundCeiling gives a mode it cannot place.
