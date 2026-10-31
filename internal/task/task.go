@@ -328,6 +328,28 @@ type Spec struct {
 	// shape (AuthorProblem): a launcher may write any address here, and git
 	// will write it into history.
 	Author *Person `json:"author,omitempty"`
+	// ReviewLevels is what the launch asks each review level to do
+	// (docs/review-levels-ab-jobmax, D724): which model runs it, at which
+	// effort, whether it runs at all, and what it is asked to focus on. Nil
+	// for every launch that asks nothing, which is every launch until the
+	// flag that writes it lands (L1.2), so a spec without the block is
+	// byte-identical to what the release before this field wrote.
+	//
+	// The block is written by the launcher and read here, so it is held to
+	// config.ReviewLevels.Validate's rules, applied by Validate below: an
+	// effort outside config.Efforts — the only refusal there is, since
+	// Claude Code warns and falls back to its default for the flag and
+	// drops the environment variable and the settings key in silence — a
+	// focus over its bound or carrying a control, bidi or other invisible
+	// character, and `none: true` beside another key. The decode above is
+	// strict about it too: DisallowUnknownFields reaches every nested
+	// object, so an unknown key inside a level refuses the whole spec.
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates
+	// a launch that would set it (reviewLevelsSince, L1.2) rather than let
+	// the run fail at bootstrap after the task was written.
+	ReviewLevels *config.ReviewLevels `json:"review_levels,omitempty"`
 }
 
 // MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
@@ -1165,6 +1187,19 @@ func (s *Spec) Validate() error {
 			bad("task spec: digest_runs needs a recipe whose first step is digest")
 		case s.Recipe.Source != string(recipe.SourceRepo) && !RecipeUsesDigest(s.Recipe.YAML):
 			bad("task spec: digest_runs needs a recipe whose first step is digest, and recipe %s is not one", s.Recipe.Name)
+		}
+	}
+	// The level block's own rules, through the ONE set of them
+	// (config.ReviewLevels.Validate), because the same block is a
+	// configuration layer's agent.levels and both readers have to refuse the
+	// same documents. The launcher applies them before it writes anything,
+	// and this is the runner's own check: a hand-written task.json that
+	// names an unknown effort reaches no stage, since the effort is written
+	// into the agent's environment (L4.3) and Claude Code would take a value
+	// it does not know without a word.
+	if s.ReviewLevels != nil {
+		if err := s.ReviewLevels.Validate(); err != nil {
+			bad("task spec: review_levels: %v", err)
 		}
 	}
 	return errors.Join(errs...)
