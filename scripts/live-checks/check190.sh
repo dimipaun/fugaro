@@ -120,6 +120,16 @@ CURL_SECONDS=${CHECK190_CURL_SECONDS:-300}
 IDLE_SECONDS=${CHECK190_IDLE_SECONDS:-2100}
 SLOW_SECONDS=${CHECK190_SLOW_SECONDS:-3660}
 BIG_MIB=${CHECK190_BIG_MIB:-33}
+# The slow route, in ONE place: the prefix the proxy is deployed with (it strips
+# it off every request that carries it and holds that request open, see the
+# proxy in check190/), and the upstream the proxy forwards to when nothing sets
+# CHK190_UPSTREAM. The check builds the URL it pushes the slow branch through out
+# of the prefix, so the route it asks through and the route the proxy answers on
+# cannot drift apart — a prefix that reaches Bitbucket instead of being stripped
+# is a repository that is not there, and a prefix stripped together with the
+# separator after it is not a URL at all.
+STALL_PREFIX=/chk190-slow/
+UPSTREAM=https://bitbucket.org
 GRANT_SECONDS=${CHECK190_GRANT_SECONDS:-60}
 BUILD_WAIT_SECONDS=${CHECK190_BUILD_WAIT_SECONDS:-1800}
 # How long a failed git row waits for the proxy's own log lines to reach Cloud
@@ -140,7 +150,7 @@ DEPLOY_FLAGS=(
   --no-allow-unauthenticated
   --timeout=3600 --min-instances=0 --max-instances=1
   --set-secrets="/chk190/token=${SECRET}:latest"
-  --set-env-vars="CHK190_TOKEN_FILE=/chk190/token,CHK190_STALL_SECONDS=${SLOW_SECONDS},CHK190_STALL_PREFIX=/chk190-slow/"
+  --set-env-vars="CHK190_TOKEN_FILE=/chk190/token,CHK190_STALL_SECONDS=${SLOW_SECONDS},CHK190_STALL_PREFIX=${STALL_PREFIX}"
 )
 
 # stop REASON: records a FAILed fact, ends the run. The EXIT trap prints the
@@ -384,23 +394,28 @@ restore_run() {
     # delete. Both listings are read with a freshly minted token, and a listing
     # that cannot be read is NOT the answer "the branch is not there" — see
     # branch_refs for why that is the ordinary case here rather than a corner.
-    local refs rc=0
+    #
+    # The delete runs whatever the first listing said, and it runs IN THE CLONE:
+    # `git push` needs a repository to run in and the scratch directory is
+    # deliberately not one, so a delete run from it dies with "fatal: not a git
+    # repository". That is silent here (a failed delete must not end the
+    # Restore) and it left the branch this run pushed on the sandbox repository
+    # while the block read as cleaned up. Both names are this run's own, and
+    # deleting one that is not there is harmless.
+    local refs rc=0 listed
     refs=$(branch_refs) || rc=$?
-    if [ "$rc" != 0 ]; then
-      fact "branch-deleted" FAIL "whether this run's branches (chk190/${NAME}, chk190/${NAME}-slow) are on $(repo_name) cannot be read: 'git ls-remote' failed even with a freshly minted identity token ($(git_error_excerpt ls-remote)). A failed listing is not the answer 'there is no branch', so this run does not claim either was deleted — read it yourself (git ls-remote <remote> 'refs/heads/chk190/*') and delete what is there (git push <remote> --delete <branch>)"
+    listed=$rc
+    run_git "$SCRATCH/full" push --quiet "$(git_url)" --delete "chk190/${NAME}" "chk190/${NAME}-slow" >/dev/null 2>&1 || true
+    rc=0
+    refs=$(branch_refs) || rc=$?
+    if [ "$listed" != 0 ]; then
+      fact "branch-deleted" FAIL "whether this run's branches (chk190/${NAME}, chk190/${NAME}-slow) are on $(repo_name) cannot be read: 'git ls-remote' failed even with a freshly minted identity token ($(git_error_excerpt ls-remote)). A failed listing is not the answer 'there is no branch', so this run does not claim either was deleted — read it yourself (git ls-remote <remote> 'refs/heads/chk190/*') and delete what is there (git push <remote> --delete <branch>). The delete of both names was attempted from the clone all the same"
+    elif [ "$rc" != 0 ]; then
+      fact "branch-deleted" FAIL "the delete of this run's branches (chk190/${NAME}, chk190/${NAME}-slow) was attempted on $(repo_name), and whether they are gone cannot be read: the listing that followed failed ($(git_error_excerpt ls-remote)). Nothing is claimed about them — read it yourself (git ls-remote <remote> 'refs/heads/chk190/*') and delete what is still there"
+    elif [ -n "$refs" ]; then
+      fact "branch-deleted" FAIL "a branch this run pushed is still on $(repo_name): $(printf '%s' "$refs" | awk '{print $2}' | tr '\n' ' ')— delete it by hand (git push <remote> --delete <branch>)"
     else
-      if [ -n "$refs" ]; then
-        run_git "$SCRATCH" push --quiet "$(git_url)" --delete "chk190/${NAME}" "chk190/${NAME}-slow" >/dev/null 2>&1 || true
-        rc=0
-        refs=$(branch_refs) || rc=$?
-      fi
-      if [ "$rc" != 0 ]; then
-        fact "branch-deleted" FAIL "the delete of this run's branches (chk190/${NAME}, chk190/${NAME}-slow) was attempted on $(repo_name), and whether they are gone cannot be read: the listing that followed failed ($(git_error_excerpt ls-remote)). Nothing is claimed about them — read it yourself (git ls-remote <remote> 'refs/heads/chk190/*') and delete what is still there"
-      elif [ -n "$refs" ]; then
-        fact "branch-deleted" FAIL "a branch this run pushed is still on $(repo_name): $(printf '%s' "$refs" | awk '{print $2}' | tr '\n' ' ')— delete it by hand (git push <remote> --delete <branch>)"
-      else
-        fact "branch-deleted" PASS "no branch named chk190/${NAME} or chk190/${NAME}-slow is on $(repo_name) any more"
-      fi
+      fact "branch-deleted" PASS "no branch named chk190/${NAME} or chk190/${NAME}-slow is on $(repo_name) any more"
     fi
   else
     fact "branch-deleted" PASS "no branch was pushed: the run stopped before its first push, so there is none to delete"
@@ -598,6 +613,19 @@ guard_deploy_is_iam_only() {
   stop "the deploy line does not carry --no-allow-unauthenticated (DEPLOY_FLAGS is: $(printf '%s ' "${DEPLOY_FLAGS[@]}")), so the throwaway service would answer anyone who found its URL, with the sandbox repository's own token behind it. This check refuses before anything is created: add the flag back to DEPLOY_FLAGS and run again. Nothing was created"
 }
 
+# The slow route is one prefix in two places — the environment variable the
+# proxy is deployed with and the URL the slow push is sent to — and the proxy
+# strips it off the path it forwards. A prefix that does not start and end with
+# "/" is stripped together with the separator beside it, and what is left is not
+# a path: the live run of 2026-10-30 had the slow endpoint answered with a 502
+# after 0 s and no hold measured at all.
+guard_slow_route() {
+  case "$STALL_PREFIX" in
+  /*/) ;;
+  *) stop "the slow route's prefix (${STALL_PREFIX}) does not start and end with '/'. The proxy strips it off every request that carries it before it forwards, so a prefix without both separators takes one of them with it and Bitbucket is asked for a path that is not there — the slow push would then measure nothing. It is a constant in this script (STALL_PREFIX); fix it there and run again. Nothing was created" ;;
+  esac
+}
+
 # guard_proxy_source: the proxy this check deploys is the main.go committed
 # beside it, and nothing else. A missing file is a stop before anything exists.
 guard_proxy_source() {
@@ -727,6 +755,12 @@ run_git() {
 repo_name() { printf '%s' "$REPO"; }
 branch_name() { printf 'chk190/%s' "$NAME"; }
 git_url() { printf 'https://%s/%s.git' "$HOST" "$REPO"; }
+# slow_push_url: the slow push's own route — the same repository, on the same
+# host, through the proxy's stall prefix. slow_upstream_url: the URL the proxy
+# forwards that request with once it has stripped the prefix, which is the same
+# repository on the upstream the proxy's own default names.
+slow_push_url() { printf 'https://%s%s%s.git' "$HOST" "$STALL_PREFIX" "$REPO"; }
+slow_upstream_url() { printf '%s/%s.git' "$UPSTREAM" "$REPO"; }
 
 # branch_refs: this run's branches on the sandbox repository, one line per ref,
 # read with a FRESHLY minted identity token. Both halves matter in the Restore:
@@ -1224,12 +1258,14 @@ step_slow_push() {
   # Through the proxy's own stall prefix: the proxy holds the receive-pack POST
   # open for CHECK190_SLOW_SECONDS before it reads it, which is what makes this
   # a slow push rather than a large one. The GET of info/refs is not stalled, so
-  # the request that hangs is the push itself.
-  url="https://${HOST}/chk190-slow/${REPO}.git"
+  # the request that hangs is the push itself. The URL is built out of the one
+  # STALL_PREFIX the deploy line gives the proxy, so the route this asks through
+  # and the route the proxy answers on are the same string.
+  url=$(slow_push_url)
   printf 'check 190: a push the front end has to time out\n' >"$dir/chk190-slow.txt"
   run_git "$dir" add chk190-slow.txt || stop "the slow file could not be staged"
   run_git "$dir" commit --quiet -m "check 190: a slow push" || stop "the slow commit could not be made"
-  say "slow push: the proxy holds this one receive-pack open for ${SLOW_SECONDS} s, and the front end's own limit is 3600 s"
+  say "slow push: ${url}, where the proxy holds this one receive-pack open for ${SLOW_SECONDS} s (the front end's own limit is 3600 s) and strips ${STALL_PREFIX} before it forwards, so Bitbucket sees $(slow_upstream_url)"
   t0=$(date +%s)
   # http.lowSpeedTime is this side's own cap, set beyond the stall so the front
   # end's answer is what ends the request when the front end cuts it: without it
@@ -1237,17 +1273,26 @@ step_slow_push() {
   run_git_traced push-slow "$dir" -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$((SLOW_SECONDS + 120))" \
     push --quiet "$url" "HEAD:refs/heads/$(branch_name)-slow" 2>"$SCRATCH/push-slow.err" || rc=$?
   t1=$(date +%s)
-  local took=$((t1 - t0)) answer
+  local took=$((t1 - t0)) answer reading
   # The status and who sent it are the row's point: a 504 from the front end
   # (no X-Chk190-Upstream) is the limit, a 401 is a refusal that only looks
   # like one.
-  answer="$(git_error_excerpt push-slow); HTTP: $(http_excerpt push-slow); $(http_reading push-slow)"
+  answer="$(git_error_excerpt push-slow); HTTP: $(http_excerpt push-slow)"
+  reading=$(http_reading push-slow)
   if [ "$rc" = 0 ]; then
     fact "timeout-3600" FAIL "a receive-pack held open for ${SLOW_SECONDS} s COMPLETED in ${took} s, so the front end did not end the request: the 3600 s timeout the proxy's design assumes is not enforced on this path"
   elif [ "$took" -ge 3400 ] && [ "$took" -le 3720 ]; then
-    fact "timeout-3600" PASS "a receive-pack held open by the proxy was ended by the front end after ${took} s (the service's own --timeout is 3600); git exited ${rc} and said: ${answer}"
+    fact "timeout-3600" PASS "the hold was measured: a receive-pack held open by the proxy was ended by the front end after ${took} s (the service's own --timeout is 3600); git exited ${rc} and said: ${answer}"
+  elif [ "$took" -lt 3400 ]; then
+    # The row exists to measure the front end's 3600 s limit. A request that
+    # came back this early was not held at all, so this run has NO figure for
+    # it: 0 s is not a measurement of a hold, and a row that read as one would
+    # let a broken slow route come back looking like an answer. The live run of
+    # 2026-10-30 did exactly that — the proxy answered 502 after 0 s, which is
+    # what a path that loses its separator with the prefix looks like.
+    fact "timeout-3600" INFO "not measured: no hold happened, so this run says nothing about the 3600 s front-end limit — the request was answered after ${took} s. What answered it: ${reading}. git exited ${rc} and said: ${answer}. Read the route before the figure: this check sends the slow push to ${url} and the proxy strips ${STALL_PREFIX} before it forwards, so an answer that names the proxy itself, or a status with no X-Chk190-Upstream and no repository path in git's own trace, means the slow request never reached Bitbucket"
   else
-    fact "timeout-3600" INFO "a receive-pack held open by the proxy ended after ${took} s, which is not the 3600 s front-end limit (3400–3720 s counts as it); git exited ${rc} and said: ${answer}. This side's own cap is $((SLOW_SECONDS + 120)) s, so a figure at that cap means the front end did not cut the request"
+    fact "timeout-3600" INFO "the hold was measured at ${took} s, past the front end's 3600 s limit (3400–3720 s counts as the limit): this side's own cap is $((SLOW_SECONDS + 120)) s, so a figure at that cap means the front end did not cut the request. git exited ${rc} and said: ${answer}"
   fi
 }
 
@@ -1268,6 +1313,7 @@ print_plan() {
   say "  [network, a failed deploy only] gcloud run services describe ${SVC}, gcloud run revisions describe <its latest revision> and gcloud logging read of that revision's lines (reads, for the deploy row)"
   say "  [network, a failed git step only] gcloud logging read of ${SVC}'s own chk190 lines, after a ${LOG_WAIT_SECONDS} s wait for them to arrive (a read, for that step's row; best effort)"
   say "  [network] the probes: identity-token requests with curl to the service's own /chk190/stats and /chk190/health, and git clone (full and blobless), git push (small and above ${BIG_MIB} MiB on HTTP/1.1) and the slow push, all through the proxy to bitbucket.org"
+  say "  [network] the slow push itself: POST https://<service host>${STALL_PREFIX}$(repo_name).git/git-receive-pack, held open by the proxy for ${SLOW_SECONDS} s and then forwarded to $(slow_upstream_url)/git-receive-pack (the GET of info/refs on the same route is not held, so the request the front end times out is the push)"
   say "  [network, writes] one branch on $(repo_name): chk190/${NAME}, and its -slow sibling if that push ever completes"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, deletes] git push --delete the branches chk190/${NAME} and chk190/${NAME}-slow"
@@ -1288,6 +1334,7 @@ main() {
   guard_project
   guard_inputs
   guard_deploy_is_iam_only
+  guard_slow_route
   guard_proxy_source
   guard_resources
 
