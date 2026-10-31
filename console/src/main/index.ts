@@ -892,7 +892,8 @@ let crashReporting: CrashReportingHandle | null = null
 async function main(): Promise<void> {
   // **The crash reporter comes up before anything it could report on.** It is
   // dormant: `optedIn` is `null` -- nothing has read the installation's switch
-  // yet, and reading it is the switch slice's (T2.2) -- and
+  // yet, and reading it is T2.1's own last part, which decodes
+  // `settings.crash_reports` from T1.3's `project show --json` -- and
   // `crashReportingDecision` makes that third state off, so this call starts
   // nothing today and will start reporting the day the switch can say yes *and*
   // the build was given a DSN. It is here rather than beside the window because

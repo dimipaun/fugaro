@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The crash reporter's wiring: @sentry/electron 8.2.0 behind the gate and the
-// scrubber in `./crash` (desktop-console plan Task 2.1, the SDK slice; D733,
-// D734; design sections 7.3 and 7.4). This is the **only** file in the console
+// scrubber in `./crash` (desktop-console plan Task 2.1, the SDK slice; the
+// owner's rulings D733 and D734 of 2026-10-30, which design section 7.4 does
+// not describe yet -- it still carries the promise they supersede, and Task 2.2
+// amends it). This is the **only** file in the console
 // that imports the SDK, and the only entry of it that is imported is `main`.
 //
 // **What the process sends, and what it never does.** The owner's ruling of
@@ -27,8 +29,14 @@
 //     "nothing is written" means for the console's own rule 10.
 //
 // `beforeSend` is the scrubber, and it is the whole of the payload rule: what
-// leaves this process is the event `scrubCrashEvent` returns, which is the
-// exception's type and its frames and nothing else.
+// leaves this process is exactly the event `scrubCrashEvent` returns, which is
+// two things and no more. The **report** is the exception's type and its frames
+// -- function, file, line, column, `in_app`. The **metadata** beside it is what
+// `ScrubbedCrashEvent` declares: `event_id`, `timestamp`, `platform`, `level`
+// and `release`. A reader checking the payload rule should read that interface
+// rather than this paragraph, and it is the complete list: nothing else on the
+// SDK's event survives the scrubber, and no breadcrumb, user, request, context or
+// extra is among them.
 //
 // **The DSN is the build's, never the repository's.** No agent and no commit
 // holds one: `npm run build`'s last step (`tools/crash-dsn/`, where the release
@@ -146,9 +154,8 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * The options are `CRASH_CLIENT_OPTIONS` corrected against 8.2.0, plus the four
  * this file owns: the DSN, `NO_IPC`, the non-offline transport, and `beforeSend`.
  * `scrubCrashEvent` is handed the event the SDK built and returns the event that
- * goes on the wire. The SDK's `ErrorEvent` differs from the type `./crash`
- * declares by one always-undefined marker, so the wiring restates that rather
- * than casting between the two. */
+ * goes on the wire, through `toSdkEvent` above -- the one assertion in this
+ * wiring, and the one place a reader auditing the hand-off should look. */
 export function startCrashReporting(input: CrashReportingInput): CrashReportingHandle {
   const dsn = input.dsn ?? crashDsnFromBuild(input.appRoot)
   const decision = crashReportingDecision({ dsn, optedIn: input.optedIn })

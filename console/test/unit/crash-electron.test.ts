@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The crash reporter's wiring, held to its four promises (desktop-console plan
-// Task 2.1, the SDK slice; D733, D734; design section 7.4).
+// Task 2.1, the SDK slice; the owner's rulings D733 and D734 of 2026-10-30,
+// which design section 7.4 does not describe yet and Task 2.2 amends).
 //
 // The module under test is the console's only importer of `@sentry/electron`,
 // and the SDK it imports is replaced here by a fake that models the one part of

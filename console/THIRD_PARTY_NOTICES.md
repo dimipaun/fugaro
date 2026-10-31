@@ -13,8 +13,8 @@ reporter's and its tree's.
 Both runtime dependencies are packed into the asar's `node_modules` because the main process
 requires them at run time -- `dist/main/updater-electron.js` for the update client, and
 `dist/main/crash-electron.js` for the crash reporter, which is the one file in the console that
-imports it (design sections 7.4 and 8.2) -- and the packages of their trees are packed beside
-them. Their sections are the last forty-seven in this file, and every version in them is the one
+imports it (the owner's rulings D733 and D734 of 2026-10-30) -- and the packages of their trees are packed beside
+them. Their sections are the last forty-eight in this file, and every version in them is the one
 `package-lock.json` pins.
 
 One name in the crash reporter's tree is worth reading twice rather than skimming: `sentry` 0.45.0,
@@ -1321,10 +1321,10 @@ SOFTWARE.
 ## @sentry/electron 8.2.0 -- MIT License
 
 The crash reporter the console's main process starts behind a per-user switch that is off by default
-(design sections 7.4 and 8.2; D733, D734), and one of the two runtime dependencies `package.json`
+(the owner's rulings D733 and D734 of 2026-10-30), and one of the two runtime dependencies `package.json`
 declares. It is packed into the asar's `node_modules` because
 `dist/main/crash-electron.js` requires it at run time -- the one file in the console that imports
-it -- and the thirty packages of its tree are packed beside it.
+it -- and the thirty-one packages of its tree are packed beside it.
 
 Its source is the `@sentry/electron@8.2.0` package from the npm registry
 (https://registry.npmjs.org/@sentry/electron/-/electron-8.2.0.tgz), whose repository is
@@ -2672,6 +2672,18 @@ and packed beside it.
 
 Its source is the `@oxc-parser/binding-linux-x64-gnu@0.152.0` package from the npm registry
 (https://registry.npmjs.org/@oxc-parser/binding-linux-x64-gnu/-/binding-linux-x64-gnu-0.152.0.tgz), whose repository is
+https://github.com/oxc-project/oxc.git.
+
+**That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
+nothing more, so there is no text to reproduce here.
+
+## @oxc-parser/binding-linux-x64-musl 0.152.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@oxc-parser/binding-linux-x64-musl@0.152.0` package from the npm registry
+(https://registry.npmjs.org/@oxc-parser/binding-linux-x64-musl/-/binding-linux-x64-musl-0.152.0.tgz), whose repository is
 https://github.com/oxc-project/oxc.git.
 
 **That package ships no licence file**: its `package.json` declares `"license": "MIT"` and

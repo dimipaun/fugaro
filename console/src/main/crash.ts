@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's crash reporter: the gate and the scrubber, with nothing wired to
-// either yet (desktop-console plan Task 2.1, first slice; D733, D734; design
-// sections 7.3 and 7.4).
+// either yet (desktop-console plan Task 2.1, first slice; the owner's rulings
+// D733 and D734 of 2026-10-30). The design of record is those two rather than a
+// section: design section 7.4 still carries the promise they supersede -- "no
+// telemetry, no crash reporting to a third party" -- and Task 2.2 is the slice
+// that amends it to describe what this code does.
 //
 // The owner's ruling of 2026-10-30 is that the console gains a crash reporter
 // now and ships **dormant**: nothing is sent, because no DSN is configured, and
@@ -22,7 +25,10 @@
 // host and no endpoint. The DSN arrives with the SDK slice as a build-time value
 // the owner sets and nobody commits. The types below are structural for the same
 // reason -- the SDK slice hands `scrubCrashEvent` the very event its own
-// `beforeSend` receives, and sends back what it returns, with no cast between.
+// `beforeSend` receives -- and the event they describe is deliberately not the
+// SDK's own: they are `readonly` where it is mutable, so the hand-off back costs
+// the wiring the one documented assertion in `./crash-electron`'s `toSdkEvent`
+// rather than letting anything downstream write to a scrubbed event in place.
 
 /** CrashOptIn is the operator's switch as this module can see it: `true` when
  * the installation's setting allows reports, and an answer that is not `true`

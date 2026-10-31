@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The build step that puts the crash reporter's DSN into the build, and the one
-// place the release build's variable is named (desktop-console plan Task 2.1b;
-// design section 7.4, and the owner's ruling of 2026-10-30).
+// place the release build's variable is named (desktop-console plan Task 2.1b,
+// and the owner's ruling of 2026-10-30; design section 7.4 does not describe
+// this yet and Task 2.2 amends it).
 //
 // **Why the DSN has to be written rather than read.** The running console must
 // never be handed the DSN by its environment: the app is launched by a person
