@@ -15,7 +15,7 @@ func resolvedWeb() Resolved {
 	return Resolved{
 		BaseRef:    "web",
 		BaseDigest: baseDigest,
-		Packages:   []string{"left-pad@1.3.0", "react@18.3.1"},
+		Packages:   []string{factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")},
 		Tools:      []string{"node@22.11.0"},
 	}
 }
@@ -34,18 +34,18 @@ func TestKeyIdenticalForIdenticalDependencySets(t *testing.T) {
 		{"the same facts in another order", Resolved{
 			BaseRef:    "web",
 			BaseDigest: baseDigest,
-			Packages:   []string{"react@18.3.1", "left-pad@1.3.0"},
+			Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", "")},
 			Tools:      []string{"node@22.11.0"},
 		}},
 		{"the same fact named twice", Resolved{
 			BaseRef:    "web",
 			BaseDigest: baseDigest,
-			Packages:   []string{"react@18.3.1", "left-pad@1.3.0", "react@18.3.1"},
+			Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")},
 			Tools:      []string{"node@22.11.0", "node@22.11.0"},
 		}},
 		{"the same facts, toolchain first", Resolved{
 			Tools:      []string{"node@22.11.0"},
-			Packages:   []string{"react@18.3.1", "left-pad@1.3.0"},
+			Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", "")},
 			BaseRef:    "web",
 			BaseDigest: baseDigest,
 		}},
@@ -92,13 +92,13 @@ func TestKeyIgnoresOrderCommentsFormattingRepoNameAndCommands(t *testing.T) {
 	got := canonical(Resolved{
 		BaseRef:    "web",
 		BaseDigest: baseDigest,
-		Packages:   []string{"react@18.3.1", "left-pad@1.3.0", "react@18.3.1"},
+		Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")},
 		Tools:      []string{"node@22.11.0"},
 	})
-	want := "key v1\n" +
+	want := "key v2\n" +
 		"base:\"web@" + baseDigest + "\"\n" +
-		"pkg:\"left-pad@1.3.0\"\n" +
-		"pkg:\"react@18.3.1\"\n" +
+		`pkg:"\"left-pad\" \"1.3.0\" \"\""` + "\n" +
+		`pkg:"\"react\" \"18.3.1\" \"\""` + "\n" +
 		"tool:\"node@22.11.0\"\n"
 	if got != want {
 		t.Errorf("canonical form =\n%q\nwant\n%q", got, want)
@@ -110,16 +110,17 @@ func TestKeyIgnoresOrderCommentsFormattingRepoNameAndCommands(t *testing.T) {
 
 // TestKeyCannotBeForgedByANewline: a name or a version is text a key file
 // supplied, and a fact holding a newline would otherwise end its line and
-// have the rest of it read as further facts. §2.4 quotes every fact for
-// exactly that: the set below names one package, called
-// "left-pad@1.3.0\npkg:react@18.3.1", and it is not the two-package set and
-// must not take its key — the two-package set's image would otherwise be
-// served to a repository whose dependency set it does not hold.
+// have the rest of it read as further facts. §2.4 writes each of the three
+// fields as its own quoted literal for exactly that: the set below names one
+// package whose name field holds a newline and the text of a second fact after
+// it, and it is not the two-package set and must not take its key — the
+// two-package set's image would otherwise be served to a repository whose
+// dependency set it does not hold.
 func TestKeyCannotBeForgedByANewline(t *testing.T) {
 	forged := Resolved{
 		BaseRef:    "web",
 		BaseDigest: baseDigest,
-		Packages:   []string{"left-pad@1.3.0\npkg:react@18.3.1"},
+		Packages:   []string{factOf("left-pad", "1.3.0", "") + "\npkg:" + factOf("react", "18.3.1", "")},
 		Tools:      []string{"node@22.11.0"},
 	}
 	if got, want := Key(forged), Key(resolvedWeb()); got == want {
@@ -155,7 +156,7 @@ func TestKeyChangesWithVersionToolchainOrBase(t *testing.T) {
 		name string
 		got  Resolved
 	}{
-		{"a package version", Resolved{BaseRef: "web", BaseDigest: baseDigest, Packages: []string{"left-pad@1.3.1", "react@18.3.1"}, Tools: []string{"node@22.11.0"}}},
+		{"a package version", Resolved{BaseRef: "web", BaseDigest: baseDigest, Packages: []string{factOf("left-pad", "1.3.1", ""), factOf("react", "18.3.1", "")}, Tools: []string{"node@22.11.0"}}},
 		{"a second toolchain pin", Resolved{BaseRef: "web", BaseDigest: baseDigest, Packages: base.Packages, Tools: []string{"node@22.11.0", "python@3.12.7"}}},
 		{"a toolchain version", Resolved{BaseRef: "web", BaseDigest: baseDigest, Packages: base.Packages, Tools: []string{"node@22.12.0"}}},
 		{"the base ref", Resolved{BaseRef: "beta", BaseDigest: baseDigest, Packages: base.Packages, Tools: base.Tools}},

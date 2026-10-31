@@ -229,11 +229,19 @@ const SharedCheckoutSince = "0.15.0"
 // does, so a repository that declares checkout: shared gets a job that
 // cannot run. Everything else the kind needs is already here — the
 // CheckoutShared value, its key rules in validateCheckout, the schema's enum
-// value, PlanWorkflowJob's acceptance of FUGARO_CHECKOUT=shared and the
-// sharedSince launch gate — so the release that ships shared images flips
-// this one value and nothing else, the way cloneShipped and catalogShipped
-// (internal/cli/recipes_skew.go) were flipped.
+// value, PlanWorkflowJob's acceptance of FUGARO_CHECKOUT=shared (which reads
+// this gate through SharedCheckoutShipped) and the sharedSince launch gate —
+// so the release that ships shared images flips this one value and nothing
+// else, the way cloneShipped and catalogShipped (internal/cli/recipes_skew.go)
+// were flipped.
 var sharedCheckoutShipped = false
+
+// SharedCheckoutShipped reports whether this build ships shared images.
+// internal/infra reads it: validateCheckout refuses a config that declares
+// checkout: shared while the gate is off, but a job's own environment is not a
+// config, and a mark a person wrote into a Cloud Run job by hand would
+// otherwise move that job's image to a shared one no build produces.
+func SharedCheckoutShipped() bool { return sharedCheckoutShipped }
 
 // SharedCheckoutRefusal is the problem validateCheckout reports for
 // checkout: shared while sharedCheckoutShipped is false. It is exported so a

@@ -38,6 +38,19 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"roles/storage.objectAdmin",
 		"it can read the token from the runner's `/proc`",
 		"With budget off there is no managed file and no routing check at all",
+		// The shared-image key's limit, which the design's C6 text repeats: the
+		// integrity rules keep two repositories from sharing an image built
+		// from two different artifacts, and they are not a boundary between
+		// repositories of one installation — the files that run during the
+		// install state no version and are no fact of the key.
+		"### Shared images: what the key protects, and what it does not",
+		"**It is not a boundary between the repositories that share an image.**",
+		"so they contribute no fact of the key",
+		"the same class as the `image.setup` of the repository that built the key",
+		// The one empty integrity the key reads from a convention rather than
+		// from a line in the file: pnpm's bare key, whose registry `.npmrc`
+		// configures and the key never reads.
+		"**One ecosystem's empty integrity rests on a convention the file does not state.**",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)

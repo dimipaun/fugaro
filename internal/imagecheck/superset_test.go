@@ -11,13 +11,18 @@ import (
 // lookup compares the keys it is given and never computes one.
 func hexKey(c string) string { return strings.Repeat(c, 64) }
 
-// lockedImage is one lock entry for the set r, under key.
+// lockedImage is one lock entry for the set r, under key. Each entry names
+// its own repository and job: a job is one repository and one workflow and it
+// runs one image, so two entries naming one job are a lock ParseLock refuses,
+// and a lock built from two of these has to be one a refresh could have
+// written.
 func lockedImage(key string, r Resolved, built time.Time) LockedImage {
+	repo := "owner/repo-" + key[:4]
 	return LockedImage{
 		Key: key, Image: "registry.example/fugaro-shared/img-" + key[:12], Digest: "sha256:" + strings.Repeat("d", 64),
 		BaseRef: r.BaseRef, BaseDigest: r.BaseDigest, Packages: r.Packages, Tools: r.Tools,
 		BuiltAt: built, BuildID: "build-" + key[:4],
-		Repositories: []string{"owner/repo-a"}, Jobs: map[string]string{"owner/repo-a": "fugaro-repo-a-web"},
+		Repositories: []string{repo}, Jobs: map[string]string{repo: "fugaro-repo-" + key[:4] + "-web"},
 		LastUsedAt: built,
 	}
 }
@@ -42,7 +47,7 @@ func TestSupersetReusesAnImageWithExtras(t *testing.T) {
 	resolved := resolvedWeb()
 	exact := lockedImage(Key(resolved), resolved, supersetBuilt)
 	wide := resolved
-	wide.Packages = append(slices.Clone(resolved.Packages), "jest@29.7.0", "typescript@5.6.2")
+	wide.Packages = append(slices.Clone(resolved.Packages), factOf("jest", "29.7.0", ""), factOf("typescript", "5.6.2", ""))
 	wider := lockedImage(Key(wide), wide, supersetBuilt)
 
 	got, ok := Superset(lockOf(wider), resolved)
@@ -71,17 +76,17 @@ func TestSupersetRequiresSameVersions(t *testing.T) {
 		got  Resolved
 	}{
 		{"a package at another version", Resolved{BaseRef: "web", BaseDigest: baseDigest,
-			Packages: []string{"left-pad@1.3.0", "react@18.2.0"}, Tools: []string{"node@22.11.0"}}},
+			Packages: []string{factOf("left-pad", "1.3.0", ""), factOf("react", "18.2.0", "")}, Tools: []string{"node@22.11.0"}}},
 		{"a missing package", Resolved{BaseRef: "web", BaseDigest: baseDigest,
-			Packages: []string{"left-pad@1.3.0"}, Tools: []string{"node@22.11.0"}}},
+			Packages: []string{factOf("left-pad", "1.3.0", "")}, Tools: []string{"node@22.11.0"}}},
 		{"a tool at another version", Resolved{BaseRef: "web", BaseDigest: baseDigest,
-			Packages: []string{"left-pad@1.3.0", "react@18.3.1"}, Tools: []string{"node@22.12.0"}}},
+			Packages: []string{factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")}, Tools: []string{"node@22.12.0"}}},
 		{"an extra tool", Resolved{BaseRef: "web", BaseDigest: baseDigest,
-			Packages: []string{"left-pad@1.3.0", "react@18.3.1"}, Tools: []string{"node@22.11.0", "python@3.12.7"}}},
+			Packages: []string{factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")}, Tools: []string{"node@22.11.0", "python@3.12.7"}}},
 		{"another base ref", Resolved{BaseRef: "beta", BaseDigest: baseDigest,
-			Packages: []string{"left-pad@1.3.0", "react@18.3.1"}, Tools: []string{"node@22.11.0"}}},
+			Packages: []string{factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")}, Tools: []string{"node@22.11.0"}}},
 		{"another base digest", Resolved{BaseRef: "web", BaseDigest: "sha256:" + strings.Repeat("b", 64),
-			Packages: []string{"left-pad@1.3.0", "react@18.3.1"}, Tools: []string{"node@22.11.0"}}},
+			Packages: []string{factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")}, Tools: []string{"node@22.11.0"}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			held := lockedImage(hexKey("9"), c.got, supersetBuilt)
@@ -99,7 +104,7 @@ func TestSupersetRequiresSameVersions(t *testing.T) {
 func TestSupersetPicksDeterministically(t *testing.T) {
 	resolved := resolvedWeb()
 	wide := resolved
-	wide.Packages = append(slices.Clone(resolved.Packages), "jest@29.7.0")
+	wide.Packages = append(slices.Clone(resolved.Packages), factOf("jest", "29.7.0", ""))
 	older := lockedImage(hexKey("a"), wide, supersetBuilt)
 	newer := lockedImage(hexKey("b"), wide, supersetBuilt.Add(time.Hour))
 	if got, ok := Superset(lockOf(older, newer), resolved); !ok || got != newer.Key {

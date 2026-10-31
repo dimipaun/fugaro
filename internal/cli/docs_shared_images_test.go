@@ -40,15 +40,76 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 	// The facts: each string is a control the design states.
 	sharedImagesMustContain(t, section, path, "fact", []string{
 		// D618 as answered, plus O6's three image-count controls.
-		"only resolved package names, versions, toolchain and base image count",
+		"only resolved package names, versions and their integrities, toolchain",
+		// D618 in §2.3: the integrity is part of the fact, a non-registry
+		// source is unkeyed, and an unnamed key file is unkeyed rather than
+		// "no dependencies" — the three controls the reduction is built to.
+		"carries the integrity or checksum the file states for that version's artifact",
+		"**a source that is not the ecosystem's registry**",
+		"the default for a key file is unkeyed, never \"no dependencies\"",
+		// C8b1b's read bound: Reduce is handed bytes that are already in
+		// memory, so the caller bounds its own read.
+		"The bound is on bytes already in memory, so the caller bounds its own read",
 		// §2.4's escaping rule: a fact is one line whatever it holds.
-		"Each fact is written as a **quoted Go string literal**",
-		"only when it holds the whole set at the same versions",
+		"Each literal is a **quoted Go string literal**",
+		// §2.4's encoding rule, which review round 2 found missing: the three
+		// fields are each their own literal, the third always written, so two
+		// different triples can never be one fact — and the key's version moved
+		// with the change.
+		"key v2",
+		"Each of the three is its own quoted literal, one space between",
+		"The three fields are encoded apart because a fact must be injective",
+		"which the spelling without per-field quoting could not say",
+		// §2.3's empty-integrity rule and the table that names each ecosystem's
+		// default registry, which is what "this source is the default registry's"
+		// means per format.
+		"A package a file states no integrity for is keyed only when the file also says it came from the",
+		"| Ecosystem | The default registry, and what the format writes for it |",
+		"and a key that is a bare `name@version` is the default registry's by the format's convention",
+		// §2.3's no-facts paragraph: those files run during the install and are
+		// not facts of the key — the claim C6 and SECURITY.md repeat.
+		"**The no-facts table is a statement about the key, not about what those files do.**",
+		// The three source shapes read one step earlier, in the header or in the
+		// version: a Yarn alias, a Yarn git or codeload dependency, npm v1's
+		// source-in-version.
+		"states the source in its `version` field",
+		"its header states the git specifier or the `owner/repo`",
+		// The two reductions round 2 fixed, and the claim round 3 corrected:
+		// go.sum's two hashes are joined, the order a file writes them in is
+		// not a fact, and a pnpm block resolution is read.
+		"both are joined into one integrity, **sorted and deduplicated**",
+		"would be another key",
+		"A `resolution:` written as a block",
+		// Round 3's three gaps: a pnpm v9 snapshot key's peers name the same
+		// package as the packages entry, every yarn descriptor is a source,
+		// and a Pipfile entry with no hashes is read through its own index.
+		"and the `packages` entry for the same x are one package and one fact",
+		"**every** range it lists, not only the first",
+		"An entry that states no hashes is keyed only when the lock says it came from PyPI's own index",
+		"That convention is the one place the key rests on a file it does not read",
+		// Round 3's follow-up: a `@registry:` key names a registry rather than a
+		// version and is a source like the other pnpm markers, and a lock older
+		// than the two sections — pnpm 5 and earlier — states its whole resolved
+		// set where the reducer does not look, so it is refused rather than read
+		// as one that holds nothing.
+		"`@patch:` or `@registry:`",
+		"a pnpm 5 or earlier lock writes each",
+		"is refused rather than read as one that holds nothing (§2.5)",
+		// §3.1's entries are the three quoted literals, quotes and all.
+		"a package entry is the fact's three quoted literals",
+		"\"\\\"left-pad\\\" \\\"1.3.0\\\" \\\"sha512-aaa\\\"\"",
+		// §3.1's one-job rule reads the repository and the name, and says what
+		// that cannot catch — the rename C8b1b's refresh owns.
+		"catch is one job **renamed** between two entries",
+		// §4 compares the whole facts.
+		"resolved to the same artifacts, compared as the three quoted literals",
+		// Reuse compares whole facts, so the integrity is part of it (D618).
+		"only when it holds the whole set at the same versions and the\nsame integrities",
 		// T6(c) as resolved: propose-then-confirm, and the unattended refusal.
 		"proposed and confirmed, never forked silently",
 		"refuses to build when there is no terminal",
 		"`--on-divergence=fork`, `--on-divergence=adopt=<repository>`, `--on-divergence=pin`",
-		"when that image is a superset of this repository's set at the same versions",
+		"when that image is a superset of this repository's set at the same versions and integrities",
 		"keeps the image the repository is on, digest unchanged, and warns",
 		// T6(c): the shared image is never mutated.
 		"never rebuilt or overwritten in place",

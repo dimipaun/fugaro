@@ -30,7 +30,7 @@ func lockWith(t *testing.T, f *cloudFixture, key, baseRef, repo, slug, workflow 
 		key: {
 			Key: key, Image: "us-east5-docker.pkg.dev/proj-1234/fugaro-shared-0123456789ab/img-" + key[:12],
 			Digest: "sha256:" + strings.Repeat("ab", 32), BaseRef: baseRef, BaseDigest: "sha256:" + strings.Repeat("cd", 32),
-			Packages: []string{"left-pad@1.3.0"}, Tools: []string{"node@22.11.0"},
+			Packages: []string{"\"left-pad\" \"1.3.0\" \"\""}, Tools: []string{"node@22.11.0"},
 			BuiltAt: time.Date(2026, 10, 29, 9, 12, 4, 0, time.UTC), BuildID: "build-1",
 			Repositories: []string{repo}, Jobs: map[string]string{repo: gcp.JobName(slug, workflow)},
 			LastUsedAt: time.Date(2026, 10, 29, 9, 40, 11, 0, time.UTC),
