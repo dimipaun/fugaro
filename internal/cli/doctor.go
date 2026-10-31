@@ -230,7 +230,7 @@ Exit 1 when a check fails, with the one-line fix to run.`,
 	cmd.Flags().StringVar(&dir, "dir", ".", "a directory in the checkout, for the plugin wiring")
 	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
-	cmd.Flags().BoolVar(&checkBitbucketToken, "check-bitbucket-token", false, "also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session)")
+	cmd.Flags().BoolVar(&checkBitbucketToken, "check-bitbucket-token", false, "also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	return cmd
@@ -427,7 +427,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	projSM, projSecrets, projOK := doctorProjectSecrets(ctx, lc)
 	o.Checks = append(o.Checks, doctorProjectSecretAccessorChecks(ctx, lc, projSM, projSecrets)...)
 	o.Checks = append(o.Checks, doctorSecretManagerChecks(ctx, lc, projSM, crmSvc)...)
-	o.Checks = append(o.Checks, doctorSecretRotationAge(ctx, lc, projSecrets, projOK)...)
+	// This checkout's own secret containers, listed here rather than in the
+	// checkout branch below because secret-rotation-age measures both scopes:
+	// the operator's secret_expires is keyed by a secret's logical name, and
+	// bitbucket-token is stored in the repository's own container by default.
+	// nil outside a checkout, which is what doctorSecrets answers for one.
+	repoSecrets := doctorSecrets(cmd, lc)
+	o.Checks = append(o.Checks, doctorSecretRotationAge(ctx, lc, projSecrets, projOK, repoSecrets)...)
 	if checkBitbucketToken {
 		o.Checks = append(o.Checks, doctorBundleChecks(ctx, lc)...)
 	}
@@ -449,7 +455,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 				o.Checks = append(o.Checks, doctorLayerChecks(ctx, lc, co.Root, *rf)...)
 			}
 		}
-		o.Secrets = doctorSecrets(cmd, lc)
+		o.Secrets = repoSecrets
 		token := oauthTokenOf(rf)
 		if repo, err := originRepo(ctx); err == nil {
 			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets, projSecrets, projOK); c != nil {

@@ -127,8 +127,15 @@ func checksByID(o doctorOutput, id string) []doctorCheck {
 // Bitbucket token, as modules/workflow/sa.tf writes it before the flip.
 func (r *brokeringRig) jobMountingBitbucketToken(t *testing.T) string {
 	t.Helper()
+	return r.jobMountingToken(t, gcp.JobName(mustSlug("bitbucket", "workspace-a/repo-a"), "app"))
+}
+
+// jobMountingToken is that mount on the job named job: the same workflow under
+// a named Claude account is a different job (gcp.WorkflowVariant), and it
+// mounts the token the same way.
+func (r *brokeringRig) jobMountingToken(t *testing.T, job string) string {
+	t.Helper()
 	slug := mustSlug("bitbucket", "workspace-a/repo-a")
-	job := gcp.JobName(slug, "app")
 	env := config.ReservedSecrets[config.BitbucketSecret]
 	id := gcp.SecretID(slug, config.BitbucketSecret)
 	r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
@@ -422,6 +429,30 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 		}
 	})
 
+	t.Run("Bitbucket failing rather than refusing", func(t *testing.T) {
+		// A 5xx or a 429 is Bitbucket (or what stands in front of it) failing
+		// to answer, not the token being rejected: calling it a refusal would
+		// send the operator to rotate a credential that works.
+		for _, status := range []int{http.StatusBadGateway, http.StatusTooManyRequests} {
+			r := newBrokeringRig(t)
+			r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+			srv, _ := bitbucketFake(t, status)
+			useBitbucketRoot(t, srv.URL, srv.Client())
+
+			o, err := r.doctor(t, "--check-bitbucket-token")
+			if err != nil {
+				t.Fatalf("doctor: %v", err)
+			}
+			vs := checksByID(o, "bitbucket-token-valid")
+			if len(vs) != 1 || vs[0].OK || vs[0].Severity != "info" {
+				t.Fatalf("HTTP %d: bitbucket-token-valid = %+v, want one informational line", status, vs)
+			}
+			if !strings.Contains(vs[0].Problem, "could not be asked") {
+				t.Errorf("HTTP %d: the line does not say the question went unanswered: %q", status, vs[0].Problem)
+			}
+		}
+	})
+
 	t.Run("unreachable", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
@@ -499,6 +530,30 @@ func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 		cs := checksByID(o, "bitbucket-direct")
 		if len(cs) != 1 || !cs[0].OK {
 			t.Fatalf("bitbucket-direct = %+v, want one ok check", cs)
+		}
+	})
+
+	t.Run("a named account's variant job", func(t *testing.T) {
+		flipProxiedGitList(t, config.BitbucketSecret)
+		r := newBrokeringRig(t)
+		addClaudeAccounts(t, r.doctorRig, "claude_accounts:\n  workspace-a-team:\n    allow_data_to: [workspace-a/repo-a]\n")
+		putProjectSecret(t, r.sm, "aurora", config.ClaudeAccountSecret("workspace-a-team"), []byte("account-token"))
+		// The named account runs the workflow as its own job
+		// (gcp.WorkflowVariant), which is the one left mounting the token: the
+		// default account's job was never deployed under that name.
+		variant := gcp.JobName(mustSlug("bitbucket", "workspace-a/repo-a"), gcp.WorkflowVariant("app", "workspace-a-team"))
+		r.jobMountingToken(t, variant)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "bitbucket-direct")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("bitbucket-direct = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, variant) {
+			t.Errorf("the warning does not name the variant job that still mounts it: %q", cs[0].Problem)
 		}
 	})
 
@@ -593,6 +648,56 @@ func TestDoctorBrokeringSecretRotationAge(t *testing.T) {
 		}
 		if !strings.Contains(cs[0].Problem, "expires on 2026-11-05") || !strings.Contains(cs[0].Problem, "in 5 days") {
 			t.Errorf("the warning does not say when it expires: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("a name nothing carries", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		addLocalLines(t, r.doctorRig, "secret_expires:\n  bitbucket-toke: \"2026-11-05\"\n")
+		pinDoctorNow(t, func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) })
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "secret-rotation-age")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("secret-rotation-age = %+v, want one warning for the name that matched nothing", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "bitbucket-toke") || !strings.Contains(cs[0].Problem, "no secret container this run could list carries that name") {
+			t.Errorf("the warning does not name the typo and say what was searched: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("a repository's own container", func(t *testing.T) {
+		// The token stored where a Bitbucket repository's belongs by default:
+		// its own container, which the project-wide listing does not carry.
+		r := newBrokeringCheckout(t, true)
+		slug := mustSlug("bitbucket", "workspace-a/repo-a")
+		addLocalLines(t, r.doctorRig, "repos:\n  workspace-a/repo-a: { provider: bitbucket, workflows: [app] }\n"+
+			"secret_expires:\n  "+config.BitbucketSecret+": \"2026-11-05\"\n")
+		r.sm.Seed(gcp.SecretID(slug, config.BitbucketSecret), map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: config.BitbucketSecret}, []byte("repo-value"))
+		pinDoctorNow(t, func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) })
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		var measured, unmatched bool
+		for _, c := range checksByID(o, "secret-rotation-age") {
+			if strings.Contains(c.Problem, "expires on 2026-11-05") {
+				measured = true
+			}
+			if strings.Contains(c.Problem, "no secret container this run could list carries that name") {
+				unmatched = true
+			}
+		}
+		if !measured {
+			t.Errorf("a date recorded for the repository's own container is not measured: %+v", checksByID(o, "secret-rotation-age"))
+		}
+		if unmatched {
+			t.Errorf("a date recorded for a container that is there is reported as matching nothing: %+v", checksByID(o, "secret-rotation-age"))
 		}
 	})
 

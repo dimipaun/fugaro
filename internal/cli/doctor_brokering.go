@@ -45,19 +45,15 @@ import (
 // same reason. The value is used in memory, to build one HTTP request per
 // proxied repository, and is never printed, logged, put in an argument or
 // carried by an error.
-const (
-	// checkBitbucketTokenFlag is the flag that allows the bundle's read.
-	checkBitbucketTokenFlag = "--check-bitbucket-token"
-	// runRoutesInvoke is the permission that admits a caller to a Cloud Run
-	// service; runInvokeRoles are the predefined roles carrying it, recognized
-	// by name the way doctorSecretManagerChecks' own lists are (a role of
-	// Google's name is Google's to define, and a project that defined a role of
-	// the same name could answer for it).
-	runRoutesInvoke = "run.routes.invoke"
-)
+// checkBitbucketTokenFlag is the flag that allows the bundle's read.
+const checkBitbucketTokenFlag = "--check-bitbucket-token"
 
 // runInvokeRoles are the predefined roles whose permissions include
-// run.routes.invoke. The workflow module grants each job account
+// run.routes.invoke, the one permission that admits a caller to a Cloud Run
+// service. They are recognized by name the way doctorSecretManagerChecks' own
+// lists are (a role of Google's name is Google's to define, and a project that
+// defined a role of the same name could answer for it). The workflow module
+// grants each job account
 // roles/run.invoker on the service and nothing else (modules/workflow/sa.tf),
 // which is the first entry; the rest are named because an installation that
 // granted one of them instead would still be admitted by Cloud Run IAM, and a
@@ -221,6 +217,15 @@ func invokerGranted(bindings []iamBinding, member string) (granted, unread bool)
 // rotation period the operator recorded (secret_rotation_days), and against
 // the expiry date they recorded for a name (secret_expires, D503c).
 //
+// The operator's date is keyed by a secret's logical name, and a logical name
+// may be stored in the project-wide container or in the repository's own —
+// bitbucket-token is per-repository by default — so both listings are
+// measured: project is the installation's project-wide containers, and repo is
+// this checkout's own (doctorSecrets, empty when doctor is not in one). A date
+// that matches neither is a warning of its own rather than silence: a name
+// nothing carries is a typo, or a secret that has gone, and a check that
+// quietly skipped it would leave the operator believing a date was watched.
+//
 // Nothing here reads a value, and nothing here runs unless the operator
 // recorded something: with no period and no date there is no age to measure
 // against, and doctor adds no Secret Manager call at all — which matters,
@@ -234,7 +239,7 @@ func invokerGranted(bindings []iamBinding, member string) (granted, unread bool)
 //
 // Both halves are warnings, never failures: an old credential still works, and
 // what the check is for is that the operator asked to be told.
-func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, secrets []gcp.SecretInfo, ok bool) []doctorCheck {
+func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, project []gcp.SecretInfo, ok bool, repo []secretEntry) []doctorCheck {
 	if lc.SecretRotationDays <= 0 && len(lc.SecretExpires) == 0 {
 		return nil
 	}
@@ -252,8 +257,12 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, secrets [
 	}
 	now := doctorNow()
 	var out []doctorCheck
-	for _, s := range secrets {
+	carried := map[string]bool{}
+	measure := func(s gcp.SecretInfo) {
 		name := s.Labels[gcp.LabelSecret]
+		if name != "" {
+			carried[name] = true
+		}
 		printable := pluginwire.Printable(cmp.Or(name, s.ID))
 		if lc.SecretRotationDays > 0 && s.Latest != "" {
 			created, known := newestEnabledVersion(ctx, sm, lc.GCPProject, s.ID)
@@ -261,7 +270,7 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, secrets [
 				out = append(out, doctorCheck{ID: id, Severity: "warning",
 					Problem: fmt.Sprintf("%s holds an enabled version whose creation time could not be read, so its age against the %d-day rotation period (secret_rotation_days) could not be measured", printable, lc.SecretRotationDays),
 					Fix:     "read the versions by hand: gcloud secrets versions list " + pluginwire.Printable(s.ID)})
-				continue
+				return
 			}
 			if age := now.Sub(created); age > time.Duration(lc.SecretRotationDays)*24*time.Hour {
 				out = append(out, doctorCheck{ID: id, Severity: "warning",
@@ -271,7 +280,7 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, secrets [
 		}
 		date, recorded := lc.SecretExpires[name]
 		if !recorded {
-			continue
+			return
 		}
 		expires, err := time.Parse(localcfg.SecretExpiryLayout, date)
 		if err != nil {
@@ -280,7 +289,7 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, secrets [
 			out = append(out, doctorCheck{ID: id, Severity: "warning",
 				Problem: fmt.Sprintf("secret_expires records %s for %s, which is not a date (YYYY-MM-DD)", pluginwire.Printable(date), printable),
 				Fix:     "fix secret_expires in the local config"})
-			continue
+			return
 		}
 		switch left := expires.Sub(now); {
 		case left < 0:
@@ -292,6 +301,24 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, secrets [
 				Problem: fmt.Sprintf("%s expires on %s (secret_expires), in %s: rotate it and store the new value before then", printable, date, ageDays(left)),
 				Fix:     "rotate it at the provider and store the new value: " + selfCommand() + " creds set " + printable + " (or " + selfCommand() + " secrets set " + printable + " --project-wide for a secret the service does not hold)"})
 		}
+	}
+	for _, s := range project {
+		measure(s)
+	}
+	for _, e := range repo {
+		measure(e.SecretInfo)
+	}
+	var unmatched []string
+	for _, name := range slices.Sorted(maps.Keys(lc.SecretExpires)) {
+		if !carried[name] {
+			unmatched = append(unmatched, pluginwire.Printable(name))
+		}
+	}
+	if len(unmatched) > 0 {
+		out = append(out, doctorCheck{ID: id, Severity: "warning",
+			Problem: fmt.Sprintf("secret_expires records a date for %s, and no secret container this run could list carries that name (the project-wide ones%s): a date nothing matches is watched by nothing, so a name that is a typo, or a secret that has gone, is reported instead of skipped",
+				strings.Join(unmatched, ", "), noteIfAny(" and this checkout's own", repo != nil)),
+			Fix: "fix the name in secret_expires, or drop the entry: the key is a secret's logical name, which is what " + selfCommand() + " secrets ls prints beside its container"})
 	}
 	return out
 }
@@ -421,7 +448,9 @@ func bundleSeverity(proxied int) string {
 // memory. A token that Bitbucket refuses (401, 403) or cannot see a repository
 // with (404) fails the check as a warning, because every run of that repository
 // fails at its first git call; anything else — a network that is down, a
-// Bitbucket outage — is reported as not checked rather than as a bad token.
+// Bitbucket outage, a rate limit — is reported as not checked rather than as a
+// bad token, since sending the operator to rotate a working credential is
+// worse than saying the question was not answered.
 func doctorBitbucketTokenValid(ctx context.Context, repos []string, token string) []doctorCheck {
 	if len(repos) == 0 {
 		return nil
@@ -466,14 +495,27 @@ func doctorBitbucketTokenValid(ctx context.Context, repos []string, token string
 		Fix: "store a token Bitbucket accepts, with Repositories read and Pull requests read/write: " + selfCommand() + " creds set " + config.BitbucketSecret}}
 }
 
-// isBitbucketRefusal reports whether err is Bitbucket answering, rather than
-// the call not being made at all: a status is the API's own answer, and every
-// one of them here means the token did not do what it was asked to. The body
-// is never part of the message: it is Bitbucket's text about a request that
-// carried a credential.
+// isBitbucketRefusal reports whether Bitbucket answered about the credential
+// rather than about itself: 401 and 403 are the token being rejected, and 404
+// is a repository the token may not see, which is what Bitbucket answers for
+// one it cannot reach — and a run that cannot see its repository fails at its
+// first git call exactly as one with a rejected token does. Every other status
+// is Bitbucket failing to answer (a 5xx, a 429, a redirect that did not land),
+// and reporting one of those as a refused token would send the operator to
+// rotate a credential that works.
+//
+// The body is never part of the message: it is Bitbucket's text about a
+// request that carried a credential.
 func isBitbucketRefusal(err error) bool {
 	var se *httpjson.StatusError
-	return errors.As(err, &se)
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	}
+	return false
 }
 
 // doctorBitbucketDirect is doctor's "bitbucket-direct" check: this checkout's
@@ -493,6 +535,12 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 	}
 	const id = "bitbucket-direct"
 	printable := pluginwire.Printable(repo)
+	repoSlug, err := task.Slug(provider, repo)
+	if err != nil {
+		// A repository no job name can be derived from: the same entry refuses
+		// the credentials stage, which is where it is worth saying.
+		return nil
+	}
 	entry, ok := lc.ProjectSecrets[config.BitbucketSecret]
 	proxied := ok && entry.Proxy && entry.AllowsData(repo)
 	flipped := slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
@@ -518,21 +566,44 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 			Problem: fmt.Sprintf("%s is proxied and flipped, and the Cloud Run API could not be reached (%s), so whether a job still mounts %s could not be checked", printable, oneLineCLI(err.Error()), config.BitbucketSecret),
 			Fix:     "rerun doctor with your credentials available"}}
 	}
+	// Every job the repository was deployed as, not only each workflow's
+	// default-account one: a named Claude account runs the same workflow as
+	// gcp.WorkflowVariant's job (infra.Workflow builds one job per (workflow,
+	// account)), it mounts the same token, and after the flip it is the same
+	// stale mount. The workflows are the local config's own record of what was
+	// deployed, unioned with the checkout's, since a job outlives the
+	// fugaro.yaml entry that made it.
+	workflows := slices.Clone(lc.Repos[repo].Workflows)
+	for _, w := range slices.Sorted(maps.Keys(facts.jobs)) {
+		if !slices.Contains(workflows, w) {
+			workflows = append(workflows, w)
+		}
+	}
+	jobs := map[string]bool{}
+	for _, w := range workflows {
+		for _, acct := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
+			variant, ok := jobWorkflow(w, acct)
+			if !ok {
+				continue
+			}
+			jobs[gcp.JobName(repoSlug, variant)] = true
+		}
+	}
 	env := config.ReservedSecrets[config.BitbucketSecret]
 	var (
 		mounting []string
 		unknown  []string
 	)
-	for _, w := range slices.Sorted(maps.Keys(facts.jobs)) {
-		refs, exists, err := be.JobSecretRefs(ctx, facts.jobs[w])
+	for _, job := range slices.Sorted(maps.Keys(jobs)) {
+		refs, exists, err := be.JobSecretRefs(ctx, job)
 		switch {
 		case err != nil:
-			unknown = append(unknown, pluginwire.Printable(facts.jobs[w]))
+			unknown = append(unknown, pluginwire.Printable(job))
 		case !exists:
 			// Not deployed: nothing of it can still mount the token, and the
 			// deploy that creates it is the one that reads the flip.
 		case refs[env] != "":
-			mounting = append(mounting, pluginwire.Printable(facts.jobs[w]))
+			mounting = append(mounting, pluginwire.Printable(job))
 		}
 	}
 	switch {
