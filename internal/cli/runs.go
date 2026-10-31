@@ -25,8 +25,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// lsWorkers is how many runs' objects are read at once.
-const lsWorkers = 8
+// lsWorkers is how many runs' objects are read at once. A run is three
+// objects, each a round trip of tens of milliseconds, and a listing covers
+// every run in the bucket's window: this width is most of what ls costs.
+const lsWorkers = 32
 
 // maxNameCellRunes bounds a name read back from a run's own result.json
 // (an OAuth account or a recipe name, neither validated by this binary
