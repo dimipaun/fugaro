@@ -102,6 +102,8 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newRepositoryStage(e) }},
 	{stage: initflow.Policy, ctor: "newPolicyMigrateStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newPolicyMigrateStage(e) }},
+	{stage: initflow.Checkout, ctor: "newCheckoutStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newCheckoutStage(e) }},
 	{stage: initflow.Project, ctor: "newProjectStage(", behind: "--create-project", firstRun: true, noYes: true,
 		build: func(e *initEngine) initflow.Stage { return newProjectStage(e) }},
 	{stage: initflow.Compute, ctor: "newComputeStage(", behind: "--provision-batch", noYes: true,

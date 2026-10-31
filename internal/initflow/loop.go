@@ -442,6 +442,9 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 // is true when the stage needs nothing and the loop goes on.
 func (l *loop) agentStage(ctx context.Context, s Stage) (done bool, err error) {
 	name := s.Name()
+	if _, local := s.(LocalUnderAgent); local {
+		return l.localStage(ctx, s)
+	}
 	if _, self := s.(SelfConfirming); self {
 		p, perr := planStage(ctx, s, l.env(name))
 		var ag *AgentError
@@ -464,6 +467,37 @@ func (l *loop) agentStage(ctx context.Context, s Stage) (done bool, err error) {
 	}
 	l.needsYou(name, AgentRefusal(l.o.Agent), s.Left())
 	return false, nil
+}
+
+// localStage is a LocalUnderAgent stage's turn in a coding agent's session.
+// Every write of the stage's own is on this machine (see LocalUnderAgent), so
+// the loop applies it and leaves the confirmations to the stage: an AgentError
+// it returns is the same needs-you it is in the ordinary path, and it is what
+// keeps whatever the stage would have done outside the machine undone.
+func (l *loop) localStage(ctx context.Context, s Stage) (done bool, err error) {
+	name := s.Name()
+	out, err := applyStage(ctx, s, l.env(name))
+	var ag *AgentError
+	var ny *NeedsYouError
+	switch {
+	case errors.As(err, &ag):
+		l.needsYou(name, ag.Error(), s.Left())
+		return false, nil
+	case errors.As(err, &ny):
+		l.needsYou(name, "", ny.Left)
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	if err := verifyStage(ctx, s); err != nil {
+		return false, err
+	}
+	r := StageResult{Name: name, State: Changed, Detail: l.redact(oneLine(out.Detail))}
+	if !out.Changed {
+		r.State = Done
+	}
+	l.res.Stages = append(l.res.Stages, r)
+	return true, nil
 }
 
 // billingPending records a stage that paused for billing: its Left is the
