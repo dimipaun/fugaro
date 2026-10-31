@@ -342,3 +342,28 @@ func TestDoctorJSONKeepsEveryCheckAndClassifiesIt(t *testing.T) {
 		t.Errorf("launcher-jobs lost its text in --json: %+v", c)
 	}
 }
+
+// TestDoctorDefaultDoesNotOpenWithTheTagLine: the release line is "this fugaro
+// is vX, built from commit Y; a tag can be moved, so to check it still names
+// that commit run: ..." — a sentence of three hundred characters, and the
+// first thing a person saw. It is an audit line: --all prints it.
+func TestDoctorDefaultDoesNotOpenWithTheTagLine(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	if releaseLine() == "" {
+		t.Skip("no release embedded in this build")
+	}
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	_ = emitDoctor(cmd, doctorOutput{Checks: []doctorCheck{{ID: "runs-bucket-iam", OK: true}}}, false, doctorView{})
+	if got := buf.String(); got != "fugaro doctor: ok — everything checked is ok\n" {
+		t.Errorf("the default view opens with something other than the verdict:\n%s", got)
+	}
+	var all bytes.Buffer
+	cmd = &cobra.Command{}
+	cmd.SetOut(&all)
+	_ = emitDoctor(cmd, doctorOutput{Checks: []doctorCheck{{ID: "runs-bucket-iam", OK: true}}}, false, doctorView{all: true})
+	if !strings.Contains(all.String(), "a tag can be moved") {
+		t.Errorf("--all does not print the release line:\n%s", all.String())
+	}
+}

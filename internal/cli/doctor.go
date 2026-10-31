@@ -1727,8 +1727,13 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool, view doctorView
 		}
 	} else {
 		out := cmd.OutOrStdout()
-		if l := releaseLine(); l != "" {
-			fmt.Fprintln(out, l)
+		// The release line is the "a tag can be moved" audit sentence, three
+		// hundred characters of it: --all prints it, and the default view
+		// starts at the verdict.
+		if view.all {
+			if l := releaseLine(); l != "" {
+				fmt.Fprintln(out, l)
+			}
 		}
 		printDoctorReport(out, o.Checks, view)
 		if p := o.Project; p != nil {
