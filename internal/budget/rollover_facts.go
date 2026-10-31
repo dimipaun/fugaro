@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/pool"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -43,7 +43,18 @@ func (b BucketFacts) warnf(format string, a ...any) {
 // Facts lists, for each day of [from, to], the runs started on it. The run
 // records are read factsWorkers at a time; the walk over them is still one
 // pass in the order the runs were listed, so a day's facts and the failures
-// that reach the caller are what reading them one at a time gave.
+// that reach the caller are what reading them one at a time gave, with these
+// exceptions, both of them about a pass that stops early rather than about
+// what it returns:
+//
+//   - Every repository is listed before any record is read, so a repository
+//     whose listing fails is reported ahead of an earlier repository's record
+//     that failed to read.
+//   - A record read the bucket refused ends the pass, so the reads it had in
+//     flight are cancelled rather than waited out and the later ones are never
+//     made. The failure reported is the one that ended the pass: a read that
+//     was cancelled has no failure of its own to report, where reading them
+//     one at a time would have given it one.
 func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]RunFact, map[string]string, error) {
 	out := map[int64][]RunFact{}
 	repos := map[string]string{}
@@ -87,17 +98,36 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 	// Every record is read before any of them is used, and each goroutine
 	// writes only its own index, so the pass below is the same walk whichever
 	// read finishes first.
+	//
+	// A read that fails the pass ends it: the reads in flight and the ones
+	// still to come are cancelled rather than waited out, so a bucket that
+	// refused a read does not cost the rest of the window's round trips
+	// before the caller hears about it.
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
 	recs := make([]*runstore.Record, len(refs))
 	errs := make([]error, len(refs))
-	readsAtOnce(len(refs), func(i int) {
-		recs[i], errs[i] = runstore.Open(b.Bucket, refs[i].slug, refs[i].id).ReadRecord(ctx)
+	pool.Run(len(refs), factsWorkers, func(i int) {
+		recs[i], errs[i] = runstore.Open(b.Bucket, refs[i].slug, refs[i].id).ReadRecord(runCtx)
+		switch {
+		case errs[i] == nil:
+		case errors.Is(errs[i], context.Canceled) && ctx.Err() == nil:
+			// This read was stopped by the pass's own cancel, not by the
+			// bucket: the failure that cancelled it is the one reported, and
+			// this read's slot stays as empty as one never made.
+			recs[i], errs[i] = nil, nil
+		case fatalRead(errs[i]):
+			stop()
+		}
 	})
 	for i, r := range refs {
 		rec, err := recs[i], errs[i]
 		switch {
+		case err == nil && rec == nil:
+			continue // cancelled: the read that ended the pass is the failure reported, and this slot holds nothing
 		case errors.Is(err, runstore.ErrNotFound):
 			continue
-		case errors.Is(err, runstore.ErrTooLarge) || (err != nil && strings.HasPrefix(err.Error(), "decoding result.json")):
+		case err != nil && !fatalRead(err):
 			b.warnf("skipping %s/%s: its result.json cannot be used (%v)", r.slug, r.id, err)
 			continue
 		case err != nil:
@@ -126,22 +156,11 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 	return out, repos, nil
 }
 
-// readsAtOnce runs fn(0) … fn(n-1) on at most factsWorkers goroutines.
-func readsAtOnce(n int, fn func(i int)) {
-	var wg sync.WaitGroup
-	next := make(chan int)
-	for range min(factsWorkers, n) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range next {
-				fn(i)
-			}
-		}()
-	}
-	for i := range n {
-		next <- i
-	}
-	close(next)
-	wg.Wait()
+// fatalRead reports whether a failed result.json read must fail the whole
+// pass: a run with no result.json yet adds nothing, and a record nobody can
+// use (corrupt, or past the read cap) is one run's problem and is warned
+// about. Anything else — the bucket refused the read — is the day's.
+func fatalRead(err error) bool {
+	return err != nil && !errors.Is(err, runstore.ErrNotFound) &&
+		!errors.Is(err, runstore.ErrTooLarge) && !strings.HasPrefix(err.Error(), "decoding result.json")
 }
