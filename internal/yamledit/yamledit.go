@@ -25,6 +25,13 @@
 // that apart from a write of the same bytes — and a refusal returns the input
 // unchanged with an error beside it, never a half-applied edit.
 //
+// A value is written as it stands unless YAML would read those bytes as
+// something else, so the text of a setting and the type its schema gives that
+// setting both survive the edit: `5` is written as the number, and a value that
+// would read as a comment, a mapping or a sequence is quoted. The quoting style
+// of the value already in the document is kept, so a hand-written file does not
+// lose the quotes its author chose.
+//
 // # What it refuses
 //
 // A refusal is an *Error naming the reason class; it never echoes document
@@ -133,11 +140,13 @@ type RemoveOptions struct {
 // that has to tell "nothing to do" from "wrote the same bytes" asks this.
 func Changed(before, after []byte) bool { return !bytes.Equal(before, after) }
 
-// SetScalar sets path to a string value, creating the mappings on the way that
-// the document does not have yet. The value is quoted only when YAML needs it —
-// when it would otherwise re-parse as another type, as a comment, or as
-// something that is not one scalar — and an existing value keeps its quoting
-// style.
+// SetScalar sets path to a value, creating the mappings on the way that the
+// document does not have yet. The value is quoted only when YAML needs it: it is
+// written as it stands whenever those bytes read back as exactly this text as
+// one scalar, so `5` is written as the number the file's schema expects and only
+// a value YAML would read as something else (a comment, a nested mapping, a
+// sequence, a trimmed string) is quoted. An existing value keeps its quoting
+// style, and an edit that would write the bytes already there changes nothing.
 func SetScalar(src []byte, path []string, value string) ([]byte, error) {
 	const op = "SetScalar"
 	if err := checkPath(op, path); err != nil {
@@ -393,9 +402,6 @@ func (d *doc) setEntryValue(op string, e *entry, value, path string) ([]byte, er
 		return nil, err
 	}
 	v := e.value
-	if scalarIs(v, value) {
-		return d.src, nil
-	}
 	empty, err := d.emptyValue(v)
 	if err != nil {
 		return nil, withOp(err, op)
@@ -412,7 +418,11 @@ func (d *doc) setEntryValue(op string, e *entry, value, path string) ([]byte, er
 		if err != nil {
 			return nil, err
 		}
-		return splice(d.src, start, end, []byte(renderValue(value, v.Style))), nil
+		want := []byte(renderValue(value, v.Style))
+		if bytes.Equal(d.src[start:end], want) {
+			return d.src, nil
+		}
+		return splice(d.src, start, end, want), nil
 	}
 	if v.Style&yaml.FlowStyle != 0 {
 		return nil, refuse(op, path, ReasonFlowCollection)

@@ -97,8 +97,12 @@ func (idx lineIndex) contentEnd(line int) int {
 }
 
 // endsWithBreak reports whether the last line was opened by a break, which is
-// how a document that ends with a newline is told from one that does not.
-func (idx lineIndex) endsWithBreak() bool { return len(idx.breaks) == len(idx.starts) }
+// how a document that ends with a newline is told from one that does not: a
+// trailing break leaves one more line start than there are breaks, and that
+// last start sits at the end of the text.
+func (idx lineIndex) endsWithBreak() bool {
+	return len(idx.breaks) > 0 && idx.starts[len(idx.starts)-1] == idx.end
+}
 
 // lineOf returns the line holding an offset. A break belongs to the line it
 // ends, so an offset on a break names the line above it.
@@ -548,8 +552,10 @@ func (d *doc) entrySpan(op string, e *entry) (int, int, error) {
 	return start, d.removalEnd(end), nil
 }
 
-// itemStart returns where a sequence item's own text begins: its `- `, back
-// over the comment lines that sit directly above it.
+// itemStart returns where a sequence item's own text begins: the start of its
+// line, indentation included, back over the comment lines that sit directly
+// above it. The whole line goes rather than just its `- `, or the indentation
+// that was in front of the dash would be left behind in front of the next item.
 func (d *doc) itemStart(op string, item *yaml.Node) (int, error) {
 	off, err := d.offset(item)
 	if err != nil {
@@ -558,7 +564,7 @@ func (d *doc) itemStart(op string, item *yaml.Node) (int, error) {
 	line := d.lines.lineOf(off)
 	lineStart := d.lines.start(line)
 	indent := leadingSpaces(d.src[lineStart:d.lines.contentEnd(line)])
-	return d.absorbComments(lineStart+indent, indent), nil
+	return d.absorbComments(lineStart, indent), nil
 }
 
 // itemSpan returns the bytes a sequence item occupies.
@@ -617,8 +623,11 @@ func mapValue(m *yaml.Node, key string) *yaml.Node {
 	return found
 }
 
+// scalarIs compares the text a scalar was written with. A value written without
+// quotes reads back as a number, a boolean or a date, and is still the text the
+// caller asked for: the file's own schema decides what each setting means.
 func scalarIs(n *yaml.Node, value string) bool {
-	return n != nil && n.Kind == yaml.ScalarNode && n.Tag == "!!str" && n.Value == value
+	return n != nil && n.Kind == yaml.ScalarNode && n.Value == value
 }
 
 func listHas(n *yaml.Node, value string) bool {

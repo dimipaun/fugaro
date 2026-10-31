@@ -21,37 +21,48 @@ func renderValue(value string, style yaml.Style) string {
 		}
 		return doubleQuote(value)
 	}
-	if plainOK(value) {
+	if _, ok := plainForm(value); ok {
 		return value
 	}
 	return doubleQuote(value)
 }
 
+// renderKey writes a mapping key, which is always a string: a key that resolved
+// to a number would not be found by the reader that looks for it by name.
 func renderKey(key string) string {
-	if plainOK(key) {
+	if tag, ok := plainForm(key); ok && tag == "!!str" {
 		return key
 	}
 	return doubleQuote(key)
 }
 
-// plainOK reports whether a value written without quotes re-parses as exactly
-// this string: as a string, and neither as another type (a boolean, a number, a
-// null, a timestamp) nor as something that is not one scalar at all (a comment,
-// a nested mapping or sequence, a trailing space). A tab is written quoted so
-// that no value can ever look like indentation.
-func plainOK(value string) bool {
+// plainForm reports whether a value written without quotes reads back as exactly
+// this text — one plain scalar, not a comment, a nested mapping, a sequence or a
+// trimmed string — and returns the tag YAML gives it.
+//
+// The tag is returned rather than required to be a string because the settings
+// this package edits decide their own types: `max_usd: 5` is how the schema
+// spells a number, and a writer that quoted it would leave the file unloadable
+// for the run that reads it next. A value whose plain form would read as
+// something other than this text — `#x` is a comment, `a: b` is a mapping, `- x`
+// is a sequence, ` pro` would lose its space — is quoted instead. A tab is
+// quoted too, so that no value can ever look like indentation.
+func plainForm(value string) (string, bool) {
 	if value == "" || strings.ContainsAny(value, "\n\r\t") {
-		return false
+		return "", false
 	}
 	var n yaml.Node
 	if err := yaml.Unmarshal([]byte(value), &n); err != nil {
-		return false
+		return "", false
 	}
 	if n.Kind != yaml.DocumentNode || len(n.Content) != 1 {
-		return false
+		return "", false
 	}
 	c := n.Content[0]
-	return c.Kind == yaml.ScalarNode && c.Style == 0 && c.Tag == "!!str" && c.Value == value
+	if c.Kind != yaml.ScalarNode || c.Style != 0 || c.Tag == "!!merge" || c.Anchor != "" || c.Value != value {
+		return "", false
+	}
+	return c.Tag, true
 }
 
 func doubleQuote(value string) string {

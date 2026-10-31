@@ -1,0 +1,28 @@
+# Project settings for owner/repo-a.
+# Written by hand, so keep the comments and the blank lines.
+
+project: workspace-a
+
+# Where the run's code may go.
+allow_data_to:
+  - owner/repo-a
+  - owner/repo-b
+
+# The default rigor mode for this project.
+# (startup is the fastest one.)
+rigor:
+  default: standard   # or startup
+  areas:
+    - name: one
+      path: internal/one/**
+      mode: critical
+
+# Pointed at a person, not at a group.
+followup:
+  trusted:
+    - person-1
+
+# budget:
+#   max_usd: 20
+budget:
+  max_usd: 5
