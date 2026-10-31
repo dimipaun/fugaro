@@ -132,9 +132,10 @@ var doctorDecisionIDs = map[string]bool{
 //
 // A read that FAILED is not one of them: "could not be read" says the fact is
 // unknown, not that it is fine, and an unknown that is filed as a measurement
-// is a silent pass — so a check whose info line is an unread state is a
-// counted finding instead (creds-broken, creds-rules, the policy-rules-skew
-// generation read, job-token-grant's unchecked summary).
+// is a silent pass — so a check whose info line is an unread state carries
+// doctorCheck.unread, and doctorClassOf counts it instead (creds-broken,
+// creds-rules, the policy-rules-skew generation read, job-token-grant's
+// unchecked summary, policy-published's three unread variants, and the rest).
 //
 // The list is explicit, and it is a list rather than a rule (an "info severity
 // and not ok" test would swallow them all) because the default of
@@ -153,6 +154,10 @@ var doctorMeasureIDs = map[string]bool{
 	// pluginwire's own "never a failure" states: not installed, cannot
 	// compare. "installed differs" is a warning, and a finding.
 	"plugin-install": true,
+	// The standing note the wiring always prints beside its per-notice lines:
+	// a fixed sentence about what wiring the plugin blesses, not a finding of
+	// this checkout's.
+	"plugin-settings-caveat": true,
 	// The verifier a base pin needs. The check's own comment is the reason it
 	// is here: an absent binary "is not a wrong state", and the pin's own
 	// refusal names it when a person needs it.
@@ -190,12 +195,16 @@ var doctorMeasureIDs = map[string]bool{
 	"batch-subnetwork":     true,
 }
 
-// doctorMeasurePrefixes are the measurements doctor emits once per instance:
-// plugin-settings-<n> is the list of what the wiring carries, one line per
-// notice. A prefix is right here and wrong for the checks above: the sweep's
-// per-instance IDs (runs-bucket-iam-1, job-token-grant-1, token-signers-2) are
-// findings doctor reports, not measurements.
-var doctorMeasurePrefixes = []string{"plugin-settings-"}
+// doctorMeasurePrefixes are the measurements doctor emits once per instance.
+// It is empty, and that is the point: every per-instance ID doctor today
+// emits is a finding — the sweep's own (runs-bucket-iam-1, job-token-grant-1,
+// token-signers-2), and plugin-settings-<n>, one line per notice of what the
+// wiring carries, which printed in the default view before doctor had classes
+// and is counted by the pointer line since. The one fixed plugin-settings
+// line, plugin-settings-caveat, is an exact ID in the list above; the
+// per-notice IDs are deliberately not a prefix here, since a prefix is what
+// would hide them.
+var doctorMeasurePrefixes []string
 
 // doctorActionableInfoIDs are the informational checks that are an action all
 // the same: the fix is one thing the reader runs, and hiding it would hide work.
@@ -224,6 +233,15 @@ func doctorClassOf(c doctorCheck) string {
 		// A decision is the owner's whatever its severity, and the default
 		// view names the command for each choice: it is never a measurement.
 		return doctorClassDecision
+	case c.unread && !finding:
+		// A check whose own line says a fact could not be read, or is unknown.
+		// It is never a measurement whatever its ID: an unknown filed as a
+		// measurement prints beside "everything checked is ok" as if it had
+		// been read — the silent pass, in the shape that matters most, since
+		// the state it hides is the one that looks cleanest. A warning-severity
+		// unread state keeps its own class above (finding): it already fails
+		// doctor and prints in the default view.
+		return doctorClassAudit
 	case c.OK:
 		// A check that passes and still carries a severity is a measurement,
 		// not a finding: project-account-stored names the repositories a

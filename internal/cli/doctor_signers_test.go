@@ -423,3 +423,25 @@ func TestDoctorTokenSignersInfoLinesNameTheCondition(t *testing.T) {
 		t.Errorf("summary %q does not name the Admin SDK binding's condition (the expression stands in for an empty title)", s.Problem)
 	}
 }
+
+// TestDoctorTokenSignersUnreadProjectNumberIsCounted: an unread project number
+// is an unread state — no Google service agent is recognised, so the summary's
+// counts are not what the project's policy says — and the summary is a counted
+// finding rather than a measurement printed beside the ok line.
+func TestDoctorTokenSignersUnreadProjectNumberIsCounted(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.project(gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{"user:eve@example.com"}})
+	r.crm.FailGet("proj-1234", 403, "PERMISSION_DENIED", "no resourcemanager.projects.get")
+
+	o, _ := r.doctor(t)
+	c, ok := summary(o)
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("summary = %+v (found %v)", c, ok)
+	}
+	if !strings.Contains(c.Problem, "the project number could not be read") {
+		t.Fatalf("the rig did not reach the unread project number: %s", c.Problem)
+	}
+	if c.Class != doctorClassAudit {
+		t.Errorf("the signer summary with an unread project number is classed %q, want %q", c.Class, doctorClassAudit)
+	}
+}

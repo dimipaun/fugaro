@@ -364,6 +364,12 @@ func TestDoctorLauncherReachAsAPlainLauncher(t *testing.T) {
 	if !strings.Contains(c.Problem, "you can start 1 of them: "+project) {
 		t.Errorf("does not report the job the caller can start (with overrides, as fugaro run launches): %s", c.Problem)
 	}
+	// And it is an unread state, not a measurement: every policy was refused,
+	// so the grants were never read, and a measurement here would print beside
+	// "everything checked is ok" on an installation nobody looked at.
+	if c.Class != doctorClassAudit {
+		t.Errorf("launcher-jobs on a surface nobody could read is classed %q, want %q", c.Class, doctorClassAudit)
+	}
 }
 
 // When not one job's policy could be read — every read failed, so not even a

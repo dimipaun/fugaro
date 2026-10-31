@@ -14,6 +14,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -32,6 +34,15 @@ import (
 func doctorOwnerCase(t *testing.T) []doctorCheck {
 	t.Helper()
 	signerSummary, signerOwners := doctorOwnerSigners(t)
+	deployers := doctorOwnerDeployers(t)
+	caveat, pluginNotice := doctorOwnerPluginSettings(t)
+	routing, markers := doctorOwnerRouting(t)
+	xdg := tempXDGChecks(func(v string) string {
+		if v == "XDG_CONFIG_HOME" {
+			return "/tmp/fugaro-config"
+		}
+		return ""
+	})[0]
 	return []doctorCheck{
 		{ID: "cli-version", Severity: "warning",
 			Problem: "fugaro 0.14.1 is available; this is 0.14.0",
@@ -64,17 +75,14 @@ func doctorOwnerCase(t *testing.T) []doctorCheck {
 			Problem: "the shipped price catalog is 24 days old; estimates use it until a release carries a newer one"},
 		{ID: "provider-zdr-unverified", Severity: "info",
 			Problem: "whether provider-a holds the traffic of a routed call under zero data retention is unverified: the provider's own console is the only place that answers it"},
-		{ID: "routing-resolution", Severity: "info",
-			Problem: "no repository this machine's config names resolves the switch, so which Claude ID is routed through a provider is unknown here"},
-		{ID: "routing-cache-markers", Severity: "info", Problem: routingCacheMarkersNothingRouted},
+		routing,
+		markers,
 		{ID: "shared-config", Severity: "info",
 			Problem: "the project's config is the shared file published to the runs bucket (generation 7, checked 3 days ago)",
 			Fix:     "fugaro setup creates your own local config"},
-		{ID: "plugin-settings-caveat", Severity: "info", Problem: "the wiring in .claude/settings.json blesses every rule in that file"},
-		{ID: "plugin-settings-1", Severity: "info",
-			Problem: ".claude/settings.json carries a hook that runs a command from the repository"},
-		{ID: "xdg-temp-dir", Severity: "info",
-			Problem: "XDG_CONFIG_HOME is under /tmp, which a reboot empties: the project config lives there"},
+		caveat,
+		pluginNotice,
+		xdg,
 		{ID: "launcher-jobs", Severity: "info",
 			Problem: "launcher grants on Cloud Run jobs: 2 grant(s) over 1 job(s), and a launcher can start 1 of them: fugaro-owner-repo-a-web"},
 		signerSummary,
@@ -88,8 +96,7 @@ func doctorOwnerCase(t *testing.T) []doctorCheck {
 			Fix:     "to narrow it, list the repositories in that provider's allow_data_to and run fugaro update --repo in each one"},
 		{ID: "provider-secret-name", Severity: "info",
 			Problem: "provider provider-a: its key is stored as anthropic-key, not provider-a-api-key"},
-		{ID: "credentials-service-deployers", Severity: "info",
-			Problem: "the credentials service is deployed and its deployers are: 1 service account"},
+		deployers,
 		{ID: "project-account-stored", OK: true, Severity: "info",
 			Problem: "the project's Claude account job(s), with the repositories each one's token may be used by: fugaro-aurora-personal (profile personal, account personal, token claude-oauth-token-personal): repositories owner/repo-a"},
 		{ID: "everything-else", OK: true},
@@ -98,6 +105,59 @@ func doctorOwnerCase(t *testing.T) []doctorCheck {
 
 // doctorOwnerBucket is the rig's runs bucket, the one the bucket checks name.
 const doctorOwnerBucket = "fugaro-runs-proj-1234"
+
+// doctorOwnerPluginSettings are the two lines the wiring's own emitter writes
+// for a settings file that carries a hook: the per-notice finding and the caveat
+// beside it.
+func doctorOwnerPluginSettings(t *testing.T) (caveat, notice doctorCheck) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"make lint"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checks := pluginSettingsChecks(p)
+	if len(checks) != 2 || checks[0].ID != "plugin-settings-1" || checks[0].Problem == "" {
+		t.Fatalf("the settings emitter did not report the hook: %+v", checks)
+	}
+	return checks[1], checks[0]
+}
+
+// doctorOwnerRouting are the two routing lines for a machine whose config names
+// no repository: the emitter's own text, since "unresolved here" is a sentence
+// with a why in it that a fixture must not invent.
+func doctorOwnerRouting(t *testing.T) (routing, markers doctorCheck) {
+	t.Helper()
+	checks := doctorRoutingChecks(&localcfg.Config{}, &projectpolicy.Policy{}, "", doctorRoutingLayer{})
+	if len(checks) != 2 {
+		t.Fatalf("the routing emitter returned %d checks", len(checks))
+	}
+	return checks[0], checks[1]
+}
+
+// doctorOwnerDeployers is the credentials-service line as its own emitter
+// writes it, on a rig whose fakes serve every policy it reads: the fixture may
+// not invent a sentence, and an invented one decides the class too.
+func doctorOwnerDeployers(t *testing.T) doctorCheck {
+	t.Helper()
+	r := newSecretReadersRig(t)
+	r.withCredentialsService(t)
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+	r.crm.SetPolicy("proj-1234",
+		gcpfake.Binding{Role: "roles/run.developer", Members: []string{"user:person-2@example.com"}})
+	o, _ := r.doctor(t)
+	c, ok := doctorCheckByID(o.Checks, "credentials-service-deployers")
+	if !ok {
+		t.Fatal("the credentials-service check emitted no line: the fixture would be inventing one")
+	}
+	if c.unread {
+		t.Fatal("the credentials-service line reports an unread policy, and the rig's fakes serve every one")
+	}
+	return c
+}
 
 // doctorOwnerSigners are the owner's two signer lines, read from the check
 // that emits them (doctorTokenSigners) on a rig whose project policy names an
@@ -193,10 +253,10 @@ func TestDoctorDefaultIsOneScreen(t *testing.T) {
 		}
 	}
 	// And it says where they went, so nobody reads a short output as a clean one.
-	// Three findings: provider-zdr-unverified in the audit half, and the
-	// sweep's two — access the caller cannot be placed for, and a read that
-	// failed. All three are counted, none is printed.
-	if !strings.Contains(got, "1 more finding: `fugaro doctor --all`") {
+	// Four findings: provider-zdr-unverified and the wiring's own notice in the
+	// audit half, and the sweep's two — access the caller cannot be placed for,
+	// and a read that failed. All four are counted, none is printed.
+	if !strings.Contains(got, "2 more findings: `fugaro doctor --all`") {
 		t.Errorf("the default view hides its audit findings without saying so:\n%s", got)
 	}
 	if !strings.Contains(got, "2 security findings: `fugaro doctor --security`") {
@@ -644,9 +704,15 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 	// A measurement is never counted, so an ID that is not on the allow-list
 	// stays a finding here — that is the ruling's default, and it is what keeps
 	// a check added later from going unmentioned.
+	// plugin-settings-<n> is here for the reason it is not on the allow-list
+	// below: a settings file that adds a hook, bypassPermissions, an
+	// apiKeyHelper or enableAllProjectMcpServers printed in the default view
+	// before doctor had classes, and a notice about what the wiring carries is
+	// not a measurement of this checkout's state. The fixed caveat line beside
+	// it (plugin-settings-caveat) is one, and stays one.
 	for _, id := range []string{
 		"provider-zdr-unverified", "runs-bucket-iam-1", "job-token-grant-2", "launcher-jobs-public",
-		"project-account-stored", "a-check-added-later",
+		"project-account-stored", "a-check-added-later", "plugin-settings-1",
 	} {
 		info := doctorCheck{ID: id, Severity: "info", Problem: "what doctor measured"}
 		if got := doctorClassOf(info); got != doctorClassAudit {
@@ -670,7 +736,7 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 		"launcher-jobs", "token-signers", "token-signers-owners",
 		"secret-readers-unexpected", "credentials-service-deployers",
 		"batch-apis", "secret-scope",
-		"plugin-settings-caveat", "plugin-settings-1",
+		"plugin-settings-caveat",
 	} {
 		c := doctorCheck{ID: id, Severity: "info", Problem: "what doctor measured"}
 		if got := doctorClassOf(c); got != doctorClassMeasure {
@@ -1037,5 +1103,108 @@ func TestDoctorDefaultDoesNotOpenWithTheTagLine(t *testing.T) {
 	_ = emitDoctor(cmd, doctorOutput{Checks: []doctorCheck{{ID: "runs-bucket-iam", OK: true}}}, false, doctorView{all: true})
 	if !strings.Contains(all.String(), "a tag can be moved") {
 		t.Errorf("--all does not print the release line:\n%s", all.String())
+	}
+}
+
+// TestDoctorUnreadPolicyStatesAreCounted: the states a real installation
+// reaches when the policy node cannot be read — a read the database refused,
+// and a budget.rtdb_url pointing at another project's database. Before the
+// unread marker each of them printed "ok — everything checked is ok", exit 0,
+// with no pointer, because policy-published and the two routing checks share
+// one ID between the measurement and the unread state. They are counted
+// findings now: the default view names the flag that prints them, and none of
+// their IDs is printed as informational.
+func TestDoctorUnreadPolicyStatesAreCounted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(t *testing.T, db *gcpfake.RTDB)
+	}{
+		{"the policy node could not be read", func(t *testing.T, db *gcpfake.RTDB) {
+			db.DenyRead(projectpolicy.PathShared())
+		}},
+		{"the database belongs to another project", func(t *testing.T, db *gcpfake.RTDB) {
+			// The check every reader makes: doctor reads everything as this
+			// project's, and this database is not it.
+			db.Set("fugaro/project", "borealis")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+			tc.set(t, db)
+
+			// Every state the unread node reaches: the node itself, and the
+			// two routing lines that resolve a switch out of it.
+			for _, id := range []string{"policy-published", "routing-resolution", "routing-cache-markers"} {
+				c := doctorCheckEmitted(t, id)
+				if c.OK || c.Severity != "info" {
+					t.Fatalf("%s = %+v, want the info line of an unread state", id, c)
+				}
+				if c.Class != doctorClassAudit {
+					t.Errorf("%s is classed %q, want %q: an unread state is never a measurement", id, c.Class, doctorClassAudit)
+				}
+			}
+
+			// The human view: not the ok line, and not the unread lines
+			// printed as if they had been measured.
+			out, _, err := execute(t, "doctor")
+			if err != nil {
+				t.Fatalf("doctor: %v\n%s", err, out)
+			}
+			if strings.Contains(out, "everything checked is ok") {
+				t.Errorf("an installation whose policy could not be read printed the ok line:\n%s", out)
+			}
+			if !strings.Contains(out, "`fugaro doctor --all`") {
+				t.Errorf("the default view hides the unread state without saying so:\n%s", out)
+			}
+			for _, id := range []string{"policy-published", "routing-resolution"} {
+				if strings.Contains(out, "info "+id) {
+					t.Errorf("the default view prints the unread %s:\n%s", id, out)
+				}
+			}
+			// --all still carries every one of them, whole.
+			all, _, _ := execute(t, "doctor", "--all")
+			for _, id := range []string{"policy-published", "routing-resolution", "routing-cache-markers"} {
+				if !strings.Contains(all, id) {
+					t.Errorf("--all does not print %s:\n%s", id, all)
+				}
+			}
+		})
+	}
+}
+
+// TestDoctorPluginSettingsNoticeIsCounted: a settings file that adds a hook,
+// bypassPermissions, an apiKeyHelper or enableAllProjectMcpServers is what the
+// wiring's notice lines are about, and they printed in the default view before
+// doctor had classes. A notice is a counted audit finding — the pointer names
+// `--all` — while the fixed caveat beside it stays a measurement.
+func TestDoctorPluginSettingsNoticeIsCounted(t *testing.T) {
+	_, root := doctorCleanRig(t, nil)
+	// The wiring an installation has, plus a hook: the notice the per-notice
+	// line is for, written through the check's own emitter below.
+	settings := filepath.Join(root, ".claude", "settings.json")
+	withHook := strings.TrimSuffix(wiredAt("v0.2.0"), "}") + `,"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"make lint"}]}]}}`
+	if err := os.WriteFile(settings, []byte(withHook), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if checks := pluginSettingsChecks(settings); len(checks) != 2 || checks[0].ID != "plugin-settings-1" {
+		t.Fatalf("the settings emitter did not report the hook: %+v", checks)
+	}
+
+	out, _, err := execute(t, "doctor", "--dir", root)
+	if err != nil {
+		t.Fatalf("doctor: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "everything checked is ok") {
+		t.Errorf("a clean installation whose settings carry a hook printed the ok line:\n%s", out)
+	}
+	if !strings.Contains(out, "1 more finding: `fugaro doctor --all`") {
+		t.Errorf("the default view does not count the settings notice:\n%s", out)
+	}
+	if strings.Contains(out, "plugin-settings-1") {
+		t.Errorf("the default view prints the settings notice:\n%s", out)
+	}
+	all, _, _ := execute(t, "doctor", "--all", "--dir", root)
+	if !strings.Contains(all, "plugin-settings-1") || !strings.Contains(all, "the file defines hooks") {
+		t.Errorf("--all does not print the settings notice:\n%s", all)
 	}
 }
