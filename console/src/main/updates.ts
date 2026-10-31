@@ -13,12 +13,14 @@
 // installs while a launch is in flight. The owner's ruling of 2026-10-30 is
 // that nothing installs on quit either: an update is installed only through the
 // notice's "Restart to update", so the client's own install-on-quit is off from
-// the first configuration and no path here turns it on. It reaches none of that
-// on its own: the
-// listing arrives through an injected `fetchReleases`, six hours pass on an
-// injected timer and the client is an injected `UpdaterPort` that the adapter
-// fills with electron-updater. What that buys is a policy testable with no
-// network, no clock and no shipped update.
+// the first configuration and no path here turns it on. That notice names the
+// download it was opened for, and a press installs only that one: a check that
+// lands between the prompt and the answer leaves the app holding other bytes,
+// and the bytes that were not offered are not the ones installed. It reaches
+// none of that on its own: the listing arrives through an injected
+// `fetchReleases`, six hours pass on an injected timer and the client is an
+// injected `UpdaterPort` that the adapter fills with electron-updater. What that
+// buys is a policy testable with no network, no clock and no shipped update.
 
 /** UPDATE_INTERVAL_MS is the interval between checks: design section 7.3 asks
  * for "check on launch and then on a long interval", and six hours is what this
@@ -99,6 +101,12 @@ const LISTING_FAILED = 'fugaro console: the release listing could not be read; t
 const CLIENT_FAILED = 'fugaro console: the update client refused the check; the next check will try again'
 const TAG_REFUSED = 'the update feed URL is refused: that tag is not a console release tag'
 
+/** RESTART_REFUSED is the line a press for a version this policy does not hold
+ * gets, and it is a constant for the reason the three above are: the press names
+ * a version, and a version is exactly what does not belong in a log the user may
+ * paste. What is useful is that the restart was refused. */
+const RESTART_REFUSED = 'fugaro console: the restart is refused; the update on disk is not the version the notice named'
+
 /** IntervalTimers is `setInterval`/`clearInterval`, injected so the cadence is
  * a test's to move rather than a wall clock's. */
 export interface IntervalTimers {
@@ -151,7 +159,10 @@ export interface UpdateController {
   start(): Promise<void>
   stop(): void
   checkNow(): Promise<void>
-  restartRequested(): void
+  /** restartRequested is the notice's "Restart to update", answered with the
+   * version that notice was opened with: the notice is answered later than it
+   * was shown, so the caller's version is what ties the press to a download. */
+  restartRequested(version: string): void
   launchFlowIdle(): void
 }
 
@@ -224,7 +235,14 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
    * actually asked for. */
   const expected = new Set<string>()
   let readyDeferred: string | null = null
-  let restartDeferred = false
+  /** installable is the version of the download this policy last accepted, and
+   * the only version a restart may install: a press arrives with the version its
+   * notice was opened with, and a check that landed in between can leave the app
+   * holding a different download than the one the operator answered about. */
+  let installable: string | null = null
+  /** restartDeferred is the version an accepted press asked for while a launch
+   * was in flight, re-checked against `installable` where it is delivered. */
+  let restartDeferred: string | null = null
   /** live is whether a check has been asked for and not yet stopped. It is here
    * because the download event carries no generation: `stop()` abandons a check
    * in flight by moving `generation` on, but a download that began before the
@@ -289,6 +307,7 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       return
     }
     expected.delete(version)
+    installable = version
     if (!deps.isLaunchFlowIdle()) {
       readyDeferred = version
       return
@@ -387,10 +406,23 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       clearTimer()
     },
     checkNow,
-    restartRequested: () => {
-      if (!allowed()) return
+    restartRequested: (version: string) => {
+      // Two refusals with no line between them: the app said stop and this is a
+      // quitting process, or the gate closed and nothing here may still write to
+      // the client. Neither records a deferral, so there is nothing left for a
+      // later `launchFlowIdle()` to deliver -- the same two refusals
+      // `launchFlowIdle` itself makes.
+      if (!live || !allowed()) return
+      if (version !== installable) {
+        // The press is about the download its notice named, and this policy is
+        // holding a different one -- or none: the bytes that would be installed
+        // are not the bytes that were offered, and an update is installed only
+        // through the notice the operator saw.
+        console.error(RESTART_REFUSED)
+        return
+      }
       if (!deps.isLaunchFlowIdle()) {
-        restartDeferred = true
+        restartDeferred = version
         return
       }
       deps.updater.quitAndInstall()
@@ -403,8 +435,12 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       const version = readyDeferred
       readyDeferred = null
       if (version !== null) deps.onReadyToRestart(version)
-      if (!restartDeferred) return
-      restartDeferred = false
+      const deferred = restartDeferred
+      restartDeferred = null
+      // The deferral is the version that was pressed, and the download is read
+      // again here rather than trusted from where the press was recorded: a check
+      // that landed while the flow was busy may have replaced it.
+      if (deferred === null || deferred !== installable) return
       deps.updater.quitAndInstall()
     },
   }
