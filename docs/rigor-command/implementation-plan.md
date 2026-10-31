@@ -510,11 +510,7 @@ neither is it, and no code reads one.
   design's **O10** — `docs/review-levels-ab-jobmax/reconciliation.md` §4, the owner's ruling of
   2026-10-30) and its rounds are **1**, the number it spends: **O3 is answered** (2026-10-31) — a mode
   **may** go below today's default of two — so hotfix is **1/1**, and the answer sets the per-mode loop
-  defaults to **POC 1/1, Startup 2/2, Pro 3/3, Critical 3/5, Hotfix 1/1**, each pair being the mode's
-  review ceiling and its adversarial ceiling (`RoundCeiling` and `AdversarialCeiling`,
-  `internal/rigor/rounds.go`). The `minRoundCeiling` clamp to two goes with the answer, in the task
-  that implements it — the rigor-modes design's **T3.2**, whose `Depends on O3` line the answer
-  unblocks (`docs/rigor-modes/implementation-plan.md`) — so until that task lands the code still
+  defaults to **POC 1/1, Startup 2/2, Pro 3/3, Critical 3/5, Hotfix 1/1**, each pair being the first-line (inner) rounds and the senior rounds the mode runs **by default** — a default, not a cap: a task override, the recipe, the repository or the project layer can set either number higher or lower within the recipe's bounds (inner 1–3, senior 1–10). The `minRoundCeiling` clamp to two goes with the answer, in the task that implements the loop-defaults ruling (which also renames the ceiling names in `internal/rigor/rounds.go`, because a field never changes meaning), whose `Depends on O3` line the answer unblocks (`docs/rigor-modes/implementation-plan.md`) — so until that task lands the code still
   clamps, and this paragraph is the ruling rather than a reading of `main`. So a hand-written
   `rigor.default: hotfix` in a layer or in a `fugaro.yaml` already reaches a mode that tolerates
   almost everything with **no gate at all**, while `fugaro run --mode hotfix` cannot take effect
@@ -585,13 +581,13 @@ changes are the wizard's and the setup skill's.
   that already hold those answers (`internal/rigor/levels.go` for the levels, `internal/rigor/rounds.go`
   for the rounds, whose defaults **O3's answer** set):
   - **`pro` — the recommendation, printed first**: level 2, the senior review that decides readiness,
-    and no adversarial pass; up to 3 review rounds. It is the built-in default, so it is what a project
+    and no adversarial pass; by default 3 first-line and 3 senior rounds. It is the built-in default, so it is what a project
     that says nothing already runs today, and the one line says so.
-  - `startup` — the same level 2 review, up to 2 rounds: less spend, less to spend it on.
+  - `startup` — the same level 2 review, by default 2 first-line and 2 senior rounds: less spend, less to spend it on.
   - `poc` — level 1 only (`levels.go`'s row turns L2 off and L1 on, so D723's first-line review runs
-    and decides readiness) and 1 round: the cheapest mode there is.
-  - `critical` — level 2 **and** level 3, the adversarial pass after it; 3 review rounds and up to 5
-    adversarial ones: the most review, and the most money.
+    and decides readiness) and by default 1 first-line and 1 senior round: the cheapest mode there is.
+  - `critical` — level 2 **and** level 3, the adversarial pass after it; by default 3 first-line and 5
+    senior rounds: the most review, and the most money.
   The four lines are printed before the prompt, the way the billing question prints its list, and the
   prompt itself carries **no suggestion**: it is `initRun.prompt` with `def` empty
   (`internal/cli/init_inputs.go`), so Enter is not an answer — an empty line prints "a value is

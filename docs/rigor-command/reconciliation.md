@@ -283,10 +283,7 @@ Reported rather than fixed, because each needs its own decision and its own revi
   Pro and Critical only) and `internal/rigor/rounds.go`'s table gives it a ceiling of **1**, which is
   the number it spends: **O3 is answered** (2026-10-31) — a mode **may** go below today's default of
   two — so hotfix is **1/1**, and the answer sets the per-mode loop defaults to **POC 1/1, Startup
-  2/2, Pro 3/3, Critical 3/5, Hotfix 1/1**, each pair being the mode's review ceiling and its
-  adversarial ceiling (`RoundCeiling` and `AdversarialCeiling`). The `minRoundCeiling` clamp to two
-  goes with the answer, in the task that carries it — the rigor-modes design's **T3.2**, whose
-  `Depends on O3` line the answer unblocks (`docs/rigor-modes/implementation-plan.md`) — so until that
+  2/2, Pro 3/3, Critical 3/5, Hotfix 1/1**, each pair being the first-line (inner) rounds and the senior rounds the mode runs **by default** — a default, not a cap: a task override, the recipe, the repository or the project layer can set either number higher or lower within the recipe's bounds (inner 1–3, senior 1–10). The `minRoundCeiling` clamp to two goes with the answer, in the task that implements the loop-defaults ruling (which also renames the ceiling names in `internal/rigor/rounds.go`, because a field never changes meaning), whose `Depends on O3` line the answer unblocks (`docs/rigor-modes/implementation-plan.md`) — so until that
   task lands the code still clamps, and this paragraph is the ruling rather than a reading of `main`.
   So a hand-written `rigor.default: hotfix` in a layer or in a `fugaro.yaml` already reaches a mode
   that tolerates almost everything, with no gate at all, while `fugaro run --mode hotfix` cannot take
