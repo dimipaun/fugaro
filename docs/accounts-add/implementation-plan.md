@@ -255,7 +255,8 @@ what the docs say around the login and need no Fugaro build at all; LC3 and LC4 
 the only checks that can falsify the design rather than the code — LC3 is where a login that would not
 take the owner's terminal, or a hidden prompt that echoed, would show up. **No live step runs from an agent session**,
 no `terraform apply`, no `fugaro update`, no `creds set`, and nothing secret is typed into a chat: every
-recorded answer is a shape — a length, an alphabet, which line — never a value.
+recorded answer is a shape — what the login asks, what a prompt says, whether a value was echoed —
+never a value.
 
 ## Release
 
