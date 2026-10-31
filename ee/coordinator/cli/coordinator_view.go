@@ -80,12 +80,12 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	if err != nil {
 		return err
 	}
-	// Every repository's view is read at once, a few at a time: a project with
-	// twenty of them costs one repository's read per round rather than their
-	// sum, which is the whole of this command's cost. Each read writes its own
-	// slot, so the document is in the repository order coordinatorRepos names
-	// whatever order they finish in, and the first failure in that order is the
-	// one reported.
+	// Every repository's view is read in one pass, a few at a time: a project
+	// with twenty of them costs one repository's read per round rather than
+	// their sum, which is the whole of this command's cost. Each read writes
+	// its own slot, so the document is in the repository order coordinatorRepos
+	// names whatever order they finish in, and the first failure in that order
+	// is the one reported.
 	//
 	// What a read warns about is buffered per repository rather than written as
 	// it is made: written as it is made, twenty reads at once put one
