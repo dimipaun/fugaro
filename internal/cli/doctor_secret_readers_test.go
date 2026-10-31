@@ -789,3 +789,32 @@ func TestDoctorSecretManagerChecksReadsACustomRoleOnce(t *testing.T) {
 		t.Errorf("the IAM API was asked what projects/proj-1234/roles/secret-runner carries %d times, want once: one doctor run resolves a role once", n)
 	}
 }
+
+// TestDoctorCredentialsServiceDeployersUnreadIsCounted: a policy the read did
+// not answer is named as unread rather than dropped, and the line is a counted
+// finding — an unread state is not a measurement, and the deployer read is
+// never the ok line.
+func TestDoctorCredentialsServiceDeployersUnreadIsCounted(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.withCredentialsService(t)
+	// The service itself is not in the fake, so its policy read fails: the
+	// account's policy is served and the project's, and the line must say
+	// which of the three it could not read.
+	r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+	r.crm.SetPolicy("proj-1234")
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("an info check must not fail doctor: %v", err)
+	}
+	c, ok := doctorCheckByID(o.Checks, "credentials-service-deployers")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("credentials-service-deployers = %+v (%+v)", c, o.Checks)
+	}
+	if !strings.Contains(c.Problem, "not read:") {
+		t.Fatalf("the rig did not reach the unread state: %s", c.Problem)
+	}
+	if c.Class != doctorClassAudit {
+		t.Errorf("a deployer read that failed is classed %q, want %q: an unread state is a counted finding", c.Class, doctorClassAudit)
+	}
+}

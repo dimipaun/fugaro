@@ -58,7 +58,7 @@
 // the Spend screen does: that decoder admits the *feed*'s two shapes (it is
 // `watch --json`'s contract), and four more commands are four more documents.
 
-import { measured, readNumber, unavailable } from '../../shared/availability'
+import { UNAVAILABLE_MARK, measured, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
 import { launcherCell } from '../../shared/launcher'
@@ -70,6 +70,7 @@ import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
+import { disabledWrite } from '../writes'
 
 // ---------------------------------------------------------------------------
 // The source lines, and the panels.
@@ -1003,15 +1004,39 @@ function note(parent: ScreenElement, factory: ScreenFactory, text: string, ...cl
   return literal(cell(parent, factory, 'p', 'projects-note', ...classes), text)
 }
 
-/** killBanner is the same shape the Live and Spend screens draw: a kill reads
- * the same on every screen, because it is the same fact. */
+/** killBanner is the badge a killed row carries: the word, and the three facts
+ * the document has. A kill's keys are `omitempty`, so a kill with no operator,
+ * no moment or no reason draws the ones it has and invents none of the others --
+ * an empty cell would say the document carried an empty string, which is a
+ * different fact from "it carried none". */
 function killBanner(factory: ScreenFactory, kill: KillView): ScreenElement {
   const element = make(factory, 'div', 'projects-kill')
   element.setAttribute('data-killed', 'true')
-  literal(cell(element, factory, 'span', 'projects-kill-word'), 'KILLED by')
-  textCell(element, factory, 'span', kill.by, 'person', 'kill.by', 'projects-kill-by')
-  textCell(element, factory, 'span', kill.at, 'label', 'kill.at', 'projects-kill-at')
-  textCell(element, factory, 'span', kill.reason, 'sentence', 'kill.reason', 'projects-kill-reason')
+  const word = cell(element, factory, 'span', 'projects-kill-word')
+  if (kill.by === '') literal(word, 'KILLED')
+  else literal(word, 'KILLED by')
+  if (kill.by !== '') textCell(element, factory, 'span', kill.by, 'person', 'kill.by', 'projects-kill-by')
+  if (kill.at !== '') textCell(element, factory, 'span', kill.at, 'label', 'kill.at', 'projects-kill-at')
+  if (kill.reason !== '') textCell(element, factory, 'span', kill.reason, 'sentence', 'kill.reason', 'projects-kill-reason')
+  return element
+}
+
+/** killRow is one kill switch: the scope it belongs to, its state as a word, the
+ * badge when it is on, and the one write the design draws for it.
+ *
+ * The write is drawn through `disabledWrite` and binds nothing: this release
+ * kills no repository and revives none, and the button says so rather than
+ * looking like a control that quietly does nothing. */
+function killRow(factory: ScreenFactory, scope: ScreenElement, kill: KillView | null): ScreenElement {
+  const element = make(factory, 'li', 'projects-kill-row')
+  const killed = kill !== null
+  element.setAttribute('data-killed', killed ? 'true' : 'false')
+  element.append(scope)
+  const state = cell(element, factory, 'span', 'projects-kill-state')
+  if (killed) literal(state, 'KILLED')
+  else literal(state, 'live')
+  if (kill !== null) element.append(killBanner(factory, kill))
+  element.append(disabledWrite(factory, 'projects-kill-action', killed ? 'Revive' : 'Kill'))
   return element
 }
 
@@ -1026,14 +1051,22 @@ function header(factory: ScreenFactory, model: ProjectsModel): ScreenElement {
   return element
 }
 
-/** panelShell draws one panel's frame: its title, its source, its state, and
- * either its count or the sentence explaining why there is none. */
+/** panelShell draws one panel's frame: its title, its state as a word, its
+ * source, and either its count or the sentence explaining why there is none. */
 function panelShell(factory: ScreenFactory, panel: ProjectsPanel): ScreenElement {
   const element = make(factory, 'section', 'projects-panel')
   element.setAttribute('data-panel', panel.key)
   element.setAttribute('data-state', panel.state)
   if (panel.operation !== null) element.setAttribute('data-operation', panel.operation)
   literal(cell(element, factory, 'h2', 'projects-title'), panel.title)
+  // The state is a word on the panel and never the frame's tone alone (styling
+  // design section 3.5). `locked` is the design's word for a card this CLI
+  // cannot read at all -- a panel with no command behind it -- and it is the
+  // state whose frame is dashed.
+  const state = cell(element, factory, 'span', 'projects-state')
+  if (panel.state === 'read') literal(state, 'read')
+  else if (panel.state === 'not-built') literal(state, 'locked')
+  else literal(state, 'not read')
   literal(cell(element, factory, 'span', 'projects-source'), panel.source)
   // A count exists only where a document was read, which is what keeps a
   // not-built panel from rendering as a zero: there is no reading to format.
@@ -1057,134 +1090,247 @@ function panelShell(factory: ScreenFactory, panel: ProjectsPanel): ScreenElement
   return element
 }
 
-/** capRowLine is one caps row: where the cap comes from, the two figures, and
- * the binding scope of each when the document names one. */
+/** capHead is one column heading of the caps table, marked as a column header so
+ * a reader's tools read the columns a sighted reader reads. The word is written
+ * by the caller, because it is the console's own vocabulary and a parameter
+ * would be a string this file cannot vouch for. */
+function capHead(parent: ScreenElement, factory: ScreenFactory): ScreenElement {
+  const element = cell(parent, factory, 'th', 'projects-cap-head')
+  element.setAttribute('scope', 'col')
+  return element
+}
+
+/** capRowLine is one caps row: the scope it belongs to, and its two caps, each
+ * in a cell of its own with the word that says where it binds.
+ *
+ * A cap's figure and its source word are drawn here rather than by a helper
+ * taking the two as parameters, because the word's own guard is written at the
+ * one place it is read: `daily_cap_source` is `repo`, `default`, `global` or
+ * `none` -- the CLI's own words for where the effective cap came from, kept only
+ * when it is one of them (`capSourceAt`) -- and what the sink scan reads is the
+ * model's value, not a parameter's.
+ *
+ * **The two cells make the row a labelled row**: the figure sits under the cap's
+ * column heading and the source word under it, so no row is a bare number and no
+ * column is a bare list of them. */
 function capRowLine(factory: ScreenFactory, row: ProjectCapRow): ScreenElement {
-  const element = make(factory, 'li', 'projects-cap')
+  const element = make(factory, 'tr', 'projects-cap')
   element.setAttribute('data-scope', row.scope)
   // The slug is the document's string, and an attribute is as much the
   // document's DOM as a text cell: it is written only as the sanitizer drew it,
   // and a slug the sanitizer refuses leaves no attribute at all.
   const slug = row.slug === null ? null : sanitizedKey(row.slug)
   if (slug !== null) element.setAttribute('data-slug', slug)
-  if (row.repo !== null) textCell(element, factory, 'span', row.repo, 'repository', 'repo', 'projects-cap-repo')
-  else literal(cell(element, factory, 'span', 'projects-cap-scope'), row.scope)
-  numberCell(element, factory, 'span', row.dailyCap, 'usd', 'projects-cap-value')
-  if (row.dailyCapSource !== null) {
-    // `daily_cap_source` is `repo`, `default` or `none`: the CLI's own words for
-    // where the effective daily cap came from.
-    literal(cell(element, factory, 'span', 'projects-cap-source'), row.dailyCapSource)
-  }
-  numberCell(element, factory, 'span', row.perRunCap, 'usd', 'projects-cap-value')
-  if (row.perRunCapSource !== null) {
-    literal(cell(element, factory, 'span', 'projects-cap-source'), row.perRunCapSource)
-  }
+  const scope = cell(element, factory, 'th', 'projects-cap-scope')
+  scope.setAttribute('scope', 'row')
+  const label = row.repo ?? row.slug
+  if (label !== null) putText(scope, label, labelClass(label), 'repo')
+  else literal(scope, row.scope)
+  const daily = cell(element, factory, 'td', 'projects-cap-cell')
+  numberCell(daily, factory, 'span', row.dailyCap, 'usd', 'projects-cap-value')
+  if (row.dailyCapSource !== null) literal(cell(daily, factory, 'span', 'projects-cap-source'), row.dailyCapSource)
+  const perRun = cell(element, factory, 'td', 'projects-cap-cell')
+  numberCell(perRun, factory, 'span', row.perRunCap, 'usd', 'projects-cap-value')
+  if (row.perRunCapSource !== null) literal(cell(perRun, factory, 'span', 'projects-cap-source'), row.perRunCapSource)
   return element
 }
 
-/** capsPanel is the caps: the largest single lease, then the rows. */
+/** capsPanel is the caps: the largest single lease, then one table whose every
+ * figure is a labelled cell -- a column heading for the cap and the CLI's own
+ * word for the scope that binds it beside the number. */
 function capsPanel(factory: ScreenFactory, model: ProjectsModel): ScreenElement {
   const element = make(factory, 'div', 'projects-caps')
   const reserve = cell(element, factory, 'p', 'projects-reserve')
-  literal(reserve, 'largest single lease (max reserve):')
+  literal(cell(reserve, factory, 'span', 'projects-reserve-word'), 'largest single lease')
   numberCell(reserve, factory, 'span', model.maxReserve, 'usd', 'projects-reserve-value')
-  const list = cell(element, factory, 'ol', 'projects-cap-list')
-  for (const row of model.caps) list.append(capRowLine(factory, row))
+  const table = cell(element, factory, 'table', 'projects-cap-table')
+  const head = cell(table, factory, 'thead')
+  const headRow = cell(head, factory, 'tr')
+  literal(capHead(headRow, factory), 'scope')
+  literal(capHead(headRow, factory), 'daily cap')
+  literal(capHead(headRow, factory), 'per-run cap')
+  const body = cell(table, factory, 'tbody')
+  for (const row of model.caps) body.append(capRowLine(factory, row))
   return element
 }
 
 /** killPanel is the project's own switch and every repository's. A switch that
- * is off is drawn as the measured fact it is -- "not killed" -- and not as a
- * missing value, which `n/a` would say. */
+ * is off is drawn as the measured fact it is -- `live` -- and not as a missing
+ * value, which `n/a` would say. The project's switch names itself with the
+ * console's own word; a repository's is a string the document wrote, so it goes
+ * through `putText` like every other one. */
 function killPanel(factory: ScreenFactory, model: ProjectsModel): ScreenElement {
   const element = make(factory, 'div', 'projects-kills')
-  const global = cell(element, factory, 'div', 'projects-kill-global')
-  literal(cell(global, factory, 'span', 'projects-kill-scope'), 'project')
-  if (model.kill.global === null) literal(cell(global, factory, 'span', 'projects-kill-none'), 'not killed')
-  else global.append(killBanner(factory, model.kill.global))
+  const list = cell(element, factory, 'ul', 'projects-kill-list')
+  const project = make(factory, 'span', 'projects-kill-scope')
+  literal(project, 'project')
+  list.append(killRow(factory, project, model.kill.global))
   for (const row of model.kill.rows) {
-    const line = cell(element, factory, 'div', 'projects-kill-row')
-    textCell(line, factory, 'span', row.repo ?? row.slug, labelClass(row.repo ?? row.slug), 'repo', 'projects-kill-repo')
-    if (row.kill === null) literal(cell(line, factory, 'span', 'projects-kill-none'), 'not killed')
-    else line.append(killBanner(factory, row.kill))
+    const label = row.repo ?? row.slug
+    const scope = make(factory, 'span', 'projects-kill-repo')
+    putText(scope, label, labelClass(label), 'repo')
+    list.append(killRow(factory, scope, row.kill))
   }
   return element
 }
 
-/** repositoriesPanel is the two lists, and the two differences between them. */
+/** repositoriesPanel is the repositories as three cards: the ones the cap
+ * document knows **and** the run list has seen, the ones with a cap row and no
+ * run yet, and the ones running with no cap row at all. The third is the case
+ * the screen exists for -- a repository spending under a cap nobody set -- so it
+ * is drawn amber and carries the write that would fix it, drawn disabled like
+ * every other write this release does not perform.
+ *
+ * **A card with no repository draws the console's own `none` and never an empty
+ * list.** The difference between "the document names no repository" and "no
+ * list arrived" is the whole reason this panel has a state: the second draws no
+ * card at all, and the panel's own sentence says which of its two documents is
+ * missing (`repositoriesBecause`). Each card is built in place rather than by a
+ * helper taking a class name, so every class and every `data-kind` is a literal
+ * at the call site. */
 function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): ScreenElement {
   const element = make(factory, 'div', 'projects-repos')
-  const enrolled = cell(element, factory, 'div', 'projects-enrolled')
-  literal(cell(enrolled, factory, 'span', 'projects-repos-label'), 'enrolled (a cap row exists)')
-  numberCell(enrolled, factory, 'span', model.enrolledCount, 'count', 'projects-enrolled-count')
-  const enrolledList = cell(enrolled, factory, 'ul', 'projects-enrolled-list')
-  for (const entry of model.enrolled) {
-    textCell(enrolledList, factory, 'li', labelOf(entry), labelClass(labelOf(entry)), 'repo', 'projects-enrolled-repo')
+  // `onlyEnrolled` names the enrolled entries with no run; everything else in
+  // `enrolled` has been seen. With both documents here -- and the panel draws no
+  // body otherwise -- the two differences are complete, so the first card is the
+  // enrolled set minus the first difference, by the label each list uses.
+  const onlyEnrolled = new Set(model.onlyEnrolled)
+  const both = model.enrolled.filter((entry) => !onlyEnrolled.has(labelOf(entry))).map(labelOf)
+
+  const seen = make(factory, 'article', 'projects-repo-card')
+  seen.setAttribute('data-kind', 'both')
+  literal(cell(seen, factory, 'h3', 'projects-repo-card-title'), 'enrolled and seen')
+  if (both.length === 0) {
+    literal(cell(seen, factory, 'p', 'projects-repo-card-none'), 'none')
+  } else {
+    const list = cell(seen, factory, 'ul', 'projects-repo-list')
+    for (const entry of both) textCell(list, factory, 'li', entry, labelClass(entry), 'repo', 'projects-repo-both')
   }
 
-  const seen = cell(element, factory, 'div', 'projects-seen')
-  literal(cell(seen, factory, 'span', 'projects-repos-label'), 'seen (a run has been recorded)')
-  numberCell(seen, factory, 'span', model.seenCount, 'count', 'projects-seen-count')
-  const seenList = cell(seen, factory, 'ul', 'projects-seen-list')
-  for (const entry of model.seen) {
-    textCell(seenList, factory, 'li', labelOf(entry), labelClass(labelOf(entry)), 'repo', 'projects-seen-repo')
-  }
-  if (model.onlySeen.length > 0) {
-    // A repository running with no cap row is the case worth a line of its own.
-    const line = cell(element, factory, 'p', 'projects-only-seen')
-    literal(line, 'running with no cap row:')
-    for (const entry of model.onlySeen) textCell(line, factory, 'span', entry, labelClass(entry), 'repo', 'projects-only-seen-repo')
-  }
-  if (model.onlyEnrolled.length > 0) {
-    const line = cell(element, factory, 'p', 'projects-only-enrolled')
-    literal(line, 'a cap row and no run yet:')
+  const waiting = make(factory, 'article', 'projects-repo-card')
+  waiting.setAttribute('data-kind', 'enrolled')
+  literal(cell(waiting, factory, 'h3', 'projects-repo-card-title'), 'enrolled, no run yet')
+  if (model.onlyEnrolled.length === 0) {
+    literal(cell(waiting, factory, 'p', 'projects-repo-card-none'), 'none')
+  } else {
+    literal(cell(waiting, factory, 'p', 'projects-repo-card-note'), 'Cap row, no run yet.')
+    const list = cell(waiting, factory, 'ul', 'projects-repo-list')
     for (const entry of model.onlyEnrolled) {
-      textCell(line, factory, 'span', entry, labelClass(entry), 'repo', 'projects-only-enrolled-repo')
+      textCell(list, factory, 'li', entry, labelClass(entry), 'repo', 'projects-only-enrolled-repo')
     }
   }
+
+  const uncapped = make(factory, 'article', 'projects-repo-card')
+  uncapped.setAttribute('data-kind', 'seen')
+  literal(cell(uncapped, factory, 'h3', 'projects-repo-card-title'), 'seen, not enrolled')
+  if (model.onlySeen.length === 0) {
+    literal(cell(uncapped, factory, 'p', 'projects-repo-card-none'), 'none')
+  } else {
+    literal(cell(uncapped, factory, 'p', 'projects-repo-card-note'), 'Running with no cap row.')
+    const list = cell(uncapped, factory, 'ul', 'projects-repo-list')
+    for (const entry of model.onlySeen) {
+      textCell(list, factory, 'li', entry, labelClass(entry), 'repo', 'projects-only-seen-repo')
+    }
+    uncapped.append(disabledWrite(factory, 'projects-repo-add', 'Add cap'))
+  }
+
+  element.append(seen)
+  element.append(waiting)
+  element.append(uncapped)
   return element
 }
 
-/** jobsPanel is the project's runs, capped, with the count of what was left
- * out: a list that silently ended at fifty rows would be a lie about the
- * project's size. */
+/** ABSENT_MARK is the console's own `n/a` (`UNAVAILABLE_MARK`), named as a
+ * module constant so the sink scan reads a string this file declares rather
+ * than a value it imported. */
+const ABSENT_MARK = UNAVAILABLE_MARK
+
+/** putMaybe writes one column a record may leave out -- the repository, the
+ * workflow, the stage, the two actors, the timestamp -- into the cell the caller
+ * has already drawn: the record's own value through `putText` when it carries
+ * one, and **the console's `n/a`** when it does not.
+ *
+ * The cell is drawn by the caller rather than here, because the selector scan
+ * reads a column's tag at the emitter call site and a tag handed to a helper as
+ * a parameter is one no stylesheet rule may qualify (`run.ts`'s `putMaybe` and
+ * `live.ts`'s `putActor` take the element for the same reason).
+ *
+ * A table cell is never omitted: one row drawn with a cell fewer shifts every
+ * column after it, so the absent case draws the mark rather than nothing.
+ * Nothing is invented either way, and the raw value never reaches the mark's
+ * path: the document's string goes through `putText`, and a refused one is
+ * `putText`'s own `n/a` with the refusal in the `title`. */
+function putMaybe(element: ScreenElement, raw: string | null, textClass: TextClass, field: string): void {
+  if (raw === null || raw === '') {
+    literal(element, ABSENT_MARK)
+    return
+  }
+  putText(element, raw, textClass, field)
+}
+
+/** jobHead is one column header of the jobs table. */
+function jobHead(parent: ScreenElement, factory: ScreenFactory): ScreenElement {
+  const element = cell(parent, factory, 'th', 'projects-job-head')
+  element.setAttribute('scope', 'col')
+  return element
+}
+
+/**
+ * jobsPanel is the project's runs as a table: one row per run, the columns the
+ * run list carries, and **the three cost accounts in three cells** -- a
+ * subscription's model dollars are notional, its compute dollars are billed and
+ * the two are never added into one figure (`docs/design/console-styling.md`
+ * section 2.10). The row is a `tr` so the figures line up down the column: a
+ * project's runs are read by comparing them, which a wrapped row of spans does
+ * not let anyone do.
+ *
+ * **The MODE column appears only when some listed run carries a block.** It is
+ * the conditional column `runs ls` writes (`internal/cli/runs.go`'s `showMode`):
+ * a run from before the field, or one that died before bootstrap, has no block
+ * and does not widen every other run's row for it -- and a project whose runs
+ * are all older than the field draws the table it always drew. Once one row
+ * carries a block the column is on every row, and the rows without one say so
+ * with `RIGOR_ABSENT` rather than with a blank.
+ */
 function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
   const element = make(factory, 'div', 'projects-jobs')
-  const list = cell(element, factory, 'ol', 'projects-job-list')
-  // **The MODE column appears only when some listed run carries a block.** It
-  // is the conditional column `runs ls` writes (`internal/cli/runs.go`'s
-  // `showMode`): a run from before the field, or one that died before
-  // bootstrap, has no block and does not widen every other run's row for it --
-  // and a project whose runs are all older than the field draws the list it
-  // always drew. Once one row carries a block the column is on every row, and
-  // the rows without one say so with `RIGOR_ABSENT` rather than with a blank.
   const showMode = model.rows.some((job) => job.rigor !== null)
+  const table = cell(element, factory, 'table', 'projects-job-table')
+  const head = cell(table, factory, 'thead')
+  const headRow = cell(head, factory, 'tr')
+  literal(jobHead(headRow, factory), 'run')
+  literal(jobHead(headRow, factory), 'repository')
+  literal(jobHead(headRow, factory), 'workflow')
+  literal(jobHead(headRow, factory), 'status')
+  literal(jobHead(headRow, factory), 'stage')
+  literal(jobHead(headRow, factory), 'requested by')
+  literal(jobHead(headRow, factory), 'started by')
+  literal(jobHead(headRow, factory), 'created')
+  if (showMode) literal(jobHead(headRow, factory), 'mode')
+  literal(jobHead(headRow, factory), 'model')
+  literal(jobHead(headRow, factory), 'compute')
+  literal(jobHead(headRow, factory), 'total')
+  const body = cell(table, factory, 'tbody')
   for (const job of model.rows) {
-    const line = cell(list, factory, 'li', 'projects-job')
-    textCell(line, factory, 'span', job.run, 'runId', 'runs[].run', 'projects-job-run')
-    if (job.repo !== null) textCell(line, factory, 'span', job.repo, 'repository', 'runs[].repo', 'projects-job-repo')
-    if (job.workflow !== null) textCell(line, factory, 'span', job.workflow, 'label', 'runs[].workflow', 'projects-job-workflow')
+    const line = cell(body, factory, 'tr', 'projects-job')
+    textCell(line, factory, 'td', job.run, 'runId', 'runs[].run', 'projects-job-run')
+    putMaybe(cell(line, factory, 'td', 'projects-job-repo'), job.repo, 'repository', 'runs[].repo')
+    putMaybe(cell(line, factory, 'td', 'projects-job-workflow'), job.workflow, 'label', 'runs[].workflow')
     // `status` is a string from the run record, so it goes through `putText`
     // like every other one: a value a document chose is not vocabulary the
     // console may write into the document unwatched.
-    textCell(line, factory, 'span', job.status, 'label', 'runs[].status', 'projects-job-status')
-    if (job.stage !== null) textCell(line, factory, 'span', job.stage, 'label', 'runs[].stage', 'projects-job-stage')
-    if (job.requestedBy !== null) {
-      textCell(line, factory, 'span', job.requestedBy, 'person', 'runs[].requested_by', 'projects-job-by')
-    }
+    textCell(line, factory, 'td', job.status, 'label', 'runs[].status', 'projects-job-status')
+    putMaybe(cell(line, factory, 'td', 'projects-job-stage'), job.stage, 'label', 'runs[].stage')
+    putMaybe(cell(line, factory, 'td', 'projects-job-by'), job.requestedBy, 'person', 'runs[].requested_by')
     // Who started the job, beside who asked for it: the short form of
     // `launched_by`, drawn as a `label` (`shared/launcher.ts` says why not
-    // `person`), and no cell at all for a row the record does not name.
-    const startedBy = launcherCell(job.launchedBy)
-    if (startedBy !== null) {
-      textCell(line, factory, 'span', startedBy, 'label', 'runs[].launched_by', 'projects-job-started-by')
-    }
-    if (job.created !== null) textCell(line, factory, 'span', job.created, 'label', 'runs[].created', 'projects-job-created')
-    if (showMode) rigorCell(line, factory, job.rigor)
-    // The three accounts, apart: a subscription's model dollars are notional.
-    numberCell(line, factory, 'span', job.cost.model, 'usd', 'projects-job-model')
-    numberCell(line, factory, 'span', job.cost.compute, 'usd', 'projects-job-compute')
-    numberCell(line, factory, 'span', job.cost.total, 'usd', 'projects-job-total')
+    // `person`), and the mark for a row the record does not name.
+    putMaybe(cell(line, factory, 'td', 'projects-job-started-by'), launcherCell(job.launchedBy), 'label', 'runs[].launched_by')
+    putMaybe(cell(line, factory, 'td', 'projects-job-created'), job.created, 'label', 'runs[].created')
+    if (showMode) rigorCell(cell(line, factory, 'td', 'projects-job-mode-cell'), factory, job.rigor)
+    numberCell(line, factory, 'td', job.cost.model, 'usd', 'projects-job-model')
+    numberCell(line, factory, 'td', job.cost.compute, 'usd', 'projects-job-compute')
+    numberCell(line, factory, 'td', job.cost.total, 'usd', 'projects-job-total')
   }
   if (model.dropped.value !== null && model.dropped.value > 0) {
     const line = cell(element, factory, 'p', 'projects-jobs-note')
@@ -1196,25 +1342,45 @@ function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
   return element
 }
 
-/** accountsPanel is the Claude accounts: names, and the note when the document
- * could not select a project. */
+/** accountsPanel is the Claude accounts: the repository the document was read
+ * for, one row per account, and the document's own sentence when it could not
+ * select a project at all.
+ *
+ * **An empty list the document did carry draws `none`**, and an empty list from
+ * a document that could not select a project does not: the second is the case
+ * `complete: false` names, and its own sentence (drawn from the document) says
+ * why. A blank space would say the two are the same fact. */
 function accountsPanel(factory: ScreenFactory, model: ProjectAccounts): ScreenElement {
   const element = make(factory, 'div', 'projects-accounts')
   if (model.repo !== null) textCell(element, factory, 'span', model.repo, 'repository', 'repo', 'projects-accounts-repo')
-  const list = cell(element, factory, 'ul', 'projects-account-list')
-  for (const name of model.names) {
-    textCell(list, factory, 'li', name, 'person', 'accounts[]', 'projects-account')
+  if (model.names.length === 0) {
+    if (model.complete) literal(cell(element, factory, 'p', 'projects-account-none'), 'none')
+  } else {
+    const list = cell(element, factory, 'ul', 'projects-account-list')
+    for (const name of model.names) {
+      textCell(list, factory, 'li', name, 'person', 'accounts[]', 'projects-account')
+    }
   }
   if (model.note !== null) textCell(element, factory, 'p', model.note, 'sentence', 'note', 'projects-accounts-note')
   return element
 }
 
-/** secretsPanel is the inventory: names, scopes, labels and version counts. The
- * console's sentence about the document's *shape* is drawn by `renderProjects`
- * beside this body, so that it is on the panel whether or not entries arrived. */
+/** SECRETS_MANAGED_WORD is the console's sentence for an inventory the console
+ * itself keeps, drawn only where every entry is one (`managed_by: fugaro`). */
+const SECRETS_MANAGED_WORD = 'All managed by fugaro.'
+
+/** secretsPanel is the inventory: names, scopes, labels, version counts, and
+ * where each secret is bound.
+ *
+ * **The "all managed by fugaro" sentence is drawn only when the panel has a
+ * document and every entry in it says so.** The sentence is a claim about all of
+ * them, so it takes the fact about all of them: an inventory with one secret
+ * someone else manages would make it false, and a panel with no document at all
+ * (this build's state -- `entry.ts` hands the panel `null`) draws no body, so
+ * the sentence is not drawn there either. */
 function secretsPanel(factory: ScreenFactory, model: ProjectSecrets): ScreenElement {
   const element = make(factory, 'div', 'projects-secrets')
-  const list = cell(element, factory, 'ol', 'projects-secret-list')
+  const list = cell(element, factory, 'ul', 'projects-secret-list')
   for (const entry of model.entries) {
     const line = cell(list, factory, 'li', 'projects-secret')
     textCell(line, factory, 'span', entry.name, 'label', 'secrets[].name', 'projects-secret-name')
@@ -1230,13 +1396,24 @@ function secretsPanel(factory: ScreenFactory, model: ProjectSecrets): ScreenElem
       textCell(pair, factory, 'span', label.key, 'label', 'secrets[].labels', 'projects-secret-label-key')
       textCell(pair, factory, 'span', label.value, 'label', 'secrets[].labels', 'projects-secret-label-value')
     }
-    for (const allowed of entry.allowed) {
-      // The two "every repository" values still go through the door, as a
-      // label; only the exact console vocabulary takes that class.
-      const textClass: TextClass = typeof allowed === 'string' && EVERY_REPOSITORY.includes(allowed) ? 'label' : 'repository'
-      textCell(line, factory, 'span', allowed, textClass, 'secrets[].allowed', 'projects-secret-allowed')
+    // Where the secret is bound: one block naming the fact, then the values, so
+    // a row cannot read as a list of repositories with no word for what they
+    // are. A secret bound nowhere draws no block rather than an empty one.
+    if (entry.allowed.length > 0) {
+      const bound = cell(line, factory, 'span', 'projects-secret-bound')
+      literal(cell(bound, factory, 'span', 'projects-secret-bound-word'), 'bound to')
+      for (const allowed of entry.allowed) {
+        // The two "every repository" values still go through the door, as a
+        // label; only the exact console vocabulary takes that class.
+        const textClass: TextClass = typeof allowed === 'string' && EVERY_REPOSITORY.includes(allowed) ? 'label' : 'repository'
+        textCell(bound, factory, 'span', allowed, textClass, 'secrets[].allowed', 'projects-secret-allowed')
+      }
     }
   }
+  const managed =
+    model.entries.length > 0 &&
+    model.entries.every((entry) => entry.labels.some((label) => label.key === 'managed_by' && label.value === 'fugaro'))
+  if (managed) literal(cell(element, factory, 'p', 'projects-secrets-managed'), SECRETS_MANAGED_WORD)
   return element
 }
 

@@ -863,7 +863,7 @@ func TestUpgradePassesYesToTheRefresh(t *testing.T) {
 				t.Fatalf("%v, options %+v\n%s", err, seen, out)
 			}
 			pin, plugin, base, cloud := strings.Index(out, "pin: done"), strings.Index(out, "plugin: skipped"), strings.Index(out, "step 2, base:"), strings.Index(out, "cloud: done")
-			if pin < 0 || plugin < pin || base < plugin || cloud < base || !strings.Contains(out, "  "+root+": pin done, plugin skipped, cloud done") {
+			if pin < 0 || plugin < pin || base < plugin || cloud < base || !strings.Contains(out, "  "+root+": pin done, plugin skipped, cloud done, rules skipped, policy skipped") {
 				t.Fatalf("order or summary wrong:\n%s", out)
 			}
 		})
@@ -898,7 +898,7 @@ func TestUpgradeOneCheckoutsCloudFailureDoesNotHideAnother(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "stopped in 1 of 2 checkout(s)") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if r := pluginwire.Status(otherSettings, "0.5.1", ""); r.Pin != pluginwire.OK || !strings.Contains(out, "  "+other+": pin done, plugin skipped, cloud skipped") {
+	if r := pluginwire.Status(otherSettings, "0.5.1", ""); r.Pin != pluginwire.OK || !strings.Contains(out, "  "+other+": pin done, plugin skipped, cloud skipped, rules skipped, policy skipped") {
 		t.Fatalf("the other checkout: %+v\n%s", r, out)
 	}
 }

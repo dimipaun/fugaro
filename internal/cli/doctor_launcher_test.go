@@ -108,8 +108,9 @@ func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 	}
 }
 
-// The line a person reads: the launcher reach is an *info* line and it is
-// printed. printDoctorChecks prints every check that is not OK, and an OK one
+// The line a person reads: the launcher reach is an *info* line and --all
+// prints it (it is an audit line, so the default view leaves it out).
+// printDoctorChecks prints every check that is not OK, and an OK one
 // too when it carries a Severity; what it prints nothing for is an OK check
 // with no Severity, which is doctor's own bookkeeping (`if c.OK &&
 // c.Severity == "" { continue }`, doctor.go). So this check is *not ok* and
@@ -137,7 +138,9 @@ func TestDoctorPrintsTheLauncherReach(t *testing.T) {
 	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
 		Members: []string{"user:a@example.com"}})
 
-	out, errOut, err := execute(t, "doctor", "--dir", t.TempDir())
+	// --all: the launcher reach is an audit line, so the default view leaves it
+	// out and this test names the view that shows it.
+	out, errOut, err := execute(t, "doctor", "--all", "--dir", t.TempDir())
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
@@ -361,6 +364,12 @@ func TestDoctorLauncherReachAsAPlainLauncher(t *testing.T) {
 	if !strings.Contains(c.Problem, "you can start 1 of them: "+project) {
 		t.Errorf("does not report the job the caller can start (with overrides, as fugaro run launches): %s", c.Problem)
 	}
+	// And it is an unread state, not a measurement: every policy was refused,
+	// so the grants were never read, and a measurement here would print beside
+	// "everything checked is ok" on an installation nobody looked at.
+	if c.Class != doctorClassAudit {
+		t.Errorf("launcher-jobs on a surface nobody could read is classed %q, want %q", c.Class, doctorClassAudit)
+	}
 }
 
 // When not one job's policy could be read — every read failed, so not even a
@@ -436,7 +445,7 @@ func TestDoctorPrintsItsInformationLines(t *testing.T) {
 		r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
 		r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
 			Members: []string{"user:a@example.com"}})
-		out, _, _ := execute(t, "doctor")
+		out, _, _ := execute(t, "doctor", "--all")
 		if !strings.Contains(out, "info launcher-jobs: ") || !strings.Contains(out, "can start 1 of them: fugaro-acme-app-web") {
 			t.Fatalf("the launcher reach is not in the printed output:\n%s", out)
 		}
@@ -445,7 +454,7 @@ func TestDoctorPrintsItsInformationLines(t *testing.T) {
 		r := projectAccountRig(t)
 		putProjectSecret(t, r.sm, "aurora", "claude-oauth-token-acme-personal", []byte("fake-token-0123456789"))
 		putProjectSecret(t, r.sm, "aurora", "claude-oauth-token", []byte("fake-token-9876543210"))
-		out, _, _ := execute(t, "doctor")
+		out, _, _ := execute(t, "doctor", "--all")
 		if !strings.Contains(out, "info project-account-stored: ") ||
 			!strings.Contains(out, "repositories acme/app in claude_accounts.acme-personal.allow_data_to") {
 			t.Fatalf("the project accounts' reach is not in the printed output:\n%s", out)

@@ -237,7 +237,7 @@ func TestReadmeOpenRouterSetup(t *testing.T) {
 		"allow_data_to",
 		"model_prices",
 		"docs/multi-model.md",
-		"docs/dogfooding.md", // the all-cheap-model setup the example is
+		"docs/dogfooding.md", // the provider-coder setup the example is
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the README OpenRouter section never mentions %q", want)

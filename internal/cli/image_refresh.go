@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -50,6 +51,13 @@ type refreshOptions struct {
 	// step 1, so a caller must take the final state from the error runImageRefresh
 	// returns, never from the hook alone.
 	onPlan func(*refreshPlan)
+	// in is the reader the calling run already reads stdin through, when a run
+	// drives this refresh rather than the fugaro image refresh command: the
+	// checkout stage of the converge (init_checkout_upgrade.go). A second
+	// bufio.Reader over the same stdin would lose whatever the first one has
+	// buffered — an interactive run's typed-ahead input, which is exactly what
+	// a build's confirmation reads. Nil for the command, which makes its own.
+	in *bufio.Reader
 }
 
 // checkoutName is how a message names the checkout: "this checkout" when
@@ -458,6 +466,11 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// refreshBuilds (step 4, which keeps its own rule: see askBuild).
 	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes}
 	r := newInitRun(cmd, iopts)
+	if o.in != nil {
+		// The caller's reader, not a second one over the same stdin: see
+		// refreshOptions.in.
+		r.in = o.in
+	}
 	p, err := refreshPreflight(ctx, o, iopts)
 	if err != nil {
 		return refreshStopped(1, nil, o, err)

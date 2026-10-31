@@ -14,6 +14,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -1440,5 +1442,112 @@ func TestBitbucketAPIRootsParse(t *testing.T) {
 	}
 	if c.BitbucketAPIRoots == nil {
 		t.Error("Shared() cleared the receiver's own list")
+	}
+}
+
+// TestReviewFloorDecodeStrict is D722's owner half: the floor is a closed
+// vocabulary twice over — the modes rigor names and the three levels — and
+// both are refused at load, never dropped. A misspelt mode or level read as
+// "no floor for that mode" would be a run that reviews less than the owner
+// asked for, and nothing downstream can tell the misspelling from a mode the
+// owner meant to leave alone.
+func TestReviewFloorDecodeStrict(t *testing.T) {
+	c, err := Parse([]byte(sample + "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string][]string{"pro": {"l2"}, "critical": {"l2", "l3"}}; !reflect.DeepEqual(c.ReviewFloor, want) {
+		t.Fatalf("ReviewFloor = %v, want %v", c.ReviewFloor, want)
+	}
+	floor, err := c.ReviewFloorPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}; !reflect.DeepEqual(floor, want) {
+		t.Errorf("ReviewFloorPolicy = %v, want %v", floor, want)
+	}
+	if none, err := Parse([]byte(sample)); err != nil {
+		t.Fatal(err)
+	} else if f, err := none.ReviewFloorPolicy(); err != nil || f != nil {
+		t.Errorf("a config that sets no floor gives (%v, %v), want (nil, nil)", f, err)
+	}
+
+	// The key written with no mode under it is the other way to say "none",
+	// and it is the spelling `fugaro project policy publish` reads as "take
+	// the node's floor away on purpose" — an absent key keeps the node's floor
+	// (internal/cli's buildProjectPolicy). The two differ in the field and not
+	// in the floor: a written empty object is a non-nil empty map, an absent
+	// key a nil one, and both parse to no floor.
+	if empty, err := Parse([]byte(sample + "review_floor: {}\n")); err != nil {
+		t.Fatal(err)
+	} else if empty.ReviewFloor == nil {
+		t.Error("a written empty object read as an absent key, so a publish cannot tell 'drop the floor' from silence about it")
+	} else if f, err := empty.ReviewFloorPolicy(); err != nil || f != nil {
+		t.Errorf("review_floor: {} gives (%v, %v), want (nil, nil)", f, err)
+	}
+
+	// Every name the vocabulary does not hold, and every shape of a floor that
+	// says nothing, is a load error.
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"an unknown mode", "review_floor:\n  prod: [l2]\n", "is not a rigor mode"},
+		{"a mode in another case", "review_floor:\n  Pro: [l2]\n", "is not a rigor mode"},
+		{"an unknown level", "review_floor:\n  pro: [l4]\n", "is not a review level"},
+		{"a level in another case", "review_floor:\n  pro: [L2]\n", "is not a review level"},
+		{"a level that is a number", "review_floor:\n  pro: [2]\n", "is not a review level"},
+		{"a repeated level", "review_floor:\n  pro: [l2, l2]\n", "is listed twice"},
+		{"a mode with no level", "review_floor:\n  pro: []\n", "a floor with no level in it says nothing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(sample + tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse = (%v, %v), want an error naming %q", c, err, tc.want)
+			}
+			// And the refusal is the loader's, not the node's: the same value
+			// never reaches the publisher, which would otherwise write a floor
+			// the runner then reads as a smaller one.
+			if c != nil {
+				if f, err := c.ReviewFloorPolicy(); err == nil {
+					t.Errorf("ReviewFloorPolicy = (%v, nil), want the same refusal", f)
+				}
+			}
+		})
+	}
+}
+
+// TestReviewFloorNotInShared: the floor is the owner's, and it reaches a run
+// through the policy node — which only the owner writes and the runner fails
+// closed on — never through the shared config a launcher can write. Shared()
+// drops it the way it drops update_check and base_branch, and MergeShared
+// never takes it back from a published object: a floor in the runs bucket's
+// shared file would be the launcher the floor exists to bind, setting it
+// (docs/design/bucket-iam.md §10 L1, L2).
+func TestReviewFloorNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "review_floor:\n  pro: [l2]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := c.Shared(); s.ReviewFloor != nil {
+		t.Errorf("Shared() carries review_floor = %v, and it is published through the policy node instead", s.ReviewFloor)
+	}
+	if c.ReviewFloor == nil {
+		t.Error("Shared() cleared the receiver's own floor")
+	}
+	published, err := Parse([]byte(sample + "review_floor:\n  critical: [l3]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The published object is the other machine's: its floor is dropped by
+	// Shared before the merge sees it, so it cannot come back either.
+	if merged := MergeShared(published, c); merged.ReviewFloor != nil {
+		t.Errorf("MergeShared carried review_floor = %v from the published object", merged.ReviewFloor)
+	}
+	if b, err := c.Shared().Marshal(); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(b), "review_floor") {
+		t.Errorf("the published file names review_floor:\n%s", b)
 	}
 }

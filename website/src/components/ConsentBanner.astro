@@ -46,10 +46,10 @@
  *     and identifiers, Google Analytics 4, and the marketing trackers and the booking widget
  *     the campaign pages carry — in the same two sentences on every page, rather than in four
  *     questions a reader has to go looking for. Nothing in it promises that a vendor is
- *     running: the pixel's and the insight tag's ids come from `site.yaml` and ship empty, a
- *     loader with no id fetches nothing, and a tracker with no id is therefore not named — the
- *     owner's feedback of 2026-10-30 — so the bar names the tool the site does load and
- *     describes the rest as a class. What a bar's own refusal covers is the statement's to say,
+ *     running: the ids come from `site.yaml` and both are the owner's now (supplied 2026-10-31),
+ *     so every vendor the bar names is one the site is configured to load — the owner's
+ *     feedback of 2026-10-30 — while a loader with no id fetches nothing and a tracker with no
+ *     id is not named. What a bar's own refusal covers is the statement's to say,
  *     not the bar's: on the privacy page, where the campaign key is carried without the
  *     campaign configuration, declining takes the campaign answer back and never gives one.
  *
@@ -131,7 +131,7 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   <div class="consent-banner__body">
     <div class="consent-banner__inner">
       <p class="consent-banner__text">
-        This site measures visits with cookies and identifiers: <strong>Google Analytics</strong> on every page, and marketing trackers and <strong>Calendly</strong>'s booking widget on the four campaign pages. Nothing loads until you accept. <a href="/privacy/">What this site measures</a>
+        This site measures visits with cookies and identifiers: <strong>Google Analytics</strong> on every page, and marketing trackers, <strong>Meta</strong>'s pixel, <strong>LinkedIn</strong>'s insight tag and <strong>Calendly</strong>'s booking widget, on the four campaign pages. Nothing loads until you accept. <a href="/privacy/">What this site measures</a>
       </p>
       <div class="consent-banner__choices">
         <button type="button" class="consent-banner__button consent-banner__button--accept" data-consent="granted">

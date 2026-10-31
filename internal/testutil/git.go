@@ -42,8 +42,26 @@ func ModuleRoot() string {
 
 // IsolateGit keeps the developer's global and system git config (signing,
 // hooks, templates) out of the test, and sets a commit identity.
+//
+// It also drops git's environment configuration (GIT_CONFIG_COUNT and its
+// numbered entries, GIT_CONFIG_PARAMETERS), which outranks a test repository's
+// own config, and the stamp's trailer values (FUGARO_STAMP_*): inside a run,
+// the agent's environment carries both (gitops.StampEnv), so a test that runs
+// git under the agent would otherwise have its repository's hooks replaced by
+// the run's, and a test of the stamp would read the run's trailers.
 func IsolateGit(t *testing.T) {
 	t.Helper()
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if k == "GIT_CONFIG_COUNT" || k == "GIT_CONFIG_PARAMETERS" ||
+			strings.HasPrefix(k, "GIT_CONFIG_KEY_") || strings.HasPrefix(k, "GIT_CONFIG_VALUE_") ||
+			strings.HasPrefix(k, "FUGARO_STAMP_") {
+			// t.Setenv records the value to restore at cleanup; Unsetenv
+			// leaves the test with the variable absent, as outside a run.
+			t.Setenv(k, "")
+			os.Unsetenv(k)
+		}
+	}
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {

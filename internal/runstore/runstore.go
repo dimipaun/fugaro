@@ -145,11 +145,20 @@ type PRRef struct {
 type ReviewSummary struct {
 	Round int `json:"round"`
 	// Tier is TierFirst for a first-line review (by the coder's model,
-	// never deciding readiness) and TierSenior for the reviewer's; empty
+	// never deciding readiness), TierSenior for the reviewer's, and
+	// TierAdversarial for level 3's, which runs after the senior's; empty
 	// is a senior review in a run that had no first line.
 	Tier     string `json:"tier,omitempty"`
 	Verdict  string `json:"verdict"`
 	Findings int    `json:"findings"`
+	// Head is the commit the review read. It stays with the verdict
+	// because the levels can approve different heads: after an adversarial
+	// rejection the cheap loop runs and the senior level is not reviewed
+	// again, so the senior verdict may name an earlier head than the one
+	// shipped (docs/review-levels-ab-jobmax D727). Empty when the round
+	// recorded none, which is every review written before this field
+	// existed.
+	Head string `json:"head,omitempty"`
 	// Bounce is which cheap loop this review followed, under review:
 	// {bounce: first_line}: 0 for a review before any senior rejection, 1
 	// for the cheap loop after the first one, and so on. Always 0 on a
@@ -159,8 +168,9 @@ type ReviewSummary struct {
 
 // Review tiers (ReviewSummary.Tier).
 const (
-	TierFirst  = "first"
-	TierSenior = "senior"
+	TierFirst       = "first"
+	TierSenior      = "senior"
+	TierAdversarial = "adversarial"
 )
 
 // MaxReviewScopeFiles bounds each path list a review-scope comparison

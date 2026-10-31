@@ -322,6 +322,11 @@ func TestDoctorLayerUnknownWhenBucketUnreachable(t *testing.T) {
 	if checksFail(cs, true) {
 		t.Fatalf("an info check must never fail doctor, strict or not: %+v", cs)
 	}
+	// Whether a layer applies is unknown, not measured: it is a counted
+	// finding, and the pointer line is where its reader hears of it.
+	if got := doctorClassOf(*c); got != doctorClassAudit {
+		t.Errorf("an unknown project layer is %q, want %q", got, doctorClassAudit)
+	}
 }
 
 // TestImageConfigReasonSortsMultipleSources: imageConfigReason's "other

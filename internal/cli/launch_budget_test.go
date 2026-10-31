@@ -585,7 +585,9 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a refusal (the policy node is published and cannot be read)", err)
 	}
-	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "update --firebase-project"} {
+	// The remedy is the plain update, not --firebase-project: the rules stage
+	// is what deploys the generation the marker is about (init_rules_stage.go).
+	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "fugaro update", "rules stage"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

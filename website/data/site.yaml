@@ -108,24 +108,28 @@ analytics:
 # because these origins are admitted by the consent check, not by
 # `allowed_hosts` below, which lists the hosts the site LINKS to.
 #
-# **Both ids are empty, and an empty id disables its loader.** The owner has not
-# supplied a pixel id or a partner id yet, and this repository publishes no
-# identifier the owner did not supply: an invented id would send a campaign
-# page's visitors into a stranger's ad account, which is the one failure this
-# file cannot take back. So the loaders are wired, gated and tested, and they
-# load nothing until a line here carries the owner's own id. The origins are
-# exact hosts and not wildcards: the plan pins the narrowest origin each vendor
-# documents (O3), and `website/test/origins.mjs` holds the deployed policy to
-# this exact list.
+# **Both ids are the owner's, supplied on 2026-10-31: the partner id and then the
+# pixel id.** This repository publishes no identifier the owner did not supply: an
+# invented id would send a campaign page's visitors into a stranger's ad account,
+# which is the one failure this file cannot take back. So all three loaders run on
+# the four campaign pages behind the campaign consent, and an empty id is a
+# loader switched off rather than a loader that loads something nameless -- which
+# is why `internal/cli`'s boundary test now refuses either of these coming back
+# empty. The origins are exact hosts and not wildcards: the plan pins the
+# narrowest origin each vendor documents (O3), and `website/test/origins.mjs`
+# holds the deployed policy to this exact list -- with one wildcard,
+# `https://*.licdn.com` in `img-src`, which the owner ruled in explicitly and for
+# that directive alone. Neither id is written anywhere else; the deployed policy
+# is firebase.json's and its token list is the test's.
 #
 # The Calendly link is NOT here: it is `website/data/landing.yaml`'s
 # `calendly_url`, one value with one home, and the banner carries it to the
 # loader. What is here is only the origin Calendly's own widget script and
 # stylesheet come from.
 marketing:
-  meta_pixel_id: ""
+  meta_pixel_id: "1128028360082828"
   meta_origin: "https://connect.facebook.net"
-  linkedin_partner_id: ""
+  linkedin_partner_id: "10341636"
   linkedin_origin: "https://snap.licdn.com"
   calendly_origin: "https://assets.calendly.com"
 

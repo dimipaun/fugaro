@@ -84,8 +84,11 @@ const ignoredGovernanceLine = "this build ignores the governance block"
 // what holds whether or not the policy half resolved anything.
 func TestUntaggedRunnerIgnoresGovernanceWithAWarning(t *testing.T) {
 	var logs bytes.Buffer
+	// The reserve is finalize's own clock, and this test is about where the
+	// stage stops: a 5s one lets a loaded machine kill finalize's git and fail
+	// the run there instead of at the stage the assertion names.
 	cfg := stageTimeoutCfg(t,
-		"timeouts: { total: 1m, stage: 300ms, verify: 5s, finalize_reserve: 5s }",
+		"timeouts: { total: 5m, stage: 300ms, verify: 5s, finalize_reserve: 2m }",
 		"governance:\n  stage_timeout: { implement: 200ms }\n")
 	h := newHarness(t, cfg, nil)
 	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
@@ -191,8 +194,11 @@ func TestLateOrDuplicateStageHookIsRefused(t *testing.T) {
 // between them cannot account for (D521, D529). The bound is the hook's own,
 // below the run's, so the decision is reached at all.
 func TestAStageHookCannotLeaveAHaltReasonTheRunnerCannotRecord(t *testing.T) {
+	// finalize runs under the reserve and nothing here is about how long it
+	// takes: at 5s a loaded machine kills finalize's own git instead of
+	// failing the stage over the hook's reason, which is what this asserts.
 	cfg := stageTimeoutCfg(t,
-		"timeouts: { total: 1m, stage: 300ms, verify: 5s, finalize_reserve: 5s }", "")
+		"timeouts: { total: 5m, stage: 300ms, verify: 5s, finalize_reserve: 2m }", "")
 	h := newHarness(t, cfg, nil)
 	runner.ResetStageHook(t)
 	if err := runner.SetStageHook(runner.StageFuncs{
