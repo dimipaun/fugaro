@@ -277,7 +277,10 @@ func RemoveListItemWithOptions(src []byte, path []string, value string, opts Rem
 // UpsertSeqItemByKey sets fields on the item of a sequence of mappings whose
 // keyField holds keyValue, and appends that item when the sequence does not
 // have it yet. The item's own fields are written in a fixed order, so the same
-// edit always writes the same bytes.
+// edit always writes the same bytes. An upsert given no fields writes nothing
+// and returns the document unchanged, but it still reads the document: the path
+// is walked, and refused where it cannot be walked, as it is for every other
+// edit.
 func UpsertSeqItemByKey(src []byte, path []string, keyField, keyValue string, fields map[string]string) ([]byte, error) {
 	const op = "UpsertSeqItemByKey"
 	if err := checkPath(op, path); err != nil {
@@ -290,6 +293,21 @@ func UpsertSeqItemByKey(src []byte, path []string, keyField, keyValue string, fi
 		return src, refuse(op, pathString(path), ReasonFieldIsKeyField)
 	}
 	if len(fields) == 0 {
+		// Nothing to write, but the document and the path are still read: an
+		// upsert whose document this package cannot edit, or whose path is not
+		// a path of mappings down to a sequence, is refused the way the removal
+		// side refuses it, rather than reported as a no-op that succeeded.
+		d, err := open(op, src)
+		if err != nil {
+			return src, err
+		}
+		chain, found, err := d.walk(op, path)
+		if err != nil || !found {
+			return src, err
+		}
+		if _, err := d.sequenceAt(op, path, chain[len(chain)-1]); err != nil {
+			return src, err
+		}
 		return src, nil
 	}
 	out := src

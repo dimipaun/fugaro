@@ -847,6 +847,52 @@ func TestUpsertSeqItemByKeyRefusesToRewriteTheKeyField(t *testing.T) {
 	}
 }
 
+// TestUpsertSeqItemByKeyWithNoFieldsStillReadsTheDocument pins that an upsert
+// with nothing to write is held to what every other edit is: the document is
+// read and the path walked, so a caller that asked for nothing on a document
+// this package cannot read, or on a path that is not a path of mappings down to
+// a sequence, is told so — rather than handed its own bytes back as though the
+// path were fine.
+func TestUpsertSeqItemByKeyWithNoFieldsStillReadsTheDocument(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc string
+		path      []string
+		keyField  string
+		reason    yamledit.Reason
+	}{
+		{"no path at all", "a: 1\n", nil, "path", yamledit.ReasonEmptyPath},
+		{"no key field", "a: 1\n", []string{"a"}, "", yamledit.ReasonEmptyField},
+		{"a document that is not YAML", "a: [1\n", []string{"a"}, "path", yamledit.ReasonMalformed},
+		{"a path that crosses a scalar", "a: 1\n", []string{"a", "b"}, "path", yamledit.ReasonNotAMapping},
+		{"a leaf that is not a sequence", "a: 1\n", []string{"a"}, "path", yamledit.ReasonNotASequence},
+		{"a flow sequence", "a: [1]\n", []string{"a"}, "path", yamledit.ReasonFlowCollection},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.UpsertSeqItemByKey([]byte(tc.doc), tc.path, tc.keyField, "person-1", nil)
+			if r := yamledit.ReasonOf(err); r != tc.reason {
+				t.Fatalf("reason = %q, want %q (got %q, %v)", r, tc.reason, got, err)
+			}
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("a refusal returned changed bytes: %q", got)
+			}
+		})
+	}
+
+	for _, doc := range []string{
+		readFixture(t, "areas.yaml"),
+		"# just a note\n",
+		"",
+	} {
+		got, err := yamledit.UpsertSeqItemByKey([]byte(doc), []string{"rigor", "areas"}, "path", "internal/one/**", map[string]string{})
+		if err != nil {
+			t.Fatalf("UpsertSeqItemByKey with no fields: %v", err)
+		}
+		if !bytes.Equal(got, []byte(doc)) {
+			t.Fatalf("an upsert with no fields rewrote the document: %q", got)
+		}
+	}
+}
+
 func TestRemoveSeqItemByKey(t *testing.T) {
 	doc := []byte(readFixture(t, "areas.yaml"))
 	got, err := yamledit.RemoveSeqItemByKey(doc, []string{"rigor", "areas"}, "path", "internal/one/**")

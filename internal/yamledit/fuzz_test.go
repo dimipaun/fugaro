@@ -36,6 +36,7 @@ func FuzzSetScalar(f *testing.F) {
 		{"a:\n\tb: 1\n", "a", "2"},
 		{"a: 1\n---\nb: 2\n", "a", "2"},
 		{"a: 1\r\nb: 2\r\n", "b", "3"},
+		{"# note\rb: 2\r", "b", "3"},
 		{"# budget:\n#   max_runs: 20\nproject: workspace-a\n", "budget", "5"},
 		{"a:\n  # keep me\n  x: 1\nb: 1\n", "a", "z"},
 		{"list:\n  - x\n", "list", "y"},
@@ -154,14 +155,38 @@ func sameOffThePath(before, after any, path []string) bool {
 	return true
 }
 
+// commentLines returns the lines of a document that are comments. The lines come
+// from documentLines, so a document a person ended with a bare CR is read as the
+// several lines it is.
 func commentLines(doc string) []string {
 	var out []string
-	for _, line := range strings.Split(doc, "\n") {
+	for _, line := range documentLines(doc) {
 		if strings.HasPrefix(strings.TrimLeft(line, " "), "#") {
 			out = append(out, line)
 		}
 	}
 	return out
+}
+
+// documentLines splits a document at the breaks the package itself ends a line
+// on: "\n" and "\r\n" are not the whole set — a bare CR, NEL, LS and PS end one
+// too — and a splitter that knew only "\n" would read such a document as one
+// line and then report a comment the edit kept as missing.
+func documentLines(doc string) []string {
+	src := []byte(doc)
+	var out []string
+	start := 0
+	for i := 0; i < len(src); {
+		w := yamledit.BreakWidth(src, i)
+		if w == 0 {
+			i++
+			continue
+		}
+		out = append(out, string(src[start:i]))
+		i += w
+		start = i
+	}
+	return append(out, string(src[start:]))
 }
 
 func isSubsequence(want, got []string) bool {

@@ -721,7 +721,7 @@ stale has found a merge that did not.
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
 | `docs/plans` sections whose heading the deferral pattern matches | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
-| Item files under `docs/backlog/` | 3 | `ls docs/backlog/[0-9]*.md 2>/dev/null \| wc -l` |
+| Item files under `docs/backlog/` | 2 | `ls docs/backlog/[0-9]*.md 2>/dev/null \| wc -l` |
 
 Every one of those commands prints the number in the Count column and nothing
 else on stdout, so a reader — and this folder's guard — can re-run the row rather
