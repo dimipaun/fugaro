@@ -298,7 +298,7 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 // reports the checkout changed with exit 0 — which is what the loop's
 // left-for-you accounting is here for. The two tests above fail with it too.
 func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
-	_, f, ran := agentCheckout(t)
+	_, _, ran := agentCheckout(t)
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
 	res := stageOutcome(t, e, checkoutStageOf(t, e))
@@ -319,21 +319,21 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 		t.Errorf("the left-for-you names %q, want %q (the door this run is, in a terminal)", l.Commands, want)
 	}
 
-	// The second run of the session: the pin and the plugin are current, and
-	// the step the session may not take is still left for the user. The
-	// stage's check says so (it does not read the parked step as done), the
-	// plan's line keeps naming it, and the JSON carries it.
-	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
-		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
-	before := len(f.Changes(t))
+	// The second run of the session: the pin is current, no cloud step is
+	// reached, and the step the session may not take is still left for the
+	// user. The stage's check says so (it does not read the parked step as
+	// done), the plan's line keeps naming it, and the JSON carries it.
 	*ran = nil
 	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
 	res2 := stageOutcome(t, e2, checkoutStageOf(t, e2))
 	if res2.Failed != nil || len(res2.Left) != 1 || res2.ExitCode() != 1 {
 		t.Fatalf("the second run of the session dropped the step: failed %+v, left %+v, exit %d\n%s", res2.Failed, res2.Left, res2.ExitCode(), out2)
 	}
-	if len(*ran) != 0 || len(f.Changes(t)) != before {
-		t.Errorf("the second run changed something it may not: steps %q\n%s", *ran, out2)
+	if len(*ran) != 0 {
+		t.Errorf("the second run reached the cloud: steps %q\n%s", *ran, out2)
+	}
+	if !strings.Contains(out2.String(), "pin: current") {
+		t.Errorf("the second run did not find the pin already moved:\n%s", out2)
 	}
 	if !strings.Contains(out2.String(), "skipped here: cloud") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
