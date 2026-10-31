@@ -260,13 +260,13 @@ describe('crash', () => {
     })
   })
 
-  it('only `true` opens the gate, whatever a document spells the switch with', () => {
-    // The value comes from a settings node this console did not write, and a
-    // truthy value is not consent: `"true"` is a string, `1` is a number, `{}` is
-    // an object, and none of them is the operator saying yes. `null` is an answer
-    // that is not permission -- an installation that stores the node and leaves it
-    // empty -- while `undefined` is no answer at all, which the case above reports
-    // as unread.
+  it('only `true` opens the gate, whatever a stored switch spells it with', () => {
+    // The value comes back from storage rather than from this console's own
+    // memory, and a truthy value is not consent: `"true"` is a string, `1` is a
+    // number, `{}` is an object, and none of them is the operator saying yes.
+    // `null` is an answer that is not permission -- a stored switch that is
+    // present and empty -- while `undefined` is no answer at all, which the case
+    // above reports as unread.
     for (const optedIn of ['true', 'false', 'yes', 1, 0, {}, []]) {
       expect(crashReportingDecision({ optedIn }), JSON.stringify(optedIn)).toEqual({
         enabled: false,

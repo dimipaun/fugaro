@@ -325,6 +325,30 @@ describe('the crash reporter starts only when the gate opens', () => {
     expect(entry.slice(allow, entry.indexOf('}', load))).toContain('startCrashReporting(')
   })
 
+  it('declares the switch unread, so a build that flipped it fails here', () => {
+    // The gate above is only as good as the value it is handed, and the value is
+    // the one thing a scan of the gate cannot see: with `optedIn` declared `true`
+    // every check in this file still passes -- the allow test is still an allow
+    // test, the import is still lazy, the close is still on the quit path -- and
+    // the console reports on every start of every build. So the declaration
+    // itself is pinned, and it is pinned as the *whole* line: the slice that
+    // reads the per-user switch changes this declaration and this pin together,
+    // which is the point -- a slice that flipped the constant without wiring the
+    // switch would be sending reports nobody asked for, and one that wired the
+    // switch has to say so here.
+    const entry = withoutComments(
+      readFileSync(fileURLToPath(new URL('../../src/main/index.ts', import.meta.url)), 'utf8'),
+    )
+    const declarations = entry
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('const optedIn'))
+    expect(
+      declarations,
+      'index.ts must declare the switch unread: `= true` here starts the reporter in every build, and nothing else in this file would notice',
+    ).toEqual(['const optedIn: unknown = null'])
+  })
+
   it('the wiring asks the gate with the switch alone, and the constant is the fallback', () => {
     // The one shape that matters inside the wiring, read as text because the
     // module imports the pinned SDK. The gate's input is `{ optedIn }` and

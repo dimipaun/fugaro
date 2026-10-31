@@ -892,12 +892,12 @@ async function main(): Promise<void> {
   // **The crash reporter comes up before anything it could report on, and the
   // module that holds the SDK comes up with it and not before.** The gate is an
   // allow test and not a list of the answers that shut it: `optedIn` is `null`
-  // -- nothing has read the installation's switch yet, and reading it is T2.1's
-  // own last part, which decodes `settings.crash_reports` from T1.3's
-  // `project show --json` -- and only a `true` reaches the reporter, so the
-  // third state D734 makes off is off here because it is not a yes rather than
-  // because this file knows its name. What follows from it is the whole of this
-  // slice's cost: in a console whose switch is not a yes, `./crash-electron` and
+  // -- nothing has read the switch yet, and reading it is the next slice's,
+  // which reads the per-user switch this console keeps for itself -- and only a
+  // `true` reaches the reporter, so the third state D734 makes off is off here
+  // because it is not a yes rather than because this file knows its name. What
+  // follows from it is the whole of this slice's cost: in a console whose switch
+  // is not a yes, `./crash-electron` and
   // the fourteen packages `@sentry/electron/main` reaches are never loaded and no
   // client exists to start -- so a start that reports nothing pays nothing for
   // the wiring that would, and the DSN sitting one import away is never read.

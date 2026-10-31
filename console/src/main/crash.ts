@@ -8,14 +8,17 @@
 // that amends it to describe what this code does.
 //
 // The owner's ruling of 2026-10-30 is that the console gains a crash reporter
-// now and ships **dormant**: nothing is sent while nothing has read the
-// installation's setting, and the switch is **opt-in** -- off unless that
-// setting says on. The window before the setting has been read is a third state
-// rather than a slow "off" (D734): in it, nothing is sent either, which is the
-// whole of the promise that an opted-out operator never sends one report. The
-// DSN is no longer part of the dormancy -- since the owner's ruling of 2026-10-31
-// it is a constant of every build (`./crash-dsn`) -- so the switch is the one
-// thing that decides, which is what D734 always said it should be.
+// now and ships **dormant**: nothing is sent while nothing has read the switch,
+// and the switch is **opt-in** -- off unless it has been turned on. The owner's
+// later ruling makes it a **per-user switch, local to the console**: a setting
+// this console keeps for itself rather than a field read out of a document a CLI
+// prints, off by default, and applied at the next launch rather than
+// mid-session. The window before it has been read is a third state rather than a
+// slow "off" (D734): in it, nothing is sent either, which is the whole of the
+// promise that an opted-out operator never sends one report. The DSN is no
+// longer part of the dormancy -- since the owner's ruling of 2026-10-31 it is a
+// constant of every build (`./crash-dsn`) -- so the switch is the one thing that
+// decides, which is what D734 always said it should be.
 //
 // F33 is why the payload is an **allow-list**. A Go panic value, an Electron
 // error message and a JS exception string all carry repository names, branch
@@ -35,17 +38,16 @@
 // rather than letting anything downstream write to a scrubbed event in place.
 
 /** CrashOptIn is the operator's switch as this module can see it: `true` when
- * the installation's setting allows reports, and an answer that is not `true`
- * otherwise -- `false`, or a `null` the document holds in the node's place,
- * which are both off. The absence of a value is the third case: nothing has read
- * it yet, not asked, unreadable, or answered by a CLI too old to carry the
- * field. That absence is D734's rule made expressible -- a console that folded it
- * into `false` could not tell "off" from "not known yet", and the two have the
- * same answer here for exactly as long as it takes something to read the setting,
- * but they are different words in a log line, which is the whole of what
- * `CrashReportingReason` is for. JSON has no `undefined`, so the absence is what
- * a settings document with no switch node in it decodes to; a node that is
- * present and empty decodes to `null`, which is an answer. */
+ * the per-user switch is on, and an answer that is not `true` otherwise --
+ * `false`, or a `null` a stored switch may hold in its place, which are both
+ * off. The absence of a value is the third case: nothing has read the switch
+ * yet, or it could not be read at all. That absence is D734's rule made
+ * expressible -- a console that folded it into `false` could not tell "off" from
+ * "not known yet", and the two have the same answer here for exactly as long as
+ * it takes something to read the switch, but they are different words in a log
+ * line, which is the whole of what `CrashReportingReason` is for. The switch is
+ * stored rather than decoded, so the absence is a key that is not there at all;
+ * a key that is present and empty is `null`, which is an answer. */
 export type CrashOptIn = boolean | null | undefined
 
 /** CrashReportingInput is everything the gate is allowed to look at: the switch,
@@ -57,11 +59,11 @@ export type CrashOptIn = boolean | null | undefined
  * to pass.
  *
  * The switch is typed `unknown` rather than `CrashOptIn` because of where it
- * comes from: a settings node in a document this console did not write, decoded
- * from JSON. `CrashOptIn` is the answer when the document is the one the CLI
- * promises; anything else is a value the gate has to refuse, and a type that
- * admitted only the three good values would move that refusal into a cast at the
- * call site. */
+ * comes from: a value read back from storage, which a hand-edit or a corrupted
+ * file can have left as anything at all. `CrashOptIn` is the answer when the
+ * stored switch is the one this console wrote; anything else is a value the gate
+ * has to refuse, and a type that admitted only the three good values would move
+ * that refusal into a cast at the call site. */
 export interface CrashReportingInput {
   readonly optedIn?: unknown
 }
@@ -89,12 +91,13 @@ export interface CrashReportingDecision {
  * could close this gate, and the gate is therefore exactly "did the operator
  * turn it on".
  *
- * The gate is strict: `true` and nothing else opens it. The value arrives from a
- * document this console did not write, so `"true"`, `1`, `"yes"` and an object
- * are all things a settings node can hold, and a truthy check would read every
- * one of them as an operator's consent -- which is the one answer this gate may
- * not guess at. Everything that is not `true` is an answer that is off, except
- * the absence of an answer, which is the unread case and says so.
+ * The gate is strict: `true` and nothing else opens it. The value arrives from
+ * storage rather than from this console's own memory, so `"true"`, `1`, `"yes"`
+ * and an object are all things a stored switch can hold, and a truthy check
+ * would read every one of them as an operator's consent -- which is the one
+ * answer this gate may not guess at. Everything that is not `true` is an answer
+ * that is off, except the absence of an answer, which is the unread case and
+ * says so.
  */
 export function crashReportingDecision(input: CrashReportingInput): CrashReportingDecision {
   if (input.optedIn === undefined) return { enabled: false, reason: 'opt-in-not-read' }

@@ -21,9 +21,10 @@
 // under `src/` is a source that has grown its own endpoint.
 //
 // What the DSN buys is a *destination*, not a permission: nothing is sent because
-// this file exists. The switch is the console's own, it is off unless the
-// installation's setting says on (D734), and the slice that reads that setting
-// is the next one -- so a console built from this tree reports nothing.
+// this file exists. The switch is the console's own, per-user and local to it, it
+// is off by default and it is applied at the next launch (D734), and the slice
+// that reads it is the next one -- so a console built from this tree reports
+// nothing.
 
 /** CONSOLE_CRASH_DSN is the Sentry project the console reports to: org `fugaro`,
  * the EU region, project `fugaro-console` (the owner's ruling of 2026-10-31). The

@@ -114,8 +114,8 @@ export interface CrashReportingHandle {
  * the e2e fixture, which point a real client at a sink of their own; `appRoot`
  * is the prefix every kept frame's path is cut at. There is deliberately no
  * switch here beyond `optedIn`, which until the switch slice lands is `null`:
- * nothing has read the installation's setting yet, and D734 makes that third
- * state off. */
+ * nothing has read the per-user switch yet, and D734 makes that third state
+ * off. */
 export interface CrashReportingInput {
   readonly optedIn: unknown
   readonly appRoot: string
