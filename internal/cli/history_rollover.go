@@ -110,7 +110,7 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	//
 	// It is the SAME question, and now the same function, that the stages of
 	// `fugaro update` ask (budgetDBUnadopted): the environment is read as the
-	// config that predicate takes (rolloverConfig) and the answer is asked of
+	// config that predicate takes (historyJobConfig) and the answer is asked of
 	// every shape, not only of a job whose two names differ. One predicate is
 	// what keeps a database the rules stage skips from coming out writable for
 	// this job, and this job is the last place a drift between the two would

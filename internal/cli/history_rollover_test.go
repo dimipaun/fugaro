@@ -263,10 +263,16 @@ func TestRolloverDayForce(t *testing.T) {
 	}
 }
 
+// TestRolloverNeedsFirestoreEnv is every name the job reads before it opens
+// anything (history_rollover.go's own loop), and FUGARO_GCP_PROJECT is one of
+// them: it is the installation's own project, which the ownership predicate's
+// remedy hands to `fugaro update --firebase-project`, so a job that lost it
+// would refuse with the name missing rather than with an empty project in that
+// sentence. The sweep's own list is TestHistoryMissingEnvironment's.
 func TestRolloverNeedsFirestoreEnv(t *testing.T) {
 	f := newRolloverFixture(t)
-	for _, k := range []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET", "FUGARO_FIRESTORE_DB"} {
-		old := map[string]string{"FUGARO_PROJECT": "aurora", "FUGARO_FIREBASE_PROJECT": "aurora-fp", "FUGARO_RTDB_URL": f.db.URL,
+	for _, k := range []string{"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET", "FUGARO_FIRESTORE_DB"} {
+		old := map[string]string{"FUGARO_PROJECT": "aurora", "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_FIREBASE_PROJECT": "aurora-fp", "FUGARO_RTDB_URL": f.db.URL,
 			"FUGARO_RUNS_BUCKET": "aurora-runs", "FUGARO_FIRESTORE_DB": "(default)"}[k]
 		t.Setenv(k, "")
 		_, _, err := execute(t, "budget", "history", "--rollover")

@@ -138,7 +138,7 @@ func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
 // update` (init_policy_migrate.go's policyMigrationFor) and the policy step of
 // `fugaro upgrade` (which reaches the migration and nothing else), plus the
 // history job's rollover, which asks it of the environment Terraform gives it
-// (history_rollover.go's rolloverConfig).
+// (history_rollover.go's historyJobConfig).
 //
 // It is asked in two halves, in this order. The config's own facts come first
 // (rulesUnavailable): no Firebase project recorded at all, or a database URL
