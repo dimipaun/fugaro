@@ -52,6 +52,7 @@ type initEngine struct {
 	previewed []initflow.StageResult
 	images    *imagesStage
 	repo      *repositoryStage
+	policy    *policyMigrateStage
 
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
@@ -157,7 +158,8 @@ func (e *initEngine) options() initflow.Options {
 // behind --provision-batch, which update refuses). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
 // secrets, plugin, the repository of the checkout it is run in (W5.1), the
-// published policy node's migration and the checkout's own steps: fugaro
+// deployed security rules generation, the published policy node's migration
+// and the checkout's own steps: fugaro
 // upgrade's pin, plugin and cloud steps for that checkout
 // (init_checkout_upgrade.go, the owner's rule of 2026-10-30). There is no
 // services stage in either
@@ -178,7 +180,14 @@ func initStages(e *initEngine) []initflow.Stage {
 	// are launched against (see the stage's own file for why it is a
 	// migration and never a delete and a republish).
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
-	stages = append(stages, newPolicyMigrateStage(e))
+	// The rules stage before the policy stage: the deployed security rules
+	// generation is what a published policy node is read under, and the policy
+	// write is gated on it — a run that migrated the node first would refuse
+	// its own write and leave the upgrade for a second command
+	// (init_rules_stage.go, the owner's rule of 2026-10-30).
+	stages = append(stages, newRulesStage(e))
+	e.policy = newPolicyMigrateStage(e)
+	stages = append(stages, e.policy)
 	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
 	// are a stage of this run too: fugaro update is the whole upgrade, so the
 	// one command the user runs may not leave the checkout it runs in behind

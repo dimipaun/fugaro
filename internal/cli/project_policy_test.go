@@ -709,8 +709,15 @@ func TestProjectPolicyPublishRefusesWithoutTheRulesMarker(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish without the rules marker was allowed")
 	}
-	if !strings.Contains(err.Error(), "update --firebase-project") {
+	// The move is the plain door: `fugaro update`'s rules stage deploys this
+	// binary's generation over rules whose marker is absent, in the same run,
+	// so --firebase-project (the door that adopts a Firebase project) is not
+	// what an installation that has one needs to run.
+	if !strings.Contains(err.Error(), "fugaro update") {
 		t.Errorf("the refusal does not name the fix: %v", err)
+	}
+	if strings.Contains(err.Error(), "--firebase-project") {
+		t.Errorf("the refusal sends the operator to --firebase-project for a state fugaro update repairs: %v", err)
 	}
 	// An absent marker is not an old one: the refusal must not tell the
 	// operator a marker is older than itself when there is no marker.
@@ -735,7 +742,11 @@ func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish behind the deployed rules was allowed")
 	}
-	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) || !strings.Contains(err.Error(), "update --firebase-project") {
+	// The move is plain `fugaro update`, whose rules stage deploys this
+	// binary's generation over the state — not `--firebase-project`, the door
+	// that adopts a Firebase project this installation already has.
+	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) ||
+		!strings.Contains(err.Error(), "fugaro update") || strings.Contains(err.Error(), "--firebase-project") {
 		t.Errorf("the refusal does not say the marker is below the generation a policy is read under: %v", err)
 	} // Not the marker-current state's sentence: "the deployed rules are older
 	// than the marker" is a claim about a document, and nothing here compared
@@ -1012,8 +1023,15 @@ func TestProjectPolicyDeleteRefusesWithoutTheRulesMarker(t *testing.T) {
 	if err == nil {
 		t.Fatal("--delete without the rules marker was allowed")
 	}
-	if !strings.Contains(err.Error(), "update --firebase-project") {
+	// The move is the plain door: `fugaro update`'s rules stage deploys this
+	// binary's generation over rules whose marker is absent, in the same run,
+	// so --firebase-project (the door that adopts a Firebase project) is not
+	// what an installation that has one needs to run.
+	if !strings.Contains(err.Error(), "fugaro update") {
 		t.Errorf("the refusal does not name the fix: %v", err)
+	}
+	if strings.Contains(err.Error(), "--firebase-project") {
+		t.Errorf("the refusal sends the operator to --firebase-project for a state fugaro update repairs: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
 		t.Error("the policy was removed anyway")
@@ -1527,14 +1545,20 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 		what   string
 		marker any
 		want   string
+		// Where the refusal sends the operator. Both states are what
+		// `fugaro update`'s own rules stage deploys over, so both sentences now
+		// name that one command; the two are pinned as written, since a remedy
+		// that drifts back to the `--firebase-project` door sends the operator to
+		// adopt a Firebase project this installation already has.
+		fix string
 	}{
-		{"no marker at all", nil, "carry no policy marker"},
+		{"no marker at all", nil, "carry no policy marker", "run 'fugaro update'"},
 		// main's requirePolicyRules (#532) admits every marker at or above
 		// PolicyRulesVersion — those rules carry the policy nodes — and words a
 		// marker below it as its own case ("records generation N", the
 		// pre-policy sentence doctor prints): that is the marker behind this
 		// Fugaro's that still refuses the write.
-		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation"},
+		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation", "re-run 'fugaro update' with fugaro"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -1550,8 +1574,8 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 				if err == nil {
 					t.Fatalf("%v was allowed with %s", args, tc.what)
 				}
-				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "update --firebase-project") {
-					t.Errorf("%v refused with %q, want it to say %q and to name the fix", args, err, tc.want)
+				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), tc.fix) {
+					t.Errorf("%v refused with %q, want it to say %q and to name the fix %q", args, err, tc.want, tc.fix)
 				}
 			}
 			if got := nodeJSON(t, f, projectpolicy.PathShared()); got != before {

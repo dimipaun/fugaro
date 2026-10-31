@@ -347,6 +347,19 @@ func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, 
 	return s.m, s.published, s.err
 }
 
+// forget drops the read the check, the plan and the apply share for the whole
+// run, so the next of them reads the node and the rules it is gated on again.
+// It exists because a run changes under this stage's feet: the rules stage
+// (init_rules_stage.go) runs before it and deploys the generation this stage's
+// write is gated on (requirePolicyRules), while the read-only preview pass —
+// every stage's check, before the first apply — is where this stage's refusal
+// is made. Without this the refusal cached there outlives the deploy that
+// answered it, and the run refuses its own work with a sentence about rules
+// that are no longer deployed.
+func (s *policyMigrateStage) forget() {
+	s.planned, s.m, s.published, s.err = false, nil, false, nil
+}
+
 // Check reports what the published node is. A refusal here is the run's, not a
 // step left for the user: a malformed node, or one written by a newer Fugaro,
 // is not something the operator of this binary can finish by hand, and the

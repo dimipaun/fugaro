@@ -2401,8 +2401,8 @@ job's environment was deployed with.
 
 Publishing refuses without the rules marker (config/limits/policyRules): a
 policy published before the rules are deployed is one the runs it bounds
-cannot read, so run fugaro update --firebase-project with a Fugaro that deploys them
-first. It also refuses a node written by a newer Fugaro.
+cannot read, so run fugaro update with a Fugaro that deploys them first. It
+also refuses a node written by a newer Fugaro.
 
 allow_repos is seeded from this machine's repos: map and from the shared
 config's repository list, and only when the node is absent or --seed-repos is
