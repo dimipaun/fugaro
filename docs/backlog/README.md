@@ -10,7 +10,7 @@ reader cannot get back in one command (D28). The format an item follows is
 [FORMAT.md](FORMAT.md); the ruling that made this folder is
 [the rigor modes reconciliation](../rigor-modes/reconciliation.md) (D26–D32).
 
-3 items: 3 open, 0 closed, 0 dropped.
+2 items: 2 open, 0 closed, 0 dropped.
 
 ## Open
 
@@ -18,4 +18,3 @@ reader cannot get back in one command (D28). The format an item follows is
 | --- | --- | --- | --- | --- | --- | --- |
 | [20261021-01](20261021-01-cross-repo-backlog-filing.md) | A run cannot file a backlog item into a repository other than its own | none | project | open | dimipaun | 2026-10-21 |
 | [20261021-02](20261021-02-hotfix-followup-scheduler.md) | Nothing reacts to a merge, so a Hotfix follow-up is run by hand | none | repo | open | dimipaun | 2026-10-21 |
-| [20261031-01](20261031-01-run-20261031-185554-45a2-review-round-2-left-4-findings-open.md) | Run 20261031-185554-45a2: review round 2 left 4 findings open | pro | repo | open | unknown | 2026-10-31 |
