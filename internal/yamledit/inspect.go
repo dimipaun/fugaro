@@ -290,13 +290,28 @@ func mergeKey(m *yaml.Node) bool {
 	return false
 }
 
-// anchorFree refuses a node an edit cannot replace without dropping what is
-// written on it.
+// anchorFree refuses a node an edit cannot replace or remove without dropping
+// what is written on it. A tag written out is one of those: yaml.v3 marks the
+// node it belongs to with TaggedStyle, and the tag is part of what the file says
+// about the node rather than a decoration a splice may drop.
 func (d *doc) anchorFree(op string, e *entry, path string) error {
-	if e.key.Anchor != "" || e.value.Anchor != "" || e.value.Kind == yaml.AliasNode {
+	if e.key.Anchor != "" || e.value.Anchor != "" || e.value.Kind == yaml.AliasNode ||
+		e.value.Style&yaml.TaggedStyle != 0 {
 		return refuse(op, path, ReasonAnchorOrAlias)
 	}
 	return nil
+}
+
+// expandable refuses an entry a DropEmptyParents cascade would take along with
+// the one the caller named. Taking a key out of the mapping above is held to the
+// same rule as taking the target out of its own, and the entry to the same
+// anchor, alias and tag rule: the cascade is only as safe as the removal it
+// extends, and it would drop what is written on that entry just as silently.
+func (d *doc) expandable(op string, up step, path string) error {
+	if mergeKey(up.parent) {
+		return refuse(op, path, ReasonMergeKey)
+	}
+	return d.anchorFree(op, up.e, path)
 }
 
 // emptyValue reports whether an entry writes no value at all: `key:` with

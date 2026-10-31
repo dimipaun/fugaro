@@ -144,7 +144,10 @@ type RemoveOptions struct {
 	// DropEmptyParents also removes the key whose mapping or sequence the
 	// removal leaves empty, and so on up to the root. Without it, removing the
 	// last key of a nested mapping leaves that key written with no value, which
-	// is how block style spells an empty mapping.
+	// is how block style spells an empty mapping. Every key the cascade reaches
+	// is held to the rules the named one was: an entry carrying an anchor, an
+	// alias or a tag, or sitting in a mapping that carries `<<`, is refused
+	// rather than taken along, and the whole edit is refused with it.
 	DropEmptyParents bool
 }
 
@@ -476,7 +479,11 @@ func (d *doc) removeKey(op string, path []string, opts RemoveOptions) ([]byte, e
 	}
 	if opts.DropEmptyParents {
 		for i := len(chain) - 1; i > 0 && len(chain[i].parent.Content) == 2; i-- {
-			if start, end, err = d.entrySpan(op, chain[i-1].e); err != nil {
+			up := chain[i-1]
+			if err := d.expandable(op, up, pathString(path)); err != nil {
+				return nil, err
+			}
+			if start, end, err = d.entrySpan(op, up.e); err != nil {
 				return nil, err
 			}
 		}
@@ -578,7 +585,7 @@ func (d *doc) removeItem(op string, path []string, value string, opts RemoveOpti
 	if err != nil {
 		return nil, err
 	}
-	if start, end, err = d.dropEmptySequence(op, chain, seq, start, end, opts); err != nil {
+	if start, end, err = d.dropEmptySequence(op, pathString(path), chain, seq, start, end, opts); err != nil {
 		return nil, err
 	}
 	return splice(d.src, start, end, nil), nil
@@ -607,7 +614,7 @@ func (d *doc) removeKeyedItem(op string, path []string, keyField, keyValue strin
 	if err != nil {
 		return nil, err
 	}
-	if start, end, err = d.dropEmptySequence(op, chain, seq, start, end, opts); err != nil {
+	if start, end, err = d.dropEmptySequence(op, pathString(path), chain, seq, start, end, opts); err != nil {
 		return nil, err
 	}
 	return splice(d.src, start, end, nil), nil
@@ -633,17 +640,24 @@ func (d *doc) sequenceAt(op string, path []string, target step) (*yaml.Node, err
 
 // dropEmptySequence extends a removal to the key that held the sequence when
 // the item removed was its last, and on up while a mapping is left empty.
-func (d *doc) dropEmptySequence(op string, chain []step, seq *yaml.Node, start, end int, opts RemoveOptions) (int, int, error) {
+func (d *doc) dropEmptySequence(op, path string, chain []step, seq *yaml.Node, start, end int, opts RemoveOptions) (int, int, error) {
 	if !opts.DropEmptyParents || len(seq.Content) != 1 {
 		return start, end, nil
 	}
 	last := len(chain) - 1
+	if err := d.expandable(op, chain[last], path); err != nil {
+		return 0, 0, err
+	}
 	start, end, err := d.entrySpan(op, chain[last].e)
 	if err != nil {
 		return 0, 0, err
 	}
 	for i := last; i > 0 && len(chain[i].parent.Content) == 2; i-- {
-		if start, end, err = d.entrySpan(op, chain[i-1].e); err != nil {
+		up := chain[i-1]
+		if err := d.expandable(op, up, path); err != nil {
+			return 0, 0, err
+		}
+		if start, end, err = d.entrySpan(op, up.e); err != nil {
 			return 0, 0, err
 		}
 	}

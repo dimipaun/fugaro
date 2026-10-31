@@ -434,6 +434,88 @@ func TestRemoveKeyDropsEmptyParentsWhenAsked(t *testing.T) {
 	}
 }
 
+// TestDropEmptyParentsRefusesWhatTheCascadeWouldTake pins that the entries a
+// cascade reaches are held to the same rules as the entry the caller named. An
+// intermediate entry an anchor, a tag or a merge key is written on is refused,
+// or the cascade would drop it silently — and an alias pointing at a dropped
+// anchor would be left pointing at nothing.
+func TestDropEmptyParentsRefusesWhatTheCascadeWouldTake(t *testing.T) {
+	drop := yamledit.RemoveOptions{DropEmptyParents: true}
+	for _, tc := range []struct {
+		name   string
+		doc    string
+		op     func([]byte) ([]byte, error)
+		reason yamledit.Reason
+	}{
+		{
+			"an anchor on a parent the cascade would remove",
+			"other: 1\nouter: &a\n  inner: 2\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveKeyWithOptions(d, []string{"outer", "inner"}, drop)
+			},
+			yamledit.ReasonAnchorOrAlias,
+		},
+		{
+			"an anchor an alias elsewhere points at",
+			"outer: &a\n  inner: 2\ncopy: *a\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveKeyWithOptions(d, []string{"outer", "inner"}, drop)
+			},
+			yamledit.ReasonAnchorOrAlias,
+		},
+		{
+			"a tag on a parent the cascade would remove",
+			"other: 1\nouter: !!map\n  inner: 2\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveKeyWithOptions(d, []string{"outer", "inner"}, drop)
+			},
+			yamledit.ReasonAnchorOrAlias,
+		},
+		{
+			"an anchor on a parent a list removal would remove",
+			"outer: &a\n  list:\n    - x\nother: 1\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveListItemWithOptions(d, []string{"outer", "list"}, "x", drop)
+			},
+			yamledit.ReasonAnchorOrAlias,
+		},
+		{
+			"an anchor on a parent a keyed removal would remove",
+			"outer: &a\n  areas:\n    - path: internal/one/**\nother: 1\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveSeqItemByKeyWithOptions(d, []string{"outer", "areas"}, "path", "internal/one/**", drop)
+			},
+			yamledit.ReasonAnchorOrAlias,
+		},
+		{
+			"a merge key on a mapping the cascade would remove a key from",
+			"base: &base\n  other: 1\n<<: *base\nouter:\n  inner: 2\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveKeyWithOptions(d, []string{"outer", "inner"}, drop)
+			},
+			yamledit.ReasonMergeKey,
+		},
+		{
+			"a merge key on the mapping a list removal would empty",
+			"base: &base\n  other: 1\nouter:\n  <<: *base\n  list:\n    - x\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveListItemWithOptions(d, []string{"outer", "list"}, "x", drop)
+			},
+			yamledit.ReasonMergeKey,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.op([]byte(tc.doc))
+			if r := yamledit.ReasonOf(err); r != tc.reason {
+				t.Fatalf("reason = %q, want %q (got %q, %v)", r, tc.reason, got, err)
+			}
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("a refusal returned changed bytes: %q", got)
+			}
+		})
+	}
+}
+
 func TestRemoveKeyFromTheFixtureKeepsEveryOtherLine(t *testing.T) {
 	doc := readFixture(t, "commented-project.yaml")
 	got, err := yamledit.RemoveKey([]byte(doc), []string{"rigor", "areas"})
