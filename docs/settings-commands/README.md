@@ -2,8 +2,10 @@
 
 **Status: design approved. SD1–SD18 were answered by the owner on 2026-10-31 (SD1–SD5 with named answers, the rest as recommended); the tasks queue for CLI 0.15.0.** The answers are in
 [reconciliation.md](reconciliation.md) §3, and the plan is written to them. The design's own
-decisions — everything the audit left open that is not one of its SDs — are **D840–D853**, in
-[reconciliation.md](reconciliation.md) §4, all recommended; **D854–D859** are reserved and unused.
+decisions — everything the audit left open that is not one of its SDs — are **D840–D854**, in
+[reconciliation.md](reconciliation.md) §4, all recommended. **D854 is the one open decision, and the
+owner is being asked about it**: a stale local copy overwriting a newer publish. **D855–D859** are
+reserved and unused.
 Nothing is built yet.
 
 **Asked by:** the owner, 2026-10-31: "for project level and repo level settings, in fact for ALL
@@ -39,8 +41,9 @@ This work adds:
    DEFAULT column, `--changed`, the JSON Schema `default` keywords and the scope table all come
    from — instead of the four scattered copies that exist today.
 3. **`fugaro settings get|set|unset`**, the generic write path for every scalar and string-list key,
-   editing the layer's own file through the shared comment-preserving editor, with the diff, the
-   confirmation and the agent-session refusal the `models` and `rigor` designs already fixed.
+   editing the layer's own file through the one shared comment-preserving editor, `internal/yamledit`,
+   with the diff, the confirmation and the agent-session refusal the `models` and `rigor` designs
+   already fixed.
 4. **Dedicated families** where a setting needs more than a value: `rigor floor`, `accounts`,
    `secrets allow`, `project profile`, `project routing`, `project credentials`,
    `project clone-url`.
@@ -62,14 +65,14 @@ Against `origin/main` at `29004ec9` and the 18 pull requests open on 2026-10-31,
 offset reads and `git show`. The audit's own citations (`file:line` at `1c9be2a2c`) were re-checked
 against that commit; every claim in [reconciliation.md](reconciliation.md) names the file and the
 symbol it was read from. `docs/rigor-command/` (PR #1463) was read in full through `gh pr diff`,
-because its R0–R6 and this plan's S4–S7 write the same two documents and the same two `fugaro
-update` stages.
+because its R0–R6 and this plan's S4–S7 write the same two documents, the same two `fugaro update`
+stages and the same editor.
 
 ## Numbers this work holds
 
 | Block | Use |
 | --- | --- |
-| **D840–D859** | this work's block: **D840–D853** written, recommended; **D854–D859** reserved and unused. Verified free as follows: on `main` the highest number anywhere in `docs/` is **D829** (`docs/console-coordinator-v2/reconciliation.md`, the tail of that work's D810–D829), and the highest in any open pull request's docs is **D839** (`docs/rigor-command/README.md`, PR #1463, which renumbered its block to **D830–D839**). The models block (D780–D799) and the console auto-update plan's block (D760–D772, #1377) are below both |
+| **D840–D859** | this work's block: **D840–D854** written, recommended (**D854 open** — the owner is being asked about the stale local copy); **D855–D859** reserved and unused. Verified free as follows: on `main` the highest number anywhere in `docs/` is **D829** (`docs/console-coordinator-v2/reconciliation.md`, the tail of that work's D810–D829), and the highest in any open pull request's docs is **D839** (`docs/rigor-command/README.md`, PR #1463, which renumbered its block to **D830–D839**). The models block (D780–D799) and the console auto-update plan's block (D760–D772, #1377) are below both |
 | **The collision this design waited on, resolved** | **PR #1463 (`docs/rigor-command`) had claimed D810–D829, which `main`'s `docs/console-coordinator-v2` already holds.** PR #1463 has since renumbered itself to **D830–D839**, so this design takes **D840**, the next free number above every block written on `main` and in an open pull request. Nothing here cites the rigor design by its old numbers; where it does cite it — the local layer file that `rigor set` writes (**D830**) and the `Layer` stage in `fugaro update` that publishes it with seeding (**D831**) — it cites the renumbered decisions. What the earlier reading recorded, and what it cost, is in [reconciliation.md](reconciliation.md) §5 |
 | **Checks** | **none taken.** Everything this design adds is a local file edit, an offline read, or a stage of `fugaro update` whose cloud writes go through the publish paths the installation's existing update checks already exercise. The one verification that would need a check number — the first `update` importing a node-only block on a real installation — is the same path `fugaro project policy publish` already runs in the live checklist, and no new operator step is added |
 

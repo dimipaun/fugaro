@@ -1,10 +1,11 @@
 # `fugaro settings`: implementation plan
 
 **The design is approved; the tasks queue for CLI 0.15.0.** SD1–SD18 were answered by the owner on
-2026-10-31 ([reconciliation.md](reconciliation.md) §3) and D840–D853 are this plan's recommendations
-(§4). A decision answered the other way changes the tasks that cite it. Each task touches at most 12
-files, names its tests, starts with a red step, and ends at the gates below. **The first slice is
-S0–S3.**
+2026-10-31 ([reconciliation.md](reconciliation.md) §3) and D840–D854 are this plan's recommendations
+(§4), **D854 still open** — a stale local copy overwriting a newer publish, which S3 carries if the
+owner accepts it. A decision answered the other way changes the tasks that cite it. Each task touches
+at most 12 files, names its tests, starts with a red step, and ends at the gates below. **The first
+slice is S0–S3.**
 
 ## Order, and what this plan does not own
 
@@ -16,12 +17,13 @@ S0–S3.**
   RULE forbids.
 - **External dependency E2 — the project layer's local file and its update stage.** PR #1463's R0
   (the file has a path) and R1 (the `Layer` stage publishes it). **S4 is only the read side** (the
-  local file's path, the drift, the `unpublished` state) and writes no stage; a second layer stage
-  would be two writers for one object.
-- **External dependency E3 — the comment-preserving editors.** The `models` plan's M0
-  (`internal/localcfg/edit.go`, the local project config) and the `rigor` plan's R2
-  (`internal/config/layeredit.go`, the project layer file). S5–S9 call them; **no task here writes a
-  fourth editor** (D847).
+  local file's path, and the `unpublished` state) and writes no stage; a second layer stage would be
+  two writers for one object.
+- **External dependency E3 — the shared comment-preserving editor, `internal/yamledit`.** One package
+  of generic locate-and-splice operations (set a scalar, remove a key, add or remove a list item,
+  upsert or remove a sequence item by key) used for the local config, the local layer file and
+  `fugaro.yaml`. **Its owning task is the editor task, and it lands first in the joint order below**;
+  S5–S9 call it, and **no task here writes a second editor** (D847).
 - **Files other work owns:** registering the commands in `internal/cli/root.go`, the generated
   `website/content/cli-reference.md`, `plugin/**`, `console/**` and `docs/releases/**` are each
   another work stream's at the time of writing. S1, S10 and every task that adds a command name them,
@@ -33,9 +35,22 @@ S0–S3.**
 | --- | --- | --- |
 | 0 | S0 | nothing |
 | 1 | S1, S3 | S0 (S1) |
-| 2 | S2, S4, S5 | S1 (S2, S5); S3 (S4); E3 (S5) |
-| 3 | S6, S7, S8, S9 | S5, and S3 for S6 and S8 |
+| 2 | S2, S4, S5 | S1 (S2, S5); S3 (S4); E3 (S5); R1 (S5) |
+| 3 | S6, S7, S8, S9 | S5, and S3 for S6, S7, S8 and S9 |
 | 4 | S10 | S1–S9; E1 and E2 merged before the release |
+
+**The joint order**, agreed with the `models` and `rigor` designs and the same list in all three:
+**editor → policy stage (S3) → settings read (S0–S2, S4) → layer stage (R0, R1) → set (S5) → rigor
+(R2–R5) and models.**
+
+| # | What lands | Owner | Why it sits here |
+| --- | --- | --- | --- |
+| 1 | The one editor, `internal/yamledit` | the editor task (E3) | every later task splices a file with it, so landing it first is what keeps anyone from writing a second one meanwhile |
+| 2 | `update` publishes the policy node | **S3**, the `models` design's E1 | it is the first slice's second half, it is what lets the read stop saying `unpublished` for the policy, and S6–S9 write keys only this stage publishes |
+| 3 | The settings read | **S0–S2, S4** | useful before every writer, and it is what makes G1, G2 and G5 visible today |
+| 4 | The layer stage, and the local layer file it publishes | the `rigor` design's **R0, R1** | `settings set --layer project` (S5) needs both the file and its publisher |
+| 5 | `fugaro settings get\|set\|unset` | **S5** | the first writer over all three documents; it must not ship before 2 and 4, or its `next: fugaro update` line is false |
+| 6 | `fugaro rigor …` (R2–R5) and the `models` writes | the `rigor` and `models` designs | they reuse the editor and both stages, and their keys reach runs through the stage of 2 |
 
 ## Gates (every task)
 
@@ -64,7 +79,7 @@ fourth hand-kept copy (F12).
   `TestRegistryOwnerNamesACommand`, `TestRegistryMarksEverySensitiveKey`.
 - **Hermetic:** pure Go, no filesystem.
 
-## S1. `fugaro settings`, the read over the offline layers (SD1, D849, D851, D852, D854)
+## S1. `fugaro settings`, the read over the offline layers (SD1, D839, D849, D851, D852)
 
 - **Files (9):** `internal/cli/settings.go` (new: the command group), `internal/cli/settings_read.go`
   (new: one row per key and scope, from the registry and the offline readers), `internal/cli/settings_read_test.go`
@@ -124,13 +139,22 @@ spend. It is E1, and it is the first slice's second half.
   `TestProjectPolicyPublishIsRefusedInAnAgentSession`, `TestProjectPolicyPublishKeepsDeleteAndSeedRepos`.
 - **Hermetic:** `internal/gcpfake`, a fake Realtime Database, `t.TempDir()`. No apply, no deploy, no
   cloud call.
+- **Its own `### For operators`, in this task's release notes** — the first slice's step, and S10's
+  entry does not repeat it: "`fugaro update` now publishes the policy node from the local config;
+  `project policy publish` is refused in a coding agent's session".
+- **If D854 is answered yes** (it is open): the same task records the generation the local file was
+  seeded from or last published at and refuses to publish over a generation that has moved since,
+  showing the three-way state and offering the re-seed —
+  `TestUpdateRefusesToPublishOverANewerGeneration`. The layer stage (R1) carries the same guard.
 
 ## S4. The layer side of the read (SD4, D845)
 
-The read side only: the layer's local file has a path, and a local file that differs from the
-published object is `unpublished`. The stage itself is E2 and is not written here.
+The read side only: the layer's local file has a path — `~/.config/fugaro/projects/<project>-layer.yaml`,
+resolved by `localcfg.LayerFile` — and a local file that differs from the published object is
+`unpublished`. The stage itself is E2 and is not written here.
 
-- **Files (4):** `internal/cli/settings_layer.go` (new), `internal/cli/settings_layer_test.go` (new),
+- **Files (4):** `internal/cli/settings_layer.go` (new: `localcfg.LayerFile`, the published object,
+  the `unpublished` comparison), `internal/cli/settings_layer_test.go` (new),
   `internal/cli/settings_cloud.go`, `internal/settings/registry.go` (the `layer.*` rows).
 - **Red step:** `TestSettingsMarksAPublishedLayerThatDriftsFromTheLocalFile` fails while the local
   layer file's path is not resolved.
@@ -145,19 +169,20 @@ It edits the local project config, the project layer file and a repository's `fu
 documents that decide where a repository's code goes and what a run may cost, and one of them
 outside every repository, which is why the agent-session refusal is here.
 
-- **Files (8):** `internal/cli/settings_set.go` (new), `internal/cli/settings_set_test.go` (new),
+- **Files (7):** `internal/cli/settings_set.go` (new), `internal/cli/settings_set_test.go` (new),
   `internal/cli/settings_write.go` (new: diff, confirmation, agent refusal, `backupFile`,
   `writeFileAtomic` — shared with S6–S9), `internal/cli/settings_write_test.go` (new),
-  `internal/cli/settings.go`, `internal/localcfg/edit.go` (M0's editor, only if its op set lacks the
-  generic scalar and list ops), `internal/config/layeredit.go` (R2's, same condition),
-  `internal/cli/init_fugaroyaml.go` (the line-edit helper beside `setGCPProjectLine`, only if it must
-  be shared rather than copied — search before writing a helper).
+  `internal/cli/settings.go`, `internal/yamledit/*.go` (only if an operation this task needs is
+  missing from the shared editor — the editor task owns that package and lands it first) and
+  `internal/yamledit/edit_test.go` (D847's cross-document test, same condition).
 - **Red step:** `TestSettingsSetRefusesAKeyOwnedByAnotherFamily` fails while the subcommand does not
   exist.
 - **Tests:** `TestSettingsSetRefusesAKeyOwnedByAnotherFamily`,
   `TestSettingsSetRefusesALayerTheKeyMayNotBeSetIn`, `TestSettingsSetRefusesAValueTheLoaderRefuses`,
   `TestSettingsSetRefusesInAnAgentSessionEvenWithYes`, `TestSettingsSetRepoLayerIsAllowedInAnAgentSession`,
   `TestSettingsSetLooseningACeilingAsksForTheTypedProjectName` (and `--yes` does not stand in),
+  `TestSettingsSetRepoLayerRefusesALooseningInAnAgentSession` (spec §4.2 step 4: the typed-name
+  carve-out — a ceiling loosened at `--layer repo` is refused in an agent session, `--yes` included),
   `TestSettingsSetBacksUpAndWritesAtomically`, `TestSettingsSetKeepsTheRestOfTheFile`,
   `TestSettingsAddAndRemoveOnAListKey`, `TestSettingsRefusesEmptyingAListKey`,
   `TestSettingsUnsetRemovesTheKeyRatherThanWritingTheDefault`,
@@ -197,9 +222,10 @@ A floor, and its semantics are subtle: an absent key and a written `{}` mean dif
 publish.
 
 - **Files (5):** `internal/cli/rigor_floor.go` (new), `internal/cli/rigor_floor_test.go` (new),
-  `internal/cli/rigor.go` (the group R3 creates, or this task creates it if #1463 is not merged),
-  `internal/localcfg/edit.go` (the `review_floor` ops), `internal/cli/settings_write.go` (the shared
-  write path).
+  `internal/cli/rigor.go` (**the group: whichever of the `rigor` design's R3 and this task lands
+  first creates it, and the other uses it**), `internal/yamledit/*.go` (the `review_floor` operations,
+  only if they are missing from the shared editor), `internal/cli/settings_write.go` (the shared write
+  path).
 - **Red step:** `TestRigorFloorSetWritesTheModeFloor` fails while the subcommand does not exist.
 - **Tests:** `TestRigorFloorSetWritesTheModeFloor`,
   `TestRigorFloorSetLoweringAsksForTheTypedProjectName`, `TestRigorFloorUnsetRemovesTheModeEntry`,
@@ -214,7 +240,7 @@ to every operator machine" step.
 
 - **Files (7):** `internal/cli/accounts_allow.go` (new), `internal/cli/accounts_allow_test.go` (new),
   `internal/cli/secrets_allow.go` (new), `internal/cli/secrets_allow_test.go` (new),
-  `internal/localcfg/edit.go` (the `allow_data_to` and `project_secrets` ops),
+  `internal/yamledit/*.go` (the `allow_data_to` and `project_secrets` operations),
   `internal/cli/upgrade_cloud.go` (`update --repo` reads `project_secrets` from the node),
   `internal/cli/upgrade_cloud_test.go`.
 - **Red step:** `TestAccountsAllowAppendsTheRepository` fails while the subcommand does not exist.
@@ -231,7 +257,7 @@ publisher refuses silence for the same reason.
 
 - **Files (6):** `internal/cli/project_profile.go` (new), `internal/cli/project_profile_test.go`
   (new), `internal/cli/project_routing.go` (new), `internal/cli/project_routing_test.go` (new),
-  `internal/localcfg/edit.go` (the `profiles` and `routing` ops), `internal/cli/project_cmd.go`
+  `internal/yamledit/*.go` (the `profiles` and `routing` operations), `internal/cli/project_cmd.go`
   (the routing silence rules, shared with the publisher rather than restated).
 - **Red step:** `TestProjectProfileAddWritesAJobProfile` fails while the subcommand does not exist.
 - **Tests:** `TestProjectProfileAddWritesAJobProfile`, `TestProjectProfileSetChangesOneKey`,
@@ -247,7 +273,8 @@ publisher refuses silence for the same reason.
   the reference), `docs/policy-migration.md` (who publishes the node), `docs/settings-commands/README.md`
   (the status line), `docs/releases/vX.Y.Z.md` (`### For operators`: "run `fugaro update`" and what
   it will ask — including the import of a node-only `credentials` or `clone_urls` block, and that
-  declining it is safe), `website/data/release-summaries.yaml`, the generated
+  declining it is safe; **the policy stage's own line is S3's, above, and is not repeated here**),
+  `website/data/release-summaries.yaml`, the generated
   `website/content/cli-reference.md` (regenerated, not hand-edited), `plugin/skills/working/SKILL.md`
   (the settings command family; owned elsewhere, see "Order").
 - **Red step:** the plugin's command test fails while a skill names `fugaro settings` before S1 is

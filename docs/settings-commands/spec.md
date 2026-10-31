@@ -1,8 +1,10 @@
 # `fugaro settings`: the spec
 
 The commands below are written to the owner's answers to SD1–SD18 (2026-10-31) and to the
-recommended answer of this design's own decisions D840–D853 ([reconciliation.md](reconciliation.md)
-§2 and §3). A decision answered the other way changes the paragraph that names it. Repository names
+recommended answer of this design's own decisions D840–D854 ([reconciliation.md](reconciliation.md)
+§3 and §4). A decision answered the other way changes the paragraph that names it. **D854 is the one
+still open** — a stale local copy overwriting a newer publish, §6 — and the text below says where it
+leans on it. Repository names
 are placeholders (`owner/repo-a`, `owner/repo-b`), projects are `workspace-a`, people are `person-1`.
 
 ## 1. The rule this serves
@@ -102,8 +104,8 @@ One of a **closed set** (D851), drawn distinctly and never filled with a guess:
 | `ok` | read from the layer that decides |
 | `stale <age>` | a cached copy (the layer cache, the shared-config cache) with its age |
 | `unread: <reason>` | no permission, offline, no budget backend, no Firebase project. **Never** a default in its place |
-| `unpublished` | the local value differs from what the published node or the published layer carries, so it reaches runs on the next `fugaro update` (SD3, SD4). This is the G1 and G2 detector and the reason the command exists |
-| `unknown (no checkout)` | a repository with no checkout on this machine, so its `fugaro.yaml` was not read and its row is not guessed |
+| `unpublished` | the local value differs from what the published node or the published layer carries, so it reaches runs on the next `fugaro update` (SD3, SD4). This is the G1 and G2 detector and the reason the command exists. It is the same sha256 comparison the `rigor` design runs, and **the word is `unpublished` everywhere** — in `settings`, in `rigor show`, in `config layer` and in `doctor` alike; none of them says `drift` |
+| `unknown (no checkout on this machine)` | a repository with no checkout on this machine, so its `fugaro.yaml` was not read and its row is not guessed. The wording is the `rigor` design's (its D839), word for word |
 
 `unpublished` compares the local file against the cloud, so it is only ever printed for a scope
 whose cloud side was read; with `--offline` it is not claimed at all.
@@ -116,7 +118,7 @@ whose cloud side was read; with `--offline` it is not claimed at all.
   I changed on this installation".
 - `--repo owner/name` narrows the repository scope to one; `--all-repos` iterates the local config's
   `repos:` plus this machine's remembered checkouts (`internal/localcfg/checkouts.go`). A repository
-  with no checkout is `unknown (no checkout)` (D854).
+  with no checkout is `unknown (no checkout on this machine)` (the `rigor` design's D839).
 - `--layer` restricts the layers read, by the names in the synopsis. `default` and `env` are always
   readable; `policy` and `caps` are the two cloud layers; `--layer` with a name the registry does
   not know is refused.
@@ -221,7 +223,11 @@ In order:
 4. **Refuse in a coding agent's session** when the target is outside the repository — `--layer
    local` and `--layer project` write `~/.config/fugaro`, so under `agentenv.Marker` they print the
    diff and the command and write nothing, `--yes` included (SD9). `--layer repo` writes a file
-   inside the repository, which an agent may edit anyway, and is allowed.
+   inside the repository, which an agent may edit anyway, and is allowed — **except for a write that
+   asks for the typed project name**: loosening a ceiling or removing a floor is refused in an agent
+   session even at `--layer repo`, printing the diff and the command and writing nothing. The typed
+   form is the owner's own hand, and the file it would edit decides the ceiling of every run the
+   branch starts, so an agent may propose that edit but not make it.
 5. **Show, confirm, back up, write.** The line diff, then the confirmation; the old file backed up
    to `<file>.bak-<UTC timestamp>` (mode 0600) and the new one written atomically through the same
    `lineDiff`, `backupFile` and `writeFileAtomic` every other writer uses (F9).
@@ -287,10 +293,12 @@ refused in a coding-agent session as every cloud write of `update` already is (S
    built once** — whichever work lands it first, the other deletes its copy. `project policy
    publish` stays for `--delete`, `--seed-repos` and scripted use, and gains the agent-session
    refusal it lacks today (SD8).
-2. **Layer publish.** The stage that publishes the project layer's local file through `publishLayer`
-   and fans it out through `fanOutLayer`, with the executable-key gate unchanged. This is PR #1463's
-   R1, and this design **does not build a second one**: §7 says exactly what is shared, and the
-   settings-side task (S4) is only the read that the layer file has a path and drifts.
+2. **Layer publish.** The stage that publishes the project layer's local file —
+   `~/.config/fugaro/projects/<project>-layer.yaml`, the path `localcfg.LayerFile` resolves — through
+   `publishLayer`, and fans it out through `fanOutLayer`, with the executable-key gate unchanged.
+   This is PR #1463's R1, and this design **does not build a second one**: §7 says exactly what is
+   shared, and the settings-side task (S4) is only the read that the layer file has a path and is
+   `unpublished`.
 3. **Provider re-converge.** `fugaro update` re-converges each recorded repository whose job's
    provider copy or ceiling copy differs from what the local config would write now, behind the same
    confirmation (D787, already answered). `fugaro upgrade`'s drift note already computes it.
@@ -308,6 +316,15 @@ And one migration, in the same command (SD5, D842, D844):
    node carries neither block gets neither block in its file: no default is seeded into a file
    nobody wrote (D843).
 
+**A stale local copy can overwrite a newer publish — D854, still open.** A stage that writes whenever
+the file differs from the object will, on a second machine, replace an operator's newer layer or
+policy node with this machine's older file, and say nothing. The recommendation: each stage records
+the generation the local file was seeded from or last published at, and when the published generation
+has moved since, it **refuses to publish**, shows the three-way state (this machine's file, the
+generation it was written from, the object published now), and offers to re-seed the local file from
+the published one under confirmation, with a backup. Until the owner answers, these stages publish on
+difference as written above.
+
 The credentials cascade's `fallback: auto` is the reason the import asks rather than writes: the
 block decides whether paid credential tiers are spent, and a value the owner never saw must not
 become theirs by a silent write.
@@ -318,15 +335,15 @@ Four mechanisms, each built once, each named here so no plan builds a second:
 
 | Mechanism | Owner | How this design uses it |
 | --- | --- | --- |
-| **The comment-preserving editor** | `internal/localcfg/edit.go` — the `models` design's M0, for the local project config; `internal/config/layeredit.go` — the `rigor` design's R2, for the project layer file | `settings set --layer local` calls M0's editor; `--layer project` calls R2's. `--layer repo` uses the line-edit helper beside `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`), which R5 also uses. **One strategy, three documents, no fourth editor:** parse to *locate* the node, splice the bytes, never re-emit the document. The plan adds a cross-document test that the three preserve comments, key order and every untouched byte the same way (D847) |
+| **The shared comment-preserving editor** | `internal/yamledit` — **one package, one owning task** (the editor task, E3), which lands it **first** in the joint order of the implementation plan. Neither this design nor the `models` or `rigor` design builds a second one | `settings get\|set\|unset` calls it for all three documents: `--layer local` (the local project config), `--layer project` (the local layer file) and `--layer repo` (`fugaro.yaml`). It holds generic **locate-and-splice** operations — set a scalar, remove a key, add or remove a list item, upsert or remove a sequence item by key — that parse to *locate* the node and splice the bytes, never re-emitting the document. The plan adds a cross-document test that all three documents preserve comments, key order and every untouched byte the same way (D847) |
 | **The diff-and-confirm UX** | `lineDiff`, `backupFile` (`<file>.bak-<timestamp>`, mode 0600) and `writeFileAtomic` (`internal/cli/init.go`), plus `confirmTyped`/`confirmTypedStrict` (`internal/cli/budget.go`) | Every write in §4 and §5 uses all five; the sensitive directions use the typed form, which `--yes` never covers |
 | **The coding-agent-session refusal** | `agentMarker`/`agentEnv` over `agentenv.Marker` (`internal/cli/initsecrets.go`), as `config publish` and `recipes publish` already refuse | `settings set\|unset --layer local\|project` and every family that writes outside a repository print the diff and the command and write nothing, `--yes` included (SD9). Reads always run |
 | **The `next: fugaro update` line** | the `models` spec §4.6 and the `rigor` spec §3.7 | Every write command here prints that one line and nothing else (SD3, SD4) |
 
-Two things this design shares the other way, and neither is a new mechanism: the update **policy**
-stage is the `models` plan's E1 and the update **layer** stage is the `rigor` plan's R1, so a task
-here that would write either is a coordination task, not an implementation (§6, implementation
-plan).
+Three things this design shares the other way, and none is a new mechanism of its own: the **editor**
+is the editor task's `internal/yamledit`, the update **policy** stage is the `models` plan's E1, and
+the update **layer** stage is the `rigor` plan's R1 — so a task here that would write any of the
+three is a coordination task, not an implementation (§6, implementation plan).
 
 ## 8. Owner-only and agent-session boundaries
 
@@ -349,7 +366,7 @@ plan).
   (`credentials:`, `clone_urls:`) is new, and the node's old spelling is imported, not
   renamed in place.
 - **A hand-edited file survives every write unchanged except the keys the command touches** — the
-  byte-preservation property of §7's editors, asserted by the cross-document test.
+  byte-preservation property of §7's editor, asserted by the cross-document test.
 - **An installation at the previous version converges on one `fugaro update`**: the policy stage
   publishes the node the local config already described, the layer stage publishes the layer file
   the owner already has, and the import brings the two node-only blocks into the local file. This is
