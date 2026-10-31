@@ -8,66 +8,67 @@ below.
 
 ## Order, and what this plan does not own
 
-- **External dependency E1 (the shared comment-preserving YAML editor), which R2 now depends on
-  rather than duplicating.** There is **one** such editor in this CLI, and settings, the `models`
-  plan and rigor all use it: three documents (the local project config, the local layer file,
-  `fugaro.yaml`), one splice (locate in the node tree, replace the bytes). **R2 must be that editor
-  or call it — it must not create a second one under a name of its own** (`internal/config/layeredit.go`
-  is exactly the duplicate this ruling removes). **E1 has not landed**: there is no shared editor
-  package on `main` today (verified 2026-10-31), and the one path this folder has named for it,
-  `internal/localcfg/edit.go`, **does not exist** — it is the file the `models` plan's M0 *creates*
-  (`docs/models-commands/implementation-plan.md`, "Files: `internal/localcfg/edit.go` (new)"), not a
-  file to go and read. So the plan names **no existing file** for E1: M0's path is a proposal, the
-  `settings` work owns the package, and the only precedent that exists today is
-  `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) — one scalar on one line, which R2's splice
-  generalises rather than repeats. **R2 resolves this at its start, not by assuming:** if the shared
-  package has landed, R2 adds its ops to it; if it has not, R2 lands the package at M0's path (or
-  wherever the `settings` work has put it by then, whichever the owner's go says) and the other two
-  works reuse it. That is a sequencing detail, never a reason for two editors. **Not** a merge of the
-  three works' plans: they are separate plans with separate owners.
+- **External dependency E1: `internal/yamledit`, the shared comment-preserving YAML editor.** The
+  package, its generic operations and the rulings the two designs share are named **once**, in the
+  [README](README.md) §"the joint order, and the rulings the rigor and settings designs share" —
+  this plan does not restate them. **One task owns it — the editor task — and it lands first in the
+  joint order**; rigor does not own it, does not fork it, and is not "the second caller that keeps a
+  copy": **R2 is a thin caller** (`EditRigor`, spec §9) and **R4 and R5 call the shared write helper
+  settings S5 lands** — the joint order's position 5 — **not** an `internal/cli/rigor_write.go` this
+  plan does not have. **E1 has not landed**: there is no `internal/yamledit` on `main` today
+  (verified 2026-10-31), and the path this folder once proposed for the editor,
+  `internal/localcfg/edit.go`, does not exist either. The plan therefore names the **package and the
+  task that lands it**, never an existing file it cannot point at; the only precedent that exists is
+  `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) — one scalar on one line, which the splice
+  generalises rather than repeats. **Not** a merge of the works' plans: they stay separate plans with
+  separate owners, and the README's joint order is what keeps them from colliding.
 - **External dependency E2 (the mode floors, `docs/rigor-modes` plan T1.5).** `show`'s floors
   section prints the review floor (F10) and one line saying the mode floors are not built (F9). The
   task that ships T1.5 adds the sensitive-path set to that section; until then no surface here may
   claim to display a floor that does not exist. Not a blocker.
 - **The console's project view** (plan P6, not built) is not an external dependency of anything:
   D836 puts no console task in this plan.
+- **The `rigor` command group is shared, and nobody may assume it exists.** `internal/cli/rigor.go`
+  — the group that holds `show`, `set`, `unset` and (SD10) the `floor` subgroup — is created by
+  **whichever of this design's R3 and the settings design's S7 lands first**, and the second adds its
+  own subcommand to what the first created. The settings design states the same sentence; neither
+  plan may write "the group exists by then", and a task that touches the file says which of the two
+  it expects.
 - **Files other work owns:** registering the command in `internal/cli/root.go`, the generated
   `website/content/cli-reference.md`, `plugin/**` and `console/**` are each owned by another open
   work stream at the time of writing. R3 and R6 name them, and the task that touches them waits for
   the owner's go for those files.
 
 **The `Needs` column is a *code* dependency: what must be merged for that task to build, test and be
-reviewed on its own.** It is not a statement about the release. A task whose code is independent of
-R1 still cannot be *shipped* without it, and that is the operational side of the same table, written
-out below it.
+reviewed on its own.** Two of its entries are cross-design — E1, the editor task's
+`internal/yamledit`, and S5, the settings task that lands the shared write helper — and both are
+positions in the [README](README.md)'s joint order rather than tasks in this plan.
 
 | Level | Tasks | Needs (code) |
 | --- | --- | --- |
 | 0 | R0 | nothing |
-| 1 | R1, R2 | R0 for R1; E1 for R2 (the shared editor, or R2 lands it) |
+| 1 | R1, R2 | R0 for R1; E1 for R2 (the editor task's `internal/yamledit`) |
 | 2 | R3 | R0 |
-| 3 | R4 | R0, R2 |
-| 4 | R5 | R4 |
+| 3 | R4 | R0, R1, R2, S5 |
+| 4 | R5 | R4 (and the same code needs: R0, R1, R2, S5) |
 | 5 | R6 | R1–R5 |
 | 6 | R7, R8 | nothing (R7 lands nothing before the owner answers) |
 
-**R1 is an operational prerequisite of the release, not a code dependency of R3–R5.** The two are
-different questions and the table above answers only the first one:
+**R4 and R5 need R1, so the HARD RULE holds mechanically and not by promise.** A `set` that lands
+without the publish stage leaves the owner's next step as `fugaro config publish FILE` — the second
+command the HARD RULE forbids (F18) — so no task here may write the layer before the task that
+publishes it has landed, and the table says so in the same column it says everything else:
 
-- **Code.** Once the row's own needs are merged, each of R3–R5 builds, tests and reviews on its own:
-  they read and write §1's file, which R0 names, and **none of them calls anything R1 adds**. So no
-  row of the table lists R1, and a branch may land without it.
-- **Release.** The release that carries R3–R5 carries R1, because a `set` that lands without the
-  layer stage leaves the owner's next step as `fugaro config publish FILE` — the second command the
-  HARD RULE forbids (F18). This is not a merge-order rule and not something the level table can
-  express: it is a rule about which tasks may be in one release, and it binds the release, not the
-  branches.
-- **And R1's seeding half is what makes the commands usable on a real installation.** R3–R5 are
-  correct without it — their own tests create the file — but on an installation whose layer predates
-  this release the file is absent while a layer is published, so the first `rigor set` is D830's
-  refusal and the owner's next step is again a second command. The commands ship as written; the
-  *release* ships with the seed. R1's task therefore carries both halves, and the release notes
-  (R6's `### For operators`) say the one command now seeds as well as publishes.
+- **R1's publish half is what makes `set`'s last line true.** R4 ends by printing `next: fugaro
+  update` (spec §3 step 7); that sentence is only honest once `update` publishes the layer.
+- **R1's seeding half is what makes `set` usable on a real installation.** On an installation whose
+  layer predates this release the file is absent while a layer is published, so without the seed the
+  first `rigor set` is D830's refusal and the owner's next step is a second command after all. R1's
+  task carries both halves, and the release notes (R6's `### For operators`) say the one command now
+  seeds as well as publishes.
+- **R3 is the exception, and deliberately so.** `show` writes nothing, so it needs neither the
+  publish stage nor the seed: it reports `unpublished` (README, the shared state word) instead of
+  fixing it, which is exactly the reading an owner needs *before* the stage has run.
 
 **R7 and R8 are follow-ups this design found and does not fix** (reconciliation §4): the missing
 hotfix gate (F13) and the loader that accepts two area rules with one glob (F14). Neither blocks
@@ -90,23 +91,25 @@ answer is a convention, not a key: the path is the project's own name under the 
 `projects/` directory, beside the project's config, so **no `--layer` flag and no `project_layer:`
 key exist** — there is nothing to resolve and nothing to record.
 
-- **Files (6):** `internal/localcfg/localcfg.go` (`LayerFile` — the path, derived from the project
+- **Files (7):** `internal/localcfg/localcfg.go` (`LayerFile` — the path, derived from the project
   name; the same directory helper the project config uses), `internal/localcfg/localcfg_test.go`,
   `internal/cli/config_publish.go` (the FILE argument becomes optional and defaults to that path),
   `internal/cli/config_publish_test.go`, `internal/cli/config_show.go` (`config layer` prints the
-  local path and whether it differs from the published object, with sha256s), and
-  `internal/cli/doctor_layer.go` plus `internal/cli/doctor_layer_test.go`. `docs/project-layer.md`
+  local path and whether the published object is `unpublished`, with sha256s),
+  `internal/cli/doctor_layer.go` and `internal/cli/doctor_layer_test.go`. `docs/project-layer.md`
   (§6 and §7) is R6's, so that this task's diff stays code.
 - **What R0 changes in `doctor_layer.go`, which already exists (9.2 KB, so this is an addition and
   not a rewrite).** It **adds one function**, `localLayerFileCheck(lc *localcfg.Config, rf resolvedFile)
   []doctorCheck`, and **one check ID**, `local-layer-file`; it appends that function's result to
   `doctorLayerChecks`'s output and touches nothing else. The existing checks and their IDs stay
   exactly as they are: `project-layer` (the layer that applies, or that none does), `project-layer-drift`
-  (the repository's last run against the published layer), `project-layer-copy` (the repository's own
-  copy), `image-config-*` and `imageLeafKeys`' attribution. The new check reports §1's path, whether
-  the file exists, and — when it does — its sha256 beside the published object's, saying `drift` when
-  they differ and adding `fugaro update` as the way to publish it, the same sentence `config layer`
-  and `show` print (one wording, three doors). **It needs no bucket round trip**, which is why it is
+  (the repository's *last run* against the published layer — **a different comparison, not the state
+  word below: its ID stays**), `project-layer-copy` (the repository's own copy), `image-config-*` and
+  `imageLeafKeys`' attribution. The new check reports §1's path, whether the file exists, and — when
+  it does — its sha256 beside the published object's, saying **`unpublished`** when they differ and
+  adding `fugaro update` as the way to publish it, the same word and the same sentence `config layer`
+  and `show` print (one word, one sha256 comparison, three doors — README, the shared rulings). **It
+  needs no bucket round trip**, which is why it is
   appended on *every* path `doctorLayerChecks` returns from — including the two early returns (no
   layer resolved; a rewritten origin) that today skip the rest — because the published side it
   compares against is the already-resolved `rf.Layer` (its `SHA256`, and its `Note` when it came from
@@ -117,10 +120,11 @@ key exist** — there is nothing to resolve and nothing to record.
 - **Tests:** `TestLayerFileIsTheProjectNameUnderProjects` (the path, and that a project name that is
   not a single path element is refused), `TestConfigPublishWithNoFilePublishesTheLocalLayer`,
   `TestConfigPublishRefusesWhenTheLocalFileDoesNotExist` (the message names `fugaro update`, not a
-  flag), `TestConfigLayerPrintsTheLocalPathAndItsDrift`,
-  `TestDoctorReportsALocalLayerFileThatDrifts` (the new `local-layer-file` check's ID, its severity
-  and its sentence, with the existing `project-layer*` checks asserted unchanged in the same test so
-  the addition is shown not to have moved them).
+  flag), `TestConfigLayerPrintsTheLocalPathAndItsUnpublishedState`,
+  `TestDoctorReportsALocalLayerFileThatIsUnpublished` (the new `local-layer-file` check's ID, its
+  severity, and that it says `unpublished` — the shared word — with the existing `project-layer*`
+  checks asserted unchanged in the same test so the addition is shown not to have moved them,
+  `project-layer-drift`'s ID included).
 - **Hermetic:** `t.TempDir()` config home, `internal/gcpfake` for the bucket, `internal/testutil`.
 
 ## R1. `fugaro update` seeds and publishes the local layer file (D831, answered). **SEC**
@@ -130,11 +134,16 @@ test commands for everyone, and it is the key whose change the executable-key ga
 **seeding** half writes only a local file, and it is what makes R0's convention usable on an
 installation that has never had one.
 
-- **Files (8):** `internal/initflow/stage.go` (the `Layer` stage name, its slot after `Policy`, and
+- **Files (6):** `internal/initflow/stage.go` (the `Layer` stage name, its slot after `Policy`, and
   its `needs`), `internal/initflow/stage_test.go`, `internal/cli/init_layer_stage.go` (new: the seed,
   the read, the diff, the confirmation, `publishLayer` and `fanOutLayer`), `internal/cli/init_layer_stage_test.go`
-  (new), `internal/cli/init.go` (registering the stage), `internal/cli/config_publish.go` (the shared
-  publish path, so the two doors cannot drift), `docs/project-layer.md` (§7 and §8).
+  (new), **`internal/cli/init_stages.go`** (registering the stage — the stages are appended in
+  `initStages`, where `newRulesStage`, `newPolicyMigrateStage` and `newCheckoutStage` already are;
+  **not `internal/cli/init.go`**, which holds the command and the engine but appends no stage), and
+  `internal/cli/config_publish.go` (the shared publish path, so the two doors cannot disagree). The new
+  stage is appended **after `e.policy`**, the slot the design chose (D831), in the same function
+  that appends it. `docs/project-layer.md` (§7 and §8) is R6's, the same as R0's, so this task's
+  diff stays code.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
 - **Tests:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` (no local file, a published layer: the
@@ -143,7 +152,7 @@ installation that has never had one.
   seed, even when it differs — that is the publish half's job, after a diff),
   `TestUpdateSeedWritesNothingWhenNoLayerIsPublished` (the first `update` of a project that has never
   published one leaves no empty file behind),
-  `TestUpdatePublishesTheProjectLayerWhenItDrifts` (the diff is printed, the object is
+  `TestUpdatePublishesTheProjectLayerWhenItIsUnpublished` (the diff is printed, the object is
   written once, the fan-out runs),
   `TestUpdateLayerStageSkipsWithNoLocalFileAndNoPublishedLayer` (the one case where there is nothing
   to seed from and nothing to publish, said in a sentence),
@@ -155,32 +164,30 @@ installation that has never had one.
 - **Hermetic:** `internal/gcpfake` for the runs bucket, `t.TempDir()` for the state and the layer
   file. No apply, no deploy, no cloud call.
 
-## R2. The rigor ops in the shared comment-preserving editor (D830). **SEC**
+## R2. `EditRigor`, the rigor ops on the shared editor (D830). **SEC**
 
 The layer decides what every repository of the project runs, and a lossy rewrite is a change nobody
 reviewed. The write must keep comments, key order and every key it does not touch — and it must be
-the **same** write the settings work and the `models` plan use, because three documents and one
+the **same** splice the settings work and the `models` plan use, because three documents and one
 splice is a design, while two editors is a bug waiting for one of them to be fixed.
 
-- **Files (5):** the shared editor package's source and test — **E1's package, not a new one**: it
-  locates in the node tree and splices bytes for the local project config, the local layer file and
-  `fugaro.yaml`. R2 adds this work's ops to it; it does **not** create
-  `internal/config/layeredit.go` or any second copy (spec §9). **Which file that is, R2 settles by
-  looking, because there is none to name today**: `internal/localcfg/edit.go` does not exist on
-  `main` (verified 2026-10-31) — it is the *new* file the `models` plan's M0 creates — so if E1 has
-  landed R2 edits the package where it finds it, and if it has not, R2 lands it at M0's path and the
-  other two works reuse it (see "Order" above). The plan names the **package** and never asserts a
-  path as if it were there. Plus three fixtures for the layer document, in
-  that package's own `testdata/` (created with the package if E1 has not landed): `hand-written-layer.yaml`,
-  `hand-written-layer-comments.yaml` and `hand-written-rigor-areas.yaml` (new; placeholder names
-  only).
-- **Interface:** `EditRigor(data []byte, at []string, ops ...RigorOp) ([]byte, error)`, where `at` is
-  the path to the block — `{"defaults", "rigor"}` for the project layer, `{"rigor"}` for a
-  repository's file (R5) — and the ops are `SetDefault(mode)`, `RemoveDefault()`,
-  `SetArea(name, match, mode)`, `RenameArea(match, name)` and `RemoveArea(match)`. It parses the
-  document into a `yaml.Node` tree only to locate the node it must change and splices bytes there;
-  it never re-emits the document (spec §9). A refusal returns the input untouched, so a caller can
-  compare bytes to know nothing was written.
+- **R2 adds a caller, not an editor.** `internal/yamledit` (E1, README's joint order position 1)
+  owns the generic half: locate the node in the tree, splice the bytes, keep every other byte. R2
+  adds a **thin rigor layer** over it — `EditRigor(data []byte, at []string, ops ...RigorOp)
+  ([]byte, error)` — which maps this work's vocabulary onto the package's generic operations and
+  hands it the anchor. It creates **no** editor: not `internal/config/layeredit.go`, not a copy of
+  the locator under a name of its own (spec §9).
+- **Files (5):** `internal/rigor/edit.go` (new: `EditRigor` and the `RigorOp` vocabulary), its test
+  `internal/rigor/edit_test.go` (new), and three fixtures in `internal/rigor/testdata/` (new):
+  `hand-written-layer.yaml`, `hand-written-layer-comments.yaml` and `hand-written-rigor-areas.yaml`
+  (placeholder names only). The fixtures live here rather than with the editor because they are
+  *layer* documents — the `defaults.rigor` and `rigor:` anchors are this work's, while
+  `internal/yamledit`'s own fixtures are about documents, not about fugaro's keys.
+- **The interface, stated once here.** `at` is the path to the block: `{"defaults", "rigor"}` for the
+  project layer, `{"rigor"}` for a repository's file (R5). The ops are `SetDefault(mode)`,
+  `RemoveDefault()`, `SetArea(name, match, mode)`, `RenameArea(match, name)` and `RemoveArea(match)`.
+  `EditRigor` locates, maps and splices; it never re-emits the document, and a refusal returns the
+  input untouched so a caller can compare bytes to know nothing was written.
 - **Two checks, and neither stands in for the other.** *Structural validity* is
   `config.ParseProjectLayer` on the output, against the same anchor the publisher uses: a document
   that parses is a layer the cloud accepts, and it is what the red step's second half shows a struct
@@ -189,11 +196,14 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
   as it was. A strict YAML decoder cannot answer the second, because comments are parse artifacts —
   discarded before any struct is decoded — so a rewrite that drops every comment passes the first
   check and fails the second. The tests assert the two separately, and
-  `TestEditRigorRefusesWhatParseProjectLayerRefuses` is the first.
-- **Red step:** `TestEditRigorKeepsCommentsAndOrder` fails while `EditRigor` does not exist, and the
-  same fixture through `ParseProjectLayer` and a struct round trip is shown to lose its comments
-  while still parsing (the reason the task exists).
-- **Tests:** `TestEditRigorKeepsCommentsAndOrder` (the byte comparison),
+  `TestEditRigorRefusesWhatParseProjectLayerRefuses` is the first. **The generic half of the byte
+  comparison is the editor task's test**, not this one: R2 asserts that it *called* the editor with
+  the right anchor and the right operation, and that what came back still parses.
+- **Red step:** `TestEditRigorMapsEachOpOntoTheEditor` fails while `EditRigor` does not exist.
+- **Tests:** `TestEditRigorMapsEachOpOntoTheEditor` (each of the five ops, against a stub or the real
+  package: the anchor it is given and the generic operation it becomes),
+  `TestEditRigorKeepsCommentsAndOrder` (the same fixture through `EditRigor`: the byte comparison
+  that shows the caller preserved what the editor preserved),
   `TestEditRigorDecodesToTheIntendedChangeOnly` (the decoded old layer plus the op equals the decoded
   new layer — the structural half), `TestEditRigorRefusesWhatParseProjectLayerRefuses`,
   `TestEditRigorAddsDefaultAfterTheKeysAlreadyThere`,
@@ -203,23 +213,39 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
 
 ## R3. `fugaro rigor show` (D835, D839)
 
-- **Files (8):** `internal/cli/rigor.go` (new: the command group, whose subcommand list is built so
-  the **`floor` subgroup SD10 rules for** is added by one entry and not by a reshape — the group
-  exists to hold more than `show`, `set` and `unset`), `internal/cli/rigor_show.go`
-  (new), `internal/cli/rigor_show_test.go` (new), `schemas/rigor-show.schema.json` (new),
+- **Files (6):** `internal/cli/rigor.go` (the command group, whose subcommand list is built so the
+  **`floor` subgroup SD10 rules for** is added by one entry and not by a reshape — the group exists
+  to hold more than `show`, `set` and `unset`), `internal/cli/rigor_show.go` (new),
+  `internal/cli/rigor_show_test.go` (new), `schemas/rigor-show.schema.json` (new),
   `schemas/schemas_test.go` (the new schema loads and the command's output validates),
-  `internal/cli/root.go` (registration; owned elsewhere, see "Order"), `docs/project-layer.md`
-  (§7's command table gains a row).
+  `internal/cli/root.go` (registration; owned elsewhere, see "Order"). `docs/project-layer.md` (§7's
+  command table gains a row) is **R6's**, the same as R0's and R1's, so this task's diff stays code.
+- **Who creates `internal/cli/rigor.go`.** **Whichever of R3 and the settings design's S7 lands
+  first** creates it; the second adds its own subcommand to the group the first built (README, and
+  the settings design states the same sentence). R3 therefore does **not** assume the file is there,
+  and S7 must not either: the task's first commit either creates the group or adds to it, and says
+  which in the message.
+- **The resolution is `rigor.Resolve` and nothing else.** `show` calls
+  `rigor.Resolve` (`internal/rigor/resolve.go`) per repository and prints what it returns —
+  `internal/rigor` is the one place the modes are ordered and the precedence settled (spec §2), and
+  the settings row calls the same function. R3 adds **no** ordering, no precedence table and no
+  second answer to "what mode does this repository get": a `show` that agreed with a run only by
+  construction is the bug this sentence prevents.
 - **Red step:** `TestRigorShowPrintsTheResolvedModeAndItsLayer` fails while the command does not
   exist.
 - **Tests:** `TestRigorShowPrintsTheResolvedModeAndItsLayer` (the four sections of spec §2, in
   order), `TestRigorShowNamesTheAreaRuleThatMatchedAPath` (`--path`, and the strictest of two),
-  `TestRigorShowUnknownForARepositoryWithNoCheckout`,
+  `TestRigorShowUnknownForARepositoryWithNoCheckout` (and that the row, the sentence and the `source`
+  string are §2.3's, word for word — `unknown (no checkout on this machine)`, the wording both
+  designs share),
   `TestRigorShowPrintsTheReviewFloorAndSaysTheModeFloorsAreNotBuilt` (and names **`fugaro rigor
   floor`** as the command that changes a floor, SD10),
-  `TestRigorShowReportsDriftFromThePublishedLayer`,
+  `TestRigorShowReportsTheUnpublishedLocalLayer` (the state word: `unpublished`, with both sha256s,
+  the same comparison `config layer` and doctor make),
+  `TestRigorShowResolvesThroughRigorResolve` (a mode `show` prints is `rigor.Resolve`'s answer for
+  the same inputs — the resolver is called, not re-implemented),
   `TestRigorShowJSONLayerNamesWhatWasRead` (spec §2's `layer` member: `published` and `local` present
-  with their sha256s, `source` one of the two words, `drift` true only when both are there and
+  with their sha256s, `source` one of the two words, `unpublished` true only when both are there and
   differ — and **absent**, never `null`, for a project that has published nothing and for a machine
   with no local file), `TestRigorShowJSONMatchesSchema`,
   `TestRigorShowJSONNeverSaysRequestOrReached`, `TestRigorShowWritesNothing`,
@@ -232,12 +258,16 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
 
 It writes the key that decides how much review a whole project gets, and `unset` removes one.
 
-- **Files (5):** `internal/cli/rigor_set.go` (new), `internal/cli/rigor_set_test.go` (new),
-  `internal/cli/rigor_write.go` (new: diff, confirmation, agent-session refusal, `backupFile`,
-  `writeFileAtomic`, shared with R5 — the *writing* is shared, the *editing* is not: the document goes
-  through R2's editor), `internal/cli/rigor_write_test.go` (new), `internal/cli/rigor.go`. It names
-  **no file of its own for the edit**: an op R2 did not foresee is added to R2's shared editor
-  (E1's package, spec §9), never to a second file under this task's name.
+- **Files (3):** `internal/cli/rigor_set.go` (new: both `set` and `unset`, which share one write
+  path), `internal/cli/rigor_set_test.go` (new), and `internal/cli/rigor.go` (the group — created by
+  R3 or by the settings design's S7, whichever landed first; R4 adds its subcommands to it).
+- **Neither half of the write is rigor's own.** The **editing** is `EditRigor` (R2), which is a
+  caller of `internal/yamledit`; the **writing** — the diff, the confirmation, the agent-session
+  refusal, the backup and the atomic write — is the **shared write helper settings S5 lands**
+  (README, the joint order's position 5), which R4 calls. **There is no `internal/cli/rigor_write.go`
+  in this plan**: a second copy of the confirmation and the refusal is exactly how `rigor set` and
+  `config set` would come to ask differently for the same kind of change, and D830's whole point is
+  that one file has one way in.
 - **Red step:** `TestRigorSetRefusesHotfixInEveryForm` fails while the subcommand does not exist.
 - **Tests:** `TestRigorSetWritesTheProjectDefault`, `TestRigorSetRefusesAVocabularyNearMiss`,
   `TestRigorSetRefusesHotfixInEveryForm`, `TestRigorSetLoweringAsksForTheTypedProjectName` (and
@@ -265,7 +295,9 @@ no layer and nothing in the cloud.
   (`internal/cli/init_fugaroyaml.go`) stays as the precedent the splice follows, not as a second
   strategy.
 - **Files (3):** `internal/cli/rigor_repo.go` (new), `internal/cli/rigor_repo_test.go` (new),
-  `internal/cli/rigor.go`.
+  `internal/cli/rigor.go` (the group: created by R3 or by the settings design's S7, whichever landed
+  first, and already extended by R4). The diff, the confirmation and the backup are the shared write
+  helper's (settings S5) as in R4 — R5 writes a different document, not a different way.
 - **A lowering here asks for the typed project name too, and a coding agent's session cannot answer
   it** (spec §4): the confirmation is a sentence only a person can complete, so in that session the
   command **prints the diff and the command it would have run and writes nothing** — SD9's wording,
@@ -287,11 +319,13 @@ no layer and nothing in the cloud.
   commands; the hand edit stays as the reference; the floor sentence names **`fugaro rigor floor`**
   rather than a flag on `set` (SD10), and the table gains `fugaro rigor floor`'s row only when that
   command ships — nothing here may document a command that does not exist),
-  `docs/rigor-command/README.md` (the status line), `plugin/skills/working/SKILL.md` (owned
+  `docs/rigor-command/README.md` (the status line, and the "joint order and shared rulings" section —
+  which is **shared with the settings design and must stay word for word in both**: a change to one
+  is a change to the other in the same release), `plugin/skills/working/SKILL.md` (owned
   elsewhere, see "Order"), `docs/releases/vX.Y.Z.md` (`### For operators`: "run `fugaro update`" and
   what it will ask — including that the stage **seeds** the local layer file when it is absent and
-  otherwise **publishes** it when it differs, with the diff and its confirmation, so the operator
-  knows the one command now does both), `website/data/release-summaries.yaml`, the
+  otherwise **publishes** it when it is **`unpublished`**, with the diff and its confirmation, so the
+  operator knows the one command now does both), `website/data/release-summaries.yaml`, the
   generated `website/content/cli-reference.md` (regenerated, not hand-edited).
 - **Red step:** the plugin's command test fails while the skill names `fugaro rigor set` before R4 is
   merged; it turns green on R4's branch.

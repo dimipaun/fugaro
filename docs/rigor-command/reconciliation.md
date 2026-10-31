@@ -1,11 +1,13 @@
 # `fugaro rigor`: reconciliation against the code
 
-Read against `origin/main` at `29004ec9` (2026-10-31). Each finding is **Exists**, **Missing** or
+Read against `origin/main` at `709574da` (2026-10-31). Each finding is **Exists**, **Missing** or
 **Conflicts**, with its consequence for the spec or the plan.
 
-The decisions were renumbered to **D830–D839** in this pass: the merged Coordinator v2 design
+The decisions were renumbered to **D830–D839** in an earlier pass: the merged Coordinator v2 design
 (`docs/console-coordinator-v2`) holds **D810–D829**, which is the block this folder had taken while
-that design was an open pull request. Nothing else about the findings changed with the merge.
+that design was an open pull request. Nothing else about the findings changed with the merge — and
+nothing changed with `709574da` either, which is a coordinator read-batching change on keys this
+folder never names.
 
 - **No line numbers anywhere in this folder**, for the reason
   `docs/rigor-modes/reconciliation.md` gives: a line number is wrong the first time anyone edits the
@@ -53,7 +55,8 @@ publishes or fans out a layer file. *Consequence:* without a new stage the owner
 `rigor set` is `fugaro config publish FILE` — a second command, which the HARD RULE forbids. **D831
 answers it** (SD4, answered): a `Layer` stage after `Policy`, which **seeds** the local file from the
 published layer when it is absent — so an installation that has never had one gets a file that is
-exactly what is in effect — and then publishes the file when it differs. R1 builds both halves.
+exactly what is in effect — and then publishes the file when it is **`unpublished`**, the shared
+state word R0's `config layer`, R3's `show` and doctor's check all print. R1 builds both halves.
 
 **F5: Exists. The resolution the spec's `from` column mirrors.** The run record's `rigor.from` is
 already `area`, `repo`, `project`, `default` or `request`, never `reached`
@@ -61,7 +64,9 @@ already `area`, `repo`, `project`, `default` or `request`, never `reached`
 `console/docs/json-contract.md` §5 (the `runs ls --json` block, and the degraded feed's body) states
 the same five words. *Consequence:* `rigor show` prints the same vocabulary minus the two values no
 launcher can produce (`request`, `reached`), so a person comparing the two surfaces reads one set of
-words.
+words. And the answer itself comes from **`rigor.Resolve`** (`internal/rigor/resolve.go`) — the one
+function that orders the modes and settles the precedence, called per repository, the way the
+settings design's row calls it. Neither surface derives a mode a second way.
 
 **F6: Exists. The wrappers the CLI resolves through.** `config.Config.RigorConfig()`
 (`internal/config/config.go`) returns `internal/rigor.Config` from a resolved config — the project
@@ -113,7 +118,12 @@ diff/backup/write triple `fugaro restore` (`internal/cli/restore.go`, which call
 `writeFileAtomic` and `lineDiff`) and the `models` plan (its D790) already use.
 `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) is a precedent for a targeted edit of one
 line of `fugaro.yaml` that keeps the rest. *Consequence:* the commands reuse all four; only the
-project layer's document-tree edit is new (R2).
+document-tree edit itself is new, and it is **not rigor's to write**: it is the editor task's
+`internal/yamledit` (the README's joint order, position 1), and R2 is the thin caller `EditRigor`
+over it. That package **does not exist on `main` yet** — no `internal/yamledit` directory, and
+neither does the path an earlier pass of this folder proposed for it, `internal/localcfg/edit.go` —
+so this folder names the package and the task that lands it, never an existing file. Nothing here is
+a fifth helper under a rigor name.
 
 **F13: Conflicts. `hotfix` has no gate, and the gate D12 names does not exist.** D12 requires
 `fugaro run --mode hotfix` to be "gated on the base branch's configuration" (`rigor.hotfix`), and
@@ -167,8 +177,10 @@ task in this plan (D836).
 operator step that is another command … if a change needs one, `update` learns to do it in the same
 release". A project default that reaches runs only after `fugaro config publish FILE` is exactly
 such a step, and today it is the **only** way the project layer moves. *Consequence:* the plan's
-ordering is not "commands first, publish later": R1 (the update stage) is a prerequisite of the
-release that carries R3–R5, in the same sense the `models` plan's E1 is for it.
+ordering is not "commands first, publish later": **R1 (the update stage) is in the Needs column of
+R4 and R5**, so a `set` task cannot be built without the stage that publishes what it writes — the
+HARD RULE held mechanically, not by a paragraph — and R1 itself sits at position 4 of the README's
+joint order, before the shared write half (settings S5) and the commands that call it.
 
 ## 3. Decisions D830–D839
 
@@ -176,10 +188,17 @@ The recommendation comes first; the alternative and **its cost** are the second 
 D831 are answered** — the owner's SD4 ruling of 2026-10-31, and the spec is written to that answer;
 **D832–D839 are open**, each with the recommendation the spec and the plan are written to.
 
+D830's answer is one of the rulings this design **shares with the settings design**, and those are
+stated once, in identical words, in the [README](README.md) ("the joint order, and the rulings the
+rigor and settings designs share"): one editor package `internal/yamledit` owned by the editor task
+and landing first, the state word **`unpublished`**, the wording `unknown (no checkout on this
+machine)`, and the joint order the two designs land in. Where a decision below uses one of those
+words it means that ruling and nothing local to this folder.
+
 | D | Question | Recommendation | The alternative, and its cost | Answer |
 | --- | --- | --- | --- | --- |
 | **D830** | Where does `rigor set` write the project default, and where does the update read it from? | **The one conventional local layer file, `~/.config/fugaro/projects/<project>-layer.yaml`** — the project's own name beside its config — with **no `--layer` flag and no new config key**: the path is derived, so there is nothing to record and nothing to resolve. The file is created only when the project has **no** published layer; when it is absent while a layer **is** published, that is a refusal whose remedy is `fugaro update`, which seeds it (D831). | **(b) A `--layer FILE` flag:** every later `update` has to read the same flag from somewhere, so the flag implies either the config key below or a state where the file the owner edits is not the file `update` publishes. **(c) A `project_layer:` key in the local project config:** a second place a path lives, for a file whose name is already fixed by the project's own name — and one more key to migrate. **(d) A new top-level `rigor:` block in the local project config, merged into the layer by `update`:** two sources of truth for one key, `update` gains a merge whose result no file shows, and the layer the owner publishes stops being the layer they read. **(e) `set` writes the published object directly:** a second door to the cloud outside `update`'s confirmation, migration and version checks — the thing D780 already refused for `models` | **Answered 2026-10-31 (SD4): option (a), with the flags dropped** |
-| **D831** | How does the change reach runs: through `update`, or through a publish step? | **A new `Layer` stage in `fugaro update`**, after `Policy`, with two halves: it **seeds** the local file from the published layer when the file is absent (so the first `update` after this ships leaves an installation with a file that is exactly the layer in effect), and when the file differs from the published object it shows the diff, publishes through `publishLayer` and fans out through `fanOutLayer`, behind update's one confirmation. A change to an executable key still needs `--executable-changes`. `fugaro config publish FILE` stays as the explicit door, its FILE argument now defaulting to the same conventional path. | **Keep `config publish FILE` as the only door:** the owner's edit stays a second command, which the HARD RULE forbids (F18) — and it is the one command the update rule is written about. **Publishing without seeding:** an installation that has never had a local file stays without one, so `rigor set`'s first act is the refusal of D830 and the owner's "one command" is two after all. Publishing *only* rigor and not the rest of the file: two writers for one object, and a state where the published layer is half the file | **Answered 2026-10-31 (SD4): the recommendation, seeding included** |
+| **D831** | How does the change reach runs: through `update`, or through a publish step? | **A new `Layer` stage in `fugaro update`**, after `Policy`, with two halves: it **seeds** the local file from the published layer when the file is absent (so the first `update` after this ships leaves an installation with a file that is exactly the layer in effect), and when the file is **`unpublished`** — differs from the published object, by the same sha256 comparison `config layer`, `show` and doctor make — it shows the diff, publishes through `publishLayer` and fans out through `fanOutLayer`, behind update's one confirmation. A change to an executable key still needs `--executable-changes`. `fugaro config publish FILE` stays as the explicit door, its FILE argument now defaulting to the same conventional path. | **Keep `config publish FILE` as the only door:** the owner's edit stays a second command, which the HARD RULE forbids (F18) — and it is the one command the update rule is written about. **Publishing without seeding:** an installation that has never had a local file stays without one, so `rigor set`'s first act is the refusal of D830 and the owner's "one command" is two after all. Publishing *only* rigor and not the rest of the file: two writers for one object, and a state where the published layer is half the file | **Answered 2026-10-31 (SD4): the recommendation, seeding included** |
 | **D832** | What confirmation does lowering a mode need? | **The typed project name** (`confirmTypedStrict`, F11) whenever the new mode ranks below what the layer resolves today; `--yes` does not stand in for it. Equal or higher is an ordinary y/N. The review floor, the sentence that this command cannot lower it and the command that can (`fugaro rigor floor`, SD10) print beside the diff. A coding agent's session cannot answer a typed name, so there the command prints the diff and the command it would have run and writes nothing (SD9, spec §4). | **`--yes` or a y/N for every direction:** a lowered project default is a whole project reviewing less, from a flag typed in advance, in a script, possibly by an agent — the direction that must never be one keystroke. **Refuse lowering entirely:** contradicts D21, which says a narrower layer may lower and a project that wants a floor declares one | **Open.** |
 | **D833** | Does `--repo R` open a pull request or write the working tree? | **Write the working tree of the repository's checkout, after a diff and a confirmation; never commit or push.** The user's own branch and review carry it, exactly as `models use` (D781 there). | **Open a pull request from the CLI:** needs a write path to GitHub and Bitbucket on the developer's machine with the user's credentials, which the CLI does not have today, and it is one more place that pushes | **Open.** |
 | **D834** | May `set` write `hotfix`? | **No, in any of the four forms** — not as a project default, not as an area rule, not in a repository's block, not as a `--json`-silent value. The refusal names `fugaro run --mode hotfix`, the operator's own door (D12). **This refusal is owed on its own terms and does not close D12's gate:** F13 shows the base-branch opt-in does not exist, so today a hand-written `rigor.default: hotfix` reaches a mode that tolerates almost everything with nothing gating it, and `--mode hotfix` on a first run is gated by nothing but the raise-only rule. Closing that is the plan's task **R7**, whose first step is a question to the owner; this design must not be read as evidence that the gate exists. | **Allow it as a default:** `hotfix` ranks below every on-axis mode (`Rank`), so a project defaulting to it would be a project whose runs tolerate nearly everything, reachable by anyone who can write the file — and D12's whole point is that the mode with the least review must not be the easy one. **Allow it with a typed confirmation:** still writes a default D12 says is an operator's own run, and the confirmation would be asked once for a state every later run inherits. **Wait for F13's gate before refusing:** leaves the one default that must never be written writable by a one-word command, to fix a gap in a different check | **Open.** |

@@ -6,7 +6,9 @@ recommendations with no answer yet, and the plan is written to them. The tasks q
 
 **Asked by:** the owner, 2026-10-31: "I want [the rigor mode default] at the project level, and we
 should have a fugaro command to manage that!"
-**Reconciled against** `origin/main` at `29004ec9` (2026-10-31).
+**Reconciled against** `origin/main` at `709574da` (2026-10-31). This design is the second half of
+one piece of work; the first is the **settings** design, and the rulings the two share are stated
+once, below.
 
 ## What it is
 
@@ -33,7 +35,48 @@ literally.
 | --- | --- |
 | [spec.md](spec.md) | The four command forms, where each one writes, how a change reaches a run, the safety rules around lowering a mode, the console read side and the migration of a hand-written block |
 | [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F17 in §1 and F18 in §2), and the decisions D830–D839 in §3. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Tasks R0–R8 (at most 12 files each), the follow-up tasks R7 (F13) and R8 (F14), and the dependencies E1, E2, with tests, red steps, gates, SEC flags and levels. **Nothing D832–D839 carry is approved** |
+| [implementation-plan.md](implementation-plan.md) | Tasks R0–R8 (at most 12 files each), the follow-up tasks R7 (F13) and R8 (F14), and the dependencies E1 (the editor task's `internal/yamledit`), E2, with tests, red steps, gates, SEC flags and levels. **Nothing D832–D839 carry is approved** |
+
+## The joint order, and the rulings the rigor and settings designs share
+
+This design and the **settings** design (`fugaro config set` and the policy/layer writes) are one
+piece of work split in two, so the rulings below are stated in the same words in both — a reader of
+either folder sees the same six lines, and a task in one may not be written as if the other did not
+exist.
+
+- **ONE shared editor package: `internal/yamledit`.** It is generic — comment-preserving
+  locate-and-splice operations on a YAML document, nothing about fugaro's own keys: **set a scalar,
+  remove a key, add or remove a list item, upsert or remove a sequence item by key**. It serves
+  **three documents**: the local project config (`~/.config/fugaro/projects/<project>.yaml`), the
+  local layer file (§1's one path) and a repository's **`fugaro.yaml`**. There is no second editor,
+  in any package, under any name.
+- **ONE owning task: the editor task.** It **owns** `internal/yamledit` and lands it **first** in
+  the joint order; every other design calls it. It is not owned by rigor, not by the `models` plan,
+  and not "by whoever gets there first": rigor's R2 and the settings tasks depend on it and never
+  fork it.
+- **The state word is `unpublished`, everywhere.** The local document has bytes the published object
+  does not: `rigor show`, `fugaro config layer` and doctor all call that **`unpublished`**, and all
+  three decide it the same way — the **same sha256 comparison** of the local file's bytes against
+  the published object's. One word, one comparison, three surfaces.
+- **The no-checkout wording is `unknown (no checkout on this machine)`** in both designs — the
+  string `fugaro rigor show` prints for a repository whose own `fugaro.yaml` this machine has no
+  checkout for. Neither design guesses a mode it could not read.
+- **The joint order.** The editor comes first because two designs call it; the layer stage comes
+  before the commands because a command that writes a layer nothing publishes is the second command
+  the HARD RULE forbids (F18); the write half comes before `set` because `set` is what calls it.
+
+| # | Who | Task |
+| --- | --- | --- |
+| 1 | the editor task | `internal/yamledit` — the shared editor package above, and nothing else |
+| 2 | settings | the policy stage (S3) |
+| 3 | settings | the read half (S0–S2, S4) |
+| 4 | rigor | the layer stage (R0, R1) |
+| 5 | settings | set (S5) — the shared write helper R4 and R5 call: diff, confirmation, agent-session refusal, backup, atomic write |
+| 6 | rigor and models | rigor R2–R5, and the `models` work |
+
+This work's own tasks keep their levels in [implementation-plan.md](implementation-plan.md); the
+table above is the order the two designs land in together, and a task here that names a settings
+task means *that task's output*, never a copy of it.
 
 Every claim in `reconciliation.md` names a **file and a symbol, never a line number**, for the reason
 `docs/rigor-modes/reconciliation.md` gives: a line number is wrong the first time anyone edits the

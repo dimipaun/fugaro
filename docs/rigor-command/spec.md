@@ -34,13 +34,22 @@ when the bucket cannot be reached, saying which it used) and each repository's `
 base branch in this machine's remembered checkouts. It writes nothing. `--path P` (repeatable) is the same declaration `fugaro run --path`
 takes, and it is the only way `show` can answer the area question the way a run will.
 
+**Every mode this document prints comes from `rigor.Resolve`** (`internal/rigor/resolve.go`), the one
+function that orders the modes and settles the precedence between area, repository, project and
+default (`docs/project-layer.md` §2's one rule). `show` calls it per repository, and the settings
+row calls the same function — there is no second resolver and no re-derived precedence anywhere in
+either design, so a mode `show` prints and a mode a run reaches can only differ by the inputs the
+caller passed (which is why a missing checkout is §2.3's absent member and not a guess).
+
 The output is four sections.
 
 1. **The project default.** `defaults.rigor.default` as the project layer resolves it, the layer's
    generation and sha256, and **where the value comes from**: `project` (the layer sets it) or
    `default` (the layer sets none, so Fugaro's own default `pro` decides). When the local layer file
-   differs from the published object, a `drift` line says so, names both sha256s and adds
-   `fugaro update` as the way to publish it — the state the layer stage of D831 closes.
+   differs from the published object, an `unpublished` line says so, names both sha256s and adds
+   `fugaro update` as the way to publish it — the state the layer stage of D831 closes. The word is
+   the shared one: `fugaro config layer` and doctor call the same state, decided by the same sha256
+   comparison (README, "the rulings the rigor and settings designs share").
 2. **The area rules of both layers.** Every rule the project layer carries and every rule a
    repository of this project carries, each as `layer (project|repo owner/repo-a)`, `name`, `match`
    and `mode`, in the layer's own order. A rule whose mode is below the project default is flagged:
@@ -84,14 +93,14 @@ within a version (D835). It has a JSON Schema in `schemas/` like the other wire 
 in that order, with the members those sections name. **`layer` is the one member with no text
 section of its own**, and it is not decoration: it says *which* layers were read and how they stand
 relative to each other, which is the input the four sections are resolved from and what §2.1 reports
-in prose as its `drift` line. It carries four members:
+in prose as its `unpublished` line. It carries four members:
 
 | Member | What it is |
 | --- | --- |
 | `published` | the project layer this document was resolved against: `{"generation": N, "sha256": "..."}` — the same two values §2.1 prints in text. **Absent**, not `null`, when the project has never published one, the rule §2.3 already sets for `mode` and `from` |
 | `local` | §1's local layer file: `{"path": "...", "sha256": "..."}`. **Absent**, not `null`, when the file does not exist |
 | `source` | where `published` was read from: `"bucket"` or `"cache"` — the two the paragraph above names, the distinction §2.1 carries in text as the cache note |
-| `drift` | `true` only when both `published` and `local` are present **and** their `sha256`s differ; `false` otherwise, because with either absent there is nothing to compare. §2.1's `drift` line prints exactly when this is `true`, so the two never disagree |
+| `unpublished` | `true` only when both `published` and `local` are present **and** their `sha256`s differ; `false` otherwise, because with either absent there is nothing to compare. §2.1's `unpublished` line prints exactly when this is `true`, so the two never disagree — and `fugaro config layer` and doctor decide the same state from the same two sha256s |
 
 The member is provenance and nothing else: `show` neither writes nor fetches (D839), so `layer`
 describes the bytes it read, and a consumer can tell a stale local file from a stale published
@@ -135,8 +144,13 @@ becomes `<mode>`. In order:
 6. **Show, confirm, back up, write.** The command prints the line diff, asks for confirmation at a
    terminal (`--yes` confirms outside a terminal), backs up the old file to `<file>.bak-<UTC
    timestamp>` (mode 0600) and writes the new one atomically (temporary file, rename, mode 0600) —
-   `backupFile` and `writeFileAtomic` (`internal/cli/init.go`), the pair `fugaro restore` and the
-   `models` plan already use.
+   through the **shared write helper** the settings design's S5 lands (README, the joint order), not
+   through a copy of it. The behaviour is not new: `lineDiff`, `backupFile` and `writeFileAtomic`
+   (`internal/cli/init.go`) already do exactly this and `fugaro restore` already calls them, so S5's
+   task is to make that one path every writer uses — the diff, the confirmation, the agent-session
+   refusal, the backup and the atomic write in one place — and this command is one of its callers.
+   Rigor builds no `rigor_write.go` of its own: a second copy of the confirmation and the refusal is
+   how the two drift apart, and D830's whole point is that there is one of each.
 7. **Hand off.** It prints `next: fugaro update`, which publishes it (D831).
 
 **Lowering is the sensitive direction.** When the new mode ranks below the project's current
@@ -251,19 +265,26 @@ name it:
   bytes that node occupies are replaced in place, leaving every other byte — comments (the block's
   own commented examples and any commented entry included), key order, quoting style, blank lines and
   unknown-to-this-command keys — exactly as it was.
-- **One editor, three documents.** The splice is not written for rigor: it is **the** shared
-  comment-preserving YAML editor this CLI has, and the settings work and the `models` plan use the
-  same one (the plan's R2 must be it or call it — never a second copy under a private name). The
-  three documents it serves are the **local project config** (`~/.config/fugaro/projects/
-  <project>.yaml`), the **local layer file** (§1's one path) and a repository's **`fugaro.yaml`**;
-  the same `rigor:` shape appears in the last two, at `defaults.rigor` and at `rigor`, so what
-  differs between them is the path the editor is pointed at, plus whether the edit is a scalar
-  (`default`) or a sequence item (`areas`) — a distinction the node tree decides and a line-oriented
-  editor cannot make. `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) is the precedent for
-  the splice on the simplest case, one scalar on one line; it is not a second strategy, and R5 does
-  not re-implement the locator. R2 owns the editor, R4 and R5 are two of its callers, and their tests
-  differ in what they assert — bytes preserved around a scalar versus around a list item — rather
-  than in the write path they use.
+- **One editor, three documents: `internal/yamledit`.** The splice is not written for rigor: it is
+  **the** shared comment-preserving YAML editor this CLI has, the package `internal/yamledit` whose
+  generic operations and owning task are named once in the README ("the joint order, and the rulings
+  the rigor and settings designs share"), and the settings work and the `models` plan call the same
+  package — never a second copy under a private name. The three documents it serves are the **local
+  project config** (`~/.config/fugaro/projects/<project>.yaml`), the **local layer file** (§1's one
+  path) and a repository's **`fugaro.yaml`**; the same `rigor:` shape appears in the last two, at
+  `defaults.rigor` and at `rigor`, so what differs between them is the path the editor is pointed at,
+  plus whether the edit is a scalar (`default`) or a sequence item (`areas`) — a distinction the node
+  tree decides and a line-oriented editor cannot make.
+- **Rigor adds a caller, not an editor.** `EditRigor(data []byte, at []string, ops ...RigorOp)
+  ([]byte, error)` is a **thin caller** of `internal/yamledit`: it maps this work's vocabulary
+  (`SetDefault`, `RemoveDefault`, `SetArea`, `RenameArea`, `RemoveArea`) onto the package's generic
+  operations and hands it the anchor, and the generic half — locate the node, splice the bytes, keep
+  every other byte — has exactly one home. `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) is
+  the precedent for the splice on the simplest case, one scalar on one line; it is not a second
+  strategy, and neither R5 nor `EditRigor` re-implements the locator. **The editor task owns
+  `internal/yamledit`**; R2 owns `EditRigor`, R4 and R5 are two of its callers, and their tests differ
+  in what they assert — bytes preserved around a scalar versus around a list item — rather than in the
+  write path they use.
 - The edited document is re-parsed — `config.ParseProjectLayer` for the project layer, the
   repository file's own config parse for `--repo R` — and must decode to the old document plus
   exactly the intended change (a test compares the two decoded layers field by field). This is one of
