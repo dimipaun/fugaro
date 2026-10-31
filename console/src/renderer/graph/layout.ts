@@ -73,14 +73,37 @@ import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH } from './model'
 import type { GraphColumn, GraphModel } from './model'
 
 /**
- * GRAPH_LAYOUT_CACHE_ENTRIES bounds the cache. It is a handful and not a
+ * GRAPH_LAYOUT_CACHE_ENTRIES is the cache's **floor**. It is a handful and not a
  * hundred: the entries a person actually revisits are the streams they are
  * looking at now and the one they looked at a moment ago, and each entry holds
  * every node of one stream. A cache that grew with the streams a person had ever
  * opened would hold the whole session's pictures to save a layout nobody asks
  * for again.
+ *
+ * It is a floor and not the whole bound because a picture is assembled one
+ * stream at a time and the eviction runs between two of them (`boundFor`): at a
+ * flat eight, a nine-stream picture evicts its own first stream before it adds
+ * its last, so no stream of that picture is ever a hit and every read lays all
+ * nine out again -- the work the cache exists to save, for a picture a document
+ * the console draws today can already have.
  */
 export const GRAPH_LAYOUT_CACHE_ENTRIES = 8
+
+/**
+ * boundFor is how many entries the cache keeps while one picture is assembled:
+ * the floor above, or the picture's own number of streams where that is larger.
+ *
+ * A picture is asked for in one pass -- every stream's run at once -- so the
+ * bound has to hold the whole pass: the streams added first are exactly the ones
+ * a later read would want back, and an eviction in the middle of the pass is an
+ * eviction of the picture that is being read. Raising the bound for the pass is
+ * the whole of the rule; a picture wider than the floor therefore keeps every
+ * one of its streams until the *next* read, whose own pass evicts the ones it
+ * does not hold, oldest first.
+ */
+function boundFor(entries: number, streams: number): number {
+  return Math.max(1, entries, streams)
+}
 
 /** GRAPH_ID is the graph's own name in the request. The client matches a reply
  * to the request it sent by request id, so one constant is enough. */
@@ -198,7 +221,11 @@ export class GraphLayout {
    */
   positions(model: GraphModel): Promise<Positions> {
     if (this.disposed) return Promise.reject(new Error('this layout was disposed of'))
-    const rows = model.columns.map((column) => this.row(column))
+    // The bound is the picture's own (`boundFor`): the rows below are added one
+    // after another, so a bound that could not hold the whole pass would evict
+    // the streams this read has just placed.
+    const bound = boundFor(this.entries, model.columns.length)
+    const rows = model.columns.map((column) => this.row(column, bound))
     return Promise.all(rows).then((laid) => stackStreams(model.columns, laid))
   }
 
@@ -214,7 +241,7 @@ export class GraphLayout {
    * stream's own coordinates. The engine starts every stream at 0, 0 and knows
    * nothing of the rows below it -- placing the stream among the others is
    * `stackStreams`' work, and it is done per call rather than cached. */
-  private row(column: GraphColumn): Promise<Positions> {
+  private row(column: GraphColumn, bound: number): Promise<Positions> {
     const hash = structureHash(column)
     const cached = this.cache.get(hash)
     if (cached !== undefined) {
@@ -224,7 +251,7 @@ export class GraphLayout {
     }
     const pending = this.client.layout(graphOf(column), REQUEST)
     this.cache.set(hash, pending)
-    this.evict()
+    this.evict(bound)
     // The rejection is handled here as well as by the caller: this `catch` is
     // what removes the entry, and a promise nobody awaits must still not report
     // an unhandled rejection -- the other streams of the same picture are still
@@ -235,8 +262,7 @@ export class GraphLayout {
     return pending
   }
 
-  private evict(): void {
-    const bound = Math.max(1, this.entries)
+  private evict(bound: number): void {
     while (this.cache.size > bound) {
       const oldest = this.cache.keys().next()
       if (oldest.done === true) return
@@ -366,10 +392,18 @@ function moved(section: RouteSection, dx: number, dy: number): RouteSection {
  * cards is this module's rather than the engine's.
  *
  * It is a simple orthogonal route: three segments, out of the upper card's
- * bottom and into the lower card's top, meeting on the ground between the two
- * rows. It leaves and arrives on the facing edges because that is what the
- * picture already reads as -- the engine's own edges are orthogonal, and the
- * rows are stacked -- and the bend sits in the gutter rather than in either row.
+ * bottom and into the lower card's top, meeting halfway between the two cards.
+ * It leaves and arrives on the facing edges because that is what the picture
+ * already reads as -- the engine's own edges are orthogonal, and the rows are
+ * stacked.
+ *
+ * **That midpoint is a gutter only when the two rows are neighbours.** Two cards
+ * with one row between them bend on the ground between those rows; two cards
+ * three rows apart bend at the midpoint between *them*, which is inside the row
+ * in between, so that run is drawn across that row's cards. This function is
+ * handed two rectangles and no rows, so it cannot avoid them: routing a long edge
+ * through the gutters, gutter by gutter, is GV4.1's work and not this round's,
+ * and the day that slice lands this is one of the functions it rewrites.
  *
  * **A model this console can build has no such edge today.** A plan's `needs`
  * name tasks of that plan (the decoder's own reading), a plan belongs to one
@@ -386,7 +420,8 @@ function moved(section: RouteSection, dx: number, dy: number): RouteSection {
  * answered as routed and hands this function only what is left, and an edge one
  * run answered has both its ends in that run -- so the pair handed in is a pair
  * from two rows, whose ground (`GRAPH_ROW_GAP`, and the two runs' own margins)
- * is between them in either direction.
+ * is between them. How many rows lie between the two, this route does not ask --
+ * see the midpoint above.
  */
 export function crossStreamRoute(from: PlacedNode, to: PlacedNode): readonly RouteSection[] {
   const down = to.y >= from.y + from.height

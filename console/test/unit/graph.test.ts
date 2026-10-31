@@ -962,6 +962,29 @@ describe('the graph screen and a card’s title', () => {
     // its third carries none -- so the rule above is a rule and not a constant.
     expect([...roles].sort()).toEqual(['button', 'group'])
   })
+
+  it('names a card by its task id where the title holds no word a reader could read', async () => {
+    // A title of whitespace alone is `ok` to the model and wraps to no word at
+    // all, so the whole-title half of the name would itself be blank: the card
+    // would be a stop that says nothing, at the head of a name that starts with
+    // nothing. The task's id is what is left for it to be told apart by.
+    const { screen } = screenWith()
+    await screen.load(patched(['plans', 0, 'nodes', 0, 'title'], '   \t  '), RUNS)
+    const model = screen.lastModel
+    if (model === null) throw new Error('no model')
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const root = mounted(drawing)
+    const named = everyNode(root).find((each) => each.getAttribute('data-key') === nodeKey(PLAN, 'task-one'))
+    if (named === undefined) throw new Error('the first task was not drawn')
+    const words = model.columns.flatMap((column) => column.plans).flatMap((plan) => plan.nodes).find((node) => node.id === 'task-one')?.words ?? []
+    // The words are still there and still said -- only the title, which holds no
+    // word at all, gives way to the id.
+    expect(words.length).toBeGreaterThan(0)
+    const label = named.getAttribute('aria-label') ?? ''
+    expect(label).toBe(['task-one', ...words].join(', '))
+    expect(label.trim()).toBe(label)
+  })
 })
 
 // ---------------------------------------------------------------------------

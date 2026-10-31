@@ -204,6 +204,52 @@ function bothPlans(value: GraphModel): GraphColumn {
   return column
 }
 
+/**
+ * manyStreams is a document of `count` streams of one plan each, through the
+ * real decoder: it is how the bound cases read a picture wider than
+ * `GRAPH_LAYOUT_CACHE_ENTRIES` without a fixture a person has to maintain. The
+ * plans are chains of two tasks, which is the smallest shape that has an edge --
+ * a stream with no cards would take no row and no cache entry.
+ */
+function manyStreams(count: number): GraphModel {
+  const plans: unknown[] = []
+  let tasks = 0
+  for (let index = 0; index < count; index += 1) {
+    const stream = `stream-${String(index)}`
+    const nodes = [0, 1].map((node) => ({
+      id: `${stream}-task-${String(node)}`,
+      title: `A task of ${stream}`,
+      state: 'ready',
+      closed: false,
+      level: node,
+      critical: false,
+      needs: node === 0 ? [] : [`${stream}-task-0`],
+    }))
+    tasks += nodes.length
+    plans.push({
+      id: `plans/2026-10-31-${stream}`,
+      artifact: `docs/plans/2026-10-31-${stream}.graph.json`,
+      plan: `The ${stream} plan`,
+      stream,
+      nodes,
+      releases: [],
+      tasks: nodes.length,
+      closed: 0,
+      open: nodes.length,
+    })
+  }
+  return buildGraphModel({
+    document: decoded({
+      repo: 'example-owner/example-repo',
+      plans,
+      totals: { plans: plans.length, tasks, closed: 0, open: tasks },
+      streams: [],
+      warnings: [],
+    }),
+    tab: null,
+  })
+}
+
 /** lastAsk is the graph of the layout this worker was asked for last, and so
  * what a reply to that ask has to cover. */
 function lastAsk(worker: FakeWorker): LayoutGraph {
@@ -580,6 +626,32 @@ describe('the graph layout cache', () => {
     expect(worker.placements).toBe(before + 1)
     worker.answer(placed(lastAsk(worker)))
     await pending
+  })
+
+  it('holds every stream of a picture wider than the floor, so a second read lays nothing out', async () => {
+    // **The floor is not the bound.** A picture is asked for in one pass and the
+    // eviction runs between two of its streams, so a bound of
+    // `GRAPH_LAYOUT_CACHE_ENTRIES` on a picture of nine streams evicts the first
+    // stream before the last is added: no stream of that picture is a hit, and a
+    // redraw that changed nothing lays the whole picture out again. The bound is
+    // therefore the picture's own number of streams where that is larger than
+    // the floor, and the case reads both sides of the gap.
+    for (const count of [GRAPH_LAYOUT_CACHE_ENTRIES + 1, 25]) {
+      const { worker, layout } = layoutWith()
+      const value = manyStreams(count)
+      expect(value.columns, `the document of ${String(count)} streams read as fewer`).toHaveLength(count)
+      await settle(worker, layout, value)
+      expect(worker.placements).toBe(count)
+
+      // The same model again: one run per stream is what a picture of `count`
+      // streams costs the first time, and nothing at all the second.
+      const before = worker.placements
+      await settle(worker, layout, value)
+      expect(
+        worker.placements,
+        `a second read of a ${String(count)}-stream picture asked the worker again`,
+      ).toBe(before)
+    }
   })
 
   it('lays the graph out left to right, orthogonally, over the cards’ own box', async () => {

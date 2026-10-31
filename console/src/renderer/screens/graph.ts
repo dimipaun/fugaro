@@ -1335,8 +1335,22 @@ function releaseBox(factory: GraphFactory, box: ReleaseBox): ScreenElement {
  * motion.
  */
 function cardLabel(node: GraphNode): string {
-  const title = node.title.ok ? node.title.text : UNAVAILABLE_MARK
+  const title = cardTitle(node)
   return node.words.length === 0 ? title : [title, ...node.words].join(', ')
+}
+
+/**
+ * cardTitle is the text a card is named by: the model's own title, or -- where
+ * that title holds no word a reader could read -- the task's id.
+ *
+ * A title of whitespace alone is `ok` to the model and wraps to no word at all,
+ * so naming a card by it names it by a blank, which is a card a reader is told
+ * nothing about -- it is a stop in the tab order that announces no name at all.
+ * The task's id is what such a card can still be told apart by.
+ */
+function cardTitle(node: GraphNode): string {
+  if (!node.title.ok) return UNAVAILABLE_MARK
+  return wrapWords(node.title.text).length === 0 ? node.id : node.title.text
 }
 
 /**
