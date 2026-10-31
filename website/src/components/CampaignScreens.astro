@@ -1,0 +1,100 @@
+---
+/**
+ * website/src/components/CampaignScreens.astro — the console's screens on a campaign page (the
+ * owner's feedback of 2026-10-30, D412's finding 3).
+ *
+ * **The finding was "the campaign pages show one screenshot and no way to see the rest".** A
+ * campaign page's hero draws the one screen its variant's claim is proved by and the page then
+ * argues for four sections without showing anything else, while the homepage has had a slider of
+ * all of the console's screens since the brief of 2026-10-21. The owner asked for that slider on
+ * all four campaign pages: the console's every screen a reader can look at, on the page whose
+ * traffic is the most expensive.
+ *
+ * **It is the homepage's slider, and this file adds no second one.** `ScreenshotSlider.astro` is
+ * the component (the snapping track, the dot anchors, the `hidden` control bar `site.js`
+ * reveals, the first slide eager and the rest lazy) and `src/content.ts`'s
+ * `loadHomeSliderScreens()` is the data reader, which is what makes the campaign pages' slider
+ * show *the same rows* as the homepage's panel rather than a campaign-shaped selection of them:
+ * one picture, one `alt`, one caption and one order, named once. Nothing about the component
+ * moved for this page — it took its heading, its slot and its ids as props long before a
+ * campaign page existed (D246) — and the script it is driven by is the site's own
+ * `public/scripts/site.js`, which finds a slider by `[data-slider]` and needed no change
+ * either. **So the CSP is untouched**: one same-origin file, the same one every page loads.
+ *
+ * **What this file is, then, is the band.** A campaign page's sections are full-width bands that
+ * pad their own content onto the page's one pair of margins with `--frame-gutter` (the owner's
+ * ruling of 2026-10-23, lever 6), and a slider is not a band: it is a block with a margin of its
+ * own for the homepage's panel, where it sits inside a section rather than between two. The
+ * wrapper below gives it the band's room and the band's gutter, and takes the component's own
+ * bottom margin away inside itself (`HomeWhatYouGet.astro` does the same for the same reason),
+ * so the section is one band like its neighbours and the page's rhythm is the page's.
+ *
+ * **Where it sits is the owner's own bound**: below the hero and before the closing call to
+ * action, which on these four pages is the last section — so the page shows what a run looks
+ * like, argues for it, and then asks, and the screens a reader might otherwise never see are
+ * one scroll from the promise rather than behind the booking.
+ *
+ * **The band is on the ground, not on a field.** The steps' panel and the closing field are the
+ * page's two fields of colour; a third one here would make the page three blocks of tone with
+ * sections between them, and the slider draws its own panel already.
+ *
+ * **And with no rows there is no band at all.** An empty `loadHomeSliderScreens()` is a legal
+ * state of the data file — the owner owns it, and clearing it is an edit nobody has to check
+ * against four pages — and `ScreenshotSlider.astro`'s own contract for that state is to render
+ * nothing rather than a picture-shaped hole. The band would defeat it: the wrapper's padding is
+ * on the page whether or not the component draws inside it, so the four campaign pages would end
+ * in a gutter-wide strip of nothing between the steps and the closing field. Hence the guard
+ * below: the band and the slider are both there, or neither is, and the page's rhythm is the
+ * rhythm of the sections it has.
+ */
+import ScreenshotSlider from './ScreenshotSlider.astro'
+import { loadHomeSliderScreens } from '../content.ts'
+
+/** The slides, which are the homepage's own rows: see `loadHomeSliderScreens()`. */
+const SCREENS = loadHomeSliderScreens()
+---
+
+{SCREENS.length > 0 && (
+  <div class="campaign-screens">
+    <ScreenshotSlider
+      screens={SCREENS}
+      heading="See the console"
+      slot="campaign-screens"
+      idPrefix="campaign-screen"
+      label="Screenshots of the Fugaro console. Scroll sideways to see the rest."
+    />
+  </div>
+)}
+
+<style>
+  /* The band: the page's own gutter, and the room a section gives the section below it. The
+     block padding is the campaign's own rhythm rather than a number — `--space-2xl` from the
+     wide breakpoint, the step the steps' band and the closing field pad with at the same width,
+     so the gap between two bands stays the 120–240 px the owner asked these pages for
+     (`website/test/base-styles.mjs` reads the pair out of the cascade). */
+  .campaign-screens {
+    padding-block: var(--space-xl);
+    padding-inline: var(--frame-gutter);
+  }
+
+  /* The slider's own bottom air is the homepage panel's, where the block below it is the watch
+     command; inside this band the band's padding is the whole of the room under it, and the two
+     in force at once is 216 px of nothing between two sections. */
+  .campaign-screens > :global(.screens) {
+    margin: 0;
+  }
+
+  @media (max-width: 30rem) {
+    /* The phone's own block: the band's air is a step smaller, the same step every campaign
+       section takes on a narrow viewport. */
+    .campaign-screens {
+      padding-block: var(--space-lg);
+    }
+  }
+
+  @media (min-width: 48rem) {
+    .campaign-screens {
+      padding-block: var(--space-2xl);
+    }
+  }
+</style>

@@ -2789,8 +2789,10 @@ test('the copy confirmation sits over its button and never moves the command', (
 
 // ---- the campaign pages' content lands on the chrome's left edge (G2.2) --------------------
 //
-// The four campaign pages are five full-width bands, each padding its own content onto the page's
-// one pair of margins with `--frame-gutter`, the expression the site's own header and footer
+// The four campaign pages are a run of full-width bands — the spec's five sections and the
+// screens band of the owner's feedback of 2026-10-30 (D412's finding 3) — each padding its own
+// content onto the
+// page's one pair of margins with `--frame-gutter`, the expression the site's own header and footer
 // carry, so the headline starts on the wordmark's left edge and the two margins are equal. That
 // holds only while `main` contributes nothing: the gutter is a percentage of the box it is used
 // in, so a `main` that pads the bands or caps their width resolves it against a box that is not
@@ -2805,8 +2807,13 @@ test('the copy confirmation sits over its button and never moves the command', (
 // carrying none is the other shape that puts their content on the chrome's edge. A page where
 // both are in force is the defect.
 
-/** The five sections a campaign page is built from, and the two chrome blocks its mode draws. */
-const CAMPAIGN_BLOCKS = ['campaign-hero', 'campaign-proof', 'campaign-steps', 'campaign-social-proof', 'campaign-calls']
+/** The bands a campaign page is built from — the spec's five sections and the screens band the
+ *  owner's feedback of 2026-10-30 (D412's finding 3) put between the steps and the closing
+ *  field — and
+ *  the two chrome blocks its mode draws. The list is in the order a reader meets them, which is
+ *  what the spacing case below reads the gaps between; every one of them is a full-width band
+ *  that pads its own content onto the page's one gutter. */
+const CAMPAIGN_BLOCKS = ['campaign-hero', 'campaign-proof', 'campaign-steps', 'campaign-social-proof', 'campaign-screens', 'campaign-calls']
 const CAMPAIGN_CHROME = ['campaign-header', 'campaign-footer']
 
 /** The two widths the reading is taken at: a phone, and a desktop. The campaign mode's own
@@ -2957,7 +2964,7 @@ export function campaignLeftEdgeFailures(css, html) {
       }
       if (Math.abs(mainLeft + room - chrome) > 0.5) {
         out.push(
-          `at ${width} px \`main\` starts the campaign bands at ${Math.round(mainLeft)} px and \`.${klass}\` pads ${Math.round(room)} px more, so their content lands at ${Math.round(mainLeft + room)} px while the chrome is at ${Math.round(chrome)} px: the five bands are as wide as the page and carry the page's one gutter, so \`main\` gives them neither a gutter nor a ceiling of its own — the two in force at once is the second left edge (G2.2)`,
+          `at ${width} px \`main\` starts the campaign bands at ${Math.round(mainLeft)} px and \`.${klass}\` pads ${Math.round(room)} px more, so their content lands at ${Math.round(mainLeft + room)} px while the chrome is at ${Math.round(chrome)} px: the bands are as wide as the page and carry the page's one gutter, so \`main\` gives them neither a gutter nor a ceiling of its own — the two in force at once is the second left edge (G2.2)`,
         )
       }
     }
@@ -3175,6 +3182,8 @@ function blockPadding(css, klass, width) {
 
 const CAMPAIGN_REDUCE = /prefers-reduced-motion\s*:\s*reduce/i
 const CAMPAIGN_NO_PREFERENCE = /prefers-reduced-motion\s*:\s*no-preference/i
+/** The site's pointer query, which is what makes a hover a hover: a touch screen has none. */
+const CAMPAIGN_POINTER = /hover\s*:\s*hover/
 
 /**
  * The font size in force on the elements a selector pattern names, at a viewport width: the last
@@ -3486,5 +3495,49 @@ test('the campaign page\'s motion is the reader\'s choice, and nothing is hidden
       ),
       `${rel} draws the focus ring on the closing band's buttons in the site's own colour: that band is a field of the accent and the site's ring is the accent, so a ring in it is a ring a reader cannot see (the owner's feedback of 2026-10-30)`,
     )
+
+    // The movement itself — the other half of D412's finding 1, and until now the half no gate
+    // read. The owner asked the controls for "a small lift or icon nudge" and not for a second
+    // colour, so what an edit may not take away in silence is the 2 px each plate rises and the
+    // 2 px each mark travels the way its own action goes. Each one is read where it is written:
+    // inside the campaign's own `no-preference` block *and* inside the site's pointer query,
+    // because the owner's other bound is that a reader who asked their system for less motion —
+    // or who is on a touch screen, where there is no hover to answer — is served the band still.
+    const MOVES = [
+      { what: "the hero's booking plate", control: /\.campaign-hero-button/, icon: null, axis: 'y', px: -2 },
+      { what: "the hero's calendar mark", control: /\.campaign-hero-button/, icon: 'calendar', axis: 'y', px: -2 },
+      { what: "the closing band's booking plate", control: /\.campaign-calls-primary/, icon: null, axis: 'y', px: -2 },
+      { what: "the closing band's two quiet actions", control: /\.campaign-calls-secondary/, icon: null, axis: 'y', px: -2 },
+      { what: "the closing band's calendar mark", control: /\.campaign-calls-primary/, icon: 'calendar', axis: 'y', px: -2 },
+      { what: "the install's arrow", control: /\.campaign-calls-secondary/, icon: 'download', axis: 'y', px: 2 },
+      { what: "the chat's bubble", control: /\.campaign-calls-secondary/, icon: 'chat', axis: 'x', px: 2 },
+    ]
+    /** The distance one rule moves by on one axis, as the built stylesheet writes it: `translateY`
+     *  for the vertical moves and `translateX` — which a minifier may write as the one-argument
+     *  `translate` — for the sideways one. `null` when the rule declares neither. */
+    const movedBy = (body, axis) => {
+      const patterns =
+        axis === 'x' ? [/translateX\(\s*(-?[\d.]+)px\s*\)/, /translate\(\s*(-?[\d.]+)px\s*\)/] : [/translateY\(\s*(-?[\d.]+)px\s*\)/]
+      for (const pattern of patterns) {
+        const found = pattern.exec(body)
+        if (found) return Number(found[1])
+      }
+      return null
+    }
+    const isMove = (rule, selector, move) => {
+      if (!move.control.test(selector) || !selector.includes(':hover')) return false
+      if (move.icon === null) {
+        if (/\.campaign-icon/.test(selector)) return false
+      } else if (!new RegExp(`\\.campaign-icon\\[data-icon=['"]?${move.icon}['"]?\\]`).test(selector)) return false
+      if (!rule.conditions.some((condition) => CAMPAIGN_NO_PREFERENCE.test(condition))) return false
+      if (!rule.conditions.some((condition) => CAMPAIGN_POINTER.test(condition))) return false
+      return movedBy(rule.body, move.axis) === move.px
+    }
+    for (const move of MOVES) {
+      assert.ok(
+        rules.some((rule) => (rule.selector ?? '').split(',').some((selector) => isMove(rule, selector.trim(), move))),
+        `${rel} writes no ${Math.abs(move.px)} px ${move.axis === 'x' ? 'sideways' : 'vertical'} move for ${move.what} on hover, inside both a \`prefers-reduced-motion: no-preference\` block and the site's pointer query: the owner asked each control for a small lift or an icon nudge rather than a colour, and a reader who asked their system for less motion — or who has no hover to give — is owed the same band still (D412's finding 1, the owner's feedback of 2026-10-30)`,
+      )
+    }
   }
 })
