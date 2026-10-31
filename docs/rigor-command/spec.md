@@ -4,10 +4,13 @@
 written to the answer of each decision (D830–D839, [reconciliation.md](reconciliation.md) §3):
 **D830** (where `set` writes) and **D831** (the `Layer` stage in `update`) are **answered** — the
 owner's SD4 ruling of 2026-10-31 — and **D832–D839 are answered on 2026-10-31, every one as
-recommended**. One decision the plan cites is **not** this design's and is **not answered**: **D854**
-— whether the `Layer` stage **records** the object generation it reads at the seed — which is the
-settings design's and is open there. Nothing here decides it; R1 states both outcomes and what each
-means for `update`. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); modes are
+recommended**. One decision the plan **cites** is **not** this design's — **D854**, whether the
+`Layer` stage **records** the object generation it reads at the seed, which is the settings design's
+— and the owner **answered it on 2026-10-31: the generation is recorded**. So `update` carries two
+guards, and R1 states both: the **within-run** one, which refuses a publish that moved since the
+stage's own read and needs no record, and the **across-runs** one, which reads the record
+(`layer_generation` on the local project config) and refuses to publish over a newer published
+generation. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); modes are
 `internal/rigor`'s five words (`poc`, `startup`, `pro`, `critical`, `hotfix`).
 
 ## 1. The rule this serves
@@ -52,7 +55,13 @@ The output is four sections.
    differs from the published object, an `unpublished` line says so, names both sha256s and adds
    `fugaro update` as the way to publish it — the state the layer stage of D831 closes. The word is
    the shared one: `fugaro config layer` and doctor call the same state, decided by the same sha256
-   comparison (README, "the rulings the rigor and settings designs share").
+   comparison (README, "the rulings the rigor and settings designs share"). **One state, two causes,
+   and the line says which.** Differing bytes are either a **local edit** — this machine's file was
+   written from the generation the published object still has, so the owner's change is what to
+   publish — or a **stale copy from another machine** — the published object has moved past the
+   generation this file was written from (the record `layer_generation` on the local project config,
+   D854 answered), so publishing it reverts someone else's publish and the file is what to re-seed.
+   The line names the cause and the remedy that fits it; the sha256 comparison alone cannot.
 2. **The area rules of both layers, as far as this machine can read them.** Every rule the project
    layer carries, and every rule carried by a repository of this project that has a **checkout
    here** — each as `layer (project|repo owner/repo-a)`, `name`, `match` and `mode`, in the layer's
@@ -110,7 +119,7 @@ in prose as its `unpublished` line. It carries five members:
 | `local` | §1's local layer file: `{"path": "...", "sha256": "..."}`. **Absent**, not `null`, when the file does not exist |
 | `source` | where `published` was read from: `"bucket"` or `"cache"` — the two the paragraph above names, the distinction §2.1 carries in text as the cache note |
 | `note` | the read's own warning, verbatim: the resolver's `foundLayer.Note` (`internal/cli/layer_resolve.go`), `""` when the bucket answered. On `"cache"` it is the sentence saying so and how old the copy is ("using the cached project layer of `<project>`, `<N>` days old"); when the value is unknown it is the reason, not a guess. It is the text §2.1 prints beside the value, so a consumer reading `"source": "cache"` can say **why** the bucket was not the source instead of reporting a bare enum |
-| `unpublished` | `true` only when both `published` and `local` are present **and** their `sha256`s differ; `false` otherwise, because with either absent there is nothing to compare. §2.1's `unpublished` line prints exactly when this is `true`, so the two never disagree — and `fugaro config layer` and doctor decide the same state from the same two sha256s |
+| `unpublished` | `true` only when both `published` and `local` are present **and** their `sha256`s differ; `false` otherwise, because with either absent there is nothing to compare. §2.1's `unpublished` line prints exactly when this is `true`, so the two never disagree — and `fugaro config layer` and doctor decide the same state from the same two sha256s. **The boolean is the state, not its cause**, and a consumer that wants the cause compares `published.generation` with the local project config's recorded `layer_generation` (D854 answered): equal means a **local edit** — the owner's change, to publish — and a recorded value older than the published one means a **stale copy from another machine**, to re-seed, which is the distinction §2.1's line prints in text |
 
 The member is provenance and nothing else: `show` neither writes nor fetches (D839), so `layer`
 describes the bytes it read, and a consumer can tell a stale local file from a stale published
@@ -139,8 +148,9 @@ becomes `<mode>`. In order:
    agent may edit the tree it was given.
 4. **Resolve the file.** It is §1's one path, `~/.config/fugaro/projects/<project>-layer.yaml`:
    there is no `--layer` flag and no config key for it (D830, answered), so there is nothing to
-   resolve and nothing to record **of the path** — D854's *generation* record is another question,
-   open in the settings design (R1). Two absences are not the same absence:
+   resolve and nothing to record **of the path** — D854's *generation* record is another question
+   and a different one, answered by the owner on 2026-10-31 (the generation is recorded) and R1's to
+   build; it is not a record *of this path*. Two absences are not the same absence:
    - the file does not exist and the project has **no** published layer: it is created as a
      **project layer document**, in the published layer's own format, carrying the layer's three
      anchor keys (`version`, `project`, `gcp_project` — `layerTopKeys` in `internal/config/layer.go`)

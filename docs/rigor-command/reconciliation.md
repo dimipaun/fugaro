@@ -48,9 +48,10 @@ the owner publishes from" cannot be written before that file has a name. **D830 
 convention, not by a new key** (SD4, answered): the file is
 `~/.config/fugaro/projects/<project>-layer.yaml` — the project's own name beside its config — so
 there is no flag and no config key to add, and nothing to record **of the path**: D854's question is
-a different one — whether the *generation* the stage reads at the seed is recorded — and it is open,
-not answered here (see §3). R0 builds the path and the door; R1 gives the file its first content on
-an installation that has none.
+a different one — whether the *generation* the stage reads at the seed is recorded — and the owner
+**answered it on 2026-10-31: the generation is recorded** (§3). R0 builds the path and the door,
+and declares the record's field; R1 gives the file its first content on an installation that has
+none.
 
 **F4: Missing. `fugaro update` does not publish the project layer.** The converge's stages run past
 `Policy`: `Checkout` and `Compute` follow it (`internal/initflow/stage.go`), and `Checkout` is what
@@ -213,13 +214,17 @@ answered.** D830 and D831 by the owner's SD4 ruling of 2026-10-31, and **D832–
 every one as recommended** — the answer column of each row below says so. The spec and the plan are
 written to those answers, and a task here may start.
 
-**One decision this design cites is not its own and is not answered: D854.** It is the settings
-design's — whether the object generation the `Layer` stage reads at the seed is **recorded** — and
-it is still **open** there. This design does not answer it: R1 carries the guard, states what each
-answer would mean for that task (the record's home in the installation's local project config, the
-two readings of `unpublished` a record would separate, and the second-machine hazard the absence of
-one leaves standing), and leaves the decision where it belongs. Everything else this design cites
-is in its own block and answered.
+**One decision this design cites is not its own — D854 — and the owner has answered it: the
+generation is recorded.** It is the settings design's: whether the object generation the `Layer`
+stage reads at the seed is **recorded**, and the ruling of 2026-10-31 is **option (a)**, so the
+record exists. R1 builds it: the field is `layer_generation` on the installation's local project
+config (`localcfg.Config`, where the settings design's `policy_generation` sits beside it for its
+policy stage), written by the stage that seeds or publishes and read by the next `update`, which
+refuses to publish over a newer published generation, shows the three-way state and offers a re-seed
+— and, on a first run that records nothing yet, publishes as it would and records the generation it
+read. The **within-run** guard R1 also carries is a separate thing and is unconditional: it refuses
+a publish that moved since the stage's own read and needs no record at all. Everything else this
+design cites is in its own block and answered.
 
 D830's answer is one of the rulings this design **shares with the settings design**: the same joint
 order and the same rulings, each folder stating them in its own words and pointing at the other's
@@ -232,7 +237,7 @@ ruling and nothing local to this folder.
 
 | D | Question | Recommendation | The alternative, and its cost | Answer |
 | --- | --- | --- | --- | --- |
-| **D830** | Where does `rigor set` write the project default, and where does the update read it from? | **The one conventional local layer file, `~/.config/fugaro/projects/<project>-layer.yaml`** — the project's own name beside its config — with **no `--layer` flag and no new config key**: the path is derived, so there is nothing to record **of the path** and nothing to resolve (D854 records the *generation*, not the path, and stays open). The file is created only when the project has **no** published layer; when it is absent while a layer **is** published, that is a refusal whose remedy is `fugaro update`, which seeds it (D831). | **(b) A `--layer FILE` flag:** every later `update` has to read the same flag from somewhere, so the flag implies either the config key below or a state where the file the owner edits is not the file `update` publishes. **(c) A `project_layer:` key in the local project config:** a second place a path lives, for a file whose name is already fixed by the project's own name — and one more key to migrate. **(d) A new top-level `rigor:` block in the local project config, merged into the layer by `update`:** two sources of truth for one key, `update` gains a merge whose result no file shows, and the layer the owner publishes stops being the layer they read. **(e) `set` writes the published object directly:** a second door to the cloud outside `update`'s confirmation, migration and version checks — the thing D780 already refused for `models` | **Answered 2026-10-31 (SD4): option (a), with the flags dropped** |
+| **D830** | Where does `rigor set` write the project default, and where does the update read it from? | **The one conventional local layer file, `~/.config/fugaro/projects/<project>-layer.yaml`** — the project's own name beside its config — with **no `--layer` flag and no new config key**: the path is derived, so there is nothing to record **of the path** and nothing to resolve (D854 records the *generation*, not the path: answered 2026-10-31, and R1's). The file is created only when the project has **no** published layer; when it is absent while a layer **is** published, that is a refusal whose remedy is `fugaro update`, which seeds it (D831). | **(b) A `--layer FILE` flag:** every later `update` has to read the same flag from somewhere, so the flag implies either the config key below or a state where the file the owner edits is not the file `update` publishes. **(c) A `project_layer:` key in the local project config:** a second place a path lives, for a file whose name is already fixed by the project's own name — and one more key to migrate. **(d) A new top-level `rigor:` block in the local project config, merged into the layer by `update`:** two sources of truth for one key, `update` gains a merge whose result no file shows, and the layer the owner publishes stops being the layer they read. **(e) `set` writes the published object directly:** a second door to the cloud outside `update`'s confirmation, migration and version checks — the thing D780 already refused for `models` | **Answered 2026-10-31 (SD4): option (a), with the flags dropped** |
 | **D831** | How does the change reach runs: through `update`, or through a publish step? | **A new `Layer` stage in `fugaro update`**, after `Policy` and before `Checkout` (which needs it, so the images are refreshed from the layer just published), with two halves: it **seeds** the local file from the published layer when the file is absent (so the first `update` after this ships leaves an installation with a file that is exactly the layer in effect), and when the file is **`unpublished`** — differs from the published object, by the same sha256 comparison `config layer`, `show` and doctor make — it shows the diff, publishes through `publishLayer` and fans out through `fanOutLayer`, behind update's one confirmation. A change to an executable key still needs `--executable-changes`. `fugaro config publish FILE` stays as the explicit door, its FILE argument now defaulting to the same conventional path. | **Keep `config publish FILE` as the only door:** the owner's edit stays a second command, which the HARD RULE forbids (F18) — and it is the one command the update rule is written about. **Publishing without seeding:** an installation that has never had a local file stays without one, so `rigor set`'s first act is the refusal of D830 and the owner's "one command" is two after all. Publishing *only* rigor and not the rest of the file: two writers for one object, and a state where the published layer is half the file | **Answered 2026-10-31 (SD4): the recommendation, seeding included** |
 | **D832** | What confirmation does lowering a mode need? | **The typed project name** (`confirmTypedStrict`, F11) whenever the new mode ranks below what the layer resolves today; `--yes` does not stand in for it. Equal or higher is an ordinary y/N. The review floor, the sentence that this command cannot lower it and the command that can (`fugaro rigor floor`, SD10) print beside the diff. A coding agent's session cannot answer a typed name, so there the command prints the diff and the command it would have run and writes nothing (SD9, spec §4). | **`--yes` or a y/N for every direction:** a lowered project default is a whole project reviewing less, from a flag typed in advance, in a script, possibly by an agent — the direction that must never be one keystroke. **Refuse lowering entirely:** contradicts D21, which says a narrower layer may lower and a project that wants a floor declares one | **Answered 2026-10-31: the recommendation.** |
 | **D833** | Does `--repo R` open a pull request or write the working tree? | **Write the working tree of the repository's checkout, after a diff and a confirmation; never commit or push.** The user's own branch and review carry it, exactly as `models use` (D781 there). | **Open a pull request from the CLI:** needs a write path to GitHub and Bitbucket on the developer's machine with the user's credentials, which the CLI does not have today, and it is one more place that pushes | **Answered 2026-10-31: the recommendation.** |

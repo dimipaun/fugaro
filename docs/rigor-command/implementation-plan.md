@@ -5,7 +5,8 @@ plan's — D836).** Every decision in this design's block is answered
 ([reconciliation.md](reconciliation.md) §3): **D830 and D831** by the owner's SD4 ruling of
 2026-10-31, **D832–D839 on 2026-10-31, all as recommended**. The one decision the plan **cites** and
 does not own — **D854**, the settings design's, whether the `Layer` stage records the generation it
-read at the seed — is **open**, and R1 states both outcomes rather than choosing one. The tasks are
+read at the seed — is **answered by the owner on 2026-10-31: record the generation**, and R1 is
+written to that answer, with the within-run guard it also carries unconditional. The tasks are
 written to the answers above. Each task touches at most 12 files, names its tests, starts with
 a red step and ends at the gates below.
 
@@ -100,11 +101,22 @@ Docs -count=1 -timeout 40m` when a doc changed; `go test ./internal/eeboundary/.
 Without it, "the file the owner publishes from" has no name, and `set` cannot be written (F3). The
 answer is a convention, not a key: the path is the project's own name under the config home's
 `projects/` directory, beside the project's config, so **no `--layer` flag and no `project_layer:`
-key exist** — there is nothing to resolve and nothing to record **of the path** (D854's *generation*
-record is a different question, open — R1).
+key exist** — there is nothing to record **of the path** and nothing to resolve. The *generation*
+record is a different thing and it does exist (D854, answered 2026-10-31: record the generation):
+it is R1's, and this task adds its **field**, because this is the task that already edits
+`internal/localcfg`.
 
+- **Where the record lives, and this task declares it: `localcfg.Config`'s `layer_generation`.** The
+  generation a publishing stage last wrote from is recorded on the local project config's own struct
+  (`internal/localcfg/localcfg.go`): **`layer_generation`** for R1's layer stage — declared by this
+  task, in the file it already edits — and **`policy_generation`** for the settings design's policy
+  stage, which its S3 declares in the same struct. One record per stage that publishes, both
+  `omitempty`, neither a second home: a local file's own record, never wire, and an installation
+  that carries neither decodes exactly as it does today (D854, answered; the settings design's
+  `reconciliation.md` §4 names both fields). R1 writes and reads `layer_generation`.
 - **Files (7):** `internal/localcfg/localcfg.go` (`LayerFile` — the path, derived from the project
-  name; the same directory helper the project config uses), `internal/localcfg/localcfg_test.go`,
+  name; the same directory helper the project config uses — and `layer_generation` above),
+  `internal/localcfg/localcfg_test.go`,
   `internal/cli/config_publish.go` (the FILE argument becomes optional and defaults to that path),
   `internal/cli/config_publish_test.go`, `internal/cli/config_show.go` (`config layer` prints the
   local path and whether the published object is `unpublished`, with sha256s),
@@ -121,7 +133,11 @@ record is a different question, open — R1).
   `imageLeafKeys`' attribution. The new check reports §1's path, whether the file exists, and — when
   it does — its sha256 beside the published object's, saying **`unpublished`** when they differ and
   adding `fugaro update` as the way to publish it, the same word and the same sentence `config layer`
-  and `show` print (one word, one sha256 comparison, three doors — README, the shared rulings). **It
+  and `show` print (one word, one sha256 comparison, three doors — README, the shared rulings) —
+  **and which cause it is**: the same record comparison `show` makes (the local project config's
+  `layer_generation`, D854 answered), so a **local edit** reads as one to publish and a **stale copy
+  from another machine** reads as one to re-seed. This task declares the record the check reads, so
+  the doors that print the word agree on why. **It
   needs no bucket round trip**, which is why it is appended on **every** path `doctorLayerChecks`
   returns from — the four early returns (`internal/cli/doctor_layer.go`: no layer resolved; an
   origin that could not be read or was rewritten; `task.Slug` failing on the origin's repository; and
@@ -184,35 +200,45 @@ installation that has never had one.
   the new constant and slot move it to sixteen with `Layer` between `Policy` and `Checkout`, and
   `Checkout`'s gained need is the second assertion it already makes. **There is no
   `internal/initflow/stage_test.go`**: the package's tests are `loop_test.go`.
-- **The guard the settings design's stage carries attaches here too — and D854 is open, so this task
-  does not decide it.** The stage refuses to publish when the published object's generation moved
-  since the seed read it — someone else published while this update ran — rather than overwriting an
-  object this update never read. Whether the generation the seed read is **recorded** is D854, and it
-  is the settings design's decision: it is **open there**, this design cites it and states both
-  outcomes, and nothing here answers it. The two outcomes, and what each one means for this task:
-  - **If the generation is recorded** (the settings design's recommendation): the record lives in the
-    installation's own local project config, `~/.config/fugaro/projects/<project>.yaml`
-    (`localcfg.Config`, the file that already holds `gcp_project`, `base_images` and `image_source` —
-    its per-installation record; the settings design owns the field's name), as the generation the
-    local layer file's bytes were last written from — written by this stage when it seeds and when it
-    publishes, and **not** kept in the layer cache, which is the cloud's copy and may be dropped at
-    any time. The record is what lets a later `update` tell the two
-    readings of `unpublished` apart, so the wording `show` (R3) and doctor's `local-layer-file` check
-    (R0) print must say which one it is: a **local edit** (the bytes differ and the recorded
-    generation is still the published one — the owner's change, to publish) or a **stale copy from
-    another machine** (the published generation has moved past the recorded one — someone else's
-    publish, which this file would revert). The two need different remedies, so one word for both
-    would send the owner to the wrong one.
-  - **If it is not recorded:** the guard covers a publish that lands during the one `update` it runs
-    in, and nothing else — the generation it read is gone when the run ends — and the second-machine
-    hazard stands unanswered: a local file left over from another machine's publish differs from the
-    published object, reads as `unpublished`, and publishing it **reverts a newer publish**, with the
-    diff shown against a stale base and no way for the command to know.
-  - **`TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed` needs the record.** That test
-    (below) is this guard's, and its reference point is the generation the **seed** read: it is the
-    record that makes that point readable after the run it was taken in, so the test states the
-    record's behaviour — if D854 is answered *no record*, the test is narrowed with its name and
-    with this paragraph, and it covers only a publish inside the one run from then on.
+- **Two guards, and the first is unconditional.** The stage refuses to publish when the published
+  object's generation moved **since its own read** — someone else published while this update ran —
+  rather than overwriting an object this update never read. That guard needs **no record and no
+  first-run special case**: the write carries the generation the read returned (`blobx.Read`'s
+  generation into `blobx.ReplaceIf`), so it holds on the first `update` of an installation exactly as
+  it holds on the hundredth. This is `TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed`
+  (below), and it is written as the unconditional test it is.
+- **The second guard is across runs, and D854 is answered: the generation is recorded.** A publish
+  that lands **after** the run that seeded the file is invisible to the guard above — a generation
+  this run never read is one it cannot compare with — which is the case the owner's ruling answers.
+  So the stage **records** the generation the local layer file's bytes were last written from, in
+  `layer_generation` on the local project config (R0 declares the field), written when it seeds and
+  when it publishes, and **not** kept in the layer cache, which is the cloud's copy and may be
+  dropped at any time. It is written through the write the converge already gives that file —
+  `writeConfig` on the engine, which holds `lc`, `spec`, `path` and `old`, the way the credentials
+  stage calls it (`internal/cli/init_credentials.go`) — so the field gets the diff, the confirmation
+  and the backup every other config write gets, and the project config gains no second writer. Every later `update` compares that record with the generation it reads: equal
+  or older, it publishes as usual and records what it read; **newer** — someone else published since
+  this machine last wrote — it refuses
+  (`TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer`, below), shows the **three-way
+  state** (this machine's file, the generation it was written from, the object published now) and
+  offers to **re-seed** the local file from the published one under its own confirmation and with a
+  backup — the seeding half this same stage already carries, aimed at a file that is there instead
+  of one that is not. A refusal that showed nothing would leave the owner to guess which of the two
+  files to keep.
+- **First run, nothing recorded: this stage adopts.** An installation that carries no
+  `layer_generation` — every installation the release reaches — is not refused and not re-seeded: the
+  stage publishes as it would, then **records the generation it read** and says that it adopted it
+  (`TestUpdateLayerStageAdoptsTheGenerationWhenNothingIsRecorded`, below; the settings design's
+  `reconciliation.md` §4 gives its policy stage the same first-run behaviour, so the two stages
+  answer the same question the same way). Refusing once to force a record would leave the first
+  `update` after the release incomplete, which is the HARD RULE's own objection.
+- **The record is what keeps `unpublished` from being one word for two states.** The wording `show`
+  (R3) and doctor's `local-layer-file` check (R0) print must say which reading it is, because the
+  recorded generation is the only thing that tells them apart: a **local edit** (the bytes differ and
+  the recorded generation is still the published one — the owner's change, to publish) or a **stale
+  copy from another machine** (the published generation has moved past the recorded one — someone
+  else's publish, which this file would revert). The two need different remedies, so one word for
+  both would send the owner to the wrong one.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
 - **Tests:** `TestStageOrderMatchesDependencies` (`internal/initflow/loop_test.go`: sixteen stages,
@@ -231,8 +257,16 @@ installation that has never had one.
   `TestUpdateLayerStageRefusesAFileThatDoesNotParse`,
   `TestUpdateLayerStageRefusesExecutableChangesWithoutTheFlag` (the same banner and refusal
   `config publish` gives), `TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes`,
-  `TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed` (the guard above: a publish that
-  landed between the seed and the write is a refusal, and the owner's file is left as it is),
+  `TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed` (the unconditional within-run
+  guard above: a publish that landed between the seed and the write is a refusal, and the owner's
+  file is left as it is — the write carries the generation the read returned, so no record is
+  consulted and none is needed, and it holds on a first run as on any other),
+  `TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer` (the across-runs guard: the record
+  says the local file was written from an older generation than the published object's, so the stage
+  refuses, prints the three-way state and offers the re-seed — and does not publish),
+  `TestUpdateLayerStageAdoptsTheGenerationWhenNothingIsRecorded` (a local file and a published layer
+  with no `layer_generation` anywhere: the stage publishes what it would have published, records the
+  generation it read, and says it adopted it),
   `TestInstallationAtThePreviousVersionConverges` (an installation whose local layer predates this
   release ends the update with it published — the HARD RULE's own test).
 - **Hermetic:** `internal/gcpfake` for the runs bucket, `t.TempDir()` for the state and the layer
@@ -321,7 +355,9 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
   `TestRigorShowPrintsTheReviewFloorAndSaysTheModeFloorsAreNotBuilt` (and names **`fugaro rigor
   floor`** as the command that changes a floor, SD10),
   `TestRigorShowReportsTheUnpublishedLocalLayer` (the state word: `unpublished`, with both sha256s,
-  the same comparison `config layer` and doctor make),
+  the same comparison `config layer` and doctor make, **and the cause** — the recorded
+  `layer_generation` against the published generation: a local edit while the two are equal, a stale
+  copy from another machine once the published one has moved past it),
   `TestRigorShowResolvesThroughRigorResolve` (a mode `show` prints is `rigor.Resolve`'s answer for
   the same inputs — the resolver is called, not re-implemented),
   `TestRigorShowJSONLayerNamesWhatWasRead` (spec §2's `layer` member: `published` and `local`

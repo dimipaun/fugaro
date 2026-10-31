@@ -1,14 +1,13 @@
 # `fugaro rigor`: managing a project's rigor mode with one command
 
-**Status: design approved; tasks queue for CLI 0.15.0 (and console 0.117.0).** Every decision in this
-design's own block is answered: **D830 and D831** by the owner's SD4 ruling of 2026-10-31, and
-**D832–D839 on 2026-10-31, all as recommended**. The one decision the plan **cites** from another
-design — **D854**, whether the `Layer` stage records the object generation it reads at the seed — is
-**open** (it is the settings design's) and this design does not decide it: R1 states both outcomes
-and what each one means for `update`, and nothing here may be read as an answer. The spec and the
-plan are written to the answers above and the tasks may start. The CLI tasks R0–R8 are 0.15.0's; the
-console half is not a task here (D836) — it is the read-only project view, and it queues for console
-0.117.0 with the rest of that work.
+**Status: design approved; tasks queue for CLI 0.15.0 (and console 0.117.0).** Every decision is
+answered: **D830 and D831** by the owner's SD4 ruling of 2026-10-31, **D832–D839 on 2026-10-31, all
+as recommended**, and the one decision the plan **cites** from another design — **D854**, whether the
+`Layer` stage records the object generation it reads at the seed — **answered by the owner on
+2026-10-31: record the generation**. Nothing this design cites is left open: the spec and the plan
+are written to those answers and the tasks may start. The CLI tasks R0–R8 are 0.15.0's; the console
+half is not a task here (D836) — it is the read-only project view, and it queues for console 0.117.0
+with the rest of that work.
 
 **Asked by:** the owner, 2026-10-31: "I want [the rigor mode default] at the project level, and we
 should have a fugaro command to manage that!"
@@ -37,19 +36,22 @@ publishes it after showing the diff; `rigor set` and `unset` edit that one file.
 therefore one command whose next step is the one documented command, which is the HARD RULE read
 literally.
 
-**One thing this shape does not settle: D854, which is open.** The stage refuses to overwrite an
-object whose generation moved since it read it, and **whether it records that generation** is the
-settings design's decision — D854, cited here, open there, and not answered here. R1 carries both
-outcomes: with the record, the local project config holds the generation the local file was last
-written from, and `unpublished` in `show` and in doctor can say whether the file is the owner's own
-edit or a stale copy from another machine; without it, the guard covers one `update` and a stale
-copy would revert a newer publish.
+**The stale copy, and the record that catches it (D854, answered: record the generation).** Two
+guards, and neither replaces the other. Within one `update` the stage refuses to overwrite an object
+whose generation moved since its own read — that guard is unconditional and needs no record. Across
+runs, which is what the owner's ruling answers, `update` **records** the generation the local layer
+file was last written from, in the local project config's `layer_generation`
+(`~/.config/fugaro/projects/<project>.yaml`, `localcfg.Config`), and refuses to publish over a newer
+published generation, showing the three-way state and offering a re-seed. The record is also what
+tells the two readings of **`unpublished`** apart in `show` and in doctor: a **local edit** (the
+bytes differ and the recorded generation is still the published one) or a **stale copy from another
+machine** (the published generation has moved past the recorded one), which need different remedies.
 
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The four command forms, where each one writes, how a change reaches a run, the safety rules around lowering a mode, the console read side and the migration of a hand-written block |
 | [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F17 in §1 and F18 in §2), and the decisions D830–D839 in §3. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Tasks R0–R8 (at most 12 files each), the follow-up tasks R7 (F13) and R8 (F14), and the dependencies E1 (the editor task's `internal/yamledit`), E2, with tests, red steps, gates, SEC flags and levels. **Every decision in this design's block is answered (D830–D839); the one it cites from another design, D854, is open and R1 states both outcomes** |
+| [implementation-plan.md](implementation-plan.md) | Tasks R0–R8 (at most 12 files each), the follow-up tasks R7 (F13) and R8 (F14), and the dependencies E1 (the editor task's `internal/yamledit`), E2, with tests, red steps, gates, SEC flags and levels. **Every decision in this design's block is answered (D830–D839), and the one it cites from another design, D854, is answered too (record the generation)** |
 
 ## The joint order, and the rulings the rigor and settings designs share
 
@@ -74,7 +76,11 @@ not exist.
 - **The state word is `unpublished`, everywhere.** The local document has bytes the published object
   does not: `rigor show`, `fugaro config layer` and doctor all call that **`unpublished`**, and all
   three decide it the same way — the **same sha256 comparison** of the local file's bytes against
-  the published object's. One word, one comparison, three surfaces.
+  the published object's. One word, one comparison, three surfaces. And it is one state with **two
+  causes**, which the recorded generation (D854, answered) tells apart: a **local edit**, when the
+  recorded generation is still the published one, and a **stale copy from another machine**, when
+  the published generation has moved past it. The surfaces that print the word say which of the two
+  it is, because the remedies differ — publish this file, or re-seed it from the newer object.
 - **The no-checkout wording is `unknown (no checkout on this machine)`** in both designs — the
   string `fugaro rigor show` prints for a repository whose own `fugaro.yaml` this machine has no
   checkout for. Neither design guesses a mode it could not read.
@@ -103,7 +109,7 @@ file above it, and a path and a symbol survive.
 
 | Block | Use |
 | --- | --- |
-| **D830–D839** | this work's block, and **nothing beyond D839 is reserved**: **D830** (where `set` writes — the one local layer file) and **D831** (the `Layer` stage in `update`, with its seeding) are **answered** by the owner's SD4 ruling, and **D832–D839** are **answered 2026-10-31, all as recommended**. Taken above the merged Coordinator v2 design, which holds **D810–D829** (`docs/console-coordinator-v2`: D810–D819 the page, D820–D828 the terminal, D829 reserved) — this work's first block was D810–D819, which that design took while this branch was open, so the numbers moved rather than the work. The highest number written anywhere else is D799 (the models plan's reserved tail: D796–D799); D800–D809 are a gap, not this work's. **D854** is cited by R1 and is the **settings design's** — a number this block does not hold and an answer this design does not give (it is open) |
+| **D830–D839** | this work's block, and **nothing beyond D839 is reserved**: **D830** (where `set` writes — the one local layer file) and **D831** (the `Layer` stage in `update`, with its seeding) are **answered** by the owner's SD4 ruling, and **D832–D839** are **answered 2026-10-31, all as recommended**. Taken above the merged Coordinator v2 design, which holds **D810–D829** (`docs/console-coordinator-v2`: D810–D819 the page, D820–D828 the terminal, D829 reserved) — this work's first block was D810–D819, which that design took while this branch was open, so the numbers moved rather than the work. The highest number written anywhere else is D799 (the models plan's reserved tail: D796–D799); D800–D809 are a gap, not this work's. **D854** is cited by R1 and is the **settings design's** — a number this block does not hold — and it is **answered by the owner on 2026-10-31: record the generation** |
 | **Checks** | none: every behaviour this work adds is a local file edit, a local read or an offline resolution, and the plan tests each one hermetically. The one cloud write it adds is `fugaro update`'s own layer stage, which the existing update path and its live checks already cover. No check number is taken |
 
 ## What this folder is not
@@ -113,9 +119,9 @@ file above it, and a path and a symbol survive.
 - **Not a licence to widen it.** Every decision this folder held is answered (D830–D839), so a task
   here may start — but a task that finds a *new* decision reports it rather than picking an answer,
   and the decisions answered above are not reopened by an implementer's convenience. **D854 is
-  exactly that case and it is already known**: it is open in the settings design, R1 states both
-  outcomes, and the task that builds R1 lets D854 be answered there rather than settling it in the
-  code.
+  answered too** (record the generation, 2026-10-31), and the cross-run guard R1 builds is that
+  answer's code: an implementer who finds a *third* reading of `unpublished`, or a state the record
+  does not cover, reports it rather than picking an answer.
 - **Not a new rigor mode or a change to the resolver.** `internal/rigor` orders the modes and
   settles the precedence once; nothing here re-states or moves either.
 - **Not a floor.** A project default is a default: a narrower layer may lower it (D21), and the
