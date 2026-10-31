@@ -93,6 +93,9 @@ import { buildCoordinatorModel, renderCoordinator } from './screens/coordinator'
 import { buildProjectsModel, renderProjects } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
+import { READING_STILL_MS, renderReading } from './screens/reading'
+import type { ReadingTab } from './screens/reading'
+import { NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
 import {
   launchBytes,
   launchCheck,
@@ -2438,9 +2441,60 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   /** replace clears the panel and draws one screen into it. The panel is this
    * file's own element, so clearing it is `replaceChildren` on the node behind
    * it -- a write no screen makes, because a screen draws one tree and owns none
-   * of the page. */
+   * of the page.
+   *
+   * **It is also what ends a read's placeholder.** Every drawing in this file
+   * comes through here -- a screen, a refusal, the issue view, the console's own
+   * onboarding -- so this is the one place the still-reading timer can be
+   * disarmed: the read has landed, or the operator has moved on, and a line
+   * armed for a panel that is no longer there must not arrive into it. */
   const replace = (drawn: SkewElement): void => {
+    endReading()
     surface.nodeOf(panel).replaceChildren(surface.nodeOf(drawn))
+  }
+
+  /** readingTimer is the one timer behind the placeholder's still-reading line.
+   * There is never more than one: a second `placeReading` replaces the first, and
+   * `replace` clears it, so a line can only arrive into the placeholder its own
+   * read put up. */
+  let readingTimer: ReturnType<typeof setTimeout> | null = null
+
+  const endReading = (): void => {
+    if (readingTimer === null) return
+    clearTimeout(readingTimer)
+    readingTimer = null
+  }
+
+  /**
+   * placeReading puts the placeholder up for a read that has not landed yet, and
+   * arms the one line that says so when the read is slow.
+   *
+   * **It is called where a read starts and nowhere else**, and that is the whole
+   * of this fix: the panel used to hold the last view's drawing -- the Graph's
+   * refusal, most visibly -- until the new read answered, which is a screen
+   * naming one tab and holding another's answer. A view that redraws a model
+   * this file already holds is not one of these (Live's frame, the Graph's
+   * picture), and asking for one there would take a screen down to put the
+   * placeholder up.
+   *
+   * `mine` is the generation of the read that is starting. The placeholder itself
+   * is drawn unconditionally -- it is what the operator is looking at while the
+   * read runs -- and the timer is the half that is guarded: a line whose read was
+   * left behind is not added to anything, which matters because the timer's
+   * callback is the one thing here that is not a read's own answer.
+   */
+  const placeReading = (tab: ReadingTab, mine: number): void => {
+    const drawn = renderReading(factory, tab, theme)
+    replace(drawn.root)
+    readingTimer = setTimeout(() => {
+      readingTimer = null
+      // `replace` already disarmed this timer for every read that landed, so a
+      // drawing that arrived is never read over. What is left is the operator:
+      // `show` claims, and a placeholder that is still up while the generation
+      // moved is the panel of a view nobody is on.
+      if (stale(mine)) return
+      drawn.body.append(drawn.still)
+    }, READING_STILL_MS)
   }
 
   const refuse = (operation: string, sentence: string): void => {
@@ -2538,12 +2592,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * view before it. Run detail is a view without a button -- it is reached from
    * a run row -- so every button is unmarked while it is up, which is the truth
    * about the navigation: none of the offered views is the one on screen.
+   *
+   * It answers the generation it claimed, because the switch itself is a door
+   * that holds a drawing: `show` hands it to `placeReading` for the views whose
+   * read has not started yet.
    */
-  const markCurrent = (id: string): void => {
-    claim()
+  const markCurrent = (id: string): number => {
+    const mine = claim()
     markButtons(id)
     currentView = id
     syncPolling()
+    return mine
   }
 
   /** show switches the panel to one view. The Live screen is not re-read here --
@@ -2552,9 +2611,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * is not its frame and is not re-read by the poll either, so it is asked for
    * here: entering the view is the moment a reader is looking at run rows, and
    * `maybeRefreshRigor` decides whether the map is old enough to be worth a
-   * read. */
+   * read.
+   *
+   * **The panel never keeps the last tab's answer.** A view that has something to
+   * redraw draws it (Live's frame, the Graph's picture); a view whose read is
+   * about to start says what it is waiting for (`placeReading`), so the refusal
+   * the Graph left on screen cannot outlive the tab that chose it. The claim is
+   * taken here, before any of that, and it is the generation the placeholder and
+   * the read are held to. */
   const show = (id: string): void => {
-    markCurrent(id)
+    const mine = markCurrent(id)
     rail.view(null)
     if (id === 'live') {
       maybeRefreshRigor()
@@ -2562,7 +2628,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (live.drawn !== null) {
         replace(live.drawn)
         placeLaunch()
-      } else void pollLive()
+      } else {
+        placeReading('live', mine)
+        void pollLive()
+      }
       return
     }
     if (id === 'graph') void showGraph()
@@ -2894,11 +2963,42 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * console could not read must not be redrawn from the plan it read before it,
    * so the screen drops the document it holds as well as the panel drawing it
    * (GV2.3b, `GraphScreen.forget`). The drawing it held goes too, so a redraw
-   * that comes later asks the keyboard about the tree the panel really has. */
+   * that comes later asks the keyboard about the tree the panel really has.
+   *
+   * **A read refused for want of a checkout is not a refusal screen.** The
+   * sentence is `src/source/cli.ts`'s precondition for this one read -- no plan
+   * document can be read because the installation names no directory to read it
+   * from -- and it is a state of the installation with one action, not a failure
+   * of the console or of the CLI; `drawNoCheckout` draws it as such and keeps the
+   * CLI's sentence in a disclosure. **That is the only sentence routed here**:
+   * every other refusal, including one the console could not read at all, is the
+   * refusal screen it always was. */
   const refuseGraph = (sentence: string): void => {
     graph.screen?.forget()
     graphTree = null
+    if (sentence === NO_CHECKOUT_SENTENCE) {
+      drawNoCheckout(sentence)
+      return
+    }
     refuse('plan.status', sentence)
+  }
+
+  /**
+   * drawNoCheckout draws the Graph's no-checkout card and wires its one action.
+   *
+   * The action is the installation picker's own door, and it is opened the way
+   * the rail's `+` opens it: `installation.open`, the picker's window, where the
+   * checkout chooser already is. There is no new channel, no new bridge method
+   * and no new argument -- a card in the panel is not a reason to widen the IPC
+   * allow-list, and the chooser this button needs is one the console already
+   * ships.
+   */
+  const drawNoCheckout = (sentence: string): void => {
+    const drawn = renderNoCheckout(factory, sentence, theme)
+    replace(drawn.root)
+    surface.nodeOf(drawn.choice).addEventListener('click', () => {
+      void railBridge.openInstallations({})
+    })
   }
 
   /** maybeRefreshGraph is the one place the plan's cadence is applied, so
@@ -2917,11 +3017,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * its way), and the plan is read on entry. That read is the first of the three
    * moments the read is made at; the others are the cadence and the operator's
    * own refresh.
+   *
+   * The placeholder goes up for the console that has **nothing** to redraw: a
+   * Graph a refusal took down, or one this console has never read. A Graph that
+   * holds a picture keeps it -- the picture is the plan the operator was looking
+   * at, and a placeholder in its place would take a drawing away to say that
+   * another one is coming.
    */
   const showGraph = async (): Promise<void> => {
     const mine = claim()
     const last = graph.screen?.redraw() ?? null
     if (last !== null) redraw(last, stopNow())
+    else placeReading('graph', mine)
     await readGraph(mine)
   }
 
@@ -3237,6 +3344,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    */
   const showSpend = async (): Promise<void> => {
     const mine = claim()
+    // The caps panel is drawn from two reads (`budget show`, then the report),
+    // so the panel says it is reading rather than holding the Graph's refusal
+    // until both have answered.
+    placeReading('spend', mine)
     let controls: SpendControls = SPEND_DEFAULT_CONTROLS
     let caps: Readonly<Record<string, unknown>> | null = null
     const capsReply = documentOf(await bridge.showBudget({}))
@@ -3349,6 +3460,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    */
   const showProjects = async (): Promise<void> => {
     const mine = claim()
+    placeReading('projects', mine)
     const sentences: Record<string, string> = {}
     const read = async (operation: string, go: () => Promise<unknown>): Promise<unknown> => {
       const answer = documentOf(await go())
@@ -3390,6 +3502,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    */
   const showCoordinator = async (): Promise<void> => {
     const mine = claim()
+    placeReading('coordinator', mine)
     const answer = documentOf(await bridge.coordinatorStatus({}))
     if (stale(mine)) return
     if (!answer.ok) {
