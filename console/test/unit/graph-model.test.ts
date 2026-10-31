@@ -27,13 +27,7 @@ import { describe, expect, it } from 'vitest'
 import { PLAN_STATES, decodePlanStatus } from '../../src/shared/schema'
 import type { PlanStatusView } from '../../src/shared/schema'
 import type { Sanitized } from '../../src/shared/sanitize'
-import {
-  GRAPH_LAYOUT_CACHE_ENTRIES,
-  GraphLayout,
-  crossStreamRoute,
-  graphOf,
-  structureHash,
-} from '../../src/renderer/graph/layout'
+import { GraphLayout, crossStreamRoute, graphOf, structureHash } from '../../src/renderer/graph/layout'
 import { LayoutClient } from '../../src/renderer/graph/layout-client'
 import type { LayoutGraph, PlacedNode, Point, Positions, WorkerLike } from '../../src/renderer/graph/layout-client'
 import {
@@ -206,22 +200,36 @@ function bothPlans(value: GraphModel): GraphColumn {
 
 /**
  * manyStreams is a document of `count` streams of one plan each, through the
- * real decoder: it is how the bound cases read a picture wider than
- * `GRAPH_LAYOUT_CACHE_ENTRIES` without a fixture a person has to maintain. The
- * plans are chains of two tasks, which is the smallest shape that has an edge --
- * a stream with no cards would take no row and no cache entry.
+ * real decoder: it is how the cache cases read a picture of any width without a
+ * fixture a person has to maintain. The plans are chains of two tasks, which is
+ * the smallest shape that has an edge -- a stream with no cards would take no row
+ * and no cache entry.
  *
- * `changed` is the stream whose tasks are named differently: the same stream,
+ * `edited` is the streams whose tasks are named differently: the same stream,
  * its own plan, with the ids the layout's own key is read from moved -- so the
- * picture one stream narrower with one of them edited is `manyStreams(count - 1,
- * 0)`.
+ * picture one stream narrower with one of them changed is `manyStreams(count - 1,
+ * { edited: [0] })`. `tab` is the document read as one of its tabs, which is how
+ * a case reads a **subset** of the picture it has already placed; `streams` is
+ * which of the picture's streams the document holds, **in this order**, for a
+ * case that needs a picture of streams it chose (`[GRAPH_MAX_PLANS, 0]`: the
+ * stream after the ones an earlier read placed, and the oldest of those).
  */
-function manyStreams(count: number, changed = -1): GraphModel {
+function manyStreams(
+  count: number,
+  options: {
+    readonly edited?: readonly number[]
+    readonly tab?: string | null
+    readonly streams?: readonly number[]
+  } = {},
+): GraphModel {
+  const edited = new Set(options.edited ?? [])
   const plans: unknown[] = []
+  const indices =
+    options.streams ?? Array.from({ length: count }, (_unused, index) => index)
   let tasks = 0
-  for (let index = 0; index < count; index += 1) {
+  for (const index of indices) {
     const stream = `stream-${String(index)}`
-    const edit = index === changed ? '-again' : ''
+    const edit = edited.has(index) ? '-again' : ''
     const nodes = [0, 1].map((node) => ({
       id: `${stream}-task-${String(node)}${edit}`,
       title: `A task of ${stream}`,
@@ -252,7 +260,7 @@ function manyStreams(count: number, changed = -1): GraphModel {
       streams: [],
       warnings: [],
     }),
-    tab: null,
+    tab: options.tab ?? null,
   })
 }
 
@@ -599,7 +607,7 @@ describe('the graph layout cache', () => {
     expect(worker.placements).toBe(3)
   })
 
-  it('does not keep a layout the worker refused, and bounds how many it keeps', async () => {
+  it('does not keep a layout the worker refused', async () => {
     const { worker, layout } = layoutWith()
     // One stream, so the refusal is one stream's and the ask after it is that
     // stream's again.
@@ -614,34 +622,16 @@ describe('the graph layout cache', () => {
     expect(worker.placements).toBe(2)
     worker.answer(placed(lastAsk(worker)))
     await expect(again).resolves.toBeTruthy()
-
-    // A handful of other structures in, the cache holds
-    // `GRAPH_LAYOUT_CACHE_ENTRIES`, and the entry the bound evicted is asked for
-    // again.
-    const many: GraphModel[] = []
-    for (let index = 0; index < GRAPH_LAYOUT_CACHE_ENTRIES + 2; index += 1) {
-      many.push(built(['plans', 0, 'nodes', 0, 'id'], `task-${String(index)}`))
-    }
-    for (const each of many) await settle(worker, layout, each)
-    const before = worker.placements
-    const oldest = many[0]
-    if (oldest === undefined) throw new Error('no model')
-    const pending = layout.positions(oldest)
-    // The evicted entry is the one stream that was patched; the stream beside it
-    // is still cached, so its row costs no run.
-    expect(worker.placements).toBe(before + 1)
-    worker.answer(placed(lastAsk(worker)))
-    await pending
   })
 
-  it('holds every stream of a picture wider than the floor, so a second read lays nothing out', async () => {
-    // **The floor is not the bound.** A read asks for its whole picture and
-    // trims the cache once it has it, so a bound of `GRAPH_LAYOUT_CACHE_ENTRIES`
-    // on a picture of nine streams trims away one of the nine streams it has just
-    // asked for: every read of that picture, changed or not, lays that stream out
-    // again. The bound is therefore the picture's own number of streams where
-    // that is larger than the floor, and the case reads both sides of the gap.
-    for (const count of [GRAPH_LAYOUT_CACHE_ENTRIES + 1, 25]) {
+  it('lays a picture out once, and a second read of it lays nothing out', async () => {
+    // **One run per stream is the whole cost of a picture, and only the first
+    // time.** The bound is flat and as wide as a model can be
+    // (`GRAPH_MAX_PLANS`), so every stream of the read stays in the cache however
+    // narrow the read before it was: a picture is laid out when it is first read
+    // and never again while a person stays on it. The widest picture a model can
+    // hold is the last case: it is one entry per stream, exactly the bound.
+    for (const count of [9, 25, GRAPH_MAX_PLANS]) {
       const { worker, layout } = layoutWith()
       const value = manyStreams(count)
       expect(value.columns, `the document of ${String(count)} streams read as fewer`).toHaveLength(count)
@@ -659,17 +649,19 @@ describe('the graph layout cache', () => {
     }
   })
 
-  it('evicts once the read is over, so a narrower picture with one stream changed costs one run', async () => {
+  it('evicts once the read is over, so only a stream that changed costs a run', async () => {
     // **The eviction is the read's, not the stream's.** It used to run inside
     // the read, between two streams of one picture: the first stream a miss adds
-    // trims the cache to the bound, and on a picture one stream narrower than
-    // the last the oldest entries are the ones this read has not reached yet --
-    // so the stream about to be asked for is evicted before it is asked for,
-    // every stream after that is evicted by the stream before it, and a read
-    // that should cost one run lays the whole picture out again. Evicting once,
+    // trimmed the cache to the bound, and on a picture one stream narrower than
+    // the last the oldest entries were the ones this read had not reached yet --
+    // so the stream about to be asked for was evicted before it was asked for,
+    // every stream after that was evicted by the stream before it, and a read
+    // that should cost one run laid the whole picture out again. Evicting once,
     // after the pass, leaves every entry the pass made or found the most recent:
     // the oldest-first eviction then takes the stream that is gone and the
-    // stream that changed, and nothing the picture still wants.
+    // streams that changed, and nothing the picture still wants. The bound being
+    // flat and as wide as a model can be, none of the pictures below is wide
+    // enough to make that eviction bite.
     for (const count of [10, 25, 60]) {
       const { worker, layout } = layoutWith()
       await settle(worker, layout, manyStreams(count))
@@ -678,11 +670,17 @@ describe('the graph layout cache', () => {
       // The last stream gone, and the first stream of what is left is a plan the
       // engine has not placed: exactly that one stream is laid out again.
       const before = worker.placements
-      await settle(worker, layout, manyStreams(count - 1, 0))
+      await settle(worker, layout, manyStreams(count - 1, { edited: [0] }))
       expect(
         worker.placements - before,
         `a ${String(count)}-stream picture, one stream narrower and one changed, was laid out again`,
       ).toBe(1)
+
+      // Two streams of the same picture changed at once: two runs, one per
+      // changed stream, and the streams that did not change are neither of them.
+      const two = worker.placements
+      await settle(worker, layout, manyStreams(count, { edited: [1, 2] }))
+      expect(worker.placements - two, 'two changed streams were not two runs').toBe(2)
 
       // A picture a stream wider, and then the one before it: the read that goes
       // back is a read of entries it still holds, so the added stream is the
@@ -693,8 +691,117 @@ describe('the graph layout cache', () => {
       expect(
         worker.placements - widened,
         `going back to the ${String(count)}-stream picture was laid out again`,
-      ).toBeLessThanOrEqual(1)
+      ).toBe(0)
     }
+  })
+
+  it('never evicts a stream the picture has not reached yet', async () => {
+    // **Evicting once, after the pass, is what the pass's own hits protect.** A
+    // read walks its streams in the model's order, so an entry it holds but has
+    // not reached yet is still where the read before left it -- at the head, if
+    // it is the oldest entry there is. An eviction between two streams of one
+    // picture lets the first miss of the read take that entry, and the read that
+    // should cost one run lays its second stream out again. A wide bound does not
+    // prevent that on its own: the bound has to be reached *after* the pass and
+    // not during it.
+    const { worker, layout } = layoutWith()
+    await settle(worker, layout, manyStreams(GRAPH_MAX_PLANS))
+    expect(worker.placements).toBe(GRAPH_MAX_PLANS)
+
+    // The cache is full, so the one new stream of the next read is one entry over
+    // the bound, and stream 0 -- which follows it in the picture's order -- is
+    // the oldest entry, and so the one an eviction during the pass would take.
+    const picture = manyStreams(GRAPH_MAX_PLANS + 1, { streams: [GRAPH_MAX_PLANS, 0] })
+    expect(picture.columns.map((column) => column.stream)).toEqual([
+      `stream-${String(GRAPH_MAX_PLANS)}`,
+      'stream-0',
+    ])
+    const before = worker.placements
+    await settle(worker, layout, picture)
+    expect(
+      worker.placements - before,
+      'the stream the read had not reached yet was laid out again',
+    ).toBe(1)
+  })
+
+  it('reads one stream’s tab and goes back to All without laying anything out again', async () => {
+    // **A read narrower than the cache is not a reason to forget the wider
+    // picture.** The eviction is the read's and runs to the read's own bound, so
+    // it used to trim the cache to the width of whatever was asked for last: a
+    // one-stream tab left one entry of a twenty-five-stream picture, and going
+    // back to All laid the other twenty-four out again -- moving between tabs
+    // being the one thing a cache over streams is most obviously for. A flat
+    // bound, as wide as a model can be, makes a narrower read evict nothing.
+    const { worker, layout } = layoutWith()
+    const all = manyStreams(25)
+    expect(all.columns).toHaveLength(25)
+    await settle(worker, layout, all)
+    expect(worker.placements).toBe(25)
+
+    const one = manyStreams(25, { tab: 'stream-0' })
+    expect(one.columns, 'the tab did not read as one stream').toHaveLength(1)
+    const tabbed = worker.placements
+    await settle(worker, layout, one)
+    expect(worker.placements, 'a one-stream tab was laid out').toBe(tabbed)
+
+    const back = worker.placements
+    await settle(worker, layout, all)
+    expect(worker.placements, 'going back to All laid streams out again').toBe(back)
+  })
+
+  it('reads a narrower picture between two reads of a wider one without laying anything out again', async () => {
+    // The same rule with no tab in it: any read that asks for less than the cache
+    // already holds leaves the rest where it is, so the picture it came from is
+    // free to come back to.
+    const { worker, layout } = layoutWith()
+    const wide = manyStreams(20)
+    const narrow = manyStreams(18)
+    expect(narrow.columns).toHaveLength(18)
+    await settle(worker, layout, wide)
+    expect(worker.placements).toBe(20)
+
+    const inBetween = worker.placements
+    await settle(worker, layout, narrow)
+    expect(worker.placements, 'a narrower picture was laid out').toBe(inBetween)
+
+    await settle(worker, layout, wide)
+    expect(worker.placements - inBetween, 'the wider picture was laid out again').toBe(0)
+  })
+
+  it('keeps a flat GRAPH_MAX_PLANS entries, and evicts the stalest first', async () => {
+    // **The bound is flat, and it is the model's own plan bound.** A stream has
+    // at least one plan and a model holds at most `GRAPH_MAX_PLANS` plans, so a
+    // model never holds more streams than that: at `GRAPH_MAX_PLANS` entries the
+    // cache holds every picture the console can draw, and what it does evict is
+    // only ever a structure no read has asked about since -- the stream a tab
+    // left behind, the plan a task was renamed out of. Oldest-first is what makes
+    // that the stalest one and never the stream a person has just been looking
+    // at.
+    const { worker, layout } = layoutWith()
+    const many: GraphModel[] = []
+    for (let index = 0; index < 200; index += 1) {
+      // One stream each, so one entry each, and two hundred structures no two of
+      // which are alike.
+      many.push(built(['plans', 0, 'nodes', 0, 'id'], `task-${String(index)}`, STREAM))
+    }
+    for (const each of many) await settle(worker, layout, each)
+    expect(worker.placements).toBe(200)
+
+    // The last `GRAPH_MAX_PLANS` of them are what is held: the newest, and the
+    // oldest with room left for it (`200 - GRAPH_MAX_PLANS`).
+    const newest = many[199]
+    const oldestHeld = many[200 - GRAPH_MAX_PLANS]
+    const stale = many[199 - GRAPH_MAX_PLANS]
+    if (newest === undefined || oldestHeld === undefined || stale === undefined) throw new Error('no model')
+    const held = worker.placements
+    await settle(worker, layout, newest)
+    await settle(worker, layout, oldestHeld)
+    expect(worker.placements, 'an entry the bound holds was laid out again').toBe(held)
+
+    // ...and the one just past them is gone, so the cache is exactly
+    // `GRAPH_MAX_PLANS` entries wide and the stalest went first.
+    await settle(worker, layout, stale)
+    expect(worker.placements, 'the entry just past the bound was not the one evicted').toBe(held + 1)
   })
 
   it('lays the graph out left to right, orthogonally, over the cards’ own box', async () => {

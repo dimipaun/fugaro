@@ -69,42 +69,27 @@ import type {
   Positions,
   RouteSection,
 } from './layout-client'
-import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH } from './model'
+import { GRAPH_MAX_PLANS, GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH } from './model'
 import type { GraphColumn, GraphModel } from './model'
 
 /**
- * GRAPH_LAYOUT_CACHE_ENTRIES is the cache's **floor**. It is a handful and not a
- * hundred: the entries a person actually revisits are the streams they are
- * looking at now and the one they looked at a moment ago, and each entry holds
- * every node of one stream. A cache that grew with the streams a person had ever
- * opened would hold the whole session's pictures to save a layout nobody asks
- * for again.
+ * CACHE_ENTRIES is how many layouts the cache keeps: **one flat bound, as wide
+ * as a model can be**.
  *
- * It is a floor and not the whole bound because a read asks for one whole
- * picture and trims the cache once, when it has it (`boundFor`, `positions`): at
- * a flat eight, a nine-stream read would trim away one of the nine streams it
- * has just asked for, so every read of that picture -- a redraw that changed
- * nothing among them -- would lay that stream out again. That is a picture a
- * document the console draws today can already have.
- */
-export const GRAPH_LAYOUT_CACHE_ENTRIES = 8
-
-/**
- * boundFor is how many entries the cache keeps for one picture's read: the floor
- * above, or the picture's own number of streams where that is larger.
+ * A model holds at most `GRAPH_MAX_PLANS` plans and a stream has at least one
+ * plan, so no picture the console can draw has more streams than that -- and one
+ * stream is one entry. At this bound the cache holds any whole picture, whatever
+ * was read before it: moving to a one-stream tab and back to All is the one
+ * thing a cache over streams is most obviously for, and a bound that followed
+ * the width of whatever was asked for last would have the narrower read throw
+ * away the picture it came from. The bound is also as small as a bound that
+ * holds every picture can be: a stream's entry is that stream's cards and routes
+ * and nothing else, so sixty-four of them is not a cache to grow past.
  *
- * A read asks for its whole picture at once and evicts once, after the pass
- * (`positions`), so the bound has to hold the whole of what that pass has just
- * placed or found: those entries are the cache's most recent, so a bound smaller
- * than the picture would have the eviction take one of the picture's own streams
- * -- and the read after this one would lay that stream out again. Holding the
- * picture is the whole of the rule: a picture wider than the floor keeps every
- * one of its streams, and the next read, whose own bound is its own width,
- * evicts whatever it did not ask about, oldest first.
+ * What the cache evicts is then only ever a structure no read has asked about
+ * since -- the stream a tab left behind, the plan a task was renamed out of.
  */
-function boundFor(entries: number, streams: number): number {
-  return Math.max(1, entries, streams)
-}
+const CACHE_ENTRIES = GRAPH_MAX_PLANS
 
 /** GRAPH_ID is the graph's own name in the request. The client matches a reply
  * to the request it sent by request id, so one constant is enough. */
@@ -202,10 +187,7 @@ export class GraphLayout {
   private readonly cache = new Map<string, Promise<Positions>>()
   private disposed = false
 
-  constructor(
-    private readonly client: LayoutClient,
-    private readonly entries: number = GRAPH_LAYOUT_CACHE_ENTRIES,
-  ) {}
+  constructor(private readonly client: LayoutClient) {}
 
   /**
    * positions resolves with the whole picture's positions -- every node placed,
@@ -225,17 +207,19 @@ export class GraphLayout {
   positions(model: GraphModel): Promise<Positions> {
     if (this.disposed) return Promise.reject(new Error('this layout was disposed of'))
     // The eviction is the **read's** and runs once the pass is over, with the
-    // picture's own bound on it (`boundFor`): every entry this pass placed or
-    // found is now the cache's most recent, so the oldest-first eviction below
-    // takes the streams this read did not ask about and never one it is about to
-    // draw. Evicting per stream instead -- between two streams of the same
-    // picture -- evicts what the read has not reached yet, and a picture that is
-    // one stream narrower than the last walks its own eviction down the whole
-    // list: every stream is laid out again, one run per stream, for a read that
-    // should cost one.
-    const bound = boundFor(this.entries, model.columns.length)
+    // cache's own flat bound on it (`CACHE_ENTRIES`): every entry this pass
+    // placed or found is now the cache's most recent, so the oldest-first
+    // eviction below takes the streams this read did not ask about and never one
+    // it is about to draw. Evicting per stream instead -- between two streams of
+    // the same picture -- evicts what the read has not reached yet, and a picture
+    // that is one stream narrower than the last walks its own eviction down the
+    // whole list: every stream is laid out again, one run per stream, for a read
+    // that should cost one. A bound that followed the width of *this* picture
+    // would be the same mistake one read later: a one-stream tab read after a
+    // wide picture would trim away every stream but its own, and going back to
+    // All would lay the whole picture out again.
     const rows = model.columns.map((column) => this.row(column))
-    this.evict(bound)
+    this.evict()
     return Promise.all(rows).then((laid) => stackStreams(model.columns, laid))
   }
 
@@ -271,8 +255,8 @@ export class GraphLayout {
     return pending
   }
 
-  private evict(bound: number): void {
-    while (this.cache.size > bound) {
+  private evict(): void {
+    while (this.cache.size > CACHE_ENTRIES) {
       const oldest = this.cache.keys().next()
       if (oldest.done === true) return
       this.cache.delete(oldest.value)
