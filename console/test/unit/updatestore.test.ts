@@ -27,6 +27,10 @@
 //   - a reader that reads a name it has not `fstat`ed fails "reads a short
 //     symlink to a FIFO as on, and does not block on it" (U4c): the FIFO is
 //     shorter than the cap and is not a file, and a read of it never returns;
+//   - the same reader at a name that is a FIFO itself rather than a link to one
+//     fails "reads a FIFO at the name itself as on, and asks it for no byte"
+//     (U4d): the link rule is not there to stop it first, so the regular-file
+//     rule is the whole of the refusal and has to be asked before a byte is;
 //   - a reader that lets an error out of the open instead of answering with the
 //     default fails "reads a name the open itself is refused as on" (U4c) --
 //     one line and the file untouched, whatever the open raised;
@@ -42,6 +46,7 @@ import {
   readFileSync,
   readlinkSync,
   readdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -49,7 +54,7 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RELEASES_URL, UPDATE_INTERVAL_MS, createUpdateController } from '../../src/main/updates'
 import type { UpdaterPort } from '../../src/main/updates'
@@ -66,24 +71,54 @@ import {
 } from '../../src/main/updatestore'
 import type { UpdatesFs } from '../../src/main/updatestore'
 
+/** made is every temporary directory this file has handed out, so one rule at
+ * the end of each case can take them all away: these hold FIFOs, links and
+ * files that nothing would want to find in the machine's temp directory once
+ * the run is over. */
+const made: string[] = []
+
 function freshDirectory(): string {
-  return mkdtempSync(join(tmpdir(), 'fugaro-updates-'))
+  const directory = mkdtempSync(join(tmpdir(), 'fugaro-updates-'))
+  made.push(directory)
+  return directory
 }
 
-/** mkfifoAbsent is whether this machine can make the FIFO the one case below
- * needs: the tool is POSIX's, and a host without it skips that case with the
- * reason rather than failing on a name it cannot create. */
+afterEach(() => {
+  for (const directory of made.splice(0)) rmSync(directory, { recursive: true, force: true })
+})
+
+/** mkfifoAbsent is whether this machine can make the FIFO the cases below need:
+ * the tool is POSIX's, and a host without it skips those cases with the reason
+ * rather than failing on a name it cannot create. The probe's own directory,
+ * and the FIFO inside it when there is one, go away whatever it answered. */
 const mkfifoAbsent = ((): boolean => {
+  const probe = mkdtempSync(join(tmpdir(), 'fugaro-updates-'))
   try {
-    execFileSync('mkfifo', [join(freshDirectory(), 'probe')])
+    execFileSync('mkfifo', [join(probe, 'probe')])
     return false
   } catch {
     return true
+  } finally {
+    rmSync(probe, { recursive: true, force: true })
   }
 })()
 
-/** MKFIFO_SKIP is the reason that case states when it is skipped. */
+/** MKFIFO_SKIP is the reason those cases state when they are skipped. */
 const MKFIFO_SKIP = 'mkfifo is not on this machine'
+
+/** noLinkRule is whether this platform defines the two flags the read is opened
+ * with: `O_NOFOLLOW` and `O_NONBLOCK` are POSIX's, and a `node:fs` that has
+ * neither leaves the module opening the name the plain way -- a link is resolved
+ * rather than refused, and there is no other rule that refuses one, because the
+ * descriptor's regular-file rule is asked about the target a link resolved to.
+ * The case that turns on those flags is skipped there with the reason rather
+ * than asserting a refusal this platform cannot make. */
+const noLinkRule = ([constants.O_NOFOLLOW, constants.O_NONBLOCK] as readonly (number | undefined)[]).some(
+  (flag) => typeof flag !== 'number',
+)
+
+/** LINK_RULE_SKIP is the reason that case states when it is skipped. */
+const LINK_RULE_SKIP = 'this platform does not define O_NOFOLLOW and O_NONBLOCK'
 
 /** only is the one entry a list is expected to hold, so "nothing was recorded"
  * fails here rather than making a later assertion vacuous. */
@@ -300,7 +335,7 @@ describe('the update switch’s file', () => {
     expect(readFileSync(target, 'utf8')).toBe('false')
   })
 
-  it('refuses a symlink to a regular file by the link rule alone, and reads a plain one (U4c)', () => {
+  it.skipIf(noLinkRule)(`refuses a symlink to a regular file by the link rule alone, and reads a plain one (U4c)${noLinkRule ? ` (${LINK_RULE_SKIP})` : ''}`, () => {
     // A link whose target is a regular file holding `false`: the answer is **on**
     // -- a name that is a link is not this switch whatever it points at, and
     // `false` is not a value this console may be made to take from somewhere
@@ -363,6 +398,40 @@ describe('the update switch’s file', () => {
     expect(readlinkSync(path)).toBe('f')
     expect(statSync(fifo).isFIFO()).toBe(true)
     expect(readdirSync(directory).toSorted()).toEqual(['f', UPDATES_FILE_NAME])
+  }, 10_000)
+
+  it.skipIf(mkfifoAbsent)(`reads a FIFO at the name itself as on, and asks it for no byte (U4d)${mkfifoAbsent ? ` (${MKFIFO_SKIP})` : ''}`, () => {
+    // The case above never reaches the regular-file rule: its name is a link, and
+    // the kernel refuses the open before anything is asked about what the name
+    // is. Here the FIFO **is** the name, so the open succeeds -- `O_NONBLOCK` is
+    // what makes a read-only open of a FIFO return instead of waiting for a
+    // writer -- and the descriptor's rule is the whole of the refusal. It has to
+    // be asked *before* a byte is, because a read of this name is not the
+    // setting however it answers: this case is what catches a reader that kept
+    // the length rule and dropped the kind one.
+    const directory = freshDirectory()
+    const path = join(directory, UPDATES_FILE_NAME)
+    execFileSync('mkfifo', [path])
+
+    const fs = recordingFs()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      expect(readUpdateSwitch(directory, fs)).toBe(true)
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls[0]?.[0]).toBe(UPDATES_FILE_UNREADABLE)
+    } finally {
+      logged.mockRestore()
+    }
+    // What the calls say: the name was opened and the descriptor asked what it
+    // is, and nothing was ever read out of it. A reader without the regular-file
+    // rule records a `readFile` here.
+    expect(fs.calls.filter((call) => call.startsWith('open:'))).toHaveLength(1)
+    expect(fs.calls.filter((call) => call.startsWith('fstat:'))).toHaveLength(1)
+    expect(fs.calls.filter((call) => call.startsWith('readFile:'))).toEqual([])
+    // The FIFO is left exactly where it was: this module reads a setting, and a
+    // name it cannot use is not its to repair or delete.
+    expect(statSync(path).isFIFO()).toBe(true)
+    expect(readdirSync(directory)).toEqual([UPDATES_FILE_NAME])
   }, 10_000)
 
   it('reads a file longer than one boolean as on, and leaves it untouched (U4b)', () => {
