@@ -403,6 +403,9 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	if e.previewState(initflow.Plugin) == initflow.Todo {
 		sep = append(sep, "the plugin wiring (its own y/N)")
 	}
+	if e.previewState(initflow.Checkout) == initflow.Todo {
+		sep = append(sep, "the checkout's own steps, run by fugaro upgrade as they are here, each with its own confirmation: the billable build of the checkout's job images is the one the cloud step asks for every time")
+	}
 	if e.previewState(initflow.Policy) == initflow.Todo {
 		sep = append(sep, "migrating the published policy node in place (type the project's name)")
 	}

@@ -176,6 +176,11 @@ func initStages(e *initEngine) []initflow.Stage {
 	// migration and never a delete and a republish).
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
 	stages = append(stages, newPolicyMigrateStage(e))
+	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
+	// are a stage of this run too: fugaro update is the whole upgrade, so the
+	// one command the user runs may not leave the checkout it runs in behind
+	// (init_checkout_upgrade.go, the owner's rule of 2026-10-30).
+	stages = append(stages, newCheckoutStage(e))
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
 	// `backend: cloud-batch` stays refused by config validation until the

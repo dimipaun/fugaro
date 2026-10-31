@@ -81,6 +81,13 @@ const (
 	// runs are admitted by, and it is the one stage whose change is a
 	// document rather than an installation.
 	Policy = "policy"
+	// Checkout is what `fugaro upgrade` does for the checkout `fugaro update`
+	// is run in, as a stage of the converge itself (internal/cli/
+	// init_checkout_upgrade.go, the owner's rule of 2026-10-30: fugaro update
+	// is the whole upgrade, so the two front doors may not be two commands).
+	// It comes after the repository stage, whose onboarding is what the
+	// images it refreshes belong to, and before compute, which stays last.
+	Checkout = "checkout"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
@@ -125,6 +132,11 @@ var order = []slot{
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
 	{name: Policy, needs: []string{Repository}},
+	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
+	// run after the repository stage: the images the cloud step refreshes are
+	// that repository's, and the onboarding the repository stage does is what
+	// the refresh builds for.
+	{name: Checkout, needs: []string{Repository}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.

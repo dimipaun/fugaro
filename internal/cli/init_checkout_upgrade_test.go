@@ -107,7 +107,11 @@ func TestUpdateRunsPinPluginAndImages(t *testing.T) {
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in Claude Code\n%s", out)
 	}
-	if want := []string{"base", "reload", "check job", "builds"}; !slices.Equal(*ran, want) {
+	// The refresh's own steps for this checkout: its base image pinned by
+	// digest, the daily check job, and the billable rebuilds. (The fake's
+	// reload step is not among them: this repository declares no agent image
+	// for it to move.)
+	if want := []string{"base", "check job", "builds"}; !slices.Equal(*ran, want) {
 		t.Errorf("the job images were not refreshed: steps %q, want %q\n%s", *ran, want, out)
 	}
 	if strings.Contains(out.String(), "not in a checkout") {
