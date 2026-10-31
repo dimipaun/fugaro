@@ -320,6 +320,19 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, project [
 				strings.Join(unmatched, ", "), noteIfAny(" and this checkout's own", repo != nil)),
 			Fix: "fix the name in secret_expires, or drop the entry: the key is a secret's logical name, which is what " + selfCommand() + " secrets ls prints beside its container"})
 	}
+	if len(out) == 0 {
+		// The measurement: what the operator recorded was checked and nothing is
+		// outside it. It is said rather than left silent, because "is anything
+		// about to expire" is a question only an answer answers — and it is ok
+		// with severity "info", which is the measurement class: --all and --json
+		// carry it, and the default view neither prints it nor counts it.
+		inside := "no date in secret_expires is within " + ageDays(secretExpiryWarnWithin)
+		if lc.SecretRotationDays > 0 {
+			inside = fmt.Sprintf("no newest enabled version is older than the recorded %d-day period, and %s", lc.SecretRotationDays, inside)
+		}
+		out = append(out, doctorCheck{ID: id, OK: true, Severity: "info",
+			Problem: "every secret this run could date is inside what the local config records (secret_rotation_days, secret_expires): " + inside})
+	}
 	return out
 }
 
@@ -418,7 +431,14 @@ func doctorBundleChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 			Problem: bundleMissingProblem(store.id, len(proxied)),
 			Fix:     selfCommand() + " creds set " + config.BitbucketSecret}}
 	}
-	out := []doctorCheck{{ID: idBundle, OK: true}}
+	// The bundle's own answer is a measurement and not doctor's bookkeeping: the
+	// question the flag was passed for is whether the service holds a token, and
+	// the line that answers it is what makes an installation with nothing wrong
+	// readable under --all. The token's value is not in it, and never is: what
+	// is said is that the bundle holds the credential, which is why a name and
+	// not a value is what every message here carries.
+	out := []doctorCheck{{ID: idBundle, OK: true, Severity: "info",
+		Problem: fmt.Sprintf("the credentials service's bundle %s holds a %s credential", pluginwire.Printable(store.id), config.BitbucketSecret)}}
 	out = append(out, doctorBitbucketTokenValid(ctx, proxied, entry.Value())...)
 	return out
 }
@@ -485,7 +505,12 @@ func doctorBitbucketTokenValid(ctx context.Context, repos []string, token string
 	case len(refused) == 0 && len(unknown) == 0:
 		return []doctorCheck{{ID: id, OK: true}}
 	case len(refused) == 0:
-		return []doctorCheck{{ID: id, Severity: "info",
+		// unread, because that is what this state is: a question Bitbucket was
+		// asked and did not answer. The marker is set by the check that could
+		// not read, and the class reads it as the unknown it is — the alternative
+		// is a fact left unknown that reads like one doctor measured and found
+		// nothing in.
+		return []doctorCheck{{ID: id, Severity: "info", unread: true,
 			Problem: fmt.Sprintf("Bitbucket could not be asked about %s, so whether the bundle's %s credential is still accepted there could not be checked", strings.Join(unknown, ", "), config.BitbucketSecret),
 			Fix:     "rerun doctor when Bitbucket is reachable"}}
 	}

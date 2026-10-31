@@ -128,6 +128,14 @@ var doctorSecurityPrefixes = []string{
 	// line, so today it reaches the default view either way; naming it here is
 	// what keeps it in the sweep if it ever gains a measurement.
 	"batch-launcher-iam",
+	// model-key-in-agent is the owner's ruling of 2026-10-31: a model
+	// credential that reaches a workflow's agent (budget off, or no credentials
+	// service) is a counted security finding, not a measurement. Its own line
+	// is information — an installation that runs without the budget is a
+	// legitimate choice, and D498's report is what the check is — so it is the
+	// sweep's info half: counted in the pointer the default view ends with and
+	// printed whole, with its fix, by --security and --all.
+	"model-key-in-agent",
 }
 
 // doctorDecisionIDs are the checks whose state is the owner's to choose: doctor
@@ -202,6 +210,17 @@ var doctorMeasureIDs = map[string]bool{
 	"secret-readers-unexpected":     true,
 	"credentials-service-deployers": true,
 	"batch-artifact-boundary":       true,
+	// The standing note about require_zdr: what the flag prices, and that
+	// whether an account's calls are held under zero data retention is a
+	// privacy setting Fugaro reads nowhere. It is emitted on every
+	// installation whose route the catalog prices (require_zdr is on by
+	// default), so a class that counted it would put a pointer on a screen
+	// with nothing wrong in it — and nothing is: the note names no fact about
+	// this installation that a reader could act on. --all and --json carry it
+	// whole. The check sets no unread marker for the same reason: the fact it
+	// cannot read is the provider's account setting, not a read of this
+	// installation that did not answer.
+	"provider-zdr-unverified": true,
 	// The Batch sweep's "not checked: this is a test configuration" line, one
 	// per API it does not read there. The warning variant of the same ID is a
 	// read that failed.
@@ -242,8 +261,14 @@ func doctorClassOf(c doctorCheck) string {
 	// prints "everything checked is ok" beside an exit code 1.
 	finding := !c.OK && c.Severity != "info"
 	switch {
-	case c.OK && c.Severity == "":
-		// doctor's own bookkeeping: nothing prints it, in any view.
+	case c.OK && c.Severity == "" && !c.unread:
+		// doctor's own bookkeeping: nothing prints it, in any view. A check that
+		// is ok AND carries the unread marker is not bookkeeping: its own line
+		// says a fact could not be read, and "ok" beside "could not be read" is
+		// the silent pass the class rules exist to keep out of the view (the
+		// marker is set by a read that did not answer, and the two fields are
+		// written by different branches of a check). It falls through to the
+		// unread arm below and is counted, never dropped.
 		return ""
 	case finding && doctorHasPrefix(c.ID, doctorUpdatePrefixes):
 		return doctorClassUpdate
@@ -335,24 +360,36 @@ type doctorView struct {
 }
 
 // doctorAuditHeld are the audit findings a view left out of its lines: the
-// security sweep's, and the rest of the audit class. Only a check that is not
-// ok is a finding, and only a finding is counted: the measurements are what
-// doctor read and found nothing in, and a pointer to them on every clean run
-// is how a reader learns to skip the line (the owner's rule of 2026-10-31: an
-// installation with nothing wrong prints one line and no pointer).
+// security sweep's, and the rest of the audit class. Only a finding
+// (doctorIsFinding) is counted: the measurements are what doctor read and found
+// nothing in, and a pointer to them on every clean run is how a reader learns
+// to skip the line (the owner's rule of 2026-10-31: an installation with
+// nothing wrong prints one line and no pointer).
 type doctorAuditHeld struct {
 	security int
 	other    int
 }
 
+// doctorIsFinding is the one question every hidden class has to answer no to:
+// is this something the reader has to know about? A check that fails doctor is
+// one (checksFail: not ok, severity not "info"), and so is a check carrying the
+// unread marker — a read that did not answer leaves a fact unknown whether the
+// check's own result field says ok or not. The marker is what a check that
+// could not read something sets, and a hidden check that carries it may not be
+// dropped: the alternative is an unknown counted as a measurement, which is the
+// silent pass in the one shape nobody can see.
+func doctorIsFinding(c doctorCheck) bool {
+	return !c.OK || c.unread
+}
+
 // doctorAuditFindingCount is how many of these lines are findings: an audit
-// check that is not ok. The count exists for the verdict line, which is
-// printed above the sweep --security prints, and may not call an installation
-// ok directly above a finding of its own.
+// check the reader has to know about (doctorIsFinding). The count exists for
+// the verdict line, which is printed above the sweep --security prints, and may
+// not call an installation ok directly above a finding of its own.
 func doctorAuditFindingCount(cs []doctorCheck) int {
 	n := 0
 	for _, c := range cs {
-		if !c.OK && doctorClassOf(c) == doctorClassAudit {
+		if doctorIsFinding(c) && doctorClassOf(c) == doctorClassAudit {
 			n++
 		}
 	}
@@ -386,9 +423,9 @@ func doctorVisible(checks []doctorCheck, v doctorView) (shown, auditSecurity []d
 			// printDoctorReport hands --all to printDoctorChecks whole.
 		case security && v.security:
 			auditSecurity = append(auditSecurity, c)
-		case !c.OK && security:
+		case doctorIsFinding(c) && security:
 			held.security++
-		case !c.OK:
+		case doctorIsFinding(c):
 			held.other++
 		}
 	}
@@ -739,15 +776,29 @@ var doctorShorts = map[string]doctorShort{
 	// has and these checks report both a grant doctor could not derive and a
 	// read that did not happen.
 	"secret-readers-unexpected": {"a secret this checkout's jobs mount grants a reader Fugaro cannot place, or could not be read.", ""},
-	"launcher-jobs":             {"which Cloud Run jobs a launcher can start could not be checked.", ""},
-	"launcher-jobs-public":      {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
-	"launcher-jobs-unread":      {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
-	"batch-launcher-iam":        {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
-	"allow-list-uncovered":      {"the published policy does not admit a repository this machine's config names.", ""},
-	"creds-broken":              {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
-	"creds-unknown-state":       {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
-	"creds-rules":               {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
-	"token-signers":             {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	// The secrets-brokering checks (B1.9), the same shape: an ID reports both a
+	// state a reader has to act on and a read that did not answer, so each
+	// sentence covers its ID's states and leaves the names (the repository, the
+	// workflow, the service) to --all and --json. The fix stays the check's own:
+	// it names the container or the repository the command needs. The two whose
+	// only state is information (bundle-bitbucket-token with nothing proxied,
+	// bitbucket-direct before the flip) are counted rather than printed, so
+	// their entries are here for the warning state beside them.
+	"credentials-service-deployed": {"the credentials service's callers could not be checked, or a job account it should admit cannot invoke it.", ""},
+	"secret-rotation-age":          {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
+	"bundle-bitbucket-token":       {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
+	"bitbucket-token-valid":        {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},
+	"bitbucket-direct":             {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
+	"model-key-in-agent":           {"a model credential reaches a workflow's agent's own environment.", ""},
+	"launcher-jobs":                {"which Cloud Run jobs a launcher can start could not be checked.", ""},
+	"launcher-jobs-public":         {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
+	"launcher-jobs-unread":         {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
+	"batch-launcher-iam":           {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
+	"allow-list-uncovered":         {"the published policy does not admit a repository this machine's config names.", ""},
+	"creds-broken":                 {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
+	"creds-unknown-state":          {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
+	"creds-rules":                  {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
+	"token-signers":                {"who can sign the budget database's sign-in tokens could not be read.", ""},
 }
 
 // doctorShortsByPrefix are the short forms for the checks doctor emits once

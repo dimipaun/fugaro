@@ -605,8 +605,18 @@ func TestDoctorBrokeringSecretRotationAge(t *testing.T) {
 		if err != nil {
 			t.Fatalf("doctor: %v", err)
 		}
-		if cs := checksByID(o, "secret-rotation-age"); len(cs) != 0 {
-			t.Errorf("a credential stored today is reported as overdue: %+v", cs)
+		cs := checksByID(o, "secret-rotation-age")
+		if len(cs) != 1 || !cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("secret-rotation-age = %+v, want the one measurement of a period nothing is outside", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "inside what the local config records") || !strings.Contains(cs[0].Problem, "30-day period") {
+			t.Errorf("the measurement does not say what it measured: %q", cs[0].Problem)
+		}
+		// And it is a measurement: the default view neither prints it nor counts
+		// it, which is what keeps the ok line the whole answer on an
+		// installation whose credentials are inside the period the operator set.
+		if out := doctorDefaultOutput(t, cs); out != "fugaro doctor: ok — everything checked is ok\n" {
+			t.Errorf("a period nothing is outside is not one clean line:\n%s", out)
 		}
 	})
 
@@ -778,6 +788,250 @@ func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
 			t.Errorf("an installation whose agent holds no key of its own got %+v", cs)
 		}
 	})
+}
+
+// TestDoctorBrokeringStatesOnTheOneScreen is item 1's classification read from
+// the checks' own emitters rather than from a fixture: every state of the six
+// secrets-brokering IDs is driven through the rig and then through the three
+// views. What each state is worth is decided by what the check emits — a
+// warning is an item of the default view, printed with the command that fixes
+// it; a measurement is printed by --all and counted by nothing; an information
+// line is counted in the pointer the default view ends with, which is where the
+// owner's ruling of 2026-10-31 puts model-key-in-agent.
+func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
+	wants := func(t *testing.T, got string, want ...string) {
+		t.Helper()
+		for _, w := range want {
+			if !strings.Contains(got, w) {
+				t.Errorf("the screen does not carry %q:\n%s", w, got)
+			}
+		}
+	}
+	// counted is the pointer the default view ends with, per kind: the counts
+	// themselves are shared with the other checks a whole rig emits, so what
+	// this pins is that the state is counted rather than dropped — the screen's
+	// last line is the pointer for its kind, and a state the view neither prints
+	// nor counts would leave no line at all.
+	counted := func(t *testing.T, def, flag string) {
+		t.Helper()
+		last := strings.TrimRight(def, "\n")
+		if i := strings.LastIndex(last, "\n"); i >= 0 {
+			last = last[i+1:]
+		}
+		if !strings.HasSuffix(last, flag) || !strings.Contains(last, "finding") {
+			t.Errorf("the default view does not end with the pointer for %s: %q\n%s", flag, last, def)
+		}
+	}
+
+	t.Run("the credentials service is missing", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		wants(t, def,
+			"warning credentials-service-deployed: the credentials service's callers could not be checked, or a job account it should admit cannot invoke it.",
+			"update --provision-credentials")
+	})
+
+	t.Run("the credentials service is deployed and its callers are granted", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if def := doctorDefaultOutput(t, o.Checks); strings.Contains(def, "credentials-service-deployed") {
+			t.Errorf("a check that passed is an item of the default view:\n%s", def)
+		}
+	})
+
+	// The flag's own answer: the bundle holds the token, and Bitbucket accepts
+	// it. Both are measurements, so neither is an item and neither is counted —
+	// what a reader who passed the flag wants is the bundle's own line under
+	// --all, and that is where it is.
+	t.Run("the bundle holds a token Bitbucket accepts", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		srv, _ := bitbucketFake(t, http.StatusOK)
+		useBitbucketRoot(t, srv.URL, srv.Client())
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		if strings.Contains(def, "bundle-bitbucket-token") || strings.Contains(def, "bitbucket-token-valid") {
+			t.Errorf("a measurement is printed on the default screen:\n%s", def)
+		}
+		wants(t, doctorAllOutput(t, o.Checks),
+			"info bundle-bitbucket-token: the credentials service's bundle", "holds a "+config.BitbucketSecret+" credential")
+	})
+
+	t.Run("the bundle holds no token and a repository is proxied", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, config.AnthropicSecret+": "+credsValue(t, "model")+"\n")
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		wants(t, def,
+			"warning bundle-bitbucket-token: the credentials service's bundle holds no Bitbucket token, or could not be read.",
+			"creds set "+config.BitbucketSecret)
+	})
+
+	t.Run("Bitbucket refuses the token", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		srv, _ := bitbucketFake(t, http.StatusUnauthorized)
+		useBitbucketRoot(t, srv.URL, srv.Client())
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		wants(t, def,
+			"warning bitbucket-token-valid: Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.",
+			"creds set "+config.BitbucketSecret)
+	})
+
+	// The unanswered question: Bitbucket failing rather than refusing is
+	// information doctor must not lose — the token may be fine — and the marker
+	// is what keeps it out of the measurements, where it would read as a fact
+	// doctor read and found nothing in.
+	t.Run("Bitbucket does not answer", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		srv, _ := bitbucketFake(t, http.StatusBadGateway)
+		useBitbucketRoot(t, srv.URL, srv.Client())
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "bitbucket-token-valid")
+		if len(cs) != 1 || cs[0].Class != doctorClassAudit {
+			t.Fatalf("bitbucket-token-valid = %+v, want the counted state", cs)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		if strings.Contains(def, "bitbucket-token-valid") {
+			t.Errorf("an unanswered question is printed instead of counted:\n%s", def)
+		}
+		counted(t, def, "`fugaro doctor --all`")
+	})
+
+	// Before the flip a proxied repository's own mount is the installation's
+	// state, and a repository nobody proxied is holding its token by design:
+	// both are information, both are counted, neither is an item.
+	t.Run("the repository holds its own token", func(t *testing.T) {
+		r := newBrokeringDirectRig(t)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "bitbucket-direct")
+		if len(cs) != 1 || cs[0].Class != doctorClassAudit {
+			t.Fatalf("bitbucket-direct = %+v, want the counted audit state", cs)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		if strings.Contains(def, "bitbucket-direct") {
+			t.Errorf("an audit line is printed on the default screen:\n%s", def)
+		}
+		counted(t, def, "`fugaro doctor --all`")
+	})
+
+	t.Run("a job still mounts the token after the flip", func(t *testing.T) {
+		flipProxiedGitList(t, config.BitbucketSecret)
+		r := newBrokeringRig(t)
+		job := r.jobMountingBitbucketToken(t)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		wants(t, def,
+			"warning bitbucket-direct: a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.",
+			"update --repo workspace-a/repo-a")
+		if !strings.Contains(doctorAllOutput(t, o.Checks), job) {
+			t.Errorf("--all does not name the job that still mounts the token")
+		}
+	})
+
+	// The owner's ruling of 2026-10-31: a model credential that reaches a
+	// workflow's agent is a counted security finding. It is not an item — the
+	// installation that runs without the budget is a legitimate one — so the
+	// default screen carries it as the count it ends with, and --security prints
+	// it whole with its fix.
+	t.Run("the model key reaches the agent", func(t *testing.T) {
+		newDoctorRig(t)
+		dir := checkoutWith(t, map[string]string{"fugaro.yaml": strings.Replace(cliMinimalYAML,
+			"workflows:", "agent: { auth: api-key }\nworkflows:", 1)})
+		testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+		out, _, _ := execute(t, "doctor", "--json")
+		var o doctorOutput
+		if err := json.Unmarshal([]byte(out), &o); err != nil {
+			t.Fatalf("json: %v\n%s", err, out)
+		}
+		cs := checksByID(o, "model-key-in-agent")
+		if len(cs) != 1 || cs[0].Class != doctorClassAudit {
+			t.Fatalf("model-key-in-agent = %+v, want the counted security audit finding", cs)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		if strings.Contains(def, "model-key-in-agent") {
+			t.Errorf("the default view prints the sweep's own line:\n%s", def)
+		}
+		counted(t, def, "`fugaro doctor --security`")
+		wants(t, doctorSecurityOutput(t, o.Checks),
+			"model-key-in-agent", "the gateway holds the key")
+	})
+}
+
+// TestDoctorBrokeringCleanInstallationIsOneLine: the same rule the owner's one
+// line is about, on the checks this task adds. An installation that opted in,
+// whose service is deployed and granted, whose bundle holds a token Bitbucket
+// accepts, whose credentials are inside the period the operator recorded and
+// whose agent holds no key of its own prints one line: every one of the six is
+// a check that passed or a measurement doctor made, and neither is an item or a
+// count.
+func TestDoctorBrokeringCleanInstallationIsOneLine(t *testing.T) {
+	flipProxiedGitList(t, config.BitbucketSecret)
+	r := newBrokeringRig(t)
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+		gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+	r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+	srv, _ := bitbucketFake(t, http.StatusOK)
+	useBitbucketRoot(t, srv.URL, srv.Client())
+	addLocalLines(t, r.doctorRig, "secret_rotation_days: 30\n")
+	job := gcp.JobName(mustSlug("bitbucket", "workspace-a/repo-a"), "app")
+	r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+	  "template":{"template":{"containers":[{"image":"fake/app","env":[
+	    {"name":"FUGARO_REPOSITORY","value":"workspace-a/repo-a"}]}]}}}`)
+
+	o, err := r.doctor(t, "--check-bitbucket-token")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	var mine []doctorCheck
+	for _, c := range o.Checks {
+		switch c.ID {
+		case "credentials-service-deployed", "secret-rotation-age", "bundle-bitbucket-token",
+			"bitbucket-token-valid", "bitbucket-direct", "model-key-in-agent":
+			mine = append(mine, c)
+		}
+	}
+	if len(mine) < 5 {
+		t.Fatalf("the rig did not emit the brokering checks: %+v", o.Checks)
+	}
+	if got := doctorDefaultOutput(t, mine); got != "fugaro doctor: ok — everything checked is ok\n" {
+		t.Errorf("a clean installation's brokering checks are not one line:\n%s", got)
+	}
 }
 
 // TestDoctorBitbucketTokenNeverPrinted is the rule the whole flag is built

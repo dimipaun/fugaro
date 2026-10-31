@@ -644,7 +644,15 @@ func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 		return nil
 	}
 	slices.Sort(names)
-	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info", unread: true,
+	// No unread marker, and that is the point of the note: what doctor cannot
+	// read is the provider account's privacy setting, a fact outside this
+	// installation, not a read of the installation that did not answer. The
+	// marker is for the second kind, and with it this line is a counted finding
+	// on every installation whose routes the catalog prices — a pointer over a
+	// screen that has nothing wrong in it, which is what the owner's rule
+	// against a pointer on a clean run forbids. It is a measurement
+	// (doctorMeasureIDs): --all, --security and --json carry it.
+	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info",
 		Problem: "require_zdr is on for the provider route(s) " + strings.Join(names, ", ") + " (the default), so their models are priced at the ZDR-eligible endpoints: " +
 			"that is the conservative price, not enforcement. Whether calls are actually zero-data-retention is your OpenRouter account's privacy setting, and Fugaro cannot read it",
 		Fix: "confirm the account's data policy in the OpenRouter settings; require_zdr: false prices every endpoint the model is served by instead"}
@@ -2064,15 +2072,18 @@ const routingCacheMarkersUnmeasured = "a routed Claude senior's cost is unmeasur
 // what keeps the sentence above from reading as a warning about nothing.
 const routingCacheMarkersNothingRouted = "no Claude ID is routed through a provider by this policy, so no call is charged at a route's rate: when the switch routes one, whether that route reports cache_read/cache_write tokens at all is unmeasured until Check 50 runs"
 
-// routingCacheMarkersUnread is the same check when the policy node itself could
-// not be read: no Firebase backend, an unreachable budget database, a marker or
-// a version this binary cannot read, a failed read. Every one of those paths
-// reaches doctorRoutingChecks with no node, and "no Claude ID is routed through
-// a provider by this policy" is a reading of a node nobody read — doctor said
-// the resolution was unresolved on the line beside it and then reported a
-// reading of the same node. It says which state this is instead, as
-// routing-resolution does.
-const routingCacheMarkersUnread = "the policy node was not read (see routing-resolution), so whether a Claude ID is routed through a provider — and so whether any call is charged at a route's rate — is unknown here: when one is, whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN)"
+// routingCacheMarkersNoSwitch is the same check when no switch is in force: no
+// Firebase backend, an unreachable budget database, a marker, a node this binary
+// cannot read, a failed read, or a policy published that no run applies — the
+// version skew in either direction, which is a node doctor read and cannot use.
+// Every one of those paths reaches doctorRoutingChecks with no node, and "no
+// Claude ID is routed through a provider by this policy" is a reading of a node
+// nobody resolved — doctor said the resolution was unresolved on the line beside
+// it and then reported a reading of the same node. It says which state this is
+// instead, as routing-resolution does, and it says it of the switch rather than
+// of the read: a policy that is published at a version no run applies was read,
+// and "the policy node was not read" would be false about it.
+const routingCacheMarkersNoSwitch = "no routing switch is in force here (see routing-resolution), so whether a Claude ID is routed through a provider — and so whether any call is charged at a route's rate — is unknown from this run: when one is, whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN)"
 
 // routingCacheMarkersUndetermined is the same check when the resolution above
 // could not be read at all: doctor cannot say a routed Claude's cost is
@@ -2130,7 +2141,7 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 				Problem: "the routing resolution is unresolved: " + why,
 				Fix:     "fugaro project policy show prints the switch the published node holds, and `fugaro validate` prints this line from the operator's own config (offline)"},
 			{ID: "routing-cache-markers", Severity: "info",
-				Problem: routingCacheMarkersUnread,
+				Problem: routingCacheMarkersNoSwitch,
 				Fix:     "fugaro project policy publish writes the switch the owner's config holds; Check 50 measures what a routed Claude costs"},
 		}
 	}
