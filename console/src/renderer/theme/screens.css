@@ -99,7 +99,6 @@ h2.projects-title {
   font-weight: var(--weight-semibold);
 }
 
-span.projects-repos-label,
 span.degraded-mode-word,
 span.spend-persons-word {
   font-size: var(--font-size-xs);
@@ -193,8 +192,6 @@ p.live-review-capped {
 li.live-review-row,
 li.spend-person,
 li.spend-cap-repo,
-li.projects-cap,
-li.projects-job,
 li.projects-secret,
 li.projects-account,
 li.degraded-run {
@@ -208,11 +205,7 @@ li.degraded-run {
 }
 
 ol.spend-cap-repos,
-ol.projects-cap-list,
-ol.projects-job-list,
-ol.projects-secret-list,
-ul.projects-enrolled-list,
-ul.projects-seen-list,
+ul.projects-secret-list,
 ul.projects-account-list,
 ol.degraded-runs,
 section.spend-caps,
@@ -247,19 +240,16 @@ span.live-review-repo,
 span.live-review-number,
 span.live-review-url,
 span.live-repo-name,
-span.projects-job-repo,
-span.projects-job-run,
-span.projects-job-workflow,
-span.projects-job-created,
-li.projects-enrolled-repo,
-li.projects-seen-repo,
-span.projects-only-seen-repo,
-span.projects-only-enrolled-repo,
+td.projects-job-repo,
+td.projects-job-run,
+td.projects-job-workflow,
+td.projects-job-created,
+li.projects-only-seen-repo,
+li.projects-only-enrolled-repo,
 span.projects-secret-name,
 span.projects-accounts-repo,
-span.projects-cap-repo,
 span.projects-kill-repo,
-span.projects-job-model,
+td.projects-job-model,
 span.spend-key,
 td.spend-model,
 span.spend-person-user,
@@ -655,6 +645,13 @@ section.spend-caps[data-available='false'] {
  * `data-state` of `read`, `unavailable` or `not-built` (design section 2.5).
  * A panel in any state but `read` has no body at all, so a rule that painted an
  * empty body would paint nothing; what it has is the panel's own sentence.
+ *
+ * **The panels' contents are the redesign's now** (console redesign, step 5):
+ * the caps and the jobs are tables, the switches are rows with a state word,
+ * the repositories are three cards, and the two cards the CLI has no command
+ * for are dashed. Their rules live in `flight-deck.css` against the hooks they
+ * draw, and what is left here is the panel's box and the state its left rule
+ * carries.
  */
 
 header.projects-header {
@@ -668,7 +665,6 @@ span.projects-mode,
 span.projects-day,
 span.projects-source,
 span.projects-count,
-span.projects-cap-scope,
 span.projects-cap-source,
 span.projects-kill-scope,
 span.projects-jobs-total-of,
@@ -678,14 +674,11 @@ span.projects-secret-label,
 span.projects-secret-label-key,
 span.projects-secret-label-value,
 span.projects-secret-allowed,
-span.projects-job-status,
-span.projects-job-stage,
-span.projects-job-by,
-span.projects-job-started-by,
-span.projects-cap-repo,
+td.projects-job-status,
+td.projects-job-stage,
+td.projects-job-by,
+td.projects-job-started-by,
 span.projects-accounts-repo,
-span.projects-only-seen-repo,
-span.projects-only-enrolled-repo,
 span.projects-kill-repo {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -709,15 +702,14 @@ span.projects-job-mode {
 
 /* A panel that is not `read` is not an empty region: it draws its state and the
  * sentence that explains it (`projects-because`), and `not-built` is the
- * design's own honesty rule in the DOM. */
+ * design's own honesty rule in the DOM. The `not-built` card itself -- the dash
+ * and the sunken ground that say "a panel will be here" -- is
+ * `flight-deck.css`'s now: this rule painted a solid left edge for a state the
+ * redesign draws as a dashed box, and two rules for one state is one rule too
+ * many. */
 section.projects-panel[data-state='unavailable'] {
   color: var(--text-muted);
   border-left: 3px solid var(--stale);
-}
-
-section.projects-panel[data-state='not-built'] {
-  color: var(--text-muted);
-  border-left: 3px solid var(--warn);
 }
 
 /* A panel the CLI could `read` is the normal panel, and its left rule is
@@ -735,33 +727,15 @@ section.projects-panel[data-state='read'] {
   border-left: 3px solid var(--accent);
 }
 
-/* The kill panel and a killed repository: `KILLED by <who> <when> "<reason>"`,
- * the word and the tone together.
- *
- * **The row is marked by the banner it holds.** `data-killed` is the
- * **banner's** attribute and not the row's (§2.5's `data-*` line, and §3.5's
- * states table: "the attribute is on the banner, and on Live's repository
- * block itself" -- Live's `section.live-repo` carries it, Projects' row does not),
- * so a rule spelling the row's own border `div.projects-kill-row[data-killed]`
- * selects nothing. `:has()` is the one selector that can see the banner inside,
- * and a row that *has* one is exactly a killed repository: the row without a
- * kill holds the words `not killed` instead. */
-div.projects-kill-row:has(div.projects-kill) {
-  border-left: 3px solid var(--halted);
-}
-
-span.projects-kill-none {
-  color: var(--text-muted);
-}
-
-/* An enrolled repository that is only seen, and a seen repository that is only
- * enrolled: two lists and the sentence that says which is which. */
-p.projects-only-seen,
-p.projects-only-enrolled {
-  margin-top: var(--space-2xs);
-  color: var(--warn);
-  font-size: var(--font-size-base);
-}
+/* The kill panel and a killed repository -- `KILLED by <who> <when> "<reason>"`,
+ * the word and the tone together -- are `flight-deck.css`'s now, against
+ * `li.projects-kill-row[data-killed='true']` and the banner's own
+ * `div.projects-kill` (console redesign, step 5). The rule that stood here
+ * selected the row through `:has()` because the banner was the only element
+ * carrying the attribute; the row carries it itself now, so the selector names
+ * the row. `span.projects-kill-none` and the two `p.projects-only-*` sentences
+ * are gone with the markup that drew them: a live row says `live` in its state
+ * cell, and each repository list is one of the three cards. */
 
 /* ---- Run detail -----------------------------------------------------------
  *
@@ -2022,7 +1996,6 @@ span.coordinator-unread-retry {
     max-width: 50%;
   }
 
-  li.projects-job,
   li.run-log-line {
     gap: var(--space-2xs) var(--space-xs);
   }
@@ -2073,12 +2046,16 @@ span.coordinator-unread-retry {
   section.live-repo,
   li.projects-secret,
   li.projects-account,
+  li.projects-kill-row,
   tr.live-run,
   div.live-runs,
   table.live-table,
   tr.spend-row,
-  li.projects-cap,
-  li.projects-job,
+  tr.projects-cap,
+  tr.projects-job,
+  table.projects-cap-table,
+  table.projects-job-table,
+  article.projects-repo-card,
   li.degraded-run,
   li.run-stage,
   li.run-spend-stage,
@@ -2193,9 +2170,11 @@ span.coordinator-unread-retry {
   p.run-replay-axis,
   p.run-replay-no-span,
   p.run-replay-window-line,
-  span.projects-cap-scope,
   span.projects-cap-source,
   span.projects-kill-scope,
+  span.projects-kill-state,
+  span.projects-state,
+  span.projects-reserve-word,
   span.projects-jobs-total-of,
   span.projects-secret-scope,
   span.projects-secret-latest,
@@ -2203,15 +2182,17 @@ span.coordinator-unread-retry {
   span.projects-secret-label-key,
   span.projects-secret-label-value,
   span.projects-secret-allowed,
-  span.projects-job-status,
-  span.projects-job-stage,
-  span.projects-job-by,
-  span.projects-job-started-by,
-  span.projects-cap-repo,
+  span.projects-secret-bound-word,
+  td.projects-job-status,
+  td.projects-job-stage,
+  td.projects-job-by,
+  td.projects-job-started-by,
   span.projects-accounts-repo,
-  span.projects-only-seen-repo,
-  span.projects-only-enrolled-repo,
   span.projects-kill-repo,
+  p.projects-repo-card-none,
+  p.projects-repo-card-note,
+  p.projects-account-none,
+  p.projects-secrets-managed,
   span.spend-persons-state,
   span.spend-persons-word,
   p.live-note,
@@ -2227,8 +2208,6 @@ span.coordinator-unread-retry {
   p.projects-jobs-note,
   p.projects-accounts-note,
   p.projects-warning,
-  p.projects-only-seen,
-  p.projects-only-enrolled,
   p.run-warning,
   p.run-log-note,
   p.run-log-refused,
@@ -2312,11 +2291,17 @@ span.coordinator-unread-retry {
 
   tr.live-run,
   tr.spend-row,
+  tr.projects-cap,
+  tr.projects-job,
   li.spend-person,
-  li.projects-cap,
-  li.projects-job,
   li.projects-secret,
   li.projects-account,
+  li.projects-kill-row,
+  article.projects-repo-card,
+  table.projects-cap-table,
+  table.projects-job-table,
+  button.projects-kill-action,
+  button.projects-repo-add,
   li.degraded-run,
   li.run-stage,
   li.run-spend-stage,
@@ -2342,7 +2327,7 @@ span.coordinator-unread-retry {
   section.projects-panel[data-state='read'],
   section.projects-panel[data-state='unavailable'],
   section.projects-panel[data-state='not-built'],
-  div.projects-kill-row:has(div.projects-kill),
+  li.projects-kill-row[data-killed='true'],
   li.spend-dim-unknown[data-dimension='unknown'],
   div.spend-cap-limit[data-limit='max_reserve'],
   section.console-unavailable[data-kind='refused'],
