@@ -79,6 +79,11 @@ var doctorSecurityPrefixes = []string{
 	"job-token-grant",
 	"credentials-service-deployers",
 	"project-secret-extra-accessors",
+	// The Batch launchers' roles/batch.jobsEditor grant: an IAM widening check
+	// like the rest of the sweep. It is a warning or nothing, never an info
+	// line, so today it reaches the default view either way; naming it here is
+	// what keeps it in the sweep if it ever gains a measurement.
+	"batch-launcher-iam",
 }
 
 // doctorDecisionIDs are the checks whose state is the owner's to choose: doctor
