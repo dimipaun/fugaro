@@ -37,7 +37,7 @@ slice is S0–S3.**
 | 1 | S1, S3 | S0 (S1) |
 | 2 | S2, S4, S5 | S1 (S2, S5); S3 (S4); E3 (S5); R1 (S5) |
 | 3 | S6, S7, S8, S9 | S5, and S3 for S6, S7, S8 and S9 |
-| 4 | S10 | S1–S9; E1 and E2 merged before the release |
+| 4 | S10, S11 | S1–S9 (S10); S1–S3 and S5 (S11, plus R0 and R1 for the layer half of the loop) |
 
 **The joint order**, agreed with the `models` and `rigor` designs and the same list in all three:
 **editor → policy stage (S3) → settings read (S0–S2, S4) → layer stage (R0, R1) → set (S5) → rigor
@@ -76,7 +76,9 @@ fourth hand-kept copy (F12).
 - **Tests:** `TestRegistryCoversEveryConfigField` (every `fugaro.yaml`, project-layer and
   local-config field has a row), `TestRegistryFugaroYAMLKeysMatchConfigScopes` (row for row with
   `config.Scopes`), `TestRegistryKeysAreUnique`, `TestRegistryDefaultsMatchApplyDefaults`,
-  `TestRegistryOwnerNamesACommand`, `TestRegistryMarksEverySensitiveKey`.
+  `TestApplyDefaultsUsesTheRegistry` (the red-step test: the literals `applyDefaults` restates today
+  are gone and its values come from the registry), `TestRegistryOwnerNamesACommand`,
+  `TestRegistryMarksEverySensitiveKey`.
 - **Hermetic:** pure Go, no filesystem.
 
 ## S1. `fugaro settings`, the read over the offline layers (SD1, D839, D849, D851, D852)
@@ -118,25 +120,37 @@ on the next `update` (G1, G2).
 - **Hermetic:** `internal/gcpfake` for the runs bucket, a fake Realtime Database reader behind the
   existing seam, `t.TempDir()`. No cloud call.
 
-## S3. `fugaro update` publishes the policy node, and `project policy publish` is refused to an agent (SD3, SD8). **SEC**
+## S3. `fugaro update` publishes the policy node, and the two cloud-writing doors are refused to an agent (SD3, SD8). **SEC**
 
 The stage writes the node every run of the project is admitted by, and it decides what a run may
-spend. It is E1, and it is the first slice's second half.
+spend. It is E1, and it is the first slice's second half. **Both** doors SD8 names are here: `project
+policy publish` and `project repos add` (F16).
 
-- **Files (7):** `internal/cli/init_policy_publish.go` (new: build from the local config with
+- **Files (9):** `internal/cli/init_policy_publish.go` (new: build from the local config with
   `buildProjectPolicy`, the diff, the confirmation, the ETag write), `internal/cli/init_policy_publish_test.go`
   (new), `internal/cli/init_stages.go` (the publish becomes part of the `Policy` stage's work),
   `internal/cli/init_policy_migrate.go` (the shared build-and-write path, so the stage and the
   explicit door cannot drift), `internal/cli/project_cmd.go` (the agent refusal `project policy
-  publish` lacks today, SD8), `internal/cli/project_cmd_test.go`, `docs/policy-migration.md` (§ on
-  who publishes, and the one command).
+  publish` lacks today, SD8), `internal/cli/project_cmd_test.go`, `internal/cli/project_enroll.go`
+  (the same refusal for `project repos add`, which carries none today except for
+  `--github-app-key`), `internal/cli/project_enroll_test.go`, `docs/policy-migration.md` (§ on who
+  publishes, and the one command).
 - **Red step:** `TestUpdatePublishesThePolicyNodeWhenItDrifts` fails while no stage builds the node
   from the local config.
 - **Tests:** `TestUpdatePublishesThePolicyNodeWhenItDrifts`, `TestUpdatePolicyStageWritesNothingWhenTheNodeMatches`,
+  `TestUpdatePolicyStageWritesUnderTheETag` (the write carries the ETag the read returned),
+  `TestUpdatePolicyStageRefusesWhenTheNodeMovedUnderIt` (a node another writer changed between the
+  read and the write is a conflict, not an overwrite: nothing is written and the sentence says whose
+  generation won),
   `TestUpdatePolicyStageAppliesNothingInAnAgentSessionEvenWithYes`,
+  `TestUpdateStageAndTheExplicitDoorBuildTheSameNode` (both go through `buildProjectPolicy` and
+  produce the same bytes from one local config — the guard against a second build path appearing
+  later),
   `TestInstallationAtThePreviousVersionConverges` (an installation whose node predates this release
   ends the update with it published — the HARD RULE's own test),
-  `TestProjectPolicyPublishIsRefusedInAnAgentSession`, `TestProjectPolicyPublishKeepsDeleteAndSeedRepos`.
+  `TestProjectPolicyPublishIsRefusedInAnAgentSession`, `TestProjectPolicyPublishKeepsDeleteAndSeedRepos`,
+  `TestProjectReposAddIsRefusedInAnAgentSession` (SD8's second door, F16, both the plain form and
+  `--github-app-key`).
 - **Hermetic:** `internal/gcpfake`, a fake Realtime Database, `t.TempDir()`. No apply, no deploy, no
   cloud call.
 - **Its own `### For operators`, in this task's release notes** — the first slice's step, and S10's
@@ -179,6 +193,10 @@ outside every repository, which is why the agent-session refusal is here.
   exist.
 - **Tests:** `TestSettingsSetRefusesAKeyOwnedByAnotherFamily`,
   `TestSettingsSetRefusesALayerTheKeyMayNotBeSetIn`, `TestSettingsSetRefusesAValueTheLoaderRefuses`,
+  `TestSettingsSetRepoLayerWithoutRepoUsesTheCurrentCheckout` (spec §4.2 step 2: with no `--repo` the
+  write lands in the current checkout's `fugaro.yaml`),
+  `TestSettingsSetRepoLayerOutsideACheckoutIsRefused` (the other half of that step: no `--repo` and no
+  checkout is refused rather than guessed),
   `TestSettingsSetRefusesInAnAgentSessionEvenWithYes`, `TestSettingsSetRepoLayerIsAllowedInAnAgentSession`,
   `TestSettingsSetLooseningACeilingAsksForTheTypedProjectName` (and `--yes` does not stand in),
   `TestSettingsSetRepoLayerRefusesALooseningInAnAgentSession` (spec §4.2 step 4: the typed-name
@@ -186,6 +204,9 @@ outside every repository, which is why the agent-session refusal is here.
   `TestSettingsSetBacksUpAndWritesAtomically`, `TestSettingsSetKeepsTheRestOfTheFile`,
   `TestSettingsAddAndRemoveOnAListKey`, `TestSettingsRefusesEmptyingAListKey`,
   `TestSettingsUnsetRemovesTheKeyRatherThanWritingTheDefault`,
+  `TestSettingsUnsetOfACeilingAsksForTheTypedProjectName` (spec §4.3: removal crosses the same
+  boundary as loosening, so `unset` of a ceiling or a floor asks for the typed name and `--yes` does
+  not stand in),
   `TestSettingsUnsetOfNothingIsAnExitZeroSentence`, `TestSettingsSetPrintsOnlyFugaroUpdateNext`,
   `TestSettingsSetWritesNothingInTheCloud`, `TestTheThreeEditorsPreserveBytesTheSameWay` (D847's
   cross-document test).
@@ -205,13 +226,22 @@ today the only writer is the Firebase console.
   `internal/cli/init_policy_publish.go` (the import), `internal/cli/init_policy_publish_test.go`,
   `internal/cli/project_cmd_test.go`.
 - **Red step:** `TestProjectCredentialsSetWritesTheLocalBlock` fails while the block does not exist.
-- **Tests:** `TestProjectCredentialsSetWritesTheLocalBlock`,
-  `TestProjectCredentialsRefusesAnUnknownFallback`, `TestProjectCloneURLSetWritesTheLocalBlock`,
+- **Tests:** `TestProjectCredentialsSetWritesTheLocalBlock` (`set fallback`),
+  `TestProjectCredentialsRefusesAnUnknownFallback`,
+  `TestProjectCredentialsSetWritesWaitThreshold` (`set wait-threshold`, a duration),
+  `TestProjectCredentialsSetWritesBackoffInitialAndCap` (`set backoff --initial --cap`, both keys in
+  one write),
+  `TestProjectCredentialsSetWritesConcurrencyPerToken` (`set concurrency-per-token`),
+  `TestProjectCredentialsSetWritesStopAfterExhaustion` (`set stop-after-exhaustion`),
+  `TestProjectCredentialsShowPrintsTheBlockAndNoSecret` (the read: the row format of spec §2, the
+  fallback named, nothing sensitive),
+  `TestProjectCloneURLSetWritesTheLocalBlock`, `TestProjectCloneURLLsListsEveryCanonical`,
   `TestUpdateImportsTheNodesCredentialsIntoTheLocalFile` (and `clone_urls`),
   `TestUpdateImportDeclinedLeavesBothSidesUntouched`,
   `TestUpdateSeedsNothingWhenTheNodeCarriesNeitherBlock`,
   `TestBuildProjectPolicyPublishesTheLocalBlocksAndNotTheNodesCopy`,
   `TestProjectCredentialsRefusesInAnAgentSessionEvenWithYes`,
+  `TestProjectCloneURLRefusesInAnAgentSessionEvenWithYes`,
   `TestProjectCredentialsPrintsOnlyFugaroUpdateNext`.
 - **Hermetic:** a fake Realtime Database carrying a `credentials` block and a `clone_urls` map,
   `t.TempDir()` config home.
@@ -228,9 +258,15 @@ publish.
   path).
 - **Red step:** `TestRigorFloorSetWritesTheModeFloor` fails while the subcommand does not exist.
 - **Tests:** `TestRigorFloorSetWritesTheModeFloor`,
-  `TestRigorFloorSetLoweringAsksForTheTypedProjectName`, `TestRigorFloorUnsetRemovesTheModeEntry`,
+  `TestRigorFloorSetLoweringAsksForTheTypedProjectName`,
+  `TestRigorFloorShowPrintsTheFloorPerMode` (the read: every mode with its levels, `{}` shown as a
+  floor of nothing rather than as absent),
+  `TestRigorFloorUnsetRemovesTheModeEntry`, `TestRigorFloorUnsetOfTheLastModeKeepsTheEmptyFloor` (the
+  subtle half: a floor of nothing is written `{}`, where an absent key means the layer below decides
+  — the two are not the same at publish),
   `TestRigorFloorUnsetOfNothingIsAnExitZeroSentence`, `TestRigorFloorRefusesAnUnknownLevel`,
-  `TestRigorFloorRefusesInAnAgentSession`, `TestRigorFloorKeepsTheRestOfTheFile`.
+  `TestRigorFloorRefusesInAnAgentSession`, `TestRigorFloorKeepsTheRestOfTheFile`,
+  `TestRigorFloorPrintsOnlyFugaroUpdateNext`.
 - **Hermetic:** `t.TempDir()` config home, a fixture with the owner's comments.
 
 ## S8. `fugaro accounts`, `fugaro secrets allow`, and SD17. **SEC**
@@ -244,10 +280,16 @@ to every operator machine" step.
   `internal/cli/upgrade_cloud.go` (`update --repo` reads `project_secrets` from the node),
   `internal/cli/upgrade_cloud_test.go`.
 - **Red step:** `TestAccountsAllowAppendsTheRepository` fails while the subcommand does not exist.
-- **Tests:** `TestAccountsAllowAppendsTheRepository`, `TestAccountsDenyRemovesIt`,
+- **Tests:** `TestAccountsAddCreatesTheAccountWithItsAllowList` (the first form: an account that does
+  not exist yet is created with the repositories it may spend from),
+  `TestAccountsAllowAppendsTheRepository`, `TestAccountsDenyRemovesIt`,
   `TestAccountsRmRemovesTheAccount`, `TestSecretsAllowWritesThePatternList`,
   `TestSecretsAllowProxySetsTheFlag`, `TestUpdateRepoReadsTheAllowListFromTheNode`,
-  `TestAccountsAllowRefusesInAnAgentSession`.
+  `TestAccountsLsShowsWhatAccountsAddAndAllowWrote` and
+  `TestSecretsLsShowsWhatSecretsAllowWrote` (the read path: `accounts ls` and `secrets ls` are the
+  family's reads, so these assert the writes are what those commands print, and that no token is),
+  `TestAccountsAllowRefusesInAnAgentSession`, `TestSecretsAllowRefusesInAnAgentSession`,
+  `TestAccountsAllowPrintsOnlyFugaroUpdateNext`.
 - **Hermetic:** a fake Realtime Database, `t.TempDir()` config home.
 
 ## S9. `fugaro project profile` and `fugaro project routing` (G6, G8). **SEC**
@@ -261,10 +303,12 @@ publisher refuses silence for the same reason.
   (the routing silence rules, shared with the publisher rather than restated).
 - **Red step:** `TestProjectProfileAddWritesAJobProfile` fails while the subcommand does not exist.
 - **Tests:** `TestProjectProfileAddWritesAJobProfile`, `TestProjectProfileSetChangesOneKey`,
-  `TestProjectProfileRmRefusesWhileAWorkflowUsesIt`, `TestProjectRoutingSetWritesTheVia`,
-  `TestProjectRoutingUnsetRemovesTheBlock`,
+  `TestProjectProfileRmRefusesWhileAWorkflowUsesIt`, `TestProjectProfileLsListsTheProfiles` (the
+  read), `TestProjectRoutingSetWritesTheVia`, `TestProjectRoutingUnsetRemovesTheBlock`,
+  `TestProjectRoutingShowPrintsTheRoute` (the read),
   `TestProjectRoutingRefusesSilenceThatTurnsTheCascadeOff`,
-  `TestProjectProfileRefusesInAnAgentSession`.
+  `TestProjectProfileRefusesInAnAgentSession`, `TestProjectRoutingRefusesInAnAgentSession`,
+  `TestProjectProfilePrintsOnlyFugaroUpdateNext`.
 - **Hermetic:** `t.TempDir()` config home, fixture files.
 
 ## S10. Documentation, skill and release notes
@@ -281,6 +325,26 @@ publisher refuses silence for the same reason.
   merged; it turns green on S1's branch.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs`, the plugin tests, `npm run check` in
   `website/`.
+
+## S11. The end-to-end converge test (SD3, SD4, D849)
+
+The whole design is one loop: set a value, see it `unpublished`, run `fugaro update`, see it `ok`.
+Every task above tests one half of it, and the halves are exactly what can drift apart, so the loop
+itself is a task: it is the test the HARD RULE is about (the published change that silently does
+nothing, G1 and G2).
+
+- **Files (1):** `internal/cli/settings_converge_test.go` (new).
+- **Red step:** `TestSetReadUnpublishedUpdateThenConverged` fails while the read command and the update
+  stage do not both exist. It is the one test that spans two tasks, so it is written with the first
+  slice and stays red until S5 can write the value it converges.
+- **Tests:** `TestSetReadUnpublishedUpdateThenConverged` — one hermetic installation (a fake Realtime
+  Database and `internal/gcpfake`): `settings set` a ceiling key at `--layer local`, read it back as
+  `unpublished` with the local value in `VALUE`, run the `fugaro update` policy stage against the fake,
+  read again and see `ok`, the same value, and `WINS local`; then the same loop for a project-layer key
+  once S4 and R1 are in.
+  `TestConvergePrintsOnlyFugaroUpdateNext` (the loop's whole output names `next: fugaro update` once and
+  no second command).
+- **Hermetic:** `internal/gcpfake`, a fake Realtime Database, `t.TempDir()` config home. No cloud call.
 
 ## Live checks
 

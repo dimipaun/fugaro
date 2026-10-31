@@ -27,7 +27,7 @@ are placeholders (`owner/repo-a`, `owner/repo-b`), projects are `workspace-a`, p
 
 ```
 fugaro settings [KEY|GLOB ...] [--repo owner/name | --all-repos]
-                [--layer default,project,profile,repo,local,shared,policy,caps,env]
+                [--layer default,project,profile,repo,flag,local,shared,policy,caps,env]
                 [--grep RE] [--changed] [--why] [--offline] [--json]
 ```
 
@@ -74,7 +74,7 @@ A level that sets a key and loses is not hidden: under `--why` it is printed wit
 
 The effective value — **the one a run gets**, not the raw value of any one layer (D849). This is
 where `settings` differs from `config show`, which reports a repository's `budget.per_run_usd: 50`
-as source `repo` even when the project ceiling clamps it to 10 and only `validate` says so (F11).
+as source `repo` even when the project ceiling clamps it to 10 and only `validate` says so (F17).
 Here the row reads `10` with `WINS policy`, and `--why` carries the `50` and the clamp.
 
 - **No secret value is ever printed.** No setting value is a secret today — a provider `secret` and
@@ -119,10 +119,18 @@ whose cloud side was read; with `--offline` it is not claimed at all.
 - `--repo owner/name` narrows the repository scope to one; `--all-repos` iterates the local config's
   `repos:` plus this machine's remembered checkouts (`internal/localcfg/checkouts.go`). A repository
   with no checkout is `unknown (no checkout on this machine)` (the `rigor` design's D839).
-- `--layer` restricts the layers read, by the names in the synopsis. `default` and `env` are always
-  readable; `policy` and `caps` are the two cloud layers; `--layer` with a name the registry does
-  not know is refused.
-- `--grep RE` filters rows by key or by rendered value (a Go regexp, matching the text columns).
+- `--layer` restricts the layers read, to the ten names in the synopsis: `default`, `project`,
+  `profile`, `repo`, `flag`, `local`, `shared`, `policy`, `caps` and `env`. `default` and `env` are
+  always readable; `policy` and `caps` are the two cloud layers; `flag` is the top level of §2.2's
+  first row, a run's own command-line override for the `InOverride` keys, and `settings` takes no such
+  override itself, so `--layer flag` reads an empty layer rather than being refused — it is a level
+  `WINS` can name, and leaving it out would make `--layer`'s vocabulary smaller than the precedence's.
+  The one level of §2.2 that is not a `--layer` name is `branch`: only a run has a branch, so it is
+  not a store a read selects. `--layer` with a name the registry does not know is refused.
+- `--grep RE` filters rows by key or by rendered value. `RE` is a Go regexp, matched with
+  `MatchString` against the key and then against each rendered text column: **unanchored**, so a
+  pattern matches anywhere in either, and **case-sensitive** unless the pattern says otherwise
+  (`(?i)`). A pattern that does not compile is refused with the compiler's own message.
 - `--offline` stops after the offline layers; every cloud row then reads `unread: offline` rather
   than disappearing, so the table keeps its shape.
 - `--json` prints one versioned document (§2.8).
@@ -141,7 +149,7 @@ whose cloud side was read; with `--offline` it is not claimed at all.
 
 Each layer's reader is the one that already exists — `config.Resolve`, `localcfg`'s selector and
 parser, `ParseShared` and its cache, `projectpolicy`'s read, the budget reader — so `settings` adds
-no second reader for anything (F14). It reads no Terraform state and calls no Secret Manager access
+no second reader for anything (F6). It reads no Terraform state and calls no Secret Manager access
 method (D850).
 
 ### 2.8 `--json`
@@ -230,7 +238,7 @@ In order:
    branch starts, so an agent may propose that edit but not make it.
 5. **Show, confirm, back up, write.** The line diff, then the confirmation; the old file backed up
    to `<file>.bak-<UTC timestamp>` (mode 0600) and the new one written atomically through the same
-   `lineDiff`, `backupFile` and `writeFileAtomic` every other writer uses (F9).
+   `lineDiff`, `backupFile` and `writeFileAtomic` every other writer uses (F4).
 6. **Hand off.** `next: fugaro update`.
 
 **The sensitive directions ask for the typed project name** (`confirmTypedStrict`, D846): loosening
@@ -262,9 +270,11 @@ with a family is refused with a pointer, never written twice by two paths.
 
 ## 5. The dedicated families
 
-Each is the same shape: `show` (read-only, `--json`, the row format of §2), then the writes, through
-the same check/diff/confirm/backup/atomic-write path and the same agent-session rule. Each refuses
-in an agent session when it writes outside a repository, and each ends with `next: fugaro update`.
+Each is the same shape: a **read** — the family's own `show`/`ls`, or the `ls` the command already
+has (`fugaro accounts ls`, `fugaro secrets ls`), read-only, `--json`, in the row format of §2 — then
+the writes, through the same check/diff/confirm/backup/atomic-write path and the same agent-session
+rule. Each refuses in an agent session when it writes outside a repository, and each ends with
+`next: fugaro update`.
 
 | Family | Forms | Writes | Covers |
 | --- | --- | --- | --- |
@@ -292,7 +302,8 @@ refused in a coding-agent session as every cloud write of `update` already is (S
    the same stage the `models` design's E1 names (its F8, UC1 part b); **it is one stage and it is
    built once** — whichever work lands it first, the other deletes its copy. `project policy
    publish` stays for `--delete`, `--seed-repos` and scripted use, and gains the agent-session
-   refusal it lacks today (SD8).
+   refusal it lacks today — the other door SD8 names, `fugaro project repos add`, gains the same
+   one, and only its `--github-app-key` form has it today (F16).
 2. **Layer publish.** The stage that publishes the project layer's local file —
    `~/.config/fugaro/projects/<project>-layer.yaml`, the path `localcfg.LayerFile` resolves — through
    `publishLayer`, and fans it out through `fanOutLayer`, with the executable-key gate unchanged.

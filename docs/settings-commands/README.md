@@ -56,8 +56,8 @@ This work adds:
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The read command and its columns, the write path, the seven dedicated families, the publish foundation, the registry, the shared mechanics the `models` and `rigor` designs already own, the migration of a hand-edited installation, and the console contract section a Settings view will need |
-| [reconciliation.md](reconciliation.md) | Findings F1–F20 against the code on `main`, the owner's answers to SD1–SD18, and this design's own decisions D840–D853 (each with a recommendation and the cost of the alternative). **Where it disagrees with [spec.md](spec.md), it wins** |
-| [implementation-plan.md](implementation-plan.md) | Tasks S0–S10 (at most 12 files each), the external dependencies E1–E3, and the order; each task names its tests, starts with a red step and carries a SEC flag where it writes policy, the layer or a credential block. **The first slice is S0–S3** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F20 against the code on `main`, the owner's answers to SD1–SD18, and this design's own decisions D840–D854 (each with a recommendation and the cost of the alternative). **Where it disagrees with [spec.md](spec.md), it wins** |
+| [implementation-plan.md](implementation-plan.md) | Tasks S0–S11 (at most 12 files each), the external dependencies E1–E3, and the order; each task names its tests, starts with a red step and carries a SEC flag where it writes policy, the layer or a credential block. **The first slice is S0–S3**; S11 is the end-to-end converge test |
 
 ## How this was reconciled
 
