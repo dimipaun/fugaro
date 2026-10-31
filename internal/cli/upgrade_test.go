@@ -1,14 +1,23 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // upgradeEnv is a hermetic machine for fugaro upgrade at version v: no coding
@@ -74,7 +83,7 @@ func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 	for _, s := range upgradeSteps {
 		names = append(names, s.name)
 	}
-	if got := strings.Join(names, ","); got != "pin,plugin,cloud,policy" {
+	if got := strings.Join(names, ","); got != "pin,plugin,cloud,rules,policy" {
 		t.Fatalf("upgradeSteps = %s", got)
 	}
 	upgradeEnv(t, "0.5.2")
@@ -99,25 +108,94 @@ func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 				t.Fatalf("%v\n%s", err, out)
 			}
 			cloud := "cloud: skipped: no fugaro.yaml yet, so no job image to refresh"
+			rules := "rules: skipped: no fugaro.yaml yet, so no job image to refresh"
 			switch tc.name {
 			case "local":
-				cloud = "cloud: skipped: --local"
+				cloud, rules = "cloud: skipped: --local", "rules: skipped: --local"
 			case "agent":
-				cloud = "cloud: skipped: a coding agent's session"
+				cloud, rules = "cloud: skipped: a coding agent's session", "rules: skipped: a coding agent's session"
+			case "check":
+				// --check reaches its caveat before anything is read, the way
+				// the policy step does, so it says it cannot tell whatever the
+				// checkout holds.
+				rules = "rules: skipped: --check makes no cloud call, so the deployed security rules are not read"
 			}
-			for _, want := range []string{"pin: current", tc.pluginSkip, cloud,
-				"  " + root + ": pin current, plugin skipped, cloud skipped, policy skipped",
+			for _, want := range []string{"pin: current", tc.pluginSkip, cloud, rules,
+				"  " + root + ": pin current, plugin skipped, cloud skipped, rules skipped, policy skipped",
 				"nothing to do: " + root + " is current (apart from what the skipped steps name)"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			for _, bad := range []string{"not implemented", "not checked:", "plugin: current", "cloud: current"} {
+			for _, bad := range []string{"not implemented", "not checked:", "plugin: current", "cloud: current", "rules: current"} {
 				if strings.Contains(out, bad) {
 					t.Errorf("output claims %q of a step that is skipped here:\n%s", bad, out)
 				}
 			}
 		})
+	}
+}
+
+// upgradeBudgetRig is a checkout of the project whose local config records the
+// shared budget backend the fake database backs — the state fugaro upgrade has
+// to reach the rules deploy from. updateBudgetRig is update's own half of it,
+// and the checkout is what resolveCloudRepo reads the door through.
+func upgradeBudgetRig(t *testing.T) (*initRig, *gcpfake.RTDB, string) {
+	t.Helper()
+	r, db := updateBudgetRig(t)
+	root := gitCheckout(t, filepath.Join(r.dir, "app"), checkoutYAML("bitbucket", "api-key", initProjectName, ""))
+	testutil.Git(t, root, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git")
+	return r, db, root
+}
+
+// TestUpgradeRunsTheRulesStep: fugaro upgrade runs the rules deploy the update
+// door's rules stage runs, in the one slot it can run it — before the policy
+// step, whose writer refuses a migration the deployed rules would not admit
+// (requirePolicyRules) — so an installation converges from either front door
+// and one upgrade is the whole move, the rule of 2026-10-30. The document
+// written and the generation recorded are that stage's own, not a second
+// implementation of them.
+func TestUpgradeRunsTheRulesStep(t *testing.T) {
+	var names []string
+	for _, s := range upgradeSteps {
+		names = append(names, s.name)
+	}
+	if want := []string{"pin", "plugin", "cloud", "rules", "policy"}; !slices.Equal(names, want) {
+		t.Fatalf("the steps are %v, want %v", names, want)
+	}
+	if got := reflect.ValueOf(upgradeSteps[3].run).Pointer(); got != reflect.ValueOf(rulesStep).Pointer() {
+		t.Error("the rules step is registered under some other function")
+	}
+	_, db, root := upgradeBudgetRig(t)
+	// The state the step exists for: the project's database holds rules that
+	// carry no generation marker, so a project policy in it would be read
+	// under rules that predate the policy model.
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(&syncBuf{})
+	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: root}}
+	u.o.yes = true
+	got := rulesStep(context.Background(), u)
+	if got.state != stepDone {
+		t.Fatalf("the rules step is %s: %s\n%s", got.state, got.reason, out)
+	}
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Errorf("the deployed rules are not this Fugaro's generation:\n%s", db.Rules())
+	}
+	if db.RulePuts() == 0 {
+		t.Error("the step reported a deploy that wrote no rules")
+	}
+	if want := strconv.Itoa(projectpolicy.RulesVersion); rulesMarkerOn(t, db) != want {
+		t.Errorf("the rules generation marker is %q, want %q", rulesMarkerOn(t, db), want)
+	}
+	if !strings.Contains(out.String(), "The security rules of the Firebase project "+initProject+":") {
+		t.Errorf("the plan was not shown before the confirmation:\n%s", out)
 	}
 }
 
@@ -172,7 +250,7 @@ func TestUpgradeNeverMovesAPinDown(t *testing.T) {
 				t.Fatalf("exit %d, changed %v\n%s", ExitCode(err), upgradeRead(t, settings) != tc.settings, out)
 			}
 			for _, want := range []string{"pin: failed: the plugin is pinned to 0.6.0, newer than this fugaro 0.5.2", "never moves a pin down", "brew upgrade dimipaun/tap/fugaro",
-				"  " + root + ": pin failed, plugin not run, cloud not run, policy not run", "once that is fixed, rerun: fugaro upgrade " + strings.Join(tc.flags, " ") + " " + root} {
+				"  " + root + ": pin failed, plugin not run, cloud not run, rules not run, policy not run", "once that is fixed, rerun: fugaro upgrade " + strings.Join(tc.flags, " ") + " " + root} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
@@ -218,7 +296,7 @@ func TestUpgradeDevBuildSkipsEveryPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	for _, want := range []string{"  " + notCheckout + ": pin skipped, plugin skipped, cloud skipped, policy skipped", "  " + plain + ": pin skipped, plugin skipped, cloud skipped, policy skipped"} {
+	for _, want := range []string{"  " + notCheckout + ": pin skipped, plugin skipped, cloud skipped, rules skipped, policy skipped", "  " + plain + ": pin skipped, plugin skipped, cloud skipped, rules skipped, policy skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -311,7 +389,7 @@ func TestUpgradeCheckReportsAFork(t *testing.T) {
 	}
 	for _, want := range []string{"pin: stale: the marketplace is the fork someone/fugaro: pass --allow-fork if it is yours (only its ref moves)",
 		"plugin: skipped: cannot tell from Claude Code's record of installed plugins",
-		"  " + root + ": pin stale, plugin skipped, cloud skipped, policy skipped"} {
+		"  " + root + ": pin stale, plugin skipped, cloud skipped, rules skipped, policy skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -341,7 +419,7 @@ func TestUpgradeFlagRules(t *testing.T) {
 		want string
 	}{
 		{[]string{"--check", "--yes"}, "--check writes nothing"},
-		{[]string{"--local", "--yes"}, "--yes confirms the cloud step"},
+		{[]string{"--local", "--yes"}, "--yes confirms the cloud, rules and policy steps"},
 		{[]string{"--local", "--repo", "acme/app"}, "which --local skips"},
 		{[]string{"--yes", "--workflow", "app", root, root}, "give them with one PATH"},
 	} {
