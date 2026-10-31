@@ -781,6 +781,42 @@ func TestPolicyPublishRefusesOverUnknownFields(t *testing.T) {
 	}
 }
 
+// TestUpgradePolicyStepSkipsTheDatabaseTheRulesStageSkips is the second door of
+// the same write: `fugaro upgrade`'s policy step reaches the migration with no
+// rules stage in front of it at all (the step is last, and the rules stage is
+// `fugaro update`'s), so the step is where a gate the rules stage holds and the
+// migration does not is invisible. It answers the same two shapes as the update
+// probe (unadoptedShapes, the config recording no Firebase project, and one
+// recording the installation's own with a database that is not its own) through
+// one shared predicate, and the probe is the same: every fact the write needs,
+// and another installation's node exactly as it was.
+func TestUpgradePolicyStepSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
+	for _, s := range unadoptedShapes {
+		t.Run(s.name, func(t *testing.T) {
+			_, db, root := unadoptedRig(t, s)
+			out := &syncBuf{}
+			cmd := NewRootCmd()
+			cmd.SetOut(out)
+			cmd.SetErr(&syncBuf{})
+			u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: root}}
+			// --yes, or the step stops at the typed confirmation and the probe
+			// never reaches the write it is about.
+			u.o.yes = true
+
+			r := policyStep(context.Background(), u)
+			if r.state != stepSkipped {
+				t.Fatalf("the policy step is %s, want skipped: %s", r.state, r.reason)
+			}
+			for _, want := range s.wants {
+				if !strings.Contains(r.reason, want) {
+					t.Errorf("the skip does not name %q: %q", want, r.reason)
+				}
+			}
+			unadoptedAssertions(t, db)
+		})
+	}
+}
+
 // TestUpgradeRunsThePolicyMigration: the upgrade step is the same migration,
 // in the same place in the sequence (the owner's rule of 2026-10-30: the
 // whole upgrade is one command, whichever door the user is in).

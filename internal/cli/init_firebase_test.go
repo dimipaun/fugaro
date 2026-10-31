@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1988,6 +1990,148 @@ func TestUpdatePolicyMigrationNamesTheWayOutBeforeItReadsTheNode(t *testing.T) {
 	}
 	if db.Value(budget.PathMark) != nil || db.Value(projectpolicy.PathShared()) != nil {
 		t.Errorf("the run wrote into a database in a Firebase project the installation never adopted: mark %v node %v", db.Value(budget.PathMark), db.Value(projectpolicy.PathShared()))
+	}
+}
+
+// unadoptedShape is one config whose budget.rtdb_url the ownership predicate
+// must refuse, and the two together are the reviewer's probe: a config that
+// records a database URL and NO Firebase project at all, and one that records
+// the installation's own GCP project while the URL names a database beside it
+// (other-default-rtdb, which is not <project>-default-rtdb, so the pair is not
+// one Firebase project's own). Both were run as plain `fugaro update --yes`
+// against a database carrying ANOTHER installation's mark, a rules marker at
+// the generation the policy write is gated on, and a version-3 node: the rules
+// stage skipped both (its pair check, rulesUnavailable, sees them) and the
+// policy migration behind it migrated that node to version 4, because its gate
+// asked only for a config naming a *separate* Firebase project.
+type unadoptedShape struct {
+	name string
+	// fp is what the config records as budget.firebase_project ("" is the
+	// shape a config written before the pair existed has).
+	fp string
+	// foreign is the shape whose URL names a database that is not the Firebase
+	// project's own: checkDatabaseHost refuses it, so nothing here may contact
+	// it, and the fake is reached by carrying the requests instead (carryToFake).
+	foreign bool
+	// wants are the words the skip has to carry: the fact that makes the
+	// database not this installation's, and the command that does work.
+	wants []string
+}
+
+var unadoptedShapes = []unadoptedShape{
+	{name: "no firebase_project recorded", fp: "",
+		wants: []string{"budget.firebase_project", "update --firebase-project " + initProject}},
+	{name: "a database that is not the project's own", fp: initProject, foreign: true,
+		wants: []string{"budget.rtdb_url", "other-default-rtdb", "budget.firebase_project", "update --firebase-project " + initProject}},
+}
+
+// carryToFake sends every database request to the fake whatever address the
+// config names. The shape under test has to name a database the Firebase
+// project does not serve — that is what makes it foreign — and such a URL is one
+// no run may contact, so the address is rewritten here rather than the config
+// being pointed at the fake: the run must refuse the database on the pair alone,
+// without the fake ever answering, and this only keeps the fake reachable for
+// the assertions about what was written.
+type carryToFake struct {
+	base *url.URL
+	rt   http.RoundTripper
+}
+
+func (c carryToFake) RoundTrip(req *http.Request) (*http.Response, error) {
+	q := *req.URL
+	q.Scheme, q.Host = c.base.Scheme, c.base.Host
+	out := req.Clone(req.Context())
+	out.URL = &q
+	out.Host = c.base.Host
+	return c.rt.RoundTrip(out)
+}
+
+// unadoptedRig is one of those shapes end to end: an installation that
+// converges, a checkout of the project (the door `fugaro upgrade` reads it
+// through, resolveCloudRepo), and a budget database seeded as ANOTHER
+// installation's — the mark of workspace-a in proj-9999, the rules marker at the
+// generation the policy write is gated on, and the version-3 node with the
+// allow-list the migration would rewrite. Every fact a run needs to reach that
+// write is there, so what stops it can only be the ownership predicate.
+func unadoptedRig(t *testing.T, s unadoptedShape) (*initRig, *gcpfake.RTDB, string) {
+	t.Helper()
+	r := updateRig(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	rtdbURL := db.URL
+	if s.foreign {
+		rtdbURL = "https://other-default-rtdb.us-east5.firebasedatabase.app"
+		base, err := url.Parse(db.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		budgetTransport = carryToFake{base: base, rt: http.DefaultTransport}
+		t.Cleanup(func() { budgetTransport = nil })
+	}
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: \""+rtdbURL+"\", firebase_project: \""+s.fp+"\" }\n")
+	r.save(t)
+	root := gitCheckout(t, filepath.Join(r.dir, "app"), checkoutYAML("bitbucket", "api-key", initProjectName, ""))
+	testutil.Git(t, root, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git")
+	return r, db, root
+}
+
+// unadoptedAssertions is what both doors assert about a database the predicate
+// refused: the node it would have rewritten is exactly as it was (version 3
+// included), and neither the mark nor the rules marker moved.
+func unadoptedAssertions(t *testing.T, db *gcpfake.RTDB) {
+	t.Helper()
+	if got := nodeVersionOn(t, db); got != 3 {
+		t.Errorf("the published node was migrated to version %d: the database is not this installation's", got)
+	}
+	if node, ok := db.Value(projectpolicy.PathShared()).(map[string]any); !ok {
+		t.Errorf("the node at %s is gone: %v", projectpolicy.PathShared(), db.Value(projectpolicy.PathShared()))
+	} else if repos, _ := node["allow_repos"].([]any); len(repos) != 2 {
+		t.Errorf("another installation's node was rewritten: %v", node)
+	}
+	if got := db.Value(budget.PathMark); got == nil || got.(map[string]any)["project"] != "workspace-a" {
+		t.Errorf("another installation's mark moved: %v", got)
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.PolicyRulesVersion); got != want {
+		t.Errorf("the rules marker is %q, want the %s the fixture seeded", got, want)
+	}
+}
+
+// TestUpdatePolicyStageSkipsTheDatabaseTheRulesStageSkipped: the drift the
+// review found, at both of its shapes. The rules stage answers the config's own
+// facts before it opens anything (rulesUnavailable), while the policy migration
+// asked only whether the config named a Firebase project OTHER than the
+// installation's own — so a database the rules stage had just refused was
+// migrated in place by the stage behind it, and a plain `fugaro update` rewrote
+// another installation's node. One predicate answers both stages now, and the
+// probe is the same one: every fact the write needs, and the write not made.
+func TestUpdatePolicyStageSkipsTheDatabaseTheRulesStageSkipped(t *testing.T) {
+	for _, s := range unadoptedShapes {
+		t.Run(s.name, func(t *testing.T) {
+			_, db, _ := unadoptedRig(t, s)
+			out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+			if err != nil {
+				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
+			}
+			var res convergeJSON
+			if err := json.Unmarshal([]byte(out), &res); err != nil {
+				t.Fatalf("%v:\n%s", err, out)
+			}
+			if got := res.state(initflow.Rules); got != "skipped" {
+				t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
+			}
+			if got := res.state(initflow.Policy); got != "skipped" {
+				t.Errorf("the policy stage is %q, want skipped: the rules stage skipped this database, and the migration behind it wrote there anyway\n%s", got, out)
+			}
+			detail := res.stageDetail(t, initflow.Policy)
+			for _, want := range s.wants {
+				if !strings.Contains(detail, want) {
+					t.Errorf("the skip does not name %q: %q", want, detail)
+				}
+			}
+			unadoptedAssertions(t, db)
+		})
 	}
 }
 
