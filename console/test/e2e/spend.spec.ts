@@ -122,7 +122,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/notice.js',
   'shared/version.js',
   'renderer/app.js',
-  // The placeholder and the busy mark the screen's two sections are drawn with
+  // The placeholder and the busy mark the screen’s two sections are drawn with
   // (console 0.116.1): `renderSpendFrame` puts a busy slot in each section, so
   // the screen requires the helper and the words it is drawn with.
   'renderer/screens/reading.js',
