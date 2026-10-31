@@ -106,7 +106,9 @@ steps 4 and 7 call it. Dependency **E3**.
 `policyMigrationFor` / `budgetDBUnadopted`: a database in a Firebase project the installation never
 adopted is skipped rather than written. The settings design's S3 notes that the publish half must reach
 the node through the **same** call — one gate read, one ETag, one write path — with
-`TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips` as the pin. *Consequence:* `accounts add`
+`TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips` as the pin. That test **does not exist on
+`main`**: it arrives with E2 (#1464, unmerged at `0a1f5694`), which is why A2 cites it as the gate's pin
+rather than as an existing check. *Consequence:* `accounts add`
 must not become a second writer with its own weaker gate: spec §2.5's first bullet is a hard
 requirement, not a preference.
 
@@ -163,7 +165,7 @@ this document wins where it disagrees with [spec.md](spec.md).
 | E | What it is | What this design needs from it | Order |
 | --- | --- | --- | --- |
 | **E1** | `internal/yamledit` — **#1467, open** | The comment-preserving edit of `claude_accounts.<name>.allow_data_to` and `profiles.<p>.claude_accounts` (spec §2.3). If its API differs from the promise above, the accounts task adapts to it; if it does not merge, this work **may not write its own splice** — the settings design's shared-files rule — so A1 waits | E1 before A1 |
-| **E2** | Settings **S3** — `fugaro update` publishes the policy node from the local config — **#1464, open** | The publish half of spec §2.5 (F10). It must reach the node through `policyMigrationFor` (F14) | E2 before A2 **ships**; A2 may merge before it but the release that carries `accounts add` carries E2, exactly as the models plan's E1 is written |
+| **E2** | Settings **S3** — `fugaro update` publishes the policy node from the local config — **#1464, open** | The publish half of spec §2.5 (F10). It must reach the node through `policyMigrationFor` (F14) E2 **before A2 starts**. A2's own red step (`TestAccountsAddLeavesNothingToRun`) asserts that the published node carries `accounts.<name>.allow_repos` and the job set carries the account's job, and neither is reachable until the `Policy` stage publishes from the local config (F10). Starting A2 earlier leaves only two ways to make that test green — weaken it or skip it — so the plan's stricter statement is the one this document means |
 | **E3** | Settings **S5** — `internal/cli/settings_write.go` — **#1464, open** | The diff, the confirmation, the agent refusal, `backupFile`, `writeFileAtomic`, in one copy (F13) | E3 before A1 |
 | **E4** | The `claude` lookup and the pty decision | `claudeplugin.Find` is already production code (F16), so only the runner is new; the pty package's promotion is E5 | E4 with A0 |
 | **E5** | `go.mod`'s `creack/pty` comment and `internal/cli/docs_console_boundary_test.go`'s `consoleGoModRequireBaseline` (F15) | Whoever promotes the package updates the comment and the pin in the same PR. Neither file is an accounts task's. If the owner answers D862 with the paste alternative, E5 disappears | E5 with A0, or never |

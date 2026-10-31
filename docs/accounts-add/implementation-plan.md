@@ -50,8 +50,13 @@ the tree's dependency posture stays a statement somebody made on purpose.
 `internal/cli/accounts_add_login_pty.go`, `internal/cli/accounts_add_login_pty_windows.go`.
 *Named tests:* `TestGoModHasNoConsoleDependency` (existing; its baseline moves),
 `TestAccountsAddClaudeRefusesWithoutTerminals`.
-*Red step:* add the pty-using file first. `GOFLAGS=-p=2 go test ./internal/cli/ -run TestGoModHasNoConsoleDependency -count=1`
-fails, because the require line the test holds verbatim now says something the tree no longer does.
+*Red step:* edit the comment on the `creack/pty` require line **first** and touch nothing else.
+`GOFLAGS=-p=2 go test ./internal/cli/ -run TestGoModHasNoConsoleDependency -count=1` fails, because the
+baseline holds that line verbatim and the tree no longer says it. The source file comes after the
+baseline has moved: a new build-tagged file that imports an **already-required** module changes no
+`go.mod` line, so adding it on its own moves nothing and is not a red step. If reading the pin shows it
+pins only the module list and not the trailing comment, then A0 has no red step at all — the PR says so
+plainly rather than manufacturing one, and the two-line change is its own evidence.
 *The separate pin gate for this task:* that same `-run` filter on its own, and the console boundary's
 whole file only if the baseline change turns out to move more than the one line.
 *Shared:* the require comment is a claim about the whole tree, so the change goes in with a sentence in
@@ -98,7 +103,8 @@ carries `<profile>/<provider>/<name>` with `secretAccessor` on that account's se
 the command's own last line names a `run` and not an `update`),
 `TestAccountsAddPublishHoldsTheAdoptionGate` (a database in a Firebase project the installation never
 adopted is skipped, exactly as the Rules stage skips it — the sibling of the settings design's
-`TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips`, F14),
+`TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips` — the settings design's pin, arriving with E2
+and absent from `main`, F14),
 `TestAccountsAddStoresProjectWideAndNothingElse` (the value lands only under `claude-oauth-token-<name>`;
 a repository-scoped intent is refused **before** the value is read),
 `TestAccountsAddReplacesTheTokenOnRerun` (re-running is rotation: version 2, one secret, one job),
