@@ -191,8 +191,11 @@ func TestLateOrDuplicateStageHookIsRefused(t *testing.T) {
 // between them cannot account for (D521, D529). The bound is the hook's own,
 // below the run's, so the decision is reached at all.
 func TestAStageHookCannotLeaveAHaltReasonTheRunnerCannotRecord(t *testing.T) {
+	// finalize runs under the reserve and nothing here is about how long it
+	// takes: at 5s a loaded machine kills finalize's own git instead of
+	// failing the stage over the hook's reason, which is what this asserts.
 	cfg := stageTimeoutCfg(t,
-		"timeouts: { total: 1m, stage: 300ms, verify: 5s, finalize_reserve: 5s }", "")
+		"timeouts: { total: 5m, stage: 300ms, verify: 5s, finalize_reserve: 2m }", "")
 	h := newHarness(t, cfg, nil)
 	runner.ResetStageHook(t)
 	if err := runner.SetStageHook(runner.StageFuncs{
