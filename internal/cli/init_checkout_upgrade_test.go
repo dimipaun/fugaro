@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,14 +231,19 @@ func agentCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]string)
 // converge drives (never a direct Apply — the loop's own agent gate is what
 // the stage answers with LocalUnderAgent), the pin moves and the plugin is
 // installed in the user's own Claude Code, exactly as fugaro upgrade --local
-// does in the same session.
+// does in the same session. The cloud half is the step this session leaves for
+// the user (TestUpdateAgentSessionLeavesTheCloudStepForTheUser), so the run
+// exits 1: its local half is done and the checkout is not.
 func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	settings, f, _ := agentCheckout(t)
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
 	res := stageOutcome(t, e, checkoutStageOf(t, e))
-	if res.Failed != nil || len(res.Left) != 0 || res.ExitCode() != 0 {
-		t.Fatalf("the loop did not finish the stage in an agent's session: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+	if res.Failed != nil {
+		t.Fatalf("the checkout stage failed in an agent's session: %+v\n%s", res.Failed, out)
+	}
+	if len(res.Left) != 1 || res.ExitCode() != 1 {
+		t.Fatalf("an agent's session reported the checkout done with the images untouched: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 	if got := stateOf(res, checkoutStageName); got != initflow.Changed {
 		t.Fatalf("the stage is %q in an agent's session, want %q\n%s", got, initflow.Changed, out)
@@ -251,14 +258,15 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 
 // In a coding agent's session the cloud write is refused even with --yes —
 // the refresh is the one thing a marker stops — while the local steps run
-// through the same loop.
+// through the same loop. That refusal is a step left for the user, not a stage
+// that skipped half of itself and reported the checkout done.
 func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	_, _, ran := agentCheckout(t)
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
 	res := stageOutcome(t, e, checkoutStageOf(t, e))
-	if res.Failed != nil || len(res.Left) != 0 {
-		t.Fatalf("the checkout stage did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+	if res.Failed != nil {
+		t.Fatalf("the checkout stage failed: %+v\n%s", res.Failed, out)
 	}
 	if len(*ran) != 0 || strings.Contains(out.String(), "fugaro image refresh of") {
 		t.Fatalf("an agent session reached the cloud: steps %q\n%s", *ran, out)
@@ -266,10 +274,111 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	if !strings.Contains(out.String(), "cloud: skipped: a coding agent's session") {
 		t.Errorf("the cloud step was not refused by name:\n%s", out)
 	}
+	if len(res.Left) != 1 || res.ExitCode() != 1 {
+		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
+	}
 	// The local half really ran, so this is not a stage that refused
 	// everything and looked right by saying nothing.
 	if stateOf(res, checkoutStageName) != initflow.Changed || !strings.Contains(out.String(), "pin: done") {
 		t.Errorf("the stage's local steps did not run in an agent's session:\n%s", out)
+	}
+}
+
+// TestUpdateAgentSessionLeavesTheCloudStepForTheUser: what a coding agent's
+// session does with the half it may not take. The step is left for the user —
+// named, with the command that runs it in a terminal, in the result and in the
+// JSON — and the run exits 1, so no script and no reader takes the checkout for
+// done while its images were never refreshed. It is said on every run of the
+// session, not only the one that moved the pin: the step is the user's until it
+// is run where it can be.
+//
+// Mutation (run, restore): drop planFor's agent arm (case u.agent != "") and
+// this test fails: the plan keeps the cloud step, the apply's own refusal
+// (cloudAgentRefusal) is then a skip with no Left beside it, and the run
+// reports the checkout changed with exit 0 — which is what the loop's
+// left-for-you accounting is here for. The two tests above fail with it too.
+func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
+	_, f, ran := agentCheckout(t)
+
+	e, out := checkoutEngine(t, &initOptions{yes: true})
+	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	if res.Failed != nil {
+		t.Fatalf("the checkout stage failed: %+v\n%s", res.Failed, out)
+	}
+	if len(res.Left) != 1 {
+		t.Fatalf("left %+v, want the checkout's cloud half as one step\n%s", res.Left, out)
+	}
+	l := res.Left[0]
+	if l.Stage != checkoutStageName || l.Kind != initflow.LeftCommand {
+		t.Errorf("the left-for-you is %+v, want the checkout stage's own command line", l)
+	}
+	if !strings.Contains(l.Text, "terminal window") {
+		t.Errorf("the left-for-you does not say where the step can be run: %q", l.Text)
+	}
+	if want := []string{selfCommand() + " " + updateDoor.name}; !slices.Equal(l.Commands, want) {
+		t.Errorf("the left-for-you names %q, want %q (the door this run is, in a terminal)", l.Commands, want)
+	}
+
+	// The second run of the session: the pin and the plugin are current, and
+	// the step the session may not take is still left for the user. The
+	// stage's check says so (it does not read the parked step as done), the
+	// plan's line keeps naming it, and the JSON carries it.
+	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
+	before := len(f.Changes(t))
+	*ran = nil
+	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
+	res2 := stageOutcome(t, e2, checkoutStageOf(t, e2))
+	if res2.Failed != nil || len(res2.Left) != 1 || res2.ExitCode() != 1 {
+		t.Fatalf("the second run of the session dropped the step: failed %+v, left %+v, exit %d\n%s", res2.Failed, res2.Left, res2.ExitCode(), out2)
+	}
+	if len(*ran) != 0 || len(f.Changes(t)) != before {
+		t.Errorf("the second run changed something it may not: steps %q\n%s", *ran, out2)
+	}
+	if !strings.Contains(out2.String(), "skipped here: cloud") {
+		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
+	}
+	b, err := res2.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" "+updateDoor.name) {
+		t.Errorf("the JSON does not carry the step left for the user:\n%s", b)
+	}
+}
+
+// The no-terminal gate is about the cloud half's typed confirmations, and a
+// coding agent's session is not that case: the pin and the plugin are this
+// machine's files, which is the whole of what LocalUnderAgent says the stage
+// does there. A gate that answered the marker's no-terminal run with needs-you
+// left the checkout unmoved, and its own comment said the opposite.
+//
+// Mutation (run, restore): drop `u.agent == ""` from Apply's gate and this
+// test fails: the stage answers needs-you, and neither the pin nor the plugin
+// moves.
+func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
+	settings, f, ran := agentCheckout(t)
+	noTerminal(t)
+
+	e, out := checkoutEngine(t, &initOptions{})
+	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	if res.Failed != nil {
+		t.Fatalf("the checkout stage failed in an agent's session: %+v\n%s", res.Failed, out)
+	}
+	if got := stateOf(res, checkoutStageName); got != initflow.Changed {
+		t.Fatalf("the stage is %q in an agent's session with no terminal and no --yes, want %q\n%s", got, initflow.Changed, out)
+	}
+	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
+		t.Errorf("the pin was not moved in an agent's session: %+v\n%s", r, out)
+	}
+	if len(f.Changes(t)) == 0 {
+		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
+	}
+	if len(*ran) != 0 {
+		t.Errorf("the session reached the cloud without --yes: steps %q\n%s", *ran, out)
+	}
+	if len(res.Left) != 1 || res.ExitCode() != 1 {
+		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 }
 
@@ -596,4 +705,109 @@ func TestUpdateAsksBeforeEachBillableBuild(t *testing.T) {
 			t.Errorf("a declined build submitted %+v", fb.specs)
 		}
 	})
+}
+
+// TestUpdateRunsNoBuildWhenTheBuildIsDeclined is that same decline with the
+// stage in front of it: a terminal, no --yes, an answer that is not the
+// project's name, and the build nobody approved is never submitted. Nothing
+// above the refresh may confirm it instead — the run's own confirmation covers
+// the ordinary steps, and a billable build is not one of them.
+//
+// Mutation (run, restore): hand the refresh --yes (ro.yes = u.o.yes, dropped,
+// or the stage's own env.Yes) and this test fails: a build is submitted with
+// nobody asked.
+func TestUpdateRunsNoBuildWhenTheBuildIsDeclined(t *testing.T) {
+	r, root := upgradeRig(t)
+	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
+	useFakeClaude(t, f)
+	// The base this release pins, already recorded, and two workflows whose
+	// records name an older one: the refresh's step 2 has nothing to pin, so
+	// the step this test is about is step 4's question.
+	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
+	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
+	fb := useFakeBuilder(t)
+	// Steps 2 and 3 are stubbed (the registry and the Cloud Run Admin API are
+	// not what this test is about) and step 3's target is the rig's own
+	// workflows; step 4 is the refresh's, question and all.
+	real := newRefreshSteps
+	newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+		s := real(run, e, p)
+		s.base = func(context.Context) error { return nil }
+		s.checkJob = func(context.Context, *refreshTarget) error { return nil }
+		s.reload = func(context.Context) (*refreshTarget, error) {
+			return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
+				RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+				Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
+		}
+		return s
+	}
+	t.Cleanup(func() { newRefreshSteps = real })
+
+	e, refreshOut := checkoutEngine(t, &initOptions{})
+	out := atTerminal(t, e, "not the project's name\n")
+	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	if res.Failed == nil || !strings.Contains(res.Failed.Error, "not confirmed") {
+		t.Fatalf("a declined build did not stop the checkout: %+v\n%s%s", res, out, refreshOut)
+	}
+	// The refresh's own writer is the command's: atTerminal hands the stage's
+	// steps a buffer of their own, and the question the step asks is the
+	// refresh's. Without seeing it asked, a run that never reached step 4
+	// would pass this test too.
+	if !strings.Contains(refreshOut.String(), "Type aurora to confirm") {
+		t.Fatalf("the stage reached the build without asking for it:\n%s", refreshOut)
+	}
+	if len(fb.specs) != 0 || strings.Contains(refreshOut.String(), "is done") {
+		t.Errorf("a declined build ran: %+v\n%s", fb.specs, refreshOut)
+	}
+}
+
+// A failed — or declined — build is the one state this stage's own check
+// cannot see: the refresh's step 2 records this release's base image in the
+// local config before step 4 builds from it, and the check a rerun starts with
+// (cloudCheck) reads that config and fugaro.yaml and never a build record,
+// which lives in the runs bucket. So the run reports the failure with the fix
+// that reaches the build again, and this test pins both halves: the fix names
+// the run whose cloud step re-reads the records, and a rerun of this door
+// itself is done at the checkout (which is why the fix may not name it).
+func TestUpdateFailedBuildNamesTheRunThatRetries(t *testing.T) {
+	r, root := upgradeRig(t)
+	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
+	useFakeClaude(t, f)
+	ran := fakeSteps(t, "builds", errors.New("the build of acme/app/app was refused"))
+
+	e, out := checkoutEngine(t, &initOptions{yes: true})
+	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	if res.Failed == nil || res.ExitCode() != 2 {
+		t.Fatalf("a failed build did not fail the stage: %+v, exit %d\n%s", res, res.ExitCode(), out)
+	}
+	if !strings.Contains(res.Failed.Error, "the build of acme/app/app was refused") {
+		t.Errorf("the failure is not the step's own sentence: %+v", res.Failed)
+	}
+	if want := selfCommand() + " upgrade --yes " + root; !strings.Contains(res.Failed.Fix, want) {
+		t.Errorf("the fix does not name the run that offers the build again (%q): %q", want, res.Failed.Fix)
+	}
+	if strings.Contains(res.Failed.Fix, "resumes at "+checkoutStageName) {
+		t.Errorf("the fix is the loop's default, which does nothing here: %q", res.Failed.Fix)
+	}
+	if len(*ran) != 3 {
+		t.Fatalf("the refresh ran %q, want its steps up to the failed one\n%s", *ran, out)
+	}
+
+	// What the refresh's step 2 leaves behind on a real machine, and what the
+	// fake does not: the base image in the local config and Claude Code's
+	// record of the plugin it installed. The rerun reads those.
+	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
+	*ran = nil
+	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
+	res2 := stageOutcome(t, e2, checkoutStageOf(t, e2))
+	if res2.Failed != nil || stateOf(res2, checkoutStageName) != initflow.Done || len(*ran) != 0 {
+		t.Errorf("a rerun of this door is not done at the checkout after a failed build: %+v, steps %q\n%s", res2, *ran, out2)
+	}
 }
