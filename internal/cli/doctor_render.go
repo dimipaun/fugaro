@@ -181,8 +181,10 @@ type doctorView struct {
 	security bool
 }
 
-// doctorVisible are the checks a view prints, in the order doctor ran them.
-func doctorVisible(checks []doctorCheck, v doctorView) (shown, hiddenSecurity []doctorCheck) {
+// doctorVisible are the checks a view prints, in the order doctor ran them:
+// the items, the audit half of the security sweep when --security asked for it,
+// and how many security findings the view left out.
+func doctorVisible(checks []doctorCheck, v doctorView) (shown, auditSecurity []doctorCheck, hidden int) {
 	for _, c := range checks {
 		class := doctorClassOf(c)
 		if class == "" {
@@ -192,13 +194,15 @@ func doctorVisible(checks []doctorCheck, v doctorView) (shown, hiddenSecurity []
 		switch {
 		case class != doctorClassAudit:
 			shown = append(shown, c)
-		case v.all || (v.security && security):
-			shown = append(shown, c)
+		case v.all:
+			// printDoctorReport hands --all to printDoctorChecks whole.
+		case security && v.security:
+			auditSecurity = append(auditSecurity, c)
 		case security:
-			hiddenSecurity = append(hiddenSecurity, c)
+			hidden++
 		}
 	}
-	return shown, hiddenSecurity
+	return shown, auditSecurity, hidden
 }
 
 // printDoctorReport prints the human view: --all keeps doctor's long-standing
@@ -209,21 +213,24 @@ func printDoctorReport(w io.Writer, checks []doctorCheck, v doctorView) {
 		printDoctorChecks(w, checks)
 		return
 	}
-	shown, hiddenSecurity := doctorVisible(checks, v)
+	shown, auditSecurity, hidden := doctorVisible(checks, v)
 	if len(shown) == 0 {
 		fmt.Fprintln(w, "fugaro doctor: ok — everything checked is ok")
-		if len(hiddenSecurity) > 0 {
-			printDoctorSecurityNotice(w, len(hiddenSecurity))
+	} else {
+		fmt.Fprintf(w, "fugaro doctor: %d things to do\n", len(shown))
+		fmt.Fprintln(w, "an error stops Fugaro until it is fixed (doctor exits 1); a warning is wrong, and Fugaro still runs. `fugaro doctor --all` prints every check.")
+		for _, c := range shown {
+			printDoctorItem(w, c)
 		}
-		return
 	}
-	fmt.Fprintf(w, "fugaro doctor: %d things to do\n", len(shown))
-	fmt.Fprintln(w, "an error stops Fugaro until it is fixed (doctor exits 1); a warning is wrong, and Fugaro still runs. `fugaro doctor --all` prints every check.")
-	for _, c := range shown {
-		printDoctorItem(w, c)
+	// A reader who asked for the security sweep gets it whole: the sweep's
+	// answers are long by nature (who may read which container), and a clipped
+	// one answers nothing. The default view's budget is for the default view.
+	for _, c := range auditSecurity {
+		fmt.Fprintln(w, doctorCheckLine(c))
 	}
-	if len(hiddenSecurity) > 0 {
-		printDoctorSecurityNotice(w, len(hiddenSecurity))
+	if hidden > 0 {
+		printDoctorSecurityNotice(w, hidden)
 	}
 }
 

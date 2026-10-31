@@ -122,6 +122,9 @@ func TestDoctorDefaultIsOneScreen(t *testing.T) {
 			t.Errorf("line %d is %d characters; the default view may not print more than 160:\n%s", i+1, n, l)
 		}
 	}
+	if strings.Contains(got, "\u2026") {
+		t.Errorf("the default view clips a sentence instead of saying it, and --all prints the whole text:\n%s", got)
+	}
 	if !regexp.MustCompile(`^fugaro doctor: \d+ things to do$`).MatchString(lines[0]) {
 		t.Errorf("the first line is not the verdict %q: %q", "fugaro doctor: N things to do", lines[0])
 	}
@@ -202,6 +205,11 @@ func TestDoctorSecurityIsBehindItsFlag(t *testing.T) {
 	shown, _, _ := execute(t, "doctor", "--security", "--dir", t.TempDir())
 	if !strings.Contains(shown, "launcher-jobs") {
 		t.Errorf("--security does not print the launcher sweep:\n%s", shown)
+	}
+	// Whole, not clipped: a reader who asked for the sweep gets the answer,
+	// and the sweep's answers are longer than one screen line by nature.
+	if !strings.Contains(shown, "migration doing what it says") {
+		t.Errorf("--security prints a clipped launcher sweep:\n%s", shown)
 	}
 	if strings.Contains(shown, "security findings: `fugaro doctor --security`") {
 		t.Errorf("--security still says findings are hidden:\n%s", shown)

@@ -1682,19 +1682,27 @@ func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 		if !c.OK && c.Severity != "info" {
 			failed = true
 		}
-		line := c.ID + ": "
-		if c.Severity != "" {
-			line = c.Severity + " " + line
-		}
-		line += c.Problem
-		if c.Fix != "" {
-			line += " (" + c.Fix + ")"
-		}
-		fmt.Fprintln(w, line)
+		fmt.Fprintln(w, doctorCheckLine(c))
 	}
 	if !failed {
 		fmt.Fprintln(w, "fugaro doctor: everything checked is ok")
 	}
+}
+
+// doctorCheckLine is one check in doctor's long-standing line shape: the
+// severity, the id, the whole problem and the whole fix. --all prints every
+// check this way, and --security prints the security half of the sweep this
+// way, since what it answers is long by nature and a clipped answer does not.
+func doctorCheckLine(c doctorCheck) string {
+	line := c.ID + ": "
+	if c.Severity != "" {
+		line = c.Severity + " " + line
+	}
+	line += c.Problem
+	if c.Fix != "" {
+		line += " (" + c.Fix + ")"
+	}
+	return line
 }
 
 // printDoctorSecrets prints the repository's secrets by name, never a
