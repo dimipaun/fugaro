@@ -61,13 +61,26 @@ type launchProjectJob struct {
 // launches: it decides, and every refusal of the launch itself is elsewhere.
 func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*launchProjectJob, error) {
 	// The workflow's own checkout: says whether this is a clone workflow, and
-	// which profile it selects. No checkout in the working directory (fugaro
-	// run --repo ... from a machine that does not hold the repository) means
-	// no answer to either, and a launch that cannot tell keeps the job it has
-	// always had.
+	// which profile it selects. Both are read from the repository's own
+	// fugaro.yaml, so with no checkout of repo in the working directory
+	// (fugaro run --repo ... from a machine that does not hold it) there is
+	// no answer to either.
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
-		return nil, nil
+		// For an installation that has published no profiles the per-repository
+		// job is not a guess: it is the only job there is, and every launch
+		// runs on it. With profiles the launch cannot tell a baked workflow's
+		// per-repository job from a clone workflow's shared one, and picking
+		// either silently would start the run on a job it may not belong to —
+		// so the ambiguity is refused, naming the way out.
+		p, found, err := e.policy.read(ctx, e.lc)
+		if err != nil {
+			return nil, policyReadErr(err)
+		}
+		if !found || p == nil || len(p.Profiles) == 0 {
+			return nil, nil
+		}
+		return nil, userErr("fugaro run --repo %s is launched from outside %s's checkout, so which Cloud Run job it targets cannot be decided: a workflow's checkout: kind and profile are read from the checkout's own fugaro.yaml, and a clone workflow runs on a shared project job where a baked one runs on the repository's own. Run it from %s's checkout", spec.Repo, spec.Repo, spec.Repo)
 	}
 	w, ok := co.Workflows[spec.Workflow]
 	if !ok || w.Checkout != config.CheckoutClone {

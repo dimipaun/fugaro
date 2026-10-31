@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -186,6 +188,32 @@ func printConfigShow(w io.Writer, doc configShowDoc, checked time.Time, asJSON b
 	return tw.Flush()
 }
 
+// configLayerAnchor is what fugaro config layer anchors its read on: the
+// working directory's own fugaro.yaml when it sits inside a checkout, else
+// the project: and gcp_project: of the selected project config. The layer
+// hangs off the installation, not off a working tree, so a machine that
+// holds no checkout still learns which layer its project published;
+// inCheckout says which of the two answered, for the messages.
+func configLayerAnchor(ctx context.Context) (data []byte, inCheckout bool, err error) {
+	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
+	if err == nil {
+		data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+		if err != nil {
+			return nil, true, userErr("%v", err)
+		}
+		return data, true, nil
+	}
+	lc := selectedProjectConfig(ctx)
+	if lc == nil || lc.Name == "" || lc.GCPProject == "" {
+		return nil, false, userErr("not inside a git checkout, and no project config is selected: run this from the repository's checkout, or set $FUGARO_PROJECT or $FUGARO_CONFIG to the installation whose published layer you want (fugaro config list names them)")
+	}
+	anchor, err := yaml.Marshal(map[string]string{"project": lc.Name, "gcp_project": lc.GCPProject})
+	if err != nil {
+		return nil, false, err
+	}
+	return anchor, false, nil
+}
+
 // configLayerDoc is fugaro config layer --json's shape, pinned so a script
 // can rely on its exact keys rather than an ad-hoc map.
 type configLayerDoc struct {
@@ -202,13 +230,9 @@ func newConfigLayerCmd() *cobra.Command {
 		Short: "Print the project layer published for this checkout's project",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			root, err := gitRead(cmd.Context(), ".", "rev-parse", "--show-toplevel")
+			data, inCheckout, err := configLayerAnchor(cmd.Context())
 			if err != nil {
-				return userErr("not inside a git checkout; run this from the repository")
-			}
-			data, err := readFugaroYAML(root + "/fugaro.yaml")
-			if err != nil {
-				return userErr("%v", err)
+				return err
 			}
 			fl, err := findLayer(cmd.Context(), getenvOS, data, selectedProjectConfig(cmd.Context()), layerOptions{}, time.Now())
 			if err != nil {
@@ -216,7 +240,11 @@ func newConfigLayerCmd() *cobra.Command {
 			}
 			l := fl.Layer
 			if l == nil {
-				msg := "no project layer applies to this checkout (its fugaro.yaml needs gcp_project:, and the project must publish one with fugaro config publish)"
+				subject, needs := "this checkout", "its fugaro.yaml needs gcp_project:"
+				if !inCheckout {
+					subject, needs = "this project", "the project config needs gcp_project:"
+				}
+				msg := fmt.Sprintf("no project layer applies to %s (%s, and the project must publish one with fugaro config publish)", subject, needs)
 				if fl.Note != "" {
 					msg += "; " + fl.Note
 				}

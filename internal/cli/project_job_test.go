@@ -1373,3 +1373,43 @@ func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
 		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s, never the Bitbucket profile's %s, which no installation deploys", len(calls), calls, perRepo, never)
 	}
 }
+
+// Item 2: a launch of a repository from outside its checkout cannot tell
+// which workflow it is about — the working tree's fugaro.yaml is where a
+// workflow's checkout: kind and its profile are read — so, for a project
+// that has published profiles, it refuses rather than silently guessing the
+// per-repository job, which is the wrong job for a clone workflow. The
+// remedy is named: run it from the repository's own checkout.
+//
+// Mutation (run, restore): return nil, nil where this refuses (the
+// per-repository path) — the launch goes through, on a job the run may not
+// belong to.
+func TestRunRepoWithoutItsCheckoutErrorsClearly(t *testing.T) {
+	newProjectJobFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"acme/app", "checkout", "fugaro run"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
+// Item 2's other half: from the repository's own checkout nothing changes —
+// the launch still reads the workflow's checkout: and profile there, and
+// targets the shared project job.
+func TestRunRepoFromItsCheckoutUnchanged(t *testing.T) {
+	f := newProjectJobFixture(t)
+	projectJobCheckout(t)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "Add a feature"); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job", profile, provider)
+	}
+}
