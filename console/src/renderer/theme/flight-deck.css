@@ -2743,7 +2743,10 @@ section.graph svg .graph-release-name {
  * the tone a task being worked on carries. The widths are the channel a forced
  * colors reader keeps: a cross-release edge is 1 px, a plain one 2 px, the
  * critical path 3 px, and the edges of a selected task are 3 px of the reading
- * tone, because the selection is a question and those edges are its answer. */
+ * tone, because the selection is a question and those edges are its answer. The
+ * one mode where that answer has no tone to be told apart by is forced colors,
+ * and its arm (`screens.css`) draws those edges 4 px instead -- a pixel wider
+ * than the critical path, so the scale is a scale there too. */
 section.graph svg .graph-edge-path {
   fill: none;
   stroke: var(--decor);

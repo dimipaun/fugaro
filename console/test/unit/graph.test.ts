@@ -19,17 +19,20 @@
 //   in `GraphScreen.build`, replace
 //       positions = await this.layout.positions(model)
 //   with
-//       positions = await this.deps.client.layout(graphOf(model))
+//       positions = await this.deps.client.layout(graphOf(model.columns[0]))
 //
 // -- which bypasses the cache and asks the worker once per frame. The case then
-// fails on its second assertion (`placements` is 2, not 1). Red before, green
-// after; the PR carries both runs.
+// fails on its second assertion (`placements` is one row per stream per frame,
+// not the one the first read asked for). Red before, green after; the PR carries
+// both runs.
 //
-// Everything runs against `test/support/fakeDom.ts` and a fake `WorkerLike`: no
-// browser, no Electron, no ELK. The fake worker answers **every** layout as it
-// is posted, so `placements` counts the asks and nothing else.
+// Everything runs against `test/support/fakeDom.ts`: no browser, no Electron.
+// Most of it is drawn over a fake `WorkerLike` that answers **every** layout as
+// it is posted, so `placements` counts the asks and nothing else; the cases
+// about the picture's geometry are drawn over the **real** engine (`ElkWorker`).
 
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -37,8 +40,8 @@ import { describe, expect, it } from 'vitest'
 import { measured } from '../../src/shared/availability'
 import { PLAN_STATUS_MIN_INTERVAL_MS } from '../../src/source/cli'
 import type { PlanStatusView, RunView } from '../../src/shared/schema'
-import { nodeKey } from '../../src/renderer/graph/layout'
-import type { LayoutEdge, LayoutNode, WorkerLike } from '../../src/renderer/graph/layout-client'
+import { GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
+import type { WorkerLike } from '../../src/renderer/graph/layout-client'
 import { GRAPH_MAX_TITLE_CODE_POINTS, buildGraphModel } from '../../src/renderer/graph/model'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
@@ -162,6 +165,66 @@ function isolatedAbove(): PlanStatusView {
   return decoded(copy)
 }
 
+/**
+ * THREE_STREAMS is a document of **three streams with two plans each**, whose
+ * plans are chains of different lengths. The lengths are the case's own: the
+ * engine packs a graph's components in **two dimensions**, so three streams of
+ * one shape stack as neatly however they are asked for as they do when each is
+ * laid out alone, and only plans whose depths differ show the interleaving this
+ * document exists to produce.
+ */
+const THREE_STREAMS: Readonly<Record<string, readonly number[]>> = Object.freeze({
+  alpha: [1, 7],
+  beta: [6, 1],
+  gamma: [3, 3],
+})
+
+/** threeStreams is THREE_STREAMS as a plan document, through the real decoder.
+ * Every node is `ready` and belongs to no release, so nothing on this picture is
+ * hidden by a shut chip: the rows this case reads are the rows of the cards that
+ * were placed. */
+function threeStreams(): PlanStatusView {
+  const plans: unknown[] = []
+  let tasks = 0
+  let at = 0
+  for (const [stream, lengths] of Object.entries(THREE_STREAMS)) {
+    at += 1
+    const nodes: unknown[] = []
+    for (const [plan, length] of lengths.entries()) {
+      for (let node = 0; node < length; node += 1) {
+        nodes.push({
+          id: `${stream}-${String(plan)}-${String(node)}`,
+          title: `A task of the ${stream} plans`,
+          state: 'ready',
+          closed: false,
+          level: node,
+          critical: false,
+          needs: node === 0 ? [] : [`${stream}-${String(plan)}-${String(node - 1)}`],
+        })
+      }
+    }
+    tasks += nodes.length
+    plans.push({
+      id: `plans/2026-10-0${String(at)}-${stream}`,
+      artifact: `docs/plans/2026-10-0${String(at)}-${stream}.graph.json`,
+      plan: `The ${stream} plans`,
+      stream,
+      nodes,
+      releases: [],
+      tasks: nodes.length,
+      closed: 0,
+      open: nodes.length,
+    })
+  }
+  return decoded({
+    repo: 'example-owner/example-repo',
+    plans,
+    totals: { plans: plans.length, tasks, closed: 0, open: tasks },
+    streams: [],
+    warnings: [],
+  })
+}
+
 /** runRow is one watch row. Only `run` and `stage` are read by anything on this
  * screen -- the join takes the suffix, the words take the stage -- so every
  * other field is the empty reading: the smallest row the type allows. */
@@ -208,152 +271,79 @@ function screenWith(theme: GraphTheme = 'light'): { screen: GraphScreen; worker:
   return { screen, worker }
 }
 
-/** LayeredWorker answers a layout as the layered engine does for a **left to
- * right** graph, which is the screen's own direction and the shape this file's
- * other fake does not have (it puts every node in one row at `y = 0`, where no
- * heading can be covered by anything).
+/**
+ * ElkWorker answers the layout protocol with the **real engine**: the pinned
+ * `elkjs` devDependency, whose node entry builds its non-worker path out of
+ * `elk-worker.min.js` -- the file the console copies into its served root and
+ * `bundle.test.ts` pins byte for byte -- so a picture drawn over this worker is
+ * laid out by the engine that ships, and not by a fake that agrees with the
+ * screen about where a row goes. **That agreement is the one thing the band
+ * cases may not assume**: whether two streams' plans end up in one another's
+ * row is a fact about the engine's own packing.
  *
- * Each node goes one **layer** to the right of the deepest node it waits on
- * (the picture's depth runs left to right), the layers are separated by the room
- * the request asks for, and the nodes of one layer are stacked vertically --
- * so a release box's heading band, and a stream band's own label above it, are
- * drawn where the request's spacing puts them, which is the whole of what the
- * cases below read. Two nodes no edge joins are two **components**, and the
- * engine places them apart by a spacing of its own (`GRAPH_COMPONENT_OPTION`),
- * so the components are stacked here at the room the request asks for rather
- * than sharing one set of layers. It is not a fake of ELK: nothing here routes
- * an edge or orders a layer, and nothing in the cases needs it to. */
-class LayeredWorker implements WorkerLike {
+ * The reply is the worker's own (`{ id, data }`), because what is under test is
+ * the screen over the shipped engine rather than a second protocol.
+ */
+interface ElkEngine {
+  layout(
+    graph: Record<string, unknown>,
+    args: { layoutOptions: Readonly<Record<string, string>> },
+  ): Promise<Record<string, unknown>>
+  terminateWorker(): void
+}
+
+/**
+ * The engine is required rather than imported: `elkjs`'s declaration does not
+ * compile under this repository's `skipLibCheck: false` (`elk-api.d.ts` indexes
+ * the optional `children` of its graph type, which `strict` refuses), and the
+ * two methods above are the whole of its surface this worker uses. Requiring
+ * also keeps what is loaded the engine the console bundles: `elkjs`'s node
+ * entry is CommonJS, and its own `require('./elk-worker.min.js')` is what it
+ * lays a graph out with.
+ */
+const Elk = createRequire(import.meta.url)('elkjs') as { new (): ElkEngine }
+
+class ElkWorker implements WorkerLike {
   readonly sent: Record<string, unknown>[] = []
   private readonly listeners = new Map<string, ((event: { data?: unknown }) => void)[]>()
+  private readonly elk = new Elk()
+
+  /** placements counts the layouts this worker was asked to run, as the fake
+   * counts them: one per `layout` command posted. */
+  get placements(): number {
+    return this.sent.filter((each) => each['cmd'] === 'layout').length
+  }
 
   postMessage(message: unknown): void {
     const request = message as Record<string, unknown>
     this.sent.push(request)
-    if (request['cmd'] === 'layout') this.reply(request)
+    if (request['cmd'] !== 'layout') return
+    const layoutOptions = (request['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+    void this.elk.layout(request['graph'] as Record<string, unknown>, { layoutOptions }).then(
+      (data) => this.answer({ id: request['id'], data }),
+      (error: unknown) => this.answer({ id: request['id'], error: String(error) }),
+    )
   }
 
   addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
   }
 
-  terminate(): void {}
+  terminate(): void {
+    this.elk.terminateWorker()
+  }
 
-  private reply(request: Record<string, unknown>): void {
-    const graph = request['graph'] as {
-      readonly children: readonly LayoutNode[]
-      readonly edges: readonly LayoutEdge[]
-    }
-    const options = (request['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
-    const gap = Number(options[GRAPH_LAYER_OPTION] ?? 20)
-    const nodeGap = Number(options[GRAPH_NODE_OPTION] ?? 20)
-    const componentGap = Number(options[GRAPH_COMPONENT_OPTION] ?? 20)
-    const placed = new Map<string, { readonly x: number; readonly y: number }>()
-    let top = 0
-    for (const component of componentsOf(graph.children, graph.edges)) {
-      const layers = layersOf(component.nodes, component.edges)
-      const width = component.nodes[0]?.width ?? 0
-      let deepest = 0
-      layers.forEach((layer, at) => {
-        let y = top
-        for (const id of layer) {
-          const node = component.nodes.find((each) => each.id === id)
-          if (node === undefined) continue
-          placed.set(id, { x: at * (width + gap), y })
-          y += node.height + nodeGap
-        }
-        deepest = Math.max(deepest, y - top - nodeGap)
-      })
-      top += deepest + componentGap
-    }
-    const data = {
-      children: graph.children.map((child) => ({
-        id: child.id,
-        x: placed.get(child.id)?.x ?? 0,
-        y: placed.get(child.id)?.y ?? 0,
-        width: child.width,
-        height: child.height,
-      })),
-      edges: graph.edges.map((edge) => ({
-        id: edge.id,
-        sections: [{ startPoint: { x: 0, y: 0 }, endPoint: { x: 1, y: 1 } }],
-      })),
-    }
-    for (const listener of this.listeners.get('message') ?? []) listener({ data: { id: request['id'], data } })
+  private answer(reply: unknown): void {
+    for (const listener of this.listeners.get('message') ?? []) listener({ data: reply })
   }
 }
 
-/** layersOf is the graph's nodes as layers: one layer per depth, where a node's
- * depth is the longest chain of dependencies to its left. */
-function layersOf(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[]): readonly (readonly string[])[] {
-  const depth = new Map<string, number>(nodes.map((node) => [node.id, 0]))
-  for (let pass = 0; pass <= nodes.length; pass += 1) {
-    let moved = false
-    for (const edge of edges) {
-      for (const from of edge.sources) {
-        for (const to of edge.targets) {
-          const beyond = (depth.get(from) ?? 0) + 1
-          if (beyond > (depth.get(to) ?? 0)) {
-            depth.set(to, beyond)
-            moved = true
-          }
-        }
-      }
-    }
-    if (!moved) break
-  }
-  const layers: string[][] = []
-  for (const node of nodes) {
-    const at = depth.get(node.id) ?? 0
-    while (layers.length <= at) layers.push([])
-    layers[at]?.push(node.id)
-  }
-  return layers
-}
-
-/** componentsOf is the graph's nodes as the engine's own connected components:
- * two nodes an edge joins are one component, and a node no edge touches -- an
- * isolated task -- is a component of its own. They are in the order their first
- * node appears, which is the model's own order. */
-function componentsOf(
-  nodes: readonly LayoutNode[],
-  edges: readonly LayoutEdge[],
-): readonly { readonly nodes: readonly LayoutNode[]; readonly edges: readonly LayoutEdge[] }[] {
-  const root = new Map<string, string>(nodes.map((node) => [node.id, node.id]))
-  const find = (id: string): string => {
-    let at = id
-    while (root.get(at) !== undefined && root.get(at) !== at) at = root.get(at) ?? at
-    return at
-  }
-  for (const edge of edges) {
-    for (const from of edge.sources) {
-      for (const to of edge.targets) {
-        const left = find(from)
-        const right = find(to)
-        if (left !== right) root.set(right, left)
-      }
-    }
-  }
-  const groups = new Map<string, { nodes: LayoutNode[]; edges: LayoutEdge[] }>()
-  for (const node of nodes) {
-    const at = find(node.id)
-    const group = groups.get(at) ?? { nodes: [], edges: [] }
-    group.nodes.push(node)
-    groups.set(at, group)
-  }
-  for (const edge of edges) {
-    const at = find(edge.sources[0] ?? '')
-    groups.get(at)?.edges.push(edge)
-  }
-  return [...groups.values()]
-}
-
-/** layeredScreen is the screen the app builds -- its own layout client -- over
- * the rows above, so a case reads the picture a request's own spacing draws. */
-function layeredScreen(worker: LayeredWorker): GraphScreen {
+/** elkScreen is a screen over the real engine -- the app's own client and
+ * request -- so a case reads the picture the engine that ships draws. */
+function elkScreen(): GraphScreen {
   return new GraphScreen({
     factory: new Surface(new FakeDocument()),
-    client: new GraphLayoutClient(() => worker),
+    client: new GraphLayoutClient(() => new ElkWorker()),
     theme: 'light',
   })
 }
@@ -461,14 +451,16 @@ describe('the graph screen and the layout cache', () => {
   it('a watch frame that changes a stage does not ask the engine to lay the graph out again', async () => {
     const { screen, worker } = screenWith()
     await screen.load(DOCUMENT, RUNS)
-    expect(worker.placements).toBe(1)
+    // One run per stream of the picture, and this document's picture is two: a
+    // stream is laid out on its own, and the rows are stacked from the runs.
+    expect(worker.placements).toBe(2)
 
     // The frame the Live screen already reads, with one node's stage moved from
     // `implement` to `fix`. The graph is the same graph -- same plans, same
     // tasks, same edges -- so no coordinate changed and the worker must not be
     // asked again.
     const after = await screen.frame([runRow('20261025-121805-aa02', 'fix')])
-    expect(worker.placements).toBe(1)
+    expect(worker.placements).toBe(2)
 
     // And the frame was not dropped: it was drawn from the positions in hand.
     expect(after).not.toBeNull()
@@ -487,7 +479,9 @@ describe('the graph screen and the layout cache', () => {
       { id: 'task-seven', title: 'A task the first read did not have', state: 'ready', closed: false, level: 3, critical: false },
     ])
     await screen.load(bigger, RUNS)
-    expect(worker.placements).toBe(2)
+    // Three and not four: the task was added to one stream's plan, so that
+    // stream is laid out again and the stream beside it keeps its own positions.
+    expect(worker.placements).toBe(3)
   })
 
   it('a selection, a chip, a zoom and the drawing are the screen own and lay nothing out', async () => {
@@ -497,13 +491,17 @@ describe('the graph screen and the layout cache', () => {
     screen.change({ view: 'list' })
     screen.change({ zoom: 2 })
     screen.change({ expanded: [CHIP] })
-    expect(worker.placements).toBe(1)
+    expect(worker.placements).toBe(2)
   })
 
-  it('narrowing to a stream is a different graph, so it does ask again', async () => {
+  it('narrowing to a stream draws that stream alone, over the run it already had', async () => {
     const { screen, worker } = screenWith()
     await screen.load(DOCUMENT, RUNS)
+    expect(worker.placements).toBe(2)
     await screen.narrow('example')
+    // Every stream of the picture has been laid out, and the one still drawn did
+    // not change: the key is a stream's, so narrowing -- a different *picture* --
+    // costs no run at all.
     expect(worker.placements).toBe(2)
     // And the picture really is narrower: one plan, not two.
     expect(screen.lastModel?.columns.map((column) => column.stream)).toEqual(['example'])
@@ -530,8 +528,9 @@ describe('the graph screen and the room a release heading needs', () => {
     const { screen, worker } = screenWith()
     await screen.load(DOCUMENT, RUNS)
     const asked = worker.sent.filter((each) => each['cmd'] === 'layout')
-    expect(asked.length).toBe(1)
-    const options = (asked[0]?.['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+    // One ask per stream, and the room is asked for in all of them: a stream is
+    // laid out on its own and no run knows which of the streams it is.
+    expect(asked.length).toBe(2)
     // The room is the lower box's heading, the stream band's own label above it,
     // and the padding both boxes keep: less than that and the heading or the
     // label is drawn on the row above, whose cards are drawn later and paint
@@ -540,16 +539,19 @@ describe('the graph screen and the room a release heading needs', () => {
     // one layer -- and the layers themselves and the components are asked for
     // the same room because neither knows which of the three it is under.
     expect(GRAPH_LAYER_GAP).toBe(GRAPH_PAD * 2 + GRAPH_BAND_HEAD)
-    expect(options[GRAPH_LAYER_OPTION]).toBe(String(GRAPH_LAYER_GAP))
-    expect(options[GRAPH_NODE_OPTION]).toBe(String(GRAPH_LAYER_GAP))
-    expect(options[GRAPH_COMPONENT_OPTION]).toBe(String(GRAPH_LAYER_GAP))
+    for (const each of asked) {
+      const options = (each['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+      expect(options[GRAPH_LAYER_OPTION]).toBe(String(GRAPH_LAYER_GAP))
+      expect(options[GRAPH_NODE_OPTION]).toBe(String(GRAPH_LAYER_GAP))
+      expect(options[GRAPH_COMPONENT_OPTION]).toBe(String(GRAPH_LAYER_GAP))
+    }
   })
 
   it('draws every release heading clear of every task card, its own box’s and another’s', async () => {
     // The fixture's own document, with no field renamed: a heading's band is the
     // box's whole width and a fixed height whatever the heading says, so the
     // release's name is not an input this case can vary.
-    const screen = layeredScreen(new LayeredWorker())
+    const screen = elkScreen()
     await screen.load(DOCUMENT, RUNS)
     const drawing = screen.redraw()
     if (drawing === null) throw new Error('no drawing')
@@ -574,7 +576,7 @@ describe('the graph screen and the room a release heading needs', () => {
     // a different component: the box's own growth and the append order are the
     // same, so a heading covered this way looks exactly like the one the layer
     // spacing used to cover.
-    const screen = layeredScreen(new LayeredWorker())
+    const screen = elkScreen()
     await screen.load(isolatedAbove(), RUNS)
     const drawing = screen.redraw()
     if (drawing === null) throw new Error('no drawing')
@@ -660,7 +662,7 @@ describe('the graph screen and its stream bands', () => {
     // stream grouping is the picture's own rows, so a reader sees which stream a
     // task belongs to without reading a tab, and the plans that name no stream
     // get a band of their own under the console's own words.
-    const screen = layeredScreen(new LayeredWorker())
+    const screen = elkScreen()
     await screen.load(DOCUMENT, RUNS)
     const drawing = screen.redraw()
     if (drawing === null) throw new Error('no drawing')
@@ -699,13 +701,76 @@ describe('the graph screen and its stream bands', () => {
     }
   })
 
+  it('lays each stream out on its own and stacks the rows in model order', async () => {
+    // **The owner's ruling of 2026-10-31, and the defect it answers.** One flat
+    // request packs a picture's components in two dimensions, so a stream whose
+    // plans are deeper than its neighbour's ends up with its own plans in the
+    // neighbour's row, and the band around them -- the union of the cards the
+    // stream has on the picture -- is then a rectangle laid over another
+    // stream's cards. Three streams of two plans each, whose plans are chains of
+    // different lengths, is the smallest document that shows it: over the real
+    // engine and one flat request, all three bands cover one another and the
+    // gutter this case reads is negative. Laid out one stream at a time and
+    // stacked, the bands are rows: disjoint, in the model's own order, with the
+    // room between them.
+    const screen = elkScreen()
+    await screen.load(threeStreams(), RUNS)
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const root = mounted(drawing)
+    const model = screen.lastModel
+    if (model === null) throw new Error('no model')
+
+    const bands = bandsIn(root)
+    const order = model.columns.map((column) => column.stream)
+    expect(order).toEqual(Object.keys(THREE_STREAMS))
+    expect(bands.map((band) => band.stream), 'no band per stream, in the model’s order').toEqual(order)
+    expect(bands.map((band) => band.label)).toEqual(order)
+
+    // Every card is inside its own stream's band -- the band is that stream's
+    // rectangle, so a card outside it is a card the band does not describe.
+    const streamOf = new Map<string, string>()
+    for (const column of model.columns) {
+      for (const plan of column.plans) for (const node of plan.nodes) streamOf.set(nodeKey(plan.id, node.id), column.stream)
+    }
+    for (const card of cardsIn(root)) {
+      const band = bands.find((each) => each.stream === streamOf.get(card.key))
+      if (band === undefined) throw new Error(`no band for ${card.key}`)
+      expect(inside(band.rect, card.rect), `${card.key} is drawn outside its stream's band`).toBe(true)
+    }
+
+    // The rows are stacked, in order, with a gutter between them: each band
+    // starts at or below the one before it and entirely below it -- which is
+    // what "disjoint" means for rectangles of one width, and the thing the flat
+    // request cannot give.
+    expect(bands.length).toBe(order.length)
+    for (let at = 1; at < bands.length; at += 1) {
+      const above = bands[at - 1]?.rect
+      const below = bands[at]?.rect
+      if (above === undefined || below === undefined) throw new Error('a band is missing')
+      expect(overlaps(above, below), `${order[at - 1]} and ${order[at]} share ground`).toBe(false)
+      // The gutter is the room this screen asks for between two rows less the
+      // room a band draws above its own cards: the band above ends GRAPH_PAD
+      // below its lowest card, and the one below starts GRAPH_PAD +
+      // GRAPH_BAND_HEAD above its highest. A row gap of GRAPH_LAYER_GAP would
+      // leave the two bands *touching*, which is why the rows are asked for
+      // more than the engine's own layer room.
+      expect(below.y - (above.y + above.height), `${order[at - 1]} and ${order[at]} are not apart`).toBe(
+        GRAPH_ROW_GAP - (GRAPH_PAD * 2 + GRAPH_BAND_HEAD),
+      )
+    }
+    expect(GRAPH_ROW_GAP, 'the rows are not asked for more room than a band needs').toBeGreaterThan(
+      GRAPH_PAD * 2 + GRAPH_BAND_HEAD,
+    )
+  })
+
   it('frames the picture on every band and every card, the band’s label included', async () => {
     // The frame is the picture's own rectangle at the initial zoom, and it is
     // the *only* crop: what falls outside it is not drawn, so the band's head --
     // where the stream's own name is written -- has to be inside it. A band is
     // not a task's rectangle, and this is the case that says the frame was
     // computed from the bands as well as from the cards.
-    const screen = layeredScreen(new LayeredWorker())
+    const screen = elkScreen()
     await screen.load(DOCUMENT, RUNS)
     const drawing = screen.redraw()
     if (drawing === null) throw new Error('no drawing')
@@ -737,7 +802,7 @@ describe('the graph screen and its stream bands', () => {
     // model's `Sanitized` label like every other document string: a hostile one
     // is text, whole, with nothing under it.
     const hostile = `<${'script'}>${'alert'}(1)</${'script'}>`
-    const screen = layeredScreen(new LayeredWorker())
+    const screen = elkScreen()
     await screen.load(patched(['plans', 0, 'stream'], hostile), RUNS)
     const drawing = screen.redraw()
     if (drawing === null) throw new Error('no drawing')
@@ -848,6 +913,54 @@ describe('the graph screen and a card’s title', () => {
     const list = screen.change({ view: 'list' })
     if (list === null) throw new Error('no drawing')
     expect(textOf(mounted(list))).toContain(long)
+  })
+
+  it('names a card with the title whole and its words, and is a button only where a key opens it', async () => {
+    // A card is a roving `tabindex` stop, and a stop that says nothing about
+    // itself leaves a reader moving in the dark. The name is what the drawing
+    // knows and the reader cannot: **the title whole**, which the card's three
+    // lines cut, and every word the model answered beside it -- so the canvas is
+    // where the whole sentence is, and the name is how it is reached there.
+    //
+    // The role is the gesture and nothing else: where a run resolved, Enter and
+    // Space open it and the card is the `button` a reader expects to press; where
+    // none did, no key does anything and `button` would promise a control that is
+    // not there.
+    const long = 'a long task title '.repeat(6).trim()
+    const { screen } = screenWith()
+    await screen.load(patched(['plans', 0, 'nodes', 0, 'title'], long), RUNS)
+    const model = screen.lastModel
+    if (model === null) throw new Error('no model')
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const root = mounted(drawing)
+    const cards = everyNode(root).filter((each) => each.getAttribute('class') === 'graph-node')
+    expect(cards.length).toBeGreaterThan(1)
+
+    const named = cards.find((each) => each.getAttribute('data-key') === nodeKey(PLAN, 'task-one'))
+    if (named === undefined) throw new Error('the first task was not drawn')
+    const words = model.columns.flatMap((column) => column.plans).flatMap((plan) => plan.nodes).find((node) => node.id === 'task-one')?.words ?? []
+    // The card cut it -- its lines are a drawing of the sentence, not the
+    // sentence -- and the name is the sentence, which is the whole of the claim.
+    expect(titleLinesIn(root, nodeKey(PLAN, 'task-one')).join(' ')).not.toBe(long)
+    expect(named.getAttribute('aria-label')).toBe([long, ...words].join(', '))
+    // A word as well as the title: `critical` is drawn as a glow, which is
+    // `aria-hidden`, so a name is the only thing that can carry it with no
+    // colour and no motion.
+    expect(words.length).toBeGreaterThan(0)
+    for (const word of words) expect(named.getAttribute('aria-label')).toContain(word)
+
+    const roles = new Set<string>()
+    for (const card of cards) {
+      const role = card.getAttribute('role') ?? ''
+      roles.add(role)
+      const opens = card.getAttribute('data-run-id')
+      expect(role, `${card.getAttribute('data-key') ?? ''} carries data-run-id=${String(opens)}`).toBe(opens === null ? 'group' : 'button')
+      expect(card.getAttribute('aria-label') ?? '', `${card.getAttribute('data-key') ?? ''} is named`).not.toBe('')
+    }
+    // Both kinds are in this picture -- the fixture's first task carries a run and
+    // its third carries none -- so the rule above is a rule and not a constant.
+    expect([...roles].sort()).toEqual(['button', 'group'])
   })
 })
 
@@ -1211,7 +1324,7 @@ describe('the graph screen and its list view', () => {
     const list = screen.change({ view: 'list' })
     if (list === null) throw new Error('no drawing')
     expect(everyNode(mounted(list)).some((each) => each.getAttribute('role') === 'list')).toBe(true)
-    expect(worker.placements).toBe(1)
+    expect(worker.placements).toBe(2)
   })
 })
 
@@ -1325,7 +1438,7 @@ describe('the graph screen and its navigation', () => {
       await screen.frame([runRow('20261025-121805-aa07', 'review'), runRow('20261025-121805-aa02', 'fix')]),
     ).not.toBeNull()
     expect(await screen.frame([runRow('20261025-121805-aa02', 'fix'), runRow('20261025-121805-aa07', 'review')])).toBeNull()
-    expect(worker.placements).toBe(1)
+    expect(worker.placements).toBe(2)
   })
 
   it('answers a frame that says nothing about a drawn task with nothing', async () => {
@@ -1340,7 +1453,7 @@ describe('the graph screen and its navigation', () => {
     await screen.load(DOCUMENT, RUNS)
     expect(await screen.frame([runRow('20261025-121805-aa01', 'implement')])).toBeNull()
     expect(await screen.frame([runRow('20261025-121805-zz99', 'review')])).toBeNull()
-    expect(worker.placements).toBe(1)
+    expect(worker.placements).toBe(2)
   })
 
   it('re-reads the plan at the cadence GV2.1 gave the read, and no oftener', () => {

@@ -2228,10 +2228,21 @@ span.coordinator-unread-retry {
    * width, its dashes and its presence. The tones go to `CanvasText` and the
    * fills to `Canvas`, the same pair every row above gets. `stroke-width` and
    * `stroke-dasharray` are not forced by the system, so the dashed blocked task
-   * and the 1/2/3 px edge scale survive the author's colours going away -- which
-   * is design section 4.4's rule 1: a state keeps its word, and here its shape
-   * as well. */
-  svg.graph-canvas {
+   * and the edge scale survive the author's colours going away -- which is
+   * design section 4.4's rule 1: a state keeps its word, and here its shape as
+   * well.
+   *
+   * **Every selector below carries `section.graph`, and that is load-bearing.**
+   * A media query adds no specificity: a rule in this arm only overrides the
+   * rule it restates where its selector is at least as specific as that rule,
+   * and the graph's rules are written `section.graph svg ...` -- in
+   * flight-deck.css, in the motion block above, and in the list's own rules
+   * below. An arm rule written `svg .graph-edge[data-selected='true']
+   * .graph-edge-path` is one class short of the rule it restates, so the
+   * reading tone won where this arm's `Highlight` was meant to, taking away the
+   * one mark this mode has no colour left to draw. `graph-motion.test.ts` holds
+   * every graph selector in this arm to that. */
+  section.graph svg.graph-canvas {
     background: Canvas;
     border-color: CanvasText;
   }
@@ -2248,31 +2259,44 @@ span.coordinator-unread-retry {
     fill: CanvasText;
   }
 
-  svg .graph-release-box,
-  svg .graph-node-box {
+  section.graph svg .graph-release-box,
+  section.graph svg .graph-node-box {
     fill: Canvas;
     stroke: CanvasText;
   }
 
-  svg .graph-edge-path {
+  section.graph svg .graph-edge-path {
     stroke: CanvasText;
   }
 
-  svg .graph-edge[data-selected='true'] .graph-edge-path,
-  svg .graph-node[data-selected='true'] .graph-node-box {
+  /* The selected edge is a **wider** stroke here and not a toned one alone: the
+   * tone that says these are the selected task's edges is the one this mode
+   * takes away, and the critical path is already drawn 3 px, so the same width
+   * would leave the two strokes indistinguishable. The distinction survives as a
+   * shape instead -- 4 px against the critical path's 3, which is the scale
+   * design section 2.11 promises a forced-colors reader keeps. */
+  section.graph svg .graph-edge[data-selected='true'] .graph-edge-path {
+    stroke: Highlight;
+    stroke-width: 4;
+  }
+
+  /* The selected card is left the 3 px its own rule gives it, against a running
+   * card's 2, and takes the system's highlight tone: a card's tone is its
+   * state's, so the width is what is left of the selection in this mode. */
+  section.graph svg .graph-node[data-selected='true'] .graph-node-box {
     stroke: Highlight;
   }
 
-  svg .graph-release-heading,
-  svg .graph-release-bar,
-  svg .graph-release-stream,
-  svg .graph-release-version,
-  svg .graph-release-name,
-  svg .graph-node-title,
-  svg .graph-node-word,
-  svg .graph-node-pr,
-  svg .graph-node-run,
-  svg .graph-node-mark {
+  section.graph svg .graph-release-heading,
+  section.graph svg .graph-release-bar,
+  section.graph svg .graph-release-stream,
+  section.graph svg .graph-release-version,
+  section.graph svg .graph-release-name,
+  section.graph svg .graph-node-title,
+  section.graph svg .graph-node-word,
+  section.graph svg .graph-node-pr,
+  section.graph svg .graph-node-run,
+  section.graph svg .graph-node-mark {
     fill: CanvasText;
   }
 
@@ -2310,19 +2334,19 @@ span.coordinator-unread-retry {
     animation: none;
   }
 
-  button.graph-tab[aria-selected='true'],
-  button.graph-chip[aria-expanded='true'] {
+  section.graph button.graph-tab[aria-selected='true'],
+  section.graph button.graph-chip[aria-expanded='true'] {
     border-color: Highlight;
   }
 
   /* Only the tone is written here: a border's *style* is not forced by the
    * system, so the blocked row's dashed left edge survives with the amber
    * going to `CanvasText` (design section 4.4's rule 1). */
-  li.graph-row[data-state='blocked'] {
+  section.graph li.graph-row[data-state='blocked'] {
     border-left-color: CanvasText;
   }
 
-  li.graph-row[data-selected='true'] {
+  section.graph li.graph-row[data-selected='true'] {
     background: Highlight;
     color: HighlightText;
     forced-color-adjust: none;

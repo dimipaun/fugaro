@@ -873,9 +873,11 @@ function bandOf(rects: readonly Rect[]): Rect | null {
  * model's own order, over the tasks **the canvas draws** -- a band around the
  * tasks a shut chip hides would be a band around empty space.
  *
- * The band is the model's stream grouping made geometry: the layout is flat (the
- * engine places tasks, not streams), so the row a stream's tasks occupy is the
- * answer's own rectangle around them, drawn behind everything else.
+ * The band is the model's stream grouping made geometry: each stream is laid out
+ * on a run of its own and the runs are stacked as rows (`layout.ts`), so the row
+ * a stream's tasks occupy is that run's own rectangle around them, drawn behind
+ * everything else -- and a band is therefore exactly a row, which is what keeps
+ * one stream's band off another stream's cards.
  */
 function streamBands(picture: GraphPicture, placed: ReadonlyMap<string, Rect>): readonly StreamBand[] {
   const bands: StreamBand[] = []
@@ -1321,6 +1323,23 @@ function releaseBox(factory: GraphFactory, box: ReleaseBox): ScreenElement {
 }
 
 /**
+ * cardLabel is what a reader who cannot see the card is told it is: the title
+ * **whole** and every word the card draws.
+ *
+ * The drawing cuts the title at three lines and the model cuts it again at
+ * `GRAPH_MAX_TITLE_CODE_POINTS`, so the card is not a name -- it is a picture of
+ * one, and a screen reader handed the `tspan`s would read a sentence that stops
+ * mid-word. `critical` is here for the same reason its close cousin
+ * `data-critical` exists: its mark is the glow, which is `aria-hidden`, and a
+ * word in a name is the only place that fact can survive with no colour and no
+ * motion.
+ */
+function cardLabel(node: GraphNode): string {
+  const title = node.title.ok ? node.title.text : UNAVAILABLE_MARK
+  return node.words.length === 0 ? title : [title, ...node.words].join(', ')
+}
+
+/**
  * nodeCard is one task's box: its title, its words, its pull request number and
  * its run, and -- when the gesture would do nothing -- the sentence saying why.
  *
@@ -1330,6 +1349,11 @@ function releaseBox(factory: GraphFactory, box: ReleaseBox): ScreenElement {
  * console's own list resolved the suffix to). It carries **no destination**: the
  * design's §5.1 rule 2 and gap 7 leave the console no URL to build, so the pull
  * request is a number and its reason.
+ *
+ * Its `role` is what the keyboard does with it, and nothing else: where there is
+ * a run to open, Enter and Space open it and the card is a `button`; where there
+ * is not, the arrow keys move over it and no key does anything, and a `button`
+ * there would promise a reader a control that is not one.
  */
 function nodeCard(
   factory: GraphFactory,
@@ -1354,6 +1378,8 @@ function nodeCard(
   // else to select (design section 2.11's attribute table).
   group.setAttribute('data-critical', node.critical ? 'true' : 'false')
   group.setAttribute('tabindex', stopHere ? '0' : '-1')
+  group.setAttribute('role', door.run !== null ? 'button' : 'group')
+  group.setAttribute('aria-label', cardLabel(node))
   shift(group, rect.x, rect.y)
   if (door.run !== null) group.setAttribute('data-run-id', door.run)
   else group.append(tooltip(factory, door.because))

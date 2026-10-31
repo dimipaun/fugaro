@@ -961,18 +961,32 @@ asked for `elk.direction: 'RIGHT'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a tas
 the **left** of the tasks that need it, the layers it computes are the columns a reader
 reads across, and a dependency is a line that leaves one card's side and arrives at
 another's. A card is **260 × 88** (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), which is the
-two constants the engine is told and the two the layout cache is keyed by: the key is a
-serialization of the graph's **structure**, so the box sizes are in it and a card that
-changes size changes the key with it.
+two constants the engine is told and the two **one stream's** layout cache is keyed by: the
+key is a serialization of that stream's **structure**, so the box sizes are in it and a
+card that changes size changes the key with it.
+
+**One engine run per stream, and the runs are stacked as rows** (the owner's ruling of
+2026-10-31). The engine's packing is two-dimensional: handed every stream at once, it
+places one stream's plans among another's wherever they fit, and the band drawn around a
+stream's cards then swallows another stream's cards. So each stream is laid out on its own
+run, and the runs are placed below one another **in the model's order**, `GRAPH_ROW_GAP`
+between two rows — the room two bands need to stay apart. A read that changes one stream's
+structure lays that stream out again and reuses every other stream's positions, because
+the key above is a stream's.
 
 **A stream is a band, and the band is geometry the screen computes rather than a
-container the engine is given** — the layout is flat, because `graphOf` hands the engine
-nodes and edges and no containers. Each stream's band
+container the engine is given** — a run is handed one stream's nodes and edges and no
+containers. Each stream's band
 is the rectangle around the cards that stream has **on the picture** — a shut chip's hidden
 tasks are outside it — padded by `GRAPH_PAD` and grown upward by `GRAPH_BAND_HEAD` for the
 band's own label, which is the stream's `Sanitized` name ("no stream" for the plans that
 name none). Bands are drawn **first**, so every card and every release box sits on its own
-stream's ground, and the picture's `viewBox` covers them.
+stream's ground, and the picture's `viewBox` covers them. Because the rows are stacked, a
+band **is** a row: it cannot reach into another stream's. An edge whose two ends land in
+different rows is the one thing no run has routed, and `crossStreamRoute` draws it as an
+orthogonal line through the gutter between the two rows — no document this console builds
+has one today (a plan's `needs` name tasks of that plan, and a plan belongs to one stream:
+the reconciliation's F4, and GV4.1 is the slice that would add them).
 
 **The canvas's ground is a dotted grid, and it is decoration.** It is a CSS background on
 `svg.graph-canvas` and not an element: nothing is read from it, no state is carried by it,
@@ -1001,7 +1015,7 @@ lands. What step 6a restyles is the canvas and the cards, below.
 | `graph-release-heading`, `graph-release-bar` | `text` inside the box | the heading line and the bar under it |
 | `graph-release-stream`, `graph-release-name`, `graph-release-version` | `tspan`s inside that heading | the same three parts the chip draws |
 | `graph-edge`, `graph-edge-path` | `g` + `path` | one edge per dependency; the `g` carries the three facts below |
-| `graph-node`, `graph-node-box` | `g` + `rect` | one card per task; the `g` carries `data-state`, `data-selected` and `data-critical` |
+| `graph-node`, `graph-node-box` | `g` + `rect` | one card per task; the `g` carries `data-state`, `data-selected` and `data-critical`, a `role` (`button` where Enter or Space opens the card's run, `group` where no key does anything) and an `aria-label` of the whole title and every word the card draws — the card's lines cut a title at three, and the name is where it is whole |
 | `graph-node-title`, `graph-node-title-line` | `text` inside the card, and one `tspan` per line it was wrapped to | SVG has no wrap, so the lines are the screen's: a title is wrapped at `GRAPH_NODE_TITLE_LINE_CODE_POINTS` over at most `GRAPH_NODE_TITLE_LINES` lines, and only a title that still does not fit is cut (with an ellipsis, on a code-point boundary) — the whole title is still in the list |
 | `graph-node-word`, `graph-node-pr`, `graph-node-run`, `graph-node-mark` | `text` inside the card | one element per state word, the pull request number, the run and the reading's mark |
 | `graph-node-comet` | `rect` on the card's own border, `aria-hidden` | the light streak that travels a **running** card's border: GV2.4's motion, drawn only while the first word is one of the four a running task draws (`implementing`, `in review`, `fixing`, `queued`) |
@@ -1052,8 +1066,10 @@ the inventory test with `data-hidden` and `data-skew`; the other two, `data-key`
 made of) unless it is on the critical path, which is `--live`. **The edge widths are the
 second channel and the only one a forced-colors reader keeps**: a cross-release edge is
 1 px, a plain one 2 px, the critical path 3 px, and the edges of a selected task 3 px of
-the reading tone — so the whole distinction survives `forced-colors: active`, where the
-dashes of a blocked card survive with it (§4.4). The selected **card** is a width too, 3 px
+the reading tone — and the selection's tone is the one thing that mode takes away, so its
+arm draws those edges **4 px of `Highlight`**, a pixel wider than the critical path: the
+whole distinction survives `forced-colors: active`, where the dashes of a blocked card
+survive with it (§4.4). The selected **card** is a width too, 3 px
 against a running card's 2, and it keeps its state's tone: a selection that recoloured the
 boundary would hide the state it is selecting. No rule paints `--ok` on this screen: §3.2
 licenses that token to two readings, and a finished task is neither.

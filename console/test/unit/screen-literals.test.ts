@@ -508,6 +508,13 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "node.words[0] ?? ''": 'the node\'s first `StateWord`, the model\'s own vocabulary, as the `data-state` hook a rule colours; the empty string is a node the model gave no word, which is a state no colour applies to',
     'door.run': 'the run id this console\'s own run list resolved the node\'s suffix to (`doorFor`), which is what `data-run-id` carries and what the entry opens -- a node whose suffix no run ends with, or one two runs end with, carries no attribute at all',
     'door.because': { within: 'listRow', reason: '`doorFor`\'s own sentence for a gesture that opens nothing, in the `title` an HTML element keeps a tooltip in' },
+    "door.run !== null ? 'button' : 'group'":
+      'a card\'s role as one of two literals: where a run resolved the card is the `button` Enter and Space open, and where none did it is the `group` no key touches -- the same shape as `live.ts`\'s `repo.kill === null ? \'false\' : \'true\'`',
+    'cardLabel(node)': {
+      within: 'nodeCard',
+      reason:
+        '`cardLabel`: a card\'s accessible name -- the same `Sanitized` title the card draws, **whole** rather than cut at three lines, and the `StateWord` list the model answered beside it. It is a name and not a drawing: it is never painted, and what a reader is told is therefore the title the card could not hold',
+    },
     'viewBoxOf(bounds, picture.state.zoom)': {
       within: 'canvas',
       reason: '`viewBoxOf`: four numbers off the picture\'s own bounds and the state\'s zoom, so what the canvas looks at is geometry rather than a style',
