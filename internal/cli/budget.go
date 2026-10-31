@@ -154,7 +154,7 @@ func checkDBProject(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) e
 	case err != nil:
 		return dbErr(lc, err, false)
 	case !found:
-		return userErr("the database at budget.rtdb_url has no /fugaro/project: it is not a Fugaro project's budget database; an operator runs fugaro update --firebase-project for project %s", lc.Name)
+		return userErr("the database at budget.rtdb_url has no /fugaro/project: it is not a Fugaro project's budget database; an operator runs fugaro update --firebase-project %s for project %s", firebaseProjectIDWord(lc.GCPProject), lc.Name)
 	case name != lc.Name:
 		return userErr("the database at budget.rtdb_url belongs to project %q, not %q; fix budget.rtdb_url in project %s's config", oneLine(name), lc.Name, lc.Name)
 	}

@@ -515,7 +515,7 @@ func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config,
 	if len(unread) > 0 {
 		problem += " (not read: " + strings.Join(unread, "; ") + ")"
 	}
-	return []doctorCheck{{ID: "credentials-service-deployers", Severity: "info", Problem: problem,
+	return []doctorCheck{{ID: "credentials-service-deployers", Severity: "info", unread: len(unread) > 0, Problem: problem,
 		Fix: "no action is required: this is who could deploy the service, and the installation needs at least one of them. Keep it to the operators who run " + selfCommand() + " update, and remember that a holder can deploy a revision that runs as the service's account, which reads every credential in the bundle"}}
 }
 

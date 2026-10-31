@@ -259,7 +259,7 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 // the Firestore location, a Cloud Build, replacing a tag, an unlisted
 // repository, a secret and the plugin wiring each keep their own).
 func TestRunConfirmationCallSites(t *testing.T) {
-	want := map[string]int{"init.go": 7, "init_firebase.go": 2, "init_images.go": 1}
+	want := map[string]int{"init.go": 7, "init_firebase.go": 2, "init_images.go": 1, "init_rules_stage.go": 1}
 	re := regexp.MustCompile(`\br\.(confirmOrdinary|askOrdinary|runCovers)\(`)
 	files, err := filepath.Glob("*.go")
 	if err != nil {

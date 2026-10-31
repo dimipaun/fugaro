@@ -979,8 +979,11 @@ console's auto-update. The step is **Task 4.4** of
 `docs/pending-workflows/console-release.yml`; the design behind it is
 **section 7.3** of `docs/design/desktop-console.md`, which is where
 electron-updater and its `latest-mac.yml` manifest are named as the feed client
-and its format. Those two are the whole citation — there is no separate
-auto-update plan and no decision number for this change. It runs on the release
+and its format. The chain is planned in
+`docs/plans/2026-10-30-console-auto-update.md`, where this change is task **U2**
+and decisions **D764** (the client finds the newest `console-vX.Y.Z` itself) and
+**D765** (this workflow, not electron-builder, writes `latest-mac.yml`) are the
+owner's of 2026-10-30. It runs on the release
 tag and **never on a pull request**, like the file it supersedes.
 
 What it adds, and nothing else in the file moved:

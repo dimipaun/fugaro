@@ -217,7 +217,7 @@ func (r *run) unreadablePolicy(err error) error {
 		// the marker in place, so a policy that was published becomes
 		// unreadable and every budget-on run of the project stops here
 		// (R2-8(b)).
-		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro update --firebase-project' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro update --firebase-project' again with an up-to-date fugaro, which deploys the rules generation this runner reads (%d). The run does not start on a ceiling the policy did not set: %s",
+		return fmt.Errorf("the project's policy at %s could not be read: the deployed rules are older than the marker %s and refuse this run's token for a node that exists, which is what an older fugaro's 'fugaro update --firebase-project' leaves behind when it redeploys rules that predate that marker and leaves it in place. Run 'fugaro update' in your own terminal with an up-to-date fugaro: its rules stage deploys the rules generation this runner reads (%d) over that skew. The run does not start on a ceiling the policy did not set: %s",
 			projectpolicy.PathShared(), marker, projectpolicy.RulesVersion, r.redact(err.Error()))
 	}
 	var me *projectpolicy.MarkerError

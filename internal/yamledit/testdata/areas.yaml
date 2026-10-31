@@ -1,0 +1,8 @@
+rigor:
+  areas:
+    - name: one
+      path: internal/one/**
+      mode: critical
+    - name: two
+      path: internal/two/**
+      mode: standard

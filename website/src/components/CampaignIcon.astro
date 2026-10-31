@@ -1,0 +1,97 @@
+---
+/**
+ * website/src/components/CampaignIcon.astro — the mark each call to action carries (the owner's
+ * feedback of 2026-10-30, D412's finding 1).
+ *
+ * **The finding was "the closing buttons read as three bars of text".** The three calls to
+ * action were three rows of type on a field of colour, and the owner asked for a small icon on
+ * each — "a little more fun: friendlier, a touch of character" — so the booking carries a
+ * calendar, the install a download and the chat a speech bubble.
+ *
+ * **The mark is decoration, and the label is the meaning.** Every one of these `<svg>`s is
+ * `aria-hidden="true"` with `focusable="false"`: a screen reader reads the link's own words
+ * ("Book a demo", "Install free", "Chat with the founder") and is told nothing about the
+ * drawing, which says the same thing a second time in a language it cannot pronounce
+ * (`website/test/landing-pages.mjs` reads the pair — an icon on each of the three, an
+ * `aria-hidden` on every icon).
+ *
+ * **Drawn here, inline, in the site's own style.** The marks are strokes on a 24-unit box with
+ * round caps and joins — the same shape language `CampaignHeroArt.astro` draws the campaign's
+ * picture in, and the same `currentColor` rule, so each mark takes the colour of the control it
+ * sits in and no second palette entry is named for it. **Nothing is fetched**: no icon font, no
+ * sprite file, no `<img>` — an icon set is a file and a licence, and three shapes a page can
+ * carry in its own markup are neither (F14, Global Constraint 8). The `website/test/
+ * landing-pages.mjs` case that reads the campaign styles for `url(…)` is the site-wide half of
+ * that rule.
+ *
+ * The size is the consumer's: the mark is 1 em of the control's own type, so the hero's button
+ * and the band's three draw it at the size of the words beside them rather than at a size this
+ * file has to know. The `<style>` below is that one rule, and it needs no `:global()`: the mark
+ * is this component's own element, so the rule is scoped to it here and the built stylesheet
+ * carries the class with this file's `data-astro-cid`. It is the *consumers* that reach across
+ * the boundary — the hero's button and the closing band's three style their own hover with
+ * `:global(.campaign-icon…)`, because a component's scoped selector cannot name another
+ * component's element (`CampaignCalls.astro`, `CampaignHero.astro`).
+ */
+interface Props {
+  /** Which mark to draw. One of the three the calls to action are, and no other. */
+  name: 'calendar' | 'download' | 'chat'
+}
+
+const { name } = Astro.props
+---
+
+<svg
+  class="campaign-icon"
+  data-icon={name}
+  viewBox="0 0 24 24"
+  aria-hidden="true"
+  focusable="false"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.8"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  {/* The booking: a month's grid — a card with its two hangers and the line under its header. */}
+  {name === 'calendar' && (
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="4" />
+      <path d="M8 2.8v4" />
+      <path d="M16 2.8v4" />
+      <path d="M3 11h18" />
+    </>
+  )}
+
+  {/* The install: an arrow coming down out of the page into a tray, which is what a reader
+      does with an install command rather than a picture of a box. */}
+  {name === 'download' && (
+    <>
+      <path d="M12 3v11" />
+      <path d="M7.5 10 12 14.5 16.5 10" />
+      <path d="M4 16.5v1.5A2.5 2.5 0 0 0 6.5 20.5h11a2.5 2.5 0 0 0 2.5-2.5v-1.5" />
+    </>
+  )}
+
+  {/* The chat: one bubble with a tail, and three dots in it — the shape a reader already knows
+      means "a message a person answers". */}
+  {name === 'chat' && (
+    <>
+      <path d="M21 14.5a2 2 0 0 1-2 2H7.5L3.5 20.5V6a2 2 0 0 1 2-2h13.5a2 2 0 0 1 2 2z" />
+      <path d="M8 9.2h.01" />
+      <path d="M12 9.2h.01" />
+      <path d="M16 9.2h.01" />
+    </>
+  )}
+</svg>
+
+<style>
+  /* The mark at the size of the words beside it, and never squeezed by a narrow control: the
+     button's own `gap` is what spaces the two. `flex: none` is half of it — a button is a flex
+     row, and an SVG with a width is a flex item that would otherwise shrink on a phone. */
+  .campaign-icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+</style>

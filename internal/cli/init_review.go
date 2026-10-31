@@ -306,6 +306,20 @@ func (e *initEngine) previewState(name string) initflow.State {
 	return ""
 }
 
+// previewDetail is what the preview's read of a stage found, in the stage's own
+// words. The review screen prints it for the one step whose own account changes
+// what the operator is agreeing to: the rules deploy can lock every phone
+// account out, and the sentence saying so is the stage's detail
+// (init_rules_stage.go's rulesStageState).
+func (e *initEngine) previewDetail(name string) string {
+	for _, s := range e.previewed {
+		if s.Name == name {
+			return s.Detail
+		}
+	}
+	return ""
+}
+
 // reviewScreen prints the one review for what is left of the run: a line for
 // each ordinary stage with something to do, the IAM changes it knows of, and
 // what still asks separately.
@@ -349,6 +363,12 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			repo = pluginwire.Printable(e.repo.tg.repo)
 		}
 		fmt.Fprintf(w, "  repository:     Terraform apply onboarding %s (planned when applied)\n", repo)
+	}
+	if todo[initflow.Rules] {
+		fmt.Fprintln(w, "  rules:          deploys this Fugaro's security rules into the Firebase project's database and records which generation is deployed")
+		if d := e.previewDetail(initflow.Rules); d != "" {
+			fmt.Fprintln(w, "                  "+d)
+		}
 	}
 	fmt.Fprintln(w, "Fixed, announced and free, so they need no plan: the Terraform state bucket (cents a month) and the Cloud Resource Manager API when missing, the local config (its diff is shown first).")
 	fmt.Fprintf(w, "IAM changes announced: removes project Viewers' read access to the runs bucket gs://%s and the state bucket gs://%s when they have it.\n", e.spec.RunsBucket, e.spec.StateBucket)
@@ -402,6 +422,12 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	if e.previewState(initflow.Plugin) == initflow.Todo {
 		sep = append(sep, "the plugin wiring (its own y/N)")
+	}
+	if e.previewState(initflow.Checkout) == initflow.Todo {
+		sep = append(sep, "the checkout's own steps, run by fugaro upgrade as they are here: the plugin pin and the plugin wiring ask nothing of their own (the pin prints its diff, and is reviewed with git diff after), while the image refresh asks at each step of its own that changes something — the base image it pins by digest, the daily image check job's config, and the billable build of the checkout's job images, one confirmation per build — the project's name typed, or --yes")
+	}
+	if e.previewState(initflow.Policy) == initflow.Todo {
+		sep = append(sep, "migrating the published policy node in place (type the project's name)")
 	}
 	if len(sep) == 0 {
 		sep = append(sep, "nothing else is waiting in this run")
@@ -479,10 +505,19 @@ func (r *initRun) firebaseReason() string {
 	if r.review == nil || r.review.firebase == nil {
 		return ""
 	}
-	if ok, why := r.review.firebase(r.ctx()); !ok {
-		return "the Firebase project is " + why
+	ok, why := r.review.firebase(r.ctx())
+	if ok {
+		return ""
 	}
-	return ""
+	if why == "" {
+		// firebaseVerified answers (false, "") for the one case it cannot word:
+		// no --firebase-project at all, so there is no project to name. Pasted
+		// into "the Firebase project is ", that answered the operator with half
+		// a sentence in the run that deploys into the project's own database
+		// (the rules stage, without the flag the database step is behind).
+		return "no Firebase project was named (--firebase-project), so nothing verified one as this installation's"
+	}
+	return "the Firebase project is " + why
 }
 
 // notCoveredFirebase is notCovered for a plan of the Firebase root, which is
