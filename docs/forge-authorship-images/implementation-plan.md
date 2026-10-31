@@ -443,8 +443,10 @@ only the dependency set and each run still gets its source from the clone); the 
 per-(repository, workflow) images; the build's credential; and the local resolver command (withdrawn
 C2) as the key's input. `fugaro project sync` never un-enrolls; removed repositories are dropped from
 the lock only. It answers reconciliation T6 (a)-(c) as resolved on 2026-10-29 and adds the three image-count
-controls: the key is **normalised** (only resolved package names, versions, toolchain and base image;
-file order, comments, formatting, repository name and build or test commands are ignored); a
+controls: the key is **normalised** (only resolved package names, versions and the integrity each key
+file states for them, toolchain and base image; file order, comments, formatting, repository name and
+build or test commands are ignored; a package resolved from a source that is not the ecosystem's
+registry leaves the repository unkeyed — D618, answered 2026-10-31, as §2.3 of the design states); a
 **superset** lookup reuses an existing image that holds the repository's whole dependency set at the
 same versions, even with extras (the wider supply-chain surface is the stated cost); and a cap
 warning plus clean-up of images unused for N days (proposed N = 30; the owner confirms). Dev-only
@@ -455,10 +457,11 @@ behaviour (C8). C8 may start once the owner gives the go; T6 is no longer a gate
 #### C8. Build, lock, proposal and job update for shared images (after C7; the owner's go)
 
 - **Decisions:** D617, D618, D619, D620, D621.
-- **Interfaces:** `imagecheck.Key(resolved) string` (the normalised hash: package names, versions,
-  toolchain, base image only), `imagecheck.Lock` (hash to digest, a JSON object in the runs bucket
-  under `builds/`, decoded strictly, schema in `schemas/`; the one source), `imagecheck.Superset(lock,
-  resolved)` (an existing image holding the whole set at the same versions), `imagecheck.Record`
+- **Interfaces:** `imagecheck.Key(resolved) string` (the normalised hash: package names, versions and
+  their integrities, toolchain, base image only), `imagecheck.Lock` (hash to digest, a JSON object
+  in the runs bucket under `builds/`, decoded strictly, schema in `schemas/`; the one source),
+  `imagecheck.Superset(lock, resolved)` (an existing image holding the whole set at the same versions),
+  `imagecheck.Record`
   gains `Key`; the job update takes the lock's digest for a repository's hash; a proposal type with
   the choices fork, adopt `<repository>` and stay-pinned; `fugaro image ls` (images, their hashes,
   the repositories on each, last use) and `fugaro image refresh --on-divergence=fork|adopt=<repo>|pin`

@@ -35,10 +35,13 @@ type Resolved struct {
 	// record's BaseRef and BaseDigest hold it.
 	BaseRef    string
 	BaseDigest string
-	// Packages and Tools are "name@version": the name and the version as
-	// the file states them, after the ecosystem's own canonicalisation
-	// where it defines one (PyPI's PEP 503 normalisation, the Go module
-	// path as written). Dev-only dependencies are not exempt (§2.3).
+	// Packages are "name@version@integrity" and Tools are "tool@version": the
+	// names and versions as the file states them, after the ecosystem's own
+	// canonicalisation where it defines one (PyPI's PEP 503 normalisation,
+	// the Go module path as written), and the integrity or checksum the file
+	// states for that version's artifact — without it when the file states
+	// none for that package (D618). Dev-only dependencies are not exempt
+	// (§2.3).
 	Packages []string
 	Tools    []string
 }

@@ -11,11 +11,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// theOperatorsKey is a key of the shape Key returns and not one this
-// checkout's files reduce to: what the test is about is that the record
-// carries the value it was handed, and a build that worked one out from what
-// it cloned would write something else here.
-const theOperatorsKey = "5a1c9e0d3b7f42c6a8e1d0b9c8f7e6d5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e"
+// theOperatorsKey is a key of the shape Key returns — 64 lower-case hex
+// characters — and not one this checkout's files reduce to: what the test is
+// about is that the record carries the value it was handed, and a build that
+// worked one out from what it cloned would write something else here.
+const theOperatorsKey = "5a1c9e0d3b7f42c6a8e1d0b9c8f7e6d5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9"
 
 // TestRecordKeyIsTheOperatorsValue: D622. The key is computed on the
 // operator's machine (imagecheck.Key, from the key files it read) and handed
@@ -77,6 +77,34 @@ func TestRecordKeyIsTheOperatorsValue(t *testing.T) {
 	}
 	if v, ok := fields["key"]; ok {
 		t.Errorf("a build handed no key recorded one of its own: %s", v)
+	}
+}
+
+// TestRecordRefusesAValueThatIsNotAKey: the key is the operator's and the
+// build records it verbatim (D622), so a value that is not a key must not
+// reach the record: every later launch chooses the image by that field, and a
+// record holding something else would name an image no build made.
+func TestRecordRefusesAValueThatIsNotAKey(t *testing.T) {
+	checkoutWith(t, npmFiles())
+	for _, bad := range []string{
+		strings.ToUpper(theOperatorsKey),
+		theOperatorsKey + "0",
+		theOperatorsKey[:63],
+		strings.Repeat("g", 64),
+		"sha256:" + theOperatorsKey,
+	} {
+		ws := t.TempDir()
+		_, _, err := execute(t, "image", "render", "--workflow", "app", "--cloud-outputs", ws, "--key", bad)
+		if err == nil {
+			t.Errorf("render accepted the key %q", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "--key") {
+			t.Errorf("render refused %q with %q, which does not say which flag it was", bad, err)
+		}
+		if _, err := os.Stat(filepath.Join(ws, "record.json")); err == nil {
+			t.Errorf("render wrote a record for the key %q", bad)
+		}
 	}
 }
 

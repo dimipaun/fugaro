@@ -50,7 +50,7 @@
         },
         "packages": {
           "type": "array",
-          "description": "This image's own resolved packages, as name@version. A reuse (§4) is decided from these: an entry holds a repository's set when every one of its packages is here at the same version, and the entry may hold more.",
+          "description": "This image's own resolved packages, as name@version@integrity — the integrity being the checksum the key file stated for that version's artifact, absent when it stated none. A reuse (§4) is decided from these: an entry holds a repository's set when every one of its packages is here at the same version and the same integrity, and the entry may hold more.",
           "items": {
             "type": "string"
           }

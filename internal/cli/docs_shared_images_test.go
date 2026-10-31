@@ -40,15 +40,25 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 	// The facts: each string is a control the design states.
 	sharedImagesMustContain(t, section, path, "fact", []string{
 		// D618 as answered, plus O6's three image-count controls.
-		"only resolved package names, versions, toolchain and base image count",
+		"only resolved package names, versions and their integrities, toolchain",
+		// D618 in §2.3: the integrity is part of the fact, a non-registry
+		// source is unkeyed, and an unnamed key file is unkeyed rather than
+		// "no dependencies" — the three controls the reduction is built to.
+		"carries the integrity or checksum the file states for that version's artifact",
+		"**a source that is not the ecosystem's registry**",
+		"the default for a key file is unkeyed, never \"no dependencies\"",
+		// C8b1b's read bound: Reduce is handed bytes that are already in
+		// memory, so the caller bounds its own read.
+		"The bound is on bytes already in memory, so the caller bounds its own read",
 		// §2.4's escaping rule: a fact is one line whatever it holds.
 		"Each fact is written as a **quoted Go string literal**",
-		"only when it holds the whole set at the same versions",
+		// Reuse compares whole facts, so the integrity is part of it (D618).
+		"only when it holds the whole set at the same versions and the\nsame integrities",
 		// T6(c) as resolved: propose-then-confirm, and the unattended refusal.
 		"proposed and confirmed, never forked silently",
 		"refuses to build when there is no terminal",
 		"`--on-divergence=fork`, `--on-divergence=adopt=<repository>`, `--on-divergence=pin`",
-		"when that image is a superset of this repository's set at the same versions",
+		"when that image is a superset of this repository's set at the same versions and integrities",
 		"keeps the image the repository is on, digest unchanged, and warns",
 		// T6(c): the shared image is never mutated.
 		"never rebuilt or overwritten in place",

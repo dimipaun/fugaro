@@ -518,6 +518,21 @@ func newImageRenderCmd() *cobra.Command {
 	return cmd
 }
 
+// isDependencyKey reports whether key has the shape imagecheck.Key returns: the
+// lower-case hex SHA-256 of the canonical dependency set (design
+// docs/forge-authorship-images/shared-images.md §2.4).
+func isDependencyKey(key string) bool {
+	if len(key) != 64 {
+		return false
+	}
+	for _, r := range key {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // writeCloudOutputs writes, into dir, what the Cloud Build steps after
 // render read: selftest.json (the smoke's spec, image.SpecForCloud),
 // record.json (the build record's source side, which record completes),
@@ -526,8 +541,14 @@ func newImageRenderCmd() *cobra.Command {
 // key is the normalised dependency-set key the operator's machine computed
 // for this repository, which the build was submitted with; it is written into
 // the record as it was given (D622) and never worked out here. The empty
-// value is a build that was handed no key.
+// value is a build that was handed no key. A value that is not a key at all is
+// refused rather than recorded: the record is what every later launch reads to
+// choose the repository's image, and one carrying something that is not the
+// operator's key would name an image no build made.
 func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf resolvedFile, name, dir, key string) error {
+	if key != "" && !isDependencyKey(key) {
+		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("--key %q is not a 64-character lower-case hex dependency-set key", key)}
+	}
 	cfg := rf.Cfg
 	git := func(args ...string) (string, error) {
 		c := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)

@@ -486,6 +486,15 @@ owner's answer (all answered 2026-10-29: every one is the recommendation except 
     warning** in `doctor` and `fugaro image ls`, and automatic clean-up of images no job has used for
     N days (proposed N = 30; the owner confirms the value). The owner did not choose "dev-only
     dependencies create no image".
+  - **(a), refined 2026-10-31 (D618 as answered):** control (1)'s package input is the resolved
+    package's name, its version **and the integrity or checksum its key file states for that
+    version's artifact** — two repositories that resolved one version to two artifacts are two
+    dependency sets, since the image is built from the artifact — and a package a key file resolves
+    from a source that is not the ecosystem's registry (a git, file or path source, an npm alias, a
+    Bundler `GIT` block, a composer `dev-` branch, …) leaves the repository **unkeyed** rather than
+    keyed by the versions beside it. §2.3 and §2.4 of the design hold the rule and its per-ecosystem
+    shapes; C8a's reduction (`internal/imagecheck/reduce.go`) is built to it. The four inputs and the
+    controls are otherwise as resolved above.
   - **(b) Interplay:** as recommended: the bucket lock (hash to digest) is the one source. D619 warns
     on a digest mismatch against the lock; D621 rebuilds only when an input hash changes; derived
     images are built from the shared base for that hash.

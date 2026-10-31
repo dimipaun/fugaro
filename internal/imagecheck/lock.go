@@ -60,12 +60,14 @@ type LockedImage struct {
 	// BaseRef and BaseDigest are the base the build ran FROM.
 	BaseRef    string `json:"base_ref"`
 	BaseDigest string `json:"base_digest"`
-	// Packages and Tools are this image's own resolved set, as "name@version"
-	// — §2.4's pkg: and tool: lines without their prefix. They are what §4
-	// compares: an entry may be reused only when it holds the whole set at
-	// the same versions and the same tools, and §5 calls a repository
-	// diverged when the image it is on does not hold its set. Without them
-	// the lock would hold only hashes, and no reuse could be decided at all.
+	// Packages and Tools are this image's own resolved set, as
+	// "name@version@integrity" and "tool@version" — §2.4's pkg: and tool:
+	// lines without their prefix, the integrity being the one the key file
+	// stated for that version's artifact (D618). They are what §4 compares:
+	// an entry may be reused only when it holds the whole set at the same
+	// versions and the same tools, and §5 calls a repository diverged when
+	// the image it is on does not hold its set. Without them the lock would
+	// hold only hashes, and no reuse could be decided at all.
 	Packages []string `json:"packages"`
 	Tools    []string `json:"tools"`
 	// BuiltAt and BuildID identify the build that made the image.
