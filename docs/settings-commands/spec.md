@@ -1,11 +1,11 @@
 # `fugaro settings`: the spec
 
-The commands below are written to the owner's answers to SD1–SD18 (2026-10-31) and to the
-recommended answer of this design's own decisions D840–D854 ([reconciliation.md](reconciliation.md)
-§3 and §4). A decision answered the other way changes the paragraph that names it. **D854 is the one
-still open** — a stale local copy overwriting a newer publish, §6 — and the text below says where it
-leans on it. Repository names
-are placeholders (`owner/repo-a`, `owner/repo-b`), projects are `workspace-a`, people are `person-1`.
+The commands below are written to the owner's answers to SD1–SD18 and to this design's own decisions
+D840–D854, all answered on 2026-10-31 as recommended ([reconciliation.md](reconciliation.md) §3 and
+§4). A decision answered the other way would change the paragraph that names it; none was. D854 —
+a stale local copy overwriting a newer publish — is answered with the refusal, and §6 says what the
+publishing stages do with it. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`),
+projects are `workspace-a`, people are `person-1`.
 
 ## 1. The rule this serves
 
@@ -60,7 +60,7 @@ the one the code already implements, stated once in `--help` and once in the JSO
 | Resolved `fugaro.yaml` keys | `default` < `project` (layer `defaults:`) < `profile <n>` (layer profile, `workflows.*` only) < `repo` < `flag` (the `InOverride` keys only) | `config.Resolve` and `Resolution.SourceOf` (`internal/config/resolve.go`); `config show` prints the same words |
 | Ceiling keys (`budget.{mode,per_run_usd,allowed_models,max_run_tokens}`, `governance.*`) | `default` → `local` (the job environment as of the last `update --repo`) → `policy` (the node) → `project` (layer governance) → `repo` → `branch` (the run's branch) | **Tighten only:** the smaller cap, the stricter mode and the intersection of the lists win (`policy.Merge`, `internal/policy/merge.go`) |
 | `review_floor` | `policy` ∪ every lower layer | A union: a lower layer only adds a floor (`localcfg.Config.ReviewFloor`) |
-| `rigor.default` | `default` < `project` < `repo` | `internal/rigor`'s resolver; `rigor.areas` is a union of the two layers |
+| `rigor.default` | `default` < `project` < `repo` | **`rigor.Resolve` (`internal/rigor/resolve.go`) is the single source of this row**: the read calls it rather than ordering the layers itself, so a run and the table cannot disagree. `rigor.areas` is a union of the two layers |
 | `caps.*`, `kill.*` | `caps.defaults` < `caps.repo` | The Realtime Database caps, independent of and enforced beside the ceiling |
 | `layer.profiles.*`, `layer.*` | `project` only | The project layer has one writer: the layer file |
 | `credentials.*`, `clone_urls.*` | `local` only | New local-config blocks (SD5); `update` publishes them into the node, which no longer holds a value the local file does not |
@@ -327,14 +327,15 @@ And one migration, in the same command (SD5, D842, D844):
    node carries neither block gets neither block in its file: no default is seeded into a file
    nobody wrote (D843).
 
-**A stale local copy can overwrite a newer publish — D854, still open.** A stage that writes whenever
-the file differs from the object will, on a second machine, replace an operator's newer layer or
-policy node with this machine's older file, and say nothing. The recommendation: each stage records
-the generation the local file was seeded from or last published at, and when the published generation
-has moved since, it **refuses to publish**, shows the three-way state (this machine's file, the
-generation it was written from, the object published now), and offers to re-seed the local file from
-the published one under confirmation, with a backup. Until the owner answers, these stages publish on
-difference as written above.
+**A stale local copy cannot overwrite a newer publish — D854, answered.** A stage that writes whenever
+the file differs from the object would, on a second machine, replace an operator's newer layer or
+policy node with this machine's older file, and say nothing. So each stage records the generation the
+local file was seeded from or last published at, and when the published generation has moved since,
+it **refuses to publish**, shows the three-way state (this machine's file, the generation it was
+written from, the object published now), and offers to re-seed the local file from the published one
+under confirmation, with a backup. The refusal is a question rather than a wall: a declined re-seed
+leaves both sides as they were, and the stage publishes again once the file is reconciled with the
+generation it was written from.
 
 The credentials cascade's `fallback: auto` is the reason the import asks rather than writes: the
 block decides whether paid credential tiers are spent, and a value the owner never saw must not
@@ -394,10 +395,10 @@ every other CLI document — spawning `--json --offline` first and `--json` afte
 steps — and the command is added to the console's spawn allow-list at that time.
 
 **The contract section it will need is `console/docs/json-contract.md` §6.15, "`fugaro settings
---json` (CLI 0.15.0)"**, in the "other documents" chapter that already carries 6.1–6.14. This
-design fixes what that section must say and writes none of it: the document version and the
-add-only rule, the closed state vocabulary of §2.5, the absent-not-null spelling of a sensitive
-value, and the precedence table of §2.2. The task that builds the screen writes the section, in the
-same pull request, so the contract and the screen cannot drift.
+--json` (CLI 0.15.0, console 0.117.0)"**, in the "other documents" chapter that already carries
+6.1–6.14. This design fixes what that section must say and writes none of it: the document version
+and the add-only rule, the closed state vocabulary of §2.5, the absent-not-null spelling of a
+sensitive value, and the precedence table of §2.2. The task that builds the screen writes the
+section, in the same pull request, so the contract and the screen cannot drift.
 
 The mobile app reads nothing of this.

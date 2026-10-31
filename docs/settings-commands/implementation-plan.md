@@ -1,20 +1,18 @@
 # `fugaro settings`: implementation plan
 
-**The design is approved; the tasks queue for CLI 0.15.0.** SD1–SD18 were answered by the owner on
-2026-10-31 ([reconciliation.md](reconciliation.md) §3) and D840–D854 are this plan's recommendations
-(§4), **D854 still open** — a stale local copy overwriting a newer publish, which S3 carries if the
-owner accepts it. A decision answered the other way changes the tasks that cite it. Each task touches
-at most 12 files, names its tests, starts with a red step, and ends at the gates below. **The first
-slice is S0–S3.**
+**The design is approved; the tasks queue for CLI 0.15.0 (and console 0.117.0).** SD1–SD18 were
+answered by the owner on 2026-10-31 ([reconciliation.md](reconciliation.md) §3), and D840–D854 —
+this plan's own decisions (§4) — were answered the same day, every one as recommended. A decision
+answered the other way would change the tasks that cite it; none was. Each task touches at most 12
+files, names its tests, starts with a red step, and ends at the gates below. **The first slice is
+S0–S3.**
 
 ## Order, and what this plan does not own
 
 - **External dependency E1 — the `fugaro update` policy-publish stage.** It is the `models` design's
   E1 (`docs/models-commands/reconciliation.md` F8) and belongs to the update-converge work. **S3 is
   that stage**: if E1 lands first, S3 is deleted and the read simply stops saying the policy is
-  unpublished. **S5 may merge before it but must not ship in a release without it**, or the owner's
-  next step after `settings set` is `fugaro project policy publish` — the second command the HARD
-  RULE forbids.
+  unpublished.
 - **External dependency E2 — the project layer's local file and its update stage.** PR #1463's R0
   (the file has a path) and R1 (the `Layer` stage publishes it). **S4 is only the read side** (the
   local file's path, and the `unpublished` state) and writes no stage; a second layer stage would be
@@ -35,7 +33,7 @@ slice is S0–S3.**
 | --- | --- | --- |
 | 0 | S0 | nothing |
 | 1 | S1, S3 | S0 (S1) |
-| 2 | S2, S4, S5 | S1 (S2, S5); S3 (S4); E3 (S5); R1 (S5) |
+| 2 | S2, S4, S5 | S1 (S2, S5); S3 (S4, S5); E3 (S5); R1 (S5) |
 | 3 | S6, S7, S8, S9 | S5, and S3 for S6, S7, S8 and S9 |
 | 4 | S10, S11 | S1–S9 (S10); S1–S3 and S5 (S11, plus R0 and R1 for the layer half of the loop) |
 
@@ -49,7 +47,7 @@ slice is S0–S3.**
 | 2 | `update` publishes the policy node | **S3**, the `models` design's E1 | it is the first slice's second half, it is what lets the read stop saying `unpublished` for the policy, and S6–S9 write keys only this stage publishes |
 | 3 | The settings read | **S0–S2, S4** | useful before every writer, and it is what makes G1, G2 and G5 visible today |
 | 4 | The layer stage, and the local layer file it publishes | the `rigor` design's **R0, R1** | `settings set --layer project` (S5) needs both the file and its publisher |
-| 5 | `fugaro settings get\|set\|unset` | **S5** | the first writer over all three documents; it must not ship before 2 and 4, or its `next: fugaro update` line is false |
+| 5 | `fugaro settings get\|set\|unset` | **S5** | the first writer over all three documents; it comes after 2 and 4 because its `next: fugaro update` line is false until both stages publish |
 | 6 | `fugaro rigor …` (R2–R5) and the `models` writes | the `rigor` and `models` designs | they reuse the editor and both stages, and their keys reach runs through the stage of 2 |
 
 ## Gates (every task)
@@ -135,9 +133,9 @@ policy publish` and `project repos add` (F16).
   (the same refusal for `project repos add`, which carries none today except for
   `--github-app-key`), `internal/cli/project_enroll_test.go`, `docs/policy-migration.md` (§ on who
   publishes, and the one command).
-- **Red step:** `TestUpdatePublishesThePolicyNodeWhenItDrifts` fails while no stage builds the node
+- **Red step:** `TestUpdatePublishesThePolicyNodeWhenItIsUnpublished` fails while no stage builds the node
   from the local config.
-- **Tests:** `TestUpdatePublishesThePolicyNodeWhenItDrifts`, `TestUpdatePolicyStageWritesNothingWhenTheNodeMatches`,
+- **Tests:** `TestUpdatePublishesThePolicyNodeWhenItIsUnpublished`, `TestUpdatePolicyStageWritesNothingWhenTheNodeMatches`,
   `TestUpdatePolicyStageWritesUnderTheETag` (the write carries the ETag the read returned),
   `TestUpdatePolicyStageRefusesWhenTheNodeMovedUnderIt` (a node another writer changed between the
   read and the write is a conflict, not an overwrite: nothing is written and the sentence says whose
@@ -156,10 +154,16 @@ policy publish` and `project repos add` (F16).
 - **Its own `### For operators`, in this task's release notes** — the first slice's step, and S10's
   entry does not repeat it: "`fugaro update` now publishes the policy node from the local config;
   `project policy publish` is refused in a coding agent's session".
-- **If D854 is answered yes** (it is open): the same task records the generation the local file was
-  seeded from or last published at and refuses to publish over a generation that has moved since,
-  showing the three-way state and offering the re-seed —
-  `TestUpdateRefusesToPublishOverANewerGeneration`. The layer stage (R1) carries the same guard.
+- **D854's guard is part of this task** (answered 2026-10-31, as recommended): the stage records the
+  generation the local file was seeded from or last published at, and refuses to publish over a
+  generation that has moved since — printing the three-way state (this machine's file, the generation
+  it was written from, the object published now) and offering to re-seed the local file from the
+  published one under confirmation, with a backup. `TestUpdateRefusesToPublishOverANewerGeneration`
+  is the red-on-removal test for it, and `TestUpdateOffersTheReseedAndWritesNothingWithoutIt` is the
+  second half: the refusal is a question, not a wall, and a declined re-seed leaves both sides as
+  they were. **The layer stage (the `rigor` design's R1) carries the same guard**, as
+  `TestLayerStageRefusesToPublishOverANewerGeneration` in R1's list; the two machines that can hold a
+  stale file are the two stages.
 
 ## S4. The layer side of the read (SD4, D845)
 
@@ -170,9 +174,9 @@ resolved by `localcfg.LayerFile` — and a local file that differs from the publ
 - **Files (4):** `internal/cli/settings_layer.go` (new: `localcfg.LayerFile`, the published object,
   the `unpublished` comparison), `internal/cli/settings_layer_test.go` (new),
   `internal/cli/settings_cloud.go`, `internal/settings/registry.go` (the `layer.*` rows).
-- **Red step:** `TestSettingsMarksAPublishedLayerThatDriftsFromTheLocalFile` fails while the local
+- **Red step:** `TestSettingsMarksAPublishedLayerThatIsUnpublished` fails while the local
   layer file's path is not resolved.
-- **Tests:** `TestSettingsMarksAPublishedLayerThatDriftsFromTheLocalFile`,
+- **Tests:** `TestSettingsMarksAPublishedLayerThatIsUnpublished`,
   `TestSettingsLayerRowsNameTheLocalFileAndBothShas`,
   `TestSettingsWithNoLocalLayerFileReadsThePublishedOneAndSaysSo`.
 - **Hermetic:** `internal/gcpfake` for the published object, `t.TempDir()` for the file.
@@ -185,7 +189,9 @@ outside every repository, which is why the agent-session refusal is here.
 
 - **Files (7):** `internal/cli/settings_set.go` (new), `internal/cli/settings_set_test.go` (new),
   `internal/cli/settings_write.go` (new: diff, confirmation, agent refusal, `backupFile`,
-  `writeFileAtomic` — shared with S6–S9), `internal/cli/settings_write_test.go` (new),
+  `writeFileAtomic` — shared with S6–S9 **and with the `rigor` design's R4 and R5**, which write
+  their floors and modes through the same helpers rather than a fourth copy of the triple),
+  `internal/cli/settings_write_test.go` (new),
   `internal/cli/settings.go`, `internal/yamledit/*.go` (only if an operation this task needs is
   missing from the shared editor — the editor task owns that package and lands it first) and
   `internal/yamledit/edit_test.go` (D847's cross-document test, same condition).
