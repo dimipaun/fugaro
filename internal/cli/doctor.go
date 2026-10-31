@@ -232,9 +232,9 @@ fix per item, each item fugaro update puts right ending in that command.
 --all prints every check, the informational lines included, and --security the
 IAM and security sweep (who can read a stored credential, who can sign a
 budget token, what a launcher may start). The default view never hides a
-security finding that is a warning, and it says how many it left out when it
-leaves any out. Every check, with its full text, is in --json whatever the
-flags.
+security finding that is a warning, and it says how many findings it left out
+when it leaves any out. Every check, with its full text, is in --json whatever
+the flags.
 
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,

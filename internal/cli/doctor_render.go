@@ -116,7 +116,6 @@ var doctorSecurityPrefixes = []string{
 // must not pick one, and the default view names the command for each choice
 // rather than a single fix.
 var doctorDecisionIDs = map[string]bool{
-	"secret-scope":                      true,
 	"secret-scope-shadowed":             true,
 	"project-secret-scope-stale":        true,
 	"project-secret-optional":           true,
@@ -125,11 +124,17 @@ var doctorDecisionIDs = map[string]bool{
 }
 
 // doctorMeasureIDs are the checks whose info-severity line is a measurement
-// doctor made or a read it could not make, and never something the reader has
-// to do: the price catalog's age, the launcher grant count, who can sign a
-// budget token, the repositories a project's account token reaches, whether a
-// policy is published, where the config lives, what the wiring in
-// .claude/settings.json carries, the tool lookups that did not answer.
+// doctor made, and never something the reader has to do: the price catalog's
+// age, the launcher grant count, who can sign a budget token, the repositories
+// a project's account token reaches, whether a policy is published, where the
+// config lives, what the wiring in .claude/settings.json carries, the tool
+// lookups that did not answer.
+//
+// A read that FAILED is not one of them: "could not be read" says the fact is
+// unknown, not that it is fine, and an unknown that is filed as a measurement
+// is a silent pass — so a check whose info line is an unread state is a
+// counted finding instead (creds-broken, creds-rules, the policy-rules-skew
+// generation read, job-token-grant's unchecked summary).
 //
 // The list is explicit, and it is a list rather than a rule (an "info severity
 // and not ok" test would swallow them all) because the default of
@@ -151,24 +156,27 @@ var doctorMeasureIDs = map[string]bool{
 	// The verifier a base pin needs. The check's own comment is the reason it
 	// is here: an absent binary "is not a wrong state", and the pin's own
 	// refusal names it when a person needs it.
-	"cosign":                        true,
-	"provider-price-catalog":        true,
-	"routing-resolution":            true,
-	"routing-cache-markers":         true,
-	"project-layer":                 true,
-	"project-layer-drift":           true,
-	"shared-config":                 true,
-	"shared-config-differs":         true,
-	"xdg-temp-dir":                  true,
-	"policy-published":              true,
-	"policy-rules-skew":             true,
+	"cosign":                 true,
+	"provider-price-catalog": true,
+	"routing-resolution":     true,
+	"routing-cache-markers":  true,
+	"project-layer":          true,
+	"project-layer-drift":    true,
+	"shared-config":          true,
+	"shared-config-differs":  true,
+	"xdg-temp-dir":           true,
+	"policy-published":       true,
+	// secret-scope is a listing and nothing else: the secrets a checkout's
+	// jobs mount, by the copy Fugaro resolves for each. It is emitted for
+	// every checkout whose jobs mount any secret, offers no choice (its one
+	// line names the command that lists them again), and the "to decide" block
+	// is for checks the owner chooses between.
+	"secret-scope":                  true,
 	"launcher-jobs":                 true,
 	"token-signers":                 true,
 	"token-signers-owners":          true,
 	"token-signers-google-agents":   true,
 	"secret-readers-unexpected":     true,
-	"runs-bucket-iam":               true,
-	"job-token-grant":               true,
 	"credentials-service-deployers": true,
 	"batch-artifact-boundary":       true,
 	// The Batch sweep's "not checked: this is a test configuration" line, one
@@ -180,9 +188,6 @@ var doctorMeasureIDs = map[string]bool{
 	"batch-log-sink":       true,
 	"batch-network":        true,
 	"batch-subnetwork":     true,
-	// A read that did not happen: the credential marks, the rules document.
-	"creds-broken": true,
-	"creds-rules":  true,
 }
 
 // doctorMeasurePrefixes are the measurements doctor emits once per instance:
@@ -304,6 +309,20 @@ type doctorAuditHeld struct {
 	other    int
 }
 
+// doctorAuditFindingCount is how many of these lines are findings: an audit
+// check that is not ok. The count exists for the verdict line, which is
+// printed above the sweep --security prints, and may not call an installation
+// ok directly above a finding of its own.
+func doctorAuditFindingCount(cs []doctorCheck) int {
+	n := 0
+	for _, c := range cs {
+		if !c.OK && doctorClassOf(c) == doctorClassAudit {
+			n++
+		}
+	}
+	return n
+}
+
 // doctorVisible are the checks a view prints, in the order doctor ran them: the
 // items, the audit half of the security sweep when --security asked for it, and
 // the audit findings the view left out, counted by kind. An audit line is never
@@ -351,14 +370,18 @@ func printDoctorReport(w io.Writer, checks []doctorCheck, v doctorView) {
 	shown, auditSecurity, held := doctorVisible(checks, v)
 	todo, decisions := doctorSplit(shown)
 	switch {
-	case len(shown) == 0 && held.security+held.other == 0:
-		// Nothing to do and nothing left out: the one line the owner asked
-		// for. Every measurement doctor made is still in --all and --json.
+	case len(shown) == 0 && held.security+held.other == 0 && doctorAuditFindingCount(auditSecurity) == 0:
+		// Nothing to do, nothing left out, and nothing the sweep is about to
+		// print that is a finding: the one line the owner asked for. Every
+		// measurement doctor made is still in --all and --json, and a
+		// measurement printed under --security is not a finding (nothing is
+		// wrong in it), so the ok line stands beside it.
 		fmt.Fprintln(w, "fugaro doctor: ok — everything checked is ok")
 	case len(shown) == 0:
-		// Nothing to do, and audit findings the default view did not print:
-		// not the ok line, because the pointer lines under it would contradict
-		// it ("all fine" above "2 security findings" is the reading the owner
+		// Nothing to do, and audit findings this view does not print — held
+		// out, or printed below the verdict as the sweep --security asked for:
+		// not the ok line, because a finding under it would contradict it
+		// ("all fine" above "2 security findings" is the reading the owner
 		// ruled out).
 		fmt.Fprintln(w, "fugaro doctor: nothing to do")
 	default:

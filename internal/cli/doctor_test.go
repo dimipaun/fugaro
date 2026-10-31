@@ -1837,7 +1837,7 @@ func TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack(t *testing.T) {
 // project-eligible name and a repository-only one to show.
 func secretScopeRig(t *testing.T) *doctorRig {
 	t.Helper()
-	r := secretScopeCheckout(t)
+	r, _ := secretScopeCheckout(t)
 	addLocalLines(t, r, projectSecretsConfig)
 	return r
 }
@@ -1850,22 +1850,23 @@ func secretScopeRig(t *testing.T) *doctorRig {
 // checks have to answer for that case too, not only for an owner's entry.
 func secretScopeSweepRig(t *testing.T) *doctorRig {
 	t.Helper()
-	r := secretScopeCheckout(t)
+	r, _ := secretScopeCheckout(t)
 	addLocalLines(t, r, "repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n")
 	return r
 }
 
 // secretScopeCheckout is the checkout both rigs above share: github.com/acme/app,
 // one workflow mounting a secret of its own, and the local config's repos block
-// left to the caller.
-func secretScopeCheckout(t *testing.T) *doctorRig {
+// left to the caller. The checkout's own directory is returned beside the rig,
+// for a caller that has to write into it.
+func secretScopeCheckout(t *testing.T) (*doctorRig, string) {
 	t.Helper()
 	r := newDoctorRig(t)
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: db-password, env: DB_PASSWORD }] }\n"
 	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
-	return r
+	return r, dir
 }
 
 // TestDoctorSecretScopeCheck: doctor lists each name this checkout's jobs
