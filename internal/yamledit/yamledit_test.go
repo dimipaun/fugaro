@@ -894,6 +894,75 @@ func TestEveryResultReparsesToTheValueItShouldCarry(t *testing.T) {
 	}
 }
 
+// TestEveryOperationKeepsTheCommentsAroundIt runs the operations that add to or
+// take from a sequence of a file written by hand, and holds the result to the
+// same promise the scalar edits make: every comment the file had is still in it,
+// in the order it was written.
+func TestEveryOperationKeepsTheCommentsAroundIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path []string
+		op   func([]byte) ([]byte, error)
+	}{
+		{
+			"AddListItem", []string{"allow_data_to"},
+			func(d []byte) ([]byte, error) {
+				return yamledit.AddListItem(d, []string{"allow_data_to"}, "owner/repo-c")
+			},
+		},
+		{
+			"RemoveListItem", []string{"followup", "trusted"},
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveListItem(d, []string{"followup", "trusted"}, "person-1")
+			},
+		},
+		{
+			"UpsertSeqItemByKey", []string{"rigor", "areas"},
+			func(d []byte) ([]byte, error) {
+				return yamledit.UpsertSeqItemByKey(d, []string{"rigor", "areas"}, "path", "internal/three/**",
+					map[string]string{"name": "three", "mode": "pro"})
+			},
+		},
+		{
+			"RemoveSeqItemByKey", []string{"rigor", "areas"},
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveSeqItemByKey(d, []string{"rigor", "areas"}, "path", "internal/one/**")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := readFixture(t, "commented-project.yaml")
+			got, err := tc.op([]byte(doc))
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if !yamledit.Changed([]byte(doc), got) {
+				t.Fatalf("%s changed nothing", tc.name)
+			}
+			if !isSubsequence(commentLines(doc), commentLines(string(got))) {
+				t.Fatalf("a comment went missing:\n%s\n%s", doc, got)
+			}
+			if !sameOffThePath(decodeMap(doc), decodeMap(string(got)), tc.path) {
+				t.Fatalf("%s reached past its path:\n%s", tc.name, got)
+			}
+			reparses(t, got)
+		})
+	}
+}
+
+// TestAFlowCollectionElsewhereIsUntouched: a flow collection this package will
+// not splice into is still a flow collection it leaves alone.
+func TestAFlowCollectionElsewhereIsUntouched(t *testing.T) {
+	const doc = "# a flow mapping this package does not touch\na: {b: 1}\nc: 2\n"
+	got, err := yamledit.SetScalar([]byte(doc), []string{"c"}, "3")
+	if err != nil {
+		t.Fatalf("SetScalar: %v", err)
+	}
+	if want := strings.Replace(doc, "c: 2", "c: 3", 1); string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func readFixture(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile("testdata/" + name)
