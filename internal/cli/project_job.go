@@ -73,11 +73,15 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		// per-repository job from a clone workflow's shared one, and picking
 		// either silently would start the run on a job it may not belong to —
 		// so the ambiguity is refused, naming the way out.
+		//
+		// The read is only the question "has this project published profiles
+		// at all", so a policy this CLI cannot read is not refused here: that
+		// is the launch gate's and the runner's refusal, in their own words,
+		// and it is not this decision's — a launcher that calls jobs.run
+		// itself must not be stopped by a job it resolves
+		// (TestPolicySinceGateIsNotOnTheRunnerPath).
 		p, found, err := e.policy.read(ctx, e.lc)
-		if err != nil {
-			return nil, policyReadErr(err)
-		}
-		if !found || p == nil || len(p.Profiles) == 0 {
+		if err != nil || !found || p == nil || len(p.Profiles) == 0 {
 			return nil, nil
 		}
 		return nil, userErr("fugaro run --repo %s is launched from outside %s's checkout, so which Cloud Run job it targets cannot be decided: a workflow's checkout: kind and profile are read from the checkout's own fugaro.yaml, and a clone workflow runs on a shared project job where a baked one runs on the repository's own. Run it from %s's checkout", spec.Repo, spec.Repo, spec.Repo)
