@@ -74,6 +74,12 @@ export const READING_STILL = 'still reading… (this can take a while on a slow 
  * were always going to answer. */
 export const READING_STILL_MS = 15_000
 
+/** READING_ROLE is the role the placeholder and its still line are drawn with:
+ * the polite live region a "this is being read" announcement belongs in. It is
+ * `status` and not `alert` -- nothing has failed -- and the theme paints no
+ * rule for it: it is for the reader, not for the eye. */
+export const READING_ROLE = 'status'
+
 /** READING_KIND is the frame's kind. It is not a state of the screen: the
  * attribute is what tells a reader of the tree which of the panel's states this
  * is, and `refused` is the only kind a rule paints (design section 2.8). */
@@ -107,6 +113,11 @@ export function renderReading(factory: ScreenFactory, tab: ReadingTab, theme: Sk
   root.setAttribute('data-theme', theme)
   root.setAttribute('data-kind', READING_KIND)
   root.setAttribute('data-received-at', '')
+  // `status` is the polite live region a tab switch belongs in: the sentence is
+  // drawn and *then* the answer arrives, so a reader that cannot see the panel
+  // is told what the console is waiting for rather than left with the previous
+  // tab's screen.
+  root.setAttribute('role', READING_ROLE)
   const body = factory.create('div')
   body.setAttribute('class', 'unavailable-body')
   root.append(body)
@@ -116,6 +127,10 @@ export function renderReading(factory: ScreenFactory, tab: ReadingTab, theme: Sk
   body.append(sentence)
   const still = factory.create('p')
   still.setAttribute('class', 'unavailable-sentence')
+  // The line the timer appends is a second announcement and not a replacement
+  // for the first: it is a live region of its own, so it is read when it
+  // arrives rather than only when the placeholder was drawn.
+  still.setAttribute('role', READING_ROLE)
   literal(still, READING_STILL)
   return { root, body, still }
 }

@@ -37,11 +37,14 @@
 // `coordinator-status.json` the project view draws. Nothing here reaches the
 // network or a real CLI.
 
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { isToolOwnedPath } from '../../src/main/installationstate'
 import { PICKER_ENTRY_URL } from '../../src/main/picker'
 import {
   NO_CHECKOUT_CHOICE_CLASS,
@@ -79,13 +82,25 @@ function nav(view: string): string {
 }
 
 /** CHECKOUT is the directory the CLI lists as this project's one checkout, and
- * the one the picker's chooser offers. It is **this repository's own directory**
- * and not a scratch one, and that is the point: the picker never offers a
- * temporary path (`isToolOwnedPath`, `src/main/installationstate.ts`, refuses
- * `/tmp` and the tool-owned roots), so a spec that seeded one would assert the
- * absence of a button rather than the button. It exists, because a checkout is a
- * directory. */
-const CHECKOUT = consoleDir
+ * the one the picker's chooser offers. The picker never offers a path under a
+ * temporary root, nor one carrying a `scratchpad` or `.claude/worktrees` segment
+ * (`isToolOwnedPath`, `src/main/installationstate.ts`), so the fixture is made
+ * **outside** them: a directory the spec creates beside the operator's home
+ * directory and removes again. It has to exist, because a checkout is a
+ * directory -- the picker resolves both spellings of it.
+ *
+ * The repository's own directory used to stand in for it, which is the same
+ * directory only while the console was checked out by hand: a checkout a tool
+ * made -- a run's own, an agent harness's worktree -- is one the picker refuses,
+ * and there the card draws its no-action sentence, so the case that asserts the
+ * action failed on the machine rather than saying so. */
+let checkout = ''
+
+/** CHECKOUT_TOOL_OWNED is whether the picker refuses this run's fixture, which
+ * is a fact about the machine and not about the console: it is true only where
+ * the home directory itself is under the OS's temporary root, and this spec can
+ * make its fixture nowhere else. */
+let checkoutToolOwned = false
 
 let cli: CliStub
 let app: ElectronApplication
@@ -95,12 +110,17 @@ test.describe('the Graph with no installation checkout', () => {
   test.describe.configure({ mode: 'serial' })
 
   test.beforeAll(async () => {
+    checkout = mkdtempSync(join(homedir(), 'fugaro-console-checkout-'))
+    checkoutToolOwned =
+      isToolOwnedPath(checkout, tmpdir()) || isToolOwnedPath(realpathSync(checkout), tmpdir())
     cli = inRangeCliStub()
     // The state under test: an installation with **no** checkout. Every other
-    // dashboard spec calls `seedActiveCheckout`; this one is the absence.
+    // dashboard spec calls `seedActiveCheckout`; this one is the absence. The
+    // fixture above is a different thing: it is what the CLI *lists* for the row,
+    // which is the picker's chooser and not the directory a read runs in.
     cli.seedActiveInstallation('e2e')
     cli.seedInstallationsList(['e2e'], [], {
-      checkouts: [{ repository: 'github/acme/aurora', baseBranch: 'main', path: CHECKOUT, valid: true }],
+      checkouts: [{ repository: 'github/acme/aurora', baseBranch: 'main', path: checkout, valid: true }],
     })
     app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
@@ -112,12 +132,21 @@ test.describe('the Graph with no installation checkout', () => {
   test.afterAll(async () => {
     await app?.close()
     cli?.remove()
+    rmSync(checkout, { recursive: true, force: true })
   })
 
   test('draws the calm card where the raw refusal used to be', async () => {
     const card = page.locator(CARD)
     await expect(card.locator('h1.unavailable-headline')).toHaveText(NO_CHECKOUT_HEADLINE)
-    await expect(card.locator(`button.${NO_CHECKOUT_CHOICE_CLASS}`)).toHaveText(NO_CHECKOUT_CHOICE_LABEL)
+    // The action is drawn for an installation the CLI listed a choosable
+    // checkout for, and the case below is the one that drives it. On the one
+    // machine whose home directory is itself a temporary root there is nothing
+    // this spec can list that the picker would offer, and the card is the
+    // no-action one -- a branch and not a skip, because everything else here
+    // holds there too.
+    const action = card.locator(`button.${NO_CHECKOUT_CHOICE_CLASS}`)
+    if (checkoutToolOwned) await expect(action).toHaveCount(0)
+    else await expect(action).toHaveText(NO_CHECKOUT_CHOICE_LABEL)
     // Not a refusal screen: no operation cell is drawn, and the frame carries
     // the read as an attribute instead -- which is what makes the card a state
     // the console can name rather than a read that failed.
@@ -139,6 +168,16 @@ test.describe('the Graph with no installation checkout', () => {
   })
 
   test('opens the installation picker and its chooser with the card’s one action', async () => {
+    // The chooser is one `Use <dir>` button per checkout the CLI listed, and the
+    // picker offers none for a path it refuses. The fixture is made outside the
+    // temporary roots for that reason, so this case runs wherever the spec does;
+    // it skips only on the machine whose home directory is itself under one,
+    // where there is no such path for the spec to make. The card's action itself
+    // is asserted in the case above either way.
+    test.skip(
+      checkoutToolOwned,
+      `this machine's home directory is under a temporary root (${checkout}), and the picker never offers one as a checkout`,
+    )
     const opened = app.waitForEvent('window')
     await page.locator(`${CARD} button.${NO_CHECKOUT_CHOICE_CLASS}`).click()
     const picker = await opened
@@ -151,7 +190,7 @@ test.describe('the Graph with no installation checkout', () => {
     // reach.
     const row = picker.locator('#picker-list li')
     await expect(row).toHaveCount(1)
-    await expect(row.locator('button', { hasText: `Use ${CHECKOUT}` })).toHaveCount(1)
+    await expect(row.locator('button', { hasText: `Use ${checkout}` })).toHaveCount(1)
   })
 
   test('never leaves the Graph’s answer on the panel under another tab', async () => {
@@ -160,8 +199,13 @@ test.describe('the Graph with no installation checkout', () => {
     // is still up would be about the switch's timing rather than about what the
     // tab drew.
     await page.locator(nav('spend')).click()
-    await expect(page.locator(REFUSED)).toHaveCount(1)
-    await expect(page.locator(`${PANEL} ${OPERATION}`)).toHaveText('spend.report')
+    // **Two** refusals, one per section: the stub answers neither `budget show`
+    // nor the report, and each of the tab's two reads draws its own refusal into
+    // its own section -- the caps' beside the report's, not one refusal standing
+    // for the whole panel.
+    await expect(page.locator(REFUSED)).toHaveCount(2)
+    await expect(page.locator(`${PANEL} ${OPERATION}`, { hasText: 'budget.show' })).toHaveCount(1)
+    await expect(page.locator(`${PANEL} ${OPERATION}`, { hasText: 'spend.report' })).toHaveCount(1)
     await expect(page.locator(PANEL)).not.toContainText(NO_PLAN_CHECKOUT)
 
     await page.locator(nav('projects')).click()

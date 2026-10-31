@@ -1,0 +1,7 @@
+# Two environments share a base block.
+base: &base
+  image: image-a
+
+prod:
+  <<: *base
+  replicas: 1
