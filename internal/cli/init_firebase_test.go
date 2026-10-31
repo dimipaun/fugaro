@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1314,6 +1316,16 @@ func (c convergeJSON) stageDetail(t *testing.T, name string) string {
 // stage acts on, and the fixture every test below starts from.
 func updateBudgetRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
 	t.Helper()
+	return updateBudgetRigFor(t, initProject)
+}
+
+// updateBudgetRigFor is updateBudgetRig with the Firebase project the config
+// names chosen. The installation's own (updateBudgetRig) is the ordinary case;
+// a project that is not it is the legacy installation that adopted a Firebase
+// project of its own through `--firebase-project`, whose database carries this
+// installation's mark because that door wrote it.
+func updateBudgetRigFor(t *testing.T, fp string) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
 	r := updateRig(t)
 	db := gcpfake.NewRTDB(t)
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
@@ -1323,7 +1335,7 @@ func updateBudgetRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
 	// two markers, and the plan it shows must carry nothing else.
 	db.Set(budget.PathMode, budget.ModeEnforce)
 	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
-	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+fp+"\" }\n")
 	r.save(t)
 	return r, db
 }
@@ -1743,6 +1755,414 @@ func TestUpdateRulesStageRefusesForeignDatabase(t *testing.T) {
 	}
 	if out := e.r.w.(*syncBuf).String(); strings.Contains(out, "deploys the security rules listed") {
 		t.Errorf("the refused stage offered to deploy into another project's database:\n%s", out)
+	}
+}
+
+// separateFirebaseRig is an installation whose budget.firebase_project names a
+// Firebase project other than its own GCP project, with the database the config
+// points at EMPTY: the state a consistent typo leaves behind (the URL's host
+// label and the recorded project agree, so the URL matches the project that is
+// named and nothing about the pair looks wrong), and the state a config written
+// before `--firebase-project` recorded the pair cannot be told from.
+func separateFirebaseRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
+	r := updateRig(t)
+	db := gcpfake.NewRTDB(t)
+	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \"other-project\" }\n")
+	r.save(t)
+	return r, db
+}
+
+// TestUpdateRulesSkipsUnadoptedSeparateFirebaseProject: a Firebase project that
+// is not the installation's own is adopted through `fugaro update
+// --firebase-project`, and the only thing that says an installation did adopt
+// one is the mark that door wrote into its database — the config's
+// budget.firebase_project alone is a name someone typed. infra.DB.Check is not
+// that proof: an EMPTY database passes it whatever project its URL belongs to,
+// so a config naming another project (a typo that agrees with itself, on a
+// database nobody ever adopted) had this stage write Fugaro's mark and this
+// binary's rules into a database that is not the installation's — the security
+// review's finding F3.
+//
+// The skip is a skip and not a refusal: the installation's other stages (the
+// images, the pin, the plugin) have nothing to do with the budget database, so
+// the owner still gets their update, and the sentence names the way out.
+//
+// The way out is the config's pair dropped and the installation's OWN project
+// adopted, not the project the config names: --firebase-project takes only the
+// installation's own GCP project (checkFirebaseProject), so the command a
+// reader is sent to has to be one this binary runs — a skip that named
+// `--firebase-project other-project` would send them to a refusal.
+func TestUpdateRulesSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
+	_, db := separateFirebaseRig(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("a Firebase project the installation never adopted stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Rules); got != "skipped" {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
+	}
+	detail := res.stageDetail(t, initflow.Rules)
+	for _, want := range []string{"other-project", initProject, "fugaro update --firebase-project " + initProject, "budget.firebase_project"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the skip does not name %q: %q", want, detail)
+		}
+	}
+	if strings.Contains(detail, "fugaro update --firebase-project other-project") {
+		t.Errorf("the skip sends the reader to --firebase-project other-project, which checkFirebaseProject refuses: %q", detail)
+	}
+	if db.RulePuts() != 0 || db.Value(projectpolicy.PathRulesMarker()) != nil {
+		t.Errorf("the run deployed rules into a database in a Firebase project the installation never adopted: %d rule deploy(s)", db.RulePuts())
+	}
+	if db.Value(budget.PathMark) != nil {
+		t.Error("the run marked a database in a Firebase project the installation never adopted as its own")
+	}
+	if db.Value(budget.PathProject) != nil || db.Value(budget.PathMode) != nil {
+		t.Errorf("the run seeded a database in a Firebase project the installation never adopted: %v %v", db.Value(budget.PathProject), db.Value(budget.PathMode))
+	}
+}
+
+// TestUpdateRulesNeverAdoptedSeparateProjectDoesNotMark: the other half of the
+// same state — the database exists and is Fugaro's, but of ANOTHER installation
+// (its mark names a different Fugaro project in a different GCP project). The
+// stage must not deploy this installation's rules over another's, and it must
+// report which database it found rather than the fact that a project is named.
+func TestUpdateRulesNeverAdoptedSeparateProjectDoesNotMark(t *testing.T) {
+	_, db := separateFirebaseRig(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Rules); got != "skipped" {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
+	}
+	detail := res.stageDetail(t, initflow.Rules)
+	for _, want := range []string{"workspace-a", "proj-9999"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the skip does not name the installation whose database this is (%q): %q", want, detail)
+		}
+	}
+	if db.RulePuts() != 0 || db.Value(projectpolicy.PathRulesMarker()) != nil {
+		t.Errorf("the run deployed rules into another installation's database: %d rule deploy(s)", db.RulePuts())
+	}
+	if got := rulesMarkerOn(t, db); got != "" {
+		t.Errorf("the marker of another installation's database moved to %q", got)
+	}
+}
+
+// TestUpdateRulesVerifyIsQuietOnADatabaseItDidNotDeployInto: Verify reads the
+// deployed document and the marker back, and a database this stage skipped over
+// (unadopted) has nothing to read back — Apply wrote nothing there, which is
+// what the skip said. Without that arm Verify would report "the security rules
+// generation N is not deployed" over a run that did exactly what the skip told
+// it to, and `fugaro update` would fail on the very state the skip exists to
+// make survivable.
+//
+// The second half is the control that makes the first mean something: the same
+// stage on a database this installation DID adopt (its mark is this
+// installation's) must still fail, so the arm is the state's and not blanket
+// silence.
+func TestUpdateRulesVerifyIsQuietOnADatabaseItDidNotDeployInto(t *testing.T) {
+	r, _ := separateFirebaseRig(t)
+	s, _ := rulesStageRig(t, r)
+	if err := s.Verify(context.Background()); err != nil {
+		t.Errorf("Verify blamed the run for the database it skipped: %v", err)
+	}
+
+	r2, _ := updateBudgetRigFor(t, "other-project")
+	s2, _ := rulesStageRig(t, r2)
+	err := s2.Verify(context.Background())
+	if err == nil {
+		t.Fatal("Verify passed a database this installation adopted and whose rules generation is not deployed")
+	}
+	if !strings.Contains(err.Error(), "not deployed") {
+		t.Errorf("the control's error is not the read-back's: %v", err)
+	}
+}
+
+// TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject: the policy
+// migration is the SECOND stage `fugaro update` writes into the budget database
+// with, and the rules stage being skipped over a database the installation
+// never adopted does not stop it. The whole of the policy stage's work — the
+// read of the published node, the ETag the write is conditional on, and the
+// write itself — lands in that same database, so the probe is the reviewer's:
+// a config naming another project, the database of ANOTHER installation
+// (workspace-a in proj-9999), the deployed rules marker current (so the
+// migration's own rules gate would pass), and a version-3 node with an
+// allow-list. Plain `fugaro update --yes` used to migrate THAT installation's
+// node to version 4 in place, merging this config's members into it.
+//
+// The stage holds the same gate the rules stage does (budgetDBUnadopted: the
+// config's separate project, then infra.DB.Check's mark), and the outcome is
+// the same shape: a skip, not a refusal, so the installation's other stages
+// still converge, and the sentence names the way out.
+func TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
+	_, db := updateBudgetRigFor(t, "other-project")
+	// Another installation's database: its mark names a Fugaro project and a
+	// GCP project that are not this installation's.
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
+	// The rules marker is current, so the migration's own gate (requirePolicyRules)
+	// is satisfied and the ownership gate is the only thing that can stop it.
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Policy); got != "skipped" {
+		t.Errorf("the policy stage is %q, want skipped:\n%s", got, out)
+	}
+	detail := res.stageDetail(t, initflow.Policy)
+	for _, want := range []string{"workspace-a", "proj-9999"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the skip does not name the installation whose database this is (%q): %q", want, detail)
+		}
+	}
+	if got := nodeVersionOn(t, db); got != 3 {
+		t.Errorf("the run migrated another installation's policy node to version %d", got)
+	}
+	if node, ok := db.Value(projectpolicy.PathShared()).(map[string]any); !ok {
+		t.Errorf("the node at %s is gone: %v", projectpolicy.PathShared(), db.Value(projectpolicy.PathShared()))
+	} else if repos, _ := node["allow_repos"].([]any); len(repos) != 2 {
+		t.Errorf("the migration rewrote another installation's node: %v", node)
+	}
+	if got := db.Value(budget.PathMark); got == nil || got.(map[string]any)["project"] != "workspace-a" {
+		t.Errorf("the run replaced another installation's mark: %v", got)
+	}
+}
+
+// TestUpdatePolicyMigrationNamesTheWayOutBeforeItReadsTheNode: the same gate on
+// the state a self-agreeing typo leaves (separateFirebaseRig: the config names
+// other-project and the database the URL points at is EMPTY, so nothing about
+// the pair looks wrong). The database has no node to migrate, so the two
+// answers this stage could give are the absent node's ("no policy is published
+// at ...") and the ownership gate's — and the gate's is the one this asserts:
+// the sentence has to name the project the config records and the command that
+// works, which is the installation's OWN project and not the one the config
+// names (--firebase-project takes only that, checkFirebaseProject), because a
+// skip that named `--firebase-project other-project` would send the reader to a
+// refusal.
+func TestUpdatePolicyMigrationNamesTheWayOutBeforeItReadsTheNode(t *testing.T) {
+	_, db := separateFirebaseRig(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("a config naming another project stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Policy); got != "skipped" {
+		t.Errorf("the policy stage is %q, want skipped:\n%s", got, out)
+	}
+	detail := res.stageDetail(t, initflow.Policy)
+	// The command the skip names is `selfCommand() + " update"`, which in a
+	// test binary is the test binary's own path (selfCommand is how the binary
+	// was run, os.Args[0]); what the assertion is about is the flag and the
+	// value, which is the part a reader acts on.
+	for _, want := range []string{"other-project", "budget.firebase_project", "update --firebase-project " + initProject} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the skip does not name %q: %q", want, detail)
+		}
+	}
+	if strings.Contains(detail, "fugaro update --firebase-project other-project") {
+		t.Errorf("the skip sends the reader to --firebase-project other-project, which checkFirebaseProject refuses: %q", detail)
+	}
+	if strings.Contains(detail, "no policy is published") {
+		t.Errorf("the stage answered about the node it should not have read: %q", detail)
+	}
+	if db.Value(budget.PathMark) != nil || db.Value(projectpolicy.PathShared()) != nil {
+		t.Errorf("the run wrote into a database in a Firebase project the installation never adopted: mark %v node %v", db.Value(budget.PathMark), db.Value(projectpolicy.PathShared()))
+	}
+}
+
+// unadoptedShape is one config whose budget.rtdb_url the ownership predicate
+// must refuse, and the two together are the reviewer's probe: a config that
+// records a database URL and NO Firebase project at all, and one that records
+// the installation's own GCP project while the URL names a database beside it
+// (other-default-rtdb, which is not <project>-default-rtdb, so the pair is not
+// one Firebase project's own). Both were run as plain `fugaro update --yes`
+// against a database carrying ANOTHER installation's mark, a rules marker at
+// the generation the policy write is gated on, and a version-3 node: the rules
+// stage skipped both (its pair check, rulesUnavailable, sees them) and the
+// policy migration behind it migrated that node to version 4, because its gate
+// asked only for a config naming a *separate* Firebase project.
+type unadoptedShape struct {
+	name string
+	// fp is what the config records as budget.firebase_project ("" is the
+	// shape a config written before the pair existed has).
+	fp string
+	// foreign is the shape whose URL names a database that is not the Firebase
+	// project's own: checkDatabaseHost refuses it, so nothing here may contact
+	// it, and the fake is reached by carrying the requests instead (carryToFake).
+	foreign bool
+	// wants are the words the skip has to carry: the fact that makes the
+	// database not this installation's, and the command that does work.
+	wants []string
+}
+
+var unadoptedShapes = []unadoptedShape{
+	{name: "no firebase_project recorded", fp: "",
+		wants: []string{"budget.firebase_project", "update --firebase-project " + initProject}},
+	{name: "a database that is not the project's own", fp: initProject, foreign: true,
+		wants: []string{"budget.rtdb_url", "other-default-rtdb", "budget.firebase_project", "update --firebase-project " + initProject}},
+}
+
+// carryToFake sends every database request to the fake whatever address the
+// config names. The shape under test has to name a database the Firebase
+// project does not serve — that is what makes it foreign — and such a URL is one
+// no run may contact, so the address is rewritten here rather than the config
+// being pointed at the fake: the run must refuse the database on the pair alone,
+// without the fake ever answering, and this only keeps the fake reachable for
+// the assertions about what was written.
+type carryToFake struct {
+	base *url.URL
+	rt   http.RoundTripper
+}
+
+func (c carryToFake) RoundTrip(req *http.Request) (*http.Response, error) {
+	q := *req.URL
+	q.Scheme, q.Host = c.base.Scheme, c.base.Host
+	out := req.Clone(req.Context())
+	out.URL = &q
+	out.Host = c.base.Host
+	return c.rt.RoundTrip(out)
+}
+
+// unadoptedRig is one of those shapes end to end: an installation that
+// converges, a checkout of the project (the door `fugaro upgrade` reads it
+// through, resolveCloudRepo), and a budget database seeded as ANOTHER
+// installation's — the mark of workspace-a in proj-9999, the rules marker at the
+// generation the policy write is gated on, and the version-3 node with the
+// allow-list the migration would rewrite. Every fact a run needs to reach that
+// write is there, so what stops it can only be the ownership predicate.
+func unadoptedRig(t *testing.T, s unadoptedShape) (*initRig, *gcpfake.RTDB, string) {
+	t.Helper()
+	r := updateRig(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	rtdbURL := db.URL
+	if s.foreign {
+		rtdbURL = "https://other-default-rtdb.us-east5.firebasedatabase.app"
+		base, err := url.Parse(db.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		budgetTransport = carryToFake{base: base, rt: http.DefaultTransport}
+		t.Cleanup(func() { budgetTransport = nil })
+	}
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: \""+rtdbURL+"\", firebase_project: \""+s.fp+"\" }\n")
+	r.save(t)
+	root := gitCheckout(t, filepath.Join(r.dir, "app"), checkoutYAML("bitbucket", "api-key", initProjectName, ""))
+	testutil.Git(t, root, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git")
+	return r, db, root
+}
+
+// unadoptedAssertions is what both doors assert about a database the predicate
+// refused: the node it would have rewritten is exactly as it was (version 3
+// included), and neither the mark nor the rules marker moved.
+func unadoptedAssertions(t *testing.T, db *gcpfake.RTDB) {
+	t.Helper()
+	if got := nodeVersionOn(t, db); got != 3 {
+		t.Errorf("the published node was migrated to version %d: the database is not this installation's", got)
+	}
+	if node, ok := db.Value(projectpolicy.PathShared()).(map[string]any); !ok {
+		t.Errorf("the node at %s is gone: %v", projectpolicy.PathShared(), db.Value(projectpolicy.PathShared()))
+	} else if repos, _ := node["allow_repos"].([]any); len(repos) != 2 {
+		t.Errorf("another installation's node was rewritten: %v", node)
+	}
+	if got := db.Value(budget.PathMark); got == nil || got.(map[string]any)["project"] != "workspace-a" {
+		t.Errorf("another installation's mark moved: %v", got)
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.PolicyRulesVersion); got != want {
+		t.Errorf("the rules marker is %q, want the %s the fixture seeded", got, want)
+	}
+}
+
+// TestUpdatePolicyStageSkipsTheDatabaseTheRulesStageSkipped: the drift the
+// review found, at both of its shapes. The rules stage answers the config's own
+// facts before it opens anything (rulesUnavailable), while the policy migration
+// asked only whether the config named a Firebase project OTHER than the
+// installation's own — so a database the rules stage had just refused was
+// migrated in place by the stage behind it, and a plain `fugaro update` rewrote
+// another installation's node. One predicate answers both stages now, and the
+// probe is the same one: every fact the write needs, and the write not made.
+func TestUpdatePolicyStageSkipsTheDatabaseTheRulesStageSkipped(t *testing.T) {
+	for _, s := range unadoptedShapes {
+		t.Run(s.name, func(t *testing.T) {
+			_, db, _ := unadoptedRig(t, s)
+			out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+			if err != nil {
+				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
+			}
+			var res convergeJSON
+			if err := json.Unmarshal([]byte(out), &res); err != nil {
+				t.Fatalf("%v:\n%s", err, out)
+			}
+			if got := res.state(initflow.Rules); got != "skipped" {
+				t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
+			}
+			if got := res.state(initflow.Policy); got != "skipped" {
+				t.Errorf("the policy stage is %q, want skipped: the rules stage skipped this database, and the migration behind it wrote there anyway\n%s", got, out)
+			}
+			detail := res.stageDetail(t, initflow.Policy)
+			for _, want := range s.wants {
+				if !strings.Contains(detail, want) {
+					t.Errorf("the skip does not name %q: %q", want, detail)
+				}
+			}
+			unadoptedAssertions(t, db)
+		})
+	}
+}
+
+// TestUpdateRulesConvergesAdoptedLegacyInstallation: the state the skip's
+// sentence sends the owner to, one command later. An installation whose
+// Firebase project differs from its GCP project was adopted through `fugaro
+// update --firebase-project`, which wrote this installation's mark into that
+// database; from then on plain `fugaro update` deploys the rules generation
+// there like anywhere else, in one run, with no second command — the owner's
+// rule of 2026-10-30 (the adoption is not a step that repeats).
+func TestUpdateRulesConvergesAdoptedLegacyInstallation(t *testing.T) {
+	_, db := updateBudgetRigFor(t, "other-project")
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("plain fugaro update did not converge an installation that adopted its Firebase project: %v\n%s%s", err, out, errOut)
+	}
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Errorf("the rules deployed are not this Fugaro's generation:\n%s", out)
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+		t.Errorf("the rules generation marker is %q, want %q:\n%s", got, want, out)
+	}
+	if !strings.Contains(out, initflow.Rules) {
+		t.Errorf("the account does not name the rules stage:\n%s", out)
 	}
 }
 

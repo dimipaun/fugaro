@@ -161,9 +161,9 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	// deploy would put an older document over the newer one and the marker
 	// write at the end would record this generation over the newer number:
 	// exactly the downgrade `fugaro doctor` warns about and tells the owner not
-	// to cause ("do not re-run 'fugaro update --firebase-project' with this binary",
-	// doctorRulesSkew). A warning the deploy path then ignores is not a
-	// boundary, so the deploy path refuses — before anything is planned, so
+	// to cause (doctorRulesSkew's "the newer binary is the one that deploys
+	// here"). A warning the deploy path then ignores is not a boundary, so the
+	// deploy path refuses — before anything is planned, so
 	// nothing is written and the newer installation's rules, marker and
 	// configuration are left as they are.
 	//
@@ -179,8 +179,8 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, dbErr("reading "+projectpolicy.PathRulesMarker(), err)
 	}
 	if markerFound && markerGen > projectpolicy.RulesVersion {
-		return nil, nil, userErr("the deployed security rules are generation %d (%s = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project' again with the newer binary; 'fugaro doctor' reports this as policy-rules-skew",
-			markerGen, projectpolicy.PathRulesMarker(), markerGen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+		return nil, nil, userErr("the deployed security rules are generation %d (%s = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary; 'fugaro doctor' reports this as policy-rules-skew",
+			markerGen, projectpolicy.PathRulesMarker(), markerGen, projectpolicy.RulesVersion, d.gcpProject, projectpolicy.RulesVersion, d.gcpProject)
 	}
 	// The credentials children's own generation is read and refused the same
 	// way (credentials-service plan, task C1.3). It is a marker of its own
@@ -197,8 +197,8 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, dbErr("reading "+rules.PathCredsRulesMarker(), err)
 	}
 	if credsFound && credsGen > rules.CredsRulesVersion {
-		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project' again with the newer binary",
-			credsGen, rules.PathCredsRulesMarker(), credsGen, rules.CredsRulesVersion, rules.CredsRulesVersion)
+		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary",
+			credsGen, rules.PathCredsRulesMarker(), credsGen, rules.CredsRulesVersion, d.gcpProject, rules.CredsRulesVersion, d.gcpProject)
 	}
 	d.acts = nil
 	var warnings []string

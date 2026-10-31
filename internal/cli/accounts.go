@@ -111,7 +111,7 @@ otherwise select for a cloud command, and never calls Secret Manager, never
 reads or prints a token value, only names.
 
 The state column is not local. When the selected project has a Firebase budget
-backend (budget.rtdb_url, which fugaro update --firebase-project writes), each account's
+backend (budget.rtdb_url, which fugaro update --firebase-project <gcp-project-id> writes), each account's
 credential state is read from that database as you, with your Application
 Default Credentials — the creds/marks subtree the credentials service writes,
 which an admin's rules grant the read of — and printed beside the name as
@@ -257,7 +257,7 @@ func accountsStates(ctx context.Context, lc *localcfg.Config, names []string, se
 		return nil, "no project config could be selected, so no credential state could be read (" + selNote + ")", nil
 	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return nil, fmt.Sprintf("project %s has no Firebase budget backend, so no credential state could be read (the cascade's marks live in its database; fugaro update --firebase-project adds it)", lc.Name), nil
+		return nil, fmt.Sprintf("project %s has no Firebase budget backend, so no credential state could be read (the cascade's marks live in its database; fugaro update --firebase-project %s adds it)", lc.Name, firebaseProjectIDWord(lc.GCPProject)), nil
 	}
 	// Before the database is opened, as openBudgetDB does: GODEBUG=http2debug
 	// makes Go print HTTP/2 requests with their headers — the OAuth bearer
