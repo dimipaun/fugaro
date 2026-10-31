@@ -998,12 +998,8 @@ async function main(): Promise<void> {
       : {
           updateMenu: {
             auto: updateSettings.auto,
-            setAuto: (on: boolean) => {
-              updateSettings.setAuto(on)
-            },
-            checkNow: () => {
-              updateSettings.checkNow()
-            },
+            setAuto: (on) => updateSettings.setAuto(on),
+            checkNow: () => updateSettings.checkNow(),
           },
         }),
   })

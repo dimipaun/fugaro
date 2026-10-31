@@ -25,7 +25,7 @@ import { basename, dirname, join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { createUpdateController, UPDATE_INTERVAL_MS } from '../../src/main/updates'
+import { RELEASES_URL, UPDATE_INTERVAL_MS, createUpdateController } from '../../src/main/updates'
 import type { UpdaterPort } from '../../src/main/updates'
 import {
   UPDATES_DIR_MODE,
@@ -130,7 +130,8 @@ describe('the update switch’s file', () => {
 
     // The write is the atomic one: a fresh temporary file, then a rename onto
     // the target, with nothing left behind.
-    expect(fs.calls.filter((call) => call.startsWith('mkdir:'))).toEqual([`mkdir:${directory}:${UPDATES_DIR_MODE.toString(8)}`])
+    const directories = fs.calls.filter((call) => call.startsWith('mkdir:'))
+    expect(directories).toEqual([`mkdir:${directory}:${UPDATES_DIR_MODE.toString(8)}`])
     const write = only(fs.calls.filter((call) => call.startsWith('writeFile:')))
     const temporary = write.slice('writeFile:'.length, -`:${UPDATES_FILE_MODE.toString(8)}:wx`.length)
     expect(write).toMatch(new RegExp(`:${UPDATES_FILE_MODE.toString(8)}:wx$`))
@@ -346,7 +347,7 @@ describe('the switch the menu drives', () => {
     const running = controllerOver(on)
     const settingsOn = createUpdateSettings({ directory: on, controller: () => running.controller })
     settingsOn.checkNow()
-    expect(running.fetches).toEqual(['https://api.github.com/repos/dimipaun/fugaro/releases?per_page=100'])
+    expect(running.fetches).toEqual([RELEASES_URL])
 
     const off = freshDirectory()
     writeUpdateSwitch(off, false)

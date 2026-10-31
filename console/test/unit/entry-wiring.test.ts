@@ -1215,8 +1215,8 @@ describe('the launch the entry wires', () => {
     // "macOS only" here -- nothing repeats that admission test.
     expect(body).toContain('updates === null')
     expect(body).toContain('updateMenu: {')
-    expect(body).toContain('setAuto: (on: boolean)')
-    expect(body).toContain('checkNow: ()')
+    expect(body).toContain('setAuto: (on) => updateSettings.setAuto(on)')
+    expect(body).toContain('checkNow: () => updateSettings.checkNow()')
     expect(withoutComments(index).match(/updateMenu:/g) ?? []).toHaveLength(1)
   })
 })
