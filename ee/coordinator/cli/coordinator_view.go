@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -68,14 +69,22 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	if err != nil {
 		return err
 	}
-	warn := cmd.ErrOrStderr()
-	views := make([]coordinator.RepoView, 0, len(repos))
-	for _, repo := range repos {
-		view, err := coordinatorStoredView(ctx, env, store, repo, coordinatorSince(window), warn)
+	// Every repository's view is read at once: a project with twenty of them
+	// costs one repository's read per round rather than their sum, which is
+	// the whole of this command's cost. Each read writes its own slot, so the
+	// document is in the repository order coordinatorRepos names whatever
+	// order they finish in, and the first failure in that order is the one
+	// reported.
+	warn := &lockedWriter{w: cmd.ErrOrStderr()}
+	views := make([]coordinator.RepoView, len(repos))
+	errs := make([]error, len(repos))
+	fcli.Parallel(len(repos), func(i int) {
+		views[i], errs[i] = coordinatorStoredView(ctx, env, store, repos[i], coordinatorSince(window), warn)
+	})
+	for _, err := range errs {
 		if err != nil {
 			return err
 		}
-		views = append(views, view)
 	}
 	out := cmd.OutOrStdout()
 	if o.all {
@@ -88,6 +97,20 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 		return writeCoordinatorJSON(out, views[0])
 	}
 	return writeCoordinatorStored(out, views[0])
+}
+
+// lockedWriter serializes the writes several repositories' reads make to the
+// command's stderr at once, so a warning of one repository's runs reaches the
+// terminal between two whole lines of another's rather than inside them.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // coordinatorStoredView reads one repository's stored view, and falls back to

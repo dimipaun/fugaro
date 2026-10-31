@@ -1,12 +1,22 @@
 package budget_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
+	"gocloud.dev/blob/driver"
 	"gocloud.dev/blob/memblob"
+	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -88,5 +98,426 @@ func TestBucketFactsSlugFilter(t *testing.T) {
 	}
 	if len(warns) != 0 {
 		t.Fatalf("a narrowed pass read another repository's runs: %v", warns)
+	}
+}
+
+// The parallel pass's own tests. Facts now reads many runs' result.json at
+// once, which must change nothing about what it returns: these hold the
+// reads' width, the order of what comes out, and the handling of a record
+// that cannot be read.
+
+// factsDriver is the runs bucket these tests drive: the objects a test seeds,
+// a count of how many object reads are in flight at once, and a way to fail
+// one read or report it larger than its bytes.
+type factsDriver struct {
+	driver.Bucket // nil: only the methods below are reached
+	mu            sync.Mutex
+	objects       map[string][]byte
+	sizes         map[string]int64
+	fail          map[string]error
+	wait          time.Duration // how long the driver's first read holds the bucket open
+	open          int
+	peak          int
+	held          bool          // the first read has already waited once
+	overlap       chan struct{} // closed the first time two reads are in flight at once
+	overlapOnce   sync.Once
+}
+
+// errNoSuchObject is the driver's missing object. ErrorCode reports it as
+// gcerrors.NotFound, which is what runstore reads as "this run has no
+// result.json".
+var errNoSuchObject = errors.New("no such object")
+
+func newFactsDriver() *factsDriver {
+	return &factsDriver{
+		objects: map[string][]byte{}, sizes: map[string]int64{}, fail: map[string]error{},
+		overlap: make(chan struct{}),
+	}
+}
+
+func (d *factsDriver) ErrorCode(err error) gcerrors.ErrorCode {
+	if errors.Is(err, errNoSuchObject) {
+		return gcerrors.NotFound
+	}
+	return gcerrors.Unknown
+}
+
+func (d *factsDriver) As(any) bool             { return false }
+func (d *factsDriver) ErrorAs(error, any) bool { return false }
+func (d *factsDriver) Close() error            { return nil }
+
+// peakOpen is the most object reads that were ever in flight at once.
+func (d *factsDriver) peakOpen() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.peak
+}
+
+func (d *factsDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (*driver.ListPage, error) {
+	d.mu.Lock()
+	keys := make([]string, 0, len(d.objects))
+	for k := range d.objects {
+		keys = append(keys, k)
+	}
+	d.mu.Unlock()
+	slices.Sort(keys)
+	var page driver.ListPage
+	seen := map[string]struct{}{}
+	for _, k := range keys {
+		rest, ok := strings.CutPrefix(k, opts.Prefix)
+		if !ok {
+			continue
+		}
+		if i := strings.Index(rest, opts.Delimiter); opts.Delimiter != "" && i >= 0 {
+			dir := opts.Prefix + rest[:i+len(opts.Delimiter)]
+			if _, dup := seen[dir]; dup {
+				continue
+			}
+			seen[dir] = struct{}{}
+			page.Objects = append(page.Objects, &driver.ListObject{Key: dir, IsDir: true})
+			continue
+		}
+		page.Objects = append(page.Objects, &driver.ListObject{Key: k})
+	}
+	return &page, nil
+}
+
+func (d *factsDriver) NewRangeReader(_ context.Context, key string, offset, length int64, _ *driver.ReaderOptions) (driver.Reader, error) {
+	d.mu.Lock()
+	err := d.fail[key]
+	body, ok := d.objects[key]
+	size := d.sizes[key]
+	d.mu.Unlock()
+	switch {
+	case err != nil:
+		return nil, err
+	case !ok:
+		return nil, errNoSuchObject
+	}
+	if size == 0 {
+		size = int64(len(body))
+	}
+	d.mu.Lock()
+	d.open++
+	if d.open > d.peak {
+		d.peak = d.open
+	}
+	colleague := d.open > 1
+	waitHere := !d.held && !colleague
+	d.held = true
+	d.mu.Unlock()
+	switch {
+	case colleague:
+		d.overlapOnce.Do(func() { close(d.overlap) })
+	case waitHere && d.wait > 0:
+		// The first read holds the bucket open until a colleague joins it,
+		// rather than for a fixed moment: what is being measured is the width
+		// of the pass, and a loaded machine may take a while to put a second
+		// read on the CPU. A pass that reads one at a time has no colleague to
+		// wait for and gives up at the bound.
+		select {
+		case <-d.overlap:
+		case <-time.After(d.wait):
+		}
+	}
+	d.mu.Lock()
+	d.open--
+	d.mu.Unlock()
+	if offset > 0 && offset < int64(len(body)) {
+		body = body[offset:]
+	}
+	if length >= 0 && length < int64(len(body)) {
+		body = body[:length]
+	}
+	return &factsReader{Reader: bytes.NewReader(body), attrs: &driver.ReaderAttributes{
+		ContentType: "application/json", Size: size,
+	}}, nil
+}
+
+type factsReader struct {
+	*bytes.Reader
+	attrs *driver.ReaderAttributes
+}
+
+func (r *factsReader) Attributes() *driver.ReaderAttributes { return r.attrs }
+func (r *factsReader) Close() error                         { return nil }
+func (r *factsReader) As(any) bool                          { return false }
+
+// factsRun is one run the two buckets hold.
+type factsRun struct {
+	slug, id string
+	rec      runstore.Record
+}
+
+// factsBuckets writes runs into a plain bucket and hands back that bucket with
+// a counting one holding the same objects byte for byte: the sequential
+// reference reads one, the parallel pass the other, so a difference between
+// the two results is the reads and never the data.
+func factsBuckets(t *testing.T, runs []factsRun) (*blob.Bucket, *factsDriver) {
+	t.Helper()
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	for _, r := range runs {
+		putRecord(t, b, r.slug, r.id, r.rec)
+	}
+	d := newFactsDriver()
+	for it := b.List(nil); ; {
+		obj, err := it.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := b.ReadAll(ctx, obj.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.objects[obj.Key] = body
+	}
+	return b.Bucket, d
+}
+
+// sequentialFacts is Facts as it read before the reads were parallel: the same
+// loop, one result.json at a time, against the same bucket. It is the
+// reference the parallel pass has to equal, kept in the test so the comparison
+// is with what the command did and not with itself.
+func sequentialFacts(t *testing.T, b budget.BucketFacts, from, to int64) (map[int64][]budget.RunFact, map[string]string) {
+	t.Helper()
+	ctx := context.Background()
+	out := map[int64][]budget.RunFact{}
+	repos := map[string]string{}
+	slugs, err := runstore.ListSlugs(ctx, b.Bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Slugs) > 0 {
+		want := make(map[string]struct{}, len(b.Slugs))
+		for _, s := range b.Slugs {
+			want[s] = struct{}{}
+		}
+		keep := make([]string, 0, len(b.Slugs))
+		for _, slug := range slugs {
+			if _, ok := want[slug]; ok {
+				keep = append(keep, slug)
+			}
+		}
+		slugs = keep
+	}
+	since := time.UnixMilli((from - 1) * 86_400_000).UTC()
+	for _, slug := range slugs {
+		ids, err := runstore.ListRunIDs(ctx, b.Bucket, slug, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range ids {
+			minted, err := runstore.RunTime(id)
+			if err != nil || budget.Day(minted) > to {
+				continue
+			}
+			rec, err := runstore.Open(b.Bucket, slug, id).ReadRecord(ctx)
+			switch {
+			case errors.Is(err, runstore.ErrNotFound):
+				continue
+			case errors.Is(err, runstore.ErrTooLarge) || (err != nil && strings.HasPrefix(err.Error(), "decoding result.json")):
+				if b.Warn != nil {
+					b.Warn(fmt.Sprintf("skipping %s/%s: its result.json cannot be used (%v)", slug, id, err))
+				}
+				continue
+			case err != nil:
+				t.Fatal(err)
+			}
+			start := rec.StartedAt
+			if start.IsZero() {
+				start = minted
+			}
+			day := budget.Day(start)
+			if day < from || day > to {
+				continue
+			}
+			f := budget.RunFact{Slug: slug, Run: id, StartDay: day}
+			if c := rec.Cost; c != nil && c.ComputeEstimated {
+				f.ComputeUSD, f.ComputeEstimated = c.ComputeUSD, true
+			}
+			if rec.FinishedAt != nil && rec.FinishedAt.After(start) {
+				f.Hours = rec.FinishedAt.Sub(start).Hours()
+			}
+			out[day] = append(out[day], f)
+			if _, ok := repos[slug]; !ok && rec.Repo != "" {
+				repos[slug] = rec.Repo
+			}
+		}
+	}
+	return out, repos
+}
+
+func TestFactsParallelEqualsSequential(t *testing.T) {
+	day := budget.Day(time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC))
+	var runs []factsRun
+	for _, slug := range []string{"acme-app", "acme-other", "acme-third"} {
+		for d := int64(-1); d <= 2; d++ {
+			at := time.UnixMilli((day + d) * 86_400_000).UTC()
+			for i := range 12 {
+				minted := at.Add(time.Duration(9+i) * time.Hour)
+				rec := runstore.Record{Repo: "acme/" + slug}
+				switch i % 4 {
+				case 0:
+					// Started the next day, and this far in the day it is the
+					// day after the one the window ends on: it is read and
+					// then dropped, which the two passes must agree on too.
+					rec.StartedAt = minted.Add(5 * time.Hour)
+				case 1:
+					// No start time at all: the mint time stands in for it.
+				default:
+					rec.StartedAt = minted.Add(time.Duration(i) * time.Minute)
+				}
+				if i%3 == 0 {
+					c := runstore.NewCost(1, float64(i)/4, runstore.BasisAPIList)
+					rec.Cost = &c
+				} else if i%3 == 1 {
+					m := runstore.ModelOnlyCost(1, runstore.BasisAPIList)
+					rec.Cost = &m
+				}
+				if i%2 == 0 {
+					fin := rec.StartedAt.Add(time.Duration(i+1) * 30 * time.Minute)
+					rec.FinishedAt = &fin
+				}
+				runs = append(runs, factsRun{slug: slug, id: minted.Format("20060102-150405") + fmt.Sprintf("-%04x", i), rec: rec})
+			}
+		}
+	}
+	plain, d := factsBuckets(t, runs)
+	// The declared width is a bound and not a sleep: the driver's first read
+	// waits this long for a second one to join it, so the assertion below
+	// measures the pass's width rather than the scheduler's promptness. Only
+	// the reference pass pays it, which is the pass that has no colleague.
+	d.wait = time.Second
+	from, to := day-1, day+1
+
+	var seqWarns []string
+	want, wantRepos := sequentialFacts(t, budget.BucketFacts{Bucket: plain, Warn: func(s string) { seqWarns = append(seqWarns, s) }}, from, to)
+
+	counted := blob.NewBucket(d)
+	var mu sync.Mutex
+	var parWarns []string
+	got, gotRepos, err := budget.BucketFacts{Bucket: counted, Warn: func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		parWarns = append(parWarns, s)
+	}}.Facts(context.Background(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peak := d.peakOpen(); peak <= 1 {
+		t.Fatalf("result.json was read %d at a time: the pass does not read them in parallel", peak)
+	}
+	if len(want) != 3 || len(want[from]) == 0 || len(want[day]) == 0 || len(want[to]) == 0 {
+		t.Fatalf("the fixture put %d days of facts in the result: this test would compare too little", len(want))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the parallel pass differs from reading one at a time:\n%+v\nwant\n%+v", got, want)
+	}
+	if !reflect.DeepEqual(gotRepos, wantRepos) {
+		t.Fatalf("repos = %v, want %v", gotRepos, wantRepos)
+	}
+	if len(parWarns) != len(seqWarns) {
+		t.Fatalf("warnings = %v, want %v", parWarns, seqWarns)
+	}
+}
+
+func TestFactsCorruptOversizedMissingRecordSameAsBefore(t *testing.T) {
+	day := budget.Day(time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC))
+	start := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
+	fin := start.Add(time.Hour)
+	c := runstore.NewCost(1, 0.25, runstore.BasisAPIList)
+	_, d := factsBuckets(t, []factsRun{{
+		slug: "acme-app", id: "20261018-100000-aaaa",
+		rec: runstore.Record{Repo: "acme/app", StartedAt: start, FinishedAt: &fin, Cost: &c},
+	}})
+	// The three records that cannot be used, beside the good one: a
+	// result.json that is not JSON, one the bucket reports past the cap, and a
+	// run whose directory holds no result.json at all.
+	d.objects["runs/acme-app/20261018-110000-bbbb/result.json"] = []byte("{nope")
+	d.objects["runs/acme-app/20261018-120000-cccc/result.json"] = []byte(`{"version":1}`)
+	d.sizes["runs/acme-app/20261018-120000-cccc/result.json"] = runstore.MaxRecordBytes + 1
+	d.objects["runs/acme-app/20261018-130000-dddd/task.json"] = []byte("{}")
+
+	var warns []string
+	f := budget.BucketFacts{Bucket: blob.NewBucket(d), Warn: func(s string) { warns = append(warns, s) }}
+	facts, _, err := f.Facts(context.Background(), day, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []budget.RunFact{{Slug: "acme-app", Run: "20261018-100000-aaaa", StartDay: day, ComputeUSD: 0.25, ComputeEstimated: true, Hours: 1}}
+	if !reflect.DeepEqual(facts[day], want) {
+		t.Fatalf("facts[day] = %+v, want only the record that can be read", facts[day])
+	}
+	// Newest first, which is the order the runs are read in: cccc before bbbb.
+	if len(warns) != 2 || !strings.Contains(warns[0], "cccc") || !strings.Contains(warns[1], "bbbb") {
+		t.Fatalf("warnings = %v, want the oversized record then the corrupt one", warns)
+	}
+	if strings.Contains(strings.Join(warns, "\n"), "dddd") {
+		t.Errorf("a run with no result.json warned: %v", warns)
+	}
+	seq, _ := sequentialFacts(t, budget.BucketFacts{Bucket: blob.NewBucket(d)}, day, day)
+	if !reflect.DeepEqual(facts, seq) {
+		t.Fatalf("the parallel pass differs from reading one at a time:\n%+v\nwant\n%+v", facts, seq)
+	}
+}
+
+func TestFactsFailedReadFailsThePass(t *testing.T) {
+	day := budget.Day(time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC))
+	start := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
+	c := runstore.NewCost(1, 0.25, runstore.BasisAPIList)
+	rec := runstore.Record{Repo: "acme/app", StartedAt: start, Cost: &c}
+	_, d := factsBuckets(t, []factsRun{
+		{slug: "acme-app", id: "20261018-100000-aaaa", rec: rec},
+		{slug: "acme-app", id: "20261018-120000-bbbb", rec: rec},
+	})
+	refused := errors.New("the runs bucket refused the read")
+	d.fail["runs/acme-app/20261018-100000-aaaa/result.json"] = refused
+	d.fail["runs/acme-app/20261018-120000-bbbb/result.json"] = refused
+
+	facts, repos, err := budget.BucketFacts{Bucket: blob.NewBucket(d)}.Facts(context.Background(), day, day)
+	if err == nil {
+		t.Fatal("a bucket read that failed did not fail the pass: a day must never be written from a bucket that could not be read")
+	}
+	if facts != nil || repos != nil {
+		t.Errorf("a failed pass returned facts %v and repos %v", facts, repos)
+	}
+	// The runs are read newest first, so bbbb is the first failure and its
+	// message is the one the caller sees, whatever order the reads finished
+	// in.
+	if !strings.Contains(err.Error(), "20261018-120000-bbbb/result.json") || strings.Contains(err.Error(), "aaaa") {
+		t.Fatalf("error = %v, want the first failure in read order", err)
+	}
+}
+
+func TestFactsRunMintedJustBeforeMidnightCounted(t *testing.T) {
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	day := budget.Day(time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC))
+	// Minted 23:59:50 the day before, started ten seconds into the day: the
+	// day it started is the day it counts on, and the look-back is what finds
+	// it at all.
+	putRecord(t, b, "acme-app", "20261018-235950-aaaa", runstore.Record{
+		Repo: "acme/app", StartedAt: time.Date(2026, 10, 19, 0, 0, 10, 0, time.UTC),
+	})
+	// Minted 23:59:50 on the day and never started: the mint time stands in
+	// for a start, so it counts on the day it was minted.
+	putRecord(t, b, "acme-app", "20261019-235950-bbbb", runstore.Record{Repo: "acme/app"})
+
+	facts, _, err := budget.BucketFacts{Bucket: b.Bucket}.Facts(context.Background(), day, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range facts[day] {
+		got = append(got, f.Run)
+	}
+	if want := []string{"20261019-235950-bbbb", "20261018-235950-aaaa"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("facts[day] = %v, want %v", got, want)
+	}
+	if len(facts[day-1]) != 0 {
+		t.Errorf("facts[day-1] = %+v: the run minted the day before started on the day", facts[day-1])
 	}
 }
