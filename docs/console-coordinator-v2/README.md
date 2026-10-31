@@ -1,8 +1,7 @@
 # The Coordinator tab as an action queue, clickable pull requests, an on-demand job list, and a terminal
 
-**Status: a draft design awaiting the owner. Nothing here is built, no task is approved, and no
-allow-list entry, wire shape or schema changes until the owner answers the decisions in
-[reconciliation.md](reconciliation.md).** The page this replaces is the Coordinator screen as it
+**Status: design approved 2026-10-31, every decision answered as recommended; the CLI tasks C0-C4 queue for 0.15.0 and the console tasks K1-K5 for 0.117.0; the INPUT BOX of the terminal waits for the coordinator front door (P7/P8) and its own independent security review; the read-only transcript pane ships first (D827).** The decisions are in
+[reconciliation.md](reconciliation.md); nothing is built yet. The page this replaces is the Coordinator screen as it
 stands on `main` (Bitbucket credentials T1.2, D364): one read, `fugaro coordinator status
 --from-store --all --json`, and one panel per repository, drawn from the view the coordinator's
 sweep last stored.

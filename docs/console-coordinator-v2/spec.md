@@ -1,5 +1,7 @@
 # The page
 
+**Status: design approved 2026-10-31, every decision answered as recommended; the CLI tasks C0-C4 queue for 0.15.0 and the console tasks K1-K5 for 0.117.0; the INPUT BOX of the terminal waits for the coordinator front door (P7/P8) and its own independent security review; the read-only transcript pane ships first (D827).**
+
 The Coordinator tab answers one question first — **what needs me now** — and then, below it, four
 quieter ones: what the fleet looks like, how far each plan has come, what the jobs did, and what a
 particular pull request says. Everything on it is a read. The page has exactly one write

@@ -1,7 +1,7 @@
 # Implementation plan
 
-**Nothing in this file is approved.** It exists so that the owner's answers to
-[reconciliation.md](reconciliation.md)'s decisions can be turned into tasks without a second design
+**Status: design approved 2026-10-31, every decision answered as recommended; the CLI tasks C0-C4 queue for 0.15.0 and the console tasks K1-K5 for 0.117.0; the INPUT BOX of the terminal waits for the coordinator front door (P7/P8) and its own independent security review; the read-only transcript pane ships first (D827).** The owner's answers to
+[reconciliation.md](reconciliation.md)'s decisions are turned into tasks here without a second design
 pass. The CLI tasks would ship in **0.15.0** (the release after `v0.14.0`) and the console tasks in
 **0.117.0** (after `console-v0.116.0`). Every task is droppable on its own: none of them is a
 prerequisite for the others except where "Depends on" says so.
@@ -45,7 +45,7 @@ test: a measurement is not a behaviour.
 **Command.** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1 -timeout 40m` (the docs tests
 that read `docs/`), then the reads themselves against the owner's own installation.
 
-**Depends on.** Nothing. It can run before the owner answers anything, and its numbers are what O1
+**Depends on.** Nothing. It needs no owner answer, and its numbers are what O1
 and O2 in [reconciliation.md](reconciliation.md) are waiting for.
 
 **Review tier.** Ordinary.
@@ -411,10 +411,10 @@ security claim of the read-only state.
 
 ---
 
-## 3. The terminal: after the owner approves D820–D828
+## 3. The terminal: approved D820–D828, the input box held
 
-**No task for the terminal is written here, and none may be started.** [reconciliation.md](reconciliation.md)
-§5 is the design; the tasks that build it are written **after the owner answers D820–D828**, in one
+**No task for the input box of the terminal is written here, and none may be started before the front door and the independent security review.** [reconciliation.md](reconciliation.md)
+§5 is the design; the tasks that build it are written **now that the owner has answered D820–D828 (2026-10-31)**, in one
 of two shapes:
 
 - If **D820 is answered "the coordinator's front door"**, the tasks depend on `docs/coordinator/implementation-plan.md`
@@ -444,6 +444,6 @@ C0 ──────────► (fills the spec's numbers)     K1 ──►
 | `docs/design/desktop-console.md` §5.1 | C2, C3, C4 | the allow-list table, which the Go docs tests pin |
 | `console/docs/json-contract.md` | C1, C2, C3, C4 | one section per document |
 
-**Order, if everything is approved:** C0, C1, C2, C3, C4 (CLI, 0.15.0), then K1, K2, K4, K3, K5
+**Order:** C0, C1, C2, C3, C4 (CLI, 0.15.0), then K1, K2, K4, K3, K5
 (console, 0.117.0). C0 first because its numbers are what O1 and O2 are waiting for, and because a
 figure in [spec.md](spec.md) that turns out wrong changes what the console may draw.
