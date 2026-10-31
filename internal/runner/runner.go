@@ -3480,7 +3480,17 @@ func (r *run) finalize(ctx context.Context) error {
 	if halt != nil {
 		leftover = leftoverHaltMessage
 	}
-	committed, err := r.repo.CommitAll(ctx, leftover)
+	// A build's artifact the run left in the tree is never this commit's
+	// (stray.go): it is refused by name, and held out of the commit, so what
+	// the branch carries is the run's work and no compiled file beside it.
+	strays, err := r.strayArtifacts(ctx)
+	if err != nil {
+		return fmt.Errorf("listing what the run left untracked: %w", err)
+	}
+	if len(strays) > 0 {
+		r.fail(strayRefusal(strays))
+	}
+	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}

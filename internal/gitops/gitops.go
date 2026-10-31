@@ -625,6 +625,62 @@ func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 	return err == nil, err
 }
 
+// Untracked lists the paths the working tree holds that no commit has and
+// that git would add, ignored ones aside (`git ls-files --others
+// --exclude-standard`, NUL-separated so a path with a newline in it survives).
+// That is exactly the set CommitAll would put in a commit: `git add -A`
+// skips an ignored file the same way, so a path this call does not list
+// cannot reach the commit either.
+func (r *Repo) Untracked(ctx context.Context) ([]string, error) {
+	out, err := r.gitRaw(ctx, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// CommitAllExcept is CommitAll with the named paths held back: everything is
+// staged as usual — including them, since that is the only way to see whether
+// anything is left to commit — and they are then taken out of the index
+// again, so the commit never carries them and they stay untracked in the tree
+// where whoever reads the run can find them.
+//
+// The paths are literals (--literal-pathspecs): a file's own name is data, and
+// one beginning with a colon or holding a wildcard would otherwise be read as
+// a pathspec's magic (the review diff passes its paths the same way,
+// reviewinput.go). They must be relative to the repository root, as Untracked
+// returns them, and the commit is stamped like CommitAll's.
+func (r *Repo) CommitAllExcept(ctx context.Context, msg string, except []string) (bool, error) {
+	if len(except) == 0 {
+		return r.CommitAll(ctx, msg)
+	}
+	if _, err := r.git(ctx, "add", "-A"); err != nil {
+		return false, err
+	}
+	unstaged := append([]string{"--literal-pathspecs", "reset", "-q", "--"}, except...)
+	if _, err := r.git(ctx, unstaged...); err != nil {
+		return false, err
+	}
+	// Read with replacement refs ignored, as IsClean is: what is committed is
+	// the index this checkout has, not the one a ref the agent planted makes
+	// HEAD's tree claim.
+	staged, err := r.git(ctx, "--no-replace-objects", "diff", "--cached", "--name-only")
+	if err != nil {
+		return false, err
+	}
+	if staged == "" {
+		return false, nil
+	}
+	_, err = r.gitCommit(ctx, "commit", "--quiet", "--no-verify", "-m", msg)
+	return err == nil, err
+}
+
 // CommitEmpty makes a commit with no changes, so a PR can exist for a branch
 // where the agent committed nothing. It is stamped like CommitAll's.
 func (r *Repo) CommitEmpty(ctx context.Context, msg string) error {
