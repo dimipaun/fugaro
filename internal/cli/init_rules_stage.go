@@ -38,6 +38,15 @@ import (
 // shared budget gets one. This stage does nothing there (no budget.firebase_project
 // recorded, so there are no deployed rules to read) and nothing over the
 // deployed rules when they are already this generation.
+//
+// A Firebase project other than the installation's own is the one database this
+// stage may not write in on the strength of the config alone: the adoption door
+// is what made that project the installation's, and the mark that door wrote
+// into its database is what says so. A config naming another project whose
+// database does not carry this installation's mark — an EMPTY database included,
+// which infra.DB.Check passes — is skipped, with the one command that adopts it
+// (unadopted): a typo that agrees with itself would otherwise mark and deploy
+// into a database that is not the installation's (security review finding F3).
 
 // forgetPolicyMigration drops the policy stage's cached read, when it has one.
 // The stage is built by initStages, so a run that never registered it (an
@@ -100,10 +109,60 @@ func rulesForeignDatabase(lc *localcfg.Config) string {
 		oneLine(lc.Budget.RTDBURL), oneLine(lc.Budget.FirebaseProject))
 }
 
+// rulesSeparateFirebaseProject is why the config's budget.firebase_project is a
+// project other than the installation's own GCP project, "" when it is (or when
+// there is none). It is the predicate internal/cli/sharedcfg.go's reader refuses
+// a shared config with, and here it says only which project the database is in:
+// that the installation is entitled to write it is the mark's answer (unadopted),
+// because a name in a config is a name someone typed.
+func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
+	if lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject {
+		return ""
+	}
+	return fmt.Sprintf("the config's budget.firebase_project (%s) is not this installation's GCP project (%s)",
+		oneLine(lc.Budget.FirebaseProject), oneLine(lc.GCPProject))
+}
+
+// unadopted is why the database the config names may not be treated as this
+// installation's, "" when it may. A Firebase project other than the
+// installation's own serves it only once the installation adopted it, and the
+// one thing that shows the adoption happened is the mark the adoption door
+// (`fugaro update --firebase-project`) wrote into that database: infra.DB.Check
+// reads it, and it is this check and not the config, because the config's
+// budget.firebase_project alone is the value a typo moves — one that agrees with
+// itself (budget.rtdb_url is then that project's own database) leaves a config
+// whose two halves look right and point at a database the installation never
+// adopted.
+//
+// An empty database is the case that made this a finding: it passes
+// infra.DB.Check whatever project the URL belongs to, so the mark-less answer is
+// a skip and not a licence, and the skip names the one command that ends the
+// state. A database that carries another installation's mark, or that holds data
+// and no mark, is a refusal from that same check and is reported here for the
+// same reason every other report in this stage is: `fugaro update`'s other
+// stages have nothing to do with the budget database.
+func (s *rulesStage) unadopted(ctx context.Context, db *infra.DB) string {
+	detail := rulesSeparateFirebaseProject(s.e.lc)
+	if detail == "" {
+		return ""
+	}
+	marked, err := db.Check(ctx)
+	if err != nil {
+		return err.Error()
+	}
+	if marked {
+		return ""
+	}
+	return fmt.Sprintf("%s: nothing in the config proves the database at %s is this installation's (an empty database passes every check that asks it), so run `%s --firebase-project %s` once to adopt it; the mark that command writes is what lets plain %s converge there from then on",
+		detail, oneLine(s.e.lc.Budget.RTDBURL), s.e.r.o.doorProgram(), oneLine(s.e.lc.Budget.FirebaseProject), s.e.r.o.doorProgram())
+}
+
 // rulesUnavailable is why the stage does not run, "" when it may: no shared
 // budget backend at all, or one whose database is not the Firebase project's
-// own. Both are reported and neither is a refusal that stops the run, because
-// `fugaro update`'s other stages are what the owner came for.
+// own. Both are config facts, and both are reported rather than refused, because
+// `fugaro update`'s other stages are what the owner came for. The third such
+// fact — a project the installation may not write — needs the database opened
+// and is asked there (unadopted), never here.
 func rulesUnavailable(lc *localcfg.Config) string {
 	if why := rulesNoBudget(lc); why != "" {
 		return why
@@ -197,11 +256,19 @@ func (s *rulesStage) read(ctx context.Context) (*infra.DB, rulesSkew, error) {
 // The config's own pair is checked before this, never after (rulesUnavailable):
 // a database the URL names and a Firebase project that is not its own is a
 // config no read of that database can settle, and the stage must not open it to
-// find out.
+// find out. Whether the installation adopted the project the pair names is
+// asked here too, and before the classification: it is a fact about the
+// database, not about the document in it.
 func (s *rulesStage) state(ctx context.Context) (*infra.DB, initflow.State, string, error) {
 	db, skew, err := s.read(ctx)
 	if err != nil {
 		return nil, initflow.Done, "", err
+	}
+	// Before the classification, because it is about the database and not about
+	// the deployed document: what a database the installation never adopted
+	// carries says nothing about what this stage may write there.
+	if why := s.unadopted(ctx, db); why != "" {
+		return db, initflow.Skipped, why, nil
 	}
 	st, detail := rulesStageState(skew)
 	if st != initflow.Todo {
@@ -314,9 +381,17 @@ func (s *rulesStage) Verify(ctx context.Context) error {
 	if detail := rulesUnavailable(s.e.lc); detail != "" {
 		return nil
 	}
-	_, skew, err := s.read(ctx)
+	db, skew, err := s.read(ctx)
 	if err != nil {
 		return err
+	}
+	// A database the stage did not deploy into has nothing to read back: Apply
+	// wrote nothing there, which is what the skip said. The state is re-derived
+	// rather than remembered for the reason rulesUnavailable's arm above is: a
+	// verify that failed over a config changed under a completed deploy would
+	// blame the run for it.
+	if s.unadopted(ctx, db) != "" {
+		return nil
 	}
 	if st, detail := rulesStageState(skew); st != initflow.Done {
 		return fmt.Errorf("the security rules generation %d is not deployed: the read-back says %s", projectpolicy.RulesVersion, detail)
