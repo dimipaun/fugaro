@@ -6,24 +6,29 @@ The Fugaro console ships files that are not ours: the elkjs layout worker; the s
 Instrument Sans and IBM Plex Mono, both under the SIL Open Font License 1.1 (their versions and
 digests are `src/renderer/fonts/README.md`); and the two runtime dependencies the main process
 runs, `electron-updater` 6.8.10 with the fifteen packages of its tree, and `@sentry/electron`
-8.2.0 with the thirty-one packages of its. Every licence text is in this file, one section each:
-elkjs's first, then the two fonts', then the update client's and its tree's, then the crash
-reporter's and its tree's.
+8.2.0 with the fourteen packages of its, plus `has-flag` 4.0.0, which reaches the tree through
+`@sentry/node`'s bundler subpath and stays in the package because the update client's own `debug`
+loads it at run time. Every licence text is in this file, one section each: elkjs's first, then the
+two fonts', then the update client's and its tree's, then the crash reporter's and its tree's.
 
 Both runtime dependencies are packed into the asar's `node_modules` because the main process
 requires them at run time -- `dist/main/updater-electron.js` for the update client, and
 `dist/main/crash-electron.js` for the crash reporter, which is the one file in the console that
 imports it (the owner's rulings D733 and D734 of 2026-10-30) -- and the packages of their trees are packed beside
-them. Their sections are the last forty-eight in this file, and every version in them is the one
+them. Their sections are the last thirty-one in this file, and every version in them is the one
 `package-lock.json` pins.
 
-One name in the crash reporter's tree is worth reading twice rather than skimming: `sentry` 0.45.0,
-a package of `@sentry/bundler-plugins` 11.7.0, is under the **Functional Source License 1.1** --
-a source-available licence rather than an open-source one, and the only licence in this file that
-restricts what a licensee may do with the code rather than only what they must reproduce. It
-reaches the tree through `@sentry/node`'s bundler plugins, which the console does not use: the
-console bundles nothing with Sentry's plugins, and this file carries the text because the package
-is installed and packed, not because anything here calls it.
+**What is no longer in this file, and why.** `@sentry/node` carries `@sentry/bundler-plugins`,
+whose job is to wrap *someone else's* webpack, vite, rollup or esbuild build. The console builds
+with `npm run build` and bundles nothing at run time, so that subpath and the tree it drags in
+(`oxc-parser` and its `@oxc-parser` platform bindings, `@oxc-project/types`, `glob` and
+`minimatch`'s family, `magic-string`, `@jridgewell/sourcemap-codec`, `lru-cache`, `minipass`,
+`path-scurry`, `dotenv`, and `sentry` 0.45.0) were packed into the asar without anything ever
+loading them. `build.files` now excludes each of them by name (Task 2.1b's fix round A) and their
+sections are gone with them. The one that is worth a sentence: `sentry` 0.45.0 is under the
+**Functional Source License 1.1**, the one licence of that tree that restricts what a licensee may
+do with the code rather than only what they must reproduce, and the console neither calls it nor
+carries it any more.
 
 The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.11.0**, copied
 verbatim by `npm run build` from `node_modules/elkjs/lib/elk-worker.min.js`.
@@ -1324,7 +1329,9 @@ The crash reporter the console's main process starts behind a per-user switch th
 (the owner's rulings D733 and D734 of 2026-10-30), and one of the two runtime dependencies `package.json`
 declares. It is packed into the asar's `node_modules` because
 `dist/main/crash-electron.js` requires it at run time -- the one file in the console that imports
-it -- and the thirty-one packages of its tree are packed beside it.
+it -- and the fourteen packages of its tree are packed beside it. Its bundler subpath, and the
+build-time tree that subpath carried, are not: the paragraph above names what fix round A took
+out and why.
 
 Its source is the `@sentry/electron@8.2.0` package from the npm registry
 (https://registry.npmjs.org/@sentry/electron/-/electron-8.2.0.tgz), whose repository is
@@ -1359,7 +1366,7 @@ SOFTWARE.
 
 ## @sentry/browser 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/browser@11.7.0` package from the npm registry
@@ -1394,7 +1401,7 @@ SOFTWARE.
 
 ## @sentry/browser-utils 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/browser-utils@11.7.0` package from the npm registry
@@ -1429,7 +1436,7 @@ SOFTWARE.
 
 ## web-vitals 6.2.3 -- Apache License 2.0
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `web-vitals@6.2.3` package from the npm registry
@@ -1645,7 +1652,7 @@ The licence text below is copied verbatim from that package's `LICENSE`.
 
 ## @sentry/feedback 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/feedback@11.7.0` package from the npm registry
@@ -1680,7 +1687,7 @@ SOFTWARE.
 
 ## @sentry/replay-canvas 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/replay-canvas@11.7.0` package from the npm registry
@@ -1715,7 +1722,7 @@ SOFTWARE.
 
 ## @sentry/replay 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/replay@11.7.0` package from the npm registry
@@ -1750,7 +1757,7 @@ SOFTWARE.
 
 ## @sentry/conventions 0.27.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/conventions@0.27.0` package from the npm registry
@@ -1785,7 +1792,7 @@ SOFTWARE.
 
 ## @sentry/core 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/core@11.7.0` package from the npm registry
@@ -1820,7 +1827,7 @@ SOFTWARE.
 
 ## @sentry/node 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/node@11.7.0` package from the npm registry
@@ -1855,7 +1862,7 @@ SOFTWARE.
 
 ## @opentelemetry/api 1.10.0 -- Apache License 2.0
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@opentelemetry/api@1.10.0` package from the npm registry
@@ -2068,811 +2075,14 @@ The licence text below is copied verbatim from that package's `LICENSE`.
    limitations under the License.
 ```
 
-## @sentry/bundler-plugins 11.7.0 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `@sentry/bundler-plugins@11.7.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/bundler-plugins/-/bundler-plugins-11.7.0.tgz), whose repository is
-https://github.com/getsentry/sentry-javascript.git.
-
-The licence text below is copied verbatim from that package's `LICENSE`.
-
-```text
-# MIT License
-
-Copyright (c) 2022-2026, Sentry
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-- Redistributions of source code must retain the above copyright notice, this
-  list of conditions and the following disclaimer.
-
-- Redistributions in binary form must reproduce the above copyright notice,
-  this list of conditions and the following disclaimer in the documentation
-  and/or other materials provided with the distribution.
-
-- Neither the name of the copyright holder nor the names of its
-  contributors may be used to endorse or promote products derived from
-  this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-```
-
-## dotenv 17.4.2 -- BSD 2-Clause License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `dotenv@17.4.2` package from the npm registry
-(https://registry.npmjs.org/dotenv/-/dotenv-17.4.2.tgz), whose repository is
-https://github.com/motdotla/dotenv.git.
-
-The licence text below is copied verbatim from that package's `LICENSE`.
-
-```text
-Copyright (c) 2015, Scott Motte
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this
-  list of conditions and the following disclaimer.
-
-* Redistributions in binary form must reproduce the above copyright notice,
-  this list of conditions and the following disclaimer in the documentation
-  and/or other materials provided with the distribution.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-```
-
-## glob 13.0.6 -- Blue Oak Model License 1.0.0
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `glob@13.0.6` package from the npm registry
-(https://registry.npmjs.org/glob/-/glob-13.0.6.tgz), whose repository is
-git@github.com:isaacs/node-glob.git.
-
-The licence text below is copied verbatim from that package's `LICENSE.md`.
-
-```text
-All packages under `src/` are licensed according to the terms in
-their respective `LICENSE` or `LICENSE.md` files.
-
-The remainder of this project is licensed under the Blue Oak
-Model License, as follows:
-
------
-
-# Blue Oak Model License
-
-Version 1.0.0
-
-## Purpose
-
-This license gives everyone as much permission to work with
-this software as possible, while protecting contributors
-from liability.
-
-## Acceptance
-
-In order to receive this license, you must agree to its
-rules.  The rules of this license are both obligations
-under that agreement and conditions to your license.
-You must not do anything with this software that triggers
-a rule that you cannot or will not follow.
-
-## Copyright
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe that contributor's
-copyright in it.
-
-## Notices
-
-You must ensure that everyone who gets a copy of
-any part of this software from you, with or without
-changes, also gets the text of this license or a link to
-<https://blueoakcouncil.org/license/1.0.0>.
-
-## Excuse
-
-If anyone notifies you in writing that you have not
-complied with [Notices](#notices), you can keep your
-license by taking all practical steps to comply within 30
-days after the notice.  If you do not do so, your license
-ends immediately.
-
-## Patent
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe any patent claims
-they can license or become able to license.
-
-## Reliability
-
-No contributor can revoke this license.
-
-## No Liability
-
-***As far as the law allows, this software comes as is,
-without any warranty or condition, and no contributor
-will be liable to anyone for any damages related to this
-software or this license, under any kind of legal claim.***
-```
-
-## minimatch 10.2.6 -- Blue Oak Model License 1.0.0
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `minimatch@10.2.6` package from the npm registry
-(https://registry.npmjs.org/minimatch/-/minimatch-10.2.6.tgz), whose repository is
-git@github.com:isaacs/minimatch.
-
-The licence text below is copied verbatim from that package's `LICENSE.md`.
-
-```text
-# Blue Oak Model License
-
-Version 1.0.0
-
-## Purpose
-
-This license gives everyone as much permission to work with
-this software as possible, while protecting contributors
-from liability.
-
-## Acceptance
-
-In order to receive this license, you must agree to its
-rules. The rules of this license are both obligations
-under that agreement and conditions to your license.
-You must not do anything with this software that triggers
-a rule that you cannot or will not follow.
-
-## Copyright
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe that contributor's
-copyright in it.
-
-## Notices
-
-You must ensure that everyone who gets a copy of
-any part of this software from you, with or without
-changes, also gets the text of this license or a link to
-<https://blueoakcouncil.org/license/1.0.0>.
-
-## Excuse
-
-If anyone notifies you in writing that you have not
-complied with [Notices](#notices), you can keep your
-license by taking all practical steps to comply within 30
-days after the notice. If you do not do so, your license
-ends immediately.
-
-## Patent
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe any patent claims
-they can license or become able to license.
-
-## Reliability
-
-No contributor can revoke this license.
-
-## No Liability
-
-**_As far as the law allows, this software comes as is,
-without any warranty or condition, and no contributor
-will be liable to anyone for any damages related to this
-software or this license, under any kind of legal claim._**
-```
-
-## brace-expansion 5.0.12 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `brace-expansion@5.0.12` package from the npm registry
-(https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz), whose repository is
-https://github.com/juliangruber/brace-expansion.git.
-
-The licence text below is copied verbatim from that package's `LICENSE`.
-
-```text
-MIT License
-
-Copyright Julian Gruber <julian@juliangruber.com>
-
-TypeScript port Copyright Isaac Z. Schlueter <i@izs.me>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-## balanced-match 4.0.4 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `balanced-match@4.0.4` package from the npm registry
-(https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz), whose repository is
-https://github.com/juliangruber/balanced-match.git.
-
-The licence text below is copied verbatim from that package's `LICENSE.md`.
-
-```text
-(MIT)
-
-Original code Copyright Julian Gruber <julian@juliangruber.com>
-
-Port to TypeScript Copyright Isaac Z. Schlueter <i@izs.me>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-## minipass 7.1.3 -- Blue Oak Model License 1.0.0
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `minipass@7.1.3` package from the npm registry
-(https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz), whose repository is
-https://github.com/isaacs/minipass.
-
-The licence text below is copied verbatim from that package's `LICENSE.md`.
-
-```text
-# Blue Oak Model License
-
-Version 1.0.0
-
-## Purpose
-
-This license gives everyone as much permission to work with
-this software as possible, while protecting contributors
-from liability.
-
-## Acceptance
-
-In order to receive this license, you must agree to its
-rules.  The rules of this license are both obligations
-under that agreement and conditions to your license.
-You must not do anything with this software that triggers
-a rule that you cannot or will not follow.
-
-## Copyright
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe that contributor's
-copyright in it.
-
-## Notices
-
-You must ensure that everyone who gets a copy of
-any part of this software from you, with or without
-changes, also gets the text of this license or a link to
-<https://blueoakcouncil.org/license/1.0.0>.
-
-## Excuse
-
-If anyone notifies you in writing that you have not
-complied with [Notices](#notices), you can keep your
-license by taking all practical steps to comply within 30
-days after the notice.  If you do not do so, your license
-ends immediately.
-
-## Patent
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe any patent claims
-they can license or become able to license.
-
-## Reliability
-
-No contributor can revoke this license.
-
-## No Liability
-
-***As far as the law allows, this software comes as is,
-without any warranty or condition, and no contributor
-will be liable to anyone for any damages related to this
-software or this license, under any kind of legal claim.***
-```
-
-## path-scurry 2.0.2 -- Blue Oak Model License 1.0.0
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `path-scurry@2.0.2` package from the npm registry
-(https://registry.npmjs.org/path-scurry/-/path-scurry-2.0.2.tgz), whose repository is
-https://github.com/isaacs/path-scurry.
-
-The licence text below is copied verbatim from that package's `LICENSE.md`.
-
-```text
-# Blue Oak Model License
-
-Version 1.0.0
-
-## Purpose
-
-This license gives everyone as much permission to work with
-this software as possible, while protecting contributors
-from liability.
-
-## Acceptance
-
-In order to receive this license, you must agree to its
-rules.  The rules of this license are both obligations
-under that agreement and conditions to your license.
-You must not do anything with this software that triggers
-a rule that you cannot or will not follow.
-
-## Copyright
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe that contributor's
-copyright in it.
-
-## Notices
-
-You must ensure that everyone who gets a copy of
-any part of this software from you, with or without
-changes, also gets the text of this license or a link to
-<https://blueoakcouncil.org/license/1.0.0>.
-
-## Excuse
-
-If anyone notifies you in writing that you have not
-complied with [Notices](#notices), you can keep your
-license by taking all practical steps to comply within 30
-days after the notice.  If you do not do so, your license
-ends immediately.
-
-## Patent
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe any patent claims
-they can license or become able to license.
-
-## Reliability
-
-No contributor can revoke this license.
-
-## No Liability
-
-***As far as the law allows, this software comes as is,
-without any warranty or condition, and no contributor
-will be liable to anyone for any damages related to this
-software or this license, under any kind of legal claim.***
-```
-
-## lru-cache 11.5.3 -- Blue Oak Model License 1.0.0
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `lru-cache@11.5.3` package from the npm registry
-(https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.3.tgz), whose repository is
-ssh://git@github.com/isaacs/node-lru-cache.git.
-
-The licence text below is copied verbatim from that package's `LICENSE.md`.
-
-```text
-# Blue Oak Model License
-
-Version 1.0.0
-
-## Purpose
-
-This license gives everyone as much permission to work with
-this software as possible, while protecting contributors
-from liability.
-
-## Acceptance
-
-In order to receive this license, you must agree to its
-rules.  The rules of this license are both obligations
-under that agreement and conditions to your license.
-You must not do anything with this software that triggers
-a rule that you cannot or will not follow.
-
-## Copyright
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe that contributor's
-copyright in it.
-
-## Notices
-
-You must ensure that everyone who gets a copy of
-any part of this software from you, with or without
-changes, also gets the text of this license or a link to
-<https://blueoakcouncil.org/license/1.0.0>.
-
-## Excuse
-
-If anyone notifies you in writing that you have not
-complied with [Notices](#notices), you can keep your
-license by taking all practical steps to comply within 30
-days after the notice.  If you do not do so, your license
-ends immediately.
-
-## Patent
-
-Each contributor licenses you to do everything with this
-software that would otherwise infringe any patent claims
-they can license or become able to license.
-
-## Reliability
-
-No contributor can revoke this license.
-
-## No Liability
-
-***As far as the law allows, this software comes as is,
-without any warranty or condition, and no contributor
-will be liable to anyone for any damages related to this
-software or this license, under any kind of legal claim.***
-```
-
-## magic-string 1.4.3 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `magic-string@1.4.3` package from the npm registry
-(https://registry.npmjs.org/magic-string/-/magic-string-1.4.3.tgz), whose repository is
-https://github.com/Rich-Harris/magic-string.git.
-
-The licence text below is copied verbatim from that package's `LICENSE`.
-
-```text
-Copyright 2018 Rich Harris
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
-## @jridgewell/sourcemap-codec 1.6.0 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `@jridgewell/sourcemap-codec@1.6.0` package from the npm registry
-(https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.6.0.tgz), whose repository is
-https://github.com/jridgewell/sourcemaps.git.
-
-The licence text below is copied verbatim from that package's `LICENSE`.
-
-```text
-Copyright 2024 Justin Ridgewell <justin@ridgewell.name>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-## oxc-parser 0.152.0 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `oxc-parser@0.152.0` package from the npm registry
-(https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.152.0.tgz), whose repository is
-https://github.com/oxc-project/oxc.git.
-
-The licence text below is copied verbatim from that package's `LICENSE`.
-
-```text
-MIT License
-
-Copyright (c) 2024-present VoidZero Inc. & Contributors
-Copyright (c) 2023 Boshen
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-## @oxc-parser/binding-linux-x64-gnu 0.152.0 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `@oxc-parser/binding-linux-x64-gnu@0.152.0` package from the npm registry
-(https://registry.npmjs.org/@oxc-parser/binding-linux-x64-gnu/-/binding-linux-x64-gnu-0.152.0.tgz), whose repository is
-https://github.com/oxc-project/oxc.git.
-
-**That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
-nothing more, so there is no text to reproduce here.
-
-## @oxc-parser/binding-linux-x64-musl 0.152.0 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `@oxc-parser/binding-linux-x64-musl@0.152.0` package from the npm registry
-(https://registry.npmjs.org/@oxc-parser/binding-linux-x64-musl/-/binding-linux-x64-musl-0.152.0.tgz), whose repository is
-https://github.com/oxc-project/oxc.git.
-
-**That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
-nothing more, so there is no text to reproduce here.
-
-## @oxc-project/types 0.152.0 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `@oxc-project/types@0.152.0` package from the npm registry
-(https://registry.npmjs.org/@oxc-project/types/-/types-0.152.0.tgz), whose repository is
-https://github.com/oxc-project/oxc.git.
-
-The licence text below is copied verbatim from that package's `LICENSE`.
-
-```text
-MIT License
-
-Copyright (c) 2024-present VoidZero Inc. & Contributors
-Copyright (c) 2023 Boshen
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-## sentry 0.45.0 -- Functional Source License 1.1, Apache 2.0 Future License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `sentry@0.45.0` package from the npm registry
-(https://registry.npmjs.org/sentry/-/sentry-0.45.0.tgz), whose repository is
-https://github.com/getsentry/cli.git.
-
-The licence text below is copied verbatim from that package's `LICENSE.md`.
-
-```text
-# Functional Source License, Version 1.1, Apache 2.0 Future License
-
-## Abbreviation
-
-FSL-1.1-Apache-2.0
-
-## Notice
-
-Copyright 2025 Functional Software, Inc. dba Sentry
-
-## Terms and Conditions
-
-### Licensor ("We")
-
-The party offering the Software under these Terms and Conditions.
-
-### The Software
-
-The "Software" is each version of the software that we make available under
-these Terms and Conditions, as indicated by our inclusion of these Terms and
-Conditions with the Software.
-
-### License Grant
-
-Subject to your compliance with this License Grant and the Patents,
-Redistribution and Trademark clauses below, we hereby grant you the right to
-use, copy, modify, create derivative works, publicly perform, publicly display
-and redistribute the Software for any Permitted Purpose identified below.
-
-### Permitted Purpose
-
-A Permitted Purpose is any purpose other than a Competing Use. A Competing Use
-means making the Software available to others in a commercial product or
-service that:
-
-1. substitutes for the Software;
-
-2. substitutes for any other product or service we offer using the Software
-   that exists as of the date we make the Software available; or
-
-3. offers the same or substantially similar functionality as the Software.
-
-Permitted Purposes specifically include using the Software:
-
-1. for your internal use and access;
-
-2. for non-commercial education;
-
-3. for non-commercial research; and
-
-4. in connection with professional services that you provide to a licensee
-   using the Software in accordance with these Terms and Conditions.
-
-### Patents
-
-To the extent your use for a Permitted Purpose would necessarily infringe our
-patents, the license grant above includes a license under our patents. If you
-make a claim against any party that the Software infringes or contributes to
-the infringement of any patent, then your patent license to the Software ends
-immediately.
-
-### Redistribution
-
-The Terms and Conditions apply to all copies, modifications and derivatives of
-the Software.
-
-If you redistribute any copies, modifications or derivatives of the Software,
-you must include a copy of or a link to these Terms and Conditions and not
-remove any copyright notices provided in or with the Software.
-
-### Disclaimer
-
-THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF FITNESS FOR A PARTICULAR
-PURPOSE, MERCHANTABILITY, TITLE OR NON-INFRINGEMENT.
-
-IN NO EVENT WILL WE HAVE ANY LIABILITY TO YOU ARISING OUT OF OR RELATED TO THE
-SOFTWARE, INCLUDING INDIRECT, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES,
-EVEN IF WE HAVE BEEN INFORMED OF THEIR POSSIBILITY IN ADVANCE.
-
-### Trademarks
-
-Except for displaying the License Details and identifying us as the origin of
-the Software, you have no right under these Terms and Conditions to use our
-trademarks, trade names, service marks or product names.
-
-## Grant of Future License
-
-We hereby irrevocably grant you an additional license to use the Software under
-the Apache License, Version 2.0 that is effective on the second anniversary of
-the date we make the Software available. On or after that date, you may use the
-Software under the Apache License, Version 2.0, in which case the following
-will apply:
-
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-this file except in compliance with the License.
-
-You may obtain a copy of the License at
-
-http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software distributed
-under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-CONDITIONS OF ANY KIND, either express or implied. See the License for the
-specific language governing permissions and limitations under the License.
-
-<!-- packages/cli/LICENSE.md is a copy of ../LICENSE.md (the canonical source in this repo). Both files must remain byte-identical. -->
-```
-
-## supports-color 8.1.1 -- MIT License
-
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
-
-Its source is the `supports-color@8.1.1` package from the npm registry
-(https://registry.npmjs.org/supports-color/-/supports-color-8.1.1.tgz), whose repository is
-chalk/supports-color.
-
-The licence text below is copied verbatim from that package's `license`.
-
-```text
-MIT License
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
 ## has-flag 4.0.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
-and packed beside it.
+`package-lock.json` reaches this package through `@sentry/electron` 8.2.0's bundler subpath, and it
+stays in the package even though that subpath does not, because it is the one package of that tree
+a run-time `require` reaches: `debug`, which the update client loads, requires `supports-color`
+from inside a `try` -- an optional require that no `package.json` declares, so only a probe sees it
+-- and `supports-color` requires this. Task 2.1b's fix round A kept it shipped on that evidence
+rather than excluding it with the rest of the tree.
 
 Its source is the `has-flag@4.0.0` package from the npm registry
 (https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz), whose repository is
@@ -2894,7 +2104,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## @sentry/opentelemetry 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/opentelemetry@11.7.0` package from the npm registry
@@ -2929,7 +2139,7 @@ SOFTWARE.
 
 ## @sentry/server-runtime-injection 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/server-runtime-injection@11.7.0` package from the npm registry
@@ -2941,7 +2151,7 @@ nothing more, so there is no text to reproduce here.
 
 ## @sentry/server-utils 11.7.0 -- MIT License
 
-One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@sentry/server-utils@11.7.0` package from the npm registry

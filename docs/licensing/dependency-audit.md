@@ -12,9 +12,12 @@ at that date. Both are `lockfileVersion` 3.
 
 **The console's half was revised 2026-10-31**, for the crash reporter's dependency (desktop-console
 plan Task 2.1b, D733): `@sentry/electron` 8.2.0 and its tree, and with it the console's second
-runtime dependency. The console's counts below are read off the lockfile of that date. The mobile
-app's counts are still the 2026-10-27 ones and have drifted since — nothing in this revision looked
-at `mobile/`.
+runtime dependency. **Its shipped set was revised again the same day**, by Task 2.1b's fix round A:
+`@sentry/bundler-plugins` and everything only that subpath reaches are excluded by name in
+`build.files`, because nothing in them loads at run time, so the tree this revision counted as
+shipped is smaller than it says below. The licence table is still the whole lockfile, which is what
+it was always about, and the console's counts are read off the lockfile of that date. The mobile app's counts are still the 2026-10-27 ones and have drifted since — nothing in this
+revision looked at `mobile/`.
 
 ## Method
 
@@ -81,18 +84,26 @@ runtime that electron-builder puts around it.
 
 Neither is copyleft, and neither is in the table below. What both bring in is a tree of their own,
 packed beside them and reproduced section by section in `console/THIRD_PARTY_NOTICES.md` — sixteen
-packages for the update client and thirty-one for the crash reporter. Every version in those
-sections is the one the lockfile pins.
+packages for the update client, fourteen for the crash reporter, and `has-flag` 4.0.0, which reaches
+the lockfile through the crash reporter's bundler subpath but is loaded at run time by the update
+client's own `debug`. Every version in those sections is the one the lockfile pins, and since
+Task 2.1b's fix round A the file is no longer read off a machine: `console/test/unit/notices.test.ts`
+derives the shipped set from `package-lock.json` for each of the three targets the console is built
+for — darwin arm64 and x64 in the universal bundle, and linux x64 — and compares it with the file's
+sections in both directions, so a section cannot outlive the package it describes and a package that
+ships cannot lose its section.
 
-**One licence in the console's tree is not open source.** `sentry` 0.45.0 — declared
-`FSL-1.1-Apache-2.0`, the Functional Source License 1.1 with a two-year conversion to Apache-2.0 —
-arrives with `@sentry/bundler-plugins` 11.7.0, which `@sentry/node` depends on and which the
-console neither calls nor configures: nothing in `console/src/` bundles anything with Sentry's
-build plugins, and the package is installed and packed rather than used. `copyleftPattern` in
-`internal/eeboundary/licence_test.go` does not match it — FSL is not a copyleft family — so the
-rule passes and this paragraph is the only place the fact is recorded. FSL's terms restrict
-competing use rather than merely requiring attribution, so whether an unused package under it is
-acceptable in a distributed artifact is a question for counsel, and it is listed as such below.
+**One licence in the console's tree is not open source, and it is not in the package.** `sentry`
+0.45.0 — declared `FSL-1.1-Apache-2.0`, the Functional Source License 1.1 with a two-year conversion
+to Apache-2.0 — arrives with `@sentry/bundler-plugins` 11.7.0, which `@sentry/node` depends on and
+which the console neither calls nor configures: nothing in `console/src/` bundles anything with
+Sentry's build plugins. It was installed *and packed* until Task 2.1b's fix round A, which excludes
+that subpath's whole tree by name in `build.files` (nothing in the tree loads at run time, which the
+round's probe shows), so no distributed artifact carries it and `THIRD_PARTY_NOTICES.md` no longer
+reproduces its text. The fact stays recorded here because it is the one licence in the console's
+lockfile that restricts what a licensee may do rather than only what they must reproduce:
+`copyleftPattern` in `internal/eeboundary/licence_test.go` does not match it — FSL is not a copyleft
+family — so the rule passes and this paragraph is what records it.
 
 **Copyleft, and what each obliges.**
 
@@ -259,14 +270,16 @@ Collected, so nothing here is buried in the prose above:
 - **Whether `mobile/` needs a `THIRD_PARTY_NOTICES.md`** before its first store submission, and what
   it has to carry for `expo`, React Native and React.
 - **The six app-store questions above**, against the licence's clauses 1.1 and 4.1.
-- **The Functional Source License in the console's production tree.** `sentry` 0.45.0
+- **The Functional Source License in the console's dependency tree.** `sentry` 0.45.0
   (`FSL-1.1-Apache-2.0`), through `@sentry/bundler-plugins`, is source-available rather than open
   source: its terms restrict competing use until the licence converts to Apache-2.0 two years after
   each release. Nothing in `console/src/` calls it, and `internal/eeboundary/licence_test.go`'s
-  copyleft rule does not match the identifier, so the console ships it today on this audit's reading
-  alone. Whether an unused package under FSL 1.1 may be packed into a distributed artifact, and
-  whether the crash reporter's dependency is acceptable at all with it in the tree, is counsel's
-  call. Task 2.1b records it rather than deciding it.
+  copyleft rule does not match the identifier. Task 2.1b's fix round A took it out of what ships —
+  `build.files` excludes the bundler subpath's whole tree, so no distributed artifact carries it —
+  but it stays installed and in the lockfile as a dependency of `@sentry/node`, so whether a
+  FSL-1.1 package may sit in the build at all, and whether the crash reporter's dependency is
+  acceptable with it in the tree, is still counsel's call. Task 2.1b records it rather than deciding
+  it.
 - **Whether `node-forge`'s `(BSD-3-Clause OR GPL-2.0)` is read the way this audit reads it.** The
   audit takes BSD-3-Clause and records that in `copyleftAllowed`; if counsel reads the expression
   differently the allow-list entry is wrong and the dependency is a decision rather than a note.
@@ -287,3 +300,11 @@ Collected, so nothing here is buried in the prose above:
 `console/test/unit/lockfile.test.ts` and the console's `pinning.test.ts` enforce different, already
 existing things about `console/package-lock.json` (pinned versions, the lockfile's own shape); they
 say nothing about licences, and this audit does not change them.
+
+`console/test/unit/notices.test.ts` does, from this revision on: it derives the set of packages the
+packed console carries for each of its three targets out of the lockfile, `package.json`'s
+`dependencies` and `build.files`'s exclusions, and holds `THIRD_PARTY_NOTICES.md` to it in both
+directions — a package that ships with no section fails, and so does a section for a package that
+does not ship. That is the machine half of this document's "a lockfile says who is installed, not
+what ships" caveat: the audit still reasons about licences, and the test is what keeps the file in
+step with the artifact.
