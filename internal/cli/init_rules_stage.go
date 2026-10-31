@@ -68,7 +68,8 @@ func (s *rulesStage) Left() initflow.Left {
 // never adopted a Firebase backend has no deployed rules to be stale, and its
 // runs read no policy node either, so `fugaro update` converges there as it
 // always did. The two ways to be without one are named apart, because the move
-// differs — nothing, and the recorded pair's other half.
+// differs: nothing at all, and the other half of the pair `--firebase-project`
+// records together.
 func rulesNoBudget(lc *localcfg.Config) string {
 	if lc.Budget == nil || lc.Budget.FirebaseProject == "" {
 		return "the project config records no shared Firebase budget backend (budget.firebase_project): fugaro update --firebase-project adopts one, and the security rules are deployed with it"
@@ -103,7 +104,7 @@ func rulesStageState(skew rulesSkew) (initflow.State, string) {
 	case rulesSkewOlder:
 		return initflow.Todo, fmt.Sprintf("the deployed security rules are generation %d and this Fugaro deploys generation %d", skew.gen, projectpolicy.RulesVersion)
 	case rulesSkewDocument:
-		return initflow.Todo, "the deployed security rules are not the document this Fugaro generates, so nothing here deploys the generation a project policy is read under"
+		return initflow.Todo, "the deployed security rules are not the document this Fugaro generates: this Fugaro redeploys the generation a project policy is read under"
 	case rulesSkewNewer:
 		return initflow.Skipped, rulesMarkerNewerText(marker, skew.gen)
 	case rulesSkewBadMarker:
