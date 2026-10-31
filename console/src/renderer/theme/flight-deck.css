@@ -2652,3 +2652,76 @@ span.projects-secret-bound-word {
   text-transform: uppercase;
   color: var(--text-3);
 }
+
+/* ---- A section's read: the busy mark (console 0.116.1) ------------------- */
+
+/* The owner's rule of 2026-10-31 -- a screen renders each part the moment its
+ * data arrives -- has a second half: the operator has to be told that a part is
+ * being read *now*, in the frame their click happened in. The mark below is that
+ * half, drawn by `renderer/section.ts` into a section's own empty first child,
+ * and it is one block for every screen that adopts it.
+ *
+ * **The spinning element and the still word are both drawn, and this stylesheet
+ * picks one.** A renderer that chose would have to ask the machine for the
+ * motion preference, and the console answers that preference in exactly one
+ * place (`base.css`, design section 3.9); the reduced-motion arm below is that
+ * one place's own exception, the way the graph's arm is. The global freeze in
+ * `base.css` alone would leave the ring wherever its last frame put it, which is
+ * a mark that says "half a circle" rather than "reading", so the element is not
+ * drawn at all.
+ *
+ * **A section being re-read keeps its content and dims it.** `data-busy` is on
+ * the section and the rule below fades every child but the busy slot: the
+ * operator's figures stay on screen while the next read runs, which is what
+ * makes the change answer in the same frame without blanking the view. */
+
+div.console-busy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+span.console-busy-spinner {
+  align-self: center;
+  inline-size: 0.75em;
+  block-size: 0.75em;
+  border: 2px solid var(--line);
+  border-top-color: var(--live);
+  border-radius: 50%;
+  animation: console-busy-turn 900ms linear infinite;
+}
+
+@keyframes console-busy-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+span.console-busy-still-mark {
+  display: none;
+}
+
+p.console-busy-still {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-label);
+  color: var(--text-3);
+}
+
+section[data-busy='true'] > *:not(div.console-busy-slot),
+div[data-busy='true'] > *:not(div.console-busy-slot) {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  span.console-busy-spinner {
+    display: none;
+  }
+
+  span.console-busy-still-mark {
+    display: inline;
+  }
+}

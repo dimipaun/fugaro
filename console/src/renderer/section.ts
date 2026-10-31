@@ -1,0 +1,316 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
+// One section's read: the busy mark a control change puts up in the same frame,
+// the sequence token that keeps the latest change's answer, and the session
+// cache of what a read answered.
+//
+// **Why this is a module of its own.** The owner's rule of 2026-10-31 -- "we
+// need to render parts of screen as soon as we get that data, not wait for it
+// all before we show anything" -- is a rule about every tab, and the second half
+// of it is about *feedback*: a control change used to look like nothing had
+// happened, because the click only started a read and the panel changed when
+// the read answered (twenty-three seconds for `report --json` on the owner's
+// installation). Both halves are the same small piece of machinery -- a busy
+// mark, a token and a cache -- so they live here rather than in the first screen
+// that needed them, and the Graph, Projects and Coordinator can adopt them
+// without a second implementation. This file draws the mark and decides nothing
+// about a screen: which element is a section, what its label says and when a
+// read starts are the caller's.
+//
+// **No `matchMedia`, and no motion the stylesheet cannot answer for.** The
+// reduced-motion arm is CSS's (`flight-deck.css`): the mark draws a spinning
+// element *and* the static word a reader with the preference sees instead, and
+// the stylesheet hides one of the two. A renderer that asked the machine would
+// be the second place the console reads a preference, which `entry.ts` rules out
+// for the theme and this file keeps for motion.
+
+import type { SkewTheme } from '../shared/version'
+import { READING_STILL, READING_STILL_MS } from './screens/reading'
+
+/** SectionElement is the whole of the DOM this file touches: a text slot, the
+ * three attribute writers and `append`. It is `SkewElement`'s shape, declared
+ * here rather than imported so the helper depends on no screen -- the same
+ * mirror-image choice `screens/degraded.ts` makes from the other side. */
+export interface SectionElement {
+  textContent: string | null
+  setAttribute(name: string, value: string): void
+  getAttribute(name: string): string | null
+  removeAttribute(name: string): void
+  readonly tag: string
+  append(child: SectionElement): void
+}
+
+export interface SectionFactory {
+  create(tag: string): SectionElement
+}
+
+/** BUSY_CLASS is the mark's own hook, and BUSY_SLOT_CLASS the empty first child
+ * every section draws for it. The slot is what keeps the mark **at the top of
+ * the section it belongs to**: a mark appended to the section itself would land
+ * under a table nobody scrolls to, and the operator would be told a read is
+ * running somewhere they cannot see. */
+export const BUSY_CLASS = 'console-busy'
+export const BUSY_SLOT_CLASS = 'console-busy-slot'
+export const BUSY_SPINNER_CLASS = 'console-busy-spinner'
+export const BUSY_STILL_MARK_CLASS = 'console-busy-still-mark'
+export const BUSY_LABEL_CLASS = 'console-busy-label'
+export const BUSY_STILL_CLASS = 'console-busy-still'
+
+/** BUSY_ATTRIBUTE is on the **section**, and it is the whole of the dimming: the
+ * stylesheet fades the section's children except the mark. It is an attribute
+ * rather than a class because the same element is already carrying `data-busy`
+ * for a reader of the tree, and one fact should not have two spellings. */
+export const BUSY_ATTRIBUTE = 'data-busy'
+
+/** BUSY_BUSY_ATTRIBUTE is the accessibility half: a section that is being
+ * re-read says so, so a reader who cannot see the spinner is told. */
+export const BUSY_BUSY_ATTRIBUTE = 'aria-busy'
+
+/** BUSY_STILL_MARK is the static word the reduced-motion arm shows **instead of**
+ * the spinning element. It is this file's own vocabulary and not a document's
+ * string, so `literal` is the only writer it needs. */
+export const BUSY_STILL_MARK = 'Reading…'
+
+/** BUSY_ROLE is the mark's role. The label is the announcement -- what is being
+ * read and, for the Spend screen, the window and the breakdown it is being read
+ * for -- and `status` is the polite live region a change belongs in. */
+export const BUSY_ROLE = 'status'
+
+/** SectionTimers is the clock, injected so a case can drive the fifteen-second
+ * line without waiting for it. The default is the host's own `setTimeout`, which
+ * is what a `vi.useFakeTimers()` suite replaces. */
+export interface SectionTimers {
+  setTimeout(callback: () => void, ms: number): ReturnType<typeof setTimeout>
+  clearTimeout(handle: ReturnType<typeof setTimeout>): void
+}
+
+export const NODE_TIMERS: SectionTimers = Object.freeze({
+  setTimeout: (callback: () => void, ms: number) => setTimeout(callback, ms),
+  clearTimeout: (handle: ReturnType<typeof setTimeout>) => {
+    clearTimeout(handle)
+  },
+})
+
+/** literal is this file's one writer of a text slot. Every argument it is handed
+ * is this file's own constant or a label the caller built out of the console's
+ * own vocabulary, so no document string reaches it. */
+function literal(element: SectionElement, text: string): SectionElement {
+  element.textContent = text
+  return element
+}
+
+/** DrawnBusy is the mark and the line a slow read adds to it. */
+export interface DrawnBusy {
+  readonly root: SectionElement
+  readonly still: SectionElement
+}
+
+/**
+ * renderBusy draws the mark for one read: the spinning element, the static word
+ * the reduced-motion arm shows instead of it, and the label naming what is being
+ * read.
+ *
+ * All three are drawn, always, and the stylesheet decides which of the first two
+ * a reader sees: a renderer that chose would need the preference, and the
+ * console reads a preference in exactly one place (`base.css`).
+ */
+export function renderBusy(factory: SectionFactory, label: string, theme: SkewTheme): DrawnBusy {
+  const root = factory.create('div')
+  root.setAttribute('class', BUSY_CLASS)
+  root.setAttribute('data-theme', theme)
+  root.setAttribute('role', BUSY_ROLE)
+  const spinner = factory.create('span')
+  spinner.setAttribute('class', BUSY_SPINNER_CLASS)
+  // The spinner is a mark and not a word: the label beside it is what a reader
+  // is told, so announcing an empty element as well would be noise.
+  spinner.setAttribute('aria-hidden', 'true')
+  root.append(spinner)
+  literal(mark(factory, root, BUSY_STILL_MARK_CLASS), BUSY_STILL_MARK)
+  literal(mark(factory, root, BUSY_LABEL_CLASS), label)
+  const still = factory.create('p')
+  still.setAttribute('class', BUSY_STILL_CLASS)
+  literal(still, READING_STILL)
+  return { root, still }
+}
+
+function mark(factory: SectionFactory, parent: SectionElement, className: string): SectionElement {
+  const element = factory.create('span')
+  element.setAttribute('class', className)
+  parent.append(element)
+  return element
+}
+
+/** SectionRead is one screen's read lifecycle. */
+export interface SectionRead {
+  /**
+   * begin marks a section busy and answers the token for the read it is about.
+   *
+   * **It draws synchronously**, before any await, and that is the whole point:
+   * the operator's click is answered in the frame it happened in. `slot` is the
+   * section's own empty first child (`BUSY_SLOT_CLASS`) and the caller empties
+   * it before each call -- the mark of a read that is still in flight is not a
+   * reason to stack a second one.
+   */
+  begin(host: SectionElement, slot: SectionElement, label: string): number
+  /**
+   * settle answers whether this token is the newest one asked for, and clears
+   * the busy state when it is. A read that lands with an older token is dropped:
+   * a slow earlier read must never overwrite a later one.
+   */
+  settle(token: number): boolean
+  /** end clears the busy state without settling it, for a screen the operator
+   * has left: nothing is in flight for it any more. */
+  end(): void
+}
+
+/**
+ * sectionRead builds one screen's read lifecycle.
+ *
+ * `stillMs` is how long a read may take before the mark says so, and it is the
+ * placeholder's own fifteen seconds (`READING_STILL_MS`): the two say the same
+ * thing about the same read, and a second number would be a second opinion.
+ */
+export function sectionRead(options: {
+  readonly factory: SectionFactory
+  readonly theme: SkewTheme
+  readonly stillMs?: number
+  readonly timers?: SectionTimers
+}): SectionRead {
+  const stillMs = options.stillMs ?? READING_STILL_MS
+  const timers = options.timers ?? NODE_TIMERS
+  let token = 0
+  let handle: ReturnType<typeof setTimeout> | null = null
+  let held: SectionElement | null = null
+
+  const clearTimer = (): void => {
+    if (handle === null) return
+    timers.clearTimeout(handle)
+    handle = null
+  }
+
+  const end = (): void => {
+    clearTimer()
+    if (held === null) return
+    held.removeAttribute(BUSY_ATTRIBUTE)
+    held.removeAttribute(BUSY_BUSY_ATTRIBUTE)
+    held = null
+  }
+
+  return {
+    begin(host: SectionElement, slot: SectionElement, label: string): number {
+      end()
+      token += 1
+      const mine = token
+      host.setAttribute(BUSY_ATTRIBUTE, 'true')
+      host.setAttribute(BUSY_BUSY_ATTRIBUTE, 'true')
+      const drawn = renderBusy(options.factory, label, options.theme)
+      slot.append(drawn.root)
+      held = host
+      handle = timers.setTimeout(() => {
+        handle = null
+        // The mark a later change put up is not this read's to write into, and
+        // the section the read was for may be gone.
+        if (mine !== token || held !== host) return
+        drawn.root.append(drawn.still)
+      }, stillMs)
+      return mine
+    },
+    settle(mine: number): boolean {
+      if (mine !== token) return false
+      end()
+      return true
+    },
+    end,
+  }
+}
+
+/** CACHE_LIMIT is how many views a session keeps. It is small on purpose: the
+ * point is the view the operator just left and comes back to, and every entry is
+ * a whole `report --json` document (the owner's is about 248 KB for a day of
+ * runs, and the report is the larger of Spend's two). */
+export const CACHE_LIMIT = 8
+
+/** CACHE_FRESH_MS is how long a cached view may be served without a read. Past
+ * it the view is still drawn -- instantly, which is the whole point -- but the
+ * stamp says when it was read and a fresh read starts at once, so a figure the
+ * operator is looking at is never silently older than five minutes. */
+export const CACHE_FRESH_MS = 5 * 60_000
+
+/** Cached is one cached answer with the console clock it was read at. */
+export interface Cached<T> {
+  readonly value: T
+  readonly at: number
+}
+
+/** ResultCache is a bounded, in-memory, insertion-ordered map. */
+export interface ResultCache<T> {
+  get(key: string): Cached<T> | null
+  put(key: string, value: T, at: number): void
+  clear(): void
+  readonly size: number
+}
+
+/**
+ * resultCache builds one screen's session cache.
+ *
+ * **It is memory and nothing else.** No storage, no disk, no IPC: the cache is
+ * an optimisation for the operator's own session and a wrong entry costs one
+ * redraw, so there is nothing here worth persisting -- and persisting a spend
+ * document would be writing the installation's figures somewhere the console has
+ * no channel to protect.
+ *
+ * The bound is on entries and not on bytes: `CACHE_LIMIT` whole documents, and
+ * the oldest goes out. Insertion order is the eviction order (`Map` keeps it),
+ * and a `put` for a key already held replaces the value and moves it to the end,
+ * which is what "the views the operator actually uses" means.
+ */
+export function resultCache<T>(limit: number = CACHE_LIMIT): ResultCache<T> {
+  const entries = new Map<string, Cached<T>>()
+  return {
+    get(key: string): Cached<T> | null {
+      return entries.get(key) ?? null
+    },
+    put(key: string, value: T, at: number): void {
+      entries.delete(key)
+      entries.set(key, { value, at })
+      while (entries.size > limit) {
+        const oldest = entries.keys().next()
+        if (oldest.done === true) break
+        entries.delete(oldest.value)
+      }
+    },
+    clear(): void {
+      entries.clear()
+    },
+    get size(): number {
+      return entries.size
+    },
+  }
+}
+
+/**
+ * cacheKey is one cache key out of its parts.
+ *
+ * The separator is a NUL, which no part this console builds can contain: the
+ * parts are an installation's project name, the picker's window, a breakdown
+ * word and a boolean, and a separator that could appear inside a part would let
+ * two different views share one key -- which is a cached figure drawn under the
+ * wrong controls, the one failure a cache must not have.
+ */
+export function cacheKey(parts: readonly string[]): string {
+  return parts.join('\u0000')
+}
+
+/**
+ * stampOf is the "as of HH:MM" a cached view is drawn with.
+ *
+ * It is the **local** clock and not the console's RFC 3339 UTC stamp: the stamp
+ * is for the operator's eye beside a refresh control, and a figure they read at
+ * 14:05 should not be stamped 13:05. Two digits of each, so the string is one
+ * width and the screen does not jump when the hour rolls over.
+ */
+export function stampOf(at: number): string {
+  const when = new Date(at)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${pad(when.getHours())}:${pad(when.getMinutes())}`
+}
