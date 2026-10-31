@@ -207,12 +207,11 @@ type websiteFactsAnalytics struct {
 // consent banner's second question.
 type websiteFactsMarketing struct {
 	// MetaPixelID and LinkedinPartnerID are the pixel's and the insight tag's
-	// identifiers. The pixel's is still the owner's to supply and is empty
-	// until they do; the partner id was supplied on 2026-10-31 and is the
-	// owner's own from then on. An id invented here would send a campaign
-	// page's visitors into a stranger's ad account, and an empty id is a
-	// loader switched off rather than a loader that loads something nameless
-	// (R3).
+	// identifiers. Both are the owner's, supplied on 2026-10-31, and the pin
+	// below refuses either of them coming back empty: an id invented here would
+	// send a campaign page's visitors into a stranger's ad account, and an empty
+	// id is a loader switched off rather than a loader that loads something
+	// nameless (R3).
 	MetaPixelID       string `yaml:"meta_pixel_id"`
 	LinkedinPartnerID string `yaml:"linkedin_partner_id"`
 	// The three origins, each the exact host the vendor documents rather than
@@ -1152,19 +1151,19 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 		t.Errorf("%s: features.video is true: the explainer video does not exist, so the hero may not render a player, an iframe, a poster or a play button. W2.4 sets this flag when the video exists, in the same commit that relaxes this check (D107, finding 57, plan Task W2.4 step 1)", websiteFactsPath)
 	}
 
-	// The campaign measurement (plan Task G2.3, D401; the owner's ruling of
+	// The campaign measurement (plan Task G2.3, D401; the owner's rulings of
 	// 2026-10-31). G2.3 pinned BOTH ids empty and said the pin is relaxed in
 	// the commit that fills one in, because a task that fills one in is a task
 	// the owner supplied the id for (R3) -- exactly as the video pin above is
-	// relaxed by W2.4. The owner supplied the insight tag's partner id on
-	// 2026-10-31 and the pixel id is still theirs to supply, so the pin is now
-	// split: the pixel id stays empty, and the partner id is refused when it is
-	// empty, because the shipped page loads the insight tag only while a value
-	// is there and website/test/consent.mjs reads that off the built artifact.
+	// relaxed by W2.4. The owner supplied the insight tag's partner id and then
+	// the pixel's id, so both halves are now the other way round: an empty value
+	// is refused, because the four campaign pages load a tag only while one is
+	// there and website/test/consent.mjs reads that off the built artifact. What
+	// the pin still refuses is an empty file, not a value it happens to hold.
 	// Neither value is printed here: the id lives in site.yaml and nowhere
 	// else, and a copy in this file would be the second one to keep in step.
-	if facts.Marketing.MetaPixelID != "" {
-		t.Errorf("%s: marketing carries meta_pixel_id = %q, and it must stay empty until the OWNER supplies one: the loader is wired and gated around it, and an id nobody supplied would point the pixel at an account that is not this project's (R3, plan Task G2.3)", websiteFactsPath, facts.Marketing.MetaPixelID)
+	if facts.Marketing.MetaPixelID == "" {
+		t.Errorf("%s: marketing carries an empty meta_pixel_id: the OWNER supplied the pixel id on 2026-10-31, the four campaign pages hand it to the pixel after the campaign consent, and an empty value is the loader switched off (R3, plan Task G2.3)", websiteFactsPath)
 	}
 	if facts.Marketing.LinkedinPartnerID == "" {
 		t.Errorf("%s: marketing carries an empty linkedin_partner_id: the OWNER supplied the partner id on 2026-10-31, the four campaign pages hand it to the insight tag after the campaign consent, and an empty value is the loader switched off (R3, plan Task G2.3)", websiteFactsPath)

@@ -36,9 +36,10 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import { secretShaped } from './accounts/index.js';
 import { ID_VARIABLES, NATIVE_CONFIG_VARIABLES, resolveConfig } from '../app.config.js';
@@ -48,6 +49,32 @@ const APP_JSON = join(HERE, '..', 'app.json');
 const RAW = readFileSync(APP_JSON, 'utf8');
 const CONFIG = JSON.parse(RAW);
 const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'));
+
+/**
+ * A real file for each native config variable, in a temp directory: the
+ * build-time guard (D260) asks whether the path a build resolved names a file,
+ * and only the filesystem can answer that. The paths are synthetic and are
+ * removed after the suite; neither is the owner's own file, which is never in a
+ * checkout.
+ */
+const NATIVE_DIR = mkdtempSync(join(tmpdir(), 'fugaro-app-config-'));
+const NATIVE_FILES = {
+  [NATIVE_CONFIG_VARIABLES.android]: join(NATIVE_DIR, 'google-services.json'),
+  [NATIVE_CONFIG_VARIABLES.ios]: join(NATIVE_DIR, 'GoogleService-Info.plist'),
+};
+writeFileSync(NATIVE_FILES[NATIVE_CONFIG_VARIABLES.android], '{}\n');
+writeFileSync(NATIVE_FILES[NATIVE_CONFIG_VARIABLES.ios], '<plist/>\n');
+after(() => rmSync(NATIVE_DIR, { recursive: true, force: true }));
+
+/** `resolved` without the two native config paths: a comparison about what
+ * something else added, not about the files a build carried (D260). */
+function withoutNativeConfig(resolved) {
+  const ios = { ...resolved.ios };
+  const android = { ...resolved.android };
+  delete ios.googleServicesFile;
+  delete android.googleServicesFile;
+  return { ...resolved, ios, android };
+}
 
 /**
  * The static config as **a resolution** carries it: `app.json`'s `expo` object
@@ -195,18 +222,20 @@ test('the identities are resolved through app.config.js, in both modes', () => {
     EAS_BUILD: 'true',
     [ID_VARIABLES.ios]: SAMPLE,
     [ID_VARIABLES.android]: SAMPLE,
+    ...NATIVE_FILES,
   });
   assert.equal(resolved.ios.bundleIdentifier, SAMPLE);
   assert.equal(resolved.android.package, SAMPLE);
-  // ... and they are the ONLY difference a build makes to the committed file:
-  // strip them and what is left is the static config plus the declaration
-  // every resolution carries (`DECLARED`, and the test below owns it), field
-  // for field.
-  const ios = { ...resolved.ios };
-  const android = { ...resolved.android };
-  delete ios.bundleIdentifier;
-  delete android.package;
-  assert.deepEqual({ ...resolved, ios, android }, DECLARED);
+  // ... and they are the only difference the IDENTITIES make to the committed
+  // file: strip them, and the two native config paths the build carried (D260;
+  // the test below is the one about those), and what is left is the static
+  // config plus the declaration every resolution carries (`DECLARED`, and the
+  // test below owns it), field for field.
+  assert.deepEqual(withoutNativeConfig(resolved), {
+    ...DECLARED,
+    ios: { ...DECLARED.ios, bundleIdentifier: SAMPLE },
+    android: { ...DECLARED.android, package: SAMPLE },
+  });
 
   // A dev/lint run (a developer's `expo start`, and this suite): neither
   // switch is set, so the resolved config is the static one, with no identity
@@ -222,8 +251,10 @@ test('the identities are resolved through app.config.js, in both modes', () => {
   // configure credentials and to submit), so the switch decides whether the
   // identities are **required**, not whether they are read.
   assert.deepEqual(
-    resolveConfig(CONFIG.expo, { [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }),
-    resolved,
+    withoutNativeConfig(
+      resolveConfig(CONFIG.expo, { [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }),
+    ),
+    withoutNativeConfig(resolved),
   );
 });
 
@@ -237,7 +268,7 @@ test('a resolved config declares that the app uses only exempt encryption', () =
   // run `eas-cli` makes locally before it uploads one.
   const SAMPLE = 'com.example.sample';
   for (const [what, env] of [
-    ['a build', { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }],
+    ['a build', { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE, ...NATIVE_FILES }],
     ['a dev/lint run', {}],
   ]) {
     const { infoPlist } = resolveConfig(CONFIG.expo, env).ios;
@@ -362,7 +393,7 @@ test('a resolved config registers the three @react-native-firebase plugins', () 
   const SAMPLE = 'com.example.sample';
   const staticPlugins = (CONFIG.expo.plugins ?? []).map(pluginName);
   for (const [what, env] of [
-    ['a build', { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }],
+    ['a build', { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE, ...NATIVE_FILES }],
     ['a dev/lint run', {}],
   ]) {
     const { plugins } = resolveConfig(CONFIG.expo, env);
@@ -394,17 +425,15 @@ test('a resolved config registers the three @react-native-firebase plugins', () 
 
 test('the native config paths come from the environment, and only when set', () => {
   const SAMPLE = 'com.example.sample';
-  // Synthetic paths, and deliberately not the real names a console output has:
-  // this file holds no path the owner's machine has, and the value is copied
-  // through unread anyway.
-  const ANDROID_PATH = '/tmp/x/google-services.json';
-  const IOS_PATH = '/tmp/x/GoogleService-Info.plist';
+  // Two real files with synthetic names: this file holds no path the owner's
+  // machine has, and the value is copied through unread anyway.
+  const ANDROID_PATH = NATIVE_FILES[NATIVE_CONFIG_VARIABLES.android];
+  const IOS_PATH = NATIVE_FILES[NATIVE_CONFIG_VARIABLES.ios];
   const build = {
     EAS_BUILD: 'true',
     [ID_VARIABLES.ios]: SAMPLE,
     [ID_VARIABLES.android]: SAMPLE,
-    [NATIVE_CONFIG_VARIABLES.android]: ANDROID_PATH,
-    [NATIVE_CONFIG_VARIABLES.ios]: IOS_PATH,
+    ...NATIVE_FILES,
   };
   const resolved = resolveConfig(CONFIG.expo, build);
   assert.equal(resolved.android.googleServicesFile, ANDROID_PATH);
@@ -422,28 +451,40 @@ test('the native config paths come from the environment, and only when set', () 
   for (const field of ['googleServicesFile', 'package']) delete android[field];
   assert.deepEqual({ ...resolved, ios, android }, DECLARED);
 
-  // Unset: the field is **absent**, in both modes, and nothing throws -- a
+  // Unset, and no switch: the field is **absent**, and nothing throws -- a
   // developer's `expo start`, this suite, and the local `eas-cli` resolution
   // all run on a machine that has neither file. Mutation: make the field
-  // unconditional (or default it to a path) and the two assertions below find
-  // one.
-  for (const env of [{}, { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }]) {
+  // unconditional (or default it to a path) and the assertions below find one.
+  for (const env of [{}, { [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }]) {
     for (const platform of ['ios', 'android']) {
       assert.equal('googleServicesFile' in resolveConfig(CONFIG.expo, env)[platform], false, platform);
     }
   }
-  // ... an **empty** value is the same as an absent one: an EAS variable set to
-  // nothing is a variable nobody set, and a build whose `googleServicesFile` is
-  // `''` is a prebuild that fails later, with a message about a missing file
-  // rather than about the variable. Mutation: test `=== undefined` alone and
-  // this goes red.
-  const empty = resolveConfig(CONFIG.expo, {
-    ...build,
-    [NATIVE_CONFIG_VARIABLES.android]: '',
-    [NATIVE_CONFIG_VARIABLES.ios]: '',
-  });
-  assert.equal('googleServicesFile' in empty.android, false);
-  assert.equal('googleServicesFile' in empty.ios, false);
+  // ... and an **empty** value is the same as an unset one in the dev/lint
+  // state too: an EAS variable set to nothing is a variable nobody set, so the
+  // field stays absent rather than becoming `''`. Mutation: test `=== undefined`
+  // alone in `nativeConfigFile` and the assertions below find
+  // `googleServicesFile: ''`.
+  for (const env of [
+    { [NATIVE_CONFIG_VARIABLES.android]: '', [NATIVE_CONFIG_VARIABLES.ios]: '' },
+    { [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE, [NATIVE_CONFIG_VARIABLES.android]: '', [NATIVE_CONFIG_VARIABLES.ios]: '' },
+  ]) {
+    for (const platform of ['ios', 'android']) {
+      assert.equal('googleServicesFile' in resolveConfig(CONFIG.expo, env)[platform], false, `${platform} carries no empty path`);
+    }
+  }
+  // ... while in a build the same unset-or-empty state is the stop D260 asks
+  // for, not a resolution: prebuild would refuse a config whose
+  // `googleServicesFile` is unset or `''`, from the plugin's own code and after
+  // the upload, and this is the earlier stop on the same fact. That refusal is
+  // `src/native-config-guard.test.js`'s own; what is pinned here is that this
+  // file hands the guard nothing to pass on either value.
+  for (const unset of [
+    { [NATIVE_CONFIG_VARIABLES.android]: undefined, [NATIVE_CONFIG_VARIABLES.ios]: undefined },
+    { [NATIVE_CONFIG_VARIABLES.android]: '', [NATIVE_CONFIG_VARIABLES.ios]: '' },
+  ]) {
+    assert.throws(() => resolveConfig(CONFIG.expo, { ...build, ...unset }));
+  }
 });
 
 test('a resolved config links no advertising-id support, on both platforms', () => {
