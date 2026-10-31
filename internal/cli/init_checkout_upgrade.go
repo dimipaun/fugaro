@@ -82,11 +82,18 @@ func (s *checkoutStage) checkout() (pluginwire.Location, string) {
 	return loc, ""
 }
 
-// plannedStep is one of the checkout's steps in this run: the step, and the
-// line saying why it is skipped here when it is.
+// plannedStep is one of the checkout's steps in this run: the step, the line
+// saying why it is skipped here when it is, and whether that skip is this
+// session's own doing — a step the user still owes, rather than one that is
+// not this checkout's to run at all.
 type plannedStep struct {
 	step upgradeStep
 	skip string
+	// parked: this run does not run the step and never will (the cloud half
+	// in a coding agent's session, planFor), so the stage is done with what
+	// it may do and still not done: the run reports the step as left for the
+	// user, and says so on every run until it is run where it can be.
+	parked bool
 }
 
 // planFor is the steps this checkout's run has, and the steps it does not:
@@ -94,8 +101,10 @@ type plannedStep struct {
 // failure. A coding agent's session leaves the cloud out (U7: the pin and the
 // plugin move there, the images do not — what fugaro upgrade --local does in
 // the same session), the step never having been reached to say it itself
-// because the loop applied this stage for its local half. A checkout with no
-// origin remote has no repository for the refresh to resolve — a skip here,
+// because the loop applied this stage for its local half. That drop is the one
+// of the three that is parked and not skipped: the step is the user's, in the
+// terminal where it can run, and the stage reports it every run. A checkout
+// with no origin remote has no repository for the refresh to resolve — a skip,
 // not the failure fugaro upgrade makes of that read, because there the user
 // asked for the refresh by name and here the step is one of a run. A checkout
 // whose fugaro.yaml names another project is not this run's to touch.
@@ -107,14 +116,14 @@ type plannedStep struct {
 // read — is a failure here too, not a skip.
 func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc pluginwire.Location) ([]plannedStep, error) {
 	u := s.upgradeCtx(env, loc)
-	pinSkip, cloudSkip := "", ""
+	pinSkip, cloudSkip, cloudParked := "", "", false
 	switch other, err := s.namesAnotherProject(loc); {
 	case err != nil:
 		return nil, err
 	case other != "":
 		pinSkip, cloudSkip = other, other
 	case u.agent != "":
-		cloudSkip = cloudAgentRefusal(u)
+		cloudSkip, cloudParked = cloudAgentRefusal(u), true
 	default:
 		origin, err := hasOriginRemote(ctx, loc.Root)
 		if err != nil {
@@ -131,7 +140,7 @@ func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc plugi
 		case "pin":
 			p.skip = pinSkip
 		case "cloud":
-			p.skip = cloudSkip
+			p.skip, p.parked = cloudSkip, cloudParked
 		}
 		steps = append(steps, p)
 	}
@@ -226,10 +235,26 @@ func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
 			todo = true
 		}
 	}
-	if todo || len(current) == 0 {
+	if todo || len(current) == 0 || parked(steps) {
 		return initflow.Status{State: initflow.Todo, Detail: s.detail(steps, loc)}, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: "up to date: " + strings.Join(current, ", ")}, nil
+}
+
+// parked reports whether this run leaves one of the checkout's steps for the
+// user. A step that is parked is not done and never will be here, so the stage
+// is not done either: reporting it as such is what made a coding agent's
+// session read as a finished checkout while the images were never touched, and
+// what made the second run of one drop even the note that they were skipped.
+// The apply is what says which step it is (leftBehind), so the line keeps the
+// plan's own words on every run.
+func parked(steps []plannedStep) bool {
+	for _, p := range steps {
+		if p.parked {
+			return true
+		}
+	}
+	return false
 }
 
 // checkStep is one step of the sequence in its check mode: read-only, no
@@ -272,11 +297,17 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
-	if !env.Yes && !env.Interactive {
+	u := s.upgradeCtx(env, loc)
+	if !env.Yes && !env.Interactive && u.agent == "" {
 		// The cloud step asks before every change, each billable build
 		// included, and there is no terminal here to ask at; the stage
 		// leaves the whole checkout for the user, which is what fugaro
-		// upgrade itself does without a terminal.
+		// upgrade itself does without a terminal. A coding agent's session
+		// is not that case, and it is the one the gate has to look at: what
+		// the marker parks is the cloud half (planFor drops it), while the
+		// pin and the plugin are this machine's own writes and are exactly
+		// what the stage exists to move there — a gate that answered the
+		// marker's no-terminal run with needs-you would leave them unmoved.
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
 	}
 	// The refresh reads its context off the command (image_refresh.go), and the
@@ -287,7 +318,6 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	prev := s.e.r.cmd.Context()
 	s.e.r.cmd.SetContext(ctx)
 	defer s.e.r.cmd.SetContext(prev)
-	u := s.upgradeCtx(env, loc)
 	var changed []string
 	for _, p := range steps {
 		r := stepResult{name: p.step.name, state: stepSkipped, reason: p.skip}
@@ -297,16 +327,62 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 		}
 		printStep(s.e.r.w, r)
 		if r.state == stepFailed {
-			return initflow.Outcome{}, errors.New(r.reason)
+			return initflow.Outcome{}, s.stepFailure(r, u, p.step)
 		}
 		if r.state == stepDone {
 			changed = append(changed, r.name)
 		}
 	}
-	if len(changed) == 0 {
-		return initflow.Outcome{Detail: "No changes"}, nil
+	out := initflow.Outcome{Detail: "No changes"}
+	if len(changed) > 0 {
+		out = initflow.Outcome{Changed: true, Detail: "ran fugaro upgrade's " + strings.Join(changed, ", ") + " for this checkout"}
 	}
-	return initflow.Outcome{Changed: true, Detail: "ran fugaro upgrade's " + strings.Join(changed, ", ") + " for this checkout"}, nil
+	out.Left = s.leftBehind(steps)
+	return out, nil
+}
+
+// stepFailure is a step of this stage that failed, as the run reports it: the
+// step's own sentence, and, for the cloud half, the fix of it.
+//
+// Every other step needs no fix of its own: the loop's default (fix what the
+// error says and rerun this door, which resumes at this stage) is true there,
+// because the stage's check reads the same state the step does and a rerun
+// reaches the step again.
+//
+// The cloud half is where that stops being true, and the loop's default is
+// then the one instruction that does nothing: step 2 records this release's
+// base image in the local config before step 4 builds from it, and the check
+// the rerun starts with (cloudCheck) reads that config and fugaro.yaml and
+// never a build record — the records live in the runs bucket — so a build that
+// failed, or was not confirmed, reads as a finished cloud half afterwards and
+// this door is done at the checkout. The run that offers the build again is
+// the one whose cloud step really runs the refresh, which is the run the
+// step's own stop line already names: upgrade's own line for this checkout,
+// with this run's flags (u.o.again), said here so the two do not drift.
+func (s *checkoutStage) stepFailure(r stepResult, u *upgradeCtx, step upgradeStep) error {
+	err := errors.New(r.reason)
+	if step.name != "cloud" {
+		return err
+	}
+	return &initflow.StageError{Err: err, Fix: fmt.Sprintf("rerun %s in your own terminal window: its cloud step re-reads the build records, so the build that was not submitted is offered again (a rerun of %s never reaches it: this stage's own check reads fugaro.yaml and the local config, never a build record)",
+		u.o.again(u.loc.Root), selfCommand()+" "+s.e.r.o.doorName())}
+}
+
+// leftBehind is what this apply leaves the user, or nil: the parked cloud half,
+// as a step of this run that only the user can run. The command is this door's
+// own — the run that parked the step, in the terminal the marker refuses, where
+// its steps can ask — so the user does not have to know a second one; the why
+// is the plan's line, in the step's own words (cloudAgentRefusal).
+func (s *checkoutStage) leftBehind(steps []plannedStep) *initflow.Left {
+	for _, p := range steps {
+		if !p.parked {
+			continue
+		}
+		return &initflow.Left{Stage: initflow.Checkout, Kind: initflow.LeftCommand,
+			Text:     "in your own terminal window, not through a coding agent or a pipe, run the checkout's cloud half — the base image, the daily check job's config and the billable job-image builds, each confirmed as it is — after running",
+			Commands: []string{selfCommand() + " " + s.e.r.o.doorName()}}
+	}
+	return nil
 }
 
 func (*checkoutStage) Verify(context.Context) error { return nil }

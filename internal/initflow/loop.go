@@ -427,13 +427,24 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 			stopped = name
 			continue
 		}
-		r := StageResult{Name: name, State: Changed, Detail: l.redact(oneLine(out.Detail))}
-		if !out.Changed {
-			r.State = Done
-		}
-		l.res.Stages = append(l.res.Stages, r)
+		l.applied(name, out)
 	}
 	return nil
+}
+
+// applied records a stage's line after its apply, and the Left beside it when
+// the stage applied what it could and left a step for the user (Outcome.Left):
+// the stage is done with what this session may do, and the run still has
+// something only the user can do, which is what the exit code has to say.
+func (l *loop) applied(stage string, out Outcome) {
+	r := StageResult{Name: stage, State: Changed, Detail: l.redact(oneLine(out.Detail))}
+	if !out.Changed {
+		r.State = Done
+	}
+	l.res.Stages = append(l.res.Stages, r)
+	if out.Left != nil {
+		l.res.Left = append(l.res.Left, l.left(stage, *out.Left))
+	}
 }
 
 // agentStage is a stage's turn in a coding agent's session, which applies
@@ -492,11 +503,7 @@ func (l *loop) localStage(ctx context.Context, s Stage) (done bool, err error) {
 	if err := verifyStage(ctx, s); err != nil {
 		return false, err
 	}
-	r := StageResult{Name: name, State: Changed, Detail: l.redact(oneLine(out.Detail))}
-	if !out.Changed {
-		r.State = Done
-	}
-	l.res.Stages = append(l.res.Stages, r)
+	l.applied(name, out)
 	return true, nil
 }
 

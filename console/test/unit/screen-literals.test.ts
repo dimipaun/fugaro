@@ -239,6 +239,18 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
         'the parameter of the `numberCell` helper itself; every call site passes one of this file\'s own count words (`COORDINATOR_RECORDS_WORD`, `COORDINATOR_IN_FLIGHT_COUNT_WORD`, `COORDINATOR_COLLISIONS_WORD`), so no document string reaches the sink',
     },
   },
+  // The two drawings console 0.116.1 adds: the panel's reading placeholder and
+  // the Graph's no-checkout card. Neither is handed a document string that
+  // reaches a sink -- the card's one is the CLI's refusal sentence, which
+  // `sanitizeRefusal` has already drawn -- and the entries below say so.
+  'reading.ts': {
+    '`${READING_LEAD} ${READING_WORDS[tab]}…`':
+      'the placeholder\'s one sentence: `READING_LEAD` is this file\'s own word and `READING_WORDS` is this file\'s own table of the navigation\'s five labels, keyed by the closed `ReadingTab` union the entry passes -- the tab is the console\'s own view id and never a value a document or a child process chose (`entry-wiring.test.ts` asserts the table against the labels the navigation itself drew)',
+  },
+  'nocheckout.ts': {
+    'drawn.ok ? drawn.text : REFUSAL_UNREADABLE':
+      'the CLI\'s refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string, **through `sanitizeRefusal`** -- the same text and the same treatment `degraded.ts` gives it (design section 6.3 requires the remedy verbatim, a token a child echoed is still redacted), with `REFUSAL_UNREADABLE` for a sentence the sanitizer refuses, so the disclosure is never empty',
+  },
   // The launch control (V2.5.1b) is the one screen that writes a string it was
   // also handed by a document -- the repository identities main recorded -- and
   // the entries below say where each of its arguments came from.
@@ -617,6 +629,13 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     theme: { within: 'renderCoordinator', reason: 'a `CoordinatorTheme`, the closed theme tuple' },
   },
+  'reading.ts': {
+    theme: { within: 'renderReading', reason: 'a `SkewTheme`, the closed two-word theme union' },
+  },
+  'nocheckout.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    theme: { within: 'renderNoCheckout', reason: 'a `SkewTheme`, the closed two-word theme union' },
+  },
   'launch.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     recorded: {
@@ -981,6 +1000,14 @@ const SCREEN_FILES: readonly string[] = Object.freeze(
   walkFiles(SCREENS).sort((a, b) => a.localeCompare(b)),
 )
 
+/** SINK_FLOOR is the fewest sink calls a screen may have, for the one screen
+ * whose drawing is smaller than that: `reading.ts` draws the panel's two
+ * sentences (the placeholder and the line a slow read adds) and calls the sink
+ * twice. Every other screen draws more, so the floor stays where it was -- the
+ * case below is a non-vacuity guard, and lowering it everywhere to fit one
+ * screen would be the weakened guard rather than the honest exception. */
+const SINK_FLOOR: Readonly<Record<string, number>> = Object.freeze({ 'reading.ts': 1 })
+
 /** SHARED_FILES are the modules outside `src/renderer/screens` that may draw --
  * `src/shared/notice.ts` writes the notice card's text slots, and
  * `src/shared/version.ts` composes the version-skew notice for it (Task 3.2).
@@ -1018,14 +1045,16 @@ const SHARED_DRAWER = '../../shared/notice.ts'
 const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the eight screens', () => {
+  it('reads the ten screens', () => {
     expect([...SCREEN_FILES]).toEqual([
       'coordinator.ts',
       'degraded.ts',
       'graph.ts',
       'launch.ts',
       'live.ts',
+      'nocheckout.ts',
       'projects.ts',
+      'reading.ts',
       'run.ts',
       'spend.ts',
     ])
@@ -1096,7 +1125,9 @@ describe('a screen writes only its own vocabulary through literal', () => {
 
   it('finds a sink call in every screen, so an empty scan cannot pass', () => {
     for (const file of SCREEN_FILES) {
-      expect(sinkCalls(readFileSync(join(SCREENS, file), 'utf8')).length, file).toBeGreaterThan(2)
+      expect(sinkCalls(readFileSync(join(SCREENS, file), 'utf8')).length, file).toBeGreaterThan(
+        SINK_FLOOR[file] ?? 2,
+      )
     }
   })
 
@@ -1358,7 +1389,9 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/graph.ts',
       'screens/launch.ts',
       'screens/live.ts',
+      'screens/nocheckout.ts',
       'screens/projects.ts',
+      'screens/reading.ts',
       'screens/run.ts',
       'screens/spend.ts',
       'writes.ts',

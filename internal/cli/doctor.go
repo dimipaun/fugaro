@@ -1951,7 +1951,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		if ok, gerr := db.Get(ctx, shared, &raw); gerr == nil && ok && !emptyPolicyNode(raw) {
 			info.Problem = fmt.Sprintf("a policy node is written at %s, but it governs nothing: %s does not record the rules generation this Fugaro reads a policy under, so no run reads it and every run takes its ceiling from the job environment",
 				shared, projectpolicy.PathRulesMarker())
-			info.Fix = "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal to deploy the rules a policy is read under, then 'fugaro project policy publish'"
+			info.Fix = "re-run 'fugaro update' with fugaro >= " + policySince + " in your own terminal: its rules stage deploys the rules a policy is read under, then 'fugaro project policy publish' publishes the node"
 		}
 		return append(checks, append([]doctorCheck{info},
 			doctorRoutingChecks(lc, nil, fmt.Sprintf("no policy is published at %s, so there is no switch to resolve", shared), layer)...)...)

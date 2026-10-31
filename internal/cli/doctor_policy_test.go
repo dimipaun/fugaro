@@ -236,7 +236,10 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "governs nothing") {
 			t.Errorf("doctor reported a node no run reads as the policy in force: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
+		// The rules stage of a plain `fugaro update` is what makes the node
+		// govern again: --firebase-project is not the remedy (and a bare one is
+		// not a command — it is a string flag).
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "firebase-project") {
 			t.Errorf("the line does not name what makes the node govern: %+v", c)
 		}
 	})

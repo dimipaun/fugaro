@@ -286,6 +286,13 @@ type Plan struct {
 type Outcome struct {
 	Changed bool   // false: the stage found nothing to do ("No changes")
 	Detail  string // one line
+	// Left is a step the stage applied what it could without: something of
+	// its work this session may not do (the checkout's cloud half in a coding
+	// agent's session, where every write must be on this machine —
+	// LocalUnderAgent). The loop records it as left-for-you beside the
+	// stage's line, so the run reports the step and exits 1 rather than
+	// reporting a stage that skipped half of itself as done.
+	Left *Left
 }
 
 // Stage is one step of the converge. Check, Plan and Verify only read;
