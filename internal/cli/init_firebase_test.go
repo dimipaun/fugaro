@@ -1784,8 +1784,13 @@ func separateFirebaseRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
 //
 // The skip is a skip and not a refusal: the installation's other stages (the
 // images, the pin, the plugin) have nothing to do with the budget database, so
-// the owner still gets their update, and the sentence names the one command that
-// ends the state.
+// the owner still gets their update, and the sentence names the way out.
+//
+// The way out is the config's pair dropped and the installation's OWN project
+// adopted, not the project the config names: --firebase-project takes only the
+// installation's own GCP project (checkFirebaseProject), so the command a
+// reader is sent to has to be one this binary runs — a skip that named
+// `--firebase-project other-project` would send them to a refusal.
 func TestUpdateRulesSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
 	_, db := separateFirebaseRig(t)
 
@@ -1801,10 +1806,13 @@ func TestUpdateRulesSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
 		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
 	}
 	detail := res.stageDetail(t, initflow.Rules)
-	for _, want := range []string{"other-project", initProject, "fugaro update --firebase-project other-project"} {
+	for _, want := range []string{"other-project", initProject, "fugaro update --firebase-project " + initProject, "budget.firebase_project"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("the skip does not name %q: %q", want, detail)
 		}
+	}
+	if strings.Contains(detail, "fugaro update --firebase-project other-project") {
+		t.Errorf("the skip sends the reader to --firebase-project other-project, which checkFirebaseProject refuses: %q", detail)
 	}
 	if db.RulePuts() != 0 || db.Value(projectpolicy.PathRulesMarker()) != nil {
 		t.Errorf("the run deployed rules into a database in a Firebase project the installation never adopted: %d rule deploy(s)", db.RulePuts())

@@ -62,17 +62,17 @@ It never runs the cloud step or any `claude plugin` command itself, never edits 
 
 ## `fugaro update` and a Firebase project that is not the installation's
 
-`fugaro update` is the whole upgrade, and it works without a second command: the one exception is an installation whose `budget.firebase_project` is not its own GCP project. That project is one the installation **adopted** through `fugaro update --firebase-project NAME`, and the config's `budget.firebase_project` alone never proves the adoption happened — a name in a config is a name someone typed, and a typo that agrees with itself (`budget.firebase_project: other` beside `other-default-rtdb`) leaves a pair that looks right.
+`fugaro update` is the whole upgrade, and it works without a second command: the one exception is an installation whose `budget.firebase_project` names a project other than its own GCP project. `--firebase-project` takes **only the installation's own GCP project** (`checkFirebaseProject`, the owner's ruling of 2026-10-23: the budget backend goes in the project `fugaro setup` created for the installation and nowhere else), so a config recording another project is one no door adopts — and the config's `budget.firebase_project` alone never proves anything happened: a name in a config is a name someone typed, and a typo that agrees with itself (`budget.firebase_project: other` beside `other-default-rtdb`) leaves a pair that looks right.
 
-So the run asks the **database**, not the config. A stage that writes into the budget database (the security rules generation, before the policy migration) does nothing when the recorded project differs from the installation's own **unless the database carries this installation's Fugaro mark**, which only the adoption door writes into a project that is not the installation's. An empty database is not proof: the mark check that every deploy goes through passes an empty database whatever project its URL belongs to, which is exactly how a config like that would otherwise have marked and deployed into a database nobody adopted. A database another installation marked, or one that holds data and no mark, is refused the same way.
+So the run asks the **database**, not the config. A stage that writes into the budget database (the security rules generation, before the policy migration) does nothing when the recorded project differs from the installation's own **unless the database carries this installation's Fugaro mark**. An empty database is not proof: the mark check that every deploy goes through passes an empty database whatever project its URL belongs to, which is exactly how a config like that would otherwise have marked and deployed into a database nobody adopted. A database another installation marked, or one that holds data and no mark, is refused the same way.
 
-It is a **skip, not a refusal**: the installation's other stages (the images, the pin, the plugin) have nothing to do with that database, so `fugaro update` still does everything else, and the skip names the one command that ends the state:
+It is a **skip, not a refusal**: the installation's other stages (the images, the pin, the plugin) have nothing to do with that database, so `fugaro update` still does everything else, and the skip names the way out — drop the config's `budget.firebase_project` (and the `budget.rtdb_url` beside it, which is that project's database), then run:
 
 ```
-fugaro update --firebase-project NAME
+fugaro update --firebase-project <gcp-project-id>
 ```
 
-Once run, the mark is in that database, and plain `fugaro update` converges there like anywhere else — the adoption is not a step that repeats. The ordinary installation (`budget.firebase_project` equal to `gcp_project`) is untouched by any of this.
+That door adopts the installation's own Firebase project, writes its mark into that project's database, and plain `fugaro update` converges there from then on — the adoption is not a step that repeats. The ordinary installation (`budget.firebase_project` equal to `gcp_project`) is untouched by any of this.
 
 ## Safety
 

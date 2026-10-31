@@ -440,10 +440,21 @@ func newInstallationStage(e *initEngine) *engineStage {
 // firebaseProjectWord is --firebase-project's value in a printed command: the
 // installation's own GCP project id, the only value it takes.
 func (e *initEngine) firebaseProjectWord() string {
-	if e.lc != nil && e.lc.GCPProject != "" {
-		return quoteWord(e.lc.GCPProject)
+	if e.lc == nil {
+		return firebaseProjectIDWord("")
 	}
-	return "<gcp-project-id>"
+	return firebaseProjectIDWord(e.lc.GCPProject)
+}
+
+// firebaseProjectIDWord is --firebase-project's value in a command printed
+// anywhere else. The flag is a string flag with no default, so a message that
+// stopped at the flag prints a command nobody can run; the id is what it
+// takes, and a caller with none to read prints the placeholder to type.
+func firebaseProjectIDWord(id string) string {
+	if id == "" {
+		return "<gcp-project-id>"
+	}
+	return quoteWord(id)
 }
 
 // newFirebaseStage is stage 4: update --firebase-project's engine, which is two

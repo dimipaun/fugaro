@@ -40,13 +40,16 @@ import (
 // deployed rules when they are already this generation.
 //
 // A Firebase project other than the installation's own is the one database this
-// stage may not write in on the strength of the config alone: the adoption door
-// is what made that project the installation's, and the mark that door wrote
-// into its database is what says so. A config naming another project whose
-// database does not carry this installation's mark — an EMPTY database included,
-// which infra.DB.Check passes — is skipped, with the one command that adopts it
-// (unadopted): a typo that agrees with itself would otherwise mark and deploy
-// into a database that is not the installation's (security review finding F3).
+// stage may not write in on the strength of the config alone: a name in a config
+// is a name someone typed, and --firebase-project takes only the installation's
+// own GCP project (checkFirebaseProject, the owner's ruling of 2026-10-23), so
+// there is no door here that adopts a project the config names. A config naming
+// another project whose database does not carry this installation's mark — an
+// EMPTY database included, which infra.DB.Check passes — is skipped, with the
+// way out: the config's pair corrected, and the installation's own Firebase
+// project adopted (unadopted). A typo that agrees with itself would otherwise
+// mark and deploy into a database that is not the installation's (security
+// review finding F3).
 
 // forgetPolicyMigration drops the policy stage's cached read, when it has one.
 // The stage is built by initStages, so a run that never registered it (an
@@ -127,20 +130,21 @@ func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
 // installation's, "" when it may. A Firebase project other than the
 // installation's own serves it only once the installation adopted it, and the
 // one thing that shows the adoption happened is the mark the adoption door
-// (`fugaro update --firebase-project`) wrote into that database: infra.DB.Check
-// reads it, and it is this check and not the config, because the config's
-// budget.firebase_project alone is the value a typo moves — one that agrees with
-// itself (budget.rtdb_url is then that project's own database) leaves a config
-// whose two halves look right and point at a database the installation never
-// adopted.
+// (`fugaro update --firebase-project`, which takes only the installation's own
+// GCP project) wrote into that database: infra.DB.Check reads it, and it is this
+// check and not the config, because the config's budget.firebase_project alone
+// is the value a typo moves — one that agrees with itself (budget.rtdb_url is
+// then that project's own database) leaves a config whose two halves look right
+// and point at a database the installation never adopted.
 //
 // An empty database is the case that made this a finding: it passes
 // infra.DB.Check whatever project the URL belongs to, so the mark-less answer is
-// a skip and not a licence, and the skip names the one command that ends the
-// state. A database that carries another installation's mark, or that holds data
-// and no mark, is a refusal from that same check and is reported here for the
-// same reason every other report in this stage is: `fugaro update`'s other
-// stages have nothing to do with the budget database.
+// a skip and not a licence, and the skip names the way out — the config's pair
+// dropped, and the installation's own Firebase project adopted in one command.
+// A database that carries another installation's mark, or that holds data and no
+// mark, is a refusal from that same check and is reported here for the same
+// reason every other report in this stage is: `fugaro update`'s other stages
+// have nothing to do with the budget database.
 func (s *rulesStage) unadopted(ctx context.Context, db *infra.DB) string {
 	detail := rulesSeparateFirebaseProject(s.e.lc)
 	if detail == "" {
@@ -153,8 +157,8 @@ func (s *rulesStage) unadopted(ctx context.Context, db *infra.DB) string {
 	if marked {
 		return ""
 	}
-	return fmt.Sprintf("%s: nothing in the config proves the database at %s is this installation's (an empty database passes every check that asks it), so run `%s --firebase-project %s` once to adopt it; the mark that command writes is what lets plain %s converge there from then on",
-		detail, oneLine(s.e.lc.Budget.RTDBURL), s.e.r.o.doorProgram(), oneLine(s.e.lc.Budget.FirebaseProject), s.e.r.o.doorProgram())
+	return fmt.Sprintf("%s: nothing in the config proves the database at %s is this installation's (an empty database passes every check that asks it), and --firebase-project takes only this installation's own GCP project, so this stage neither marks nor writes there. Drop the config's budget.firebase_project (and the budget.rtdb_url beside it, which is that project's database) and run `%s --firebase-project %s` once to adopt the installation's own Firebase project: the mark that door writes is what lets plain %s converge there from then on",
+		detail, oneLine(s.e.lc.Budget.RTDBURL), s.e.r.o.doorProgram(), oneLine(s.e.lc.GCPProject), s.e.r.o.doorProgram())
 }
 
 // rulesUnavailable is why the stage does not run, "" when it may: no shared

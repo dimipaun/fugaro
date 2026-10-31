@@ -481,7 +481,7 @@ func (c *RulesClient) inspect(ctx context.Context, want string) (rulesState, err
 	case !exists:
 		return rulesMissing, nil
 	case normalizeRules(src) != normalizeRules(want):
-		return 0, userErr("the Firebase project %s already has Firestore security rules that are not deny-all, and 'fugaro update --firebase-project' never replaces rules that are there (they could be looser or tighter than you want). Read them (Firebase console, Firestore, Rules), and either deploy deny-all yourself (allow read, write: if false; for every document) or delete the release, then run 'fugaro update --firebase-project' again", c.Project)
+		return 0, userErr("the Firebase project %s already has Firestore security rules that are not deny-all, and 'fugaro update --firebase-project %s' never replaces rules that are there (they could be looser or tighter than you want). Read them (Firebase console, Firestore, Rules), and either deploy deny-all yourself (allow read, write: if false; for every document) or delete the release, then run 'fugaro update --firebase-project %s' again", c.Project, c.Project, c.Project)
 	}
 	return rulesSame, nil
 }

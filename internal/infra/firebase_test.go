@@ -782,12 +782,50 @@ func TestRefusalsPrescribeACommandThatRuns(t *testing.T) {
 		if !strings.Contains(msg, "fugaro update --firebase-project") {
 			t.Errorf("the refusal does not name 'fugaro update --firebase-project', the door that deploys the rules it refuses: %s", msg)
 		}
+		// And it names the project that door takes: --firebase-project is a
+		// string flag with no default, so a message that stops at the flag
+		// prints a command that cannot run — the same failure as the retired
+		// verb, one token further along.
+		for i := 0; ; {
+			j := strings.Index(msg[i:], firebaseFlag)
+			if j < 0 {
+				break
+			}
+			rest := strings.TrimLeft(msg[i+j+len(firebaseFlag):], " ")
+			if rest == "" || !firebaseFlagValue(rest) {
+				t.Errorf("the refusal stops at '--firebase-project', which takes a project id: the operator gets a command that fails on a missing argument: %s", msg)
+			}
+			i += j + len(firebaseFlag)
+		}
 		for _, bad := range []string{"re-run init", "rerun init", "run init"} {
 			if strings.Contains(strings.ToLower(msg), bad) {
 				t.Errorf("the refusal sends the operator to %q, and the retired verb is a hidden tombstone that exits 1: name the door that deploys the rules instead: %s", bad, msg)
 			}
 		}
 	}
+}
+
+// firebaseFlag is the door these refusals prescribe, and firebaseFlagValue
+// judges what follows it: a project id (a real one, or the placeholder a
+// message with no config to read one from prints) and never a quote, a
+// backtick or an English word carrying the sentence on.
+const firebaseFlag = "fugaro update --firebase-project"
+
+func firebaseFlagValue(rest string) bool {
+	word := rest
+	if k := strings.IndexAny(word, " \t\n"); k >= 0 {
+		word = word[:k]
+	}
+	word = strings.Trim(word, ".,;:")
+	if word == "" || !(word[0] == '<' || word[0] == '-' || word[0] >= '0' && word[0] <= '9' || word[0] >= 'a' && word[0] <= 'z' || word[0] >= 'A' && word[0] <= 'Z') {
+		return false
+	}
+	for _, prose := range []string{"again", "with", "and", "would", "is", "to", "refuses", "refused", "never", "first"} {
+		if word == prose {
+			return false
+		}
+	}
+	return true
 }
 
 func TestDBRefusals(t *testing.T) {

@@ -68,7 +68,7 @@ func Read(ctx context.Context, db *rtdb.Client) (*Policy, bool, error) {
 type MarkerError struct{ Value string }
 
 func (e *MarkerError) Error() string {
-	return fmt.Sprintf("%s holds %s: it must be the integer generation of the deployed rules, written by fugaro update --firebase-project", PathRulesMarker(), e.Value)
+	return fmt.Sprintf("%s holds %s: it must be the integer generation of the deployed rules, written by fugaro update --firebase-project <gcp-project-id>", PathRulesMarker(), e.Value)
 }
 
 // rulesGeneration reads the deployed security rules' generation. An absent

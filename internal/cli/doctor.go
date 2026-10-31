@@ -1997,7 +1997,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
-	checks = append(checks, doctorCredsRules(ctx, db, p)...)
+	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
 	}
@@ -2842,7 +2842,7 @@ func doctorCredsUnknownState(marks map[string]creds.Mark) []doctorCheck {
 // published policy's routing.claude.via, which is the switch a run reads
 // (projectpolicy.RouteCascade, D150): C1.18's Terraform variable is not a fact
 // this command can read, and the policy is the one the runs themselves obey.
-func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Policy) []doctorCheck {
+func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Policy, lc *localcfg.Config) []doctorCheck {
 	if !cascadeSwitchOn(p) {
 		return nil
 	}
@@ -2859,13 +2859,13 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if !found {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the cascade is switched on (%s) and %s is not written: the deployed rules predate the credentials family, so the first credential a cascade run records is refused and the run halts instead of running (fugaro accounts and fugaro watch show no state on such an installation)", via, marker),
-			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on"}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on", firebaseProjectIDWord(lc.GCPProject))}}
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s cannot be told apart: %s", marker, oneLine(string(raw))),
-			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself"}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself", firebaseProjectIDWord(lc.GCPProject))}}
 	}
 	if gen > rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
@@ -2875,7 +2875,7 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if gen < rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, below the generation %d this Fugaro's credentials rules carry: the deployed document predates the credentials family, so a cascade run's first recorded credential is refused and the run halts", marker, gen, rules.CredsRulesVersion),
-			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation"}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation", firebaseProjectIDWord(lc.GCPProject))}}
 	}
 	return nil
 }
