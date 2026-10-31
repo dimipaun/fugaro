@@ -1,9 +1,10 @@
 # `fugaro accounts add`: the implementation plan
 
-**Nothing here is approved.** This is the task breakdown the owner reads before deciding anything in
-[reconciliation.md](reconciliation.md) §4. Every task is written to that document's **recommendation**;
-an owner who answers a `D` the other way changes the task, not just a sentence. Where this plan and
-[spec.md](spec.md) disagree, [reconciliation.md](reconciliation.md) wins.
+**The decisions are answered (2026-10-31); nothing here is built yet.** Every task is written to the
+owner's answers in [reconciliation.md](reconciliation.md) §4 — D860–D872, with **D862 answered as the
+alternative (a)** and **D868 answered `--yes` covers everything** — and a decision answered the other
+way changes the task, not just a sentence. Where this plan and [spec.md](spec.md) disagree,
+[reconciliation.md](reconciliation.md) wins.
 
 Every task states its files (at most 12), the tests that name it, the **red step** that has to fail
 first, and whether it carries a **SEC** flag — a flag that means the change needs an independent review
@@ -17,16 +18,17 @@ recorded length and alphabet, never a plausible credential in the source.
 | Level | Task | Blocked by |
 | --- | --- | --- |
 | 0 | **E1** `internal/yamledit` (#1467, merged) · **E3** `internal/cli/settings_write.go` (#1464's S5: the design merged, the file is not in the tree) · **E2** `internal/cli/init_policy_migrate.go` publishing from the local config (#1464's S3: the design merged, the stage still only migrates) | other work streams |
-| 1 | **A0** the pty answer, taken and pinned | D862/D863; E5's owner |
+| 1 | **A0** the login's own-terminal contract, taken and pinned | nothing (D862 answered: (a)) |
 | 2 | **A1** the local config edit | E1, E3, A0 |
 | 3 | **A2** the converge half, and the test that says the command is one command | A1, **E2 landed** |
-| 4 | **A3** `--claude` | A1; the guard's floor and alphabet from LC1–LC3 |
+| 4 | **A3** `--claude` | A1; what the login prints and asks from LC1–LC2 |
 | 4 | **A4** `accounts rm` | A2 |
 | 5 | **A5** the page becomes short | A1–A4 (the page names a command that must exist) |
 | 5 | **A6** the surfaces that name the old pair, and the handoffs | A1–A4 |
 
-**LC1–LC3 are runnable today** and block nothing. They are the owner's, they take ten minutes, and their
-answers decide A3's guard before anyone writes it (spec §9).
+**LC1 and LC2 are runnable today** and block nothing. They are the owner's, they take ten minutes, and
+their answers are what A5's page and A6's surfaces say around the login — nothing in the code reads
+the login's output, so A3 can be written the moment A1 lands (spec §9).
 
 **A2 does not start until E2 has landed.** The tempting shortcut — start A2 against today's `Policy`
 stage, which migrates in place and re-derives nothing (F10), and let the publish half arrive later —
@@ -34,34 +36,30 @@ would ship the exact HARD RULE violation this design exists to remove, and the o
 step green in the meantime is to weaken or skip it. If the owner wants an accounts command before E2
 lands, the answer is D860's alternative, and this plan is rewritten rather than partly skipped.
 
-## A0 — the pty answer, taken and pinned
+## A0 — the login's own-terminal contract, taken and pinned
 
-**SEC.** Goal: the `--claude` path's only cross-work dependency (E5) is either paid for or avoided, and
-the tree's dependency posture stays a statement somebody made on purpose.
+**SEC.** Goal: the child gets the owner's **own** terminal and nothing else changes. D862 is answered
+(a), so there is no pty, no copier, no raw mode and **no promotion of `github.com/creack/pty`**: E5 is
+gone, `go.mod` and `consoleGoModRequireBaseline` are untouched, and Windows is not refused (D863 is
+moot). This task is small on purpose — the answer removed the machinery, and what remains is the
+contract the reader has to get right.
 
-- **If D862 answers "pty" and D863 answers "refuse Windows":** change the comment on
-  `github.com/creack/pty`'s existing `require` line in `go.mod`, update `consoleGoModRequireBaseline` in
-  `internal/cli/docs_console_boundary_test.go` to match, and add the build-tagged runner file. The module
-  is already required — no version moves, no `require` line is added.
-- **If D862 answers "the owner pastes":** the task is the refusal file alone, and neither `go.mod` nor
-  the pin is touched, and **E5 disappears**.
+In one line: `claude setup-token` runs with the owner's stdin, stdout and stderr inherited, in
+Fugaro's own process group, with Fugaro holding its own `SIGINT` for the child's duration; two exported
+variables stop the command before any child starts; and `--claude` without a terminal is a named
+refusal (spec §3.1).
 
-*Files (≤4):* `go.mod`, `internal/cli/docs_console_boundary_test.go`,
-`internal/cli/accounts_add_login_pty.go`, `internal/cli/accounts_add_login_pty_windows.go`.
-*Named tests:* `TestGoModHasNoConsoleDependency` (existing; its baseline moves),
-`TestAccountsAddClaudeRefusesWithoutTerminals`.
-*Red step:* edit the comment on the `creack/pty` require line **first** and touch nothing else.
-`GOFLAGS=-p=2 go test ./internal/cli/ -run TestGoModHasNoConsoleDependency -count=1` fails, because the
-baseline holds that line verbatim and the tree no longer says it. The source file comes after the
-baseline has moved: a new build-tagged file that imports an **already-required** module changes no
-`go.mod` line, so adding it on its own moves nothing and is not a red step. If reading the pin shows it
-pins only the module list and not the trailing comment, then A0 has no red step at all — the PR says so
-plainly rather than manufacturing one, and the two-line change is its own evidence.
-*The separate pin gate for this task:* that same `-run` filter on its own, and the console boundary's
-whole file only if the baseline change turns out to move more than the one line.
-*Shared:* the require comment is a claim about the whole tree, so the change goes in with a sentence in
-the PR saying why a pseudo-terminal is needed at all and what the alternative cost — the same sentence
-the console-boundary stream would have to write if it were theirs.
+*Files (≤2):* `internal/cli/accounts_add_login.go`, `internal/cli/accounts_add_login_test.go`.
+*Named tests:* `TestAccountsAddClaudeGivesTheLoginTheOwnerTerminal` (**the red step**),
+`TestAccountsAddClaudeRefusesAnExportedCredential` (with `CLAUDE_CODE_OAUTH_TOKEN` or
+`ANTHROPIC_API_KEY` set, the command stops and says so and the fake child's marker file is absent
+afterwards — spec §3.1 step 3 and §6(b)), `TestAccountsAddClaudeRefusesWithoutATerminal`.
+*Red step:* `TestAccountsAddClaudeGivesTheLoginTheOwnerTerminal` runs a fake child that writes to the
+file descriptors it was handed and asserts the owner's terminal saw the bytes verbatim and unfiltered;
+it fails against the first cut, which captures the child's output into a pipe — the shape the removed
+capture needed and this design does not. Write it first; the runner exists to pass it.
+*Hermetic:* the child is a compiled helper or a script under `t.TempDir()`, never a real `claude`.
+*The separate pin gate for this task:* `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestAccountsAddClaude' -count=1`.
 
 ## A1 — the local config edit
 
@@ -85,7 +83,8 @@ a hand-written key order and a `claude_accounts` entry the owner added by hand. 
 goes through `internal/yamledit` (E1) instead of `yaml.Marshal` — which is the whole reason F11 and F12
 exist.
 *SEC:* yes. This task writes the file that decides where a credential may be sent. D868's confirmation
-belongs to it: a widening of `allow_data_to` asks for the account's name typed.
+belongs to it: **one** prompt, whose text names a widening of `allow_data_to` and what it means, and
+which `--yes` answers whole (spec §2.6).
 *Independent review:* yes, together with A2 — the pair is one security surface, and reviewing them apart
 would review half a rule.
 
@@ -120,64 +119,47 @@ no weaker gate. A new stage registered in `initStages` is **not** part of this t
 
 ## A3 — `--claude`
 
-**SEC, and it gets the independent review on its own** — it is the only code in the design that runs
-another program. Goal: spec §3. Find the binary through `claudeplugin.Find`, run it as a child **on a
-pty** (Linux, macOS), copy its output a line at a time through the guard and flush a partial line once
-the child goes idle (§3.2; a prompt with no newline otherwise hangs the login), offer every maximal run
-of `[A-Za-z0-9_-]` of 40 characters or more to the capture and withhold it, treat a run on a line
-containing `://` as **no candidate at all** (D872: the `code_challenge` is 43 characters from the same
-alphabet, and offering it would store a non-credential), store nothing when two or more **distinct**
-candidates were seen (D871), and fall back to the hidden prompt when any of that leaves the command
-unsure.
+**SEC.** Goal: spec §3. Act one is A0's runner; this task is the flag, act two, and the handover
+between them. `--claude` runs the login (A0) on the owner's own terminal and then reads the token at
+the **hidden prompt** — the `readHidden` path §2.2 step 3 already uses — and keeps nothing from the
+login's output: no capture, no guard, no candidate rule (D871 and D872 are moot with D862's answer,
+and their tests go with them).
 
-*Files (≤6):* `internal/cli/accounts_add_login.go` (the runner and the guard),
-`internal/cli/accounts_add.go` (the flag), `internal/cli/accounts_add_login_test.go`,
-`internal/cli/accounts_add_login_pty_test.go` (next to `secrets_pty_test.go`, whose pattern it follows),
-`internal/cli/accounts_add_claude_test.go`.
-*Named tests:* `TestAccountsAddClaudeGuardWithholdsTokenRuns` (**the red step**; a table: a token-shaped
-run of the recorded length and alphabet inside prose is withheld; a 39-character run is not; a run on a
-line containing `://` is **forwarded whole and stored nowhere** — the case a first cut that captures URL
-runs must fail; a line that is only a URL keeps its query string),
-`TestAccountsAddClaudeGuardRefusesTwoDistinctCandidates` (D871: two distinct runs anywhere in the login
-store nothing and fall back, two *identical* runs are one candidate and store),
-`TestAccountsAddClaudeGuardDoesNotStoreAChallenge` (the fake child prints a login URL whose
-`code_challenge` is a 43-character run and a token-shaped run after it; only the second is ever offered),
-`TestAccountsAddClaudeFlushesAPromptWithoutANewline` (the fake child prints `paste the code` and then
-waits; the text reaches the terminal before the child is answered — the hang the line-at-a-time copier
-has — and a run split across the flush and the rest of its line is offered once, whole),
-`TestAccountsAddClaudeRestoresTheTerminalOnEveryExit` (the pty test: the owner's terminal is in raw mode
-for the duration and out of it when the child exits non-zero, when the login is cancelled, and when the
-guard falls back — spec §3.1 step 3, whose Ctrl-C claim is only true while the restore runs),
-`TestAccountsAddClaudeWritesTheValueNowhere` (the fake child prints a value in every position the guard
-knows about; nothing reaching stdout, the config tree, a log line or an error message holds it),
-`TestAccountsAddClaudeFallsBackToTheHiddenPrompt` (an unparseable child is not a failure — the prompt
-runs, and the command says why),
-`TestAccountsAddClaudeRefusesWithoutTerminals`, `TestAccountsAddClaudeRefusesAHostileClaude`
-(`exec.ErrDot`, a non-directory-safe path, a directory),
-`TestAccountsAddClaudeRefusesAnExportedCredential` (**the red step's sibling, and the spec's rule, not
-a stripping one**: with `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` set in the command's own
-environment, the command **stops and says so** and **no child is ever started** — the fake child's
-marker file is absent afterwards — because either variable decides which account the login lands on and
-the command declines to guess rather than editing the owner's environment, spec §3.1 step 4 and §6(b)).
-*Red step:* `TestAccountsAddClaudeGuardWithholdsTokenRuns` fails against a first copier that forwards the
-child's output verbatim. That failure **is** the reason the guard exists; the test is written first and
-the copier is written until it passes.
-*Hermetic:* the child is a compiled helper or a script under `t.TempDir()`, never a real `claude`; the
-pty test uses the package `secrets_pty_test.go` already uses (E5).
-*Unknowns this task does not invent answers to:* spec §3.4's five, and LC1–LC3 settle four of them.
+*Files (≤4):* `internal/cli/accounts_add.go` (the flag and the two acts),
+`internal/cli/accounts_add_login.go` (the handover and the paste),
+`internal/cli/accounts_add_login_test.go`, `internal/cli/accounts_add_claude_test.go`.
+*Named tests:* `TestAccountsAddClaudeRunsTheLoginThenAsksForOnePaste` (**the red step**: the fake child
+runs to completion on the owner's terminal and the token is then read at the hidden prompt — and only
+there; a first cut that tries to read the value out of the child's output stores nothing, which is what
+this test fails against),
+`TestAccountsAddClaudeWritesTheValueNowhere` (the fake child prints a token-shaped value on its stdout;
+nothing reaching Fugaro's own stdout, the config tree, a log line or an error message holds it — the
+value comes only from the paste),
+`TestAccountsAddClaudeFallsBackToTheHiddenPrompt` (a child that exits non-zero is not a failure — the
+prompt still runs, and the command reports the exit status and says why),
+`TestAccountsAddClaudeRefusesAHostileClaude` (`exec.ErrDot`, a non-directory-safe path, a directory).
+*Red step:* `TestAccountsAddClaudeRunsTheLoginThenAsksForOnePaste` fails against a first cut that reads
+the token from the login's output. That failure **is** the answer's whole point (D862 (a)): the hidden
+prompt is the only token path, and the test is written first.
+*Hermetic:* the child is a compiled helper or a script under `t.TempDir()`, never a real `claude`.
+*Unknowns this task does not invent answers to:* spec §3.4's three, and LC1–LC2 settle the two the docs
+need.
 
 ## A4 — `accounts rm`
 
 Goal: spec §4. Refuse while a profile still lists the account, remove the declaration and the profile
 entry through the same editor, delete the secret through the store's own `Delete`, converge, and print
-the secret's ID **before** it goes.
+the secret's ID **before** it goes — with the sentence that deleting it does **not** revoke the token
+at the provider (D866).
 
 *Files (≤4):* `internal/cli/accounts_rm.go`, `internal/cli/accounts.go`,
 `internal/cli/accounts_rm_test.go`.
 *Named tests:* `TestAccountsRmRefusesWhileAProfileListsIt` (**the red step**),
 `TestAccountsRmRemovesTheDeclarationAndTheProfileEntry`,
 `TestAccountsRmDeletesTheSecretAndConverges` (the job and its service account go, and the value is gone),
-`TestAccountsRmLeavesAnotherAccountsSecretAlone`, `TestAccountsRmKeepsTheOtherRepositoriesComments`.
+`TestAccountsRmLeavesAnotherAccountsSecretAlone`, `TestAccountsRmKeepsTheOtherRepositoriesComments`,
+`TestAccountsRmSaysTheTokenIsNotRevokedAtTheProvider` (the confirmation names the secret's ID and says
+the provider's copy stays valid until it expires or the owner revokes it there — D866).
 *Red step:* against a first cut that removes only the declaration, `TestAccountsRmRefusesWhileAProfileListsIt`
 fails one step later than it should — the file it leaves is invalid under
 `config.ValidateProfileClaudeAccounts`'s subset rule, so the command would hand the owner a config that
@@ -231,7 +213,7 @@ reports it rather than editing a reserved file.
 
 | What | Where it goes | By whom |
 | --- | --- | --- |
-| LC1–LC5 | `docs/gcp-live-checklist.md`, under the number free at that merge, as Check 35's own row asks (D870) | the work stream that owns the checklist |
+| LC1–LC4 | `docs/gcp-live-checklist.md`, under the number free at that merge, as Check 35's own row asks (D870) | the work stream that owns the checklist |
 | The `### For operators` line | `docs/releases/v0.15.0.md` — "run `fugaro update`", plus what it will ask; nothing else, because `accounts add` needs no operator step by construction | the release owner; `docs/releases/**` is reserved |
 | The CLI reference | `website/content/cli-reference.md`, regenerated by its own tooling | the website stream |
 | The release summary line | `website/data/release-summaries.yaml`, no backticks | the release owner |
@@ -245,12 +227,11 @@ reports it rather than editing a reserved file.
 | `internal/cli/init_policy_migrate.go` | **#1464's S3** (design merged, stage unchanged), **#1460** (E2, F14) | a `Policy` stage that publishes from the local config and reaches the node through `policyMigrationFor` | Do not edit it here, and do not write a second publisher |
 | `internal/cli/init_stages.go` | the update-door streams | the stage list A2 invokes | Read it. Registering a new stage here is not this work's edit |
 | `internal/cli/accounts.go` | nobody | the `accounts` parent, which already owns its `AddCommand` (F19) | This work's file; `internal/cli/root.go` stays closed |
-| `go.mod`, `internal/cli/docs_console_boundary_test.go` | the console-boundary stream (E5) | the pty require comment and the pin that holds it | One PR changes both, with the reason in the body; if D862 avoids the pty, neither changes |
 | `plugin/skills/setup/SKILL.md` | reserved | the one paragraph that tells the owner what to type | This work edits it **only** if the rulings' reservation is lifted for it; otherwise it is a handoff |
 | `plugin/*_test.go` | reserved | the coverage tests that must go green with the command | Report, do not edit |
 | `docs/project-claude-accounts.md` | #1464's docs work, possibly | the page and its pins | Keep the pinned facts, change the wording, and run the Docs filter |
 | `internal/cli/testdata/init_commands.golden`, `internal/cli/testdata/init_retire.golden`, `internal/infra/testdata/repo_root_addresses.golden`, `internal/infra/testdata/repo_root_credentials_addresses.golden` | whoever changes the init flow | the new next-step lines | Regenerated by their own `-update` flags; never hand-edited |
-| `docs/gcp-live-checklist.md`, `docs/releases/**`, `website/**` | reserved | LC1–LC5, the operator line, the CLI reference | Handoffs, above |
+| `docs/gcp-live-checklist.md`, `docs/releases/**`, `website/**` | reserved | LC1–LC4, the operator line, the CLI reference | Handoffs, above |
 | `deploy/terraform/**`, `schemas/**` | — | **nothing** | No `.tf` file and no schema changes: the job set is computed by `infra.ProjectJobs` and the policy node has no schema (spec §8). If A2 ever needs a `cover.go` entry, that is a new resource type and a stop-and-report, not a table widening |
 
 ## Gates
@@ -269,9 +250,10 @@ Every task, before its PR:
 
 ## Live checks
 
-LC1–LC5 live in [spec.md](spec.md) §9 and are the owner's, in the owner's own terminal. LC1–LC3 settle
-`--claude` before A3 is written and need no Fugaro build at all; LC4 and LC5 run after A2/A3 and are the
-only checks that can falsify the design rather than the code. **No live step runs from an agent session**,
+LC1–LC4 live in [spec.md](spec.md) §9 and are the owner's, in the owner's own terminal. LC1 and LC2 are
+what the docs say around the login and need no Fugaro build at all; LC3 and LC4 run after A2/A3 and are
+the only checks that can falsify the design rather than the code — LC3 is where a login that would not
+take the owner's terminal, or a hidden prompt that echoed, would show up. **No live step runs from an agent session**,
 no `terraform apply`, no `fugaro update`, no `creds set`, and nothing secret is typed into a chat: every
 recorded answer is a shape — a length, an alphabet, which line — never a value.
 
@@ -289,8 +271,9 @@ slice is a feature, not a fix:
    steps. A patch release's notes are a fix to the version they patch; a credential flow that changes
    what the documentation instructs is a behaviour change, and `docs/releases/README.md`'s own rule puts
    it where the release notes are read before the upgrade, not after.
-3. **The dependency posture moves.** A0 turns a package the tree calls test-only into a production one
-   (or refuses Windows to avoid it). That is a whole-release statement, not a patch note.
+3. **The login path is new.** A0 and A3 run another program — Anthropic's own login — on the owner's
+   terminal for the first time. That is a whole-release statement, not a patch note. (D862's answer
+   (a) keeps it out of the dependency posture: no package is promoted, no `go.mod` line moves.)
 4. **The doc half is shared.** A5 rewrites a page whose pins the settings design's own docs work may be
    touching in the same window; landing it as a patch against a released tag costs a second rewrite.
 
