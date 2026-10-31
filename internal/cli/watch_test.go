@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -112,7 +111,7 @@ func TestWatchJSONMaxParallel(t *testing.T) {
 // what the document says.
 func TestWatchJSONMaxParallelResolvesTheDefault(t *testing.T) {
 	f := newBudgetFixture(t, "")
-	dropMaxParallel(t, f)
+	setMaxParallel(t, 0)
 	seedWatch(f, "fix the bug")
 	out, _, err := execute(t, "watch", "--once", "--json")
 	if err != nil {
@@ -128,25 +127,6 @@ func TestWatchJSONMaxParallelResolvesTheDefault(t *testing.T) {
 	}
 	if doc.Total.MaxParallel == nil || *doc.Total.MaxParallel != 20 {
 		t.Fatalf("total.max_parallel = %v, want the engine's default 20", doc.Total.MaxParallel)
-	}
-}
-
-// dropMaxParallel rewrites the fixture's local config without its max_parallel
-// line, the shape a machine whose config names no cap has; the CLI then
-// resolves the default itself.
-func dropMaxParallel(t *testing.T, f *budgetFixture) {
-	t.Helper()
-	path := os.Getenv("FUGARO_CONFIG")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kept := strings.Replace(string(data), "max_parallel: 2\n", "", 1)
-	if kept == string(data) {
-		t.Fatal("the fixture's config names no max_parallel to drop")
-	}
-	if err := os.WriteFile(path, []byte(kept), 0o600); err != nil {
-		t.Fatal(err)
 	}
 }
 

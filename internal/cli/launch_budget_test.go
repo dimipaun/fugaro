@@ -805,7 +805,7 @@ func TestPrecheckLowHeadroomRefuses(t *testing.T) {
 // single run; two attempts need $0.50.
 func TestRunAttemptsBudgetPrecheckCountsAllAtOnce(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_750_000}) // $0.25 left
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "task")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "repo_daily_cap") || !strings.Contains(err.Error(), "needs headroom for all 2") {
@@ -829,7 +829,7 @@ func TestRunAttemptsBudgetPrecheckCountsAllAtOnce(t *testing.T) {
 // the launch carries the 80% warning too, and it is counted the same way.
 func TestRunAttemptsBudgetNotesPrintOncePerBatch(t *testing.T) {
 	f := newLaunchBudget(t, "observe")
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	f.db.Set("config/mode", "observe")
 	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_900_000})
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "3", "task")
@@ -853,7 +853,7 @@ func TestRunAttemptsBudgetNotesPrintOncePerBatch(t *testing.T) {
 // TestRunAttemptsBudgetNotesPrintOncePerBatch's --no-budget-check half.
 func TestRunAttemptsBudgetNoBudgetCheckWarnsOnce(t *testing.T) {
 	newLaunchBudget(t, "enforce")
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "3", "--no-budget-check", "task")
 	if err != nil {
 		t.Fatal(err)
