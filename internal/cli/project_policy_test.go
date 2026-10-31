@@ -17,7 +17,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -76,21 +78,38 @@ const twoClaudeModelsProvidersYAML = projectProvidersYAML +
 	"    models: [\"anthropic/claude-sonnet-5.5\", \"anthropic/claude-opus-5.5\"]\n" +
 	"    allow_data_to: [\"*\"]\n"
 
+// projectConfigText is the fixture's whole config file: the installation the
+// publisher needs, this machine's providers block, two repositories and
+// whatever a test adds on top.
+func projectConfigText(dir, dbURL, providers, extra string) string {
+	return "version: 1\n" +
+		"name: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
+		"bucket_url: file://" + filepath.Join(dir, "runs") + "\n" +
+		"user: someone@example.com\nmax_parallel: 2\n" +
+		"budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + dbURL + " }\n" +
+		"endpoints: { no_auth: true }\n" +
+		providers +
+		"repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n" +
+		extra
+}
+
+// rewriteProjectConfig replaces the fixture's config with one whose only
+// difference is extra: a second publish of the same installation from a
+// machine whose file says something else — which is the state a publish's
+// handling of a member the file is silent about is about.
+func rewriteProjectConfig(t *testing.T, f *projectFixture, extra string) {
+	t.Helper()
+	if err := os.WriteFile(f.path, []byte(projectConfigText(f.dir, f.db.URL, projectProvidersYAML, extra)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newProjectFixtureWith(t *testing.T, providers, extra string) *projectFixture {
 	t.Helper()
 	dir := t.TempDir()
 	db := gcpfake.NewRTDB(t)
 	path := isolateProjects(t, dir)
-	cfg := "version: 1\n" +
-		"name: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
-		"bucket_url: file://" + filepath.Join(dir, "runs") + "\n" +
-		"user: someone@example.com\nmax_parallel: 2\n" +
-		"budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + db.URL + " }\n" +
-		"endpoints: { no_auth: true }\n" +
-		providers +
-		"repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n" +
-		extra
-	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(projectConfigText(dir, db.URL, providers, extra)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
@@ -3333,4 +3352,159 @@ func TestProjectPolicyPublishCarriesTheProjectBaseBranch(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestReviewFloorPublishedToPolicyNode is D722's publish half: the owner's
+// review-level floor travels from his project config into the policy node —
+// the one object only the owner writes and the runner fails closed on — and
+// nowhere else. A project that sets no floor publishes no member at all, so
+// its node is byte for byte what it was before the key existed.
+func TestReviewFloorPublishedToPolicyNode(t *testing.T) {
+	f := newProjectFixture(t, "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n")
+	publishOut, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The diff warns that the member stops older readers (the plan's C1.2 skew
+	// section): an older CLI refuses every launch and publish of this project,
+	// and an older runner image warns that the key has no effect and runs the
+	// levels anyway, so the floor does not bind there until the image is
+	// upgraded (L1.2's gate on the resolved levels is what refuses that image,
+	// and it is not in this change).
+	if !strings.Contains(publishOut, "carries a review_floor member") {
+		t.Errorf("the publish does not warn that the floor stops older readers:\n%s", publishOut)
+	}
+	p := publishedPolicy(t, f)
+	if len(p.ReviewFloor) != 2 {
+		t.Fatalf("ReviewFloor = %v, want the two modes the config writes", p.ReviewFloor)
+	}
+	if got, want := p.ReviewFloor[rigor.Pro], []policy.Level{policy.LevelL2}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor[pro] = %v, want %v", got, want)
+	}
+	if got, want := p.ReviewFloor[rigor.Critical], []policy.Level{policy.LevelL2, policy.LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor[critical] = %v, want %v", got, want)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_floor"`) {
+		t.Errorf("the node does not carry the floor:\n%s", raw)
+	}
+
+	// A project that writes none: no member, and no other change to the node.
+	g := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if raw := nodeJSON(t, g, projectpolicy.PathShared()); strings.Contains(raw, "review_floor") {
+		t.Errorf("a project that sets no floor published one:\n%s", raw)
+	}
+	if p := publishedPolicy(t, g); p.ReviewFloor != nil {
+		t.Errorf("ReviewFloor = %v, want nil", p.ReviewFloor)
+	}
+}
+
+// TestPublishKeepsReviewFloorTheConfigIsSilentAbout is the review finding this
+// behaviour exists for: a publish from a machine whose config says nothing
+// about the floor does not take the node's away. The floor is a minimum the
+// owner set to bind the launchers of his own project, and the publish that
+// would drop it is the one he did not mean — a second machine whose file
+// predates the key, or a key deleted while tidying one. The diff says it was
+// kept, because the value does not change and no line of the diff above would
+// mention it otherwise, and an operator who deleted the key would read that
+// silence as "it is gone".
+func TestPublishKeepsReviewFloorTheConfigIsSilentAbout(t *testing.T) {
+	f := newProjectFixture(t, "review_floor:\n  pro: [l2]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if len(p.ReviewFloor) != 1 || !slices.Equal(p.ReviewFloor[rigor.Pro], []policy.Level{policy.LevelL2}) {
+		t.Errorf("the second publish changed the floor: ReviewFloor = %v, want pro: [l2]", p.ReviewFloor)
+	}
+	if !strings.Contains(out, "review_floor kept: pro: l2") {
+		t.Errorf("the publish does not say the floor was kept:\n%s", out)
+	}
+}
+
+// TestPublishDropsReviewFloorOnPurpose: `review_floor: {}` is how the owner
+// takes a published floor away. Silence about the key keeps the node's floor
+// (the test above), so the written empty object is the spelling that has to
+// mean "none" — and the diff names the change like any other value's, which is
+// what makes the removal a decision the operator reads rather than one that
+// happened behind the diff.
+func TestPublishDropsReviewFloorOnPurpose(t *testing.T) {
+	f := newProjectFixture(t, "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, "review_floor: {}\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewFloor != nil {
+		t.Errorf("ReviewFloor = %v, want none after a written empty object", p.ReviewFloor)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "review_floor") {
+		t.Errorf("the node still carries the member:\n%s", raw)
+	}
+	if !strings.Contains(out, "~ review_floor:") || !strings.Contains(out, "→ none") {
+		t.Errorf("the diff does not name the floor going away:\n%s", out)
+	}
+}
+
+// TestPolicyShowPrintsReviewFloor: `policy show` is the audit surface, and the
+// floor is a member a publish decides — so it is a row of that output whether
+// the node carries one or not, the way the Bitbucket block's row is (the
+// review of #1329). Without it the operator cannot confirm that the floor he
+// published is the floor the runs read.
+func TestPolicyShowPrintsReviewFloor(t *testing.T) {
+	newProjectFixture(t, "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "review_floor: critical: l2, l3; pro: l2") {
+		t.Errorf("policy show does not print the floor:\n%s", out)
+	}
+
+	newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "review_floor: none (a run reviews what its rigor mode and the repository ask for)") {
+		t.Errorf("policy show does not say a policy carries no floor:\n%s", out)
+	}
+}
+
+// TestReviewFloorNotInShared: the floor is the owner's, and the shared config
+// is the file any launcher with objectAdmin on the runs bucket can write. A
+// floor published there would be the launcher the floor exists to bind,
+// setting it (D722, G1, docs/design/bucket-iam.md §10 L1, L2), so the reader
+// refuses the key — the way it refuses bitbucket_api_roots — and the publisher
+// never writes it (localcfg.Config.Shared drops it).
+func TestReviewFloorNotInShared(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "review_floor") {
+		t.Fatal("sharedForbidden does not name review_floor, so a published floor would be read")
+	}
+	data := validShared() + "review_floor:\n    pro: [l2]\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying review_floor: was accepted")
+	}
+	for _, want := range []string{"review_floor", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
 }
