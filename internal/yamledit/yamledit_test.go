@@ -593,6 +593,52 @@ func TestRemoveKeyKeepsALessIndentedComment(t *testing.T) {
 	}
 }
 
+// TestRemoveKeyKeepsTheFileHeaderComment pins that a comment block reaching the
+// file's first line is the file's own header and stays, whether the key removed
+// is the file's first or triggers a cascade. The block is kept whole: which of
+// its lines sat next to the key would be arbitrary. A comment between later keys
+// is still the entry's, which TestRemoveKeyTakesTheCommentBlockDirectlyAboveIt
+// holds.
+func TestRemoveKeyKeepsTheFileHeaderComment(t *testing.T) {
+	drop := yamledit.RemoveOptions{DropEmptyParents: true}
+	for _, tc := range []struct {
+		name, doc, want string
+		op              func([]byte) ([]byte, error)
+	}{
+		{
+			"the file's first key",
+			"# Licence header\nproject: x\nb: 1\n",
+			"# Licence header\nb: 1\n",
+			func(d []byte) ([]byte, error) { return yamledit.RemoveKey(d, []string{"project"}) },
+		},
+		{
+			"a header written over several lines",
+			"# one\n# two\nproject: x\nb: 1\n",
+			"# one\n# two\nb: 1\n",
+			func(d []byte) ([]byte, error) { return yamledit.RemoveKey(d, []string{"project"}) },
+		},
+		{
+			"the cascade a list removal runs up to the first line",
+			"# hdr\nk:\n  - a\nz: 1\n",
+			"# hdr\nz: 1\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.RemoveListItemWithOptions(d, []string{"k"}, "a", drop)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.op([]byte(tc.doc))
+			if err != nil {
+				t.Fatalf("removal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			reparses(t, got)
+		})
+	}
+}
+
 func TestAddListItemAppendsAndCreatesTheSequence(t *testing.T) {
 	const doc = "allow_data_to:\n  - owner/repo-a\n\n# next\nother: 1\n"
 	got, err := yamledit.AddListItem([]byte(doc), []string{"allow_data_to"}, "owner/repo-b")

@@ -188,7 +188,9 @@ func SetScalar(src []byte, path []string, value string) ([]byte, error) {
 
 // RemoveKey removes the key at path and its value. The comment lines directly
 // above the key go with it, but only while they sit there with no blank line
-// between: a blank line ends what the comments below it belong to.
+// between — a blank line ends what the comments below it belong to — and never a
+// block that reaches the file's first line, which is the file's own header
+// rather than a note about the key below it.
 func RemoveKey(src []byte, path []string) ([]byte, error) {
 	return RemoveKeyWithOptions(src, path, RemoveOptions{})
 }

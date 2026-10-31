@@ -495,8 +495,8 @@ func (d *doc) removalEnd(off int) int {
 }
 
 // entryStart returns where an entry's own text begins: the start of its key's
-// line, back over the comment lines that sit directly above it. An entry a path
-// reaches is always written at the start of its line.
+// line, back over the comment lines the entry owns. An entry a path reaches is
+// always written at the start of its line.
 func (d *doc) entryStart(op string, e *entry) (int, error) {
 	keyStart, err := d.offset(e.key)
 	if err != nil {
@@ -512,7 +512,15 @@ func (d *doc) entryStart(op string, e *entry) (int, error) {
 // the lines directly above it, with no blank line between, indented at least as
 // far as the entry itself. A blank line, a less indented comment or any other
 // line ends the walk.
+//
+// A block that reaches the file's first line ends it as well, and is kept whole.
+// What is written at the top of a file introduces the file rather than whichever
+// key happens to sit under it, and a key is the file's first one only until the
+// next edit puts something above it; which of the block's lines sat next to the
+// key would be arbitrary anyway. The walk gives back the entry's own start when
+// it reaches line 1, so none of that block goes with the entry.
 func (d *doc) absorbComments(start, indent int) int {
+	own := start
 	for line := d.lines.lineOf(start); line > 1; {
 		prev := line - 1
 		ps, pe := d.lines.start(prev), d.lines.contentEnd(prev)
@@ -520,6 +528,9 @@ func (d *doc) absorbComments(start, indent int) int {
 		trimmed := bytes.TrimLeft(text, " ")
 		if len(trimmed) == 0 || trimmed[0] != '#' || len(text)-len(trimmed) < indent {
 			return start
+		}
+		if prev == 1 {
+			return own
 		}
 		start = ps
 		line = prev
@@ -541,8 +552,8 @@ func (d *doc) entrySpan(op string, e *entry) (int, int, error) {
 }
 
 // itemStart returns where a sequence item's own text begins: the start of its
-// line, indentation included, back over the comment lines that sit directly
-// above it. The whole line goes rather than just its `- `, or the indentation
+// line, indentation included, back over the comment lines the item owns. The
+// whole line goes rather than just its `- `, or the indentation
 // that was in front of the dash would be left behind in front of the next item.
 func (d *doc) itemStart(op string, item *yaml.Node) (int, error) {
 	off, err := d.offset(item)
