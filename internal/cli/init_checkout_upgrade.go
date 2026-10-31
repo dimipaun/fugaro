@@ -337,7 +337,7 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	if len(changed) > 0 {
 		out = initflow.Outcome{Changed: true, Detail: "ran fugaro upgrade's " + strings.Join(changed, ", ") + " for this checkout"}
 	}
-	out.Left = s.leftBehind(steps)
+	out.Left = s.leftBehind(u, steps)
 	return out, nil
 }
 
@@ -369,18 +369,21 @@ func (s *checkoutStage) stepFailure(r stepResult, u *upgradeCtx, step upgradeSte
 }
 
 // leftBehind is what this apply leaves the user, or nil: the parked cloud half,
-// as a step of this run that only the user can run. The command is this door's
-// own — the run that parked the step, in the terminal the marker refuses, where
-// its steps can ask — so the user does not have to know a second one; the why
-// is the plan's line, in the step's own words (cloudAgentRefusal).
-func (s *checkoutStage) leftBehind(steps []plannedStep) *initflow.Left {
+// as a step of this run that only the user can run. The commands are the ones
+// the parked step's own refusal names — this run's flags for this checkout,
+// with and without --yes (cloudLine) — and not this door's name: the cloud
+// step here is `fugaro upgrade`'s, its confirmations are its own, and a reader
+// sent to a second command for the same step would have to know which half of
+// which door runs it. The why is the plan's line, in the step's own words
+// (cloudAgentRefusal).
+func (s *checkoutStage) leftBehind(u *upgradeCtx, steps []plannedStep) *initflow.Left {
 	for _, p := range steps {
 		if !p.parked {
 			continue
 		}
 		return &initflow.Left{Stage: initflow.Checkout, Kind: initflow.LeftCommand,
-			Text:     "in your own terminal window, not through a coding agent or a pipe, run the checkout's cloud half — the base image, the daily check job's config and the billable job-image builds, each confirmed as it is — after running",
-			Commands: []string{selfCommand() + " " + s.e.r.o.doorName()}}
+			Text:     "in your own terminal window, not through a coding agent or a pipe, run the checkout's cloud half — the base image, the daily check job's config and the billable job-image builds, each confirmed as it is — by running",
+			Commands: []string{u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false)}}
 	}
 	return nil
 }
