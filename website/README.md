@@ -123,10 +123,11 @@ LinkedIn's insight tag and Calendly's booking widget.
   carries none of it and loads none of them, and a campaign page served from another path
   loads none of them either.
 - **An empty id is a loader switched off** (R3), and this repository publishes no identifier
-  the owner did not supply. The owner supplied the LinkedIn Partner ID on 2026-10-31, so the
-  insight tag loads on the four campaign pages behind the campaign consent; the pixel's id is
-  still theirs to supply and stays empty, which is the loader switched off. `internal/cli`'s
-  boundary test pins the pixel id empty, the partner id present and the three origins exact.
+  the owner did not supply. Both ids are the owner's, supplied on 2026-10-31 — the LinkedIn
+  Partner ID and the Meta pixel id — so all three loaders run on the four campaign pages behind
+  the campaign consent, and a value cleared in `site.yaml` switches its loader off. `internal/cli`'s
+  boundary test refuses either id coming back empty and pins the three origins exact, and
+  `test/consent.mjs` reads the switched-off state off a page whose markup carries an empty id.
 - **Each vendor is handed the page's path and no query** (F22): the site builds the address it
   reports from the origin and the path, and passes it to the pixel and the insight tag as
   `page_location` rather than leaving them to read the address in the window, so what this site
@@ -151,8 +152,9 @@ LinkedIn's insight tag and Calendly's booking widget.
   that the gate loads from exactly the origins the policy admits. The Calendly booking link
   itself stays a plain `<a href>`: a visitor who declines the campaign consent keeps it.
 
-**G2.4 is the task that added the funnel and the pass-through** — three key events to GA4, and
-the campaign parameters a visitor arrived through, onto the booking address and nothing else.
+**G2.4 is the task that added the funnel and the pass-through** — three key events to GA4 (and,
+since the owner's ruling of 2026-10-31, the same three actions to the pixel under Meta's names),
+and the campaign parameters a visitor arrived through, onto the booking address and nothing else.
 
 - **Three events, and only after the analytics grant.** `install_click` and `whatsapp_click`
   are presses of the two secondary calls to action, found by the ids the markup gives them;
@@ -166,6 +168,14 @@ the campaign parameters a visitor arrived through, onto the booking address and 
   the visitor has granted analytics or after a withdrawal; the count is the funnel, and the
   campaign's own attribution reaches GA4 through the owner's Calendly-to-GA4 integration rather
   than through this site (F22).
+- **The same three actions are Meta's events too, and only after the campaign grant** (the
+  owner's ruling of 2026-10-31): `ViewContent` for a press of Install free, `Contact` for the
+  chat link and `Lead` for a booking, sent from the same handlers — the same press, the same
+  once-per-action binding, and the same origin and sender checks on the widget's message — so
+  the two measurements cannot drift apart. The gate is the campaign question rather than the
+  analytics one: a visitor who granted the campaign measurement and not the site's is sent the
+  pixel's three and none of GA4's, and a campaign page whose pixel id is empty sends Meta
+  nothing (`test/landing-events.mjs`).
 - **The campaign parameters go onto the booking address and nowhere else.** The five `utm_*`
   names the agenda's links carry, each value decoded and encoded again — a `+` in the visitor's
   query read as the space a browser reads it as, and the `%20` this page writes read back the

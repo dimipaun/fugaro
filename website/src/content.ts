@@ -546,15 +546,15 @@ export interface AnalyticsFacts {
 /**
  * The campaign measurement's configuration (G2.3, D401): the two vendor ids and the
  * one origin each of the three loaders fetches its script from. An empty id disables
- * its loader, which is the state the file ships in — the owner has not supplied a
- * pixel id or a partner id, and this repository invents none (R3).
+ * its loader: this repository invents no identifier (R3), and both ids are the
+ * owner's, supplied on 2026-10-31.
  */
 export interface MarketingFacts {
-  /** The Meta pixel's id, empty until the owner supplies it. */
+  /** The Meta pixel's id, which the owner supplied on 2026-10-31. */
   metaPixelID: string
   /** The origin the pixel's own script is fetched from. */
   metaOrigin: string
-  /** The LinkedIn partner id, empty until the owner supplies it. */
+  /** The LinkedIn partner id, which the owner supplied on 2026-10-31. */
   linkedinPartnerID: string
   /** The origin the insight tag's own script is fetched from. */
   linkedinOrigin: string
