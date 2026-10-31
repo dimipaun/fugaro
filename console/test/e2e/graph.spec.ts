@@ -529,8 +529,10 @@ test.describe('the graph view in a window', () => {
     // A task is selected first: the selection is a width as well as a tone
     // (`.graph-node[data-selected='true'] .graph-node-box`), and a window with
     // nothing selected has no such element at all -- a `null` read there would
-    // make the assertion below pass whatever the stylesheet says.
-    await page.locator('g.graph-node').first().click()
+    // make the assertion below pass whatever the stylesheet says. The card
+    // selected is one in a **neutral** state, so the running card read below
+    // keeps its own state's thickness with the selection out of its way.
+    await page.locator('g.graph-node[data-state="ready"]').first().click()
     await page.locator('g.graph-node[data-selected="true"]').first().waitFor()
     await page.emulateMedia({ forcedColors: 'active' })
     try {
@@ -555,6 +557,11 @@ test.describe('the graph view in a window', () => {
             'g.graph-edge[data-critical="false"][data-cross="false"][data-selected="false"] .graph-edge-path',
           ),
           selected: width('g.graph-node[data-selected="true"] .graph-node-box'),
+          // A task being worked on, with no selection on it: its state is 2 px,
+          // which is the thickness the selected card's boundary has to be told
+          // apart from -- in this mode the tone that says the same thing is
+          // gone, so the difference has to be the width.
+          running: width('g.graph-node[data-state="implementing"]:not([data-selected="true"]) .graph-node-box'),
         }
       })
       expect(widths.critical).toBe('3px')
@@ -564,6 +571,7 @@ test.describe('the graph view in a window', () => {
       // 3 px against a running card's 2, which is what keeps the selected card
       // distinguishable from the state it also carries.
       expect(widths.selected).toBe('3px')
+      expect(widths.running).toBe('2px')
     } finally {
       await page.emulateMedia({ forcedColors: 'none' })
     }

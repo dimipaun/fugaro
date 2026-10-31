@@ -632,6 +632,17 @@ function titleLinesIn(root: FakeNode, key: string): readonly string[] {
   return (title?.children ?? []).map((line) => line.textContent ?? '')
 }
 
+/** viewBoxIn is the canvas's own frame as four numbers, which is what the
+ * browser crops the picture to. */
+function viewBoxIn(root: FakeNode): ReturnType<typeof rectOf> {
+  const canvas = everyNode(root).find((each) => each.getAttribute('class') === 'graph-canvas')
+  const parts = (canvas?.getAttribute('viewBox') ?? '').split(' ').map(Number)
+  if (parts.length !== 4 || parts.some((each) => !Number.isFinite(each))) {
+    throw new Error(`the canvas was drawn with no frame: ${JSON.stringify(canvas?.getAttribute('viewBox') ?? null)}`)
+  }
+  return { x: parts[0] ?? 0, y: parts[1] ?? 0, width: parts[2] ?? 0, height: parts[3] ?? 0 }
+}
+
 /** inside is whether a rectangle holds another whole: a card is on its stream's
  * band when every one of its four edges is within the band's. */
 function inside(outer: ReturnType<typeof rectOf>, inner: ReturnType<typeof rectOf>): boolean {
@@ -685,6 +696,39 @@ describe('the graph screen and its stream bands', () => {
         if (one.stream === other.stream) continue
         expect(overlaps(one.rect, other.rect), `${one.stream} and ${other.stream} overlap`).toBe(false)
       }
+    }
+  })
+
+  it('frames the picture on every band and every card, the band’s label included', async () => {
+    // The frame is the picture's own rectangle at the initial zoom, and it is
+    // the *only* crop: what falls outside it is not drawn, so the band's head --
+    // where the stream's own name is written -- has to be inside it. A band is
+    // not a task's rectangle, and this is the case that says the frame was
+    // computed from the bands as well as from the cards.
+    const screen = layeredScreen(new LayeredWorker())
+    await screen.load(DOCUMENT, RUNS)
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const root = mounted(drawing)
+    const frame = viewBoxIn(root)
+
+    const bands = bandsIn(root)
+    expect(bands.length, 'no band was drawn, so the frame below is vacuous').toBeGreaterThan(0)
+    for (const one of bands) {
+      expect(inside(frame, one.rect), `${one.stream}'s band is drawn outside the frame`).toBe(true)
+    }
+    // The label is written at the band's head, so its baseline has to be below
+    // the frame's top edge -- a band that fitted while its own label did not is
+    // a stream with no name.
+    const labels = everyNode(root).filter((each) => each.getAttribute('class') === 'graph-band-label')
+    expect(labels.length).toBe(bands.length)
+    for (const label of labels) {
+      const baseline = Number(label.getAttribute('y'))
+      expect(baseline, 'a band label is drawn above the frame').toBeGreaterThanOrEqual(frame.y)
+      expect(baseline).toBeLessThanOrEqual(frame.y + frame.height)
+    }
+    for (const card of cardsIn(root)) {
+      expect(inside(frame, card.rect), `${card.key} is drawn outside the frame`).toBe(true)
     }
   })
 
@@ -750,6 +794,41 @@ describe('the graph screen and a card’s title', () => {
     const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
     expect(lone.test(drawn)).toBe(false)
     expect(drawn).toContain(astral)
+  })
+
+  it('draws the mark only where the card’s lines dropped text, however short the last line is', async () => {
+    // The mark is a **signal** and not a length: it says the card's three lines
+    // could not hold the title, so a reader who sees it knows something was
+    // dropped. A last line shorter than the line's bound is therefore not a
+    // false mark -- a title of long words leaves its third line one word long
+    // and still loses the rest. The pair below is the same title one word
+    // longer, and it fits three lines: the mark appears with the drop and not
+    // with how full the last line happens to be.
+    const long = (letter: string): string => letter.repeat(GRAPH_NODE_TITLE_LINE_CODE_POINTS)
+    const fits = `${long('a')} ${long('b')} c`
+    const over = `${fits} ${long('d')}`
+
+    const { screen } = screenWith()
+    await screen.load(patched(['plans', 0, 'nodes', 0, 'title'], fits), RUNS)
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const held = titleLinesIn(mounted(drawing), nodeKey(PLAN, 'task-one'))
+    expect(held).toHaveLength(GRAPH_NODE_TITLE_LINES)
+    expect(held.join(' ')).toBe(fits)
+    expect(held.join(' ')).not.toContain('…')
+
+    const other = screenWith()
+    await other.screen.load(patched(['plans', 0, 'nodes', 0, 'title'], over), RUNS)
+    const cut = other.screen.redraw()
+    if (cut === null) throw new Error('no drawing')
+    const cutLines = titleLinesIn(mounted(cut), nodeKey(PLAN, 'task-one'))
+    expect(cutLines).toHaveLength(GRAPH_NODE_TITLE_LINES)
+    // The last line is two code points and carries the mark, which is the case
+    // the mark is read as a lie in: what it reports is the fourth line.
+    expect(cutLines[cutLines.length - 1]).toBe('c…')
+    const body = [...cutLines.slice(0, -1), (cutLines[cutLines.length - 1] ?? '').replace(/…$/, '')].join(' ')
+    expect(over.startsWith(body)).toBe(true)
+    expect([...body].length).toBeLessThan([...over].length)
   })
 
   it('draws a title the card cannot hold whole in the list, where the whole sentence is', async () => {
