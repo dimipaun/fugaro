@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pool"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -29,6 +30,12 @@ import (
 // objects, each a round trip of tens of milliseconds, and a listing covers
 // every run in the bucket's window: this width is most of what ls costs.
 const lsWorkers = 32
+
+// followWorkers is how many runs' executions are followed at once. That read
+// leaves the bucket for the compute backend, whose own requests are not the
+// ones lsWorkers is for, and only the runs the executions listing did not
+// already answer reach it.
+const followWorkers = 8
 
 // maxNameCellRunes bounds a name read back from a run's own result.json
 // (an OAuth account or a recipe name, neither validated by this binary
@@ -335,7 +342,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	prices := env.prices(func(s string) { warnf("%s", s) })
 	rows := make([]runview.Row, len(runs))
 	errs = make([]error, len(runs))
-	parallel(len(runs), func(i int) {
+	parallelN(len(runs), followWorkers, func(i int) {
 		if errs[i] = followExecution(ctx, env, &runs[i], execs, warnf); errs[i] == nil {
 			rows[i] = runview.Join(runs[i].in, prices, now)
 		}
@@ -356,34 +363,20 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	return rows, nil
 }
 
-// parallel calls fn(0) … fn(n-1) on up to lsWorkers goroutines.
+// parallel calls fn(0) … fn(n-1) on up to lsWorkers goroutines, for work that
+// reads the runs bucket.
 func parallel(n int, fn func(i int)) {
 	parallelN(n, lsWorkers, fn)
 }
 
-// parallelN is parallel with its own bound: fn(0) … fn(n-1) run on at most
-// workers goroutines, and nothing is written between them — indices go out on
-// the channel in order, and whatever each call computes is the caller's to
-// place (a slice indexed by i, so the result is deterministic whatever order
-// the goroutines finish in). A caller with a bound of its own passes it here
-// rather than growing lsWorkers, which is runs ls's own read width.
+// parallelN is parallel with a bound of its own. A caller whose work reaches
+// something other than the runs bucket passes its width here rather than
+// growing lsWorkers, which is what a bucket read costs: two gh processes at
+// github.com at once are what a host's secondary rate limits are about, and a
+// read that fans out over repositories multiplies its width by the width of
+// the read inside it.
 func parallelN(n, workers int, fn func(i int)) {
-	var wg sync.WaitGroup
-	next := make(chan int)
-	for range min(workers, n) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range next {
-				fn(i)
-			}
-		}()
-	}
-	for i := range n {
-		next <- i
-	}
-	close(next)
-	wg.Wait()
+	pool.Run(n, workers, fn)
 }
 
 // onPR reports whether a run is on pull request pr: its task continues

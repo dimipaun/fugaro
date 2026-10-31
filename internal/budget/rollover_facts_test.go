@@ -115,12 +115,13 @@ type factsDriver struct {
 	objects       map[string][]byte
 	sizes         map[string]int64
 	fail          map[string]error
-	wait          time.Duration // how long the driver's first read holds the bucket open
+	wait          time.Duration // how long a read holds the bucket open waiting for the declared width
+	want          int           // the width a read waits for; 0 reads without waiting
 	open          int
 	peak          int
-	held          bool          // the first read has already waited once
-	overlap       chan struct{} // closed the first time two reads are in flight at once
-	overlapOnce   sync.Once
+	reached       bool          // open has been want at least once
+	width         chan struct{} // closed the first time want reads are in flight at once
+	widthOnce     sync.Once
 }
 
 // errNoSuchObject is the driver's missing object. ErrorCode reports it as
@@ -131,7 +132,7 @@ var errNoSuchObject = errors.New("no such object")
 func newFactsDriver() *factsDriver {
 	return &factsDriver{
 		objects: map[string][]byte{}, sizes: map[string]int64{}, fail: map[string]error{},
-		overlap: make(chan struct{}),
+		width: make(chan struct{}),
 	}
 }
 
@@ -202,21 +203,24 @@ func (d *factsDriver) NewRangeReader(_ context.Context, key string, offset, leng
 	if d.open > d.peak {
 		d.peak = d.open
 	}
-	colleague := d.open > 1
-	waitHere := !d.held && !colleague
-	d.held = true
+	widened := d.open >= d.want && !d.reached
+	d.reached = d.reached || widened
+	waiting := !d.reached && d.wait > 0
 	d.mu.Unlock()
 	switch {
-	case colleague:
-		d.overlapOnce.Do(func() { close(d.overlap) })
-	case waitHere && d.wait > 0:
-		// The first read holds the bucket open until a colleague joins it,
-		// rather than for a fixed moment: what is being measured is the width
-		// of the pass, and a loaded machine may take a while to put a second
-		// read on the CPU. A pass that reads one at a time has no colleague to
-		// wait for and gives up at the bound.
+	case widened:
+		d.widthOnce.Do(func() { close(d.width) })
+	case waiting:
+		// A reader holds the bucket open until the pass has as many reads in
+		// flight as the test declares, rather than for a fixed moment: what is
+		// being measured is the pass's own width, and a loaded machine may take
+		// a while to put a read on the CPU. A pass that widens past the
+		// declared width closes d.width and every read goes through at once; a
+		// pass at the declared width, which is the one under test, waits this
+		// out, so the assertion below reads the width the pass settled at
+		// rather than the scheduler's promptness.
 		select {
-		case <-d.overlap:
+		case <-d.width:
 		case <-time.After(d.wait):
 		}
 	}
@@ -351,6 +355,12 @@ func sequentialFacts(t *testing.T, b budget.BucketFacts, from, to int64) (map[in
 	return out, repos
 }
 
+// TestFactsParallelEqualsSequential: the parallel pass returns what reading
+// one at a time did, and it reads within factsWorkers at once. The bound is
+// the half of that the facts cannot show: a pass with no bound returns the
+// same days and opens one socket per run of the bucket's whole window.
+// Mutations caught: reading one at a time (a peak of 1), and dropping the
+// bound (a peak of every ref the fixture holds).
 func TestFactsParallelEqualsSequential(t *testing.T) {
 	day := budget.Day(time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC))
 	var runs []factsRun
@@ -387,11 +397,14 @@ func TestFactsParallelEqualsSequential(t *testing.T) {
 		}
 	}
 	plain, d := factsBuckets(t, runs)
-	// The declared width is a bound and not a sleep: the driver's first read
-	// waits this long for a second one to join it, so the assertion below
-	// measures the pass's width rather than the scheduler's promptness. Only
-	// the reference pass pays it, which is the pass that has no colleague.
-	d.wait = time.Second
+	// factsWorkers is what the assertion below pins, and this package's tests
+	// are external to the one that declares it: 32 is that number, written
+	// once here so a pass that widens past it is caught. The driver holds a
+	// read until one more than the bound is in flight, so a wide pass is
+	// measured widening and a pass at the bound waits this out instead.
+	const factsBound = 32
+	d.want = factsBound + 1
+	d.wait = 250 * time.Millisecond
 	from, to := day-1, day+1
 
 	var seqWarns []string
@@ -408,8 +421,8 @@ func TestFactsParallelEqualsSequential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if peak := d.peakOpen(); peak <= 1 {
-		t.Fatalf("result.json was read %d at a time: the pass does not read them in parallel", peak)
+	if peak := d.peakOpen(); peak <= 1 || peak > factsBound {
+		t.Fatalf("result.json was read %d at a time, want more than one and at most %d (factsWorkers): the pass reads them in parallel and within its bound", peak, factsBound)
 	}
 	if len(want) != 3 || len(want[from]) == 0 || len(want[day]) == 0 || len(want[to]) == 0 {
 		t.Fatalf("the fixture put %d days of facts in the result: this test would compare too little", len(want))
