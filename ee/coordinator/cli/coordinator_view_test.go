@@ -7,8 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // `fugaro coordinator status --from-store` (D364): the read of the view the
@@ -311,5 +315,83 @@ func TestCoordinatorStatusFromStorePrintsAStaleMarker(t *testing.T) {
 	}
 	if strings.Contains(out, "ago") {
 		t.Errorf("the text output claims an age:\n%s", out)
+	}
+}
+
+// fixtureRepos rewrites the fixture's repositories: --all reads what the local
+// config lists, and the coordinator's own selection sorts them.
+func fixtureRepos(t *testing.T, f *cloudFixture, repos ...string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var block strings.Builder
+	block.WriteString("repos:\n")
+	for _, r := range repos {
+		block.WriteString("  " + r + ": { provider: github, base_branch: main, workflows: [web] }\n")
+	}
+	out := regexp.MustCompile(`(?m)^repos:\n(?:  .*\n)*`).ReplaceAllString(string(data), block.String())
+	if out == string(data) {
+		t.Fatalf("the fixture's config has no repositories to replace:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(out), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCoordinatorReposInParallelKeepOrder: --all reads every repository's view
+// at once, and prints them in the order the selection names — the config's
+// repositories, sorted — whatever order the reads finish in. The config lists
+// them in another order, so a document in the config's order fails here.
+func TestCoordinatorReposInParallelKeepOrder(t *testing.T) {
+	repos := []string{"acme/third", "acme/app", "acme/other"}
+	var seeds []coordinatorRunSeed
+	run := map[string]string{}
+	for i, repo := range repos {
+		id := fmt.Sprintf("20261013-1%d0000-%04x", i, i)
+		run[repo] = id
+		seeds = append(seeds, coordinatorRunSeed{
+			id: id, repo: repo,
+			who: "someone@example.com", status: runstore.StatusRunning, base: "main",
+		})
+	}
+	f := newCoordinatorStoreFixture(t, seeds)
+	fixtureRepos(t, f.cloudFixture, repos...)
+	noStoreOpens(t)
+
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--all", "--since", "0", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	var got coordinator.StoredProjectView
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(got.Repos) != len(repos) {
+		t.Fatalf("--all read %d repositories, want %d", len(got.Repos), len(repos))
+	}
+	want := slices.Sorted(slices.Values(repos))
+	have := make([]string, 0, len(got.Repos))
+	for _, v := range got.Repos {
+		if v.Stored {
+			t.Errorf("%s is stored: the database holds no view for any repository", v.Repo)
+		}
+		have = append(have, v.Repo)
+	}
+	if !slices.Equal(have, want) {
+		t.Fatalf("repositories = %v, want %v", have, want)
+	}
+	// Each view is the one repository's own runs and not another's: the reads
+	// are placed, so a view that landed in the wrong slot is visible here.
+	for _, v := range got.Repos {
+		var labels []string
+		for _, r := range v.View.Records {
+			labels = append(labels, r.Label())
+		}
+		if !slices.Equal(labels, []string{run[v.Repo]}) {
+			t.Errorf("%s's view = %v, want the run seeded for it, %s", v.Repo, labels, run[v.Repo])
+		}
 	}
 }
