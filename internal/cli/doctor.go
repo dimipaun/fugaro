@@ -1884,7 +1884,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// job environment, exactly as they did before this model (P3).
 		checks := []doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
-			Fix:     "fugaro update --firebase-project " + firebaseProjectIDWord(lc.GCPProject) + " --name " + lc.Name + " adds the backend the policy is published to"}}
+			Fix:     "fugaro update --firebase-project " + firebaseProjectIDWord(lc.GCPProject) + " --name " + lc.Name + " adds the backend the policy is published to." + adoptOwnFirebaseProject(lc)}}
 		return append(checks, doctorRoutingChecks(lc, nil,
 			fmt.Sprintf("project %s has no Firebase budget backend, so there is no policy node to read a switch from", lc.Name), layer)...)
 	}
@@ -2418,6 +2418,21 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro update --repo . in your own terminal, which is the only path that writes a job's environment)"}
 }
 
+// adoptOwnFirebaseProject is what every doctor fix whose command is `fugaro
+// update --firebase-project` has to say beside it, and it is the migration
+// `fugaro update` itself names in the same words: a config that records another
+// Firebase project is refused by that command (initFirebase's checkFirebaseProject,
+// one Fugaro project has one Firebase project, design D3) before it reads or
+// writes anything, so a line that stopped at the command would send exactly the
+// installation these checks were written for — the legacy one whose mark and
+// rules are the states reported here — to a refusal and no repair. The two
+// values to drop are the config's own (budget.firebase_project and the
+// budget.rtdb_url beside it, which is that project's database), and with them
+// gone the same command adopts the installation's own project.
+func adoptOwnFirebaseProject(lc *localcfg.Config) string {
+	return fmt.Sprintf(" If the config records another project in budget.firebase_project, that command is refused while it does: drop it and budget.rtdb_url beside it first, and `fugaro update --firebase-project %s` then adopts this installation's own project (which is the case the sentence above is about).", firebaseProjectIDWord(lc.GCPProject))
+}
+
 // doctorRulesSkew is the fifth check: the deployed rules are older than the
 // marker config/limits/policyRules. It is the state an older CLI's
 // `fugaro update --firebase-project` leaves behind by redeploying the pre-policy
@@ -2487,12 +2502,12 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 			return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
 				Problem: rulesMarkerBadText(skew.raw),
 				Fix: fmt.Sprintf("set %s to the integer generation of the deployed rules by hand, or delete the node: a value that is not a number is a generation no Fugaro wrote, and `fugaro update --firebase-project %s` reads that node before it writes, so it stops on this one and nothing is repaired. With the node deleted the deployed rules read as generation 0, and `fugaro update --firebase-project %s` then deploys this Fugaro's rules and records generation %d (upgrade Fugaro first if the rules deployed here came from a newer release — this template would replace them).",
-					marker, firebaseProjectIDWord(lc.GCPProject), firebaseProjectIDWord(lc.GCPProject), projectpolicy.RulesVersion)}}
+					marker, firebaseProjectIDWord(lc.GCPProject), firebaseProjectIDWord(lc.GCPProject), projectpolicy.RulesVersion) + adoptOwnFirebaseProject(lc)}}
 		}
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
 			Problem: rulesMarkerBadText(skew.raw),
 			Fix: fmt.Sprintf("re-run `fugaro update --firebase-project %s` with fugaro >= %s in your own terminal. It writes the marker this Fugaro reads, over a document it deploys itself.",
-				firebaseProjectIDWord(lc.GCPProject), policySince)}}
+				firebaseProjectIDWord(lc.GCPProject), policySince) + adoptOwnFirebaseProject(lc)}}
 	case rulesSkewNewer:
 		// A marker above this binary's RulesVersion, and the review of PR
 		// #402's point: a newer Fugaro wrote it, so the deployed rules are a
@@ -2885,13 +2900,13 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if !found {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the cascade is switched on (%s) and %s is not written: the deployed rules predate the credentials family, so the first credential a cascade run records is refused and the run halts instead of running (fugaro accounts and fugaro watch show no state on such an installation)", via, marker),
-			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on", firebaseProjectIDWord(lc.GCPProject))}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on", firebaseProjectIDWord(lc.GCPProject)) + adoptOwnFirebaseProject(lc)}}
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s cannot be told apart: %s", marker, oneLine(string(raw))),
-			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself", firebaseProjectIDWord(lc.GCPProject))}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself", firebaseProjectIDWord(lc.GCPProject)) + adoptOwnFirebaseProject(lc)}}
 	}
 	if gen > rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
@@ -2901,7 +2916,7 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if gen < rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, below the generation %d this Fugaro's credentials rules carry: the deployed document predates the credentials family, so a cascade run's first recorded credential is refused and the run halts", marker, gen, rules.CredsRulesVersion),
-			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation", firebaseProjectIDWord(lc.GCPProject))}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation", firebaseProjectIDWord(lc.GCPProject)) + adoptOwnFirebaseProject(lc)}}
 	}
 	return nil
 }

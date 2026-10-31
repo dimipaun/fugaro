@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -1597,5 +1598,71 @@ func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
 	doctorPolicyRig(t, doctorPolicy(nil), "")
 	if c, ok := doctorChecksByID(t)["creds-rules"]; ok {
 		t.Fatalf("doctor reported creds-rules with the cascade off: %+v", c)
+	}
+}
+
+// TestDoctorFixesSayHowToGetPastAForeignFirebaseProject: the doctor lines whose
+// remedy is `fugaro update --firebase-project <the installation's own GCP
+// project>` are printed for every installation in the state they report,
+// including the legacy one whose config records *another* Firebase project in
+// budget.firebase_project. That is exactly the config the command refuses
+// (checkFirebaseProject: one Fugaro project has one Firebase project), before
+// it reads or writes anything — so a line that stopped at the command would
+// name a remedy that cannot run for the installation it is about, and the
+// person is left with a refusal and the node still wrong. Each of those lines
+// carries the move that comes first: the two config values to drop.
+func TestDoctorFixesSayHowToGetPastAForeignFirebaseProject(t *testing.T) {
+	cascadeOn := func(p *projectpolicy.Policy) {
+		p.Routing = &projectpolicy.Routing{Claude: &projectpolicy.ClaudeRoute{Via: projectpolicy.RouteCascade}}
+	}
+	arms := []struct {
+		name  string
+		build func(t *testing.T) map[string]doctorCheck
+	}{
+		{"no budget backend", func(t *testing.T) map[string]doctorCheck {
+			newDoctorRig(t)
+			return doctorChecksByID(t)
+		}},
+		{"a rules marker that is not a number", func(t *testing.T) map[string]doctorCheck {
+			_, db := doctorPolicyRig(t, doctorPolicy(cascadeOn), "")
+			db.Set(projectpolicy.PathRulesMarker(), "four")
+			return doctorChecksByID(t)
+		}},
+		{"a rules marker no deploy writes", func(t *testing.T) map[string]doctorCheck {
+			_, db := doctorPolicyRig(t, doctorPolicy(cascadeOn), "")
+			db.Set(projectpolicy.PathRulesMarker(), -1)
+			return doctorChecksByID(t)
+		}},
+	}
+	for _, arm := range arms {
+		t.Run(arm.name, func(t *testing.T) {
+			named := 0
+			for _, c := range arm.build(t) {
+				if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
+					continue
+				}
+				named++
+				for _, want := range []string{"budget.firebase_project", "budget.rtdb_url"} {
+					if !strings.Contains(c.Fix, want) {
+						t.Errorf("the fix of %s names the command a config recording another Firebase project is refused by, and not the way past it (%s missing): %+v", c.ID, want, c)
+					}
+				}
+			}
+			if named == 0 {
+				t.Fatal("no check in this state names `fugaro update --firebase-project`: the arm exercises nothing")
+			}
+		})
+	}
+	// The tail itself, in the two shapes a config puts the project in: the id,
+	// and nothing recorded at all — a fix must never print the flag with no
+	// value after it, whatever it is handed.
+	for _, tc := range []struct{ gcp, want string }{
+		{"proj-1234", "fugaro update --firebase-project proj-1234"},
+		{"", "fugaro update --firebase-project <gcp-project-id>"},
+	} {
+		tail := adoptOwnFirebaseProject(&localcfg.Config{GCPProject: tc.gcp})
+		if !strings.Contains(tail, tc.want) {
+			t.Errorf("adoptOwnFirebaseProject(%q) does not print %q: %q", tc.gcp, tc.want, tail)
+		}
 	}
 }
