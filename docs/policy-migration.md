@@ -49,6 +49,15 @@ deleting it:
    flight stops the write unless `--yes` is passed, exactly as `publish
    --delete` does with it).
 
+A project policy is read under a deployed security rules generation, so the
+migration's write is gated on it (`requirePolicyRules`): the same run deploys
+the generation this Fugaro carries **before** the write — `fugaro update`'s
+rules stage, and `fugaro upgrade`'s rules step, both of them one deploy of one
+document — so an installation whose deployed rules predate the policy model
+reaches the node with the one command, instead of meeting the gate and being
+sent to a second one. A node already at this version is left alone whatever the
+deployed rules are.
+
 `fugaro upgrade --check` does not read the node at all: the node lives in the
 project's Realtime Database and reading it needs credentials, and `--check`'s
 own promise is that it makes no cloud call. It says the policy step cannot tell
@@ -61,10 +70,13 @@ Fugaro, then run `fugaro update` again, so the newer binary that knows them
 does the migration.
 
 Two refusals stay put on purpose. A coding agent's session never writes the
-policy (every cloud write of this CLI is the operator's, in their own terminal).
-And a concurrent writer — a publish landing between the read and the write —
-makes the write fail rather than overwrite: the operator confirmed a diff of a
-node that is no longer there.
+policy (every cloud write of this CLI is the operator's, in their own terminal):
+`fugaro update` there exits 1 with the checkout left for the user, and
+`fugaro upgrade`'s rules and policy steps are skipped, each naming the command
+to run in their own terminal — an expected exit, not a failure. And a
+concurrent writer — a publish landing between the read and the write — makes
+the write fail rather than overwrite: the operator confirmed a diff of a node
+that is no longer there.
 
 ## When `--delete` is still the answer
 
