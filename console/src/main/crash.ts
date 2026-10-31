@@ -234,6 +234,14 @@ const IDENTIFIER_RE = /^[A-Za-z_$][\w$.<>[\]]{0,128}$/
  * somebody's disk. */
 const PACKED_ROOT = 'app.asar/'
 
+/** PACKED_SEGMENT is PACKED_ROOT as a whole path segment: the marker with the
+ * separator that has to precede it. `app.asar` is a directory *name*, so a
+ * directory whose name merely ends in it -- `/tmp/<x>-app.asar/` -- is a
+ * directory on somebody's disk rather than the archive, and a search that finds
+ * the marker anywhere inside a segment cuts at the wrong place and puts the
+ * next directory on the wire. */
+const PACKED_SEGMENT = `/${PACKED_ROOT}`
+
 /** HOME_PATH_RE is a path that names a home directory, on any platform this
  * console runs on and in any case it is spelled in. It is checked on what is
  * *left* after the app root comes off, because the root itself is a path on the
@@ -287,16 +295,34 @@ function withoutScheme(source: string): string | null {
   return null
 }
 
+/** CONTROL_RE is the characters a file name never carries and a reader always
+ * obeys: a newline, a carriage return, a NUL, a tab, a delete. A control
+ * character is not a separator any two readers agree on -- `x\nhome/<x>/secret.js`
+ * is one segment to `HOME_PATH_RE` and two to a log line, a terminal or a
+ * decoder -- so one inside a path is a way past the check below rather than part
+ * of a name. */
+const CONTROL_RE = /[\x00-\x1f\x7f]/
+
+/** QUERY_MARKERS are where a URL's query and its fragment begin, and neither is
+ * part of a file's name: `x.js?token=<x>` is a file name with a credential after
+ * it. They are refused rather than trimmed at, because the SDK that built the URL
+ * may itself have cut the path at the marker -- so what is left before it can be
+ * a name the frame never had, and a wrong name is not safer than no name. */
+const QUERY_MARKERS: readonly string[] = ['?', '#']
+
 /** unplaceable is the last gate a cut path passes, and it is the one the app root
  * cannot stand in for: cutting a prefix off is not a check, so a path that
  * reached under the root and then walked back out of it -- `/opt/console/../../x`
  * -- leaves a relative path pointing outside the app. What is refused here is
  * every way such a path is still *about* somewhere: a `..` segment, a leading
  * `~`, a colon or a percent-escape that another reader would decode into a
- * separator, and the empty string, which is a path with no name in it at all. */
+ * separator, a query or a fragment marker, a control character, and the empty
+ * string, which is a path with no name in it at all. */
 function unplaceable(rest: string): boolean {
   if (rest === '' || rest.startsWith('~')) return true
   if (rest.includes(':') || rest.includes('%')) return true
+  if (CONTROL_RE.test(rest)) return true
+  if (QUERY_MARKERS.some((marker) => rest.includes(marker))) return true
   return rest.split('/').includes('..')
 }
 
@@ -318,9 +344,9 @@ function appRelative(source: string, appRoot: string): string {
   if (root !== '' && path.startsWith(`${root}/`)) rest = path.slice(root.length + 1)
   else rest = null
   if (rest === null) {
-    const packed = path.lastIndexOf(PACKED_ROOT)
+    const packed = path.lastIndexOf(PACKED_SEGMENT)
     if (packed === -1) return EXTERNAL
-    rest = path.slice(packed + PACKED_ROOT.length)
+    rest = path.slice(packed + PACKED_SEGMENT.length)
   } else if (rest.startsWith(PACKED_ROOT)) {
     // The archive sits inside the root once the app is packaged, and everything
     // before it -- the resources directory -- is a path on somebody's disk.
@@ -353,15 +379,20 @@ function scrubName(name: unknown, fallback: string): string | undefined {
  * `EXTERNAL`, the same word a frame outside the app gets, rather than a frame
  * dropped from the middle and a stack that no longer reads as itself. A value
  * that is not a frame is not one this module declined to place: it is not a
- * frame at all, and it is dropped by `scrubValue` before it reaches here. */
+ * frame at all, and it is dropped by `scrubValue` before it reaches here.
+ *
+ * The position is kept only when it is a *finite* number: `NaN` and the
+ * infinities are not positions a file has, and JSON writes every one of them as
+ * `null` -- a value the processor would have to read as a position it was never
+ * given. */
 function scrubFrame(frame: CrashFrame, appRoot: string): ScrubbedFrame {
   const source = frameSource(frame)
   const name = scrubName(frame.function, ANONYMOUS)
   return {
     filename: source === null ? EXTERNAL : appRelative(source, appRoot),
     ...(name === undefined ? {} : { function: name }),
-    ...(typeof frame.lineno === 'number' ? { lineno: frame.lineno } : {}),
-    ...(typeof frame.colno === 'number' ? { colno: frame.colno } : {}),
+    ...(typeof frame.lineno === 'number' && Number.isFinite(frame.lineno) ? { lineno: frame.lineno } : {}),
+    ...(typeof frame.colno === 'number' && Number.isFinite(frame.colno) ? { colno: frame.colno } : {}),
     ...(typeof frame.in_app === 'boolean' ? { in_app: frame.in_app } : {}),
   }
 }
@@ -400,29 +431,71 @@ function scrubValue(
  * shape its type claims is one of the things a library hands over. An event that
  * is not an object is an empty event, and a bad value inside one is dropped at
  * the level it is bad at -- so a report missing its exception is still a report,
- * and nothing that was not read is passed on. */
+ * and nothing that was not read is passed on.
+ *
+ * The reads below are guarded by a `catch` as well as by their own checks,
+ * because "an object of the shape its type claims" is not a promise this module
+ * can keep on its own: the event is a library's object, and a property of one can
+ * be a getter that throws -- a `Proxy`, a class with a throwing accessor -- so
+ * the guard that makes each read safe is the wrong shape for that case. An event
+ * that throws anywhere is the empty event, since a field read past a throwing
+ * sibling is a field this module cannot claim it checked. */
 export function scrubCrashEvent(event: CrashEvent | null | undefined, appRoot: string): ScrubbedCrashEvent {
-  if (event === null || event === undefined || typeof event !== 'object') return {}
-  const values = event.exception?.values
-  if (!Array.isArray(values)) return scrubFields(event)
-  const kept: ScrubbedExceptionValue[] = []
-  for (const value of values) {
-    const scrubbed = scrubValue(value, appRoot)
-    if (scrubbed !== null) kept.push(scrubbed)
+  try {
+    if (event === null || event === undefined || typeof event !== 'object') return {}
+    const values = event.exception?.values
+    if (!Array.isArray(values)) return scrubFields(event)
+    const kept: ScrubbedExceptionValue[] = []
+    for (const value of values) {
+      const scrubbed = scrubValue(value, appRoot)
+      if (scrubbed !== null) kept.push(scrubbed)
+    }
+    return { ...scrubFields(event), exception: { values: kept } }
+  } catch {
+    return {}
   }
-  return { ...scrubFields(event), exception: { values: kept } }
 }
+
+/** EVENT_ID_RE is the one shape an event id has: 32 lower-case hexadecimal
+ * characters, which is what the reporter's own generator writes. An id is not
+ * read by this module and not by the processor -- it is a de-duplication key --
+ * so a string that is not that shape is a string from somewhere else, and the
+ * field is dropped rather than sent with a value the service would index. */
+const EVENT_ID_RE = /^[0-9a-f]{32}$/
+
+/** PLATFORM_RE is the shape the platform field has: the one lowercase word the
+ * reporter writes (`node`, `javascript`). A longer or punctuated string is a
+ * sentence, a path or a token -- every one of them a value that got into the
+ * field rather than a platform this report runs on. */
+const PLATFORM_RE = /^[a-z]{1,16}$/
+
+/** RELEASE_RE is the shape this console's release string has: letters, digits,
+ * dots, hyphens and the `+` a build's metadata carries, bounded at 64. The
+ * underscore is left out on purpose -- it is the character a forge's personal
+ * access token and an npm automation token both carry in their prefix, so a
+ * release-shaped string with one in it is a credential that reached the field
+ * rather than a version. */
+const RELEASE_RE = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$/
 
 /** scrubFields is the event-level allow-list, apart from the exception: what
  * every field above reads is a string or a number the reporter wrote, and a field
  * that is anything else is dropped by the same rule as one this type never
- * named. */
+ * named. The three string fields are held to their own shapes as well as to being
+ * strings, because "a string the reporter wrote" is the assumption an allow-list
+ * may not make: the value arrives from a library, and a library that was handed a
+ * path, a token or a sentence puts it in whichever field is nearest. */
 function scrubFields(event: CrashEvent): ScrubbedCrashEvent {
   return {
-    ...(typeof event.event_id === 'string' ? { event_id: event.event_id } : {}),
+    ...(typeof event.event_id === 'string' && EVENT_ID_RE.test(event.event_id)
+      ? { event_id: event.event_id }
+      : {}),
     ...(typeof event.timestamp === 'number' ? { timestamp: event.timestamp } : {}),
-    ...(typeof event.platform === 'string' ? { platform: event.platform } : {}),
+    ...(typeof event.platform === 'string' && PLATFORM_RE.test(event.platform)
+      ? { platform: event.platform }
+      : {}),
     ...(LEVELS.includes(event.level as CrashLevel) ? { level: event.level as CrashLevel } : {}),
-    ...(typeof event.release === 'string' ? { release: event.release } : {}),
+    ...(typeof event.release === 'string' && RELEASE_RE.test(event.release)
+      ? { release: event.release }
+      : {}),
   }
 }

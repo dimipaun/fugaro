@@ -16,6 +16,17 @@
 //     not a boolean.** The default the console ships, and the safe direction
 //     for a file nobody moved: an operator who hand-edited it keeps their edit
 //     and gets one constant line, and the console never deletes or repairs it.
+//     **Opened with `O_NOFOLLOW` and `O_NONBLOCK`, and the descriptor
+//     `fstat`ed before a byte is read**: the kernel refuses a symlink at the
+//     name (ELOOP) rather than resolving it, a FIFO cannot make the open wait
+//     for a writer that is never coming, and the regular-file and length rules
+//     are asked of the very object the read returns -- one `open` rather than a
+//     name looked at and then opened, which is two questions a name can answer
+//     differently. A symlink, a directory or a FIFO is the same refusal as a
+//     malformed one, so no name in this directory can be made to point the read
+//     elsewhere or to block it. The line is one per file per process, because
+//     the gate reads this switch before every check, every prompt and every
+//     install.
 //   - **atomic, and only on a change.** The document goes to a fresh temporary
 //     file and a rename publishes it, exactly as `installations.json` does, and
 //     a write whose value is already the file's is no write at all.
@@ -27,7 +38,7 @@
 //     and the toggle under plain Node.
 
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { UpdateController } from './updates'
@@ -50,6 +61,28 @@ export const UPDATES_DIR_MODE = 0o700
  * and the answer -- automatic checks stay on -- does not depend on it. */
 export const UPDATES_FILE_UNREADABLE = 'the console could not read its update setting, so automatic checks stay on'
 
+/** UPDATES_SWITCH_UNWRITTEN is the one line a write that did not land is worth,
+ * for the reason the line above is one: the failure is the filesystem's, this
+ * module names no path and repeats no error text, and what it means to the
+ * operator -- the switch did not move -- is the same sentence either way. */
+export const UPDATES_SWITCH_UNWRITTEN = 'the console could not write its update setting, so the switch did not move'
+
+/** UPDATES_FILE_MAX_BYTES is the longest file that can still be the setting:
+ * `false` plus the newline a hand editor leaves is six bytes, and the whole
+ * document is one boolean, so anything longer is not this console's own file
+ * and is refused by its length rather than parsed. */
+export const UPDATES_FILE_MAX_BYTES = 8
+
+/** UPDATES_READ_FLAGS is how the switch is opened: read-only, `O_NOFOLLOW`, so
+ * the kernel answers ELOOP for a name that is a symlink instead of resolving it
+ * to whatever it points at, and `O_NONBLOCK`, so a FIFO is opened rather than
+ * waited on -- a read-only open of a FIFO blocks until a writer appears, and
+ * the writer of a name like this one is never coming. A platform that does not
+ * define one of the flags contributes nothing to the mask: `undefined` in a
+ * bitwise or is zero, and there the regular-file rule below is the whole of the
+ * refusal. */
+export const UPDATES_READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+
 /** UpdatesFs is `node:fs` as this module uses it, and nothing more. Every call
  * is here so the tests can hold the mode, the atomic rename and the "only on a
  * change" rule against a filesystem that records what it was asked to do. */
@@ -57,7 +90,17 @@ export interface UpdatesFs {
   mkdir(path: string, options: { readonly recursive: true; readonly mode: number }): void
   writeFile(path: string, data: string, options: { readonly flag: 'wx'; readonly mode: number }): void
   rename(from: string, to: string): void
-  readFile(path: string): string
+  /** open is `open`, and it is the only way this module reaches the switch for
+   * reading: the flags decide what a name is allowed to be, and the descriptor
+   * it answers is what everything below is asked about. */
+  open(path: string, flags: number): number
+  /** fstat answers about the descriptor the open returned, not about the name
+   * again: there is one object behind both calls, so nothing can be put at that
+   * name in between the rules and the read. `isFile` is the regular-file rule
+   * and `size` is what bounds the read below. */
+  fstat(handle: number): { readonly isFile: () => boolean; readonly size: number }
+  readFile(handle: number, maxBytes: number): string
+  close(handle: number): void
   unlink(path: string): void
 }
 
@@ -75,39 +118,97 @@ export const nodeUpdatesFs: UpdatesFs = Object.freeze<UpdatesFs>({
   rename: (from, to) => {
     renameSync(from, to)
   },
-  readFile: (path) => readFileSync(path, 'utf8'),
+  open: (path, flags) => openSync(path, flags),
+  fstat: (handle) => fstatSync(handle),
+  readFile: (handle, maxBytes) => {
+    const buffer = Buffer.alloc(maxBytes)
+    const read = readSync(handle, buffer, 0, maxBytes, 0)
+    return buffer.toString('utf8', 0, read)
+  },
+  close: (handle) => {
+    closeSync(handle)
+  },
   unlink: (path) => {
     unlinkSync(path)
   },
 })
 
+/** reported is every path this process has already named its one line for: the
+ * gate reads the switch before every check, every prompt and every install, and
+ * a file nobody is going to repair would be one line per read without it. */
+const reported = new Set<string>()
+
+function reportUnreadable(path: string): void {
+  if (reported.has(path)) return
+  reported.add(path)
+  console.error(UPDATES_FILE_UNREADABLE)
+}
+
 /** readUpdateSwitch answers whether automatic checks are on, read from the file
  * **now**: a hand-edited file, or one another run of the console wrote, is the
  * answer the next ask gets. */
 export function readUpdateSwitch(directory: string, fs: UpdatesFs = nodeUpdatesFs): boolean {
-  let text: string
+  const path = join(directory, UPDATES_FILE_NAME)
+  let handle: number
   try {
-    text = fs.readFile(join(directory, UPDATES_FILE_NAME))
+    handle = fs.open(path, UPDATES_READ_FLAGS)
   } catch (error) {
     // A first run has no file, and that is not worth a line: it is the default
     // the console ships rather than something to report. Everything else -- a
-    // permission, a directory at that name -- is one sentence, and the answer
-    // is the same one.
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.error(UPDATES_FILE_UNREADABLE)
+    // permission, a name this process may not look at, a symlink the kernel
+    // refused with ELOOP -- is one sentence, and the answer is the same one.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') reportUnreadable(path)
     return true
   }
-  let parsed: unknown
   try {
-    parsed = JSON.parse(text) as unknown
-  } catch {
-    console.error(UPDATES_FILE_UNREADABLE)
-    return true
+    // The rules are asked of the descriptor rather than of the name: what is
+    // read below is the object that was opened, so nothing can be put at that
+    // name between the question and the read. The name has to be a regular file
+    // of a boolean's length before anything is read out of it -- a directory or
+    // a FIFO is refused here, and the length rule is the read's cap, because the
+    // document is one boolean and a longer file is not this console's own.
+    let info: { readonly isFile: () => boolean; readonly size: number }
+    try {
+      info = fs.fstat(handle)
+    } catch {
+      reportUnreadable(path)
+      return true
+    }
+    if (!info.isFile() || info.size > UPDATES_FILE_MAX_BYTES) {
+      reportUnreadable(path)
+      return true
+    }
+    let text: string
+    try {
+      text = fs.readFile(handle, UPDATES_FILE_MAX_BYTES)
+    } catch {
+      reportUnreadable(path)
+      return true
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text) as unknown
+    } catch {
+      reportUnreadable(path)
+      return true
+    }
+    if (typeof parsed !== 'boolean') {
+      reportUnreadable(path)
+      return true
+    }
+    return parsed
+  } finally {
+    // Every path above leaves through here, so a refused file is a descriptor
+    // the process does not keep: the gate reads this switch before every check,
+    // every prompt and every install, and a read that leaked one would run the
+    // process out of them.
+    try {
+      fs.close(handle)
+    } catch {
+      /* the answer is already decided; a descriptor that will not close is not
+         a reason to change it */
+    }
   }
-  if (typeof parsed !== 'boolean') {
-    console.error(UPDATES_FILE_UNREADABLE)
-    return true
-  }
-  return parsed
 }
 
 /** writeUpdateSwitch writes the switch, and does nothing at all when the file
@@ -147,8 +248,12 @@ export interface UpdateSettings {
   readonly auto: boolean
   /** setAuto moves the switch, and then the running controller: off stops the
    * timer at once (a download already in flight is refused by the controller's
-   * own gate, which reads this same switch), and on starts it again. */
-  setAuto(on: boolean): void
+   * own gate, which reads this same switch), and on starts it again.
+   *
+   * It answers the value the switch holds **after** the call, read back from
+   * the file: a write that did not land leaves the switch where it was, and the
+   * menu draws this answer rather than the state its checkbox was clicked to. */
+  setAuto(on: boolean): boolean
   /** checkNow is `Check for Updates Now`. A check while the switch is off is
    * refused by that same gate in the controller, so nothing here has to decide
    * it twice. */
@@ -169,13 +274,23 @@ export function createUpdateSettings(options: {
     get auto(): boolean {
       return readUpdateSwitch(options.directory, fs)
     },
-    setAuto(on: boolean): void {
+    setAuto(on: boolean): boolean {
       // The store first: `start()` reads the gate, and the gate is this file.
-      writeUpdateSwitch(options.directory, on, fs)
+      try {
+        writeUpdateSwitch(options.directory, on, fs)
+      } catch {
+        // A write that did not land is one line and nothing else: the switch is
+        // where it was, the controller is left exactly as it is -- a switch that
+        // did not move must not stop or start anything -- and the answer is what
+        // the file says, so the menu is drawn from the real value.
+        console.error(UPDATES_SWITCH_UNWRITTEN)
+        return readUpdateSwitch(options.directory, fs)
+      }
       const controller = options.controller()
-      if (controller === null) return
+      if (controller === null) return on
       if (on) void controller.start()
       else controller.stop()
+      return on
     },
     checkNow(): void {
       void options.controller()?.checkNow()

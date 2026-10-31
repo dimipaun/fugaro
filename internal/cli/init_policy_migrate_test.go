@@ -648,6 +648,89 @@ func TestUpdateMigrationWithoutABitbucketCredentialDerivesNothing(t *testing.T) 
 	}
 }
 
+// currentPolicyNode is a node at the version this Fugaro writes: the state of
+// every installation that already ran a fugaro update of this release.
+func currentPolicyNode() map[string]any {
+	return map[string]any{
+		"version": projectpolicy.Version,
+		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
+	}
+}
+
+// TestUpdateCurrentNodeWithUnderivableBitbucketDoesNotFail: a node already at
+// this version is not migrated, so nothing is derived for it either, and the
+// config's own refusal (an allow_data_to entry the policy's reader rejects,
+// which is what stops a publish) has nothing to refuse here. Before this, the
+// derivation ran for every node and its error failed the policy stage of every
+// fugaro update of an installation whose node was current.
+func TestUpdateCurrentNodeWithUnderivableBitbucketDoesNotFail(t *testing.T) {
+	f := newProjectFixture(t, bitbucketTokenTheNodeCannotRead)
+	f.db.Set(projectpolicy.PathShared(), currentPolicyNode())
+	h := newMigrationRig(t, f, &initOptions{})
+
+	if err := h.check(); err != nil {
+		t.Fatalf("a node already at version %d failed the check over a config only a publish would refuse: %v", projectpolicy.Version, err)
+	}
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("a node already at version %d was not left alone: %v\n%s", projectpolicy.Version, err, out)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+		t.Errorf("the node's version is %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+// TestUpdateMigrationRefusedOnOldRulesMarker: the write is the publisher's, so
+// it holds the publisher's gate — a node written under rules that predate the
+// policy model is a policy no run reads, and the migration refuses it with the
+// publisher's own sentence rather than writing it. The node is left exactly as
+// it was: the refusal is before the diff and the confirmation, so nobody
+// confirms a document they do not get.
+func TestUpdateMigrationRefusedOnOldRulesMarker(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	f.db.Set(projectpolicy.PathRulesMarker(), nil) // the rules a deploy that never ran left: no marker
+	h := newMigrationRig(t, f, &initOptions{})
+
+	err := h.check()
+	if err == nil {
+		t.Fatal("a policy node was migrated under rules that carry no policy marker: every run of the project would read a policy its rules cannot serve")
+	}
+	for _, want := range []string{"predate the policy model", "fugaro update --firebase-project"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if out, err := h.apply(t, true); err == nil {
+		t.Errorf("the migration wrote the node anyway:\n%s", out)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 3 {
+		t.Errorf("the node moved to version %d on a refusal", got)
+	}
+}
+
+// TestUpdateLeavesACurrentNodeAloneWhateverTheRulesAre: the gate is the
+// migration's, not the stage's: a node already at this version is not written,
+// so an installation whose rules are older than the policy model still
+// converges (its rules are what fugaro update --firebase-project and doctor's
+// policy-rules-skew are about, and neither is this stage's to fix).
+func TestUpdateLeavesACurrentNodeAloneWhateverTheRulesAre(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), currentPolicyNode())
+	f.db.Set(projectpolicy.PathRulesMarker(), nil)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	if err := h.check(); err != nil {
+		t.Fatalf("a node already at this version was refused over the deployed rules: %v", err)
+	}
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+		t.Errorf("the node's version is %d, want %d", got, projectpolicy.Version)
+	}
+}
+
 func TestUpdatePolicyMigrationRefusesOverUnknownFields(t *testing.T) {
 	f := newProjectFixture(t, "")
 	node := v3Node(nil)

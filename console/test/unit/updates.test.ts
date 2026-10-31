@@ -962,6 +962,81 @@ describe('after stop(), nothing the client reports is acted on', () => {
   })
 })
 
+describe('a stop() forgets the download it was holding', () => {
+  it('installs nothing for a press whose download a stop() put behind it (U4b)', async () => {
+    // `stop()` is not only the quitting process's: the switch going off stops
+    // this controller and the switch coming back on starts it again, and the
+    // bytes a download left on disk are not the bytes this run chose. A version
+    // that survived the stop is one a later press installs, so the press has to
+    // find nothing here to install.
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { controller, updater, ready } = harness()
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual(['0.120.0'])
+
+    controller.stop()
+    await controller.start()
+    controller.restartRequested('0.120.0')
+    expect(updater.quits).toBe(0)
+    expect(logged.mock.calls).toEqual([
+      ['fugaro console: the restart is refused; the update on disk is not the version the notice named'],
+    ])
+  })
+
+  it('installs nothing for a press the same release downloaded again must not revive (U4c)', async () => {
+    // The deferral is the press's, and a press is about the notice the operator
+    // answered -- not about a version string. The switch going off and on again,
+    // and the same release downloaded again, is a *new* download, and the press
+    // that came before it is not an answer to a notice nobody has seen: only the
+    // clearing at `stop()` keeps the old press from installing it, because
+    // `installable` is the same version again and a deferral left standing
+    // matches it exactly where the flow goes idle.
+    const { controller, updater, ready, setIdle, setSwitch } = harness()
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual(['0.120.0'])
+
+    // A launch is in flight and "Restart to update" is pressed: deferred, not
+    // delivered.
+    setIdle(false)
+    controller.restartRequested('0.120.0')
+    expect(updater.quits).toBe(0)
+
+    setSwitch(false)
+    controller.stop()
+    setSwitch(true)
+    await controller.start()
+
+    // The same release finishes downloading again, and the launch ends.
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    setIdle(true)
+    controller.launchFlowIdle()
+
+    // The notice for the new download is delivered, and nothing is installed:
+    // the press went with the download the stop forgot.
+    expect(ready).toEqual(['0.120.0', '0.120.0'])
+    expect(updater.quits).toBe(0)
+  })
+
+  it('prompts nobody for a download a stop() put behind it (U4b)', async () => {
+    // The prompt is deferred while a launch is in flight, and the stop lands in
+    // between: a flow that goes idle after the controller started again must not
+    // deliver a notice about a download that is no longer this policy's.
+    const { controller, updater, ready, setIdle } = harness()
+    setIdle(false)
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual([])
+
+    controller.stop()
+    setIdle(true)
+    await controller.start()
+    controller.launchFlowIdle()
+    expect(ready).toEqual([])
+  })
+})
+
 describe('a failure is one line and a retry', () => {
   it('swallows a listing failure, names no host and no query, and checks again on the next tick', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
