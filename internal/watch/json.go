@@ -37,9 +37,15 @@ type JSONTotal struct {
 	// leased, and it is *leased, not yet spent* rather than "live leases" --
 	// the sweeper never releases (internal/budget/sweep.go), so a crashed
 	// run's lease stays in the figure for the rest of the (UTC) day.
-	LeasedUSD   float64   `json:"leased_usd"`
-	DailyCapUSD *float64  `json:"daily_cap_usd"`
-	Percent     *float64  `json:"percent"`
+	LeasedUSD   float64  `json:"leased_usd"`
+	DailyCapUSD *float64 `json:"daily_cap_usd"`
+	Percent     *float64 `json:"percent"`
+	// MaxParallel is the concurrent-run cap the launcher enforces
+	// (checkMaxParallel, internal/cli/run.go): the selected config's own
+	// max_parallel, which no budget node holds. Null means unknown -- a reader
+	// drawing a cap bar must show no cap rather than a guessed one, and the
+	// engine's default (20) is a cap no config named.
+	MaxParallel *int      `json:"max_parallel"`
 	Burn        JSONBurn  `json:"burn"`
 	Kill        *JSONKill `json:"kill"`
 	Runs        int       `json:"runs"`

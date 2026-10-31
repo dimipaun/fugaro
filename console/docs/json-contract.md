@@ -161,6 +161,7 @@ permission refusal, which `watchStream` emits once and then returns `dbErr`
 | `leased_usd` | float64 | USD | no | measured — **`BuildJSON` writes it**, so it is always present and `0` when nothing is leased (the console still reads it as optional, for a CLI older than the release that added it). The **outstanding** leased dollars: `counted_usd − spent_usd`, floored at zero (`watch.LeasedUSD`, `internal/watch/json.go`), where `max_reserve_usd` (§3) is the **ceiling** on one lease. The label is *leased, not yet spent*, never "live leases": the sweeper never releases a lease (`internal/budget/sweep.go`), so a crashed run's stays in the figure for the rest of the day |
 | `daily_cap_usd` | `*float64` | USD | no | **null = unavailable** (no cap set) |
 | `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`) |
+| `max_parallel` | `*int` | count | no | **null = unknown** — the concurrent-run cap a launch is checked against (`checkMaxParallel`, `internal/cli/run.go`), which is the selected config's `max_parallel` and no budget node's, so it is set in `internal/cli/watch.go` (`maxParallelOf`) rather than by `BuildJSON`. A config that names no cap leaves it null — never `0`, which a cap bar would draw as a limit of none, and never the engine's default 20, a cap no config named. The console's concurrent-runs bar reads it: `n/a`, never a full bar, when it is unknown |
 | `burn` | `JSONBurn` | — | no | see below |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
 | `runs` | int | count | no | measured |
