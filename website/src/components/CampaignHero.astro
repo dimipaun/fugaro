@@ -80,6 +80,7 @@
  * states and no page types a colour of its own.
  */
 import CampaignHeroArt from './CampaignHeroArt.astro'
+import CampaignIcon from './CampaignIcon.astro'
 import type { Screen } from '../content.ts'
 
 interface Props {
@@ -115,8 +116,12 @@ const { headline, supportingLine, tone, calendlyURL, art, screenshot } = Astro.p
   <div class="campaign-hero-body">
     <div class="campaign-hero-copy">
       <p class="campaign-hero-line">{supportingLine}</p>
+      {/* The first screen's one action, and the same booking the closing band offers: the same
+          link, and the same calendar mark beside the same words (`CampaignIcon.astro`), so the
+          two actions a page offers are one control a reader meets twice rather than two
+          buttons that happen to share a label. */}
       <p class="campaign-hero-action">
-        <a class="campaign-hero-button" href={calendlyURL}>Book a demo</a>
+        <a class="campaign-hero-button" href={calendlyURL}><CampaignIcon name="calendar" />Book a demo</a>
       </p>
     </div>
     {/* One picture and no second one: the screen the variant named, or the drawing when it named
@@ -201,6 +206,9 @@ const { headline, supportingLine, tone, calendlyURL, art, screenshot } = Astro.p
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    /* The calendar mark and the label are one row, spaced by the layout rather than by a margin
+       on the icon — the same pair the closing band's booking is. */
+    gap: var(--space-xs);
     box-sizing: border-box;
     min-height: 56px;
     padding: 0 var(--space-xl);
@@ -292,6 +300,27 @@ const { headline, supportingLine, tone, calendlyURL, art, screenshot } = Astro.p
       transition:
         background-color var(--duration-fast) var(--ease-out),
         transform var(--duration-fast) var(--ease-out);
+    }
+
+    /* The calendar mark travels with the plate it sits on, the 2 px lift and nudge the closing
+       band's booking answers a pointer with: the first screen's action and the last one are the
+       same booking, so they answer the same way (`CampaignCalls.astro`). */
+    .campaign-hero-button :global(.campaign-icon) {
+      transition: transform var(--duration-fast) var(--ease-out);
+    }
+
+    /* `:not(:active)` for the same reason the closing band's rules carry it: the press below is
+       this rule's sibling at the same specificity, and a mouse press is `:hover` and `:active` at
+       once — without the exclusion the lift would answer it and the press would read as nothing
+       (`CampaignCalls.astro`). */
+    @media (hover: hover) and (pointer: fine) {
+      .campaign-hero-button:hover:not(:active) {
+        transform: translateY(-2px);
+      }
+
+      .campaign-hero-button:hover:not(:active) :global(.campaign-icon[data-icon='calendar']) {
+        transform: translateY(-2px);
+      }
     }
 
     .campaign-hero-line,

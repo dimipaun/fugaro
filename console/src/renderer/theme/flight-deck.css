@@ -2266,3 +2266,389 @@ span.spend-cap-at-cap {
   color: var(--warn-text);
   font-size: var(--font-size-xs);
 }
+
+/* ---- Projects (console redesign, step 5) ----------------------------------
+ *
+ * The caps, the switches, the repositories, the jobs and the two cards the
+ * console cannot read at all (`console/src/renderer/screens/projects.ts`). The
+ * old `screens.css` blocks for this screen are gone with the markup that met
+ * them: the caps and the jobs are tables now, the switches are rows, and the
+ * repositories are three cards.
+ *
+ * **One tone per fact, and the word always beside it** (styling design section
+ * 3.5): the killed row's ground is `--danger-tint` and its border is
+ * `--danger`, the seen-and-uncapped card is `--warn-tint` and says "Running with
+ * no cap row.", and no rule here paints a state the reader cannot also read.
+ * The killed row's banner keeps the `--halted` word `screens.css` gives it: a
+ * kill is a deliberate stop and not a failure, which is what `--halted` is for.
+ *
+ * **The locked cards are dashed, and they are the only dashed panels on this
+ * screen** (design section 2.9's `not-built` row): a card the console has no
+ * command for is a placeholder, and the dash is the shape that says so without
+ * inventing a word for a state the CLI never reported.
+ * ------------------------------------------------------------------------- */
+
+/* The panel's own state, as the word the reader meets first: `read`, `not read`
+ * or `locked`. Structure and nothing more -- the tone a state carries is the
+ * panel's left rule, and this chip is deliberately neutral so the word is what
+ * a reader is left with when every colour is gone. */
+section.projects-panel span.projects-state {
+  padding: 0 var(--space-2xs);
+  font-size: var(--text-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-chip);
+}
+
+/* A card the CLI has no command for: a dashed box, a little sunken, so it reads
+ * as a place a panel will be rather than as a panel with nothing in it. The
+ * `border-left` rule `screens.css` used to paint this state is deleted with the
+ * old markup: a dashed box and a solid left rule are two ways of saying the
+ * same thing, and only one of them can be the card. */
+section.projects-panel[data-state='not-built'] {
+  background: var(--surface-sunken);
+  border: var(--rule-width) dashed var(--line-strong);
+  color: var(--text-3);
+}
+
+/* ---- The caps table ------------------------------------------------------ */
+
+div.projects-caps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+p.projects-reserve {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3xs);
+  margin: 0;
+}
+
+span.projects-reserve-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+span.projects-reserve-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+table.projects-cap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+table.projects-cap-table th.projects-cap-head {
+  padding: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-3);
+  border-bottom: var(--rule-width) solid var(--line);
+}
+
+table.projects-cap-table th.projects-cap-head:not(:first-child) {
+  text-align: right;
+}
+
+table.projects-cap-table td.projects-cap-cell {
+  padding: var(--space-2xs) var(--space-sm);
+  text-align: right;
+  vertical-align: top;
+}
+
+table.projects-cap-table tr.projects-cap {
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+/* The scope is the row's own name: the two project-wide rows carry the CLI's
+ * word for the scope and a run's row carries the repository, so the word marks
+ * the first two as the rows the others fall back to. */
+table.projects-cap-table th.projects-cap-scope {
+  padding: var(--space-2xs) var(--space-sm);
+  font-weight: 400;
+  text-align: left;
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+table.projects-cap-table tr.projects-cap[data-scope='global'] th.projects-cap-scope,
+table.projects-cap-table tr.projects-cap[data-scope='defaults'] th.projects-cap-scope {
+  font-family: inherit;
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+span.projects-cap-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* The word the CLI gave for where this figure binds (`repo`, `default`,
+ * `global`, `none`) sits under the figure it belongs to, so a reader never has
+ * to line a number up with a column to know what it is. */
+span.projects-cap-source {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--text-3);
+}
+
+/* ---- The switches -------------------------------------------------------- */
+
+ul.projects-kill-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+li.projects-kill-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  padding: var(--space-2xs) var(--space-xs);
+  border: var(--rule-width) solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+/* A repository that is already killed is a row with a **danger tint and a
+ * border**, and the word `KILLED` in the state cell and in the banner: the tone
+ * never travels without it. */
+li.projects-kill-row[data-killed='true'] {
+  background: var(--danger-tint);
+  border-color: var(--danger-border);
+  border-left: 3px solid var(--danger);
+}
+
+span.projects-kill-state {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+li.projects-kill-row[data-killed='true'] span.projects-kill-state {
+  color: var(--danger-text);
+  font-weight: var(--weight-semibold);
+}
+
+li.projects-kill-row span.projects-kill-scope,
+li.projects-kill-row span.projects-kill-repo {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+div.projects-kills div.projects-kill {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+
+/* The two writes the design draws and this release refuses: `Kill` on a live
+ * row, `Revive` on a killed one (`disabledWrite`, `src/renderer/writes.ts`).
+ * They are real buttons -- a keyboard reader meets them and hears why they do
+ * nothing -- and they are painted as a control and not as a figure. */
+button.projects-kill-action,
+button.projects-repo-add {
+  align-self: center;
+  margin-left: auto;
+  padding: var(--space-3xs) var(--space-sm);
+  font: inherit;
+  color: var(--text-3);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--control-border);
+  border-radius: var(--radius-sm);
+  cursor: not-allowed;
+}
+
+/* ---- The three repository cards ------------------------------------------ */
+
+div.projects-repos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+article.projects-repo-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-sm);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-md);
+}
+
+h3.projects-repo-card-title {
+  margin: 0;
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+ul.projects-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+li.projects-repo-both,
+li.projects-only-enrolled-repo,
+li.projects-only-seen-repo {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+p.projects-repo-card-none,
+p.projects-repo-card-note {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-3);
+}
+
+/* The card the screen exists for: a repository running with no cap row. Amber,
+ * and the sentence "Running with no cap row." under its heading carries the
+ * fact on its own -- the tone is the second channel, never the only one. */
+article.projects-repo-card[data-kind='seen'] {
+  background: var(--warn-tint);
+  border-color: var(--warn-border);
+}
+
+article.projects-repo-card[data-kind='seen'] h3.projects-repo-card-title,
+article.projects-repo-card[data-kind='seen'] p.projects-repo-card-note,
+article.projects-repo-card[data-kind='seen'] li.projects-only-seen-repo {
+  color: var(--warn-text);
+}
+
+/* ---- The jobs table ------------------------------------------------------ */
+
+div.projects-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  overflow-x: auto;
+}
+
+table.projects-job-table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+table.projects-job-table th.projects-job-head {
+  padding: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-3);
+  border-bottom: var(--rule-width) solid var(--line);
+}
+
+table.projects-job-table td {
+  padding: var(--space-2xs) var(--space-sm);
+  vertical-align: top;
+}
+
+table.projects-job-table tr.projects-job {
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+table.projects-job-table td.projects-job-run {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+table.projects-job-table td.projects-job-model,
+table.projects-job-table td.projects-job-compute,
+table.projects-job-table td.projects-job-total {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The three accounts are told apart **by the marks the formatter writes into the
+ * cell** -- `~$` for the plan's dollars, `est.` for a figure nobody has billed
+ * yet -- and by nothing else: this table has no reading-state hook to paint, and
+ * a tone inferred from the column would paint a billed model figure like an
+ * estimate. The three cells are monospace and right-aligned so the accounts line
+ * up down the column and are never added. */
+
+/* The conditional MODE column: a cell of its own, so the table keeps its
+ * columns when only some rows carry a rigor block. */
+table.projects-job-table td.projects-job-mode-cell {
+  white-space: nowrap;
+}
+
+p.projects-jobs-note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3xs);
+  margin: 0;
+}
+
+/* ---- Accounts and the secrets inventory --------------------------------- */
+
+ul.projects-account-list,
+ul.projects-secret-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+li.projects-account {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+p.projects-account-none,
+p.projects-secrets-managed {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-3);
+}
+
+span.projects-secret-bound {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  padding-left: var(--space-2xs);
+  border-left: var(--rule-width) solid var(--line-subtle);
+}
+
+span.projects-secret-bound-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}

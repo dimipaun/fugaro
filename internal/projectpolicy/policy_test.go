@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 func TestDecodeAbsentIsNotFound(t *testing.T) {
@@ -918,5 +920,67 @@ func TestDecodeRefusesFoldEqualMemberNames(t *testing.T) {
 	p, found, err := Decode([]byte(`{"version": 4, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"]}, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"]}}}`))
 	if err != nil || !found || p == nil || len(p.Budget.AllowedModels) != 1 || len(p.Routing.Claude.Models) != 1 {
 		t.Fatalf("a correctly spelled node was refused: (%v, %v, %v)", p, found, err)
+	}
+}
+
+// TestReviewFloorDecodeStrict: the owner's review-level floor is the one
+// member of the node that bounds how much review a launcher-written layer may
+// turn off (D722, G1), so a name this Fugaro cannot read is refused rather
+// than dropped — a dropped level is a run reviewing less than the owner
+// required, and the node is hand-writable. It also pins the shape a project
+// with no floor publishes: no member at all, so the node of such a project is
+// what it was before the member existed.
+func TestReviewFloorDecodeStrict(t *testing.T) {
+	p, found, err := Decode([]byte(`{"version": 4, "review_floor": {"pro": ["l2"], "critical": ["l2", "l3"]}}`))
+	if err != nil || !found {
+		t.Fatalf("the correctly spelled floor was refused: %v", err)
+	}
+	want := map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}
+	if !reflect.DeepEqual(p.ReviewFloor, want) {
+		t.Errorf("ReviewFloor = %v, want %v", p.ReviewFloor, want)
+	}
+	if p.UnknownKeys != nil {
+		t.Errorf("review_floor is listed as an unknown key: %v", p.UnknownKeys)
+	}
+
+	for _, tc := range []struct{ name, body, want string }{
+		{"an unknown mode", `{"prod": ["l2"]}`, "is not a rigor mode"},
+		{"a mode in another case", `{"PRO": ["l2"]}`, "is not a rigor mode"},
+		{"an unknown level", `{"pro": ["l4"]}`, "is not a review level"},
+		{"a level in another case", `{"pro": ["L2"]}`, "is not a review level"},
+		{"a repeated level", `{"pro": ["l2", "l2"]}`, "is listed twice"},
+		{"a mode with no level", `{"pro": []}`, "a floor with no level in it says nothing"},
+		{"a mode named twice", `{"pro": ["l2"], "pro": ["l3"]}`, "names \"pro\" twice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(`{"version": 4, "review_floor": ` + tc.body + `}`))
+			if err == nil || p != nil || !found || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Decode = (%v, %v, %v), want a refusal naming %q", p, found, err, tc.want)
+			}
+		})
+	}
+
+	// A written empty block is no floor, and a policy that sets none marshals
+	// no member: the publisher writes this struct, so the member's absence is
+	// what keeps a floorless project's node byte for byte what it was.
+	empty, found, err := Decode([]byte(`{"version": 4, "review_floor": {}}`))
+	if err != nil || !found || len(empty.ReviewFloor) != 0 {
+		t.Fatalf("Decode({\"review_floor\": {}}) = (%v, %v, %v), want no floor", empty, found, err)
+	}
+	for _, raw := range []string{`{"version": 4}`, `{"version": 4, "review_floor": null}`} {
+		q, _, err := Decode([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if q.ReviewFloor != nil {
+			t.Errorf("Decode(%s).ReviewFloor = %v, want nil", raw, q.ReviewFloor)
+		}
+		b, err := json.Marshal(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "review_floor") {
+			t.Errorf("a policy with no floor marshals one: %s", b)
+		}
 	}
 }

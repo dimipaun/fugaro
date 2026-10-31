@@ -104,6 +104,9 @@ func main() {
 	}
 	upstream := envOr("CHK190_UPSTREAM", "https://bitbucket.org")
 	stallPrefix := os.Getenv("CHK190_STALL_PREFIX")
+	if !validStallPrefix(stallPrefix) {
+		log.Fatalf("chk190: CHK190_STALL_PREFIX is %q and it must be empty or start and end with '/': the slow route's prefix is stripped off the request path before the request is forwarded, so one without both separators takes one of them with it and the upstream is asked for a path that is not there", stallPrefix)
+	}
 	stallSeconds, err := strconv.Atoi(os.Getenv("CHK190_STALL_SECONDS"))
 	if err != nil || stallSeconds < 0 {
 		stallSeconds = 0
@@ -158,10 +161,12 @@ func serveProxy(w http.ResponseWriter, r *http.Request, client *http.Client, ups
 	// that receive-pack POST open for the configured time before it reads it,
 	// which is what makes a push slow rather than large. The prefix is stripped
 	// for every method, so the same path reaches Bitbucket either way, and only
-	// the POST is held.
+	// the POST is held. upstreamPath keeps the separator the prefix ends with:
+	// without it the request is forwarded to the upstream plus a path with no
+	// leading "/", which is not a URL and never reaches Bitbucket.
 	stalled := 0
 	if stallPrefix != "" && strings.HasPrefix(path, stallPrefix) {
-		path = strings.TrimPrefix(path, stallPrefix)
+		path = upstreamPath(path, stallPrefix)
 		if r.Method == http.MethodPost && stallSeconds > 0 {
 			stalled = stallSeconds
 			time.Sleep(time.Duration(stallSeconds) * time.Second)
@@ -246,6 +251,29 @@ func serveProxy(w http.ResponseWriter, r *http.Request, client *http.Client, ups
 		f.Flush()
 	}
 	_, _ = io.Copy(wout, resp.Body)
+}
+
+// upstreamPath is the path the request is forwarded with: the slow route's
+// prefix off, and the separator that follows it — the one the prefix ends with —
+// left in place. Without it the upstream URL is the upstream plus a path with no
+// leading "/" ("https://bitbucket.org" + "workspace-a/repo-a.git"), which is not
+// a URL: the request never reaches Bitbucket and the proxy answers its own 502
+// instead, which is what the check's live run of 2026-10-30 saw on its slow
+// endpoint after 0 s. A prefix the check would never deploy — one without both
+// separators — is not a prefix this proxy strips at all, so a misconfigured one
+// cannot eat a separator either.
+func upstreamPath(path, stallPrefix string) string {
+	if !validStallPrefix(stallPrefix) || !strings.HasPrefix(path, stallPrefix) {
+		return path
+	}
+	return "/" + strings.TrimPrefix(path, stallPrefix)
+}
+
+// validStallPrefix: no slow route at all (empty), or a prefix with both
+// separators. Anything else is refused at startup rather than silently mangling
+// the path of every request that carries it.
+func validStallPrefix(prefix string) bool {
+	return prefix == "" || (strings.HasPrefix(prefix, "/") && strings.HasSuffix(prefix, "/"))
 }
 
 // callerCredential is a header that carries the caller's own identity token:
