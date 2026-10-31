@@ -23,6 +23,6 @@ followup:
     - person-1
 
 # budget:
-#   max_usd: 20
+#   max_runs: 20
 budget:
-  max_usd: 5
+  max_runs: 5

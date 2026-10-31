@@ -41,9 +41,9 @@ func renderKey(key string) string {
 // trimmed string — and returns the tag YAML gives it.
 //
 // The tag is returned rather than required to be a string because the settings
-// this package edits decide their own types: `max_usd: 5` is how the schema
-// spells a number, and a writer that quoted it would leave the file unloadable
-// for the run that reads it next. A value whose plain form would read as
+// this package edits decide their own types: `retries: 5` is how a schema spells
+// a number, and a writer that quoted it would leave the file unloadable for the
+// run that reads it next. A value whose plain form would read as
 // something other than this text — `#x` is a comment, `a: b` is a mapping, `- x`
 // is a sequence, ` pro` would lose its space — is quoted instead. A tab is
 // quoted too, so that no value can ever look like indentation.

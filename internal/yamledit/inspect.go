@@ -311,7 +311,14 @@ func (d *doc) emptyValue(v *yaml.Node) (bool, error) {
 		return false, err
 	}
 	end := d.lines.contentEnd(d.lines.lineOf(off))
-	return strings.TrimSpace(string(plainComment(d.src[off:end]))) == "", nil
+	rest := d.src[off:end]
+	if len(rest) > 0 && (rest[0] == '!' || rest[0] == '&') {
+		// A tag or an anchor sits where the value goes, so these are not the
+		// spaces of a key written with nothing after it, and filling the value
+		// in here would drop what is written on it.
+		return false, nil
+	}
+	return strings.TrimSpace(string(plainComment(rest))) == "", nil
 }
 
 // plainComment cuts a line's text where a comment starts.

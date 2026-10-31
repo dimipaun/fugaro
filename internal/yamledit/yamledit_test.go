@@ -107,16 +107,16 @@ func TestSetScalarQuotesOnlyWhenYAMLNeedsIt(t *testing.T) {
 
 // TestSetScalarWritesAValueTheWayTheSchemaSpellsIt states the consequence of the
 // quoting rule: the package writes settings, and the type each setting has is the
-// document's business, not this package's. A `max_usd` written as `"5"` would be
+// document's business, not this package's. A `max_runs` written as `"5"` would be
 // a file the next run cannot load.
 func TestSetScalarWritesAValueTheWayTheSchemaSpellsIt(t *testing.T) {
 	for _, tc := range []struct{ name, doc, value, want string }{
-		{"a number over a number", "max_usd: 5\n", "9", "max_usd: 9\n"},
+		{"a number over a number", "max_runs: 5\n", "9", "max_runs: 9\n"},
 		{"a number over a string", "a: pro\n", "9", "a: 9\n"},
 		{"a boolean over a string", "a: pro\n", "true", "a: true\n"},
 		{"a string over a string", "a: pro\n", "standard", "a: standard\n"},
-		{"a number written as a number", "max_usd: 5\n", "5", "max_usd: 5\n"},
-		{"a float over an integer", "max_usd: 5\n", "5.5", "max_usd: 5.5\n"},
+		{"a number written as a number", "max_runs: 5\n", "5", "max_runs: 5\n"},
+		{"a float over an integer", "max_runs: 5\n", "5.5", "max_runs: 5.5\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := yamledit.SetScalar([]byte(tc.doc), []string{strings.SplitN(tc.want, ":", 2)[0]}, tc.value)
@@ -162,8 +162,8 @@ func TestSetScalarCreatesMissingMappingsAtTheParentsIndentation(t *testing.T) {
 		{
 			"a new top-level key",
 			"project: workspace-a\n",
-			[]string{"budget", "max_usd"}, "5",
-			"project: workspace-a\nbudget:\n  max_usd: 5\n", 5,
+			[]string{"budget", "max_runs"}, "5",
+			"project: workspace-a\nbudget:\n  max_runs: 5\n", 5,
 		},
 		{
 			"the indentation the document already uses",
@@ -275,20 +275,20 @@ func TestSetScalarIsANoOpWhenTheValueIsAlreadyThere(t *testing.T) {
 
 func TestSetScalarOnAnEmptyOrCommentOnlyDocument(t *testing.T) {
 	for _, tc := range []struct{ name, doc, want string }{
-		{"empty", "", "budget:\n  max_usd: 5\n"},
-		{"no trailing break", "# header", "# header\nbudget:\n  max_usd: 5\n"},
-		{"comment only", "# header\n", "# header\nbudget:\n  max_usd: 5\n"},
-		{"blank lines only", "\n\n# header\n", "\n\n# header\nbudget:\n  max_usd: 5\n"},
+		{"empty", "", "budget:\n  max_runs: 5\n"},
+		{"no trailing break", "# header", "# header\nbudget:\n  max_runs: 5\n"},
+		{"comment only", "# header\n", "# header\nbudget:\n  max_runs: 5\n"},
+		{"blank lines only", "\n\n# header\n", "\n\n# header\nbudget:\n  max_runs: 5\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := yamledit.SetScalar([]byte(tc.doc), []string{"budget", "max_usd"}, "5")
+			got, err := yamledit.SetScalar([]byte(tc.doc), []string{"budget", "max_runs"}, "5")
 			if err != nil {
 				t.Fatalf("SetScalar: %v", err)
 			}
 			if string(got) != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
-			if v := at(t, got, "budget", "max_usd"); v != 5 {
+			if v := at(t, got, "budget", "max_runs"); v != 5 {
 				t.Fatalf("the result reads back %#v, want 5", v)
 			}
 		})
@@ -304,7 +304,7 @@ rigor:
   areas:
     - name: one
 budget:
-  max_usd: 5
+  max_runs: 5
 `
 	const want = `project: workspace-a
 allow_data_to:
@@ -312,7 +312,7 @@ allow_data_to:
 rigor:
   default: standard
 budget:
-  max_usd: 5
+  max_runs: 5
 `
 	got, err := yamledit.RemoveKey([]byte(doc), []string{"rigor", "areas"})
 	if err != nil {
@@ -333,9 +333,9 @@ func TestRemoveKeyTakesTheCommentBlockDirectlyAboveIt(t *testing.T) {
 	const doc = `a: 1
 
 # budget:
-#   max_usd: 20
+#   max_runs: 20
 budget:
-  max_usd: 5
+  max_runs: 5
 `
 	got, err := yamledit.RemoveKey([]byte(doc), []string{"budget"})
 	if err != nil {
@@ -423,8 +423,8 @@ func TestRemoveKeyFromTheFixtureKeepsEveryOtherLine(t *testing.T) {
 		"# Pointed at a person, not at a group.",
 		"    - person-1",
 		"# budget:",
-		"#   max_usd: 20",
-		"  max_usd: 5",
+		"#   max_runs: 20",
+		"  max_runs: 5",
 	} {
 		if !strings.Contains(string(got), kept) {
 			t.Fatalf("%q went missing:\n%s", kept, got)
@@ -608,14 +608,14 @@ func TestRemoveSeqItemByKey(t *testing.T) {
 }
 
 func TestLineEndingsArePreserved(t *testing.T) {
-	lf := "project: workspace-a\nallow_data_to:\n  - owner/repo-a\n# note\nbudget:\n  max_usd: 5\n"
+	lf := "project: workspace-a\nallow_data_to:\n  - owner/repo-a\n# note\nbudget:\n  max_runs: 5\n"
 	crlf := []byte(strings.ReplaceAll(lf, "\n", "\r\n"))
 
-	got, err := yamledit.SetScalar(crlf, []string{"budget", "max_usd"}, "9")
+	got, err := yamledit.SetScalar(crlf, []string{"budget", "max_runs"}, "9")
 	if err != nil {
 		t.Fatalf("SetScalar: %v", err)
 	}
-	if want := strings.ReplaceAll(strings.Replace(lf, "max_usd: 5", "max_usd: 9", 1), "\n", "\r\n"); string(got) != want {
+	if want := strings.ReplaceAll(strings.Replace(lf, "max_runs: 5", "max_runs: 9", 1), "\n", "\r\n"); string(got) != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 	assertCRLF(t, got)
@@ -640,19 +640,19 @@ func TestLineEndingsArePreserved(t *testing.T) {
 }
 
 func TestAKeyThatAppearsOnlyInACommentIsNotMatched(t *testing.T) {
-	const doc = "# budget:\n#   max_usd: 20\nproject: workspace-a\n"
-	got, err := yamledit.RemoveKey([]byte(doc), []string{"budget", "max_usd"})
+	const doc = "# budget:\n#   max_runs: 20\nproject: workspace-a\n"
+	got, err := yamledit.RemoveKey([]byte(doc), []string{"budget", "max_runs"})
 	if err != nil {
 		t.Fatalf("RemoveKey: %v", err)
 	}
 	if !bytes.Equal(got, []byte(doc)) {
 		t.Fatalf("a commented-out key was rewritten:\n%q", got)
 	}
-	got, err = yamledit.SetScalar([]byte(doc), []string{"budget", "max_usd"}, "9")
+	got, err = yamledit.SetScalar([]byte(doc), []string{"budget", "max_runs"}, "9")
 	if err != nil {
 		t.Fatalf("SetScalar: %v", err)
 	}
-	if want := "# budget:\n#   max_usd: 20\nproject: workspace-a\nbudget:\n  max_usd: 9\n"; string(got) != want {
+	if want := "# budget:\n#   max_runs: 20\nproject: workspace-a\nbudget:\n  max_runs: 9\n"; string(got) != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
@@ -748,6 +748,18 @@ func TestRefusals(t *testing.T) {
 		{
 			"an anchor on the value to replace",
 			"a: &x 1\nb: 2\n",
+			func(d []byte) ([]byte, error) { return yamledit.SetScalar(d, []string{"a"}, "2") },
+			yamledit.ReasonAnchorOrAlias,
+		},
+		{
+			"a tag on the value to replace",
+			"a: !!str 1\nb: 2\n",
+			func(d []byte) ([]byte, error) { return yamledit.SetScalar(d, []string{"a"}, "2") },
+			yamledit.ReasonAnchorOrAlias,
+		},
+		{
+			"a tag on a key written with no value",
+			"a: !!str\nb: 2\n",
 			func(d []byte) ([]byte, error) { return yamledit.SetScalar(d, []string{"a"}, "2") },
 			yamledit.ReasonAnchorOrAlias,
 		},
