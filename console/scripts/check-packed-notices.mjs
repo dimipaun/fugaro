@@ -19,8 +19,20 @@
 // It runs where the console's own CI job already runs: `npm run test:e2e`
 // (`check:packed`, then Playwright) after `npm run build`. It uses
 // `@electron/asar`, which is already in the tree through electron-builder, so
-// it adds no dependency, and it needs no network: the packer's Electron archive
-// is the one the e2e pass has already fetched.
+// it adds no dependency.
+//
+// **It does need the network, and it is not free.** CI installs with
+// `npm ci --ignore-scripts` -- the flag that keeps lifecycle scripts out of this
+// repository -- and that is also what leaves `node_modules/electron/` with no
+// runtime, because the runtime is what electron's own `postinstall` writes. So
+// the first thing here that needs Electron fetches it: on this path that is
+// electron-builder, packing, and in the Playwright pass after it that is
+// `require('electron')` unpacking the same archive (`test/support/
+// electronRuntime.ts` has that half, and why the resolution happens before any
+// worker exists). Both go through `@electron/get`, which caches the archive, so
+// the second is normally a cache hit rather than a second download -- but on a
+// cold runner the download happens, and the pack is a cost this check adds to
+// every e2e job.
 //
 // The target is the host's, because the packer can only build the host's own
 // platform here: `--mac --dir --arm64` on macOS, `--linux --dir` everywhere

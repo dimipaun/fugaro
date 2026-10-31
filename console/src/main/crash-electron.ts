@@ -28,6 +28,15 @@
 //     no such file: a report that cannot be sent is dropped, which is also what
 //     "nothing is written" means for the console's own rule 10.
 //
+// **And one thing the SDK does that no setting covers.** `init` patches
+// `electron.utilityProcess.fork` on every start -- `sdk.js` calls
+// `configureUtilityProcessIPC()` unconditionally, and no option and no
+// integration refuses it -- so the wiring takes that patch back off immediately
+// after `init` returns (see `startCrashReporting`). It is the fourth mechanism
+// and the only one that is a restore rather than a setting: the patched fork
+// forwards what a child process sends with `client.sendEnvelope`, which is the
+// one path in this SDK that does not pass `beforeSend`.
+//
 // `beforeSend` is the scrubber, and it is the whole of the payload rule: what
 // leaves this process is exactly the event `scrubCrashEvent` returns, which is
 // two things and no more. The **report** is the exception's type and its frames
@@ -59,6 +68,8 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+import { utilityProcess } from 'electron'
 
 import {
   close as closeClient,
@@ -150,10 +161,10 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
 /** startCrashReporting asks the gate and, only when it opens, initialises the
  * SDK's main-process client. A closed gate is not an error and not a log line:
  * it is the console's normal state, and the answer the switch slice will change.
- * It asks the gate in the gate's own order -- the switch first, the build's DSN
- * artifact second -- so the disk is untouched by a start that could not have
- * reported anything anyway, and `index.ts` asks the same question with the
- * switch alone before it decides to load this module at all.
+ * The switch is read before the build's DSN artifact, and it is asked as an
+ * allow test, so the disk is untouched by a start that could not have reported
+ * anything anyway -- and `index.ts` asks the same question (`optedIn === true`)
+ * before it decides to load this module at all.
  *
  * The options are `CRASH_CLIENT_OPTIONS` corrected against 8.2.0, plus the four
  * this file owns: the DSN, `NO_IPC`, the non-offline transport, and `beforeSend`.
@@ -196,16 +207,14 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * no log without it answering, which is the behaviour the missing option was
  * wanted for; the unit test pins all three names against the SDK's types. */
 export function startCrashReporting(input: CrashReportingInput): CrashReportingHandle {
-  // The switch is asked before the artifact is read, which is the half of the
-  // gate that is about the disk rather than about the wire: a start whose switch
-  // is unread or off reads nothing and starts nothing, and the DSN the build
-  // wrote is opened only for a switch that said yes. `'no-dsn'` is the answer a
-  // yes gets while the artifact has not been consulted -- there is no other way
-  // to be asked with the switch alone -- so it is the one reason that carries on.
-  if (crashReportingDecision({ optedIn: input.optedIn }).reason !== 'no-dsn') {
-    return { close: () => Promise.resolve() }
-  }
-  const dsn = input.dsn ?? crashDsnFromBuild(input.appRoot)
+  // The switch is read before the artifact is, and it is an **allow** test rather
+  // than a list of the answers that shut the gate: only a switch that says yes
+  // opens a file, and a state nobody has defined yet -- the `null` this slice is
+  // called with, and whatever the switch slice adds beside `true` -- is off
+  // without this file having to know its name. The DSN the build wrote is opened
+  // only for that yes; a caller that passed one still has `crashReportingDecision`
+  // decide below, against the switch it was handed.
+  const dsn = input.dsn ?? (input.optedIn === true ? crashDsnFromBuild(input.appRoot) : null)
   const decision = crashReportingDecision({ dsn, optedIn: input.optedIn })
   if (!decision.enabled) return { close: () => Promise.resolve() }
   const options: ElectronMainOptions = {
@@ -217,7 +226,20 @@ export function startCrashReporting(input: CrashReportingInput): CrashReportingH
     beforeSendTransaction: () => null,
     beforeSendLog: () => null,
   }
+  // `configureUtilityProcessIPC`, which the pinned `init` calls on every start
+  // whatever the IPC mode, replaces `electron.utilityProcess.fork` with a Proxy
+  // that opens a port to the child process and forwards what the child sends
+  // with `client.sendEnvelope` -- the one path in this SDK that does not pass
+  // `beforeSend`. No option and no integration turns it off, so the patch is
+  // taken back off here, immediately: the console forks no utility process
+  // today, and a global left patched for the whole run is a surface this wiring
+  // did not ask for and cannot see. It is put back only if `init` changed it,
+  // and only when there is a `utilityProcess` to put it back on.
+  const forked = utilityProcess?.fork
   initClient(options)
+  if (forked !== undefined && utilityProcess !== undefined && utilityProcess.fork !== forked) {
+    utilityProcess.fork = forked
+  }
   return {
     close: async () => {
       await closeClient().catch(() => false)

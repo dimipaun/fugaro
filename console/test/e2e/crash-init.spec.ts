@@ -44,21 +44,22 @@
 //     installing its own channels, protocol and preload, and the four registries
 //     are wrapped *before* the wiring starts -- a handler that was installed
 //     leaves no trace to read afterwards.
-//   - **the utility-process patch is the SDK's, and it stays.** The pinned
-//     `init` wraps `electron.utilityProcess.fork` on every start, whatever
-//     `ipcMode` it was given: `configureUtilityProcessIPC()` is called
-//     unconditionally (`node_modules/@sentry/electron/main/sdk.js`), no option
-//     refuses it, and it is not an integration that `defaultIntegrations: false`
-//     could leave out. Its cost is bounded rather than removable -- it acts only
-//     when the app forks a utility process (*the console forks none*), events
-//     that arrive over the port it opens go through `captureEvent` and therefore
-//     through `beforeSend`, and the envelopes that do *not* -- spans, logs and
-//     metrics, which `client.sendEnvelope` forwards directly -- are payloads
-//     this client cannot produce: no tracing integration is installed, no span
-//     is started by hand, and the pinned 8.2.0 has no `enableLogs` to switch a
-//     log on. So the test pins the patch rather than its absence, and the
-//     decision to remove it (a hand-written transport, or an SDK that offers the
-//     option) is reported to the owner rather than taken here.
+//   - **the utility-process patch is taken back off.** The pinned `init` wraps
+//     `electron.utilityProcess.fork` on every start, whatever `ipcMode` it was
+//     given: `configureUtilityProcessIPC()` is called unconditionally
+//     (`node_modules/@sentry/electron/main/sdk.js`), no option refuses it, and it
+//     is not an integration that `defaultIntegrations: false` could leave out.
+//     What it would leave behind opens a port to a child process and forwards
+//     what the child sends with `client.sendEnvelope` -- the one path in this SDK
+//     that does not pass `beforeSend` -- so `startCrashReporting` puts the
+//     original fork back the moment `init` returns, and this asserts the global
+//     the app is left with is not the SDK's. (The console forks no utility
+//     process today; the patch would be inert, which is not the same as absent.)
+//   - **the dynamic import is the one the build emits.** `dist/main/index.js`'s
+//     `import('./crash-electron.js')` is read out of the built file, resolved
+//     against a copy of `dist/main/` inside a directory named `app.asar` and
+//     loaded, so a specifier that names nothing, a dropped extension, or a path
+//     the packer's layout breaks all fail here rather than in an installed app.
 //   - **nothing captures an uncaught exception yet.** With
 //     `defaultIntegrations: false` no `onuncaughtexception` integration is
 //     installed, so this fixture captures the error *through the SDK's API*
@@ -70,7 +71,7 @@
 // with a port the kernel picks, its DSN is assembled at run time from that port,
 // and the fixture's Electron is the app's own pinned runtime.
 
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { homedir, hostname, tmpdir } from 'node:os'
@@ -128,6 +129,7 @@ function itemsOf(envelope: string): readonly Item[] {
 interface Report {
   readonly fatal?: string
   readonly forkWrapped?: boolean
+  readonly entryImport?: { readonly loaded?: boolean }
   readonly before?: readonly string[]
   readonly after?: readonly string[]
   readonly recorded?: { readonly ipcs?: readonly string[]; readonly protocols?: readonly string[]; readonly preloads?: readonly string[] }
@@ -187,16 +189,43 @@ async function waitForReport(path: string, timeoutMs: number): Promise<Report> {
   throw new Error(`the crash fixture wrote no report to ${path}`)
 }
 
+/** appAsarLayout is the packed app's shape, to the one degree this test needs it:
+ * a copy of the built `dist/main/` inside a directory named `app.asar`, which is
+ * the segment Electron's own loader treats as an archive. It is built here rather
+ * than in the fixture because Electron's fs patches intercept a path with that
+ * segment -- a directory named `app.asar` cannot be *created* there, only read --
+ * and because the resolution this holds to is Node's: the module graph reaches
+ * `electron` and `@sentry/electron` through the `node_modules` beside the entry,
+ * which is the console's own. It answers the file the entry's dynamic import
+ * resolves to, so the specifier is checked against the layout rather than
+ * assumed. */
+function appAsarLayout(): { readonly resolved: string; readonly specifier: string } {
+  const entry = readFileSync(join(consoleDir, 'dist', 'main', 'index.js'), 'utf8')
+  const emitted = [...entry.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g)].map((match) => match[1])
+  // One, and it is the crash reporter's: a second dynamic import would be a
+  // module the entry loads without the gate having been asked.
+  expect(emitted, 'the built entry emits exactly one dynamic import').toEqual(['./crash-electron.js'])
+  const root = join(mkdtempSync(join(tmpdir(), 'fugaro-crash-app-')), 'app.asar')
+  mkdirSync(join(root, 'dist'), { recursive: true })
+  cpSync(join(consoleDir, 'dist', 'main'), join(root, 'dist', 'main'), { recursive: true })
+  symlinkSync(join(consoleDir, 'node_modules'), join(root, 'node_modules'), 'dir')
+  const specifier = emitted[0] as string
+  const resolved = join(root, 'dist', 'main', specifier)
+  expect(existsSync(resolved), `the emitted specifier resolves under the packed layout: ${specifier}`).toBe(true)
+  return { resolved, specifier }
+}
+
 /** envFor is the child's whole environment: this process's, so Electron finds
  * its display and its libraries the way CI gives them to it, plus the fixture's
- * two inputs. */
-function envFor(sink: Sink, reportPath: string): Record<string, string> {
+ * inputs. */
+function envFor(sink: Sink, reportPath: string, importPath: string): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === 'string') env[key] = value
   }
   env['FUGARO_CRASH_FIXTURE_DSN'] = sink.dsn
   env['FUGARO_CRASH_FIXTURE_REPORT'] = reportPath
+  env['FUGARO_CRASH_FIXTURE_IMPORT'] = importPath
   return env
 }
 
@@ -204,10 +233,11 @@ test('the real client sends the scrubbed event, and nothing else', async () => {
   const sink = await startSink()
   const profile = mkdtempSync(join(tmpdir(), 'fugaro-crash-profile-'))
   const reportPath = join(mkdtempSync(join(tmpdir(), 'fugaro-crash-report-')), 'report.json')
+  const layout = appAsarLayout()
 
   const app = await launchConsole({
     args: [FIXTURE_DIR, `--user-data-dir=${profile}`, ...NO_DISPLAY],
-    env: envFor(sink, reportPath),
+    env: envFor(sink, reportPath, layout.resolved),
   })
 
   let report: Report
@@ -280,8 +310,15 @@ test('the real client sends the scrubbed event, and nothing else', async () => {
   expect(report.recorded?.protocols ?? []).toEqual([])
   expect(report.recorded?.preloads ?? []).toEqual([])
 
-  // **The utility-process patch is present**, because the pinned `init` makes it
-  // whatever the wiring asks for; the header above carries the decision and why
-  // it is bounded rather than removed.
-  expect(report.forkWrapped, 'the SDK wrapped electron.utilityProcess.fork, as 8.2.0 does').toBe(true)
+  // **The utility-process patch is not left behind.** The pinned `init` installs
+  // it unconditionally and the wiring takes it off again; the header carries what
+  // the patch would forward and why.
+  expect(report.forkWrapped, 'the SDK\'s patch on electron.utilityProcess.fork is gone by the time the app runs').toBe(
+    false,
+  )
+
+  // **The emitted dynamic import loads**, from the packed layout: the specifier
+  // above is the built file's rather than the source's, and the fixture imported
+  // what it resolved to in the runtime the app runs on.
+  expect(report.entryImport?.loaded, 'loading the emitted specifier yields the wiring the app starts').toBe(true)
 })

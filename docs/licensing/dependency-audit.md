@@ -93,6 +93,21 @@ for — darwin arm64 and x64 in the universal bundle, and linux x64 — and comp
 sections in both directions, so a section cannot outlive the package it describes and a package that
 ships cannot lose its section.
 
+**And two of those packages carry other projects' code inside them.** `@sentry/server-utils` and
+`@sentry/server-runtime-injection` — two of the crash reporter's fourteen — each ship a `vendored/`
+directory under `build/cjs/` and `build/esm/` holding thirteen other projects' sources in all: the
+`@apm-js-collab` transformer and its bundler plugins and tracing hooks, `astring`, `debug`,
+`esquery`, `has-flag`, `meriyah`, `module-details-from-path`, `ms`, `semifies`, `source-map` and
+`supports-color`. Those are not packages of the archive, so they have no section of their own: the
+notices file's last section lists them with the versions and licences their packages' own
+`build/THIRD-PARTY-LICENSES.txt` — which both package and pack — states, and reproduces their
+licence texts. All open source; the one thing that has no text anywhere is
+`@apm-js-collab/code-transformer-bundler-plugins`, whose shipped entry declares MIT and carries no
+licence body, which the notices file records and which is with counsel. A third package,
+`@sentry/node` itself, carries three vendored files under `build/*/integrations/fs/vendored/` that
+nothing in the package attributes or licenses — recorded in the same section as an open question
+for counsel, since nothing that ships answers it.
+
 **One licence in the console's tree is not open source, and it is not in the package.** `sentry`
 0.45.0 — declared `FSL-1.1-Apache-2.0`, the Functional Source License 1.1 with a two-year conversion
 to Apache-2.0 — arrives with `@sentry/bundler-plugins` 11.7.0, which `@sentry/node` depends on and

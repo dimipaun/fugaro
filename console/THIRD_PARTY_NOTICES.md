@@ -15,7 +15,9 @@ requires them at run time -- `dist/main/updater-electron.js` for the update clie
 `dist/main/crash-electron.js` for the crash reporter, which is the one file in the console that
 imports it (the owner's rulings D733 and D734 of 2026-10-30) -- and the packages of their trees are packed beside
 them. Their sections are the last thirty in this file, and every version in them is the one
-`package-lock.json` pins.
+`package-lock.json` pins. The last section of all is the one the crash reporter's two server
+packages need beside their own: each of them vendors other projects' code, which has no section of
+its own because it is not a package of the archive.
 
 **What is no longer in this file, and why.** `@sentry/node` carries `@sentry/bundler-plugins`,
 whose job is to wrap *someone else's* webpack, vite, rollup or esbuild build. The console builds
@@ -38,9 +40,31 @@ one (the same idiom `debug`'s own source comments on). The packer therefore hois
 this file -- which reasoned from the lockfile, where the top-level `supports-color` is a
 development 7.2.0 -- listed neither. `build.files` now excludes both by name, and the console
 still runs: that `require` fails, `debug` catches it and turns colours off, nothing else loads
-either package, and the probe recorded in the pull request shows the packed app reporting and
-starting normally without them. `scripts/check-packed-notices.mjs` is the check that would have
+either package, and the probe below shows the packed app reporting and starting normally without
+them. `scripts/check-packed-notices.mjs` is the check that would have
 caught this: it packs the app, opens the archive and holds this file to what is inside it.
+
+**The probe.** It is an experiment rather than a script this repository keeps, so it is recorded
+here where the two paragraphs above cite it. Run on Linux against `electron-builder --dir` output
+(the same target `check-packed-notices.mjs` packs), with the console built by `npm run build`:
+
+- packed **without** the two exclusions, the archive carries `node_modules/supports-color` and
+  `node_modules/has-flag`, and the packed console still starts, starts nothing it should not
+  (the switch is `null`, so the crash reporter is dormant) and quits normally;
+- and nothing in the archive requires either of them: the only `require('supports-color')` in the
+  whole tree is `debug`'s, inside a `try`, and no file of the console, of `electron-updater` or of
+  `@sentry/electron` names `has-flag`;
+- packed **with** the exclusions, the archive's package list is the thirty this file's package
+  sections name -- that is what `check:packed` prints, and it is the check that would have caught
+  the hoist rather than the probe;
+- what loads at run time is what the console's own sources import: `node:` builtins, `electron`,
+  `@electron/fuses` (from a file `build.files` excludes), `electron-updater`, and `@sentry/electron`
+  from `dist/main/crash-electron.js` -- and, of those, `@sentry/electron` only when the gate opens.
+  The excluded trees are reached by none of them, which is why carrying them was a licence question
+  rather than a runtime one.
+
+The one thing the probe does *not* say is what the vendored code inside the two Sentry packages
+does, and that is the section at the end of this file.
 
 The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.11.0**, copied
 verbatim by `npm run build` from `node_modules/elkjs/lib/elk-worker.min.js`.
@@ -2132,7 +2156,9 @@ Its source is the `@sentry/server-runtime-injection@11.7.0` package from the npm
 https://github.com/getsentry/sentry-javascript.git.
 
 **That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
-nothing more, so there is no text to reproduce here.
+nothing more, so there is no text to reproduce there.
+
+**And it carries other projects' code besides.** See the section at the end of this file.
 
 ## @sentry/server-utils 11.7.0 -- MIT License
 
@@ -2144,4 +2170,261 @@ Its source is the `@sentry/server-utils@11.7.0` package from the npm registry
 https://github.com/getsentry/sentry-javascript.git.
 
 **That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
-nothing more, so there is no text to reproduce here.
+nothing more, so there is no text to reproduce there.
+
+**And it carries other projects' code besides.** See the section at the end of this file.
+
+## The code the two Sentry server packages vendor
+
+The two sections above are not only Sentry's code. `@sentry/server-utils` and
+`@sentry/server-runtime-injection` each carry a `vendored/` directory under `build/cjs/` and
+`build/esm/` holding whole copies of other projects' sources, compiled in; the two formats carry
+the same projects. **Neither directory names a version, a repository or a licence** -- there is no
+`LICENSE` file, no `package.json` to read a `license` field from, and no banner in the files -- so a
+reader who opens the archive cannot tell what that code is or what it is under.
+
+**The packages do account for it one level up.** Each ships a `build/THIRD-PARTY-LICENSES.txt`
+beside the vendored code, and `package.json`'s `files` is `["/build"]`, so that file is inside the
+packed app too: an installed copy carries the attribution, not only this file. It names every
+vendored project with its version, its licence and its licence text, it is complete (one entry per
+vendored project, the two lists agreeing exactly), and **this section is that file's list** -- the
+versions and the licence names in the table are its, and the texts below are copied from it
+verbatim.
+
+| vendored project | version | licence | vendored by |
+| --- | --- | --- | --- |
+| `@apm-js-collab/code-transformer` | 0.18.1 | Apache-2.0 | both |
+| `@apm-js-collab/code-transformer-bundler-plugins` | 0.7.4 | MIT declared, no text shipped | `server-utils` |
+| `@apm-js-collab/tracing-hooks` | 0.13.3 | Apache-2.0 | `server-runtime-injection` |
+| `astring` | 1.9.0 | MIT | both |
+| `debug` | 4.4.3 | MIT | `server-runtime-injection` |
+| `esquery` | 1.7.0 | BSD-3-Clause | both |
+| `has-flag` | 4.0.0 | MIT | `server-runtime-injection` |
+| `meriyah` | 6.1.4 | ISC | both |
+| `module-details-from-path` | 1.0.4 | MIT | both |
+| `ms` | 2.1.3 | MIT | `server-runtime-injection` |
+| `semifies` | 1.0.0 | Apache-2.0 | both |
+| `source-map` | 0.6.1 | BSD-3-Clause | both |
+| `supports-color` | 7.2.0 | MIT | `server-runtime-injection` |
+
+**Three licence texts are not repeated in full here, and each is a reference rather than a gap.**
+The console packs `debug` 4.4.3 and `ms` 2.1.3 for `electron-updater` as well, at the same versions
+the vendored copies are, and their texts are reproduced in their own sections above. The Apache
+License 2.0 is reproduced in full in this file's `## @opentelemetry/api 1.10.0` section:
+`semifies` ships exactly that text, and the two `@apm-js-collab` projects ship it with the
+appendix's placeholder line filled in, which is the whole of the difference and is reproduced
+below. Repeating two hundred lines of the same licence five times would not add a fact.
+
+### @apm-js-collab/code-transformer 0.18.1 and @apm-js-collab/tracing-hooks 0.13.3 (Apache-2.0)
+
+Both mark the appendix's `Copyright [yyyy] [name of copyright owner]` line with the holder, and
+neither changes another line of the text above. This is the appendix as each ships it, verbatim:
+
+```text
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2025-present Datadog, Inc.
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
+
+`@apm-js-collab/code-transformer` -- which is `@apm-js-collab/code-transformer@0.18.1`, whose
+`package.json` names `https://github.com/nodejs/orchestrion-js.git` as its repository -- carries
+one thing more, the notice its entry ends with:
+
+```text
+Notice:
+===
+
+Orchestrion-JS
+Copyright 2025-Present Datadog, Inc.
+This product includes software developed at Datadog (<https://www.datadoghq.com/>).
+```
+
+**One entry has nothing to reproduce, and it is the one question this section leaves open.**
+`@apm-js-collab/code-transformer-bundler-plugins` is listed with `License: MIT` and then carries no
+text at all: the entry has the header fields and no `License Text` under them. Its upstream
+repository is public and the declaration is unambiguous, so this is a gap in the shipped file
+rather than a licensing doubt -- but the shipped file is what an installed copy has, and it is what
+this section can honestly report. **It is flagged for counsel in the pull request**, because it is
+a licensing question and not a code decision: no change in this round turns on it.
+
+**A third package of the archive carries vendored files, and no statement beside them.**
+`@sentry/node` -- which the console packs, and which is the crash reporter's own base package --
+has `build/cjs/integrations/fs/vendored/` and its `esm` and `types` twins, holding three files
+(`constants`, `instrumentation`, `utils`). Nothing in them and nothing beside them names an
+upstream project, a version or a licence, and the package ships no `THIRD-PARTY-LICENSES.txt` the
+way the two server packages do, so **this file cannot state a licence for them from what ships**.
+They are recorded here so that the list of vendored code in the archive is complete, and left as
+a question for counsel rather than answered with a guess; it is flagged with the rest of this
+section in the pull request.
+
+### astring 1.9.0 (MIT)
+
+```text
+Copyright (c) 2015, David Bonnet <david@bonnet.cc>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### esquery 1.7.0 (BSD-3-Clause)
+
+```text
+Copyright (c) 2013, Joel Feenstra
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the ESQuery nor the names of its contributors may
+      be used to endorse or promote products derived from this software without
+      specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL JOEL FEENSTRA BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### has-flag 4.0.0 (MIT)
+
+```text
+MIT License
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### meriyah 6.1.4 (ISC)
+
+```text
+ISC License
+
+Copyright (c) 2019 and later, KFlash and others.
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+### module-details-from-path 1.0.4 (MIT)
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2016-2025 Thomas Watson Steen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### source-map 0.6.1 (BSD-3-Clause)
+
+```text
+Copyright (c) 2009-2011, Mozilla Foundation and contributors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the names of the Mozilla Foundation nor the names of project
+  contributors may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### supports-color 7.2.0 (MIT)
+
+```text
+MIT License
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```

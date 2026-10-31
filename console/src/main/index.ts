@@ -61,7 +61,6 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
-import { crashReportingDecision } from './crash'
 import type { CrashReportingHandle } from './crash-electron'
 import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
@@ -891,36 +890,38 @@ let crashReporting: CrashReportingHandle | null = null
  */
 async function main(): Promise<void> {
   // **The crash reporter comes up before anything it could report on, and the
-  // module that holds the SDK comes up with it and not before.** The gate is
-  // asked first, and with the switch alone: `optedIn` is `null` -- nothing has
-  // read the installation's switch yet, and reading it is T2.1's own last part,
-  // which decodes `settings.crash_reports` from T1.3's `project show --json` --
-  // and `crashReportingDecision` answers `'opt-in-not-read'` for that third
-  // state, which is one of the two answers that shut the gate whatever the build
-  // was given. What follows from it is the whole of this slice's cost: in a
-  // console whose switch is not a yes, `./crash-electron` and the fourteen
-  // packages `@sentry/electron/main` reaches are never loaded, `crashDsnFromBuild`
-  // never reads the artifact the build wrote, and no client exists to start -- so
+  // module that holds the SDK comes up with it and not before.** The gate is an
+  // allow test and not a list of the answers that shut it: `optedIn` is `null`
+  // -- nothing has read the installation's switch yet, and reading it is T2.1's
+  // own last part, which decodes `settings.crash_reports` from T1.3's
+  // `project show --json` -- and only a `true` reaches the reporter, so the
+  // third state D734 makes off is off here because it is not a yes rather than
+  // because this file knows its name. What follows from it is the whole of this
+  // slice's cost: in a console whose switch is not a yes, `./crash-electron` and
+  // the fourteen packages `@sentry/electron/main` reaches are never loaded, the
+  // artifact the build wrote is never read, and no client exists to start -- so
   // a start that reports nothing pays nothing for the wiring that would.
   //
-  // The two reasons a yes-switch can still leave the gate shut are `'no-dsn'`
-  // and `'enabled'`: the first is a yes whose DSN nobody has offered yet, which
-  // is exactly what `startCrashReporting` reads the artifact for, and the second
-  // is a caller that passed one. Every other answer is the switch itself saying
-  // no, and it is asked here rather than inside the module because loading the
-  // module is the thing being decided.
+  // Everything after the yes is `startCrashReporting`'s: the build's DSN
+  // artifact, and the two ways a yes can still end without a client (a build
+  // that was given no DSN, and a caller that passed its own). That is why this
+  // file needs no opinion about them -- and why it imports nothing from
+  // `./crash` to ask a question `===` answers.
   //
   // The reporter is wired here rather than beside the window because a crash
   // before the window opens is the one an operator most wants back, and because
   // the handle has to be closed on the way out.
-  const gate = crashReportingDecision({ optedIn: null })
-  if (gate.reason !== 'opt-in-not-read' && gate.reason !== 'opt-in-off') {
+  const optedIn: unknown = null
+  if (optedIn === true) {
     // The `.js` is the CommonJS build's spelling rather than a file this source
-    // tree has: `dist/main/index.js` requires `dist/main/crash-electron.js`, and
-    // `tsconfig.build.json` is the config that resolves both (the type-checking
-    // config resolves either spelling, so this is the build that decides it).
+    // tree has: `dist/main/index.js` carries this `import()` as `tsc` emitted it
+    // (`module: Node16` keeps the real dynamic import in CommonJS output), and
+    // `dist/main/crash-electron.js` is the file it resolves to --
+    // `test/e2e/crash-init.spec.ts` resolves the emitted specifier and loads it
+    // for that reason. The type-checking config resolves either spelling, so it
+    // is the build that decides.
     const { startCrashReporting } = await import('./crash-electron.js')
-    crashReporting = startCrashReporting({ optedIn: null, appRoot: app.getAppPath() })
+    crashReporting = startCrashReporting({ optedIn, appRoot: app.getAppPath() })
   }
   // The icon first, and before any window exists: an unpackaged console has no
   // bundle to carry `build/icon.png`, so until this runs the dock shows

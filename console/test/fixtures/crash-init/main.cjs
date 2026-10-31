@@ -35,6 +35,7 @@ const { app, ipcMain, protocol, session, utilityProcess } = require('electron')
 const { readdirSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 const { homedir, hostname } = require('node:os')
+const { pathToFileURL } = require('node:url')
 const { types } = require('node:util')
 
 /** consoleRoot is the console directory this fixture lives in: `test/fixtures/
@@ -104,11 +105,26 @@ app
     // leave shut is deliberately open here, which is the whole point -- what is
     // being tested is what the SDK does once it is running, not whether it runs.
     const handle = startCrashReporting({ optedIn: true, appRoot, dsn })
-    // The SDK's main-process `init` wraps `electron.utilityProcess.fork` on every
-    // start, whatever `ipcMode` it was given -- the one thing it does to a global
-    // that this wiring cannot turn off, so the spec pins it rather than the
-    // absence of it (the spec's own header carries the decision).
+    // The wiring puts `utilityProcess.fork` back the moment `init` returns:
+    // the SDK's `configureUtilityProcessIPC` patches it on every start, and the
+    // spec's header carries what that patch costs and why the console takes it
+    // off. What is read here is the global the *app* is left with.
     const forkWrapped = typeof utilityProcess.fork === 'function' && types.isProxy(utilityProcess.fork)
+
+    // **The dynamic import the build emits.** The spec reads the specifier out
+    // of `dist/main/index.js`, lays a copy of `dist/main/` out inside a directory
+    // named `app.asar` and names the file the specifier resolved to here -- this
+    // process only loads it. That is the half worth a real runtime: the file the
+    // entry's `import('./crash-electron.js')` names, imported the way the app
+    // imports it (a `file:` URL, through the asar-aware loader), so a specifier
+    // that names nothing, a dropped extension or a path the packed layout breaks
+    // all fail rather than being resolved on paper.
+    const importPath = process.env.FUGARO_CRASH_FIXTURE_IMPORT ?? ''
+    const entryImport = { loaded: false }
+    if (importPath !== '') {
+      const loaded = await import(pathToFileURL(importPath).href)
+      entryImport.loaded = typeof loaded.startCrashReporting === 'function'
+    }
 
     // A thrown error: the shape a crash report is for, with a message that
     // carries the credential and the home path the report may not.
@@ -148,7 +164,7 @@ app
 
     writeFileSync(
       reportPath,
-      JSON.stringify({ forkWrapped, before, after: listing(userData), recorded }, null, 2),
+      JSON.stringify({ forkWrapped, entryImport, before, after: listing(userData), recorded }, null, 2),
     )
     await handle.close()
     app.quit()

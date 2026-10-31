@@ -20,8 +20,10 @@
 //      changed to hand the event back untouched, the token, the home path and
 //      the message are what the transport receives.
 //   3. **The entry loads this module only when the gate can open, and the wiring
-//      reads the artifact only after the switch says yes.** That is a claim
-//      about two files this suite cannot import (one of them imports Electron's
+//      reads the artifact only for a switch that says yes.** The gate is an
+//      allow test on both sides -- `optedIn === true` -- so a state nobody has
+//      defined yet is off without either file knowing its name. Both are claims
+//      about files this suite cannot import (one of them imports Electron's
 //      runtime), so the two cases below read them as text -- with the comments
 //      blanked, because both explain the order in prose.
 //   4. **The parts only a running client can answer are in
@@ -56,7 +58,26 @@ const harness = vi.hoisted(() => ({
   transport: { send: async (_envelope: unknown): Promise<unknown> => ({ statusCode: 200 }) },
   /** How many times the client was closed. */
   closes: 0,
+  /** How many times the mocked SDK's `init` patched `utilityProcess.fork` the
+   * way the pinned `configureUtilityProcessIPC` does. */
+  forksPatched: 0,
 }))
+
+/** utility is the `electron.utilityProcess` the mocked SDK patches: `real` is the
+ * fork the app started with, and `patched` is the one `init` assigns over it. It
+ * is deliberately **not** `undefined` -- the case the wiring has to survive is
+ * the real one, where the SDK's Proxy stands in for a fork that exists, and an
+ * undefined `utilityProcess` is a module that has nothing to restore. */
+const utility = vi.hoisted(() => {
+  const fork = (..._args: unknown[]): { postMessage: () => void } => ({ postMessage: () => undefined })
+  return {
+    real: fork,
+    patched: (..._args: unknown[]): { postMessage: () => void } => ({ postMessage: () => undefined }),
+    process: { fork } as { fork: (...args: unknown[]) => unknown },
+  }
+})
+
+vi.mock('electron', () => ({ utilityProcess: utility.process }))
 
 /** artifactReads is every path this module graph asked `node:fs` to read, in
  * order. It is a probe rather than a fake -- the real `readFileSync` still runs,
@@ -86,6 +107,12 @@ vi.mock('@sentry/electron/main', () => ({
     const factory = options.transport as (transportOptions: unknown) => { send: (e: unknown) => Promise<unknown> }
     const transport = factory({ url: 'the endpoint the DSN resolves to', recordDroppedEvent: () => undefined })
     harness.transport = transport
+    // ...and `configureUtilityProcessIPC()` runs here too: `@sentry/electron`'s
+    // main `sdk.js` calls it on every start, unconditionally, and it is what
+    // replaces `electron.utilityProcess.fork` with a Proxy. Nothing in the
+    // console turns it off, so the wiring has to put the original back.
+    harness.forksPatched += 1
+    utility.process.fork = utility.patched
   },
   close: async () => {
     harness.closes += 1
@@ -180,6 +207,8 @@ beforeEach(() => {
   harness.initOptions = []
   harness.sent = []
   harness.closes = 0
+  harness.forksPatched = 0
+  utility.process.fork = utility.real
   artifactReads.paths = []
 })
 
@@ -291,6 +320,27 @@ describe('the crash reporter starts only when the gate opens', () => {
     expect(reader).not.toContain('process.env')
   })
 
+  it('puts electron.utilityProcess.fork back the way the SDK found it', () => {
+    // The pinned SDK patches `electron.utilityProcess.fork` on every start and
+    // offers no option against it, so the wiring takes the patch off again. The
+    // cost of leaving it on is the reason: the patched fork opens a port to the
+    // child and forwards what the child sends with `client.sendEnvelope`, which
+    // is the one path in this SDK that skips `beforeSend` -- so an unpatched
+    // global is the difference between a child's envelope passing the scrubber
+    // and it not passing at all. What the mock cannot say is whether the Proxy
+    // is a *problem*; `test/e2e/crash-init.spec.ts` holds the real one to the
+    // same answer, and this is the half that fails when the restore is dropped.
+    const appRoot = tempAppRoot()
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    expect(harness.forksPatched, 'the mocked SDK patches fork during init').toBe(1)
+    expect(
+      utility.process.fork,
+      'the fork the app started with is the one it still has: the SDK\'s Proxy is gone',
+    ).toBe(utility.real)
+    void handle.close()
+  })
+
   it('starts the client with the artifact DSN when the switch says yes', () => {
     const appRoot = tempAppRoot()
     const dsn = dsnPlaceholder()
@@ -319,7 +369,7 @@ describe('the crash reporter starts only when the gate opens', () => {
       readFileSync(fileURLToPath(new URL('../../src/main/index.ts', import.meta.url)), 'utf8'),
     )
     const starts = [...entry.matchAll(/startCrashReporting\(\{([^}]*)\}\)/g)].map((match) => match[1]?.trim())
-    expect(starts).toEqual(['optedIn: null, appRoot: app.getAppPath()'])
+    expect(starts).toEqual(['optedIn, appRoot: app.getAppPath()'])
     expect([...entry.matchAll(/crashReporting\?\.close\(\)/g)]).toHaveLength(1)
 
     // The module is reached dynamically, once, and only from behind the gate: a
@@ -329,32 +379,32 @@ describe('the crash reporter starts only when the gate opens', () => {
       .split('\n')
       .filter((line) => line.includes("from './crash-electron'") && !line.trimStart().startsWith('import type'))
     expect(staticLoads).toEqual([])
-    expect(entry).toContain("import { crashReportingDecision } from './crash'")
     expect([...entry.matchAll(/import\('\.\/crash-electron\.js'\)/g)]).toHaveLength(1)
 
-    // ...and the decision comes first, with the switch's two shut answers in the
-    // branch between the two: the load is inside it, so a start whose switch is
-    // unread loads nothing.
-    const gate = entry.indexOf('crashReportingDecision({ optedIn: null })')
+    // ...and the gate is an **allow test**: `optedIn === true`, and nothing else
+    // -- no `./crash`, no reason, no list of the answers that shut it. A state
+    // nobody has defined yet is off because it is not a yes, so the switch slice
+    // can add to what a yes is without this file learning a name.
+    expect(entry).not.toContain('crashReportingDecision')
+    expect(entry).not.toContain("from './crash'")
+    const allow = entry.indexOf('if (optedIn === true)')
     const load = entry.indexOf("import('./crash-electron.js')")
-    expect(gate, 'the entry asks the gate with the switch unread').toBeGreaterThan(-1)
-    expect(load).toBeGreaterThan(gate)
-    const branch = entry.slice(gate, load)
-    expect(branch).toContain('if (')
-    expect(branch).toContain("gate.reason !== 'opt-in-not-read'")
-    expect(branch).toContain("gate.reason !== 'opt-in-off'")
+    expect(allow, 'the entry asks the gate with an allow test').toBeGreaterThan(-1)
+    expect(load).toBeGreaterThan(allow)
+    const branch = entry.slice(allow, load)
+    expect(branch, 'no line closes the block before the load, so the load is inside it').not.toMatch(/^\s*\}/m)
+    expect(entry.slice(allow, entry.indexOf('}', load))).toContain('startCrashReporting(')
   })
 
-  it('the module the entry loads to ask the gate imports nothing, and the wiring reads the artifact second', () => {
-    // The gate is worth loading for because of what it is not: `./crash` imports
-    // nothing at all -- no SDK, no file, no environment -- so asking it costs a
-    // start nothing but the module itself. And inside the wiring the switch is
-    // asked before `crashDsnFromBuild`, which is the half of the gate that is
-    // about the disk: a start whose switch is off must not have opened the
-    // artifact the build wrote.
-    const gate = readFileSync(fileURLToPath(new URL('../../src/main/crash.ts', import.meta.url)), 'utf8')
-    expect(gate).not.toMatch(/^\s*import\s/m)
-
+  it('the wiring reads the build\'s DSN artifact only for a switch that says yes', () => {
+    // The one order that matters inside the wiring, and it is an allow test
+    // too: `crashDsnFromBuild` is on the yes side of `input.optedIn === true`,
+    // which is the half of the gate about the disk -- a start whose switch is
+    // off must not have opened the artifact the build wrote -- and
+    // `crashReportingDecision` is asked once, after it, about the switch and the
+    // DSN together. There is no separate switch-first call any more: the reason
+    // it existed (`'no-dsn'`) was a spelling of "a yes whose DSN has not been
+    // read yet", which is what the expression below says outright.
     const wiring = withoutComments(
       readFileSync(fileURLToPath(new URL('../../src/main/crash-electron.ts', import.meta.url)), 'utf8'),
     )
@@ -363,11 +413,14 @@ describe('the crash reporter starts only when the gate opens', () => {
         wiring,
       )
     if (start === null) throw new Error('the scan found no startCrashReporting: it would pass by finding nothing')
-    const switchAt = start[0].indexOf('crashReportingDecision({ optedIn: input.optedIn })')
+    expect(start[0]).toContain(
+      'const dsn = input.dsn ?? (input.optedIn === true ? crashDsnFromBuild(input.appRoot) : null)',
+    )
     const artifactAt = start[0].indexOf('crashDsnFromBuild(input.appRoot)')
-    expect(switchAt, 'the switch is asked at all').toBeGreaterThan(-1)
+    const decideAt = start[0].indexOf('crashReportingDecision({ dsn, optedIn: input.optedIn })')
     expect(artifactAt, 'the artifact is read at all').toBeGreaterThan(-1)
-    expect(artifactAt, 'the switch is asked before the artifact is read').toBeGreaterThan(switchAt)
+    expect(decideAt, 'the gate decides after the artifact is read').toBeGreaterThan(artifactAt)
+    expect(start[0]).not.toContain("reason !== 'no-dsn'")
   })
 })
 

@@ -553,6 +553,11 @@ describe('the packaging configuration the fuses belong to', () => {
       '!node_modules/brace-expansion/**',
       '!node_modules/dotenv/**',
       '!node_modules/glob/**',
+      // `has-flag` and `supports-color` are the two the packer hoisted *out* of
+      // that excluded tree and into the archive's own `node_modules`, through a
+      // `require` inside a `try` that no lockfile walk can see (Task 2.1b fix
+      // round A): excluded by name with the rest of it.
+      '!node_modules/has-flag/**',
       '!node_modules/lru-cache/**',
       '!node_modules/magic-string/**',
       '!node_modules/minimatch/**',
@@ -560,6 +565,7 @@ describe('the packaging configuration the fuses belong to', () => {
       '!node_modules/oxc-parser/**',
       '!node_modules/path-scurry/**',
       '!node_modules/sentry/**',
+      '!node_modules/supports-color/**',
     ])
   })
 
