@@ -1884,7 +1884,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// job environment, exactly as they did before this model (P3).
 		checks := []doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
-			Fix:     "fugaro update --firebase-project " + lc.GCPProject + " --name " + lc.Name + " adds the backend the policy is published to"}}
+			Fix:     "fugaro update --firebase-project " + firebaseProjectIDWord(lc.GCPProject) + " --name " + lc.Name + " adds the backend the policy is published to"}}
 		return append(checks, doctorRoutingChecks(lc, nil,
 			fmt.Sprintf("project %s has no Firebase budget backend, so there is no policy node to read a switch from", lc.Name), layer)...)
 	}
@@ -2475,10 +2475,24 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// this binary, and not of a hand edit, which would send the operator to
 		// redeploy rules that are not what is wrong (the review finding on this
 		// change).
+		if skew.notInteger {
+			// The remedy the other half of this state has is not this one's: a
+			// value that is not a number stops `fugaro update --firebase-project`
+			// at the READ, before anything is written (infra.DB.Plan reads the
+			// marker into an int), so a reader sent there meets "cannot
+			// unmarshal string into Go value of type int" and no repair. The
+			// node is a person's, so the line is what a person does to it, and
+			// both moves end at the command that writes the marker this Fugaro
+			// reads.
+			return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
+				Problem: rulesMarkerBadText(skew.raw),
+				Fix: fmt.Sprintf("set %s to the integer generation of the deployed rules by hand, or delete the node: a value that is not a number is a generation no Fugaro wrote, and `fugaro update --firebase-project %s` reads that node before it writes, so it stops on this one and nothing is repaired. With the node deleted the deployed rules read as generation 0, and `fugaro update --firebase-project %s` then deploys this Fugaro's rules and records generation %d (upgrade Fugaro first if the rules deployed here came from a newer release — this template would replace them).",
+					marker, firebaseProjectIDWord(lc.GCPProject), firebaseProjectIDWord(lc.GCPProject), projectpolicy.RulesVersion)}}
+		}
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
 			Problem: rulesMarkerBadText(skew.raw),
 			Fix: fmt.Sprintf("re-run `fugaro update --firebase-project %s` with fugaro >= %s in your own terminal. It writes the marker this Fugaro reads, over a document it deploys itself.",
-				lc.GCPProject, policySince)}}
+				firebaseProjectIDWord(lc.GCPProject), policySince)}}
 	case rulesSkewNewer:
 		// A marker above this binary's RulesVersion, and the review of PR
 		// #402's point: a newer Fugaro wrote it, so the deployed rules are a
@@ -2495,7 +2509,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
 			Problem: rulesMarkerNewerText(marker, gen),
 			Fix: fmt.Sprintf("upgrade Fugaro (`brew upgrade fugaro`), then `fugaro update` with the newer binary. The deployed rules are a generation this binary does not know, and `fugaro update --firebase-project %s` refuses this state rather than redeploying generation %d over them, so the newer binary is the one that deploys here.",
-				lc.GCPProject, projectpolicy.RulesVersion)}}
+				firebaseProjectIDWord(lc.GCPProject), projectpolicy.RulesVersion)}}
 	case rulesSkewPrePolicy:
 		// Present and below the generation that carries the policy nodes is a
 		// state of its own, not an absent marker: it records rules that predate
@@ -2657,7 +2671,16 @@ type rulesSkew struct {
 	kind rulesSkewKind
 	gen  int
 	raw  string
-	err  error
+	// notInteger is rulesSkewBadMarker's other half: the node is not a number
+	// at all, where the rest of that kind is the negative integer no deploy
+	// writes. The two are one state to projectpolicy.Read (both are its
+	// MarkerError, and the report of the wrong value is one text), and two to
+	// the operator, because the remedy differs: a negative generation is
+	// repaired by the deploy that writes the marker over it, and a value that
+	// is not a number stops that deploy at the read (infra.DB.Plan reads the
+	// node before it writes), so it has to be put right by hand first.
+	notInteger bool
+	err        error
 }
 
 // rulesSkewOf reads the generation marker and — only where the marker records
@@ -2677,7 +2700,10 @@ func rulesSkewOf(ctx context.Context, db *rtdb.Client) rulesSkew {
 		return rulesSkew{kind: rulesSkewAbsentMarker}
 	}
 	var gen int
-	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+	if err := json.Unmarshal(raw, &gen); err != nil {
+		return rulesSkew{kind: rulesSkewBadMarker, raw: oneLine(string(raw)), notInteger: true}
+	}
+	if projectpolicy.MarkerHandEdited(gen) {
 		return rulesSkew{kind: rulesSkewBadMarker, raw: oneLine(string(raw))}
 	}
 	switch {

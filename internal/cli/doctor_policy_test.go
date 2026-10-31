@@ -686,6 +686,45 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Errorf("the default view does not print this state's own fix (%q):\n%s", want, out)
 		}
 	})
+
+	t.Run("a marker that is not a number at all", func(t *testing.T) {
+		// The other half of the cannot-be-told-apart state, and the half whose
+		// remedy is NOT the negative generation's: `fugaro update
+		// --firebase-project` repairs a negative marker by deploying over it
+		// (infra.DB.Plan reads the node into an int, and -1 is one), while a
+		// value that is not a number stops that same read — "cannot unmarshal
+		// string into Go value of type int" — and nothing is written. The fix
+		// printed for the negative arm sends the operator to a command that
+		// fails on this node and leaves it exactly as it was.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), "four")
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		// The body is the shared one: what the node holds is one state to
+		// projectpolicy.Read, and doctor's report of it is the refusal's text.
+		if c.Problem != rulesMarkerBadText(`"four"`) {
+			t.Errorf("the body is not rulesMarkerBadText:\n got %q\nwant %q", c.Problem, rulesMarkerBadText(`"four"`))
+		}
+		// The fix is the hand edit's, and it is not the negative arm's.
+		for _, want := range []string{"by hand", projectpolicy.PathRulesMarker(), "before it writes"} {
+			if !strings.Contains(c.Fix, want) {
+				t.Errorf("the fix does not name %q: %+v", want, c)
+			}
+		}
+		if strings.Contains(c.Fix, "re-run `fugaro update --firebase-project") || strings.Contains(c.Fix, "with fugaro >= "+policySince) {
+			t.Errorf("the fix for a value that is not a number is the negative marker's, which sends the reader to a command that stops at this node: %+v", c)
+		}
+		// The default view prints it (ownFix): the class's plain `fugaro update`
+		// is the line that would leave the warning standing, and a line that
+		// stopped at the flag would fail on the missing value.
+		out, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+		if !strings.Contains(out, "set "+projectpolicy.PathRulesMarker()+" to the integer generation of the deployed rules by hand, or delete the node:") {
+			t.Errorf("the default view does not print this state's own fix:\n%s", out)
+		}
+	})
 }
 
 // TestDoctorNewerThanBinaryNamesTheReleaseThatIntroducedTheVersion: doctor's

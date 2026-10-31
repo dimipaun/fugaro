@@ -78,6 +78,41 @@ func TestRolloverNoFirestoreDatabaseIsExit0(t *testing.T) {
 	}
 }
 
+// TestRolloverNoFirestoreWarningNamesAProjectTheFlagTakes: the warning is a
+// remedy a person pastes into their own terminal, and --firebase-project takes
+// only the installation's own GCP project (checkFirebaseProject), so the job's
+// own Firebase project is the one value the printed command may not carry: on
+// the fixture's shape — a job whose two names differ, which is the only shape
+// that reaches this warning with a database the gate above let through — that
+// command is refused before it reads anything. The ordinary installation, whose
+// two names are one, keeps the command it always printed.
+func TestRolloverNoFirestoreWarningNamesAProjectTheFlagTakes(t *testing.T) {
+	for _, tc := range []struct{ name, fp, gcp string }{
+		{"the job's Firebase project is the installation's GCP project", "proj-1234", "proj-1234"},
+		{"a Firebase project of its own, from before 2026-10-23", "aurora-fp", "proj-1234"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRolloverFixture(t)
+			t.Setenv("FUGARO_FIREBASE_PROJECT", tc.fp)
+			t.Setenv("FUGARO_GCP_PROJECT", tc.gcp)
+			f.fs.RemoveDatabase()
+			_, stderr, err := execute(t, "budget", "history", "--rollover")
+			if err != nil {
+				t.Fatalf("err = %v, stderr = %q", err, stderr)
+			}
+			if !strings.Contains(stderr, "no Firestore database") {
+				t.Fatalf("no warning: %q", stderr)
+			}
+			if !strings.Contains(stderr, "fugaro update --firebase-project "+tc.gcp) {
+				t.Errorf("the warning does not name the project --firebase-project takes (%s): %q", tc.gcp, stderr)
+			}
+			if tc.fp != tc.gcp && strings.Contains(stderr, "--firebase-project "+tc.fp) {
+				t.Errorf("the warning names the Firebase project --firebase-project refuses (%s): %q", tc.fp, stderr)
+			}
+		})
+	}
+}
+
 // TestRolloverRefusesAnotherInstallationsDatabase: the rollover's one write to
 // the Realtime Database is destructive — a day node that is moved out is then
 // DELETED — so which database it may do that to is asked of the database and

@@ -477,7 +477,7 @@ func TestJobIdentityTellsAPolicyWithNoProfilesFromNoPolicy(t *testing.T) {
 		{"a policy with no profiles", &projectpolicy.Policy{Version: projectpolicy.Version}, true,
 			"This project's published policy defines no job profiles at all", "fugaro project policy publish"},
 		{"a policy with profiles", policyOf(map[string]config.JobProfile{"standard": profileOf("github")}), true,
-			"This project's published policy defines the job profiles standard", "fugaro update --firebase-project <gcp-project-id>"},
+			"This project's published policy defines the job profiles standard", "then `fugaro update` with the current Fugaro"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := identityRun(t, job, slug, nil, tc.p, tc.found)

@@ -105,7 +105,7 @@ func (r *initRun) coordinatorJob(ctx context.Context, c *infra.Clients, lc *loca
 	case cs.GitHubAppID == "":
 		if !r.coordinatorNoted {
 			r.coordinatorNoted = true
-			r.warn("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads every repository through a token minted from one. Onboarding a GitHub repository records it (fugaro update --repo <owner/name> --github-app-id <id>), and the next fugaro update --firebase-project deploys the job.")
+			r.warn(fmt.Sprintf("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads every repository through a token minted from one. Onboarding a GitHub repository records it (fugaro update --repo <owner/name> --github-app-id <id>), and the next fugaro update --firebase-project %s deploys the job.", r.o.firebaseProject()))
 		}
 	default:
 		ok, err := infra.CoordinatorImageExists(ctx, c, lc, cs)

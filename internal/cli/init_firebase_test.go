@@ -1859,6 +1859,36 @@ func TestUpdateRulesNeverAdoptedSeparateProjectDoesNotMark(t *testing.T) {
 	}
 }
 
+// TestUpdateRulesVerifyIsQuietOnADatabaseItDidNotDeployInto: Verify reads the
+// deployed document and the marker back, and a database this stage skipped over
+// (unadopted) has nothing to read back — Apply wrote nothing there, which is
+// what the skip said. Without that arm Verify would report "the security rules
+// generation N is not deployed" over a run that did exactly what the skip told
+// it to, and `fugaro update` would fail on the very state the skip exists to
+// make survivable.
+//
+// The second half is the control that makes the first mean something: the same
+// stage on a database this installation DID adopt (its mark is this
+// installation's) must still fail, so the arm is the state's and not blanket
+// silence.
+func TestUpdateRulesVerifyIsQuietOnADatabaseItDidNotDeployInto(t *testing.T) {
+	r, _ := separateFirebaseRig(t)
+	s, _ := rulesStageRig(t, r)
+	if err := s.Verify(context.Background()); err != nil {
+		t.Errorf("Verify blamed the run for the database it skipped: %v", err)
+	}
+
+	r2, _ := updateBudgetRigFor(t, "other-project")
+	s2, _ := rulesStageRig(t, r2)
+	err := s2.Verify(context.Background())
+	if err == nil {
+		t.Fatal("Verify passed a database this installation adopted and whose rules generation is not deployed")
+	}
+	if !strings.Contains(err.Error(), "not deployed") {
+		t.Errorf("the control's error is not the read-back's: %v", err)
+	}
+}
+
 // TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject: the policy
 // migration is the SECOND stage `fugaro update` writes into the budget database
 // with, and the rules stage being skipped over a database the installation

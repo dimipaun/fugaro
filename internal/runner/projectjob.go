@@ -269,17 +269,18 @@ func jobWorkflow(workflow, token string) (variant string, ok bool) {
 // The fix is a command either way: publishing the policy a project job is
 // defined by where there is none to define one, and the installation's own
 // apply — which is what creates the project jobs, from that policy — where
-// there is a policy and the job is one it no longer describes. The flag's
-// value is the one --firebase-project takes, the installation's own GCP
-// project id; it is spelled as a placeholder because a run holds no config to
-// read it from, and a bare flag would be a command nobody can run.
+// there is a policy and the job is one it no longer describes. That apply is
+// the plain `fugaro update`, spelled with no flag: --firebase-project takes
+// only the installation's own GCP project and is refused for any other, and a
+// run holds no config to read that project from, so a placeholder after the
+// flag would be a command that only some readers can run.
 func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workflow, variant string) error {
 	detail := "This project has published no policy, so it defines no project job at all"
 	fix := "The fix is `fugaro doctor`, then `fugaro project policy publish` with the profiles this project's fugaro.yaml defines"
 	if found {
 		if names := p.ProfileNames(); len(names) > 0 {
 			detail = fmt.Sprintf("This project's published policy defines the job profiles %s, and a project job is one whose name is gcp.ProjectJobName of one of their (profile, provider, account) triples", strings.Join(names, ", "))
-			fix = "The fix is `fugaro doctor`, then `fugaro update --firebase-project <gcp-project-id>` with the current Fugaro, whose first apply is the one that deploys this project's jobs from that policy"
+			fix = "The fix is `fugaro doctor`, then `fugaro update` with the current Fugaro, whose first apply is the one that deploys this project's jobs from that policy"
 		} else {
 			detail = "This project's published policy defines no job profiles at all, so it defines no project job either: a project job is gcp.ProjectJobName of a (profile, provider, account) triple, and a policy with no profiles has no such triple"
 		}

@@ -145,7 +145,18 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	}
 	fmt.Fprintln(out, oneLine(rep.Summary()))
 	if rep.NoFirestore {
-		fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: no Firestore database: spend history is not being archived; run fugaro update --firebase-project "+oneLine(env[envFirebaseFP]))
+		// --firebase-project takes only the installation's own GCP project
+		// (checkFirebaseProject), so naming the Firebase project this job reads
+		// when the two differ — an installation that had a Firebase project of
+		// its own before 2026-10-23, the one shape whose marked database got
+		// past the gate above — prints a command that is refused before it
+		// reads anything. The way to a Firestore database this job can write is
+		// the move `fugaro update`'s skip names.
+		if env[envFirebaseFP] == env[envGCPProject] {
+			fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: no Firestore database: spend history is not being archived; run fugaro update --firebase-project "+oneLine(env[envGCPProject]))
+		} else {
+			fmt.Fprintln(cmd.ErrOrStderr(), fmt.Sprintf("WARNING: no Firestore database: spend history is not being archived, and --firebase-project takes only the installation's own GCP project (%s), not the Firebase project this job reads (%s): drop the config's budget.firebase_project (and the budget.rtdb_url beside it) and run fugaro update --firebase-project %s once, which builds this job's databases in that project", oneLine(env[envGCPProject]), oneLine(env[envFirebaseFP]), oneLine(env[envGCPProject])))
+		}
 	}
 	switch {
 	case err == nil:
