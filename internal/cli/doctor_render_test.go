@@ -125,8 +125,8 @@ func TestDoctorDefaultIsOneScreen(t *testing.T) {
 	if strings.Contains(got, "\u2026") {
 		t.Errorf("the default view clips a sentence instead of saying it, and --all prints the whole text:\n%s", got)
 	}
-	if !regexp.MustCompile(`^fugaro doctor: \d+ things to do$`).MatchString(lines[0]) {
-		t.Errorf("the first line is not the verdict %q: %q", "fugaro doctor: N things to do", lines[0])
+	if !regexp.MustCompile(`^fugaro doctor: \d+ things to do, \d+ to decide$`).MatchString(lines[0]) {
+		t.Errorf("the first line is not the verdict %q: %q", "fugaro doctor: N things to do, M to decide", lines[0])
 	}
 	if len(lines) < 2 || !strings.Contains(lines[1], "warning") || !strings.Contains(lines[1], "error") {
 		t.Errorf("the severity is not explained once, on the second line: %q", strings.Join(lines[min(2, len(lines)):], "\n"))
@@ -146,6 +146,11 @@ func TestDoctorDefaultIsOneScreen(t *testing.T) {
 	// And it says where they went, so nobody reads a short output as a clean one.
 	if !strings.Contains(got, "security findings: `fugaro doctor --security`") {
 		t.Errorf("the default view hides security findings without saying so:\n%s", got)
+	}
+	// The choices are the owner's and are counted as choices: a reader is not
+	// handed a decision as a task.
+	if !strings.Contains(got, "yours to decide:\n") {
+		t.Errorf("the default view does not separate the decisions from the work:\n%s", got)
 	}
 }
 
@@ -235,7 +240,7 @@ func TestDoctorWarningSecurityFindingIsNeverHidden(t *testing.T) {
 			t.Errorf("a warning security finding is hidden: %q missing from\n%s", want, got)
 		}
 	}
-	if !strings.Contains(got, "1 security findings") {
+	if !strings.Contains(got, "1 security finding: ") {
 		t.Errorf("the one hidden info finding is not counted:\n%s", got)
 	}
 }
@@ -269,8 +274,8 @@ func TestDoctorAllPrintsEveryCheck(t *testing.T) {
 // lost: --all and --json still carry it.
 func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 	updateIDs := []string{
-		"cli-version", "plugin-pin", "plugin-install", "base-image", "image-config-web",
-		"policy-older-than-binary", "policy-rules-skew", "policy-vs-jobs",
+		"cli-version", "plugin-pin", "base-image", "image-config-web",
+		"policy-rules-skew", "policy-vs-jobs",
 	}
 	for _, id := range updateIDs {
 		c := doctorCheck{ID: id, Severity: "warning",
@@ -280,10 +285,10 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 			t.Errorf("%s is %q, want %q", id, got, doctorClassUpdate)
 		}
 		line := doctorItemLine(t, c)
-		// cli-version's newer release has to be installed before the update can
-		// run, so its line ends in the upgrade and then the same command.
-		if !strings.Contains(line, "fugaro update`") || !strings.HasSuffix(line, "`") {
-			t.Errorf("%s's line does not end in the fugaro update command: %q", id, line)
+		// The line names `fugaro update` and what makes it do the work: the
+		// upgrade before it (cli-version), or the flag the stage needs.
+		if !strings.Contains(line, "`fugaro update") {
+			t.Errorf("%s's line does not name the fugaro update command: %q", id, line)
 		}
 		if strings.Contains(line, "manual migration") {
 			t.Errorf("%s's line prints the check's own long fix: %q", id, line)
@@ -296,6 +301,69 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		ok.OK, ok.Severity, ok.Problem, ok.Fix = true, "", "", ""
 		if got := doctorDefaultOutput(t, []doctorCheck{ok}); !strings.Contains(got, "fugaro doctor: ok") {
 			t.Errorf("%s still prints when it passes:\n%s", id, got)
+		}
+	}
+
+	// A check `fugaro update` does not put right is not an update item, and its
+	// line names the command that does the work: a line that sends the reader
+	// to a command which leaves the warning standing is worse than a longer one
+	// that works (the review's finding: projectpolicy.Migrate has no production
+	// caller, and the converge's plugin stage writes the pin rather than
+	// installing the plugin).
+	for id, want := range map[string]string{
+		"policy-older-than-binary": "`fugaro project policy publish --delete`",
+		"plugin-install":           "`fugaro upgrade --local`",
+	} {
+		c := doctorCheck{ID: id, Severity: "warning", Problem: "what is wrong here",
+			Fix: "a fix long enough that the default view prints the short form instead: " + strings.Repeat("and its own words ", 10)}
+		if got := doctorClassOf(c); got == doctorClassUpdate {
+			t.Errorf("%s is an update item, and fugaro update does not do this: %q", id, got)
+		}
+		line := doctorItemLine(t, c)
+		if !strings.Contains(line, want) {
+			t.Errorf("%s's line does not name %s: %q", id, want, line)
+		}
+	}
+}
+
+// TestDoctorNeverHidesAFinding is the invariant the classification exists
+// under: checksFail fails on any check that is not ok and whose severity is
+// not "info", so a check that can fail doctor may never be hidden — not by an
+// audit ID (provider-price-catalog is an age to read and a stale catalog,
+// project-layer-drift is a layer that moved on and a run that applied none),
+// not by anything else. A hidden check plus a failing exit code prints
+// "everything checked is ok" beside exit 1.
+func TestDoctorNeverHidesAFinding(t *testing.T) {
+	ids := []string{
+		"provider-price-catalog", "provider-zdr-unverified", "routing-resolution", "routing-cache-markers",
+		"project-layer", "project-layer-drift", "shared-config", "shared-config-differs",
+		"xdg-temp-dir", "policy-published", "plugin-settings-caveat", "plugin-settings-1",
+		"token-signers-owners", "runs-bucket-iam-1", "launcher-jobs-public", "job-token-grant",
+		"project-account-stored",
+	}
+	for _, id := range ids {
+		for _, sev := range []string{"", "warning"} {
+			c := doctorCheck{ID: id, Severity: sev, Problem: "something is wrong", Fix: "run `fugaro update`"}
+			if doctorClassOf(c) != doctorClassActionable {
+				t.Errorf("%s at severity %q is not an item of the default view: %q", id, sev, doctorClassOf(c))
+			}
+			if !strings.Contains(doctorDefaultOutput(t, []doctorCheck{c}), id) {
+				t.Errorf("%s at severity %q fails doctor and the default view does not print it", id, sev)
+			}
+		}
+		// The measurement is the half that moves behind --all: same ID, an
+		// info severity, nothing wrong.
+		info := doctorCheck{ID: id, Severity: "info", Problem: "what doctor measured"}
+		if got := doctorClassOf(info); got != doctorClassAudit {
+			t.Errorf("%s as a measurement is %q, want %q", id, got, doctorClassAudit)
+		}
+	}
+
+	// The other direction: whatever a view hides, doctor does not fail on.
+	for _, c := range doctorOwnerCase() {
+		hidden := doctorClassOf(c) == "" || doctorClassOf(c) == doctorClassAudit
+		if hidden && checksFail([]doctorCheck{c}, true) {
+			t.Errorf("%s is hidden from the default view and fails doctor: %+v", c.ID, c)
 		}
 	}
 }

@@ -42,21 +42,33 @@ const (
 // doctorUpdatePrefixes are the checks whose remedy is `fugaro update` itself
 // (CLAUDE.md's hard rule: the one documented command brings the installation,
 // the policy, the rules, the images and the plugin pin to the new version).
-// Matching is by prefix because two of them are per-instance IDs
+// Matching is by prefix because one of them is a per-instance ID
 // (image-config-<workflow>).
 //
-// policy-older-than-binary and policy-rules-skew are here per the plan's
-// sequencing: `fugaro update` migrates a policy node it finds older than itself
-// and redeploys the rules (UC2 and UC3). Until those land the check's own --all
-// text still names what an operator does by hand today, and no explanation is
-// lost: it is in --json and under --all.
+// The list is what `fugaro update` does today, because the default view may
+// not name a command that will not do the work: the converge's own stages are
+// preflight, installation, Firebase, images, installation again, secrets,
+// plugin and the checkout's repository (init_stages.go), and a check whose
+// remedy is none of them is not an update item. Two the plan means to move
+// here are not here yet:
+//
+//   - policy-older-than-binary: its remedy today is `fugaro project policy
+//     publish --delete`, then a publish. projectpolicy.Migrate has no
+//     production caller, so `fugaro update` leaves the old node where it is.
+//   - plugin-install: what differs is the plugin Claude Code installed, and
+//     the converge's plugin stage rewrites the checkout's pin, not the
+//     installation: `fugaro upgrade --local` (or the marketplace command in
+//     Claude Code) is what installs it.
+//
+// policy-rules-skew is here and its line names --firebase-project, because a
+// plain `fugaro update` does not reach the rules: the flag is what deploys
+// them. And cli-version's line names the upgrade first: the newer release is
+// not installed yet, so `fugaro update` alone would run the old binary.
 var doctorUpdatePrefixes = []string{
 	"cli-version",
 	"plugin-pin",
-	"plugin-install",
 	"base-image",
 	"image-config-",
-	"policy-older-than-binary",
 	"policy-rules-skew",
 	"policy-vs-jobs",
 }
@@ -107,6 +119,13 @@ var doctorAuditPrefixes = []string{"plugin-settings-"}
 // doctorAuditIDs are the same, by their whole name: a prefix would swallow a
 // neighbour that is not informational (project-layer is the layer that applies,
 // project-layer-copy is a stale copy that has to be republished).
+//
+// An audit ID is what doctor measured, and several of them are a measurement
+// in one state and a finding in another: provider-price-catalog is an age to
+// read and a stale catalog, project-layer-drift is a layer that moved on and a
+// run that applied none. The class is therefore never the ID alone — see
+// doctorClassOf: a check that is not ok and carries a severity is a finding
+// whatever its ID, and a finding is never hidden.
 var doctorAuditIDs = map[string]bool{
 	"provider-price-catalog":  true,
 	"provider-zdr-unverified": true,
@@ -131,25 +150,39 @@ var doctorActionableInfoIDs = map[string]bool{
 // a check's meaning stays where its sentence is, and --json and the human view
 // cannot disagree about what is hidden.
 func doctorClassOf(c doctorCheck) string {
+	// doctorFinding is the one question every hidden class has to answer no
+	// to: does this check fail doctor? checksFail fails on any check that is
+	// not ok and whose severity is not "info" — "" fails always, "warning"
+	// fails --strict. A check that fails may never be hidden, or the view
+	// prints "everything checked is ok" beside an exit code 1.
+	finding := !c.OK && c.Severity != "info"
 	switch {
 	case c.OK && c.Severity == "":
 		// doctor's own bookkeeping: nothing prints it, in any view.
 		return ""
-	case !c.OK && c.Severity != "info" && doctorHasPrefix(c.ID, doctorUpdatePrefixes):
-		// Not an "info" check: that severity is what doctor says when it could
-		// not read the state at all (the deployed rules were unreadable, a
-		// plugin state cannot be compared), and `fugaro update` is no fix for a
-		// read that did not happen.
+	case finding && doctorHasPrefix(c.ID, doctorUpdatePrefixes):
 		return doctorClassUpdate
 	case doctorDecisionIDs[c.ID]:
 		return doctorClassDecision
 	case doctorHasPrefix(c.ID, doctorSecurityPrefixes):
-		if !c.OK && c.Severity != "info" {
+		if finding {
 			// A warning-severity security finding is never hidden.
 			return doctorClassActionable
 		}
 		return doctorClassAudit
+	case finding:
+		// A finding is an item whatever its ID: the audit list is what doctor
+		// measured, and taking it as a class on its own hid a stale price
+		// catalog and a run that applied no project layer — both warnings,
+		// both of which fail --strict while the view says there is nothing to
+		// do.
+		return doctorClassActionable
 	case doctorAuditIDs[c.ID] || doctorHasPrefix(c.ID, doctorAuditPrefixes):
+		return doctorClassAudit
+	case c.OK:
+		// A check that passes and still carries a severity is a measurement,
+		// not a finding: project-account-stored names the repositories a
+		// project's token reaches when nothing is wrong with it.
 		return doctorClassAudit
 	case c.Severity == "info" && !doctorActionableInfoIDs[c.ID]:
 		return doctorClassAudit
@@ -219,13 +252,23 @@ func printDoctorReport(w io.Writer, checks []doctorCheck, v doctorView) {
 		return
 	}
 	shown, auditSecurity, hidden := doctorVisible(checks, v)
+	todo, decisions := doctorSplit(shown)
 	if len(shown) == 0 {
 		fmt.Fprintln(w, "fugaro doctor: ok — everything checked is ok")
 	} else {
-		fmt.Fprintf(w, "fugaro doctor: %d things to do\n", len(shown))
+		fmt.Fprintln(w, doctorVerdict(len(todo), len(decisions)))
 		fmt.Fprintln(w, "an error stops Fugaro until it is fixed (doctor exits 1); a warning is wrong, and Fugaro still runs. `fugaro doctor --all` prints every check.")
-		for _, c := range shown {
+		for _, c := range todo {
 			printDoctorItem(w, c)
+		}
+		if len(decisions) > 0 {
+			// A decision is the owner's, not work of the same kind: it prints
+			// under its own line, so a reader counting the items above is not
+			// counting the choices as things to do.
+			fmt.Fprintln(w, "yours to decide:")
+			for _, c := range decisions {
+				printDoctorItem(w, c)
+			}
 		}
 	}
 	// A reader who asked for the security sweep gets it whole: the sweep's
@@ -239,11 +282,41 @@ func printDoctorReport(w io.Writer, checks []doctorCheck, v doctorView) {
 	}
 }
 
+// doctorSplit is the items by what they ask of the reader: what has to be
+// done, and what is theirs to choose.
+func doctorSplit(shown []doctorCheck) (todo, decisions []doctorCheck) {
+	for _, c := range shown {
+		if doctorClassOf(c) == doctorClassDecision {
+			decisions = append(decisions, c)
+			continue
+		}
+		todo = append(todo, c)
+	}
+	return todo, decisions
+}
+
+// doctorVerdict is the one line that says how much there is: the work, and the
+// choices, because a reader of a decision is not being handed a task.
+func doctorVerdict(todo, decisions int) string {
+	switch {
+	case todo > 0 && decisions > 0:
+		return fmt.Sprintf("fugaro doctor: %d things to do, %d to decide", todo, decisions)
+	case todo > 0:
+		return fmt.Sprintf("fugaro doctor: %d things to do", todo)
+	default:
+		return fmt.Sprintf("fugaro doctor: %d to decide", decisions)
+	}
+}
+
 // printDoctorSecurityNotice is the line that keeps a hidden security finding
 // from being an unmentioned one: the classification is never silent, so a
 // short output is never read as a clean one.
 func printDoctorSecurityNotice(w io.Writer, n int) {
-	fmt.Fprintf(w, "%d security findings: `fugaro doctor --security`\n", n)
+	word := "findings"
+	if n == 1 {
+		word = "finding"
+	}
+	fmt.Fprintf(w, "%d security %s: `fugaro doctor --security`\n", n, word)
 }
 
 // printDoctorItem prints one item of the default view: the check's ID, the
@@ -298,16 +371,28 @@ func doctorSeverityWord(c doctorCheck) string {
 	return "error"
 }
 
-// doctorFixForUpdate is the one fix of an update-class item, and the check's
-// own text is not lost with it: --all and --json still print what the check
-// says (a manual migration, a rebuilt image, the repository a publish runs in).
-func doctorFixForUpdate(id string) string {
-	if id == "cli-version" {
-		// The newer release is not installed yet, so the upgrade comes first;
-		// the update behind it is what brings the repository to the version.
-		return "run `brew upgrade fugaro && fugaro update`"
-	}
-	return "run `fugaro update`"
+// doctorUpdateFixes is the one fix of an update-class item, per ID where the
+// command needs a flag or comes after another one, and `fugaro update` plain
+// otherwise. A check whose remedy is not what update does is not in the class
+// at all (doctorUpdatePrefixes), because a line that names a command which
+// leaves the warning standing is worse than a longer one that works.
+//
+// The check's own text is not lost with these: --all and --json still print
+// what it says (the manual migration, the repository a publish runs in).
+var doctorUpdateFixes = map[string]string{
+	// The newer release is not installed yet, so the upgrade comes first; the
+	// update behind it is what brings the installation and the checkout to the
+	// version (CLAUDE.md's hard rule: those two commands are the whole upgrade).
+	"cli-version": "run `brew upgrade fugaro`, then `fugaro update`",
+	// The rules are not reached by a plain update: --firebase-project is what
+	// deploys them, and the check's own fix says the same.
+	"policy-rules-skew": "run `fugaro update --firebase-project`",
+	// The images stage rebuilds the jobs, and writing a job's environment is
+	// the checkout's repository stage.
+	"policy-vs-jobs": "run `fugaro update --repo .`",
+	// A check that cannot even be read outside a checkout says so in its own
+	// text: update is the whole upgrade, and it runs in the repository.
+	"plugin-pin": "run `fugaro update` in the repository's checkout",
 }
 
 // doctorShortProblem is the one sentence the default view prints for a check.
@@ -321,29 +406,67 @@ func doctorShortProblem(c doctorCheck) string {
 			return c.Problem[:i] + ": the repository copy wins over the project-wide one, so the project's value never reaches here."
 		}
 	}
-	if s, ok := doctorShorts[c.ID]; ok {
-		return s.problem
-	}
-	for prefix, s := range doctorShortsByPrefix {
-		if strings.HasPrefix(c.ID, prefix) {
-			return s
-		}
+	if s, ok := doctorShortFor(c.ID); ok && s.problem != "" {
+		return doctorExpand(s.problem, c.ID)
 	}
 	return firstSentence(c.Problem)
 }
 
 // doctorShortFix is the one fix the default view prints: the command or the one
-// action, and nothing else. Update-class items get `fugaro update` whatever
-// they say themselves; the rest use their own short form, else the first
-// sentence of the check's Fix.
+// action, and nothing else.
+//
+// An update-class item gets its own command, because that is what the class is
+// for. Every other check keeps the fix it words itself whenever that fix fits
+// the line — the check knows its own state and doctor's text is the one the
+// operator's search will find — and falls back to its short form only when it
+// does not fit. That fallback is why a short fix in the table is reachable:
+// none of them is written to be replaced.
 func doctorShortFix(c doctorCheck) string {
 	if doctorClassOf(c) == doctorClassUpdate {
-		return doctorFixForUpdate(c.ID)
+		if f, ok := doctorUpdateFixes[c.ID]; ok {
+			return f
+		}
+		return "run `fugaro update`"
 	}
-	if s, ok := doctorShorts[c.ID]; ok && s.fix != "" {
-		return s.fix
+	own := firstSentence(c.Fix)
+	s, ok := doctorShortFor(c.ID)
+	if own != "" && (!ok || s.fix == "" || doctorFits(c, own)) {
+		return own
 	}
-	return firstSentence(c.Fix)
+	return doctorExpand(s.fix, c.ID)
+}
+
+// doctorShortFor is one check's short form, by its whole ID or by the prefix
+// doctor gives a per-instance check.
+func doctorShortFor(id string) (doctorShort, bool) {
+	if s, ok := doctorShorts[id]; ok {
+		return s, true
+	}
+	for prefix, s := range doctorShortsByPrefix {
+		if strings.HasPrefix(id, prefix) {
+			return s, true
+		}
+	}
+	return doctorShort{}, false
+}
+
+// doctorFits reports whether a fix fits beside the item's own head on one line.
+func doctorFits(c doctorCheck, fix string) bool {
+	head := doctorSeverityWord(c) + " " + c.ID + ": " + doctorShortProblem(c)
+	return len([]rune(head))+1+len([]rune(fix)) <= doctorLineLimit
+}
+
+// doctorExpand fills a short form's %s with the instance's own name: the
+// per-instance checks name a workflow in their ID and their command needs it.
+func doctorExpand(s, id string) string {
+	if !strings.Contains(s, "%s") {
+		return s
+	}
+	name := id
+	for prefix := range doctorShortsByPrefix {
+		name = strings.TrimPrefix(id, prefix)
+	}
+	return strings.ReplaceAll(s, "%s", name)
 }
 
 // doctorShort is one check's short form: the sentence and the fix.
@@ -359,10 +482,17 @@ type doctorShort struct {
 var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
 	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
+	// The plugin Claude Code installed is not the checkout's pin, and the
+	// converge's plugin stage writes the pin: installing is the upgrade's own
+	// step (its refusal text and pluginwire.Fix both name it).
 	"plugin-install": {"the installed Claude Code plugin is not the pinned one.",
-		"run `claude plugin install fugaro` inside the repository"},
-	"base-image":                        {"no Fugaro base image is recorded, so image builds start from whatever the repository names.", ""},
-	"policy-older-than-binary":          {"the published policy is older than this Fugaro, and no run applies it.", ""},
+		"run `fugaro upgrade --local`, or install it in Claude Code"},
+	"base-image": {"no Fugaro base image is recorded, so image builds start from whatever the repository names.", ""},
+	// The published policy node is older than this binary, and nothing
+	// redeploys, migrates or deletes it: the remedy is the publisher's own two
+	// commands, not `fugaro update`.
+	"policy-older-than-binary": {"the published policy is older than this Fugaro, and no run applies it.",
+		"run `fugaro project policy publish --delete`, then `fugaro project policy publish`"},
 	"policy-rules-skew":                 {"the deployed budget rules are older than the policy generation, so a published policy cannot be read.", ""},
 	"policy-vs-jobs":                    {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
 	"installation":                      {"no Fugaro installation is configured.", "run `fugaro setup`"},
@@ -375,7 +505,7 @@ var doctorShorts = map[string]doctorShort{
 	"project-account-stored":            {"a Claude account job mounts a token the project does not store.", "run `claude setup-token`, then `fugaro secrets set TOKEN --project-wide`"},
 	"claude-accounts-stored":            {"a named Claude account of this repository has no stored token.", "run `claude setup-token`, then `fugaro secrets set claude-oauth-token-NAME`"},
 	"oauth-token-allowed":               {"this checkout's agent.oauth_token names an account it may not use.", "name the repository in that account's allow_data_to, or drop the key"},
-	"project-layer-copy":                {"the repository's own copy of the project layer is not the published one.", "run `fugaro update --repo .` in this checkout"},
+	"project-layer-copy":                {"the repository's own copy of the project layer is not the published one.", "run `fugaro config publish` in this checkout"},
 	"project-secret-extra-accessors":    {"a project-wide secret still grants a job a repository no longer holds.", "run `fugaro update --repo .` in that repository's checkout"},
 	"secret-scope":                      {"which copy Fugaro resolves for each secret this checkout's jobs mount.", "run `fugaro secrets ls --json` for that container's versions"},
 	"secret-scope-shadowed":             {"the repository copy wins over the project-wide one, so the project's value never reaches here.", ""},
@@ -388,11 +518,14 @@ var doctorShorts = map[string]doctorShort{
 	"docker":                            {"docker is not on the PATH.", "install docker"},
 }
 
-// doctorShortsByPrefix are the short sentences for the checks doctor emits once
+// doctorShortsByPrefix are the short forms for the checks doctor emits once
 // per instance (image-config-<workflow>): the instance's own name is in the
-// check's text, and the full text stays in --all and --json.
-var doctorShortsByPrefix = map[string]string{
-	"image-config-": "the workflow's job image was built from image settings it no longer resolves to.",
+// check's text, and the full text stays in --all and --json. A %s in a short
+// form is the instance's name, taken from the ID.
+var doctorShortsByPrefix = map[string]doctorShort{
+	// No short fix: the check's own names the workflow, and its workflow is the
+	// one thing a hand-run build needs.
+	"image-config-": {problem: "its job image was built from image settings it no longer resolves to."},
 }
 
 // firstSentence is a check's first sentence: the default view prints one, and
