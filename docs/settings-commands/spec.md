@@ -1,7 +1,7 @@
 # `fugaro settings`: the spec
 
 The commands below are written to the owner's answers to SD1–SD18 (2026-10-31) and to the
-recommended answer of this design's own decisions D830–D843 ([reconciliation.md](reconciliation.md)
+recommended answer of this design's own decisions D840–D853 ([reconciliation.md](reconciliation.md)
 §2 and §3). A decision answered the other way changes the paragraph that names it. Repository names
 are placeholders (`owner/repo-a`, `owner/repo-b`), projects are `workspace-a`, people are `person-1`.
 
@@ -70,7 +70,7 @@ A level that sets a key and loses is not hidden: under `--why` it is printed wit
 
 ### 2.3 VALUE
 
-The effective value — **the one a run gets**, not the raw value of any one layer (D839). This is
+The effective value — **the one a run gets**, not the raw value of any one layer (D849). This is
 where `settings` differs from `config show`, which reports a repository's `budget.per_run_usd: 50`
 as source `repo` even when the project ceiling clamps it to 10 and only `validate` says so (F11).
 Here the row reads `10` with `WINS policy`, and `--why` carries the `50` and the clamp.
@@ -95,7 +95,7 @@ value there would be a second place the meaning lives.
 
 ### 2.5 STATE
 
-One of a **closed set** (D841), drawn distinctly and never filled with a guess:
+One of a **closed set** (D851), drawn distinctly and never filled with a guess:
 
 | State | Meaning |
 | --- | --- |
@@ -116,7 +116,7 @@ whose cloud side was read; with `--offline` it is not claimed at all.
   I changed on this installation".
 - `--repo owner/name` narrows the repository scope to one; `--all-repos` iterates the local config's
   `repos:` plus this machine's remembered checkouts (`internal/localcfg/checkouts.go`). A repository
-  with no checkout is `unknown (no checkout)` (D844).
+  with no checkout is `unknown (no checkout)` (D854).
 - `--layer` restricts the layers read, by the names in the synopsis. `default` and `env` are always
   readable; `policy` and `caps` are the two cloud layers; `--layer` with a name the registry does
   not know is refused.
@@ -140,14 +140,14 @@ whose cloud side was read; with `--offline` it is not claimed at all.
 Each layer's reader is the one that already exists — `config.Resolve`, `localcfg`'s selector and
 parser, `ParseShared` and its cache, `projectpolicy`'s read, the budget reader — so `settings` adds
 no second reader for anything (F14). It reads no Terraform state and calls no Secret Manager access
-method (D840).
+method (D850).
 
 ### 2.8 `--json`
 
 One document, `{"version": 1, "project": …, "generated_at": …, "sources": [{"layer", "read_at",
 "duration_ms", "status", "note"}], "settings": [{"key", "scope", "value", "wins", "default":
 {"value", "source"}, "state", "levels": [{"layer", "value", "outcome"}]}]}`, whose members are only
-ever added within a version (D838). A renamed or re-meant member is a new member under a new name
+ever added within a version (D848). A renamed or re-meant member is a new member under a new name
 and the old one is kept; removing or retyping one bumps `version`. The schema is
 `schemas/settings.schema.json`, loaded and exercised by `schemas/schemas_test.go` like every other
 wire format.
@@ -158,7 +158,7 @@ consumer cannot mistake for the value.
 
 ## 3. The key and defaults registry
 
-One machine-readable row per setting (SD16, D830), in a new `internal/settings` package:
+One machine-readable row per setting (SD16, D840), in a new `internal/settings` package:
 
 | Field | What it holds |
 | --- | --- |
@@ -174,9 +174,9 @@ One machine-readable row per setting (SD16, D830), in a new `internal/settings` 
 the layers they may be set in — and the registry **reads** it rather than replacing it: a
 `fugaro.yaml` key appears in both, and a test asserts the two agree row for row. That keeps
 `internal/config` free of any knowledge of `localcfg` or `projectpolicy`, which is what lets the
-runner and the task format import it (D830).
+runner and the task format import it (D840).
 
-What the registry becomes the single source of (D831):
+What the registry becomes the single source of (D841):
 
 - the DEFAULT column and `--changed`;
 - the JSON Schema `default` keywords, which exist nowhere today, **pinned by a test** rather than
@@ -209,7 +209,7 @@ In order:
 1. **Find the row.** An unknown key is refused with the nearest names. A key whose `Owner` is
    another family is refused and that family's command is printed — `settings set` never writes a
    route, a price, a rigor mode, a floor, an account, a job profile, a credential or a clone URL
-   (D843). A map-valued key has no generic form and is owned by a family, always.
+   (D853). A map-valued key has no generic form and is owned by a family, always.
 2. **Find the layer.** `--layer` names the target; `default` is never a target. `--layer repo`
    without `--repo` uses the current directory's checkout and refuses when the directory is not one.
    A layer the key may not be set in is refused with the layers it may (the registry's `Layers`).
@@ -227,7 +227,7 @@ In order:
    `lineDiff`, `backupFile` and `writeFileAtomic` every other writer uses (F9).
 6. **Hand off.** `next: fugaro update`.
 
-**The sensitive directions ask for the typed project name** (`confirmTypedStrict`, D836): loosening
+**The sensitive directions ask for the typed project name** (`confirmTypedStrict`, D846): loosening
 a ceiling key (`budget.*`, `governance.*`), removing a `review_floor` entry, turning a `followup.*`
 key on, or writing a key the registry marks as a floor. `--yes` does not stand in for the typed
 form, exactly as `fugaro project repos rm` already does not.
@@ -295,7 +295,7 @@ refused in a coding-agent session as every cloud write of `update` already is (S
    provider copy or ceiling copy differs from what the local config would write now, behind the same
    confirmation (D787, already answered). `fugaro upgrade`'s drift note already computes it.
 
-And one migration, in the same command (SD5, D832, D834):
+And one migration, in the same command (SD5, D842, D844):
 
 4. **The node-only blocks get a local source.** The local project config gains two blocks that
    exist nowhere today — `credentials:` and `clone_urls:` — decoded strictly
@@ -306,7 +306,7 @@ And one migration, in the same command (SD5, D832, D834):
    leaves the file and the node exactly as they were and says so — nothing is lost, and the console
    stays the only writer until the owner accepts or sets a value with §5.6. An installation whose
    node carries neither block gets neither block in its file: no default is seeded into a file
-   nobody wrote (D833).
+   nobody wrote (D843).
 
 The credentials cascade's `fallback: auto` is the reason the import asks rather than writes: the
 block decides whether paid credential tiers are spent, and a value the owner never saw must not
@@ -318,7 +318,7 @@ Four mechanisms, each built once, each named here so no plan builds a second:
 
 | Mechanism | Owner | How this design uses it |
 | --- | --- | --- |
-| **The comment-preserving editor** | `internal/localcfg/edit.go` — the `models` design's M0, for the local project config; `internal/config/layeredit.go` — the `rigor` design's R2, for the project layer file | `settings set --layer local` calls M0's editor; `--layer project` calls R2's. `--layer repo` uses the line-edit helper beside `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`), which R5 also uses. **One strategy, three documents, no fourth editor:** parse to *locate* the node, splice the bytes, never re-emit the document. The plan adds a cross-document test that the three preserve comments, key order and every untouched byte the same way (D837) |
+| **The comment-preserving editor** | `internal/localcfg/edit.go` — the `models` design's M0, for the local project config; `internal/config/layeredit.go` — the `rigor` design's R2, for the project layer file | `settings set --layer local` calls M0's editor; `--layer project` calls R2's. `--layer repo` uses the line-edit helper beside `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`), which R5 also uses. **One strategy, three documents, no fourth editor:** parse to *locate* the node, splice the bytes, never re-emit the document. The plan adds a cross-document test that the three preserve comments, key order and every untouched byte the same way (D847) |
 | **The diff-and-confirm UX** | `lineDiff`, `backupFile` (`<file>.bak-<timestamp>`, mode 0600) and `writeFileAtomic` (`internal/cli/init.go`), plus `confirmTyped`/`confirmTypedStrict` (`internal/cli/budget.go`) | Every write in §4 and §5 uses all five; the sensitive directions use the typed form, which `--yes` never covers |
 | **The coding-agent-session refusal** | `agentMarker`/`agentEnv` over `agentenv.Marker` (`internal/cli/initsecrets.go`), as `config publish` and `recipes publish` already refuse | `settings set\|unset --layer local\|project` and every family that writes outside a repository print the diff and the command and write nothing, `--yes` included (SD9). Reads always run |
 | **The `next: fugaro update` line** | the `models` spec §4.6 and the `rigor` spec §3.7 | Every write command here prints that one line and nothing else (SD3, SD4) |

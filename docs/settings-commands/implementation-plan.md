@@ -1,7 +1,7 @@
 # `fugaro settings`: implementation plan
 
 **The design is approved; the tasks queue for CLI 0.15.0.** SD1–SD18 were answered by the owner on
-2026-10-31 ([reconciliation.md](reconciliation.md) §3) and D830–D843 are this plan's recommendations
+2026-10-31 ([reconciliation.md](reconciliation.md) §3) and D840–D853 are this plan's recommendations
 (§4). A decision answered the other way changes the tasks that cite it. Each task touches at most 12
 files, names its tests, starts with a red step, and ends at the gates below. **The first slice is
 S0–S3.**
@@ -21,7 +21,7 @@ S0–S3.**
 - **External dependency E3 — the comment-preserving editors.** The `models` plan's M0
   (`internal/localcfg/edit.go`, the local project config) and the `rigor` plan's R2
   (`internal/config/layeredit.go`, the project layer file). S5–S9 call them; **no task here writes a
-  fourth editor** (D837).
+  fourth editor** (D847).
 - **Files other work owns:** registering the commands in `internal/cli/root.go`, the generated
   `website/content/cli-reference.md`, `plugin/**`, `console/**` and `docs/releases/**` are each
   another work stream's at the time of writing. S1, S10 and every task that adds a command name them,
@@ -44,7 +44,7 @@ S0–S3.**
 -run Docs -count=1 -timeout 40m` when a doc changed; `go test ./internal/eeboundary/... -count=1`.
 Never the whole `internal/cli` package.
 
-## S0. The key and defaults registry (SD16, D830, D831)
+## S0. The key and defaults registry (SD16, D840, D841)
 
 Without it the DEFAULT column, `--changed` and the schema `default` keywords have no source but a
 fourth hand-kept copy (F12).
@@ -64,7 +64,7 @@ fourth hand-kept copy (F12).
   `TestRegistryOwnerNamesACommand`, `TestRegistryMarksEverySensitiveKey`.
 - **Hermetic:** pure Go, no filesystem.
 
-## S1. `fugaro settings`, the read over the offline layers (SD1, D839, D841, D842, D844)
+## S1. `fugaro settings`, the read over the offline layers (SD1, D849, D851, D852, D854)
 
 - **Files (9):** `internal/cli/settings.go` (new: the command group), `internal/cli/settings_read.go`
   (new: one row per key and scope, from the registry and the offline readers), `internal/cli/settings_read_test.go`
@@ -85,7 +85,7 @@ fourth hand-kept copy (F12).
 - **Hermetic:** `t.TempDir()` config home, a fake checkout made with `git init` in the temp dir, a
   seeded layer cache, `internal/testutil`.
 
-## S2. The cloud layers, `unpublished`, and `--why` (SD3, D839, D841)
+## S2. The cloud layers, `unpublished`, and `--why` (SD3, D849, D851)
 
 The `unpublished` state is the whole point of the read: it is what says a local edit will reach runs
 on the next `update` (G1, G2).
@@ -125,7 +125,7 @@ spend. It is E1, and it is the first slice's second half.
 - **Hermetic:** `internal/gcpfake`, a fake Realtime Database, `t.TempDir()`. No apply, no deploy, no
   cloud call.
 
-## S4. The layer side of the read (SD4, D835)
+## S4. The layer side of the read (SD4, D845)
 
 The read side only: the layer's local file has a path, and a local file that differs from the
 published object is `unpublished`. The stage itself is E2 and is not written here.
@@ -139,7 +139,7 @@ published object is `unpublished`. The stage itself is E2 and is not written her
   `TestSettingsWithNoLocalLayerFileReadsThePublishedOneAndSaysSo`.
 - **Hermetic:** `internal/gcpfake` for the published object, `t.TempDir()` for the file.
 
-## S5. `fugaro settings get|set|unset` (SD2, SD9, D836, D837, D842, D843). **SEC**
+## S5. `fugaro settings get|set|unset` (SD2, SD9, D846, D847, D852, D853). **SEC**
 
 It edits the local project config, the project layer file and a repository's `fugaro.yaml`: three
 documents that decide where a repository's code goes and what a run may cost, and one of them
@@ -162,12 +162,12 @@ outside every repository, which is why the agent-session refusal is here.
   `TestSettingsAddAndRemoveOnAListKey`, `TestSettingsRefusesEmptyingAListKey`,
   `TestSettingsUnsetRemovesTheKeyRatherThanWritingTheDefault`,
   `TestSettingsUnsetOfNothingIsAnExitZeroSentence`, `TestSettingsSetPrintsOnlyFugaroUpdateNext`,
-  `TestSettingsSetWritesNothingInTheCloud`, `TestTheThreeEditorsPreserveBytesTheSameWay` (D837's
+  `TestSettingsSetWritesNothingInTheCloud`, `TestTheThreeEditorsPreserveBytesTheSameWay` (D847's
   cross-document test).
 - **Hermetic:** `t.TempDir()` config home, a fake checkout with `git init`, `internal/gcpfake` for the
   layer, fixture files with comments and unknown keys (placeholder names only).
 
-## S6. `fugaro project credentials` and `fugaro project clone-url`, with the import (SD5, D832, D833, D834). **SEC**
+## S6. `fugaro project credentials` and `fugaro project clone-url`, with the import (SD5, D842, D843, D844). **SEC**
 
 The highest-risk gap (G3): the block decides whether a run spends the paid credential tiers, and
 today the only writer is the Firebase console.

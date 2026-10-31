@@ -86,7 +86,7 @@ Sources: `internal/config/layer.go:29`, `:50-180`. A per-repository copy is writ
 |---|---|---|---|---|---|---|---|
 | `defaults.git.{provider,pr.labels,pr.early_draft,pr.checkpoints}` | layer.go:139-149 | `config layer` (needs a git checkout: config_show.go:205), `config show` (resolved) / yes | **hand**: `config layer > f`, edit, `config publish f` | `config publish` writes the object and fans it out (config_publish.go:70-77). **Not** `update` | anyone who can write the runs bucket (launchers too: models spec D792) | refused (config_publish.go:36) | **H** |
 | `defaults.agent.{auth,model,models.*,review_rounds,max_budget_usd,first_line_*,recipe}` | layer.go:152-161 | same | same | same | same | same | **H** (`models use` deliberately does not write here, D792) |
-| `defaults.rigor.{default,areas}` | layer.go:133-136 | same | same; **`fugaro rigor set` designed** with a local layer file (#1463 D810/D811) | same; #1463 adds an update "Layer" stage | same | same | **H** (designed) |
+| `defaults.rigor.{default,areas}` | layer.go:133-136 | same | same; **`fugaro rigor set` designed** with a local layer file (#1463 D830/D831) | same; #1463 adds an update "Layer" stage | same | same | **H** (designed) |
 | `profiles.<name>.*` (image, commands, cache, resources, timeouts, rebuild, inputs, checkout), `default_profile` | layer.go:55-56, :164-180 | same | same; executable keys need `--executable-changes` (config_publish.go:85, :129-141) | same | same | same | **H** |
 | `claude_models` (top level) | layer.go:58-64 | `config layer` | same; checked against the routes at publish (config_publish.go:67) | same | same | same | M |
 | `governance` (top level) | layer.go:66-75 | `config layer` | same | same | same | same | M |
@@ -187,7 +187,7 @@ No command shows these. A `settings` read should list them as a layer (§4B).
 | A Terraform-backed local key | `update` (the flag) | yes |
 | A key from the policy section of the local config (budget, providers, prices, routing, profiles, accounts, project_secrets, base_branch, review_floor, bitbucket_api_roots) | hand edit → `fugaro project policy publish` | **no**. The node is only migrated (init_policy_migrate.go:20-36) |
 | providers, budget ceiling, or accounts in a job's environment | hand edit → `fugaro update --repo` **in every repository** (upgrade_cloud.go:428) | **no**. D787 (answered) assigns it to update |
-| Project layer | `config layer > f` (only from inside a checkout) → edit → `config publish f [--executable-changes]` | **no** (#1463 F18; D810/D811 proposed) |
+| Project layer | `config layer > f` (only from inside a checkout) → edit → `config publish f [--executable-changes]` | **no** (#1463 F18; D830/D831 proposed) |
 | `credentials.*`, `clone_urls` | Firebase console | **no**, and nothing else does it either |
 | Caps, kill switches, marks | `budget set|kill|resume`, `accounts clear` (immediate) | n/a (runtime controls, see SD7) |
 | Project recipes | `recipes publish FILE` | no |
@@ -228,7 +228,7 @@ Agent-refusal inconsistencies:
    - This is already the dependency F8 of `docs/models-commands/reconciliation.md` (UC1 part b).
    - `project policy publish` stays, for `--delete`, `--seed-repos` and scripted use.
    - It gains an agent refusal, for parity with `config publish`.
-2. **`fugaro update` gains a "Layer" stage** (#1463 D811). It publishes `~/.config/fugaro/projects/<name>-layer.yaml` (D810) through `publishLayer` and `fanOutLayer` (config_publish.go:99, :357).
+2. **`fugaro update` gains a "Layer" stage** (#1463 D831). It publishes `~/.config/fugaro/projects/<name>-layer.yaml` (D830) through `publishLayer` and `fanOutLayer` (config_publish.go:99, :357).
    - **Migration:** the first `update` on an installation whose layer is published and has no local file *seeds* the local file from the published bytes, shows it, and confirms. Without this, the first `rigor set` or `settings set --layer project` would fail with "no local file", which would be a manual step the HARD RULE forbids.
    - `config publish` defaults its FILE argument to that path.
    - `config layer` stops requiring a checkout when `--project` is given.
@@ -398,7 +398,7 @@ No D-number is taken. The numbers are assigned when a design folder is written.
 | SD1 | Name of the unified command | **`fugaro settings`** (read, plus `get`/`set`/`unset`); `config show` stays as its repository view | `config show --all`: overloads a group that already means three things, and it needs a checkout today |
 | SD2 | Generic `set` or one command per block | **Hybrid**: generic for scalar and list keys from the registry, dedicated families for structured blocks (routes, accounts, profiles, routing, credentials, floor) | Generic only: typing a provider map on a command line is error-prone, and the cross-key checks are lost |
 | SD3 | Does `fugaro update` publish the policy node from the local config every run? | **Yes**, behind its one confirmation, with a diff; `project policy publish` keeps `--delete`/`--seed-repos` | Keep the separate publish: violates the HARD RULE (G1) |
-| SD4 | Does `fugaro update` publish the project layer, with a seeded local file? | **Yes** (#1463 D810/D811, plus seeding on first update) | `config publish FILE` only: G2 stays |
+| SD4 | Does `fugaro update` publish the project layer, with a seeded local file? | **Yes** (#1463 D830/D831, plus seeding on first update) | `config publish FILE` only: G2 stays |
 | SD5 | `credentials.*` and `clone_urls`: where is the source of truth? | **Move them to local config blocks published by update; the first update imports the node's values** | Commands that write the node directly: a second door to the cloud outside update (the model D780 refused) |
 | SD6 | Two modes: the policy `budget.mode` and the Realtime Database `config/mode` (`budget set --mode`, and `update --budget-mode` sets both) | **Keep both, name them distinctly in settings keys (`budget.mode`, `caps.mode`)**, and have `update --help` say which it writes | Merge into one: changes what a field means, which is forbidden |
 | SD7 | `budget set|kill` stay immediate writes outside update? | **Yes**: they are runtime controls (the kill switch must be instant), not upgrade state | Route them through update: a kill switch delayed is useless |

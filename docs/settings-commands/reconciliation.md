@@ -126,7 +126,7 @@ parity (spec §6.1). The deliberate exceptions — `budget set|kill` and `accoun
 
 **F17: Conflicts. `config show` reports a clamped value as if it were in force.** A repository's
 `budget.per_run_usd: 50` under a ceiling of 10 is printed with source `repo`; only `validate` says
-the ceiling clamps it (`internal/cli/validate.go`'s clamp warning). *Consequence:* D839 — the
+the ceiling clamps it (`internal/cli/validate.go`'s clamp warning). *Consequence:* D849 — the
 `VALUE` column is the effective value and `--why` carries the raw one. `config show` itself keeps
 its behaviour: its `PATH VALUE SOURCE` shape is read by its own consumers, and changing what
 `SOURCE` means for a clamped key is a field-meaning question that is not this work's (§5).
@@ -140,7 +140,7 @@ already exists.
 **F19: Missing. There is no settings JSON Schema.** `schemas/` holds eight documents
 (`fugaro`, `project-layer`, `task`, `result`, `recipe`, `image-lock`, `creds-bundle`,
 `pair-event`), none of them a settings read, and `schemas/schemas_test.go` loads and exercises each.
-*Consequence:* D838 fixes `"version": 1` and the add-only rule; the plan's S1 writes
+*Consequence:* D848 fixes `"version": 1` and the add-only rule; the plan's S1 writes
 `schemas/settings.schema.json` and the test row for it.
 
 **F20: Coordination, not a gap. The two `fugaro update` stages this design needs are two other
@@ -162,7 +162,7 @@ were answered as recommended. The recommendation and the cost of the alternative
 | **SD1** | The name of the unified command | **`fugaro settings`** (read, plus `get`/`set`/`unset`); `config show` stays as its repository view | `config show --all`: overloads a group that already means three things, and it needs a checkout today | **Answered: the command is `fugaro settings`** — read, plus `get`, `set` and `unset` |
 | **SD2** | Generic `set`, or one command per block | **Hybrid**: a generic `get`/`set`/`unset` driven by the key registry, plus dedicated families where a setting needs more than a value | Generic only: typing a provider map or a routing block on a command line is error-prone, and the cross-key checks are lost | **Answered: hybrid** — the generic path from the registry, dedicated families for the structured blocks |
 | **SD3** | Does `fugaro update` publish the policy node from the local config every run? | **Yes**, behind its one confirmation, with a diff; `project policy publish` keeps `--delete` and `--seed-repos` | Keep the separate publish: violates the HARD RULE (G1) — an edit plus `update` changes nothing and warns about nothing | **Answered: yes, and `update` publishes the policy node** |
-| **SD4** | Does `fugaro update` publish the project layer, with a seeded local file? | **Yes** (the `rigor` plan's D810/D811), plus seeding the local file on the first update | `config publish FILE` only: G2 stays, and the layer's every key keeps a second command | **Answered: yes, and `update` publishes the project layer too**, seeding a local layer file on the first update |
+| **SD4** | Does `fugaro update` publish the project layer, with a seeded local file? | **Yes** (the `rigor` plan's D830/D831), plus seeding the local file on the first update | `config publish FILE` only: G2 stays, and the layer's every key keeps a second command | **Answered: yes, and `update` publishes the project layer too**, seeding a local layer file on the first update |
 | **SD5** | `credentials.*` and `clone_urls`: where is the source of truth? | **Move them to local-config blocks that `update` publishes**; the first update imports the node's values | Commands that write the node directly: a second door to the cloud outside `update` (the model D780 refused) | **Answered: local-config blocks, published by `fugaro update`, with the first update importing the node's values** |
 | **SD6** | The policy `budget.mode` and the Realtime Database `config/mode` | **Keep both, name them distinctly** (`budget.mode`, `caps.mode`), and have `update --help` say which it writes | Merge into one: changes what a field means, which is forbidden | **Answered 2026-10-31: the recommendation** |
 | **SD7** | Do `budget set\|kill` stay immediate writes outside `update`? | **Yes**: runtime controls, not upgrade state | Route them through `update`: a kill switch delayed is useless | **Answered: the recommendation** |
@@ -178,38 +178,42 @@ were answered as recommended. The recommendation and the cost of the alternative
 | **SD17** | The `project_secrets` per-machine copy | **Publish it in the node and read it from there in `update --repo`** | Keep the manual copy: a documented hand step on every operator machine | **Answered: the recommendation** |
 | **SD18** | Who may `settings set --layer local` | **Anyone may edit their own file; the boundary stays IAM at publish** | Enforce roles locally: not enforceable on a file the user owns | **Answered: the recommendation** |
 
-## 4. This design's decisions D830–D843
+## 4. This design's decisions D840–D853
 
 Everything the audit left open that is **not** one of its SDs. The recommendation comes first; the
 alternative and its cost are the second column. **All are recommended; none is answered yet.**
 
 | D | Question | Recommendation | The alternative, and its cost |
 | --- | --- | --- | --- |
-| **D830** | Where does the key and defaults registry live? | **A new `internal/settings` package**, whose `fugaro.yaml` rows are read from `config.Scopes` and pinned against it by a test. `internal/config` learns nothing of `localcfg` or `projectpolicy` | **Extend `config.Scopes` with default, merge and store columns:** puts local-config and node knowledge into the package the runner and the task format import, and every consumer of a `fugaro.yaml` key would carry it |
-| **D831** | Are the schema `default` keywords and the docs table generated from the registry, or pinned to it? | **Pinned by a test**, the shape `TestScopeTableMatchesDocs` already gives the scope table | **Generated** (`go generate`): a step a release must remember to run, and a generated file whose diff is noise nobody reads |
-| **D832** | Where is the local source of truth for `credentials.*` and `clone_urls`? | **Two new blocks in the local project config**, decoded strictly like every other block, beside `budget`, `providers` and `routing` | **A separate `<project>-policy.yaml`:** a second file for the owner to know about, while the local config is already the home of every policy-section key (audit §1.3) |
-| **D833** | What does `update` do when neither the local file nor the node carries the two blocks? | **Nothing: no block is created and no default is seeded** | **Seed the defaults into the local file:** writes values nobody chose, and makes a file look authoritative where the node's own defaults already decide |
-| **D834** | What does the import confirm, and what does a refusal do? | **It prints the values, confirms under update's own confirmation, and writes with the diff/backup/atomic triple; a refusal leaves the file and the node untouched and says so** | **Write the import without asking:** a file the owner never wrote appears in their config home, carrying the block that decides whether paid tiers are spent |
-| **D835** | The `--layer` vocabulary, and how `--layer repo` finds its file | **`local`, `project`, `repo`; `default` is never a target; `--layer repo` without `--repo` uses the current directory's checkout and refuses when the directory is not one** | **Name the layers after their files** (`localcfg`, `layer`, `fugaro.yaml`): names that change when a file moves, and that say nothing about precedence |
-| **D836** | Which writes ask for the typed project name? | **Loosening a ceiling key (`budget.*`, `governance.*`), removing a `review_floor` entry, turning a `followup.*` key on, and writing any key the registry marks as a floor; `--yes` never covers the typed form** | **The typed name for every write:** ceremony on the common, harmless direction, which teaches people to type their project name without reading it |
-| **D837** | How many comment-preserving editors does this work need? | **One strategy, three documents, no fourth editor:** `--layer local` uses the `models` plan's M0 (`internal/localcfg/edit.go`), `--layer project` uses the `rigor` plan's R2 (`internal/config/layeredit.go`), `--layer repo` uses the helper beside `setGCPProjectLine`; a cross-document test asserts the three preserve comments, key order and untouched bytes the same way | **A fourth, generic editor:** a second implementation of the property the two plans test separately, and the one that will drift from them |
-| **D838** | The `--json` version, and where the console contract section goes | **`schemas/settings.schema.json`, `"version": 1`, members added only within a version; the console section is `console/docs/json-contract.md` §6.15, written by the task that builds the screen** | **Fix the contract here:** a design that writes the console's own document drifts from the screen it describes, and the console boundary keeps `console/docs/` a file the console's work owns |
-| **D839** | Is `VALUE` the effective value or the winning layer's raw one? | **The effective value a run gets; `--why` carries the raw value and the clamp** | **The winning layer's raw value:** the state `config show` is in today (F17), where a clamped 50 reads as if it were in force |
-| **D840** | What may a read touch? | **Reads run anywhere, an agent session included; no Secret Manager access call, no Terraform state; a cloud layer that cannot be read is `unread: <reason>`, never a default** | **Refuse reads in an agent session:** a read-only command answering a question an agent may legitimately ask, and the refusal pushes it to a hand read of the same files with no diff and no redaction |
-| **D841** | Is the `STATE` vocabulary closed? | **Closed** (spec §2.5); a new state is a new member of the set and an addition to `--json` | **Free text:** a consumer cannot branch on the column, which is the only reason the column exists |
-| **D842** | `settings get` on a key set nowhere, and on an unknown key | **Set nowhere prints the default row and exits 0; unknown exits non-zero with the nearest registry names** | **Non-zero for set nowhere:** an idempotent script fails on a state that is already the answer — the argument `rigor unset` makes for its no-op |
-| **D843** | Which keys does the generic path own? | **Every scalar and string-list key; a map key, and any key whose `Owner` is a family, is refused with that family's command** | **Let the generic path write maps:** typing a provider map or an area rule on a command line loses the cross-key checks (route overlap, `Area.Validate`, the cascade's silence rules) the families exist for |
+| **D840** | Where does the key and defaults registry live? | **A new `internal/settings` package**, whose `fugaro.yaml` rows are read from `config.Scopes` and pinned against it by a test. `internal/config` learns nothing of `localcfg` or `projectpolicy` | **Extend `config.Scopes` with default, merge and store columns:** puts local-config and node knowledge into the package the runner and the task format import, and every consumer of a `fugaro.yaml` key would carry it |
+| **D841** | Are the schema `default` keywords and the docs table generated from the registry, or pinned to it? | **Pinned by a test**, the shape `TestScopeTableMatchesDocs` already gives the scope table | **Generated** (`go generate`): a step a release must remember to run, and a generated file whose diff is noise nobody reads |
+| **D842** | Where is the local source of truth for `credentials.*` and `clone_urls`? | **Two new blocks in the local project config**, decoded strictly like every other block, beside `budget`, `providers` and `routing` | **A separate `<project>-policy.yaml`:** a second file for the owner to know about, while the local config is already the home of every policy-section key (audit §1.3) |
+| **D843** | What does `update` do when neither the local file nor the node carries the two blocks? | **Nothing: no block is created and no default is seeded** | **Seed the defaults into the local file:** writes values nobody chose, and makes a file look authoritative where the node's own defaults already decide |
+| **D844** | What does the import confirm, and what does a refusal do? | **It prints the values, confirms under update's own confirmation, and writes with the diff/backup/atomic triple; a refusal leaves the file and the node untouched and says so** | **Write the import without asking:** a file the owner never wrote appears in their config home, carrying the block that decides whether paid tiers are spent |
+| **D845** | The `--layer` vocabulary, and how `--layer repo` finds its file | **`local`, `project`, `repo`; `default` is never a target; `--layer repo` without `--repo` uses the current directory's checkout and refuses when the directory is not one** | **Name the layers after their files** (`localcfg`, `layer`, `fugaro.yaml`): names that change when a file moves, and that say nothing about precedence |
+| **D846** | Which writes ask for the typed project name? | **Loosening a ceiling key (`budget.*`, `governance.*`), removing a `review_floor` entry, turning a `followup.*` key on, and writing any key the registry marks as a floor; `--yes` never covers the typed form** | **The typed name for every write:** ceremony on the common, harmless direction, which teaches people to type their project name without reading it |
+| **D847** | How many comment-preserving editors does this work need? | **One strategy, three documents, no fourth editor:** `--layer local` uses the `models` plan's M0 (`internal/localcfg/edit.go`), `--layer project` uses the `rigor` plan's R2 (`internal/config/layeredit.go`), `--layer repo` uses the helper beside `setGCPProjectLine`; a cross-document test asserts the three preserve comments, key order and untouched bytes the same way | **A fourth, generic editor:** a second implementation of the property the two plans test separately, and the one that will drift from them |
+| **D848** | The `--json` version, and where the console contract section goes | **`schemas/settings.schema.json`, `"version": 1`, members added only within a version; the console section is `console/docs/json-contract.md` §6.15, written by the task that builds the screen** | **Fix the contract here:** a design that writes the console's own document drifts from the screen it describes, and the console boundary keeps `console/docs/` a file the console's work owns |
+| **D849** | Is `VALUE` the effective value or the winning layer's raw one? | **The effective value a run gets; `--why` carries the raw value and the clamp** | **The winning layer's raw value:** the state `config show` is in today (F17), where a clamped 50 reads as if it were in force |
+| **D850** | What may a read touch? | **Reads run anywhere, an agent session included; no Secret Manager access call, no Terraform state; a cloud layer that cannot be read is `unread: <reason>`, never a default** | **Refuse reads in an agent session:** a read-only command answering a question an agent may legitimately ask, and the refusal pushes it to a hand read of the same files with no diff and no redaction |
+| **D851** | Is the `STATE` vocabulary closed? | **Closed** (spec §2.5); a new state is a new member of the set and an addition to `--json` | **Free text:** a consumer cannot branch on the column, which is the only reason the column exists |
+| **D852** | `settings get` on a key set nowhere, and on an unknown key | **Set nowhere prints the default row and exits 0; unknown exits non-zero with the nearest registry names** | **Non-zero for set nowhere:** an idempotent script fails on a state that is already the answer — the argument `rigor unset` makes for its no-op |
+| **D853** | Which keys does the generic path own? | **Every scalar and string-list key; a map key, and any key whose `Owner` is a family, is refused with that family's command** | **Let the generic path write maps:** typing a provider map or an area rule on a command line loses the cross-key checks (route overlap, `Area.Validate`, the cascade's silence rules) the families exist for |
 
-**D844–D849 are reserved and unused.**
+**D854–D859 are reserved and unused.**
 
 ## 5. Noticed while reconciling, and not this work's
 
-- **Two works claim one decision block.** `docs/console-coordinator-v2` on `main` holds
-  **D810–D829**, and PR #1463 (`docs/rigor-command`) claims **D810–D829** for itself
-  (`docs/rigor-command/README.md`'s number table, and D810–D819 written in its reconciliation).
-  Two documents cannot own one block. This design takes the next free number above both (**D830**),
-  so nothing here depends on the outcome; renumbering a merged document and an open pull request is
-  not this run's to do.
+- **Two works claimed one decision block, and the second has moved off it.** `docs/console-coordinator-v2`
+  on `main` holds **D810–D829**, and PR #1463 (`docs/rigor-command`) had claimed **D810–D829** for
+  itself (`docs/rigor-command/README.md`'s number table, and D810–D819 written in its reconciliation).
+  Two documents cannot own one block. PR #1463 has since renumbered its own block to **D830–D839**,
+  so the collision is resolved: this design takes the next free number above every block written on
+  `main` and in an open pull request (**D840**), and the two places it cites the rigor design — the
+  local layer file that `rigor set` writes (**D830**) and the `Layer` stage in `fugaro update` that
+  publishes it with seeding (**D831**) — cite the renumbered decisions. The block this design held
+  before the renumbering (D830–D849) is released, so the two blocks cannot be confused; nothing
+  outside this folder ever cited it.
 - **`internal/cli/run.go`'s cascade refusal names the wrong file.** Its message says to "add the
   allow-list to the project layer and publish it (`fugaro project policy publish`)", while
   `budget.allowed_models` is a key of the **local project config** and the project layer has no such
@@ -222,7 +226,7 @@ alternative and its cost are the second column. **All are recommended; none is a
   word.** The first is the installation's own credentials service, in the local config; the second is
   the cascade's spending policy, on the node. The registry must keep them apart by key
   (`credentials_service.url` versus `credentials.fallback`), or the read will be read as the write.
-- **The clamp is invisible in `config show`** (F17). Closed for `settings` by D839; `config show`
+- **The clamp is invisible in `config show`** (F17). Closed for `settings` by D849; `config show`
   keeps its own behaviour, because changing what its `SOURCE` column means for a clamped key is a
   decision for its consumers, not a fix this design may slip in.
 - **`fugaro config layer` requires a git checkout**, so an owner outside a repository cannot read

@@ -1,9 +1,9 @@
 # `fugaro settings`: one command to see and change every setting, with `fugaro update` publishing what it changes
 
 **Status: design approved. SD1–SD18 were answered by the owner on 2026-10-31 (SD1–SD5 with named answers, the rest as recommended); the tasks queue for CLI 0.15.0.** The answers are in
-[reconciliation.md](reconciliation.md) §2, and the plan is written to them. The design's own
-decisions — everything the audit left open that is not one of its SDs — are **D830–D843**, in
-[reconciliation.md](reconciliation.md) §3, all recommended; **D844–D849** are reserved and unused.
+[reconciliation.md](reconciliation.md) §3, and the plan is written to them. The design's own
+decisions — everything the audit left open that is not one of its SDs — are **D840–D853**, in
+[reconciliation.md](reconciliation.md) §4, all recommended; **D854–D859** are reserved and unused.
 Nothing is built yet.
 
 **Asked by:** the owner, 2026-10-31: "for project level and repo level settings, in fact for ALL
@@ -53,7 +53,7 @@ This work adds:
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The read command and its columns, the write path, the seven dedicated families, the publish foundation, the registry, the shared mechanics the `models` and `rigor` designs already own, the migration of a hand-edited installation, and the console contract section a Settings view will need |
-| [reconciliation.md](reconciliation.md) | Findings F1–F18 against the code on `main`, the owner's answers to SD1–SD18, and this design's own decisions D830–D843 (each with a recommendation and the cost of the alternative). **Where it disagrees with [spec.md](spec.md), it wins** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F20 against the code on `main`, the owner's answers to SD1–SD18, and this design's own decisions D840–D853 (each with a recommendation and the cost of the alternative). **Where it disagrees with [spec.md](spec.md), it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks S0–S10 (at most 12 files each), the external dependencies E1–E3, and the order; each task names its tests, starts with a red step and carries a SEC flag where it writes policy, the layer or a credential block. **The first slice is S0–S3** |
 
 ## How this was reconciled
@@ -69,8 +69,8 @@ update` stages.
 
 | Block | Use |
 | --- | --- |
-| **D830–D849** | this work's block: **D830–D843** written, recommended; **D844–D849** reserved and unused. Verified free as follows: on `main` the highest number anywhere in `docs/` is **D829** (`docs/console-coordinator-v2/reconciliation.md`, the tail of that work's D810–D829), and the highest in any open pull request's docs is also **D829** (`docs/rigor-command/README.md`, PR #1463). The models block (D780–D799) and the console auto-update plan's block (D760–D772, #1377) are below both |
-| **A collision, recorded and not resolved here** | **PR #1463 (`docs/rigor-command`) claims D810–D829, and `main`'s `docs/console-coordinator-v2` already holds D810–D829.** Two works cannot own one block. This design takes the next free block above both (D830), so nothing here depends on how that is settled; the collision is reported in [reconciliation.md](reconciliation.md) §4 rather than fixed, because fixing it means renumbering a merged document and an open pull request, which is not this run's |
+| **D840–D859** | this work's block: **D840–D853** written, recommended; **D854–D859** reserved and unused. Verified free as follows: on `main` the highest number anywhere in `docs/` is **D829** (`docs/console-coordinator-v2/reconciliation.md`, the tail of that work's D810–D829), and the highest in any open pull request's docs is **D839** (`docs/rigor-command/README.md`, PR #1463, which renumbered its block to **D830–D839**). The models block (D780–D799) and the console auto-update plan's block (D760–D772, #1377) are below both |
+| **The collision this design waited on, resolved** | **PR #1463 (`docs/rigor-command`) had claimed D810–D829, which `main`'s `docs/console-coordinator-v2` already holds.** PR #1463 has since renumbered itself to **D830–D839**, so this design takes **D840**, the next free number above every block written on `main` and in an open pull request. Nothing here cites the rigor design by its old numbers; where it does cite it — the local layer file that `rigor set` writes (**D830**) and the `Layer` stage in `fugaro update` that publishes it with seeding (**D831**) — it cites the renumbered decisions. What the earlier reading recorded, and what it cost, is in [reconciliation.md](reconciliation.md) §5 |
 | **Checks** | **none taken.** Everything this design adds is a local file edit, an offline read, or a stage of `fugaro update` whose cloud writes go through the publish paths the installation's existing update checks already exercise. The one verification that would need a check number — the first `update` importing a node-only block on a real installation — is the same path `fugaro project policy publish` already runs in the live checklist, and no new operator step is added |
 
 ## What this design does not do
