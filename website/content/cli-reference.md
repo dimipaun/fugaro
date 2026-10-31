@@ -1644,14 +1644,24 @@ fugaro doctor --plugin --strict.
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
 
+What doctor prints is a verdict and then only what to do: one sentence and one
+fix per item, each item fugaro update puts right ending in that command.
+--all prints every check, the informational lines included, and --security the
+IAM and security sweep (who can read a stored credential, who can sign a
+budget token, what a launcher may start). The default view never hides a
+security finding that is a warning, and it says how many findings it left out
+when it leaves any out. Every check, with its full text, is in --json whatever
+the flags.
+
 Exit 1 when a check fails, with the one-line fix to run.
 
-Usage: `fugaro doctor [--json] [--plugin] [--strict]`
+Usage: `fugaro doctor [--json] [--all] [--security] [--plugin] [--strict]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | print every check, the informational and audit lines included |
 | `--check-github-app` | bool | `false` | no | also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |
@@ -1661,6 +1671,7 @@ Flags:
 | `--plugin` | bool | `false` | no | check only the plugin's wiring (offline, no credentials) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
 
 Subcommands:

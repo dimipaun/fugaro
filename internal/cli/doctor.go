@@ -50,10 +50,57 @@ type doctorCheck struct {
 	Problem  string `json:"problem,omitempty"`
 	Fix      string `json:"fix,omitempty"`
 	Severity string `json:"severity,omitempty"`
+	// Class is which view prints the check: "actionable" (something is wrong,
+	// one fix), "update" (`fugaro update` puts it right), "decision" (the
+	// owner's choice, with the command for each), "measure" (what doctor
+	// measured, with nothing to do about it: printed by --all, counted by no
+	// view) or "audit" (a finding the default view counts in its pointer line
+	// rather than printing: the IAM and security sweep's own, and anything
+	// doctor has not classified). It is attached by classifyDoctorChecks,
+	// never by the check itself, so the human view and --json cannot disagree
+	// about what the default view hides. A check that carries none is a
+	// passing check nothing prints.
+	Class string `json:"class,omitempty"`
+	// unread marks a check whose own line says a fact could not be read, or is
+	// unknown: doctorClassOf reads it and never files such a check as a
+	// measurement, because an unknown filed as a measurement prints as part of
+	// "everything checked is ok" beside a fact nobody read — the silent pass
+	// the classes exist to prevent. Unexported and absent from --json on
+	// purpose: it is not a second class (the class stays decided in one place,
+	// and every ID keeps its meaning), only the one question a check answers
+	// about itself that the ID alone cannot.
+	unread bool
 }
 
 func fromPreflight(c preflight.Check) doctorCheck {
 	return doctorCheck{ID: c.ID, OK: c.OK, Problem: c.Problem, Fix: c.Fix}
+}
+
+// pluginSettingsChecks are what else the settings file carries, one line per
+// notice, then the caveat: informational only, whatever --strict says, because
+// it is the repository's business to review and a CI that failed on every hook
+// would be turned off. A notice is a counted audit finding — it printed in the
+// default view before doctor had classes — while the caveat is the standing
+// sentence about the file itself and is a measurement.
+func pluginSettingsChecks(settings string) []doctorCheck {
+	var out []doctorCheck
+	for i, n := range pluginwire.NoticesFor(settings) {
+		out = append(out, doctorCheck{ID: fmt.Sprintf("plugin-settings-%d", i+1), Severity: "info", Problem: n,
+			Fix: "review " + pluginwire.Printable(settings) + " (git blame it): wiring the plugin blesses the whole file"})
+	}
+	return append(out, doctorCheck{ID: "plugin-settings-caveat", Severity: "info", Problem: pluginwire.NoticesCaveat,
+		Fix: "read " + pluginwire.Printable(settings) + " and the files beside it (.claude/skills, .claude/commands, .mcp.json) yourself"})
+}
+
+// unreadRouting marks the routing checks of a switch doctor could not read —
+// the database unreachable or another project's, the policy unreadable, a node
+// no run reads. Their line says the switch is unknown rather than naming one,
+// and an unknown is a counted finding, never a measurement (doctorClassOf).
+func unreadRouting(cs []doctorCheck) []doctorCheck {
+	for i := range cs {
+		cs[i].unread = true
+	}
+	return cs
 }
 
 // doctorOpenProvidersCheck is doctor's "provider-open-to-every-repository"
@@ -182,9 +229,11 @@ func newDoctorCmd() *cobra.Command {
 		checkApp bool
 		strict   bool
 		asJSON   bool
+		showAll  bool
+		security bool
 	)
 	cmd := &cobra.Command{
-		Use:   "doctor [--json] [--plugin] [--strict]",
+		Use:   "doctor [--json] [--all] [--security] [--plugin] [--strict]",
 		Short: "Check that Fugaro is set up and ready, without changing anything",
 		Long: `doctor only ever reads: the environment, Terraform, the local project config
 and its installation's billing and IAM policy (with a budget backend, who can
@@ -214,10 +263,19 @@ fugaro doctor --plugin --strict.
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
 
+What doctor prints is a verdict and then only what to do: one sentence and one
+fix per item, each item fugaro update puts right ending in that command.
+--all prints every check, the informational lines included, and --security the
+IAM and security sweep (who can read a stored credential, who can sign a
+budget token, what a launcher may start). The default view never hides a
+security finding that is a warning, and it says how many findings it left out
+when it leaves any out. Every check, with its full text, is in --json whatever
+the flags.
+
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp)
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp, doctorView{all: showAll, security: security})
 		},
 	}
 	addCloudFlags(cmd, &cloud)
@@ -226,10 +284,12 @@ Exit 1 when a check fails, with the one-line fix to run.`,
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	cmd.Flags().BoolVar(&showAll, "all", false, "print every check, the informational and audit lines included")
+	cmd.Flags().BoolVar(&security, "security", false, "also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start)")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool) error {
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool, view doctorView) error {
 	ctx := cmd.Context()
 	// Before anything is read: the key is never read in a coding agent's session.
 	if checkApp {
@@ -247,16 +307,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			// differs", "not installed" are not evaluated (design §4.5).
 			pluginReport.Install, pluginReport.Version = "", ""
 		}
-		pluginChecks = pluginDoctorChecks(pluginReport)
-		// Informational only, whatever --strict says: what else the settings
-		// file carries is the repository's business to review, and a CI that
-		// failed on every hook would be turned off.
-		for i, n := range pluginwire.NoticesFor(loc.Settings) {
-			pluginChecks = append(pluginChecks, doctorCheck{ID: fmt.Sprintf("plugin-settings-%d", i+1), Severity: "info", Problem: n,
-				Fix: "review " + pluginwire.Printable(loc.Settings) + " (git blame it): wiring the plugin blesses the whole file"})
-		}
-		pluginChecks = append(pluginChecks, doctorCheck{ID: "plugin-settings-caveat", Severity: "info", Problem: pluginwire.NoticesCaveat,
-			Fix: "read " + pluginwire.Printable(loc.Settings) + " and the files beside it (.claude/skills, .claude/commands, .mcp.json) yourself"})
+		pluginChecks = append(pluginDoctorChecks(pluginReport), pluginSettingsChecks(loc.Settings)...)
 	} else {
 		// Not inside a checkout there is no wiring to find: a warning (so
 		// --strict fails, as update-skills --check does), never silence.
@@ -271,7 +322,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		// network call of any kind. cli-version would need one, so it is
 		// skipped here; the full run below always includes it.
 		o.OK = !checksFail(o.Checks, strict)
-		return emitDoctor(cmd, o, asJSON)
+		return emitDoctor(cmd, o, asJSON, view)
 	}
 	o.Checks = append(o.Checks, cliVersionCheck(ctx, Version, time.Now()))
 
@@ -290,7 +341,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			Problem: "no Fugaro installation is configured",
 			Fix:     "run fugaro setup"})
 		o.OK = !checksFail(o.Checks, strict)
-		return emitDoctor(cmd, o, asJSON)
+		return emitDoctor(cmd, o, asJSON, view)
 	}
 	// failed is a refusal after the checks began: --json still prints the
 	// object, with the reason; the error is returned as it was.
@@ -474,7 +525,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 
 	o.OK = !checksFail(o.Checks, strict)
-	return emitDoctor(cmd, o, asJSON)
+	return emitDoctor(cmd, o, asJSON, view)
 }
 
 // doctorBaseImage warns when the installation has no Fugaro base recorded
@@ -551,7 +602,7 @@ func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 		return nil
 	}
 	slices.Sort(names)
-	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info",
+	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info", unread: true,
 		Problem: "require_zdr is on for the provider route(s) " + strings.Join(names, ", ") + " (the default), so their models are priced at the ZDR-eligible endpoints: " +
 			"that is the conservative price, not enforcement. Whether calls are actually zero-data-retention is your OpenRouter account's privacy setting, and Fugaro cannot read it",
 		Fix: "confirm the account's data policy in the OpenRouter settings; require_zdr: false prices every endpoint the model is served by instead"}
@@ -1661,19 +1712,27 @@ func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 		if !c.OK && c.Severity != "info" {
 			failed = true
 		}
-		line := c.ID + ": "
-		if c.Severity != "" {
-			line = c.Severity + " " + line
-		}
-		line += c.Problem
-		if c.Fix != "" {
-			line += " (" + c.Fix + ")"
-		}
-		fmt.Fprintln(w, line)
+		fmt.Fprintln(w, doctorCheckLine(c))
 	}
 	if !failed {
 		fmt.Fprintln(w, "fugaro doctor: everything checked is ok")
 	}
+}
+
+// doctorCheckLine is one check in doctor's long-standing line shape: the
+// severity, the id, the whole problem and the whole fix. --all prints every
+// check this way, and --security prints the security half of the sweep this
+// way, since what it answers is long by nature and a clipped answer does not.
+func doctorCheckLine(c doctorCheck) string {
+	line := c.ID + ": "
+	if c.Severity != "" {
+		line = c.Severity + " " + line
+	}
+	line += c.Problem
+	if c.Fix != "" {
+		line += " (" + c.Fix + ")"
+	}
+	return line
 }
 
 // printDoctorSecrets prints the repository's secrets by name, never a
@@ -1694,7 +1753,10 @@ func printDoctorSecrets(w io.Writer, secrets []secretEntry) {
 	fmt.Fprintln(w, "secrets: "+strings.Join(names, ", "))
 }
 
-func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
+func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool, view doctorView) error {
+	// The class is attached here, on every path and for every reader, so the
+	// human view and --json are the same classification of the same checks.
+	o.Checks = classifyDoctorChecks(o.Checks)
 	if asJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -1703,14 +1765,24 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
 		}
 	} else {
 		out := cmd.OutOrStdout()
-		if l := releaseLine(); l != "" {
-			fmt.Fprintln(out, l)
+		// The release line is the "a tag can be moved" audit sentence, three
+		// hundred characters of it; the project line and the secret list are
+		// context, not work. All three belong to --all: the default view ends
+		// with its pointer lines, and a line after them is a line a reader who
+		// stopped at the pointer never sees (a clean installation prints the one
+		// ok line and nothing else).
+		if view.all {
+			if l := releaseLine(); l != "" {
+				fmt.Fprintln(out, l)
+			}
 		}
-		printDoctorChecks(out, o.Checks)
-		if p := o.Project; p != nil {
-			fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)
+		printDoctorReport(out, o.Checks, view)
+		if view.all {
+			if p := o.Project; p != nil {
+				fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)
+			}
+			printDoctorSecrets(out, o.Secrets)
 		}
-		printDoctorSecrets(out, o.Secrets)
 	}
 	if !o.OK {
 		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro doctor found a problem; see above")}
@@ -1808,10 +1880,10 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
-		return append([]doctorCheck{{ID: "policy-published", Severity: "info",
+		return append([]doctorCheck{{ID: "policy-published", Severity: "info", unread: true,
 			Problem: fmt.Sprintf("whether project %s publishes a policy could not be checked: %v", lc.Name, err),
 			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
-			doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database could not be reached (%v), so the published switch cannot be read", err), layer)...)
+			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database could not be reached (%v), so the published switch cannot be read", err), layer))...)
 	}
 	// And the database must be this project's own, the check every other
 	// reader and writer makes (checkDBProject): everything below — the policy,
@@ -1821,10 +1893,10 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	// accounts as this one's. A note, not a failure, like every other read
 	// that did not answer.
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return append([]doctorCheck{{ID: "policy-published", Severity: "info",
+		return append([]doctorCheck{{ID: "policy-published", Severity: "info", unread: true,
 			Problem: fmt.Sprintf("whether project %s publishes a policy could not be checked: %v", lc.Name, err),
 			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
-			doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer)...)
+			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer))...)
 	}
 	checks := doctorRulesSkew(ctx, db)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
@@ -1841,8 +1913,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// The marker is not a generation at all. doctorRulesSkew has reported it,
 		// and Read cannot get past it — neither can a run — so there is nothing
 		// further doctor can honestly say about the node.
-		return append(checks, doctorRoutingChecks(lc, nil,
-			fmt.Sprintf("%s does not record the rules generation a policy is read under, so no run reads the node and no switch can be resolved from it", projectpolicy.PathRulesMarker()), layer)...)
+		return append(checks, unreadRouting(doctorRoutingChecks(lc, nil,
+			fmt.Sprintf("%s does not record the rules generation a policy is read under, so no run reads the node and no switch can be resolved from it", projectpolicy.PathRulesMarker()), layer))...)
 	case errors.As(err, &ve):
 		// P8's release skew, both directions: Decode refuses a node of any other
 		// version, and the two remedies are opposite. A newer node needs a newer
@@ -1852,8 +1924,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// itself words (publishedPolicyOf): remove it, then publish.
 		if ve.Found > ve.Understood {
 			checks = append(checks, policyNewerThanBinaryCheck(ve, shared))
-			return append(checks, doctorRoutingChecks(lc, nil,
-				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer)...)
+			return append(checks, unreadRouting(doctorRoutingChecks(lc, nil,
+				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer))...)
 		}
 		checks = append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
 			Problem: fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood),
@@ -1862,11 +1934,11 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			fmt.Sprintf("the node at %s is a policy of version %d, which no run applies, so no switch is in force", shared, ve.Found), layer)...)
 	case err != nil:
 		// A read that failed is not "no policy": doctor says which it is.
-		checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
+		checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info", unread: true,
 			Problem: fmt.Sprintf("the project policy could not be read (%v), so whether one is published, and whether the runs are bounded by it, is unknown", err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"})
-		return append(checks, doctorRoutingChecks(lc, nil,
-			fmt.Sprintf("the policy at %s could not be read (%v), so the switch it holds is unknown", shared, err), layer)...)
+		return append(checks, unreadRouting(doctorRoutingChecks(lc, nil,
+			fmt.Sprintf("the policy at %s could not be read (%v), so the switch it holds is unknown", shared, err), layer))...)
 	case !found:
 		info := doctorCheck{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("no policy is published at %s: runs take their ceiling from the job environment", shared),
@@ -2453,7 +2525,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// note, never a failure, which is what the rest of the policy checks
 		// do with one (doctorPolicyChecks's "the project policy could not be
 		// read"): the remedy is a credential, not the owner's rules deploy.
-		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info", unread: true,
 			Problem: rulesRulesUnreadableText(skew.err, marker),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	case rulesSkewUngeneratable:
@@ -2465,7 +2537,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// doctor cannot tell whether the deployed rules are the generation this
 		// Fugaro reads a project policy under — so it is the same info note,
 		// naming what failed.
-		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info", unread: true,
 			Problem: rulesRulesUngeneratableText(skew.err),
 			Fix:     fmt.Sprintf("this binary's embedded rules template is broken, so nothing can be said about %s; report it, and check the installation with a release build (fugaro doctor from one)", marker)}}
 	}
@@ -2658,7 +2730,7 @@ func emptyPolicyNode(raw []byte) bool {
 func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	marks, err := (&creds.RTDBStore{DB: db}).Marks(ctx)
 	if err != nil {
-		return []doctorCheck{{ID: "creds-broken", Severity: "info",
+		return []doctorCheck{{ID: "creds-broken", Severity: "info", unread: true,
 			Problem: fmt.Sprintf("the credential marks could not be read (%v), so whether any admitted account is broken, or held in a state this Fugaro does not read, is unknown", err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}
@@ -2760,7 +2832,7 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	var raw json.RawMessage
 	found, err := db.Get(ctx, marker, &raw)
 	if err != nil {
-		return []doctorCheck{{ID: id, Severity: "info",
+		return []doctorCheck{{ID: id, Severity: "info", unread: true,
 			Problem: fmt.Sprintf("whether the deployed rules carry the credentials family is unknown: %s could not be read (%v)", marker, err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}

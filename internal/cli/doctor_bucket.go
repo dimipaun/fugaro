@@ -90,7 +90,7 @@ func selfCheck(bucket string, held bool, user string, launchers, operators []str
 // tokenGrantUnchecked is job-token-grant when the bucket's policy cannot be
 // read (a launcher's usual case): never a silent pass, never a failure.
 func tokenGrantUnchecked(bucket string) doctorCheck {
-	return doctorCheck{ID: "job-token-grant", Severity: "info",
+	return doctorCheck{ID: "job-token-grant", Severity: "info", unread: true,
 		Problem: "unchecked: cannot read the bucket policy of gs://" + bucket + ", so whether each repository's job account can read its budget token objects under tokens/ is not known",
 		Fix:     "an operator runs fugaro doctor, which can read it"}
 }
