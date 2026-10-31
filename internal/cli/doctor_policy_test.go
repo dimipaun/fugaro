@@ -497,6 +497,16 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "refuses this state rather than redeploying generation") {
 			t.Errorf("the fix does not say that update --firebase-project refuses this state: %+v", c)
 		}
+		// And the default view prints that fix, not the class's plain `fugaro
+		// update`: this state's update is the newer binary, so a line naming
+		// the update alone would send the reader to a command whose rules
+		// stage reports this state rather than deploying over it. The human
+		// view is the surface (ownFix is unexported and a check read back from
+		// --json cannot carry it: the class is on the wire, the line is not).
+		out, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+		if !strings.Contains(out, "upgrade Fugaro (`brew upgrade fugaro`), then `fugaro update` with the newer binary.") {
+			t.Errorf("the default view does not print this state's own fix:\n%s", out)
+		}
 	})
 
 	t.Run("a marker below the generation a policy is read under", func(t *testing.T) {
@@ -662,6 +672,18 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// table (projectpolicy.VersionSince), which answers a different question.
 		if !strings.Contains(c.Fix, "fugaro >= "+policySince+" ") {
 			t.Errorf("the fix does not quote the release the policy model ships in (%s): %+v", policySince, c)
+		}
+		// The default view prints it, with the project the deploy goes to: this
+		// binary's rules stage reports a hand-edited marker rather than
+		// deploying over it, so the class's plain `fugaro update` is the one
+		// line that would leave the warning standing — and `--firebase-project`
+		// takes a value, so a line that stopped at the flag would fail on the
+		// missing one. The human view is the surface (ownFix is unexported and
+		// a check read back from --json cannot carry it).
+		out, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+		want := "re-run `fugaro update --firebase-project " + initProject + "` with fugaro >= " + policySince + " in your own terminal."
+		if !strings.Contains(out, want) {
+			t.Errorf("the default view does not print this state's own fix (%q):\n%s", want, out)
 		}
 	})
 }

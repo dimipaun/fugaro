@@ -70,6 +70,16 @@ type doctorCheck struct {
 	// and every ID keeps its meaning), only the one question a check answers
 	// about itself that the ID alone cannot.
 	unread bool
+	// ownFix marks a check in an update class whose own state `fugaro update`
+	// does NOT put right, so the default view prints the check's own fix (its
+	// first sentence, worded as the command that does the work) instead of the
+	// class's one command. The class is per ID and policy-rules-skew is one ID
+	// with ten states, most of them the update's own work, so the ID alone
+	// cannot answer this either — and a reader sent to `fugaro update` for a
+	// state it does not repair comes back to the warning still standing.
+	// Unexported and absent from --json for the reason unread is: it is not a
+	// second class, only the one question a check answers about itself.
+	ownFix bool
 }
 
 func fromPreflight(c preflight.Check) doctorCheck {
@@ -1898,7 +1908,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
 			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer))...)
 	}
-	checks := doctorRulesSkew(ctx, db)
+	checks := doctorRulesSkew(ctx, db, lc)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
 	// The node is read through projectpolicy.Read, the reader a run uses
 	// (design §5(3)), not with a plain Get: with no marker, or one below
@@ -2425,7 +2435,13 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // A warning, not an error: the fix is the owner's `fugaro update` — whose rules
 // stage deploys this binary's generation, in the same run, for every state here
 // but the hand-edited marker the stage reports instead — and doctor cannot
-// perform it.
+// perform it. The two states that command does not repair carry their own line
+// in the default view (ownFix): the hand-edited marker, whose repair is a
+// deploy from a Fugaro that reads generations at all, and a marker above this
+// binary's generation, whose repair is the newer binary. lc is what the other
+// states' own fixes need too: the one value `--firebase-project` accepts is the
+// installation's own project (checkFirebaseProject), so the command a line
+// names has to carry it.
 //
 // The same check reports the marker's other wrong values: a value that is not a
 // generation this Fugaro may read at all (not an integer, or the negative one no
@@ -2435,7 +2451,7 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // binary's). An absent marker is not one of them — it is generation 0 without a
 // claim, and there is nothing for the rules to be older than; what an absent
 // marker does to a node is doctorPolicyChecks's line to draw.
-func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
+func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) []doctorCheck {
 	skew := rulesSkewOf(ctx, db)
 	marker, gen := projectpolicy.PathRulesMarker(), skew.gen
 	switch skew.kind {
@@ -2459,9 +2475,10 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// this binary, and not of a hand edit, which would send the operator to
 		// redeploy rules that are not what is wrong (the review finding on this
 		// change).
-		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
 			Problem: rulesMarkerBadText(skew.raw),
-			Fix:     "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
+			Fix: fmt.Sprintf("re-run `fugaro update --firebase-project %s` with fugaro >= %s in your own terminal. It writes the marker this Fugaro reads, over a document it deploys itself.",
+				lc.GCPProject, policySince)}}
 	case rulesSkewNewer:
 		// A marker above this binary's RulesVersion, and the review of PR
 		// #402's point: a newer Fugaro wrote it, so the deployed rules are a
@@ -2475,10 +2492,10 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// verify and must not redeploy over, which is why update --firebase-project
 		// refuses the state — and the operator who was told the policy is
 		// unreadable would look for the wrong thing.
-		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
 			Problem: rulesMarkerNewerText(marker, gen),
-			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro update --firebase-project' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
-				projectpolicy.RulesVersion)}}
+			Fix: fmt.Sprintf("upgrade Fugaro (`brew upgrade fugaro`), then `fugaro update` with the newer binary. The deployed rules are a generation this binary does not know, and `fugaro update --firebase-project %s` refuses this state rather than redeploying generation %d over them, so the newer binary is the one that deploys here.",
+				lc.GCPProject, projectpolicy.RulesVersion)}}
 	case rulesSkewPrePolicy:
 		// Present and below the generation that carries the policy nodes is a
 		// state of its own, not an absent marker: it records rules that predate
