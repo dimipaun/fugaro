@@ -100,6 +100,14 @@ func (c *Config) Shared() *Config {
 	s.SecretExpires = nil
 	s.Build.ServiceAccount = ""
 	s.BaseBranch = ""
+	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
+	// through `fugaro project policy publish` into the policy node. It is
+	// dropped here for a sharper reason than the keys above it: the floor is
+	// what stops a launcher turning review off, so a floor a launcher could
+	// write into the runs bucket's shared file would be that launcher setting
+	// its own floor — and ParseShared refuses the key besides, because a
+	// shared config carrying it was not written by the converge.
+	s.ReviewFloor = nil
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }

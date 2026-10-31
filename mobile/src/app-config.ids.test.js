@@ -68,13 +68,15 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import appConfig, {
   ID_PATTERNS,
   ID_VARIABLES,
+  NATIVE_CONFIG_VARIABLES,
   isIdentifier,
   requiresIdentifiers,
   resolveConfig,
@@ -83,6 +85,23 @@ import appConfig, {
 const APP_JSON = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));
 const EXPO = APP_JSON.expo;
 const SOURCE = readFileSync(new URL('../app.config.js', import.meta.url), 'utf8');
+const GUARD_SOURCE = readFileSync(new URL('../native-config-guard.js', import.meta.url), 'utf8');
+
+/**
+ * A real file for each native config variable, in a temp directory: the
+ * build-time guard (D260) asks whether the path a build resolved names a file,
+ * and only the filesystem can answer that. The paths are synthetic, they are
+ * removed after the suite, and neither is the owner's own file -- which is
+ * never in a checkout (see `src/app-config.test.js`).
+ */
+const NATIVE_DIR = mkdtempSync(join(tmpdir(), 'fugaro-app-config-ids-'));
+const NATIVE_FILES = {
+  [NATIVE_CONFIG_VARIABLES.android]: join(NATIVE_DIR, 'google-services.json'),
+  [NATIVE_CONFIG_VARIABLES.ios]: join(NATIVE_DIR, 'GoogleService-Info.plist'),
+};
+writeFileSync(NATIVE_FILES[NATIVE_CONFIG_VARIABLES.android], '{}\n');
+writeFileSync(NATIVE_FILES[NATIVE_CONFIG_VARIABLES.ios], '<plist/>\n');
+after(() => rmSync(NATIVE_DIR, { recursive: true, force: true }));
 
 /**
  * A **fictional** sample identity: one reverse-DNS name for both stores, of the
@@ -125,18 +144,32 @@ const DECLARED = {
   android: { ...EXPO.android, blockedPermissions: ['com.google.android.gms.permission.AD_ID'] },
 };
 
-/** An environment as EAS's build servers present it to `app.config.js`. */
+/** An environment as EAS's build servers present it to `app.config.js`. Both
+ * native config variables name a real file: a build whose resolved config
+ * carries no readable one is the stop D260 asks for (`src/native-config-guard.test.js`),
+ * and every build fixture here is a build the guard lets through. */
 const build = (extra = {}) => ({
   EAS_BUILD: 'true',
   [ID_VARIABLES.ios]: IOS,
   [ID_VARIABLES.android]: ANDROID,
+  ...NATIVE_FILES,
   ...extra,
 });
 
+/** `resolved` without the two native config paths, so a comparison is about
+ * what something ELSE added rather than about the files a build carried. */
+function withoutNativeConfig(resolved) {
+  const ios = { ...resolved.ios };
+  const android = { ...resolved.android };
+  delete ios.googleServicesFile;
+  delete android.googleServicesFile;
+  return { ...resolved, ios, android };
+}
+
 /** `resolved` without the two identity fields, so what is left can be compared
  * with `DECLARED` (the static config as a resolution carries it: the identities
- * are the only fields this strips -- the declaration is the other addition, and
- * it is expected, so it stays in). */
+ * and the two native config paths are the only fields this strips -- the
+ * declaration is the other addition, and it is expected, so it stays in). */
 function withoutIdentities(resolved) {
   const ios = { ...resolved.ios };
   const android = { ...resolved.android };
@@ -316,11 +349,12 @@ test('a build with both variables resolves them onto the static config, and chan
   const resolved = resolveConfig(EXPO, build());
   assert.equal(resolved.ios.bundleIdentifier, IOS);
   assert.equal(resolved.android.package, ANDROID);
-  // The identities are the only fields ADDED here: every other field of the
-  // static config survives untouched (`supportsTablet`, `edgeToEdgeEnabled`,
-  // the name, the slug and the version included), and what a resolution
-  // carries besides them is the export-compliance declaration `DECLARED` names.
-  assert.deepEqual(withoutIdentities(resolved), DECLARED);
+  // The identities and the two native config paths are the only fields ADDED
+  // here: every other field of the static config survives untouched
+  // (`supportsTablet`, `edgeToEdgeEnabled`, the name, the slug and the version
+  // included), and what a resolution carries besides them is the
+  // export-compliance declaration `DECLARED` names.
+  assert.deepEqual(withoutIdentities(withoutNativeConfig(resolved)), DECLARED);
   // ... and the static object itself is not mutated by resolving it.
   assert.equal('bundleIdentifier' in EXPO.ios, false);
   assert.equal('package' in EXPO.android, false);
@@ -383,17 +417,22 @@ test('no environment value but the two identities reaches the config', () => {
   assert.deepEqual(resolveConfig(EXPO, polluted), resolveConfig(EXPO, build()));
 });
 
-test('app.config.js names exactly the variables it reads, as literals', () => {
+test('the config resolution names exactly the variables it reads, as literals', () => {
   // The positive control: a planted third variable is flagged, so the walk
   // below is known to be able to fail.
   assert.deepEqual(namedIn("const v = process.env['FIREBASE_TOKEN'];\n"), ['FIREBASE_TOKEN']);
-  // ... and the file itself names the two identities and the **two native
-  // config file** variables (P7.1a: the path of `google-services.json` and of
-  // `GoogleService-Info.plist` on a build worker), and nothing else. A fifth
-  // variable read here would be a fifth thing a build depends on, which is the
-  // reading this test exists to make deliberate -- the rule is unchanged, and
-  // what grew is the list of variables this file legitimately reads.
-  assert.deepEqual(namedIn(SOURCE), [
+  // ... and the two files the resolution reads the environment through --
+  // `app.config.js` and the guard module it imports -- together name the two
+  // identities, the **two native config file** variables (P7.1a: the path of
+  // `google-services.json` and of `GoogleService-Info.plist` on a build
+  // worker), and the platform EAS is building for (P7.1b's guard), and nothing
+  // else. A variable read in *either* file is a build dependency, so leaving
+  // the guard outside the walk would make its read invisible to the pin whose
+  // whole purpose is to make each one deliberate. Mutation: add a
+  // `process.env['FIREBASE_TOKEN']` read to `native-config-guard.js` and this
+  // goes red naming it.
+  assert.deepEqual([...namedIn(SOURCE), ...namedIn(GUARD_SOURCE)].sort(), [
+    'EAS_BUILD_PLATFORM',
     'FUGARO_ANDROID_PACKAGE',
     'FUGARO_IOS_BUNDLE_ID',
     'GOOGLE_SERVICES_JSON',
@@ -411,7 +450,11 @@ test('the switches add the requirement, and only the requirement', () => {
   // config without an identity -- and with them set, both states resolve the
   // same identities, which is what the local eas-cli phase depends on.
   const asked = resolveConfig(EXPO, { EAS_BUILD: 'true', ...build() });
-  const local = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS, [ID_VARIABLES.android]: ANDROID });
+  const local = resolveConfig(EXPO, {
+    [ID_VARIABLES.ios]: IOS,
+    [ID_VARIABLES.android]: ANDROID,
+    ...NATIVE_FILES,
+  });
   assert.deepEqual(asked, local);
   assert.deepEqual(resolveConfig(EXPO, {}), DECLARED, 'no switch, no variables: nothing is required');
   assert.match(refusal(() => resolveConfig(EXPO, { EAS_BUILD: 'true' })), /FUGARO_IOS_BUNDLE_ID/);
@@ -419,7 +462,14 @@ test('the switches add the requirement, and only the requirement', () => {
 
 test("Expo's entry reads process.env, and refuses a call with no static config", () => {
   const saved = {};
-  const keys = ['EAS_BUILD', 'FUGARO_REQUIRE_IDS', ID_VARIABLES.ios, ID_VARIABLES.android];
+  const keys = [
+    'EAS_BUILD',
+    'FUGARO_REQUIRE_IDS',
+    ID_VARIABLES.ios,
+    ID_VARIABLES.android,
+    NATIVE_CONFIG_VARIABLES.ios,
+    NATIVE_CONFIG_VARIABLES.android,
+  ];
   for (const key of keys) saved[key] = Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined;
   try {
     for (const key of keys) delete process.env[key];
@@ -431,6 +481,10 @@ test("Expo's entry reads process.env, and refuses a call with no static config",
     process.env.EAS_BUILD = 'true';
     process.env[ID_VARIABLES.ios] = IOS;
     process.env[ID_VARIABLES.android] = ANDROID;
+    // ... and the two native config paths name real files, because a build
+    // whose resolved config carries none is the stop D260 asks for.
+    process.env[NATIVE_CONFIG_VARIABLES.ios] = NATIVE_FILES[NATIVE_CONFIG_VARIABLES.ios];
+    process.env[NATIVE_CONFIG_VARIABLES.android] = NATIVE_FILES[NATIVE_CONFIG_VARIABLES.android];
     assert.equal(appConfig({ config: EXPO }).ios.bundleIdentifier, IOS);
     assert.equal(appConfig({ config: EXPO }).android.package, ANDROID);
   } finally {

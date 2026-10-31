@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "budget": {
+    "mode": "enforce",
+    "per_run_usd": 5
+  },
+  "allow_repos": [
+    "bitbucket/workspace-a/repo-a"
+  ],
+  "profiles": {
+    "standard": {
+      "provider": "bitbucket",
+      "cpu": 2,
+      "memory": "4Gi",
+      "timeout_class": "6h",
+      "secrets": [
+        "bitbucket-token"
+      ],
+      "allow_repos": [
+        "bitbucket/workspace-a/repo-a"
+      ]
+    }
+  }
+}

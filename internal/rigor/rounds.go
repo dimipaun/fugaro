@@ -55,3 +55,19 @@ func RoundCeiling(m Mode) int {
 	}
 	return min(max(n, minRoundCeiling), widestRoundCeiling)
 }
+
+// AdversarialCeiling is the most rounds the adversarial step — review level 3 —
+// may carry for mode m (D726, L2.2).
+//
+// It is held at minRoundCeiling for every mode while rigor O3 is open: the
+// adversarial pass runs after the review, on the same budget, and the owner's
+// question is the same one the review's own floor answers, so a mode cannot
+// spend on it what no mode may spend on the review. It is stated as the
+// minimum of the two rather than as the constant so that the day O3 is
+// answered above, a Critical run takes its own review ceiling and this
+// function follows the table instead of drifting from it. A mode the table
+// cannot place takes RoundCeiling's widest answer, which the minimum lowers
+// like any other — an unplaced mode raises nothing either.
+func AdversarialCeiling(m Mode) int {
+	return min(RoundCeiling(m), minRoundCeiling)
+}

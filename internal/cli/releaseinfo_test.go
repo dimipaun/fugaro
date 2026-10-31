@@ -48,9 +48,11 @@ func TestUpdateSkillsAndDoctorPluginPrintTheReleaseCommit(t *testing.T) {
 	if !strings.Contains(out, testCommit) || !strings.Contains(out, "git ls-remote") {
 		t.Errorf("update-skills --check:\n%s", out)
 	}
-	out, _, _ = executeStdin(t, "", "doctor", "--plugin")
+	// --all: the release line is an audit one, so the default view starts at
+	// the verdict and this names the view that prints it.
+	out, _, _ = executeStdin(t, "", "doctor", "--plugin", "--all")
 	if !strings.Contains(out, testCommit) || !strings.Contains(out, "git ls-remote") {
-		t.Errorf("doctor --plugin:\n%s", out)
+		t.Errorf("doctor --plugin --all:\n%s", out)
 	}
 	out, _, _ = executeStdin(t, "", "doctor", "--plugin", "--json")
 	if !strings.Contains(out, `"commit": "`+testCommit+`"`) {

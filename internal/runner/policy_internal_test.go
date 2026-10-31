@@ -3,8 +3,10 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,6 +15,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
@@ -209,5 +214,55 @@ func TestPolicyKeyPathGovernance(t *testing.T) {
 		if got := PolicyKeyPath(c.key); got != c.want {
 			t.Errorf("PolicyKeyPath(%q) = %q, want %q", c.key, got, c.want)
 		}
+	}
+}
+
+// TestRunnerReadsReviewFloorFromNode is D722's job half, and the trust
+// boundary it closes (G1): the floor is read from the owner-only policy node
+// — the one object the launcher cannot write — and from nowhere else, so a
+// hostile task or project layer cannot turn review off below the owner's
+// line. The read is the node read resolvePolicy already makes; the floor
+// rides the ceiling layer from there (policyCeiling) and the merge unions it
+// into the effective policy, which is what L3.1's resolver will consume.
+func TestRunnerReadsReviewFloorFromNode(t *testing.T) {
+	node := &projectpolicy.Policy{ReviewFloor: map[rigor.Mode][]policy.Level{
+		rigor.Pro:      {policy.LevelL2},
+		rigor.Critical: {policy.LevelL2, policy.LevelL3},
+	}}
+	r := &run{
+		cfg:  &config.Config{},
+		spec: &task.Spec{},
+		rec:  &runstore.Record{},
+		d:    Deps{Log: slog.New(slog.DiscardHandler)},
+	}
+	r.projPolicy = policyRead{done: true, policy: node, found: true}
+	if err := r.resolvePolicy(context.Background(), r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := r.policy.ReviewFloor(rigor.Pro), []policy.Level{policy.LevelL2}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor(pro) = %v, want %v: the floor the node carries must reach the effective policy", got, want)
+	}
+	if got, want := r.policy.ReviewFloor(rigor.Critical), []policy.Level{policy.LevelL2, policy.LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor(critical) = %v, want %v", got, want)
+	}
+	if got := r.policy.ReviewFloor(rigor.POC); got != nil {
+		t.Errorf("ReviewFloor(poc) = %v, want nil: the node sets no floor for that mode", got)
+	}
+
+	// A run whose project has no policy node at all — no floor to read — has
+	// no floor, which is the state every installation is in until an owner
+	// publishes one.
+	none := &run{
+		cfg:  &config.Config{},
+		spec: &task.Spec{},
+		rec:  &runstore.Record{},
+		d:    Deps{Log: slog.New(slog.DiscardHandler)},
+	}
+	none.projPolicy = policyRead{done: true, found: false}
+	if err := none.resolvePolicy(context.Background(), none.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := none.policy.ReviewFloor(rigor.Pro); got != nil {
+		t.Errorf("ReviewFloor(pro) = %v with no policy node, want nil", got)
 	}
 }

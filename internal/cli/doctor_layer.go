@@ -35,14 +35,18 @@ import (
 func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf resolvedFile) []doctorCheck {
 	l := rf.Layer.Layer
 	if l == nil {
+		// Whether a layer applies is a fact when it was resolved and an
+		// unknown when it was not: the second is a counted finding, not a
+		// measurement a reader skips over.
 		msg := "no project layer applies to this checkout"
-		if rf.Layer.Unknown {
+		unknown := rf.Layer.Unknown
+		if unknown {
 			msg = "whether a project layer applies is unknown"
 		}
 		if rf.Layer.Note != "" {
 			msg += ": " + rf.Layer.Note
 		}
-		return []doctorCheck{{ID: "project-layer", Severity: "info", Problem: msg}}
+		return []doctorCheck{{ID: "project-layer", Severity: "info", unread: unknown, Problem: msg}}
 	}
 	problem := fmt.Sprintf("project layer %s generation %d (sha256 %s) applies; fugaro config show prints where each value comes from", l.Project, rf.Layer.Generation, shortSHA(l.SHA256))
 	if rf.Layer.Note != "" {

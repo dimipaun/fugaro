@@ -13,15 +13,23 @@ git:
     labels: []
 
 agent:
-  # The cloud loop is all DeepSeek through OpenRouter (docs/multi-model.md),
-  # on an Anthropic API key (api-key: the budget gateway prices every call; the owner's local
-  # config sets the caps). The senior review stays OUTSIDE the cloud loop (independent local
-  # agents), so there is no Claude model in the loop and no OAuth token on the job.
+  # The cloud loop is all DeepSeek through OpenRouter (docs/multi-model.md), on the OpenRouter API
+  # key (api-key: the budget gateway prices every call; the owner's local config sets the caps).
+  # The in-loop senior review is a different, stronger OpenRouter model than the coder
+  # (deepseek-v4-pro), so a `standard` launch here no longer resolves to L1 = L2: that is the pair
+  # the review levels' guardrail (D721, docs/review-levels-ab-jobmax/) will refuse by exact model
+  # ID once it ships, which nothing in the binary does today. The independent review stays OUTSIDE
+  # the cloud loop (local agents) until the per-stage OAuth reviewer setting exists, so there is no
+  # Claude model in the loop and no OAuth token on the job.
   auth: api-key
   max_budget_usd: 500  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
   models:
     coder: deepseek/deepseek-v4.1-flash
-    reviewer: deepseek/deepseek-v4.1-flash
+    reviewer: deepseek/deepseek-v4-pro
+  # deepseek-v4-pro answers at most 16384 tokens a call; the review stage asks for 32000 unless limited,
+  # and the gateway refuses that request.
+  max_output_tokens:
+    reviewer: 16384
 
 # Follow-ups (fugaro run --pr N) act on PR comments, which on a public repository anyone can
 # write: only the listed GitHub accounts (numeric IDs) are obeyed, and allow_public is the

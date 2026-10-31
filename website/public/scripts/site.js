@@ -1001,6 +1001,14 @@
   // just answered the banner is measured from the same press that loaded the tag.
   var measuring = false
 
+  // And whether the pixel is, which is the same thing for the other consent (G2.3, the owner's
+  // ruling of 2026-10-31): the campaign loader's `load()` sets it from the ids the banner
+  // carries — an empty id leaves it false, and the pixel's queue is never created — a
+  // withdrawal clears it, and only the key events read it. Two questions, two answers: the key
+  // events of the campaign pages go to whichever of the two tags the visitor granted, and to
+  // neither when they granted none.
+  var tracking = false
+
   // One call into the tag's queue. The queue is created by `load()` below, and the two callers
   // are both behind a check that it exists: this is the gate's own voice and not a second one.
   function gtag() {
@@ -1173,16 +1181,39 @@
       document.head.appendChild(tag)
     }
 
-    // The pixel: its own queue first, so nothing is lost to the fetch, and then its script.
+    // The pixel: its own stub first, so nothing is lost to the fetch, and then its script. The
+    // stub is Meta's own shape, and the half of it that matters is `callMethod`: `fbevents.js`
+    // attaches that method to the stub it finds and drains the queue through it once, and from
+    // then on a call pushed onto the queue is never read again. So a call is handed to
+    // `callMethod` whenever one is there — a stub that only ever pushed would strand every event
+    // a visitor's press sends after the load, and the withdrawal's revoke with them, which is
+    // the privacy page's own claim about the pixel.
+    //
+    // It says whether it ran, which is what the key events of this page gate their own sends on
+    // — an id nobody supplied is a loader that did not load, and not a queue that is sent through
+    // namelessly.
     function pixel(origin, id) {
-      if (!origin || !id) return
-      window.fbq = window.fbq || function () {
-        window.fbq.queue.push(Array.prototype.slice.call(arguments))
+      if (!origin || !id) return false
+      if (!window.fbq) {
+        var stub = function () {
+          return stub.callMethod ? stub.callMethod.apply(stub, arguments) : stub.queue.push(arguments)
+        }
+        if (!window._fbq) window._fbq = stub
+        stub.push = stub
+        stub.loaded = true
+        stub.version = '2.0'
+        stub.queue = []
+        window.fbq = stub
       }
-      window.fbq.queue = window.fbq.queue || []
+      // Before `init`, because that is the call the pixel is configured by: Meta's own automatic
+      // collection — the button clicks it gathers and the page metadata it reads — is not this
+      // page's, and the campaign's events are the three the handlers send and nothing else. The
+      // id is the pixel's own, which is why the configuration names it.
+      window.fbq('set', 'autoConfig', false, id)
       window.fbq('init', id)
       window.fbq('track', 'PageView', { page_location: page })
       fetchScript(origin, '/en_US/fbevents.js')
+      return true
     }
 
     // The insight tag: the partner id on the window where its own snippet reads it, then its
@@ -1219,7 +1250,7 @@
     function load() {
       if (!mine || loaded) return
       loaded = true
-      pixel(banner.getAttribute(META_ORIGIN_ATTR), banner.getAttribute(META_ID_ATTR))
+      tracking = pixel(banner.getAttribute(META_ORIGIN_ATTR), banner.getAttribute(META_ID_ATTR))
       insight(banner.getAttribute(LINKEDIN_ORIGIN_ATTR), banner.getAttribute(LINKEDIN_ID_ATTR))
       embed(banner.getAttribute(CALENDLY_ORIGIN_ATTR), banner.getAttribute(CALENDLY_URL_ATTR))
     }
@@ -1236,6 +1267,7 @@
     // is the whole of what is read, so a visitor who never accepted has nothing deleted — and
     // nothing is written but an expiry on a cookie this host already held.
     function withdraw() {
+      tracking = false
       if (window.fbq) window.fbq('consent', 'revoke')
       var host = (window.location && window.location.hostname) || ''
       var held = heldNames()
@@ -1255,13 +1287,17 @@
 
   // ---- the campaign's key events (G2.4, spec §13) -----------------------------------------
   //
-  // The funnel's three events, and the two things that make them worth reading. They are GA4's,
-  // so they wait for the analytics grant: `keyEvent` sends nothing while `measuring` is false,
-  // which is the state a visitor who has not answered the site's question is in and the state a
-  // withdrawal puts them back in. None of them carries a parameter — the count is the funnel,
-  // the page's own address reaches GA4 through the tag's `config` call, and a campaign
-  // parameter is the booking link's business and not GA4's (F22) — and nothing a vendor said is
-  // forwarded either.
+  // The funnel's three events, and the two things that make them worth reading. Two
+  // measurements are told each of them, and each answers to its own gate: GA4, which waits for
+  // the analytics grant — `keyEvent` sends nothing to it while `measuring` is false, which is
+  // the state a visitor who has not answered the site's question is in and the state a
+  // withdrawal puts them back in — and the pixel, which waits for the campaign's own answer and
+  // reads it off `tracking`, under the names Meta gives the same three actions (the owner's
+  // ruling of 2026-10-31). A visitor who has answered one question and not the other is
+  // measured by one tag and not the other, which is what two questions mean. None of the events
+  // carries a parameter — the count is the funnel, the page's own address reaches GA4 through
+  // the tag's `config` call, and a campaign parameter is the booking link's business and not a
+  // vendor's (F22) — and nothing a vendor said is forwarded to either.
   //
   // Two of the three are the page's own calls to action, found by the ids the calls-to-action
   // section gives them. The third is the embed's report, and it is taken from exactly one
@@ -1270,9 +1306,19 @@
   // origin, another window of this page, a message this page never asked for — is dropped
   // unread, and no field of the message that is accepted goes anywhere.
   function keyEvents(banner) {
+    // The pixel's names for the three, keyed by GA4's: one handler per action tells both tags,
+    // so a change to what an action means cannot reach one measurement and miss the other.
+    var META_EVENTS = {
+      install_click: 'ViewContent',
+      whatsapp_click: 'Contact',
+      demo_booked: 'Lead',
+    }
+
     function keyEvent(name) {
-      if (!measuring) return
-      gtag('event', name)
+      if (measuring) gtag('event', name)
+      // The pixel's queue exists only where `load()` ran with an id, which is what `tracking`
+      // says: an id nobody supplied is a tag nothing is sent through.
+      if (tracking) window.fbq('track', META_EVENTS[name])
     }
 
     function press(id, name) {

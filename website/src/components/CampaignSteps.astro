@@ -23,6 +23,12 @@
  * size the page's own scale gives a section rather than at the size three columns leave room
  * for. The band is a field one tone step above the ground (`--panel`, the field the homepage's
  * own stage is drawn in) and it carries no rule between the steps: the air does the separating.
+ * **Its corners are rounded generously** (the owner's feedback of 2026-10-30, D412's finding 2):
+ * the panel was a hard-cornered field, and it is cut at `--radius-xl` — the site's largest radius
+ * step, the panel radius the token scale draws for a panel (`src/styles/tokens.css`) — which is
+ * the same corner as the closing field below it. No token is added for that: the scale has the
+ * step, and the two bands are one shape. It is the one radius this file names; the hero's frame
+ * and the slider's frame are controls and cards, and they stay at `--radius-lg`.
  *
  * **Its parts rise into place once.** The band is a `data-reveal-block`, so `site.js`'s own
  * entrance holds back the heading and each step's two parts while they are below the first
@@ -61,6 +67,7 @@
   .campaign-steps {
     padding-block: var(--space-xl);
     padding-inline: var(--frame-gutter);
+    border-radius: var(--radius-xl);
     background: var(--panel);
   }
 

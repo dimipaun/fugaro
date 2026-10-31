@@ -456,7 +456,11 @@ func TestGovernanceHaltOnThePanicPathFindsTheStageStop(t *testing.T) {
 
 func TestHaltLeftoversCommitMessage(t *testing.T) {
 	b := newHandleBox(t)
-	h := newHarness(t, "", nil)
+	// The fixture's own 30s reserve is still a wall clock finalize races on a
+	// loaded machine, and nothing here is about how long the leftover commit
+	// takes.
+	cfg := stageTimeoutCfg(t, "timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 2m }", "")
+	h := newHarness(t, cfg, nil)
 	rec, err := h.run(t, haltAfter(b, leaveFile("partial.txt")))
 	if err != nil || rec.Status != runstore.StatusHalted {
 		t.Fatalf("rec = %+v, err = %v", rec, err)

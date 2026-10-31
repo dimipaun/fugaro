@@ -71,6 +71,7 @@ import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
 import { controlTargetFailures } from './lib/controls.mjs'
+import { readScreenRows } from './lib/screens.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -1424,35 +1425,6 @@ const CONSOLE_SCREENS_YAML = 'website/data/console-screens.yaml'
 const HOME_SLOT = 'watch-screenshot'
 const HOME_SLIDER_SLOT = 'home-screens'
 const WATCH_FILE = 'fugaro-watch.png'
-
-/** A YAML scalar as the site's own reader reads it: quoted or plain, and no escapes beyond the
- *  two its reader knows (`\"` and `\\`), which is the subset these rows are written in. */
-function yamlScalar(raw) {
-  const value = raw.trim()
-  if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1).replace(/\\(["\\])/g, '$1')
-  return value
-}
-
-/**
- * A screenshots data file, read literally: one row per `- file:` line, with the keys under it.
- * Deliberately this gate's own reader rather than the build's `loadHomeScreens()` — the loader
- * is what puts these rows on the page, so a gate that read them through it would be asking the
- * page whether it agrees with itself — and `dir` is read because the watch row is the one row of
- * the two files that lives under `public/images/` rather than under `public/screenshots/`.
- */
-function readScreenRows(relative) {
-  const out = []
-  let row = null
-  for (const line of repoFile(relative).split('\n')) {
-    if (line.trim() === '' || line.trim().startsWith('#')) continue
-    let m
-    if ((m = /^ {2}- file: (\S+)$/.exec(line))) out.push((row = { file: m[1], dir: 'screenshots' }))
-    else if (row && (m = /^ {4}(alt|caption|dir|height|width): (.*)$/.exec(line))) {
-      row[m[1]] = m[1] === 'width' || m[1] === 'height' ? Number(m[2].trim()) : yamlScalar(m[2])
-    }
-  }
-  return out
-}
 
 /** The site path a row is served at, composed the way `src/content.ts` composes it. */
 const srcOfRow = (row) => `/${row.dir}/${row.file}`

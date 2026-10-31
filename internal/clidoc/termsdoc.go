@@ -19,7 +19,9 @@ const (
 	termsPage   = "website/content/subscription-terms.md"
 
 	// termsStatus is the line the page shows above the agreement. It named a
-	// draft until counsel approved the text (the owner's word of 2026-10-30).
+	// draft until counsel approved the text (the owner's word of 2026-10-30),
+	// and counsel approved section 7.3 as revised to the opt-in ruling of
+	// 2026-10-31 (the owner's word of 2026-10-31).
 	termsStatus = "Approved by counsel"
 )
 

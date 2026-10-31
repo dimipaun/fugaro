@@ -546,15 +546,15 @@ export interface AnalyticsFacts {
 /**
  * The campaign measurement's configuration (G2.3, D401): the two vendor ids and the
  * one origin each of the three loaders fetches its script from. An empty id disables
- * its loader, which is the state the file ships in — the owner has not supplied a
- * pixel id or a partner id, and this repository invents none (R3).
+ * its loader: this repository invents no identifier (R3), and both ids are the
+ * owner's, supplied on 2026-10-31.
  */
 export interface MarketingFacts {
-  /** The Meta pixel's id, empty until the owner supplies it. */
+  /** The Meta pixel's id, which the owner supplied on 2026-10-31. */
   metaPixelID: string
   /** The origin the pixel's own script is fetched from. */
   metaOrigin: string
-  /** The LinkedIn partner id, empty until the owner supplies it. */
+  /** The LinkedIn partner id, which the owner supplied on 2026-10-31. */
   linkedinPartnerID: string
   /** The origin the insight tag's own script is fetched from. */
   linkedinOrigin: string
@@ -1130,6 +1130,24 @@ export function loadHomeScreens(): ScreensFacts {
       "the homepage slider's slides: the console's screenshots and the `fugaro watch` capture, with their alt text, their captions and their sizes (the brief of 2026-10-21)",
     ),
   }
+}
+
+/**
+ * The slides of the site's own console slider: the homepage's rows without the `fugaro watch`
+ * capture, which is a terminal screen rather than one of the console's, is served from
+ * `public/images/` rather than from `public/screenshots/`, and is the homepage hero's picture
+ * rather than a slide.
+ *
+ * **One reader for the five pages that show these rows**, which is the owner's feedback of
+ * 2026-10-30 (D412's finding 3): the homepage's "See it" panel and the four campaign pages' own
+ * slider show one set of pictures — the same file, the same `alt`, the same caption, the same
+ * order — so the set is named once here and a page that wants another one is a change in this
+ * function rather than a second filter on a second page. The rule is the directory the row is served
+ * from — `screenshots` for the console's captures, `images` for the terminal capture — so it is
+ * the row's own shape being read and not a file name written down a second time.
+ */
+export function loadHomeSliderScreens(): Screen[] {
+  return loadHomeScreens().screens.filter((screen) => screen.src.startsWith(`/${SCREENS_DIR}/`))
 }
 
 /**

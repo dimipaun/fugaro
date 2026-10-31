@@ -552,3 +552,28 @@ func TestSweepReportsPerUserDeleteErrors(t *testing.T) {
 		t.Fatalf("warnings = %q", warns)
 	}
 }
+
+// TestSweepLinesSanitiseUIDs: both halves of the failed-deletion warning come
+// from outside this program — the uid is the Auth directory's own, the message
+// the API's — and a control character in either would otherwise rewrite the
+// terminal that reads the line or open a line of its own. They go through the
+// package's own sanitiser, the one a registry entry's text already goes through,
+// so the line says what the sweep could not delete and nothing the value wrote.
+func TestSweepLinesSanitiseUIDs(t *testing.T) {
+	e := newSweepEnv(t)
+	uid := "m~\x1b[2Jred\nsecond"
+	e.idt.AddUser(uid, sweepNow.Add(-72*time.Hour))
+	e.idt.FailDelete(uid, "USER_NOT_FOUND_LOCKED\x1b[0m")
+	var warns []string
+	e.sw.Warn = func(s string) { warns = append(warns, s) }
+	e.sweep()
+	if len(warns) != 1 {
+		t.Fatalf("warnings = %q, want the one failed deletion reported", warns)
+	}
+	if got := warns[0]; strings.ContainsAny(got, "\x1b\n\r") {
+		t.Errorf("the warning carries a control character: %q", got)
+	}
+	if !strings.Contains(warns[0], "m~redsecond") || !strings.Contains(warns[0], "USER_NOT_FOUND_LOCKED") {
+		t.Errorf("warnings = %q, want the uid and the API message with their controls dropped", warns)
+	}
+}
