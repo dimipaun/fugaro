@@ -86,8 +86,8 @@ from its own download host rather than from npm, so the pin, the download and
 the checksum get the hand-bumped, documented treatment the repository already
 gives the Trivy digest and the Dockerfile frontend digest (design section 5.2).
 
-The rest of the pinned set, all exact, all build and test tooling (there is no
-runtime dependency today; see below):
+The rest of the pinned set, all exact, all build and test tooling apart from
+the one runtime dependency (`electron-updater`, below):
 
 | Package | Version | Where | Why it is here |
 |---|---|---|---|
@@ -100,13 +100,18 @@ runtime dependency today; see below):
 | `electron-builder` | `26.18.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
 | `elkjs` | `0.11.0` | `devDependencies` | the graph view's layout engine: the build copies its `elk-worker.min.js` verbatim into the served root (GV2.2); its EPL-2.0 licence is `THIRD_PARTY_NOTICES.md` |
 
-`dependencies` is empty, and that is a decision rather than a symptom: the
-renderer bundles no framework runtime and no charting library (design D9); its one third-party file is elkjs's layout worker, a devDependency whose `elk-worker.min.js` the build copies verbatim into the served root and whose EPL-2.0 licence is `console/THIRD_PARTY_NOTICES.md`, and
+`dependencies` holds exactly one entry — `electron-updater` pinned to `6.8.10`,
+the console's one runtime dependency — and that is a decision rather than a
+symptom: the renderer bundles no framework runtime and no charting library
+(design D9); its one third-party file is elkjs's layout worker, a devDependency
+whose `elk-worker.min.js` the build copies verbatim into the served root and
+whose EPL-2.0 licence is `console/THIRD_PARTY_NOTICES.md`, and
 everything a `dependencies` entry names is packed into the shipped asar. Task 1.0
 pinned `electron-updater` there for Task 4.4's auto-update; Task 4.1's review
-found it shipped in the bundle with nothing importing it, so it was removed, and
-Task 4.4 adds it back, exactly pinned, with the code that uses it. The pinning
-test asserts the `dependencies` set is exactly empty until then.
+found it shipped in the bundle with nothing importing it, so it was removed; and
+Task 4.4 added it back, exactly pinned, with the code that uses it.
+`pinning.test.ts`'s runtime allow-list holds the set to that one entry, and a
+second one is a deliberate edit there with the case for it written down.
 
 **The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
 It is the version every command in this task was run on, and it is a member of
@@ -177,6 +182,29 @@ binary again on the way into each launch and retries ETXTBSY three times, 250 ms
 apart (`test/support/textFileBusy.ts`); no other launch error is retried, and
 `test/unit/playwright.test.ts` holds both the config line and the rule that no
 spec calls `electron.launch` itself.
+
+## Automatic updates (Task 4.4)
+
+The console keeps itself up to date, and this is the whole of it. It checks the
+console's own release stream at launch and then every six hours, and downloads a
+newer version **quietly**; nothing is installed until you press **Restart to
+update** on the non-blocking notice that names the version on disk, and **nothing
+is ever installed on quit** — the update installs only the download that notice
+named. The client is `electron-updater` `6.8.10`, the console's one runtime
+dependency, pinned exactly, and `src/main/updater-electron.ts`'s `hardenUpdater`
+rewrites it where the library would otherwise identify the machine: it neither
+mints nor writes `.updaterId` under `userData`, and no request carries
+`x-user-staging-id`. The off switch is the application menu's **Check for Updates
+Automatically** (with **Check for Updates Now** beside it), whose state is the one
+boolean `<userData>/updates.json` holds, written only when the switch changes
+(`src/main/updatestore.ts`); setting `FUGARO_NO_UPDATE_CHECK=1` turns the checks
+off as well. The console honours those two and never the CLI's `update_check`
+(owner ruling D769). Two locations under `~/Library/Caches` are the updater's and
+not the app's — the download cache `fugaro-console-updater`, named by
+`hardenUpdater` through `configOnDisk`, and Squirrel.Mac's ShipIt staging
+directory — and both appear only after a download, are replaced or removed by the
+install, and hold no identifier (owner rulings D768 and D770; design sections
+5.1 rule 10, 7.3 and 7.4).
 
 ## The hardened window (Task 1.1)
 
