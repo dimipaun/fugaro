@@ -35,6 +35,7 @@ import {
   NO_CHECKOUT_CHOICE_LABEL,
   NO_CHECKOUT_DETAILS_CLASS,
   NO_CHECKOUT_DETAILS_LABEL,
+  NO_CHECKOUT_EMPTY_SENTENCE,
   NO_CHECKOUT_HEADLINE,
   NO_CHECKOUT_KIND,
   NO_CHECKOUT_OPERATION,
@@ -127,9 +128,12 @@ function drawn(root: FakeScreen): string {
     .join(' ')
 }
 
-/** theCard draws the card for one sentence and theme. */
-function theCard(sentence: string, theme: SkewTheme = 'dark'): FakeScreen {
-  return renderNoCheckout(factory, sentence, theme).root as FakeScreen
+/** theCard draws the card for one sentence and theme. `choosable` is the fact
+ * the card cannot read for itself: whether the CLI listed a checkout for this
+ * installation, which is what the picker's own `Use <dir>` buttons are drawn
+ * from. */
+function theCard(sentence: string, theme: SkewTheme = 'dark', choosable = true): FakeScreen {
+  return renderNoCheckout(factory, sentence, theme, { choosable }).root as FakeScreen
 }
 
 const PLAIN_SENTENCE = 'the installation records no checkout'
@@ -199,6 +203,33 @@ describe('the Graph’s no-checkout card', () => {
     // The card's own words are untouched by it.
     expect(one(root, 'unavailable-headline').textContent).toBe(NO_CHECKOUT_HEADLINE)
     expect(one(root, NO_CHECKOUT_CHOICE_CLASS).textContent).toBe(NO_CHECKOUT_CHOICE_LABEL)
+  })
+
+  it('says what to do instead of offering an action the picker cannot answer', () => {
+    // The picker's only word about a checkout is one `Use <dir>` per checkout
+    // the CLI listed for a row, and it has no folder dialog: for an
+    // installation that lists none, the action opens a window that cannot
+    // resolve this state. The card says so instead of drawing it.
+    const root = theCard(PLAIN_SENTENCE, 'dark', false)
+    expect(walk(root).some((node) => node.attributes.get('class') === NO_CHECKOUT_CHOICE_CLASS)).toBe(false)
+    expect(shape(root)).toEqual([
+      'section.console-unavailable',
+      'div.unavailable-body',
+      'h1.unavailable-headline',
+      'p.unavailable-sentence',
+      'details.installation-issue-details',
+      'summary.installation-issue-summary',
+      'p.unavailable-sentence',
+    ])
+    expect(drawn(root)).toContain(NO_CHECKOUT_EMPTY_SENTENCE)
+    // The card is still not a refusal, and the CLI's own sentence is still
+    // behind the disclosure where a reader who wants it finds it.
+    expect(root.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    expect(one(one(root, NO_CHECKOUT_DETAILS_CLASS), NO_CHECKOUT_SENTENCE_CLASS).textContent).toBe(PLAIN_SENTENCE)
+    // And the sentence that stands in for the action names the two commands
+    // that record a checkout, which is the whole of what the operator can do.
+    expect(NO_CHECKOUT_EMPTY_SENTENCE).toContain('fugaro config init')
+    expect(NO_CHECKOUT_EMPTY_SENTENCE).toContain('fugaro run')
   })
 
   it('draws the console’s own sentence when the refusal cannot be read', () => {
