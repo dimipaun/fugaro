@@ -106,10 +106,14 @@ func doctorDefaultOutput(t *testing.T, checks []doctorCheck) string {
 // informational lines, several sentences of six hundred characters) and asked
 // who is meant to read it. The informational lines and the security audit are
 // still there, behind --all and --security; what the default view may not do is
-// print them.
+// print them line by line.
 //
-// The limits are the ones the brief fixes: at most 25 lines on this state, and
-// no line longer than 160 characters.
+// The owner's correction of 2026-10-31 adds one thing the screen owes the
+// reader: what it left out is counted at the end, so an audit nobody reads
+// about is not an audit nobody knows exists. That is one line each, and nothing
+// in this state's audit half is a finding that needs a person, so the limits
+// the brief fixes stand unchanged: at most 25 lines, and no line longer than
+// 160 characters.
 func TestDoctorDefaultIsOneScreen(t *testing.T) {
 	got := doctorDefaultOutput(t, doctorOwnerCase())
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
@@ -147,6 +151,14 @@ func TestDoctorDefaultIsOneScreen(t *testing.T) {
 	if !strings.Contains(got, "security findings: `fugaro doctor --security`") {
 		t.Errorf("the default view hides security findings without saying so:\n%s", got)
 	}
+	if !strings.Contains(got, "more findings: `fugaro doctor --all`") {
+		t.Errorf("the default view hides its audit findings without saying so:\n%s", got)
+	}
+	// The pointers are the last thing on the screen: a reader who reads to the
+	// bottom of a short output learns that there is more of it.
+	if last := lines[len(lines)-1]; !strings.Contains(last, "`fugaro doctor --all`") {
+		t.Errorf("the default view does not end with the audit pointer: %q", last)
+	}
 	// The choices are the owner's and are counted as choices: a reader is not
 	// handed a decision as a task.
 	if !strings.Contains(got, "yours to decide:\n") {
@@ -154,17 +166,82 @@ func TestDoctorDefaultIsOneScreen(t *testing.T) {
 	}
 }
 
-// TestDoctorDefaultVerdictIsOKWhenThereIsNothingToDo: a clean state is one
-// line, and the line the docs pin ("everything checked is ok") is the one a
-// reader gets.
-func TestDoctorDefaultVerdictIsOKWhenThereIsNothingToDo(t *testing.T) {
+// TestDoctorAllFineIsOneLine: a state with nothing to do and no audit finding
+// is one line, and the line the docs pin ("everything checked is ok") is the
+// one a reader gets. A measurement doctor made and found nothing in does not
+// earn a pointer: the audit class is only a finding when it is not ok.
+func TestDoctorAllFineIsOneLine(t *testing.T) {
 	got := doctorDefaultOutput(t, []doctorCheck{
-		{ID: "project-layer", Severity: "info", Problem: "project layer aurora generation 12 applies"},
-		{ID: "routing-resolution", Severity: "info", Problem: "no switch resolves here"},
+		{ID: "project-layer", Severity: "info", OK: true, Problem: "project layer aurora generation 12 applies"},
+		{ID: "token-signers", Severity: "info", OK: true, Problem: "who can sign sign-in tokens: 1 service account"},
 		{ID: "runs-bucket-iam", OK: true},
+		{ID: "everything-else", OK: true},
 	})
 	if got != "fugaro doctor: ok — everything checked is ok\n" {
 		t.Errorf("a state with nothing to do printed:\n%s", got)
+	}
+}
+
+// TestDoctorNoAuditFindingsNoPointer: the pointer lines are for findings. An
+// installation whose audit checks all pass — the sweep measured the IAM and it
+// is the installation's own accounts, the layer is the published one — gets the
+// verdict and nothing else: a pointer to an empty --all is noise, and noise on
+// every clean run is how a reader learns to skip the line.
+func TestDoctorNoAuditFindingsNoPointer(t *testing.T) {
+	got := doctorDefaultOutput(t, []doctorCheck{
+		{ID: "provider-price-catalog", Severity: "info", OK: true, Problem: "the price catalog was checked 3 days ago"},
+		{ID: "project-layer", Severity: "info", OK: true, Problem: "project layer aurora generation 12 applies"},
+		{ID: "policy-published", Severity: "info", OK: true, Problem: "a policy is published at config/policy/shared"},
+		{ID: "launcher-jobs", Severity: "info", OK: true, Problem: "launcher grants on Cloud Run jobs: 2 grants over 1 job"},
+		{ID: "token-signers", Severity: "info", OK: true, Problem: "who can sign sign-in tokens: 1 service account"},
+		{ID: "plugin-settings-1", Severity: "info", OK: true, Problem: "the wiring blesses every rule in that file"},
+	})
+	for _, unwanted := range []string{"--security", "--all", "finding"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("a clean audit still prints %q:\n%s", unwanted, got)
+		}
+	}
+}
+
+// TestDoctorDefaultEndsWithAuditPointer: an audit finding the default view does
+// not print is an audit finding nobody hears about (the owner's correction,
+// 2026-10-31). The screen ends with one pointer line per kind — the security
+// sweep's and the rest of the audit class — each naming the flag that prints
+// them, and each counted, not listed.
+func TestDoctorDefaultEndsWithAuditPointer(t *testing.T) {
+	got := doctorDefaultOutput(t, []doctorCheck{
+		{ID: "installation", OK: true},
+		{ID: "provider-zdr-unverified", Severity: "info", Problem: "whether provider-a holds the traffic under zero data retention is unverified"},
+		{ID: "routing-resolution", Severity: "info", Problem: "no repository this machine's config names resolves the switch"},
+		{ID: "token-signers", Severity: "info", Problem: "who can sign sign-in tokens for the budget database: 1 service account"},
+		{ID: "project-layer", Severity: "info", OK: true, Problem: "project layer aurora generation 12 applies"},
+	})
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("the screen is %d lines, want the verdict and the two pointers:\n%s", len(lines), got)
+	}
+	if lines[0] != "fugaro doctor: ok — everything checked is ok" {
+		t.Errorf("the verdict is not the first line: %q", lines[0])
+	}
+	if lines[1] != "1 security finding: `fugaro doctor --security`" {
+		t.Errorf("the security pointer is not the second line: %q", lines[1])
+	}
+	if lines[2] != "2 more findings: `fugaro doctor --all`" {
+		t.Errorf("the audit pointer is not the last line: %q", lines[2])
+	}
+
+	// --security prints the sweep's own, and its pointer goes: a flag asks for
+	// detail, it never changes what the reader is told exists.
+	shown, _, _ := execute(t, "doctor", "--security", "--dir", t.TempDir())
+	if strings.Contains(shown, "security finding") {
+		t.Errorf("--security still points at the sweep it just printed:\n%s", shown)
+	}
+	// --all prints everything, and so has nothing to point at. (The directory
+	// has no installation and doctor exits 1: the view is on the writer either
+	// way, and the exit code is not what this test is about.)
+	all, _, _ := execute(t, "doctor", "--all", "--dir", t.TempDir())
+	if strings.Contains(all, "more findings:") || strings.Contains(all, "security findings:") {
+		t.Errorf("--all still points at what it just printed:\n%s", all)
 	}
 }
 
@@ -221,11 +298,12 @@ func TestDoctorSecurityIsBehindItsFlag(t *testing.T) {
 	}
 }
 
-// TestDoctorWarningSecurityFindingIsNeverHidden: a security check that is a
+// TestDoctorDefaultShowsAWarningSecurityFinding: a security check that is a
 // warning is a finding, not a measurement, and hiding it would hide a live
-// grant from the default view. The classification hides the sweep's info
-// lines only.
-func TestDoctorWarningSecurityFindingIsNeverHidden(t *testing.T) {
+// grant from the default view — the owner's correction of 2026-10-31 is
+// exactly this: what needs a person is shown, and only the measurements move
+// behind a flag.
+func TestDoctorDefaultShowsAWarningSecurityFinding(t *testing.T) {
 	got := doctorDefaultOutput(t, []doctorCheck{
 		{ID: "secret-readers-unexpected", Severity: "warning",
 			Problem: "secret fugaro-owner-repo-a-api-key grants a role that reads every version to user:x@example.com",

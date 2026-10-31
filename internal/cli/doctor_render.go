@@ -219,10 +219,23 @@ type doctorView struct {
 	security bool
 }
 
-// doctorVisible are the checks a view prints, in the order doctor ran them:
-// the items, the audit half of the security sweep when --security asked for it,
-// and how many security findings the view left out.
-func doctorVisible(checks []doctorCheck, v doctorView) (shown, auditSecurity []doctorCheck, hidden int) {
+// doctorAuditHeld are the audit findings a view left out of its lines: the
+// security sweep's, and the rest of the audit class. Only a check that is not
+// ok is a finding — the audit class is a measurement when it passes (the runs
+// bucket's IAM is the installation's own accounts, the launcher grants are
+// these two over that job), and a measurement nobody has to look at is not
+// something a pointer line has to announce.
+type doctorAuditHeld struct {
+	security int
+	other    int
+}
+
+// doctorVisible are the checks a view prints, in the order doctor ran them: the
+// items, the audit half of the security sweep when --security asked for it, and
+// the audit findings the view left out, counted by kind. An audit line is never
+// dropped in silence: the counts are what the pointer lines at the end of the
+// default screen are made of.
+func doctorVisible(checks []doctorCheck, v doctorView) (shown, auditSecurity []doctorCheck, held doctorAuditHeld) {
 	for _, c := range checks {
 		class := doctorClassOf(c)
 		if class == "" {
@@ -236,11 +249,13 @@ func doctorVisible(checks []doctorCheck, v doctorView) (shown, auditSecurity []d
 			// printDoctorReport hands --all to printDoctorChecks whole.
 		case security && v.security:
 			auditSecurity = append(auditSecurity, c)
-		case security:
-			hidden++
+		case !c.OK && security:
+			held.security++
+		case !c.OK:
+			held.other++
 		}
 	}
-	return shown, auditSecurity, hidden
+	return shown, auditSecurity, held
 }
 
 // printDoctorReport prints the human view: --all keeps doctor's long-standing
@@ -251,7 +266,7 @@ func printDoctorReport(w io.Writer, checks []doctorCheck, v doctorView) {
 		printDoctorChecks(w, checks)
 		return
 	}
-	shown, auditSecurity, hidden := doctorVisible(checks, v)
+	shown, auditSecurity, held := doctorVisible(checks, v)
 	todo, decisions := doctorSplit(shown)
 	if len(shown) == 0 {
 		fmt.Fprintln(w, "fugaro doctor: ok — everything checked is ok")
@@ -277,8 +292,14 @@ func printDoctorReport(w io.Writer, checks []doctorCheck, v doctorView) {
 	for _, c := range auditSecurity {
 		fmt.Fprintln(w, doctorCheckLine(c))
 	}
-	if hidden > 0 {
-		printDoctorSecurityNotice(w, hidden)
+	// The screen ends with what it did not print: an audit finding the reader
+	// never hears about is an audit finding nobody acts on, and a flag is a
+	// question about detail, never about whether something exists.
+	if held.security > 0 {
+		printDoctorSecurityNotice(w, held.security)
+	}
+	if held.other > 0 {
+		printDoctorAuditNotice(w, held.other)
 	}
 }
 
@@ -310,13 +331,27 @@ func doctorVerdict(todo, decisions int) string {
 
 // printDoctorSecurityNotice is the line that keeps a hidden security finding
 // from being an unmentioned one: the classification is never silent, so a
-// short output is never read as a clean one.
+// short output is never read as a clean one. The owner's correction of
+// 2026-10-31 is the other half of the same rule — a finding that needs a person
+// is printed, and this line is for the ones the sweep measures rather than
+// finds.
 func printDoctorSecurityNotice(w io.Writer, n int) {
-	word := "findings"
+	fmt.Fprintf(w, "%d security %s: `fugaro doctor --security`\n", n, doctorFindings(n))
+}
+
+// printDoctorAuditNotice is the same for the rest of the audit class: what
+// doctor measured, and what it noticed while measuring. "more" is the word
+// because the security line above it, when there is one, is the sweep's.
+func printDoctorAuditNotice(w io.Writer, n int) {
+	fmt.Fprintf(w, "%d more %s: `fugaro doctor --all`\n", n, doctorFindings(n))
+}
+
+// doctorFindings is the noun for a count of them.
+func doctorFindings(n int) string {
 	if n == 1 {
-		word = "finding"
+		return "finding"
 	}
-	fmt.Fprintf(w, "%d security %s: `fugaro doctor --security`\n", n, word)
+	return "findings"
 }
 
 // printDoctorItem prints one item of the default view: the check's ID, the
