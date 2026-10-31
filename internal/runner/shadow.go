@@ -309,8 +309,8 @@ func gitStream(ctx context.Context, repo *gitops.Repo, w io.Writer, args ...stri
 // anything that reaches the developer. The leftover commit, the run's own
 // commits, the changed paths, the rigour mode, the verify records, the patch
 // object and the verdict are all the run's own; the push, the pull request,
-// the status section, the reviewers, the report comment and the backlog filing
-// are not, and nothing here calls the provider at all (D554).
+// the status section, the reviewers and the report comment are not, and
+// nothing here calls the provider at all (D554).
 //
 // The status says how the run ended — halted, cancelled, or the verdict Decide
 // reached — and the outcome is none in every case, which is what tells a

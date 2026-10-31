@@ -3448,7 +3448,7 @@ func (r *run) finalize(ctx context.Context) error {
 		// A challenger arm's finalize is its own (shadow.go,
 		// shadowFinalize): the same record it would otherwise carry, and
 		// nothing that reaches the developer — no push, no pull request, no
-		// comment, no filing.
+		// comment.
 		return r.shadowFinalize(ctx)
 	}
 	// A report run's last word before anything is pushed: the files it commits
@@ -3544,9 +3544,9 @@ func (r *run) finalize(ctx context.Context) error {
 	r.uploadVerifyRecords(ctx, records)
 	// Both arms' patch objects (A2.1): the run's own tree diff, from the
 	// commit it started at to the head it is about to push. sha is that head
-	// — the leftover commit, the run's own commits and the filing above are
-	// all behind it — so the champion's patch is the diff of the branch it
-	// publishes and the challenger's is the diff it holds back.
+	// — the leftover commit and the run's own commits are behind it — so the
+	// champion's patch is the diff of the branch it publishes and the
+	// challenger's is the diff it holds back.
 	r.uploadPatch(ctx, sha)
 
 	pol := r.findingsPolicy()

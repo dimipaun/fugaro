@@ -165,14 +165,17 @@ func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
 // mode's split of that round's findings, or the zero policy where the run may
 // not tolerate anything at all.
 //
-// D9 is the bound. A mode may not tolerate a finding it cannot file, so the
-// split is taken only where the filing can happen: the repository opted in
-// (rigor.Config.Configured, the gate fileOpenItems reads as well) and the
-// mode's rigor.Files row files what it tolerates. Every other run gets the
-// zero policy and decides by the count on the record, exactly as it did
+// D9 is the bound. A mode may not let a finding through where the repository
+// has not asked for the mode, so the split is taken only where both hold: the
+// repository opted in (rigor.Config.Configured — an opt-in read from the base
+// branch, D25) and the mode's rigor.Files row tolerates. Every other run gets
+// the zero policy and decides by the count on the record, exactly as it did
 // before modes existed — the unconfigured repository, which D19 resolves Pro
-// for its budget but which files nothing, and POC, whose account is its pull
-// request body's own line (D30) and which therefore files nothing either.
+// for its budget, and POC, whose account of what it left open is its pull
+// request body's own line (D30). A tolerated finding is recorded in the run's
+// record (Tolerated, T3.4) and named in the pull request's status section,
+// which is all the run does with it: nothing is written into the repository
+// for it (finalize).
 func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []rigor.Score) FindingsPolicy {
 	if !cfg.Configured() || !rigor.Files(mode).Tolerated {
 		return FindingsPolicy{}
