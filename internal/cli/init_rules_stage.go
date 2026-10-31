@@ -135,12 +135,29 @@ func (s *rulesStage) read(ctx context.Context) (*infra.DB, rulesSkew, error) {
 
 // state is one read of the stage: the database to deploy into, the state the
 // deployed rules are in, and the sentence the result carries.
+//
+// A deployable state is checked against the database's own gate first
+// (infra.DB.Check, the first thing the database step of `--firebase-project`
+// does): nothing may be written into a database that holds data and is not this
+// installation's, or that carries another project's mark, and the sentence that
+// refuses it on that path is the sentence here. A state that must not be
+// deployed over at all is not checked — the question is not asked of a database
+// this stage is not going to write to — and a database the gate refuses is
+// REPORTED rather than fatal: `fugaro update`'s other stages have nothing to do
+// with it, and the run that refused them all would be the one command that must
+// work, not working.
 func (s *rulesStage) state(ctx context.Context) (*infra.DB, initflow.State, string, error) {
 	db, skew, err := s.read(ctx)
 	if err != nil {
 		return nil, initflow.Done, "", err
 	}
 	st, detail := rulesStageState(skew)
+	if st != initflow.Todo {
+		return db, st, detail, nil
+	}
+	if _, err := db.Check(ctx); err != nil {
+		return db, initflow.Skipped, err.Error(), nil
+	}
 	return db, st, detail, nil
 }
 

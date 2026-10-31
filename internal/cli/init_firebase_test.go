@@ -1656,3 +1656,41 @@ func TestUpdateRulesDeclinedRefusesPolicyWrite(t *testing.T) {
 		t.Errorf("the published policy moved to version %d after the rules deploy was declined: the migration's own gate is the marker that deploy did not write", got)
 	}
 }
+
+// TestUpdateRulesStageReportsADatabaseThatIsNotOurs: the deploy goes through the
+// database step's own gate (infra.DB.Check), so the stage writes nothing into a
+// database that holds data and is not this installation's — and it reports that
+// rather than stopping the run. The two halves are the point: the write must not
+// happen, and `fugaro update`'s other stages (the images, the pin, the plugin)
+// have nothing to do with the budget database, so a state only the budget
+// backend is in must not leave the owner unable to update anything (the owner's
+// rule of 2026-10-30). The sentence is the database step's own.
+func TestUpdateRulesStageReportsADatabaseThatIsNotOurs(t *testing.T) {
+	r := updateRig(t)
+	db := gcpfake.NewRTDB(t)
+	// Someone else's data, and no mark of ours: marked databases only.
+	db.Set("their/data", true)
+	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+	r.save(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("a database that is not ours stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Rules); got != "skipped" {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
+	}
+	if detail := res.stageDetail(t, initflow.Rules); !strings.Contains(detail, "no Fugaro mark") {
+		t.Errorf("the skip does not say why nothing was deployed: %q", detail)
+	}
+	if db.RulePuts() != 0 || db.Value(projectpolicy.PathRulesMarker()) != nil {
+		t.Errorf("the run wrote into a database that is not ours: %d rule deploy(s)", db.RulePuts())
+	}
+	if db.Value(budget.PathMark) != nil {
+		t.Error("the run marked someone else's database as this installation's")
+	}
+}
