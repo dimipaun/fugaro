@@ -65,33 +65,69 @@ func (s *checkoutStage) checkout() (pluginwire.Location, string) {
 	return loc, ""
 }
 
-// detail is the stage's one line, in both the read-only view and the plan.
-func (s *checkoutStage) detail(loc pluginwire.Location) string {
-	return fmt.Sprintf("runs fugaro upgrade's own steps for %s: %s", pluginwire.Printable(loc.Root), checkoutStepNames())
+// plannedStep is one of the checkout's steps in this run: the step, and the
+// line saying why it is skipped here when it is.
+type plannedStep struct {
+	step upgradeStep
+	skip string
 }
 
-func checkoutStepNames() string {
-	names := make([]string, 0, len(checkoutSteps))
-	for _, s := range checkoutSteps {
-		names = append(names, s.name)
+// planFor is the steps this checkout's run has. The cloud step is the one that
+// can drop out: the refresh resolves the repository from the checkout's
+// origin, and a checkout with none has nothing for it to refresh — a skip
+// here, not the failure fugaro upgrade makes of that read, because there the
+// user asked for the refresh by name and here the step is one of a run. Every
+// other reason the refresh skips (no fugaro.yaml, a teammate checkout, one
+// not onboarded, a development build, a custom base) is cloudCheck's own
+// verdict, and cloudStep says it itself.
+func (s *checkoutStage) planFor(ctx context.Context, loc pluginwire.Location) []plannedStep {
+	cloudSkip := ""
+	if _, err := checkoutRepo(ctx, loc.Root); err != nil {
+		cloudSkip = "this checkout has no origin repository to refresh (" + oneLine(err.Error()) + ")"
 	}
-	return strings.Join(names, ", ")
+	steps := make([]plannedStep, 0, len(checkoutSteps))
+	for _, step := range checkoutSteps {
+		p := plannedStep{step: step}
+		if step.name == "cloud" {
+			p.skip = cloudSkip
+		}
+		steps = append(steps, p)
+	}
+	return steps
 }
 
-func (s *checkoutStage) Check(context.Context) (initflow.Status, error) {
+// detail is the stage's one line, in both the read-only view and the plan: the
+// steps it runs, and the one it does not.
+func (s *checkoutStage) detail(steps []plannedStep, loc pluginwire.Location) string {
+	names, skipped := make([]string, 0, len(steps)), make([]string, 0, len(steps))
+	for _, p := range steps {
+		if p.skip != "" {
+			skipped = append(skipped, p.step.name+" ("+p.skip+")")
+			continue
+		}
+		names = append(names, p.step.name)
+	}
+	line := fmt.Sprintf("runs fugaro upgrade's own steps for %s: %s", pluginwire.Printable(loc.Root), strings.Join(names, ", "))
+	if len(skipped) > 0 {
+		line += "; skipped here: " + strings.Join(skipped, "; ")
+	}
+	return line
+}
+
+func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
 	loc, why := s.checkout()
 	if why != "" {
 		return initflow.Status{State: initflow.Skipped, Detail: why}, nil
 	}
-	return initflow.Status{State: initflow.Todo, Detail: s.detail(loc)}, nil
+	return initflow.Status{State: initflow.Todo, Detail: s.detail(s.planFor(ctx, loc), loc)}, nil
 }
 
-func (s *checkoutStage) Plan(_ context.Context, _ initflow.Env) (initflow.Plan, error) {
+func (s *checkoutStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
 	loc, why := s.checkout()
 	if why != "" {
 		return initflow.Plan{NothingToDo: true, Detail: why}, nil
 	}
-	return initflow.Plan{Detail: s.detail(loc)}, nil
+	return initflow.Plan{Detail: s.detail(s.planFor(ctx, loc), loc)}, nil
 }
 
 // Apply runs the steps in upgrade's order and stops at the first that fails,
@@ -111,9 +147,12 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	}
 	u := s.upgradeCtx(ctx, env, loc)
 	var changed []string
-	for _, step := range checkoutSteps {
-		r := step.run(ctx, u)
-		r.name = step.name
+	for _, p := range s.planFor(ctx, loc) {
+		r := stepResult{name: p.step.name, state: stepSkipped, reason: p.skip}
+		if p.skip == "" {
+			r = p.step.run(ctx, u)
+			r.name = p.step.name
+		}
 		printStep(s.e.r.w, r)
 		if r.state == stepFailed {
 			return initflow.Outcome{}, errors.New(r.reason)
