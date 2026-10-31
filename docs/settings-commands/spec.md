@@ -1,11 +1,11 @@
 # `fugaro settings`: the spec
 
 The commands below are written to the owner's answers to SD1–SD18 and to this design's own decisions
-D840–D853, all answered on 2026-10-31 as recommended ([reconciliation.md](reconciliation.md) §3 and
-§4). A decision answered the other way would change the paragraph that names it; none was. **D854 —
-a stale local copy overwriting a newer publish — is open**, and §6 says what the publishing stages do
-under either of its two outcomes. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`),
-projects are `workspace-a`, people are `person-1`.
+D840–D854, all answered on 2026-10-31 as recommended ([reconciliation.md](reconciliation.md) §3 and
+§4). A decision answered the other way would change the paragraph that names it; none was, D854
+included — a stale local copy overwriting a newer publish is refused, and §6 says how. Repository
+names are placeholders (`owner/repo-a`, `owner/repo-b`), projects are `workspace-a`, people are
+`person-1`.
 
 ## 1. The rule this serves
 
@@ -341,24 +341,23 @@ And one migration, in the same command (SD5, D842, D844):
    node carries neither block gets neither block in its file: no default is seeded into a file
    nobody wrote (D843).
 
-**A stale local copy overwriting a newer publish — D854, open.** A stage that writes whenever the
-file differs from the object would, on a second machine, replace an operator's newer layer or policy
-node with this machine's older file, and say nothing about it. Two outcomes are live, and the stages
-are written so either can land (reconciliation §4 holds both, with where the recorded generation
-would live and what the first `update` does when nothing is recorded):
+**A stale local copy overwriting a newer publish — D854, answered: the generation is recorded.** A
+stage that writes whenever the file differs from the object would, on a second machine, replace an
+operator's newer layer or policy node with this machine's older file, and say nothing about it. So
+each stage **records the generation** the local file was seeded from or last published at
+(reconciliation §4 holds where it lives and what the first `update` does when nothing is recorded),
+and when the published generation has moved since, it **refuses to publish**, shows the three-way
+state (this machine's file, the generation it was written from, the object published now), and
+offers to re-seed the local file from the published one under confirmation, with a backup. The
+refusal is a question rather than a wall: a declined re-seed leaves both sides as they were, and the
+stage publishes again once the file is reconciled with the generation it was written from.
 
-- **(a) record the generation and refuse.** Each stage remembers the generation the local file was
-  seeded from or last published at, and when the published generation has moved since, it **refuses
-  to publish**, shows the three-way state (this machine's file, the generation it was written from,
-  the object published now), and offers to re-seed the local file from the published one under
-  confirmation, with a backup. The refusal is a question rather than a wall: a declined re-seed
-  leaves both sides as they were, and the stage publishes again once the file is reconciled with the
-  generation it was written from.
-- **(b) publish on difference anyway.** This is today's behaviour and the design's without an answer:
-  the file wins, the diff and the backup make the replacement visible after the fact, and the newer
-  publish is recoverable only if someone kept a copy.
+**Rejected: publish on difference anyway.** That is today's behaviour — the file wins, the diff and
+the backup make the replacement visible after the fact, and the newer publish is recoverable only if
+someone kept a copy — and it is what D854's answer trades away: on a second machine it silently
+replaces an operator's newer layer or policy node.
 
-**What is not open, either way:** within one run, the write carries the generation the read
+**What is not the same guard:** within one run, the write carries the generation the read
 returned. A publish another writer slips in between the two is a conflict and not an overwrite —
 both designs' stages hold that, and it is the half of the problem the ETag alone can see.
 
