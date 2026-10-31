@@ -620,7 +620,9 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		}
 		line := doctorItemLine(t, c)
 		// The line names `fugaro update` and what makes it do the work: the
-		// upgrade before it (cli-version), or the flag the stage needs.
+		// upgrade before it (cli-version), or the repository the checkout
+		// runs in (plugin-pin). A check here that carries no line of its own
+		// gets the class's one command, whole.
 		if !strings.Contains(line, "`fugaro update") {
 			t.Errorf("%s's line does not name the fugaro update command: %q", id, line)
 		}
@@ -649,6 +651,40 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro update --repo . in your own terminal)"}
 	if line := doctorItemLine(t, narrowed); !strings.HasSuffix(line, "run `fugaro update`") {
 		t.Errorf("policy-vs-jobs' line does not name the whole update: %q", line)
+	}
+
+	// policy-rules-skew's line, for every state `fugaro update` really repairs,
+	// is that same plain command and nothing else: it is one ID with ten
+	// states (rulesSkewKind), and the states the update does not put right are
+	// the two that carry their own line, below. The check's own long text is
+	// what the class's line exists to replace — the state's detail is in the
+	// next line's own words.
+	skew := doctorCheck{ID: "policy-rules-skew", Severity: "warning",
+		Problem: "the deployed security rules are generation 1, which predates the project policy: this Fugaro deploys generation 5",
+		Fix:     "re-run 'fugaro update' with fugaro >= 0.8.0 in your own terminal: it deploys the rules a policy is read under and records generation 5 in the marker"}
+	if line := doctorItemLine(t, skew); !strings.HasSuffix(line, "run `fugaro update`") {
+		t.Errorf("policy-rules-skew's line, for a state the update repairs, is not the plain command: %q", line)
+	}
+
+	// And the two states it does not repair print their own fix (ownFix), in
+	// full, because it is the command that does the work: a marker no deploy
+	// writes is repaired by a deploy from a Fugaro that reads generations, and
+	// a marker above this binary's is repaired by the newer binary. The class
+	// is the ID's and stays what it was (--json is unchanged): what differs is
+	// which line the default view prints.
+	for id, want := range map[string]string{
+		"the hand-edited marker":    "re-run `fugaro update --firebase-project proj-1234` with fugaro >= 0.8.0 in your own terminal.",
+		"the marker above this one": "upgrade Fugaro (`brew upgrade fugaro`), then `fugaro update` with the newer binary.",
+	} {
+		c := doctorCheck{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
+			Problem: "the deployed rules are not this Fugaro's to deploy over",
+			Fix:     want + " The rest of the check's own text stays where it is."}
+		if got := doctorClassOf(c); got != doctorClassUpdate {
+			t.Errorf("%s: the class is %q, want %q: ownFix changes the line, not the class", id, got, doctorClassUpdate)
+		}
+		if line := doctorItemLine(t, c); !strings.Contains(line, want) || strings.HasSuffix(line, "run `fugaro update`") {
+			t.Errorf("%s's line does not print the state's own fix (%q): %q", id, want, line)
+		}
 	}
 
 	// A check `fugaro update` does not put right is not an update item, and its
