@@ -244,15 +244,15 @@ function scrubFunction(name: string | undefined): string | undefined {
 }
 
 /** scrubFrame is the frame allow-list: the name, the app-relative path and the
- * position in the file. A frame with no path at all is dropped rather than kept
- * with an invented `<external>`, which would claim the reporter had said
- * something it did not. */
-function scrubFrame(frame: CrashFrame, appRoot: string): ScrubbedFrame | null {
+ * position in the file. Every frame in is a frame out, because the shape of the
+ * stack is what the processor groups by -- a frame with no path to place is
+ * `EXTERNAL`, the same word a frame outside the app gets, rather than a frame
+ * dropped from the middle and a stack that no longer reads as itself. */
+function scrubFrame(frame: CrashFrame, appRoot: string): ScrubbedFrame {
   const source = frameSource(frame)
-  if (source === null) return null
   const name = scrubFunction(frame.function)
   return {
-    filename: appRelative(source, appRoot),
+    filename: source === null ? EXTERNAL : appRelative(source, appRoot),
     ...(name === undefined ? {} : { function: name }),
     ...(typeof frame.lineno === 'number' ? { lineno: frame.lineno } : {}),
     ...(typeof frame.colno === 'number' ? { colno: frame.colno } : {}),
@@ -260,17 +260,17 @@ function scrubFrame(frame: CrashFrame, appRoot: string): ScrubbedFrame | null {
   }
 }
 
+/** scrubValue is the exception allow-list: the type, and the frames the reporter
+ * placed. The message is not here at all, which is this module's whole answer to
+ * F33 -- so an exception the reporter could not walk is one word and no frames,
+ * rather than a sentence somebody typed. */
 function scrubValue(value: CrashExceptionValue, appRoot: string): ScrubbedExceptionValue {
   const frames = value.stacktrace?.frames
   const type = typeof value.type === 'string' ? value.type : undefined
   if (!Array.isArray(frames)) return { ...(type === undefined ? {} : { type }) }
   return {
     ...(type === undefined ? {} : { type }),
-    stacktrace: {
-      frames: frames
-        .map((frame) => scrubFrame(frame, appRoot))
-        .filter((frame): frame is ScrubbedFrame => frame !== null),
-    },
+    stacktrace: { frames: frames.map((frame) => scrubFrame(frame, appRoot)) },
   }
 }
 

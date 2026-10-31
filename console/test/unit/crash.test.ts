@@ -301,6 +301,9 @@ describe('crash', () => {
         appRoot,
       )
       const kept = scrubbed.exception?.values?.[0]?.stacktrace?.frames?.[0]
+      // Every frame in is a frame out: the stack's shape is what the processor
+      // groups by, so a frame this module cannot place is `<external>` rather
+      // than a hole in the middle of a report.
       if (kept === undefined) throw new Error('the frame was dropped')
       return kept
     }
@@ -323,8 +326,10 @@ describe('crash', () => {
     // Anything outside the app is the fixed word, and never the path.
     expect(frame('/opt/vendor/node_modules/dep-a/index.js').filename).toBe('<external>')
     expect(frame(`${HOME_PATH}/dev/elsewhere/main.js`).filename).toBe('<external>')
-    // A filename the SDK already made relative is kept as it is.
+    // A filename the SDK already made relative is kept as it is, and a frame
+    // with no path at all is kept and not placed.
     expect(frame('', 'dist/main/index.js').filename).toBe('dist/main/index.js')
+    expect(frame('', undefined)).toEqual({ filename: '<external>' })
   })
 
   it('the scrubber reads the app root and the packaged path', () => {
