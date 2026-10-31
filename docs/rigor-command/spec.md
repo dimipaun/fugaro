@@ -4,7 +4,10 @@
 written to the answer of each decision (D830–D839, [reconciliation.md](reconciliation.md) §3):
 **D830** (where `set` writes) and **D831** (the `Layer` stage in `update`) are **answered** — the
 owner's SD4 ruling of 2026-10-31 — and **D832–D839 are answered on 2026-10-31, every one as
-recommended**. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); modes are
+recommended**. One decision the plan cites is **not** this design's and is **not answered**: **D854**
+— whether the `Layer` stage **records** the object generation it reads at the seed — which is the
+settings design's and is open there. Nothing here decides it; R1 states both outcomes and what each
+means for `update`. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); modes are
 `internal/rigor`'s five words (`poc`, `startup`, `pro`, `critical`, `hotfix`).
 
 ## 1. The rule this serves
@@ -136,7 +139,8 @@ becomes `<mode>`. In order:
    agent may edit the tree it was given.
 4. **Resolve the file.** It is §1's one path, `~/.config/fugaro/projects/<project>-layer.yaml`:
    there is no `--layer` flag and no config key for it (D830, answered), so there is nothing to
-   resolve and nothing to record. Two absences are not the same absence:
+   resolve and nothing to record **of the path** — D854's *generation* record is another question,
+   open in the settings design (R1). Two absences are not the same absence:
    - the file does not exist and the project has **no** published layer: it is created from the
      local config's own anchors (`version`, `project`, `gcp_project`) **plus the `defaults:` block
      the command is there to write** — the created document already carries
@@ -157,8 +161,9 @@ becomes `<mode>`. In order:
 6. **Show, confirm, back up, write.** The command prints the line diff, asks for confirmation at a
    terminal (`--yes` confirms outside a terminal), backs up the old file to `<file>.bak-<UTC
    timestamp>` (mode 0600) and writes the new one atomically (temporary file, rename, mode 0600) —
-   through the **shared write helper** the settings design's S5 lands (README, the joint order), not
-   through a copy of it. The behaviour is not new: `lineDiff`, `backupFile` and `writeFileAtomic`
+   through the **shared write helper** the settings design's S5 lands in
+   **`internal/cli/settings_write.go`** (README, the joint order), not through a copy of it. The
+   behaviour is not new: `lineDiff`, `backupFile` and `writeFileAtomic`
    (`internal/cli/init.go`) already do exactly this and `fugaro restore` already calls them, so S5's
    task is to make that one path every writer uses — the diff, the confirmation, the agent-session
    refusal, the backup and the atomic write in one place — and this command is one of its callers.

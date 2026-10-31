@@ -1,9 +1,12 @@
 # `fugaro rigor`: implementation plan
 
 **Design approved; the tasks here queue for CLI 0.15.0 (and console 0.117.0, which is not this
-plan's — D836).** Every decision is answered ([reconciliation.md](reconciliation.md) §3): **D830 and
-D831** by the owner's SD4 ruling of 2026-10-31, **D832–D839 on 2026-10-31, all as recommended**. The
-tasks are written to those answers. Each task touches at most 12 files, names its tests, starts with
+plan's — D836).** Every decision in this design's block is answered
+([reconciliation.md](reconciliation.md) §3): **D830 and D831** by the owner's SD4 ruling of
+2026-10-31, **D832–D839 on 2026-10-31, all as recommended**. The one decision the plan **cites** and
+does not own — **D854**, the settings design's, whether the `Layer` stage records the generation it
+read at the seed — is **open**, and R1 states both outcomes rather than choosing one. The tasks are
+written to the answers above. Each task touches at most 12 files, names its tests, starts with
 a red step and ends at the gates below.
 
 ## Order, and what this plan does not own
@@ -40,24 +43,29 @@ a red step and ends at the gates below.
   the owner's go for those files.
 
 **The `Needs` column is a *code* dependency: what must be merged for that task to build, test and be
-reviewed on its own.** Two of its entries are cross-design — E1, the editor task's
-`internal/yamledit`, and S5, the settings task that lands the shared write helper — and both are
-positions in the [README](README.md)'s joint order rather than tasks in this plan.
+reviewed on its own.** Three of its entries reach into another design — E1, the editor task's
+`internal/yamledit`; S5, the settings task that lands the shared write helper
+(`internal/cli/settings_write.go`); and **R3 or S7**, the two tasks that can create the `rigor`
+command group `internal/cli/rigor.go` — and each is a position in the [README](README.md)'s joint
+order rather than a task in this plan. R3 is this plan's; S7 is the settings design's.
 
 | Level | Tasks | Needs (code) |
 | --- | --- | --- |
 | 0 | R0 | nothing |
 | 1 | R1, R2 | R0 for R1; E1 for R2 (the editor task's `internal/yamledit`) |
 | 2 | R3 | R0 |
-| 3 | R4 | R0, R1, R2, S5 |
-| 4 | R5 | R4 (and the same code needs: R0, R1, R2, S5) |
+| 3 | R4 | R0, R1, R2, S5, and R3 or S7 (whichever created `internal/cli/rigor.go`) |
+| 4 | R5 | R4 (and the same code needs: R0, R1, R2, S5, and R3 or S7) |
 | 5 | R6 | R1–R5 |
 | 6 | R7, R8 | nothing (R7 lands nothing before the owner answers) |
 
-**R4 and R5 need R1 among their four code needs — and that one is what makes the HARD RULE hold
-mechanically rather than by promise.** The row is the whole list (R0, R1, R2 and S5); the three
+**R4 and R5 need R1 among their code needs — and that one is what makes the HARD RULE hold
+mechanically rather than by promise.** The row is the whole list (R0, R1, R2, S5, and R3 or S7 —
+`internal/cli/rigor.go`, the group both R4 and R5 extend and both R3 and the settings design's S7
+can create, so the row names either and the task waits for whichever landed first); the three
 bullets below are about the entry the HARD RULE turns on, which is not the only one the row names:
-they say nothing about R0, R2 or S5, and nothing here may be read as shortening the row. A `set` that
+they say nothing about R0, R2, S5 or R3/S7, and nothing here may be read as shortening the row. A
+`set` that
 lands without the publish stage leaves the owner's next step as `fugaro config publish FILE` — the
 second command the HARD RULE forbids (F18) — so no task here may write the layer before the task
 that publishes it has landed, and the table says so in the same column it says everything else:
@@ -92,7 +100,8 @@ Docs -count=1 -timeout 40m` when a doc changed; `go test ./internal/eeboundary/.
 Without it, "the file the owner publishes from" has no name, and `set` cannot be written (F3). The
 answer is a convention, not a key: the path is the project's own name under the config home's
 `projects/` directory, beside the project's config, so **no `--layer` flag and no `project_layer:`
-key exist** — there is nothing to resolve and nothing to record.
+key exist** — there is nothing to resolve and nothing to record **of the path** (D854's *generation*
+record is a different question, open — R1).
 
 - **Files (7):** `internal/localcfg/localcfg.go` (`LayerFile` — the path, derived from the project
   name; the same directory helper the project config uses), `internal/localcfg/localcfg_test.go`,
@@ -113,12 +122,14 @@ key exist** — there is nothing to resolve and nothing to record.
   it does — its sha256 beside the published object's, saying **`unpublished`** when they differ and
   adding `fugaro update` as the way to publish it, the same word and the same sentence `config layer`
   and `show` print (one word, one sha256 comparison, three doors — README, the shared rulings). **It
-  needs no bucket round trip**, which is why it is
-  appended on *every* path `doctorLayerChecks` returns from — including the two early returns (no
-  layer resolved; a rewritten origin) that today skip the rest — because the published side it
-  compares against is the already-resolved `rf.Layer` (its `SHA256`, and its `Note` when it came from
-  the offline cache), never a fresh read. A check that vanished exactly when the bucket was
-  unreachable would be the one line the owner needs in the state that breaks `set`.
+  needs no bucket round trip**, which is why it is appended on **every** path `doctorLayerChecks`
+  returns from — the four early returns (`internal/cli/doctor_layer.go`: no layer resolved; an
+  origin that could not be read or was rewritten; `task.Slug` failing on the origin's repository; and
+  `blobx.Open` failing on the bucket) that today skip the rest — because the published side it
+  compares against is the already-resolved `rf.Layer.Layer` (its `SHA256` — so
+  `rf.Layer.Layer.SHA256`, not `rf.Layer.SHA256` — and its `Note` when it came from the offline
+  cache), never a fresh read. A check that vanished exactly when the bucket was unreachable would be
+  the one line the owner needs in the state that breaks `set`.
 - **Red step:** `TestConfigPublishWithNoFilePublishesTheLocalLayer` fails while `publish` takes an
   exact-1 argument and no path is derived.
 - **Tests:** `TestLayerFileIsTheProjectNameUnderProjects` (the path, and that a project name that is
@@ -138,20 +149,55 @@ test commands for everyone, and it is the key whose change the executable-key ga
 **seeding** half writes only a local file, and it is what makes R0's convention usable on an
 installation that has never had one.
 
-- **Files (6):** `internal/initflow/stage.go` (the `Layer` stage name, its slot after `Policy`, and
-  its `needs`), `internal/initflow/stage_test.go`, `internal/cli/init_layer_stage.go` (new: the seed,
-  the read, the diff, the confirmation, `publishLayer` and `fanOutLayer`), `internal/cli/init_layer_stage_test.go`
+- **The stage runs before `Checkout`, and `Checkout` needs it.** The canonical order
+  (`internal/initflow/stage.go`) does **not** end at `Policy`: `Checkout` and `Compute` follow it,
+  and `Checkout` is what refreshes the images for the checkout's repositories. A layer that changes
+  `image.*` or `commands.*` therefore has to be published **before** that refresh, or the run builds
+  from the layer the owner just replaced and the next `update` is needed to build from the right one
+  — the second command the HARD RULE forbids, one step to the side. So this task gives `Checkout`
+  `Layer` in its `needs` beside the `Repository` it already has, and appends the new stage **after
+  `e.policy` and before `newCheckoutStage`** (`internal/cli/init_stages.go`: the same function
+  appends `e.policy` and then the checkout stage, so the new append goes between them).
+- **Files (6):** `internal/initflow/stage.go` (the `Layer` stage name, its slot after `Policy` and
+  before `Checkout`, its own `needs` and `Checkout`'s gained `Layer`),
+  `internal/initflow/stage_test.go`, `internal/cli/init_layer_stage.go` (new: the seed, the read,
+  the diff, the confirmation, `publishLayer` and `fanOutLayer`),
+  `internal/cli/init_layer_stage_test.go`
   (new), **`internal/cli/init_stages.go`** (registering the stage — the stages are appended in
   `initStages`, where `newRulesStage`, `newPolicyMigrateStage` and `newCheckoutStage` already are;
   **not `internal/cli/init.go`**, which holds the command and the engine but appends no stage), and
-  `internal/cli/config_publish.go` (the shared publish path, so the two doors cannot disagree). The new
-  stage is appended **after `e.policy`**, the slot the design chose (D831), in the same function
-  that appends it. `docs/project-layer.md` (§7 and §8) is R6's, the same as R0's, so this task's
-  diff stays code.
-- **The guard settings S3 attaches here too (D854, answered yes).** The stage refuses to publish when
-  the published object's generation moved since the seed read it — someone else published while this
-  update ran — rather than overwriting an object this update never read; the same guard the settings
-  design's policy stage carries, so the two stages cannot disagree about the object they write.
+  `internal/cli/config_publish.go` (the shared publish path, so the two doors cannot disagree). The
+  slot is the one D831 chose, and the bullet above fixes where in that function it lands.
+  `docs/project-layer.md` (§7 and §8) is R6's, the same as R0's, so this task's diff stays code.
+- **The guard the settings design's stage carries attaches here too — and D854 is open, so this task
+  does not decide it.** The stage refuses to publish when the published object's generation moved
+  since the seed read it — someone else published while this update ran — rather than overwriting an
+  object this update never read. Whether the generation the seed read is **recorded** is D854, and it
+  is the settings design's decision: it is **open there**, this design cites it and states both
+  outcomes, and nothing here answers it. The two outcomes, and what each one means for this task:
+  - **If the generation is recorded** (the settings design's recommendation): the record lives in the
+    installation's own local project config, `~/.config/fugaro/projects/<project>.yaml`
+    (`localcfg.Config`, the file that already holds `gcp_project`, `base_images` and `image_source` —
+    its per-installation record; the settings design owns the field's name), as the generation the
+    local layer file's bytes were last written from — written by this stage when it seeds and when it
+    publishes, and **not** kept in the layer cache, which is the cloud's copy and may be dropped at
+    any time. The record is what lets a later `update` tell the two
+    readings of `unpublished` apart, so the wording `show` (R3) and doctor's `local-layer-file` check
+    (R0) print must say which one it is: a **local edit** (the bytes differ and the recorded
+    generation is still the published one — the owner's change, to publish) or a **stale copy from
+    another machine** (the published generation has moved past the recorded one — someone else's
+    publish, which this file would revert). The two need different remedies, so one word for both
+    would send the owner to the wrong one.
+  - **If it is not recorded:** the guard covers a publish that lands during the one `update` it runs
+    in, and nothing else — the generation it read is gone when the run ends — and the second-machine
+    hazard stands unanswered: a local file left over from another machine's publish differs from the
+    published object, reads as `unpublished`, and publishing it **reverts a newer publish**, with the
+    diff shown against a stale base and no way for the command to know.
+  - **`TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed` needs the record.** That test
+    (below) is this guard's, and its reference point is the generation the **seed** read: it is the
+    record that makes that point readable after the run it was taken in, so the test states the
+    record's behaviour — if D854 is answered *no record*, the test is narrowed with its name and
+    with this paragraph, and it covers only a publish inside the one run from then on.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
 - **Tests:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` (no local file, a published layer: the
@@ -280,11 +326,11 @@ It writes the key that decides how much review a whole project gets, and `unset`
   R3 or by the settings design's S7, whichever landed first; R4 adds its subcommands to it).
 - **Neither half of the write is rigor's own.** The **editing** is `EditRigor` (R2), which is a
   caller of `internal/yamledit`; the **writing** — the diff, the confirmation, the agent-session
-  refusal, the backup and the atomic write — is the **shared write helper settings S5 lands**
-  (README, the joint order's position 5), which R4 calls. **There is no `internal/cli/rigor_write.go`
-  in this plan**: a second copy of the confirmation and the refusal is exactly how `rigor set` and
-  `config set` would come to ask differently for the same kind of change, and D830's whole point is
-  that one file has one way in.
+  refusal, the backup and the atomic write — is the **shared write helper settings S5 lands** in
+  `internal/cli/settings_write.go` (README, the joint order's position 5), which R4 calls. **There is
+  no `internal/cli/rigor_write.go` in this plan**: a second copy of the confirmation and the refusal
+  is exactly how `rigor set` and `config set` would come to ask differently for the same kind of
+  change, and D830's whole point is that one file has one way in.
 - **Red step:** `TestRigorSetRefusesHotfixInEveryForm` fails while the subcommand does not exist.
 - **Tests:** `TestRigorSetWritesTheProjectDefault`, `TestRigorSetRefusesAVocabularyNearMiss`,
   `TestRigorSetRefusesHotfixInEveryForm`, `TestRigorSetLoweringAsksForTheTypedProjectName` (and
@@ -316,7 +362,8 @@ no layer and nothing in the cloud.
 - **Files (3):** `internal/cli/rigor_repo.go` (new), `internal/cli/rigor_repo_test.go` (new),
   `internal/cli/rigor.go` (the group: created by R3 or by the settings design's S7, whichever landed
   first, and already extended by R4). The diff, the confirmation and the backup are the shared write
-  helper's (settings S5) as in R4 — R5 writes a different document, not a different way.
+  helper's (`internal/cli/settings_write.go`, settings S5) as in R4 — R5 writes a different document,
+  not a different way.
 - **A lowering here asks for the typed project name too, and a coding agent's session cannot answer
   it** (spec §4): the confirmation is a sentence only a person can complete, so in that session the
   command **prints the diff and the command it would have run and writes nothing** — SD9's wording,
@@ -341,8 +388,10 @@ no layer and nothing in the cloud.
   `docs/rigor-command/README.md` (the status line — **approved, tasks queue for CLI 0.15.0 (and
   console 0.117.0)** as it reads now, which this task moves to *shipped* in the release that lands
   R0–R5, so the folder never claims a version that is not out — and the "joint order and shared
-  rulings" section, which is **shared with the settings design and must stay word for word in both**:
-  a change to one is a change to the other in the same release), `plugin/skills/working/SKILL.md` (owned
+  rulings" section, whose **order and rulings are shared with the settings design**: each folder
+  states them in its own words and points at the other, so this task changes the order or a ruling
+  here and in the settings design's own statement of it in the same release, and leaves the wording
+  of the other alone), `plugin/skills/working/SKILL.md` (owned
   elsewhere, see "Order"), `docs/releases/vX.Y.Z.md` (`### For operators`: "run `fugaro update`" and
   what it will ask — including that the stage **seeds** the local layer file when it is absent and
   otherwise **publishes** it when it is **`unpublished`**, with the diff and its confirmation, so the
