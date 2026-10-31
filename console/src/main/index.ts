@@ -62,6 +62,7 @@ import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
 import { startUpdates } from './updater-electron'
+import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
 import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
 import { launchFingerprint } from './launchrules'
@@ -931,7 +932,20 @@ async function main(): Promise<void> {
   // through `onIdle` when a launch that was in flight settles -- so a download
   // that finished mid-launch is offered the moment the launch ends rather than
   // waiting for the next six-hourly check.
-  updates = startUpdates({ isLaunchFlowIdle: () => launchRunner.isIdle() })
+  //
+  // **The switch's one source is `updates.json`** (U4, D768 (a) of 2026-10-30).
+  // The settings are built first because the policy reads them: `switchOn` is
+  // asked afresh before every check, every prompt and every install, so a
+  // hand-edited file -- or the checkbox, which writes the same file and then
+  // stops or starts this controller -- is what the gate acts on.
+  const updateSettings = createUpdateSettings({
+    directory: app.getPath('userData'),
+    controller: () => updates,
+  })
+  updates = startUpdates({
+    isLaunchFlowIdle: () => launchRunner.isIdle(),
+    switchOn: () => updateSettings.auto,
+  })
   launchRunner.onIdle(() => {
     updates?.launchFlowIdle()
   })
@@ -975,6 +989,19 @@ async function main(): Promise<void> {
     onRecordRemoved: (project) => {
       launchRunner.cancelFor(project)
     },
+    // The two update items, handed over **only while a controller is running**:
+    // `startUpdates` answered null on everything that is not a packaged macOS
+    // app, so the menu carries neither item off a Mac and in development, and
+    // nothing here repeats that admission test.
+    ...(updates === null
+      ? {}
+      : {
+          updateMenu: {
+            auto: updateSettings.auto,
+            setAuto: (on) => updateSettings.setAuto(on),
+            checkNow: () => updateSettings.checkNow(),
+          },
+        }),
   })
   // The menu is installed in **every** mode, `refused` included: choosing an
   // installation is how an operator gets out of a refusal, and a console that

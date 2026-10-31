@@ -1194,6 +1194,31 @@ describe('the launch the entry wires', () => {
     if (quit === null) throw new Error('the entry has no before-quit to read')
     expect(quit[0]).toContain('updates?.stop()')
   })
+
+  it('gives the switch its one source, and the menu its two items only while a controller runs (U4)', () => {
+    // The off switch of D768 (a): `<userData>/updates.json` is what the policy's
+    // gate reads, and the two menu items are handed to the picker over the same
+    // settings -- so the checkbox and the gate are one value rather than two
+    // that could disagree.
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    const main = /async function main\(\): Promise<void> \{[\s\S]*?\n\}\n/.exec(index)
+    if (main === null) throw new Error('the scan found no main(): it would pass by finding nothing')
+    const body = withoutComments(main[0])
+
+    expect(body).toContain('switchOn: () => updateSettings.auto')
+    expect(body).toContain('controller: () => updates')
+    // The settings are built **before** the policy, which reads them for the
+    // first check `startUpdates` runs, and read afresh after that.
+    expect(body.indexOf('createUpdateSettings(')).toBeLessThan(body.indexOf('startUpdates('))
+    // The items go over only when there is a controller: `startUpdates` answered
+    // null on everything that is not a packaged macOS app, which is the whole of
+    // "macOS only" here -- nothing repeats that admission test.
+    expect(body).toContain('updates === null')
+    expect(body).toContain('updateMenu: {')
+    expect(body).toContain('setAuto: (on) => updateSettings.setAuto(on)')
+    expect(body).toContain('checkNow: () => updateSettings.checkNow()')
+    expect(withoutComments(index).match(/updateMenu:/g) ?? []).toHaveLength(1)
+  })
 })
 
 // The entry spec draws nothing into its window by hand.
