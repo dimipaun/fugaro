@@ -672,7 +672,7 @@ changes are the wizard's and the setup skill's.
   its question table is there: the row is added with the owner's go for those files (the plan's "Files
   other work owns" rule), and `docs/project-layer.md` §2/§7 and this folder's README are **R6's**, so
   the sentence that says the wizard asks is written by R6's task in the release that lands W.
-- **Files (12):** `internal/cli/setup.go` (the `setupQuestions` row, the four lines it prints and the
+- **Files (11):** `internal/cli/setup.go` (the `setupQuestions` row, the four lines it prints and the
   refusal of `--rigor` on a converge), `internal/cli/init.go` (the `--rigor` flag and its help, and the
   field the answer is recorded on), `internal/cli/wizard_stage.go` (the question itself),
   `internal/cli/init_layer_stage.go` (R1's stage: the splice before the publish),
@@ -680,8 +680,9 @@ changes are the wizard's and the setup skill's.
   `internal/cli/setup_wizard_test.go` (the table's contract, extended),
   `internal/cli/init_layer_stage_test.go` (R1's file: the answer published by the same run),
   `plugin/skills/setup/SKILL.md`, `docs/gcp-setup.md` and `docs/setup-wizard/implementation-plan.md`.
-  **Eleven named and one new test file is twelve**; W adds no file under `internal/rigor` and no new
-  command, and nothing here is a fifth helper beside `internal/cli/settings_write.go`.
+  **Eleven files — five Go files, three test files and three documents — one under the plan's ceiling
+  of twelve**; W adds no file under `internal/rigor` and no new command, and nothing here is a fifth
+  helper beside `internal/cli/settings_write.go`.
 - **Red step:** `TestSetupAsksTheRigorModeWithNoSilentDefault` fails while no question prints the four
   modes and Enter is still an answer (`setupQuestions` has no rigor row, so nothing prints and nothing
   refuses).
