@@ -89,6 +89,14 @@ func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigr
 	node, derr := withDerivedMembers(raw, lc)
 	moved, changes, err := projectpolicy.Migrate(node)
 	switch {
+	case err == nil && len(changes) == 0:
+		// A node already at this version: nothing is written, so nothing is
+		// derived either, and the derivation's refusal is not this stage's to
+		// make here. It is a config a publish would refuse (an allow_data_to
+		// entry the policy's own reader rejects), and the operator meets it on
+		// the publish that derives the block — not as a failure of the policy
+		// stage of every fugaro update of a node nobody is migrating.
+		return nil, true, nil
 	case derr != nil:
 		// The derivation's own error is the refusal whether or not Migrate
 		// had one: a member the local config cannot state is a config a
@@ -100,8 +108,18 @@ func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigr
 		return nil, true, derr
 	case err != nil:
 		return nil, true, policyMigrationRefusal(err)
-	case len(changes) == 0:
-		return nil, true, nil
+	}
+	// The write is the publisher's write, so it holds the publisher's gate
+	// (P3, requirePolicyRules): a policy node is read by the runs a deployed
+	// rules generation admits, and one written under rules that predate the
+	// policy model is a policy nothing reads. It is checked only when a
+	// migration is pending — a node already at this version is left alone
+	// whatever the deployed rules are — and it is checked here rather than at
+	// the write because the operator reads the diff before it: a refusal after
+	// the typed confirmation would be a document they confirmed and did not
+	// get.
+	if err := requirePolicyRules(ctx, db, lc); err != nil {
+		return nil, true, err
 	}
 	if err := refuseMigrationUnknownKeys(moved); err != nil {
 		return nil, true, err
@@ -198,8 +216,9 @@ const (
 // A member the node already carries is never rewritten: the block is the
 // node's, and the owner may have narrowed its allow-list by hand. The error is
 // the derivation's own (the config's allow_data_to cannot become a policy
-// entry), and it is the caller's to place: only a node that needed the block
-// is stopped by it.
+// entry), and it is the caller's to place: only a write that would carry the
+// block — a pending migration — is stopped by it, because a node that is not
+// migrated derives nothing and so needs nothing.
 func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
 	carries := func(key string) bool {
 		before, was, err := jsonMember(raw, key)
