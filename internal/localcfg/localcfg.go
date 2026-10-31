@@ -32,6 +32,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -250,8 +251,32 @@ type Config struct {
 	// node, which is where the runner reads it, while the value itself never
 	// travels in the shared config a launcher can write (Shared drops it,
 	// like each repo's).
-	BaseBranch string          `yaml:"base_branch,omitempty"`
-	Repos      map[string]Repo `yaml:"repos"`
+	BaseBranch string `yaml:"base_branch,omitempty"`
+	// ReviewFloor is the owner's review-level floor (D722, G1): per rigor
+	// mode, the levels a run of that mode must run, whatever a lower layer
+	// asks for. It travels the way BaseBranch does, and the reason is the
+	// same one: `fugaro project policy publish` copies it into the policy
+	// node, which only the owner writes and the runner fails closed on, and
+	// the value itself never enters the shared config a launcher can write
+	// (Shared drops it, and the publisher refuses the key). A floor a
+	// launcher could write — in the published shared config, in the project
+	// layer or in the task (docs/design/bucket-iam.md §10 L1, L2) — would be
+	// that launcher deciding how much review it gets, which is the one thing
+	// the floor exists to prevent.
+	//
+	// A mode that is not one of rigor's, a level outside l1/l2/l3, and a
+	// repeated level are refused at load (validate), never dropped: a
+	// misspelt floor is a run that reviews less than the owner asked for.
+	//
+	// A publish keeps the node's floor when this file sets none (see
+	// internal/cli's buildProjectPolicy): a floor is the one value a publish
+	// must not lower by accident, so silence about it is not a request to
+	// remove it. Taking a published floor away on purpose is therefore a
+	// written empty object — `review_floor: {}` — and not an absent key. The
+	// two spellings are told apart here (a written empty object is a non-nil
+	// empty map, an absent key a nil one) and mean the same floor, none.
+	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
+	Repos       map[string]Repo     `yaml:"repos"`
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
@@ -1165,6 +1190,22 @@ func profileNames(profiles map[string]config.JobProfile) []string {
 	return names
 }
 
+// ReviewFloorPolicy is the owner's floor in the policy package's vocabulary:
+// the form `fugaro project policy publish` writes into the node, and nil when
+// the file sets no floor — the key left out and an empty object alike, which
+// is what leaves the published node without the member. The rule itself is
+// policy.ParseFloor, the one the node's own decoder applies, so the file the
+// operator writes and the node the runner reads cannot disagree about what a
+// written floor means.
+//
+// A name outside either vocabulary is an error rather than a value dropped:
+// the floor is a minimum, so a level lost on the way to the node would be a
+// run reviewing less than the file says, which is the direction this key must
+// never move.
+func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
+	return policy.ParseFloor(c.ReviewFloor)
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -1401,6 +1442,17 @@ func (c *Config) validate() error {
 	}
 	if c.BaseBranch != "" && !config.ValidBranchName(c.BaseBranch) {
 		bad("base_branch %q is not a plain git branch name (the project's default base branch)", c.BaseBranch)
+	}
+	// The floor is a closed vocabulary twice over — the modes rigor names and
+	// the three levels — and this file is where it is written. Its one rule is
+	// ReviewFloorPolicy's, which is policy.ParseFloor, the rule
+	// projectpolicy.Decode holds the node to: called here so that the load and
+	// the publish cannot disagree about what a written floor means, and so that
+	// neither can disagree with the node. A name it refuses is a run that would
+	// review less than the owner asked for, and nothing downstream can tell a
+	// misspelt mode from one the owner meant to leave alone.
+	if _, err := c.ReviewFloorPolicy(); err != nil {
+		bad("%v", err)
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

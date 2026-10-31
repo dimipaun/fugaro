@@ -581,6 +581,59 @@ func TestRecordPushedHead(t *testing.T) {
 	}
 }
 
+// TestReviewSummaryHeadRoundTrip: the commit a review read survives the trip
+// beside its verdict — the levels of one round can approve different heads,
+// which is what the PR body reports and what the record has to carry
+// (docs/review-levels-ab-jobmax L4.1, D727) — while a review that recorded
+// none stays without one, so the field is omitted rather than written empty,
+// and a record written before it existed still decodes.
+func TestReviewSummaryHeadRoundTrip(t *testing.T) {
+	s := newStore(t)
+	head := "0123456789abcdef0123456789abcdef01234567"
+	if err := s.WriteRecord(ctx, &Record{Version: 1, RunID: runID, Status: StatusSucceeded, StartedAt: time.Now().UTC(),
+		Reviews: []ReviewSummary{
+			{Round: 2, Tier: TierSenior, Verdict: "ship", Head: head},
+			{Round: 3, Tier: TierAdversarial, Verdict: "changes", Findings: 1},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Reviews) != 2 {
+		t.Fatalf("ReadRecord reviews = %+v, want 2", got.Reviews)
+	}
+	if got.Reviews[0].Tier != TierSenior || got.Reviews[0].Head != head {
+		t.Fatalf("senior review = %+v, want tier %q and head %q", got.Reviews[0], TierSenior, head)
+	}
+	if got.Reviews[1].Tier != TierAdversarial || got.Reviews[1].Head != "" {
+		t.Fatalf("adversarial review = %+v, want tier %q and no head", got.Reviews[1], TierAdversarial)
+	}
+
+	// Empty is omitted, so a review that read no commit is byte-identical to
+	// one written before the field existed.
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID,
+		Reviews: []ReviewSummary{{Round: 1, Tier: TierSenior, Verdict: "ship"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"head":`) {
+		t.Fatalf("empty Head encoded: %s", data)
+	}
+
+	// A record written before this field existed still parses, with its
+	// reviews intact.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z","reviews":[{"round":1,"tier":"senior","verdict":"ship","findings":0}]}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || len(got.Reviews) != 1 || got.Reviews[0].Head != "" || got.Reviews[0].Tier != TierSenior {
+		t.Fatalf("old record reviews = %+v, %v", got.Reviews, err)
+	}
+}
+
 func TestSibling(t *testing.T) {
 	b := memblob.OpenBucket(nil)
 	defer b.Close()
