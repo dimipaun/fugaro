@@ -1929,10 +1929,11 @@ nothing else, so adding, replacing or removing a screenshot is a data-file edit 
 things are worth knowing before editing the file. The four campaign pages' heroes are a second
 consumer of those rows: each variant names one in `data/landing.yaml` and the loader refuses a
 name no row carries, so removing a row a variant names stops the campaign build rather than
-quietly shrinking a page (D411). And the homepage's "See it" panel is the same component over
-`data/home-screens.yaml`, not over this file — its console rows mirror these three files and
-`test/home.mjs` holds them equal row for row, so a change here reaches the homepage only through
-that file:
+quietly shrinking a page (D411). And the homepage's "See it" panel and the four campaign pages'
+own slideshow are the same component over `data/home-screens.yaml`, not over this file — its
+console rows mirror these three files and `test/home.mjs` holds them equal row for row, so a
+change here reaches the homepage and the campaign pages only through that file, whose rows the
+campaign slider is held to slide for slide by `test/landing-pages.mjs` (D412):
 
 1. **The file**, under `public/screenshots/`. The name is letters, digits, dots, dashes and
    underscores; the extension is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`.

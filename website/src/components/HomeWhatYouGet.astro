@@ -17,7 +17,7 @@
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { REPO_ROOT, loadHomeScreens, loadSite } from '../content.ts'
+import { REPO_ROOT, loadHomeSliderScreens, loadSite } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
 import { holdLabels, section } from '../lib/repo-quote.mjs'
 import ScreenshotSlider from './ScreenshotSlider.astro'
@@ -61,8 +61,10 @@ const ITEMS = [
 
 holdLabels({ lead: LEAD, ...Object.fromEntries(ITEMS.map((item) => [item.name, item.line])) }, SOURCES, 'website/src/components/HomeWhatYouGet.astro')
 
-/** The console's screens: the home page's data file, less the terminal capture the hero shows. */
-const SCREENS = loadHomeScreens().screens.filter((screen) => !screen.src.endsWith('/fugaro-watch.png'))
+/** The console's screens: the home page's data file, less the terminal capture the hero shows.
+ *  The four campaign pages' own slider renders this same list (the owner's feedback of
+ *  2026-10-30, D412's finding 3), so the set is `loadHomeSliderScreens()`'s rather than a filter here. */
+const SCREENS = loadHomeSliderScreens()
 
 const consoleExists = loadSite().facts.features.consoleDownloads
 
