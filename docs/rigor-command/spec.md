@@ -48,9 +48,18 @@ The output is four sections.
    | `area` | the strictest area rule that matched `--path`, with its own name and mode; `-` when `--path` matched none, `(no paths declared)` when `--path` was not given |
    | `source` | `checkout <path>` when the repository's `fugaro.yaml` was read at its base branch from a remembered checkout, or `unknown (no checkout on this machine)` |
 
-   A repository with no checkout on this machine is **never guessed**: its row shows the project
-   default plus a marker that its own block could not be read, and says that the answer may be lower
-   or higher (D819).
+   A repository with no checkout on this machine is **never guessed** (D819). Its row reads
+   `unknown | -` in the `mode` and `from` columns, with the sentence "no checkout on this machine:
+   this repository's own `fugaro.yaml` was not read, so its mode may be lower or higher than the
+   project default" — the project default is §2.1's line, not a value printed in this row as if it
+   were the repository's answer. In `--json` the repository member's `mode` and `from` are
+   **absent**, not `null` and not a sentinel word, and `source` is the string `"unknown"` (it is
+   `"checkout"`, with the row's `path` member, when the file was read); the schema therefore requires
+   `repository` and `source` on a repository row and leaves `mode` and `from` optional, and a
+   consumer that finds them absent prints the same sentence the text output prints. Absent is the
+   only spelling that cannot be read as an answer: `null` and `"unknown"` are both values a later
+   version could give a meaning, and a reader would then read this machine's missing checkout as the
+   repository's mode.
 4. **The floors, and what they hold.** The review-level floor the published policy carries
    (`localcfg.Config.ReviewFloor`, D722/G1), per mode, with the line that it is outside every layer
    and this command cannot lower it. Then one line stating that the mode floors (the sensitive-path
@@ -71,21 +80,28 @@ becomes `<mode>`. In order:
    the message, as `fugaro run --mode` refuses it.
 2. **Refuse `hotfix`.** `hotfix` is not a default in any layer (D814, D12): it is off the axis,
    ranks below every on-axis mode, and is reached by an operator's own `fugaro run --mode hotfix`.
-   The refusal names that command and never offers a flag that would write it.
-3. **Resolve the file.** `--layer FILE` when given; else the path the local project config records;
+   The refusal names that command and never offers a flag that would write it. This refusal is owed
+   on its own terms: D12's base-branch opt-in does not exist today (F13), and nothing here closes
+   that gate or may be read as evidence that it exists.
+3. **Refuse in a coding agent's session.** The target file is outside every repository, in the
+   owner's own config home, so `set` and `unset` of the project layer are refused where
+   `fugaro config publish` is refused (`agentenv.Marker`, F15) — before the diff is printed and
+   whether or not `--yes` was typed. `show` runs anywhere, and §4's `--repo R` form writes a
+   repository's own file and is allowed: an agent may edit the tree it was given.
+4. **Resolve the file.** `--layer FILE` when given; else the path the local project config records;
    else `~/.config/fugaro/projects/<project>-layer.yaml`. A file that does not exist **and** a
    project with no published layer is created from the local config's own anchors (`version`,
    `project`, `gcp_project`). A file that does not exist while the project **has** a published layer
    is refused: publishing a fresh, nearly empty layer over the project's real one is the one
    mistake this command must not make (D810).
-4. **Check the result.** The edited document must `config.ParseProjectLayer` cleanly, against the
+5. **Check the result.** The edited document must `config.ParseProjectLayer` cleanly, against the
    same anchor the publisher uses, and must pass `Area.Validate` on every rule it touches.
-5. **Show, confirm, back up, write.** The command prints the line diff, asks for confirmation at a
+6. **Show, confirm, back up, write.** The command prints the line diff, asks for confirmation at a
    terminal (`--yes` confirms outside a terminal), backs up the old file to `<file>.bak-<UTC
    timestamp>` (mode 0600) and writes the new one atomically (temporary file, rename, mode 0600) —
    `backupFile` and `writeFileAtomic` (`internal/cli/init.go`), the pair `fugaro restore` and the
    `models` plan already use.
-6. **Hand off.** It prints `next: fugaro update`, which publishes it (D811).
+7. **Hand off.** It prints `next: fugaro update`, which publishes it (D811).
 
 **Lowering is the sensitive direction.** When the new mode ranks below the project's current
 resolved default, the confirmation is the **typed project name**, as `fugaro project repos rm`
@@ -161,6 +177,10 @@ The reverse, through the same check, diff, backup and atomic write (D817):
   (`area`, `repo`, `project`, `default`). `request` and `reached` never appear: nothing in this
   command launches a run, so neither can be true of its answer. A reader that sees a value outside
   that set is reading a document from a newer CLI.
+- A repository whose own block could not be read carries **no** `mode` and **no** `from` member
+  (§2.3): absence is the third state this document has, beside the four words and a value from a
+  newer CLI, and it is the only spelling that cannot be read as an answer. `source` is present on
+  every repository member, so a consumer always has the machine-readable reason for the absence.
 
 ## 8. The console
 
@@ -177,12 +197,30 @@ A project layer written by hand before these commands exist must keep working, a
 whose `fugaro.yaml` already carries a `rigor:` block must be left alone by a command that does not
 name it:
 
-- The write edits the YAML document tree, not a re-marshalled struct (D810): comments (including
-  the block's own commented examples and any commented entry), key order, quoting style and
-  unknown-to-this-command keys are kept byte for byte. `config.ProjectLayer`'s round trip does not
-  preserve them, so it is not used for the write.
-- The edited document is re-parsed with `config.ParseProjectLayer` and must decode to the old layer
-  plus exactly the intended change (a test compares the two decoded layers field by field).
+- **Not a re-marshalled struct, and not a re-emitted tree either (D810).** A struct round trip
+  (`config.ProjectLayer`) drops comments and key order outright. A `yaml.Node` tree round trip keeps
+  comments and key order but re-emits the parts it did not change with the encoder's own quoting and
+  indentation, so it is not byte-preserving either. The write is therefore a **splice**: the document
+  is parsed into a node tree only to *locate* the mapping or the sequence item to change, and the
+  bytes that node occupies are replaced in place, leaving every other byte — comments (the block's
+  own commented examples and any commented entry included), key order, quoting style, blank lines and
+  unknown-to-this-command keys — exactly as it was.
+- **One editor, two anchors.** The same splice serves both targets, because the shapes are the same:
+  `defaults.rigor` in the project layer file and `rigor` in a repository's `fugaro.yaml` carry the
+  same `default` and `areas`. What differs is the path the editor is pointed at, and whether the edit
+  is a scalar (`default`) or a sequence item (`areas`) — a distinction the node tree decides, which a
+  line-oriented editor cannot make. `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) is the
+  precedent for the splice itself on the simplest case, one scalar on one line; it is not a second
+  strategy, and R5 does not re-implement the locator. The plan's R2 owns the editor, R4 and R5 are
+  its two callers, and their tests differ in what they assert — bytes preserved around a scalar
+  versus around a list item — rather than in the write path they use.
+- The edited document is re-parsed — `config.ParseProjectLayer` for the project layer, the
+  repository file's own config parse for `--repo R` — and must decode to the old document plus
+  exactly the intended change (a test compares the two decoded layers field by field). This is one of
+  **two** checks, not one: parsing proves the result is *valid*, and it cannot prove the comments
+  survived — comments are discarded before a struct ever sees them. Preservation is asserted
+  separately, by comparing the bytes around the edit (R2's red step is exactly that pair: the same
+  fixture through a struct round trip loses its comments, while the splice keeps them).
 - A hand-written `defaults.rigor` with an area rule this command did not create round-trips
   unchanged through a `set` of the default and through an `unset` of another rule, including its
   name, its glob and its comments. A repository's `rigor:` block is never touched by a project-level

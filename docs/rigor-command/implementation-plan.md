@@ -7,12 +7,13 @@ that cite it. Each task touches at most 12 files, names its tests, starts with a
 
 ## Order, and what this plan does not own
 
-- **External dependency E1 (the `models` plan's M0).** That task writes a comment-preserving editor
-  for the **local project config** (`internal/localcfg/edit.go`, its M0). If it has shipped when R2
-  starts, R2 adds the project layer's ops to that editor rather than writing a second one; if it has
-  not, R2 writes the editor and leaves that plan to reuse it. One document-tree editor, two
-  documents. Not a blocker either way, and **not** a merge of the two works' files: they are
-  separate plans with separate owners.
+- **External dependency E1 (the `models` plan's M0), which R2 does not wait for.** That task writes a
+  comment-preserving editor for a **different document** — the local project config,
+  `internal/localcfg/edit.go` — with a different shape, so it is a neighbour rather than a
+  dependency: R2 creates `internal/config/layeredit.go` whether or not E1 has shipped, and R2 says
+  which helpers (not files, not ops) may be shared between them. One design principle, two
+  documents, two files. **Not** a merge of the two works' plans: they are separate plans with
+  separate owners.
 - **External dependency E2 (the mode floors, `docs/rigor-modes` plan T1.5).** `show`'s floors
   section prints the review floor (F10) and one line saying the mode floors are not built (F9). The
   task that ships T1.5 adds the sensitive-path set to that section; until then no surface here may
@@ -88,22 +89,39 @@ test commands for everyone, and it is the key whose change the executable-key ga
 The layer decides what every repository of the project runs, and a lossy rewrite is a change nobody
 reviewed. The write must keep comments, key order and every key it does not touch.
 
-- **Files (5):** `internal/localcfg/edit.go` (E1: the ops join the editor if it has shipped, else
-  this file is `internal/config/layeredit.go`), its test file,
-  `internal/localcfg/testdata/hand-written-layer.yaml` (new; placeholder names only),
-  `internal/localcfg/testdata/hand-written-layer-comments.yaml` (new),
-  `internal/localcfg/testdata/hand-written-rigor-areas.yaml` (new).
-- **Interface:** `EditLayer(data []byte, ops ...LayerOp) ([]byte, error)` over a `yaml.Node` tree,
-  with ops `SetRigorDefault(mode)`, `RemoveRigorDefault()`, `SetRigorArea(name, match, mode)`,
-  `RenameRigorArea(match, name)`, `RemoveRigorArea(match)`. The output must `ParseProjectLayer`
-  cleanly; a refusal returns the input untouched.
-- **Red step:** `TestEditLayerKeepsCommentsAndOrder` fails while `EditLayer` does not exist, and the
-  same fixture through `ParseProjectLayer` and a struct round trip is shown to lose its comments (the
-  reason the task exists).
-- **Tests:** `TestEditLayerKeepsCommentsAndOrder`, `TestEditLayerDecodesToTheIntendedChangeOnly`
-  (the decoded old layer plus the op equals the decoded new layer),
-  `TestEditLayerRefusesWhatParseProjectLayerRefuses`, `TestEditLayerAddsDefaultAfterTheKeysAlreadyThere`,
-  `TestEditLayerLeavesARepositoryBlockAlone`.
+- **Files (5):** `internal/config/layeredit.go` (new — this is the file R2 owns, named rather than
+  conditional: it is the project layer's editor, and E1's `internal/localcfg/edit.go` is the local
+  project config's, a different document), `internal/config/layeredit_test.go` (new),
+  `internal/config/testdata/hand-written-layer.yaml` (new; the directory does not exist yet, so R2
+  creates it; placeholder names only),
+  `internal/config/testdata/hand-written-layer-comments.yaml` (new),
+  `internal/config/testdata/hand-written-rigor-areas.yaml` (new).
+- **Interface:** `EditRigor(data []byte, at []string, ops ...RigorOp) ([]byte, error)`, where `at` is
+  the path to the block — `{"defaults", "rigor"}` for the project layer, `{"rigor"}` for a
+  repository's file (R5) — and the ops are `SetDefault(mode)`, `RemoveDefault()`,
+  `SetArea(name, match, mode)`, `RenameArea(match, name)` and `RemoveArea(match)`. It parses the
+  document into a `yaml.Node` tree only to locate the node it must change and splices bytes there;
+  it never re-emits the document (spec §9). A refusal returns the input untouched, so a caller can
+  compare bytes to know nothing was written.
+- **Two checks, and neither stands in for the other.** *Structural validity* is
+  `config.ParseProjectLayer` on the output, against the same anchor the publisher uses: a document
+  that parses is a layer the cloud accepts, and it is what the red step's second half shows a struct
+  round trip still passing. *Preservation* is a **byte** comparison of the output against the input
+  around the edit: every comment, key order, quoting style, blank line and unrelated key kept exactly
+  as it was. A strict YAML decoder cannot answer the second, because comments are parse artifacts —
+  discarded before any struct is decoded — so a rewrite that drops every comment passes the first
+  check and fails the second. The tests assert the two separately, and
+  `TestEditRigorRefusesWhatParseProjectLayerRefuses` is the first.
+- **Red step:** `TestEditRigorKeepsCommentsAndOrder` fails while `EditRigor` does not exist, and the
+  same fixture through `ParseProjectLayer` and a struct round trip is shown to lose its comments
+  while still parsing (the reason the task exists).
+- **Tests:** `TestEditRigorKeepsCommentsAndOrder` (the byte comparison),
+  `TestEditRigorDecodesToTheIntendedChangeOnly` (the decoded old layer plus the op equals the decoded
+  new layer — the structural half), `TestEditRigorRefusesWhatParseProjectLayerRefuses`,
+  `TestEditRigorAddsDefaultAfterTheKeysAlreadyThere`,
+  `TestEditRigorAtTheRepositoryAnchorTouchesOnlyItsOwnBlock` (a `fugaro.yaml` fixture through the
+  `{"rigor"}` anchor: its other keys and comments survive, and a `defaults.rigor` anchor on the same
+  bytes is a refusal, not a silent edit of the wrong block).
 
 ## R3. `fugaro rigor show` (D815, D819)
 
@@ -129,9 +147,9 @@ It writes the key that decides how much review a whole project gets, and `unset`
 
 - **Files (6):** `internal/cli/rigor_set.go` (new), `internal/cli/rigor_set_test.go` (new),
   `internal/cli/rigor_write.go` (new: diff, confirmation, agent-session refusal, `backupFile`,
-  `writeFileAtomic`, shared with R5), `internal/cli/rigor_write_test.go` (new), `internal/cli/rigor.go`,
-  `internal/localcfg/edit.go` or `internal/config/layeredit.go` (only if an op R2 did not foresee is
-  needed).
+  `writeFileAtomic`, shared with R5 — the *writing* is shared, the *editing* is not: the document goes
+  through R2's editor), `internal/cli/rigor_write_test.go` (new), `internal/cli/rigor.go`,
+  `internal/config/layeredit.go` (R2's file, and only if an op R2 did not foresee is needed).
 - **Red step:** `TestRigorSetRefusesHotfixInEveryForm` fails while the subcommand does not exist.
 - **Tests:** `TestRigorSetWritesTheProjectDefault`, `TestRigorSetRefusesAVocabularyNearMiss`,
   `TestRigorSetRefusesHotfixInEveryForm`, `TestRigorSetLoweringAsksForTheTypedProjectName` (and
@@ -149,9 +167,14 @@ It writes the key that decides how much review a whole project gets, and `unset`
 It edits a repository's own file in its working tree, which the user reviews and commits; it writes
 no layer and nothing in the cloud.
 
-- **Files (4):** `internal/cli/rigor_repo.go` (new), `internal/cli/rigor_repo_test.go` (new),
-  `internal/cli/rigor.go`, `internal/cli/init_fugaroyaml.go` (only if the line-edit helper beside
-  `setGCPProjectLine` is shared rather than copied; search before writing a helper).
+- **The write path is R2's editor, pointed at this target's anchor** (spec §9: one editor, two
+  anchors — R5 does not re-implement the locator, and the smallest diff is what the splice gives). It
+  calls `EditRigor` with `{"rigor"}`: the scalar `rigor.default`, or a sequence item under
+  `rigor.areas` for `--area`, with every other byte of the user's file untouched. `setGCPProjectLine`
+  (`internal/cli/init_fugaroyaml.go`) stays as the precedent the splice follows, not as a second
+  strategy.
+- **Files (3):** `internal/cli/rigor_repo.go` (new), `internal/cli/rigor_repo_test.go` (new),
+  `internal/cli/rigor.go`.
 - **Red step:** `TestRigorRepoEditsOnlyTheDefaultLine` fails while the subcommand does not exist.
 - **Tests:** `TestRigorRepoEditsOnlyTheDefaultLine`, `TestRigorRepoInsertsTheRigorBlockWhenAbsent`,
   `TestRigorRepoRefusesHotfix`, `TestRigorRepoLoweringAsksForTheTypedProjectName`,

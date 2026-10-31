@@ -25,8 +25,12 @@ after a second command is not delivered.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The four command forms, where each one writes, how a change reaches a run, the safety rules around lowering a mode, the console read side and the migration of a hand-written block |
-| [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F17), and the decisions D810–D819. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F17 in §1 and F18 in §2), and the decisions D810–D819 in §3. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks R0–R6 (at most 12 files each) and the external dependencies E1, E2, with tests, red steps, gates, SEC flags and levels. **Nothing in it is approved** |
+
+Every claim in `reconciliation.md` names a **file and a symbol, never a line number**, for the reason
+`docs/rigor-modes/reconciliation.md` gives: a line number is wrong the first time anyone edits the
+file above it, and a path and a symbol survive.
 
 ## Numbers this work holds
 
