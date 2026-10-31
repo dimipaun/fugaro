@@ -1810,6 +1810,31 @@ func TestUpdateRulesRedeploysADocumentUnderACurrentMarker(t *testing.T) {
 	}
 }
 
+// TestUpdateRulesVerifySaysTheGenerationIsNotDeployed: Verify's sentence may not
+// claim a deploy. The loop verifies a stage whatever its Apply returned, and
+// Apply writes nothing when the state moves under it between its read and its
+// plan (its own `st != initflow.Todo` and the empty plan), so a run that wrote
+// nothing would be told it deployed rules the read-back cannot find — the run the
+// operator then goes looking for the failure of.
+func TestUpdateRulesVerifySaysTheGenerationIsNotDeployed(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	s, _ := rulesStageRig(t, r)
+
+	err := s.Verify(context.Background())
+	if err == nil {
+		t.Fatal("Verify passed over a document that is not this generation's, under a marker that claims it is")
+	}
+	got := ErrorText(err)
+	if strings.Contains(got, "was deployed") {
+		t.Errorf("the read-back failure claims a deploy the run may not have made: %v", err)
+	}
+	if !strings.Contains(got, "is not deployed") || !strings.Contains(got, strconv.Itoa(projectpolicy.RulesVersion)) {
+		t.Errorf("the read-back failure does not name the generation it did not find: %v", err)
+	}
+}
+
 // TestUpdateRulesRecoversFromAFailureAfterTheDeploy: Apply stops at the first
 // failure, so a marker write refused after the document landed leaves this
 // generation's rules under the old marker — the state a run that died between

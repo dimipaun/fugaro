@@ -158,7 +158,13 @@ func rulesStageState(skew rulesSkew) (initflow.State, string) {
 		return initflow.Skipped, fmt.Sprintf("the rules generation marker at %s could not be read (%v), so whether the deployed rules are the generation this Fugaro deploys is unknown", marker, skew.err)
 	case rulesSkewUnreadableRules:
 		return initflow.Skipped, rulesRulesUnreadableText(skew.err, marker)
+	case rulesSkewUngeneratable:
+		return initflow.Skipped, rulesRulesUngeneratableText(skew.err)
 	}
+	// Every kind is listed above, as doctorRulesSkew lists them, so that a kind
+	// added to rulesSkewKind shows up here as a gap rather than as this report.
+	// Go still wants a statement after the switch, and a kind outside the list
+	// is the same state: nothing can be said about the deployed document.
 	return initflow.Skipped, rulesRulesUngeneratableText(skew.err)
 }
 
@@ -300,7 +306,10 @@ func (s *rulesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 
 // Verify reads the deployed document and the marker back: a rule deploy that
 // claims a generation it did not land is one the doctor keeps reporting and
-// every later run would deploy again.
+// every later run would deploy again. Its sentence does not say the run
+// deployed, because Apply writes nothing when the state moves under it between
+// its read and its plan, and the run it is failing wrote nothing to be blamed
+// for.
 func (s *rulesStage) Verify(ctx context.Context) error {
 	if detail := rulesUnavailable(s.e.lc); detail != "" {
 		return nil
@@ -310,7 +319,7 @@ func (s *rulesStage) Verify(ctx context.Context) error {
 		return err
 	}
 	if st, detail := rulesStageState(skew); st != initflow.Done {
-		return fmt.Errorf("the security rules generation %d was deployed, and the read-back says %s", projectpolicy.RulesVersion, detail)
+		return fmt.Errorf("the security rules generation %d is not deployed: the read-back says %s", projectpolicy.RulesVersion, detail)
 	}
 	return nil
 }
