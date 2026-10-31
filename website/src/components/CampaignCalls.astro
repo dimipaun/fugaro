@@ -28,7 +28,12 @@
  * band takes the accent, its words and its two quiet actions are set in the ground, and the
  * booking is the one filled control on it. Nothing on the field carries a hairline border — the
  * two quiet actions are text at a thumb's target size rather than boxes — so the band reads as
- * one colour with three actions on it rather than as three controls with a background.
+ * one colour with three actions on it rather than as three controls with a background. **Its
+ * corners are rounded generously** (the owner's feedback of 2026-10-30, D412's finding 2): the field
+ * was a hard-cornered band and it is cut at `--radius-xl`, the site's largest radius step and
+ * the one the steps' panel above it carries, so the page's two fields are one shape. It is
+ * still flat colour — no gradient, no shadow at rest — and the radius is the whole of the
+ * change to its box.
  *
  * **The field is why the focus ring is named here.** The site's ring is the accent
  * (`base.css`'s `:focus-visible`), and on a field of the accent a ring in it is a ring nobody
@@ -46,7 +51,21 @@
  * **The two ids are the events' hook** (G2.4): `site.js` knows the two links by the ids the
  * markup gives them, and presses them into GA4's `install_click` and `whatsapp_click` once the
  * visitor has granted analytics. They are the only thing about this section a script reads.
+ *
+ * **Each action carries its own small mark** (the owner's feedback of 2026-10-30, D412's finding 1).
+ * Three rows of type on a field of colour read as three lines of a paragraph rather than as
+ * three things a reader can do, so the booking has a calendar beside it, the install a
+ * download and the chat a bubble — inline SVG from `CampaignIcon.astro`, `aria-hidden` because
+ * the link's own words are the meaning, and in the control's own colour so the band paints no
+ * second one. The plate lifts 2 px on hover and each mark nudges 2 px the way its own action
+ * goes — the calendar up, the arrow down into its tray, the bubble out — which is the "small
+ * lift or icon nudge" the owner asked for, and it is 2 px of `transform` on two elements
+ * rather than a second colour. **The movement is inside the `no-preference` query with the
+ * band's other motion**, so a reader who asked their system for less is served the same band
+ * still: the hover's colour and underline are what answers them.
  */
+import CampaignIcon from './CampaignIcon.astro'
+
 interface Props {
   /** The owner's booking link, from `website/data/landing.yaml`. */
   calendlyURL: string
@@ -64,13 +83,13 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
   <p class="campaign-calls-line">Book half an hour, bring a repository, and watch a task become a pull request under your own caps.</p>
   <ul class="campaign-calls-list">
     <li>
-      <a class="campaign-calls-primary" href={calendlyURL}>Book a demo</a>
+      <a class="campaign-calls-primary" href={calendlyURL}><CampaignIcon name="calendar" />Book a demo</a>
     </li>
     <li>
-      <a class="campaign-calls-secondary" id="campaign-install" href={repository} rel="noopener">Install free</a>
+      <a class="campaign-calls-secondary" id="campaign-install" href={repository} rel="noopener"><CampaignIcon name="download" />Install free</a>
     </li>
     <li>
-      <a class="campaign-calls-secondary" id="campaign-whatsapp" href={whatsappURL} rel="noopener">Chat with the founder</a>
+      <a class="campaign-calls-secondary" id="campaign-whatsapp" href={whatsappURL} rel="noopener"><CampaignIcon name="chat" />Chat with the founder</a>
     </li>
   </ul>
   {/* The booking widget's place, empty and hidden until the visitor grants the marketing
@@ -90,6 +109,7 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
   .campaign-calls {
     padding-block: var(--space-xl) var(--space-3xl);
     padding-inline: var(--frame-gutter);
+    border-radius: var(--radius-xl);
     background: var(--accent);
     color: var(--ground);
   }
@@ -129,6 +149,9 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
     display: flex;
     align-items: center;
     justify-content: center;
+    /* The mark and the label are one row with the site's own step between them, so the two are
+       spaced by the layout rather than by a margin on the icon. */
+    gap: var(--space-xs);
     box-sizing: border-box;
     min-height: 56px;
     padding: 0 var(--space-xl);
@@ -211,6 +234,44 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
         background-color var(--duration-fast) var(--ease-out),
         color var(--duration-fast) var(--ease-out),
         transform var(--duration-fast) var(--ease-out);
+    }
+
+    /* The mark's own travel, which is the second half of the controls' answer: the icon
+       transitions with the plate it sits on, so the two move as one control rather than the
+       icon arriving late. */
+    .campaign-calls-primary :global(.campaign-icon),
+    .campaign-calls-secondary :global(.campaign-icon) {
+      transition: transform var(--duration-fast) var(--ease-out);
+    }
+
+    /* The lift and the three nudges, for a pointer that hovers and for no other kind (the
+       site's own query): the plate rises 2 px and the mark moves 2 px past it the way its own
+       action goes. Both are `transform` and nothing else — the colour the control answers with
+       is the rule above this block, which every reader gets.
+       **`:not(:active)` is what keeps the press visible**: the plate's `:active` scale is
+       declared above this block at the same specificity, so without the exclusion a mouse press
+       — which is `:hover` and `:active` at once — would be answered by the lift and the press
+       would read as nothing at all. A pressed control is not a hovered one. */
+    @media (hover: hover) and (pointer: fine) {
+      .campaign-calls-primary:hover:not(:active),
+      .campaign-calls-secondary:hover:not(:active) {
+        transform: translateY(-2px);
+      }
+
+      /* One nudge each, so a mark's direction is its own action's rather than one direction the
+         three share: the booking's calendar rises with its plate, the install's arrow carries on
+         down into the tray it is drawn over, and the chat's bubble goes out. */
+      .campaign-calls-primary:hover:not(:active) :global(.campaign-icon[data-icon='calendar']) {
+        transform: translateY(-2px);
+      }
+
+      .campaign-calls-secondary:hover:not(:active) :global(.campaign-icon[data-icon='download']) {
+        transform: translateY(2px);
+      }
+
+      .campaign-calls-secondary:hover:not(:active) :global(.campaign-icon[data-icon='chat']) {
+        transform: translateX(2px);
+      }
     }
 
     /* The campaign's own travel: the owner asked these four pages for 16–32 px of it, and the

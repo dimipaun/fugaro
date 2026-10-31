@@ -560,29 +560,78 @@ exported: it is the sentence a row draws, not a vocabulary anything reads.
 
 Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
 (where there is one) `data-operation`: `caps`, `kill`, `repositories`, `jobs`, `accounts`,
-`secrets`, `policy`, `enrollment`.
+`secrets`, `policy`, `enrollment`. **The panel's state is a word as well as a frame**:
+`span.projects-state` draws `read`, `not read`, or the design's word for a card this CLI
+cannot read at all — `locked` — so no rule has to carry a state on a tone alone (§3.5).
 
 | Group | Class hooks |
 |---|---|
-| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
+| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-state`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
 | Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches all three**, and the third is **unreachable today** — see below |
-| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
-| Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
-| Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
-| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-job-mode`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
-| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-accounts-note` |
-| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed` |
+| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-word`, `projects-reserve-value`, `projects-cap-table`, `projects-cap-head`, `projects-cap`, `projects-cap-scope`, `projects-cap-cell`, `projects-cap-value`, `projects-cap-source` |
+| Kill | `projects-kills`, `projects-kill-list`, `projects-kill-row`, `projects-kill-scope`, `projects-kill-repo`, `projects-kill-state`, `projects-kill-action`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
+| Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-both`, `projects-only-enrolled-repo`, `projects-only-seen-repo`, `projects-repo-card-none`, `projects-repo-card-note`, `projects-repo-add` |
+| Jobs | `projects-jobs`, `projects-job-table`, `projects-job-head`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-mode`, `projects-job-mode-cell`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
+| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
 `read`, `unavailable`, `not-built`**; `data-operation`
 (`budget.show|runs.list|accounts.inventory|secrets.inventory`, absent on `policy` and
-`enrollment`); `data-scope` (`global|defaults|repo`); `data-slug`; `data-killed` (`true`).
+`enrollment`); `data-scope` (`global|defaults|repo`, on a caps row and on a kill row);
+`data-slug` (the same two rows); `data-killed` (`true`|`false` on a kill row, and `true` on
+the banner a killed row carries); `data-kind` (`both|enrolled|seen`, on a repository card).
 
 The `not-built` state is the design's own honesty rule in the DOM: `policy` and
 `enrollment` carry `data-state="not-built"` and a `projects-because` sentence ("not
 readable with this CLI: …"). An `unavailable` panel carries the CLI's sentence or "no
 document arrived for …". A `read` panel carries a count and a body; **a panel in any other
 state has no body at all**, so a rule that painted an empty body would be painting nothing.
+The two `not-built` panels are the design's locked cards: a dashed frame, the state word
+`locked` beside the title, and no body, no list and no count behind it.
+
+**The caps are one table and every cell in it is labelled.** `table.projects-cap-table`
+carries a `th.projects-cap-head` per column, and each row — the project (`global`), the
+repository defaults (`defaults`) and one per repository — opens with
+`th.projects-cap-scope` naming what the caps are set for, before the two
+`td.projects-cap-cell`s. Each of those carries its figure as money
+(`span.projects-cap-value`) **with the cap's source word** (`span.projects-cap-source`, from
+`CAP_SOURCES`) beside it, because a bare column of numbers names nothing: a rule that
+right-aligned three `$` figures would align a cap the CLI derived from the project's
+defaults with one an operator typed on the repository. A source this build does not know is
+drawn as `unknown` and not guessed at. Above the table, `p.projects-reserve` carries the
+largest single lease the project has out (`span.projects-reserve-word` names it,
+`span.projects-reserve-value` is the money).
+
+**The switches are rows whose state is a word.** `ul.projects-kill-list` holds one
+`li.projects-kill-row` for the project and one per repository, each with
+`data-killed="true"` or `"false"` and a `span.projects-kill-state` that draws `KILLED` or
+`live`. A killed row carries the badge banner, `div.projects-kill` — itself
+`data-killed="true"`, with `span.projects-kill-word` (`KILLED by`) and the who, when and why
+only when the document has them, and nothing invented when it does not. The row's own action
+is drawn through `disabledWrite` (§5.1): `Kill` on a live row, `Revive` on a killed one.
+
+**The repositories are three cards**, `article.projects-repo-card`, one per state of the
+document: a repository with a cap row and a run (`data-kind="both"`), one with a cap row and
+no run yet (`data-kind="enrolled"`, saying so in `p.projects-repo-card-note`), and one that
+ran with no cap row (`data-kind="seen"`, in the warn tone, saying so, and the one card that
+draws an action: `Add cap`, through `disabledWrite`). A known but empty set says `none` in
+`p.projects-repo-card-none` rather than drawing an empty card or nothing at all. The panel's
+reason for an unread set stays `projects-because` (`repositoriesBecause`), so a set no
+document reported is never drawn as an empty one.
+
+**The jobs are a table**, `table.projects-job-table`: the run, the repository, the workflow,
+the status, the stage, the requester, the launcher, the timestamp, the mode where the column
+exists, and **the three cost accounts in three cells** — the subscription's model dollars
+(notional), the compute dollars (billed) and their total — each through `numberCell`, so
+every figure carries its own reading's state and a value the document does not carry is
+`n/a` and never `$0.00`.
+
+The accounts and secrets panels draw their rows as lists (`ul.projects-account-list`,
+`ul.projects-secret-list`). **Neither read is wired in this build**, so the two panels are
+drawn with their own "not read" sentence and no list at all — and the secrets panel's
+`p.projects-secrets-managed` sentence ("All managed by fugaro.") waits for a document whose
+every entry says so.
 
 **`projects-accounts-note` is a hook no document this CLI produces can reach.** `fugaro
 accounts ls --json` writes `note` with `omitempty` and answers `complete: false` whenever
@@ -594,12 +643,13 @@ hook is emitted by the code and reachable by no feed today; it becomes reachable
 `complete: true` and a non-empty `note` can arrive together, which is why it stays in the
 vocabulary rather than being deleted.
 
-Readings: money (`usd`) for the reserve, the caps and the job figures; counts for panel
-counts, dropped/total, enrolled/seen, secret versions. **No reading is a time on this
-screen** — every date is text.
+Readings: money (`usd`) for the reserve, the caps and the job figures; counts for the panel
+counts, the jobs panel's dropped/total line and the secret versions. **No reading is a time
+on this screen** — every date is text.
 
 **`projects-job-mode` is the jobs row's rigor mode, and the column is conditional.** The
-cell draws the mode's word — the five §2.3 names — or the record's own value when this
+cell, `td.projects-job-mode-cell`, draws the mode's word — the five §2.3 names — or the
+record's own value when this
 build does not know it, or `-` for a run whose record carries no block; and **no cell is
 drawn at all unless some listed run carries a block**, which is the rule `fugaro runs ls`
 writes for its own MODE column (`internal/cli/runs.go`'s `showMode`). A project whose runs
@@ -833,7 +883,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
+| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (a kill row, and the banner that row carries). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, on Live's repository block itself, and on Projects' kill row** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), and `li.projects-kill-row` carries `true`/`false` with the banner appended into the row, so `.live-repo[data-killed="true"]` and `li.projects-kill-row[data-killed="true"]` are rules this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
 | silent / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |

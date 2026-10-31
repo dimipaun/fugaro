@@ -74,7 +74,7 @@ func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 	for _, s := range upgradeSteps {
 		names = append(names, s.name)
 	}
-	if got := strings.Join(names, ","); got != "pin,plugin,cloud" {
+	if got := strings.Join(names, ","); got != "pin,plugin,cloud,policy" {
 		t.Fatalf("upgradeSteps = %s", got)
 	}
 	upgradeEnv(t, "0.5.2")
@@ -106,7 +106,7 @@ func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 				cloud = "cloud: skipped: a coding agent's session"
 			}
 			for _, want := range []string{"pin: current", tc.pluginSkip, cloud,
-				"  " + root + ": pin current, plugin skipped, cloud skipped",
+				"  " + root + ": pin current, plugin skipped, cloud skipped, policy skipped",
 				"nothing to do: " + root + " is current (apart from what the skipped steps name)"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
@@ -172,7 +172,7 @@ func TestUpgradeNeverMovesAPinDown(t *testing.T) {
 				t.Fatalf("exit %d, changed %v\n%s", ExitCode(err), upgradeRead(t, settings) != tc.settings, out)
 			}
 			for _, want := range []string{"pin: failed: the plugin is pinned to 0.6.0, newer than this fugaro 0.5.2", "never moves a pin down", "brew upgrade dimipaun/tap/fugaro",
-				"  " + root + ": pin failed, plugin not run, cloud not run", "once that is fixed, rerun: fugaro upgrade " + strings.Join(tc.flags, " ") + " " + root} {
+				"  " + root + ": pin failed, plugin not run, cloud not run, policy not run", "once that is fixed, rerun: fugaro upgrade " + strings.Join(tc.flags, " ") + " " + root} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
@@ -218,7 +218,7 @@ func TestUpgradeDevBuildSkipsEveryPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	for _, want := range []string{"  " + notCheckout + ": pin skipped, plugin skipped, cloud skipped", "  " + plain + ": pin skipped, plugin skipped, cloud skipped"} {
+	for _, want := range []string{"  " + notCheckout + ": pin skipped, plugin skipped, cloud skipped, policy skipped", "  " + plain + ": pin skipped, plugin skipped, cloud skipped, policy skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -311,7 +311,7 @@ func TestUpgradeCheckReportsAFork(t *testing.T) {
 	}
 	for _, want := range []string{"pin: stale: the marketplace is the fork someone/fugaro: pass --allow-fork if it is yours (only its ref moves)",
 		"plugin: skipped: cannot tell from Claude Code's record of installed plugins",
-		"  " + root + ": pin stale, plugin skipped, cloud skipped"} {
+		"  " + root + ": pin stale, plugin skipped, cloud skipped, policy skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

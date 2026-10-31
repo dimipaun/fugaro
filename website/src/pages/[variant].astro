@@ -13,9 +13,10 @@
  * **Every word a variant owns comes from the file.** The headline and the supporting line are
  * the file's (G2.1, D102), the proof band prints the file's figure or the sentinel in its place
  * (F6), and the tone the page's look keys off is the file's own word. What this page writes is
- * the section order the spec fixes — hero, proof, how it works, social proof, the calls to
- * action — and the two links of the last of them, which are `landing.yaml`'s booking link and
- * `site.yaml`'s repository rather than URLs typed here.
+ * the section order — the spec's five, hero, proof, how it works, social proof, the calls to
+ * action, with the console's screens between the last two (the owner's feedback of 2026-10-30,
+ * D412's finding 3) — and the two links of the calls to action, which are `landing.yaml`'s
+ * booking link and `site.yaml`'s repository rather than URLs typed here.
  *
  * **The page is rendered through the layout's campaign mode** (`campaign` on `Base.astro`):
  * `noindex` and canonical to the home page, the wordmark's row with no menu, the minimal
@@ -32,6 +33,7 @@ import CampaignHero from '../components/CampaignHero.astro'
 import CampaignProof from '../components/CampaignProof.astro'
 import CampaignSteps from '../components/CampaignSteps.astro'
 import CampaignSocialProof from '../components/CampaignSocialProof.astro'
+import CampaignScreens from '../components/CampaignScreens.astro'
 import CampaignCalls from '../components/CampaignCalls.astro'
 import { loadLanding } from '../lib/landing.mjs'
 import { loadSite } from '../content.ts'
@@ -91,6 +93,12 @@ const { variant } = Astro.props
   {/* Hidden while the file names no partner: the section is not rendered at all, so a campaign
       page with no proof of a partnership does not claim one (F11, F12, D405). */}
   {landing.partnerLogos.length > 0 && <CampaignSocialProof logos={landing.partnerLogos} />}
+  {/* The console's screens, in the homepage's own slider: below the hero and above the closing
+      call to action, which is the owner's bound (the feedback of 2026-10-30, D412's finding 3), so the
+      page shows what a run looks like before it asks for the booking. It reads the rows through
+      `loadHomeSliderScreens()`, which is the homepage's own list, so the two sliders are one
+      set of pictures rather than two. */}
+  <CampaignScreens />
   <CampaignCalls calendlyURL={landing.calendlyURL} repository={site.facts.repository} whatsappURL={variant.whatsappURL} />
 </Base>
 

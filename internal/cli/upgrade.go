@@ -14,11 +14,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // fugaro upgrade (docs/design/upgrade.md): each checkout brought up to this
-// binary in three steps, pin, plugin and cloud, stopping that checkout at
-// the first step that fails; every checkout is tried, one summary ends the
+// binary in four steps, pin, plugin, cloud and policy, stopping that checkout
+// at the first step that fails; every checkout is tried, one summary ends the
 // run, and the exit code is the worst.
 
 type upgradeOptions struct {
@@ -64,7 +65,7 @@ type upgradeStep struct {
 }
 
 // upgradeSteps run in this order for each checkout.
-var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}}
+var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}, {"policy", policyStep}}
 
 type checkoutResult struct {
 	path  string // as given
@@ -79,7 +80,7 @@ func newUpgradeCmd() *cobra.Command {
 		Use:   "upgrade [PATH...]",
 		Short: "Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images",
 		Long: `upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in three
+processed one after the other, each on its own) up to this fugaro, in four
 steps, stopping that checkout at the first step that fails:
 
   pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
@@ -108,19 +109,31 @@ steps, stopping that checkout at the first step that fails:
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
           named-account jobs are updated by the same fugaro update --repo .
+  policy  the project's published policy node, if an earlier Fugaro wrote it
+          in an older version: migrated in place (never deleted and
+          published again), after a diff of what changes, what is kept and
+          what is derived from the local config, and the project's name typed
+          at a terminal. --yes confirms it, and is the way past the refusal a
+          run in flight makes without it. Skipped where there is no local
+          project config or the repository is not onboarded, and in a coding
+          agent's session, with the command to run in your own terminal. It
+          reads the published node, so --check makes no call here either and
+          says it cannot tell. This is what fugaro update does for the same
+          node; both doors run it.
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
 --local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud step is skipped before it reads
-anything, never attempted, with the command to run in your own terminal, so
-the exit code is 0 when the local steps succeeded. --check writes nothing,
-runs no claude command and makes no cloud call: it reads the settings file,
-Claude Code's record of installed plugins and the local project config,
-prints what each step would do and exits 1 when anything is stale (build
-records are not read). Without --yes, --local or --check it needs a real
-terminal. There is no --json.
+session (CLAUDECODE and the like) the cloud and policy steps are skipped
+before they read anything, never attempted, with the command to run in your
+own terminal, so the exit code is 0 when the local steps succeeded. --check
+writes nothing, runs no claude command and makes no cloud call: it reads the
+settings file, Claude Code's record of installed plugins and the local project
+config, prints what each step would do and exits 1 when anything is stale
+(build records are not read, and the published policy node is not either: the
+policy step says it cannot tell). Without --yes, --local or --check it needs a
+real terminal. There is no --json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files
@@ -463,6 +476,69 @@ func pinStep(_ context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	return stepResult{state: stepDone, reason: "pinned to " + ch.Tag + " in " + shown + ": review it with git diff and commit it like any change"}
+}
+
+// checkPolicyCaveat is what --check says for the step it cannot answer: whether
+// the published policy node is current is a fact of the project's Realtime
+// Database and of nothing in the checkout, and reading it there is the cloud
+// call the flag promises not to make (cloudStep's checkJobCopyCaveat is the
+// same shape for the same reason).
+const checkPolicyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the published policy node is current or an older Fugaro's; run fugaro upgrade (or fugaro update) without --check to migrate it in place, after the diff and the typed confirmation"
+
+// policyStep is the last step of the sequence, and the same migration `fugaro
+// update`'s policy stage makes for the checkout's project
+// (init_policy_migrate.go), with the same diff, the same typed confirmation and
+// the same refusals — the two front doors of one upgrade, so neither can carry
+// a node the other would refuse. It is last because the cloud step's verdicts
+// are read first: a real local-file error stops the checkout in every mode,
+// --check included, and a checkout with nothing to refresh is skipped, neither
+// of which a step of this one's may pre-empt.
+//
+// The step is skipped, not failed, where there is nothing here to migrate from:
+// a teammate's checkout has no local project config, and a repository that is
+// not onboarded has no node of this project's to read (resolveCloudRepo's
+// cloudNotHere, the same verdict the cloud step uses). Under --check it is
+// skipped before anything is read, like the cloud step's own caveat: the node
+// lives in the project's Realtime Database, and reading it needs credentials.
+func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
+	if u.o.check {
+		fmt.Fprintf(u.w, "note: %s\n", checkPolicyCaveat)
+		return stepResult{state: stepSkipped, reason: "--check makes no cloud call, so the published policy node is not read: run fugaro upgrade without --check to migrate it in place"}
+	}
+	if u.o.local {
+		return stepResult{state: stepSkipped, reason: "--local"}
+	}
+	if u.agent != "" {
+		reason := fmt.Sprintf("a coding agent's session (%s is set) never writes the published policy, by design; in your own terminal window, not through the agent, run %s", u.agent, u.o.cloudLine(u.loc.Root, false))
+		if h := initflow.IDEHint(u.agent); h != "" {
+			reason += " (" + h + ")"
+		}
+		return stepResult{state: stepSkipped, reason: reason}
+	}
+	_, lc, _, _, _, v := resolveCloudRepo(ctx, u.loc.Root, u.o.refresh.cloud)
+	if v != nil {
+		if v.state == cloudNotHere {
+			return stepResult{state: stepSkipped, reason: v.reason}
+		}
+		return stepResult{state: stepFailed, code: ExitUserError, reason: v.reason}
+	}
+	if policyNodeUnreachable(lc) {
+		return stepResult{state: stepSkipped, reason: policyNoDBReason}
+	}
+	m, published, err := policyMigrationFor(ctx, lc)
+	if err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	switch {
+	case !published:
+		return stepResult{state: stepCurrent, reason: policyNoneDetail()}
+	case m == nil:
+		return stepResult{state: stepCurrent, reason: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}
+	}
+	if err := policyMigrationConfirm(ctx, u.cmd, m, u.o.yes, u.w); err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	return stepResult{state: stepDone, reason: fmt.Sprintf("the published policy was migrated from version %d to %d in place", m.from, projectpolicy.Version)}
 }
 
 // warnUpgradeFork is update-skills' warning, said whenever the checkout's

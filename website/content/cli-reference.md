@@ -3974,7 +3974,7 @@ This command has no subcommands.
 Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
 
 upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in three
+processed one after the other, each on its own) up to this fugaro, in four
 steps, stopping that checkout at the first step that fails:
 
   pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
@@ -4003,19 +4003,31 @@ steps, stopping that checkout at the first step that fails:
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
           named-account jobs are updated by the same fugaro update --repo .
+  policy  the project's published policy node, if an earlier Fugaro wrote it
+          in an older version: migrated in place (never deleted and
+          published again), after a diff of what changes, what is kept and
+          what is derived from the local config, and the project's name typed
+          at a terminal. --yes confirms it, and is the way past the refusal a
+          run in flight makes without it. Skipped where there is no local
+          project config or the repository is not onboarded, and in a coding
+          agent's session, with the command to run in your own terminal. It
+          reads the published node, so --check makes no call here either and
+          says it cannot tell. This is what fugaro update does for the same
+          node; both doors run it.
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
 --local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud step is skipped before it reads
-anything, never attempted, with the command to run in your own terminal, so
-the exit code is 0 when the local steps succeeded. --check writes nothing,
-runs no claude command and makes no cloud call: it reads the settings file,
-Claude Code's record of installed plugins and the local project config,
-prints what each step would do and exits 1 when anything is stale (build
-records are not read). Without --yes, --local or --check it needs a real
-terminal. There is no --json.
+session (CLAUDECODE and the like) the cloud and policy steps are skipped
+before they read anything, never attempted, with the command to run in your
+own terminal, so the exit code is 0 when the local steps succeeded. --check
+writes nothing, runs no claude command and makes no cloud call: it reads the
+settings file, Claude Code's record of installed plugins and the local project
+config, prints what each step would do and exits 1 when anything is stale
+(build records are not read, and the published policy node is not either: the
+policy step says it cannot tell). Without --yes, --local or --check it needs a
+real terminal. There is no --json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files
