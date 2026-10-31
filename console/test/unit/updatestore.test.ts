@@ -21,14 +21,23 @@
 //   - a reader that follows the name instead of `lstat`ing it fails "reads a
 //     symlink, a directory and an oversized file as on, and leaves each where it
 //     is" (U4b);
+//   - a reader that opens the name without `O_NOFOLLOW` fails "refuses a symlink
+//     to a regular file by the link rule alone" (U4c): the two hold the same
+//     bytes, and only the kind of name they sit at tells them apart;
+//   - a reader that reads a name it has not `fstat`ed fails "reads a short
+//     symlink to a FIFO as on, and does not block on it" (U4c): the FIFO is
+//     shorter than the cap and is not a file, and a read of it never returns;
 //   - a reader that says its line on every read fails "says its one line once,
 //     however many times the gate reads the file" (U4b).
 
+import { execFileSync } from 'node:child_process'
 import {
+  constants,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   statSync,
   symlinkSync,
@@ -57,6 +66,21 @@ import type { UpdatesFs } from '../../src/main/updatestore'
 function freshDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'fugaro-updates-'))
 }
+
+/** mkfifoAbsent is whether this machine can make the FIFO the one case below
+ * needs: the tool is POSIX's, and a host without it skips that case with the
+ * reason rather than failing on a name it cannot create. */
+const mkfifoAbsent = ((): boolean => {
+  try {
+    execFileSync('mkfifo', [join(freshDirectory(), 'probe')])
+    return false
+  } catch {
+    return true
+  }
+})()
+
+/** MKFIFO_SKIP is the reason that case states when it is skipped. */
+const MKFIFO_SKIP = 'mkfifo is not on this machine'
 
 /** only is the one entry a list is expected to hold, so "nothing was recorded"
  * fails here rather than making a later assertion vacuous. */
@@ -91,13 +115,21 @@ function recordingFs(): UpdatesFs & {
       calls.push(`rename:${from}:${to}`)
       nodeUpdatesFs.rename(from, to)
     },
-    lstat: (path) => {
-      calls.push(`lstat:${path}`)
-      return nodeUpdatesFs.lstat(path)
+    open: (path, flags) => {
+      calls.push(`open:${path}:${flags}`)
+      return nodeUpdatesFs.open(path, flags)
     },
-    readFile: (path, maxBytes) => {
-      calls.push(`readFile:${path}:${maxBytes}`)
-      return nodeUpdatesFs.readFile(path, maxBytes)
+    fstat: (handle) => {
+      calls.push(`fstat:${handle}`)
+      return nodeUpdatesFs.fstat(handle)
+    },
+    readFile: (handle, maxBytes) => {
+      calls.push(`readFile:${handle}:${maxBytes}`)
+      return nodeUpdatesFs.readFile(handle, maxBytes)
+    },
+    close: (handle) => {
+      calls.push(`close:${handle}`)
+      nodeUpdatesFs.close(handle)
     },
     unlink: (path) => {
       calls.push(`unlink:${path}`)
@@ -204,12 +236,15 @@ describe('the update switch’s file', () => {
     expect(statSync(path).isDirectory()).toBe(true)
   })
 
-  it('reads a symlink as on, and follows it nowhere (U4b)', () => {
+  it('reads a symlink as on, and follows it nowhere (U4b, U4c)', () => {
     // The gate is read on a path, and the one answer it must never give is one
-    // read out of a name somebody else chose: `lstat` does not follow the link,
-    // so a symlink is refused as not a regular file rather than parsed -- the
-    // target is never opened, and neither the link nor the file behind it is
-    // removed or replaced.
+    // read out of a name somebody else chose: the open does not follow the link
+    // (`O_NOFOLLOW`), so a symlink is refused rather than parsed -- the target
+    // is never read, and neither the link nor the file behind it is removed or
+    // replaced. This target's path is longer than the cap below, so it is the
+    // *length* that would stop a reader that never asked what the name is; the
+    // case right after this one is the short target that only that question
+    // stops.
     const directory = freshDirectory()
     const path = join(directory, UPDATES_FILE_NAME)
     const target = join(freshDirectory(), 'elsewhere.json')
@@ -227,6 +262,71 @@ describe('the update switch’s file', () => {
     expect(lstatSync(path).isSymbolicLink()).toBe(true)
     expect(readFileSync(target, 'utf8')).toBe('false')
   })
+
+  it('refuses a symlink to a regular file by the link rule alone, and reads a plain one (U4c)', () => {
+    // A link whose target is a regular file holding `false`: the answer is **on**
+    // -- a name that is a link is not this switch whatever it points at, and
+    // `false` is not a value this console may be made to take from somewhere
+    // else. The plain file beside it is the same bytes at a name that is a file,
+    // and it is read as off, so the refusal above is about the link rather than
+    // about the content. The flags the open is asked for are recorded here too:
+    // no-follow is what refuses the link, and non-blocking is what an open of a
+    // FIFO needs to not wait for a writer (the case below).
+    const directory = freshDirectory()
+    const path = join(directory, UPDATES_FILE_NAME)
+    const target = join(directory, 'elsewhere.json')
+    writeFileSync(target, 'false')
+    symlinkSync(target, path)
+
+    const fs = recordingFs()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      expect(readUpdateSwitch(directory, fs)).toBe(true)
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls[0]?.[0]).toBe(UPDATES_FILE_UNREADABLE)
+    } finally {
+      logged.mockRestore()
+    }
+    const opened = only(fs.calls.filter((call) => call.startsWith('open:')))
+    const flags = Number(opened.slice(opened.lastIndexOf(':') + 1))
+    expect(flags & constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW)
+    expect(flags & constants.O_NONBLOCK).toBe(constants.O_NONBLOCK)
+    expect(lstatSync(path).isSymbolicLink()).toBe(true)
+    expect(readFileSync(target, 'utf8')).toBe('false')
+
+    const plain = freshDirectory()
+    writeFileSync(join(plain, UPDATES_FILE_NAME), 'false')
+    expect(readUpdateSwitch(plain)).toBe(false)
+  })
+
+  it.skipIf(mkfifoAbsent)(`reads a short symlink to a FIFO as on, and does not block on it (U4c)${mkfifoAbsent ? ` (${MKFIFO_SKIP})` : ''}`, () => {
+    // The link's own target is three characters, well inside the cap, so a
+    // reader that only measured the name would read on -- and the target is a
+    // FIFO, which a read-only `open` waits on until a writer appears. This is
+    // the case the target length cannot stand in for: the regular-file rule is
+    // the whole of the refusal here, and a read that did not know about FIFOs
+    // would hang the console's own menu thread instead of answering on.
+    const directory = freshDirectory()
+    const path = join(directory, UPDATES_FILE_NAME)
+    const fifo = join(directory, 'f')
+    execFileSync('mkfifo', [fifo])
+    symlinkSync('f', path)
+
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      expect(readUpdateSwitch(directory)).toBe(true)
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls[0]?.[0]).toBe(UPDATES_FILE_UNREADABLE)
+    } finally {
+      logged.mockRestore()
+    }
+    // The name and the FIFO are both left exactly where they were: this module
+    // reads a setting, and a file it cannot use is not its to repair or delete.
+    expect(lstatSync(path).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(path)).toBe('f')
+    expect(statSync(fifo).isFIFO()).toBe(true)
+    expect(readdirSync(directory).toSorted()).toEqual(['f', UPDATES_FILE_NAME])
+  }, 10_000)
 
   it('reads a file longer than one boolean as on, and leaves it untouched (U4b)', () => {
     // The refusal has to come from the length rather than from a truncated
@@ -306,8 +406,10 @@ describe('the update switch’s file', () => {
       rename: () => {
         throw new Error('ENOSPC: no space left on device')
       },
-      lstat: (target) => nodeUpdatesFs.lstat(target),
-      readFile: (target, maxBytes) => nodeUpdatesFs.readFile(target, maxBytes),
+      open: (target, flags) => nodeUpdatesFs.open(target, flags),
+      fstat: (handle) => nodeUpdatesFs.fstat(handle),
+      readFile: (handle, maxBytes) => nodeUpdatesFs.readFile(handle, maxBytes),
+      close: (handle) => nodeUpdatesFs.close(handle),
       unlink: (target) => nodeUpdatesFs.unlink(target),
     }
 
