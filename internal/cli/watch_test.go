@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,75 @@ func TestWatchOnceJSON(t *testing.T) {
 	}
 	if len(doc.Runs) != 2 || notional["fix the bug"] || !notional["sub run"] {
 		t.Fatalf("runs = %+v, want the oauth run flagged notional and only it", doc.Runs)
+	}
+}
+
+// The document carries the concurrent-run cap the launcher enforces
+// (checkMaxParallel, run.go): the console draws its cap bar against it, and
+// the local config is the one source that cap has. The fixture config sets
+// max_parallel: 2.
+func TestWatchJSONMaxParallel(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "fix the bug")
+	out, _, err := execute(t, "watch", "--once", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Total struct {
+			MaxParallel *int `json:"max_parallel"`
+		} `json:"total"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Total.MaxParallel == nil || *doc.Total.MaxParallel != 2 {
+		t.Fatalf("total.max_parallel = %v, want 2 (the local config's)", doc.Total.MaxParallel)
+	}
+}
+
+// The document reports the cap a launch is checked against, which is the
+// config's resolved value and not the file's text: a local config that names
+// no max_parallel is given the engine's default (20) by the config layer
+// before checkMaxParallel reads it, so 20 is the cap a launch meets and 20 is
+// what the document says.
+func TestWatchJSONMaxParallelResolvesTheDefault(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	dropMaxParallel(t, f)
+	seedWatch(f, "fix the bug")
+	out, _, err := execute(t, "watch", "--once", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Total struct {
+			MaxParallel *int `json:"max_parallel"`
+		} `json:"total"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Total.MaxParallel == nil || *doc.Total.MaxParallel != 20 {
+		t.Fatalf("total.max_parallel = %v, want the engine's default 20", doc.Total.MaxParallel)
+	}
+}
+
+// dropMaxParallel rewrites the fixture's local config without its max_parallel
+// line, the shape a machine whose config names no cap has; the CLI then
+// resolves the default itself.
+func dropMaxParallel(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := strings.Replace(string(data), "max_parallel: 2\n", "", 1)
+	if kept == string(data) {
+		t.Fatal("the fixture's config names no max_parallel to drop")
+	}
+	if err := os.WriteFile(path, []byte(kept), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
