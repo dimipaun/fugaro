@@ -83,7 +83,8 @@ becomes `<mode>`. In order:
 5. **Show, confirm, back up, write.** The command prints the line diff, asks for confirmation at a
    terminal (`--yes` confirms outside a terminal), backs up the old file to `<file>.bak-<UTC
    timestamp>` (mode 0600) and writes the new one atomically (temporary file, rename, mode 0600) —
-   `backupFile` and `writeFileAtomic`, the pair `fugaro init` and `models add` already use.
+   `backupFile` and `writeFileAtomic` (`internal/cli/init.go`), the pair `fugaro restore` and the
+   `models` plan already use.
 6. **Hand off.** It prints `next: fugaro update`, which publishes it (D811).
 
 **Lowering is the sensitive direction.** When the new mode ranks below the project's current

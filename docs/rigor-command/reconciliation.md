@@ -92,8 +92,8 @@ helper, not a new one.
 
 **F12: Exists. The write helpers and a line-edit precedent.** `lineDiff`
 (`internal/cli/init.go:2641`), `backupFile` (`:2578`, `<file>.bak-<timestamp>`, mode 0600) and
-`writeFileAtomic` (`:2614`) are the diff/backup/write triple `fugaro init`, `restore` and the
-`models` plan all use. `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go:61`) is a precedent for
+`writeFileAtomic` (`:2614`) are the diff/backup/write triple `fugaro restore` and the `models` plan
+already use (`restore.go:963`, `:970`). `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go:61`) is a precedent for
 a targeted edit of one line of `fugaro.yaml` that keeps the rest. *Consequence:* the commands reuse
 all four; only the project layer's document-tree edit is new (R2).
 
