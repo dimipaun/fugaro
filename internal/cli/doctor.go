@@ -50,6 +50,14 @@ type doctorCheck struct {
 	Problem  string `json:"problem,omitempty"`
 	Fix      string `json:"fix,omitempty"`
 	Severity string `json:"severity,omitempty"`
+	// Class is which view prints the check: "actionable" (something is wrong,
+	// one fix), "update" (`fugaro update` puts it right), "decision" (the
+	// owner's choice, with the command for each) or "audit" (what doctor
+	// measured, and the IAM and security sweep). It is attached by
+	// classifyDoctorChecks, never by the check itself, so the human view and
+	// --json cannot disagree about what the default view hides. A check that
+	// carries none is a passing check nothing prints.
+	Class string `json:"class,omitempty"`
 }
 
 func fromPreflight(c preflight.Check) doctorCheck {
@@ -182,9 +190,11 @@ func newDoctorCmd() *cobra.Command {
 		checkApp bool
 		strict   bool
 		asJSON   bool
+		showAll  bool
+		security bool
 	)
 	cmd := &cobra.Command{
-		Use:   "doctor [--json] [--plugin] [--strict]",
+		Use:   "doctor [--json] [--all] [--security] [--plugin] [--strict]",
 		Short: "Check that Fugaro is set up and ready, without changing anything",
 		Long: `doctor only ever reads: the environment, Terraform, the local project config
 and its installation's billing and IAM policy (with a budget backend, who can
@@ -214,10 +224,19 @@ fugaro doctor --plugin --strict.
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
 
+What doctor prints is a verdict and then only what to do: one sentence and one
+fix per item, each item fugaro update puts right ending in that command.
+--all prints every check, the informational lines included, and --security the
+IAM and security sweep (who can read a stored credential, who can sign a
+budget token, what a launcher may start). The default view never hides a
+security finding that is a warning, and it says how many it left out when it
+leaves any out. Every check, with its full text, is in --json whatever the
+flags.
+
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp)
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp, doctorView{all: showAll, security: security})
 		},
 	}
 	addCloudFlags(cmd, &cloud)
@@ -226,10 +245,12 @@ Exit 1 when a check fails, with the one-line fix to run.`,
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	cmd.Flags().BoolVar(&showAll, "all", false, "print every check, the informational and audit lines included")
+	cmd.Flags().BoolVar(&security, "security", false, "also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start)")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool) error {
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool, view doctorView) error {
 	ctx := cmd.Context()
 	// Before anything is read: the key is never read in a coding agent's session.
 	if checkApp {
@@ -271,7 +292,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		// network call of any kind. cli-version would need one, so it is
 		// skipped here; the full run below always includes it.
 		o.OK = !checksFail(o.Checks, strict)
-		return emitDoctor(cmd, o, asJSON)
+		return emitDoctor(cmd, o, asJSON, view)
 	}
 	o.Checks = append(o.Checks, cliVersionCheck(ctx, Version, time.Now()))
 
@@ -290,7 +311,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			Problem: "no Fugaro installation is configured",
 			Fix:     "run fugaro setup"})
 		o.OK = !checksFail(o.Checks, strict)
-		return emitDoctor(cmd, o, asJSON)
+		return emitDoctor(cmd, o, asJSON, view)
 	}
 	// failed is a refusal after the checks began: --json still prints the
 	// object, with the reason; the error is returned as it was.
@@ -474,7 +495,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 
 	o.OK = !checksFail(o.Checks, strict)
-	return emitDoctor(cmd, o, asJSON)
+	return emitDoctor(cmd, o, asJSON, view)
 }
 
 // doctorBaseImage warns when the installation has no Fugaro base recorded
@@ -1694,7 +1715,10 @@ func printDoctorSecrets(w io.Writer, secrets []secretEntry) {
 	fmt.Fprintln(w, "secrets: "+strings.Join(names, ", "))
 }
 
-func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
+func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool, view doctorView) error {
+	// The class is attached here, on every path and for every reader, so the
+	// human view and --json are the same classification of the same checks.
+	o.Checks = classifyDoctorChecks(o.Checks)
 	if asJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -1706,7 +1730,7 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
 		if l := releaseLine(); l != "" {
 			fmt.Fprintln(out, l)
 		}
-		printDoctorChecks(out, o.Checks)
+		printDoctorReport(out, o.Checks, view)
 		if p := o.Project; p != nil {
 			fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)
 		}
