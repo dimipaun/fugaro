@@ -920,35 +920,49 @@ describe('crash', () => {
   })
 
   it('every exception field is read once, so a getter that answers again cannot pass the allow-list', () => {
-    // The same rule one level down, at the four positions an exception has: the
-    // exception itself, its `values`, and each value's `type` and `stacktrace`.
+    // The same rule one level down, at every position an exception has: the
+    // exception itself, its `values`, a value's `type` and `stacktrace`, and the
+    // `frames` inside it.
     const token = tokenPlaceholder()
     const frames = [{ abs_path: `${APP_ROOT}/dist/main/index.js` }]
     const first = { type: 'Error', stacktrace: { frames } }
     const expected = {
       exception: { values: [{ type: 'Error', stacktrace: { frames: [{ filename: 'dist/main/index.js' }] } }] },
     }
+    const changingValues = changingOnSecondRead('values', [first], token)
     const scrubbed = [
+      // The exception itself, and its `values`.
       scrubCrashEvent(
         changingOnSecondRead('exception', { values: [first] }, token) as unknown as CrashEvent,
         APP_ROOT,
       ),
-      scrubCrashEvent({ exception: changingOnSecondRead('values', [first], token) as never }, APP_ROOT),
-      scrubCrashEvent({
-        exception: {
-          values: [changingOnSecondRead('type', 'Error', token, { stacktrace: first.stacktrace })],
-        },
-      } as unknown as CrashEvent, APP_ROOT),
-      scrubCrashEvent({
-        exception: {
-          values: [changingOnSecondRead('stacktrace', first.stacktrace, token, { type: 'Error' })],
-        },
-      } as unknown as CrashEvent, APP_ROOT),
-      scrubCrashEvent({
-        exception: {
-          values: [{ type: 'Error', stacktrace: changingOnSecondRead('frames', frames, token) }],
-        },
-      } as unknown as CrashEvent, APP_ROOT),
+      scrubCrashEvent({ exception: changingValues } as unknown as CrashEvent, APP_ROOT),
+      // A value's `type`, and its `stacktrace`.
+      scrubCrashEvent(
+        {
+          exception: {
+            values: [changingOnSecondRead('type', 'Error', token, { stacktrace: first.stacktrace })],
+          },
+        } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent(
+        {
+          exception: {
+            values: [changingOnSecondRead('stacktrace', first.stacktrace, token, { type: 'Error' })],
+          },
+        } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      // ...and the `frames` inside it.
+      scrubCrashEvent(
+        {
+          exception: {
+            values: [{ type: 'Error', stacktrace: changingOnSecondRead('frames', frames, token) }],
+          },
+        } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
     ]
     for (const one of scrubbed) {
       expect(one).toEqual(expected)
