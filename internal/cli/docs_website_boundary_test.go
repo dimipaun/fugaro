@@ -1156,15 +1156,14 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	// 2026-10-31). G2.3 pinned BOTH ids empty and said the pin is relaxed in
 	// the commit that fills one in, because a task that fills one in is a task
 	// the owner supplied the id for (R3) -- exactly as the video pin above is
-	// relaxed by W2.4. The owner supplied the insight tag's partner id on
-	// 2026-10-31 and the pixel id is still theirs to supply, so the pin is now
-	// split: the pixel id stays empty, and the partner id is refused when it is
-	// empty, because the shipped page loads the insight tag only while a value
-	// is there and website/test/consent.mjs reads that off the built artifact.
-	// Neither value is printed here: the id lives in site.yaml and nowhere
-	// else, and a copy in this file would be the second one to keep in step.
-	if facts.Marketing.MetaPixelID != "" {
-		t.Errorf("%s: marketing carries meta_pixel_id = %q, and it must stay empty until the OWNER supplies one: the loader is wired and gated around it, and an id nobody supplied would point the pixel at an account that is not this project's (R3, plan Task G2.3)", websiteFactsPath, facts.Marketing.MetaPixelID)
+	// relaxed by W2.4. The owner supplied the insight tag's partner id, and
+	// then the pixel's id, on 2026-10-31, and both switches are on: an empty
+	// value here is the loader switched off, so an empty one is now refused in
+	// both places rather than expected in one. Neither value is printed here:
+	// the ids live in site.yaml and nowhere else, and a copy in this file would
+	// be the second one to keep in step.
+	if facts.Marketing.MetaPixelID == "" {
+		t.Errorf("%s: marketing carries an empty meta_pixel_id: the OWNER supplied the pixel id on 2026-10-31, the banner on every page hands it to the pixel after the marketing consent, and an empty value is the loader switched off (R3, plan Task G2.3)", websiteFactsPath)
 	}
 	if facts.Marketing.LinkedinPartnerID == "" {
 		t.Errorf("%s: marketing carries an empty linkedin_partner_id: the OWNER supplied the partner id on 2026-10-31, the four campaign pages hand it to the insight tag after the campaign consent, and an empty value is the loader switched off (R3, plan Task G2.3)", websiteFactsPath)

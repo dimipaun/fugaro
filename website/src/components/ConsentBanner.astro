@@ -38,20 +38,19 @@
  *     visitor asked for — rather than leaving it on a control that has just vanished.
  *   - **Withdrawal.** On the privacy page the banner is offered even when a decision is
  *     stored (`alwaysOffer`), which is how consent is withdrawn: the one page that says how
- *     is the one page where the choice is always available again. It carries the campaign
- *     decision's key as well as the site's (`marketingKey`), so the refusal it offers takes
- *     back both answers — a campaign decision is made on a campaign page, where the bar is
- *     gone once it has been answered, and this is the page a visitor comes to to undo one.
+ *     is the one page where the choice is always available again. It carries the marketing
+ *     decision's key as well as the site's, without `asksMarketing`, so the refusal it offers
+ *     takes back both answers — the marketing decision is made where the pixel may load, and
+ *     this is the page a visitor comes to to undo one.
  *   - **One question, in two sentences.** The bar asks about measurement as a whole — cookies
- *     and identifiers, Google Analytics 4, and the marketing trackers and the booking widget
- *     the campaign pages carry — in the same two sentences on every page, rather than in four
- *     questions a reader has to go looking for. Nothing in it promises that a vendor is
- *     running: the ids come from `site.yaml` and the pixel's ships empty (the owner supplied
- *     the insight tag's on 2026-10-31), a loader with no id fetches nothing, and a tracker
- *     with no id is therefore not named — the owner's feedback of 2026-10-30 — so the bar
- *     names the tools the site does load and describes the rest as a class. What a bar's own refusal covers is the statement's to say,
- *     not the bar's: on the privacy page, where the campaign key is carried without the
- *     campaign configuration, declining takes the campaign answer back and never gives one.
+ *     and identifiers, Google Analytics 4, the pixel, and the campaign pages' two vendors — in
+ *     the same two sentences on every page, rather than in four questions a reader has to go
+ *     looking for. Nothing in it promises that a vendor is running: the ids come from
+ *     `site.yaml`, a loader with no id fetches nothing, and a tracker with no id is therefore
+ *     not named — the owner's feedback of 2026-10-30 — so the bar names the tools the site
+ *     does load. What a bar's own refusal covers is the statement's to say, not the bar's: on
+ *     the privacy page, where the marketing key is carried without `asksMarketing`, declining
+ *     takes that answer back and never gives one.
  *
  * The markup is emitted hidden and `site.js` reveals it: a browser that runs no script shows
  * no control it cannot honour, and loads nothing.
@@ -61,32 +60,31 @@ interface Props {
   alwaysOffer?: boolean
   /** The analytics property the gate reports to, from `site.yaml` (W3.2). */
   measurementID: string
-  /** The one third-party origin the gate may load from (D93, D106). */
+  /** The one third-party origin the analytics gate may load from (D93, D106). */
   analyticsOrigin: string
+  /** The pixel's id, from `site.yaml`: every page carries it, because the pixel is the site's. */
+  metaID: string
+  /** The origin the pixel's script comes from. */
+  metaOrigin: string
   /**
-   * The campaign measurement's configuration, on the four campaign pages only (G2.3, D401):
-   * its own consent key, the page it was built for, the two vendor ids and the three origins
-   * their loaders fetch from, and the booking link the embed is built from. Absent everywhere
-   * else, which is why every other page is unchanged by that task.
+   * Whether this bar asks the marketing question. It is asked on every page — the pixel loads
+   * wherever the visitor reads (the owner's ruling of 2026-10-31) — except on the page that only
+   * withdraws: the privacy page's bar carries the decision's key and never grants it, because
+   * that page is where a decision is taken back and it never put the pixel to the visitor.
    */
-  marketing?: MarketingConfig | null
+  asksMarketing?: boolean
   /**
-   * The campaign decision's key where the bar does not ask the campaign question — the privacy
-   * page, which is where a visitor withdraws one. A bar carrying the key without the
-   * configuration answers that question in the refusal direction only: `site.js` may take the
-   * campaign decision away from it, and may not give one, because this page never put the three
-   * vendors to the visitor. Null on every other page.
+   * The four campaign pages' own two vendors (G2.3, D401): the page this configuration was built
+   * for, the insight tag's partner id and the origin its script comes from, and the booking link
+   * and origin Calendly's embed is built from. Absent everywhere else, so the two loaders that
+   * read it are inert on every other page.
    */
-  marketingKey?: string | null
+  campaign?: CampaignConfig | null
 }
 
-export interface MarketingConfig {
-  /** The key the campaign decision is stored under (`consent-key.mjs`). */
-  key: string
-  /** The route this configuration was built for: the loader runs on that page and no other. */
+export interface CampaignConfig {
+  /** The route this configuration was built for: the two loaders run there and nowhere else. */
   path: string
-  metaID: string
-  metaOrigin: string
   linkedinID: string
   linkedinOrigin: string
   /** `landing.yaml`'s booking link, which the inline embed is built from. */
@@ -99,14 +97,16 @@ const {
   alwaysOffer = false,
   measurementID,
   analyticsOrigin,
-  marketing = null,
-  marketingKey = null,
+  metaID,
+  metaOrigin,
+  asksMarketing = true,
+  campaign = null,
 } = Astro.props
 
-// The key the decision is stored under, written once in `src/lib/consent-key.mjs`: `site.js`
-// reads it back out of the markup below, so the banner that writes the decision and the gate
+// The two keys a decision is stored under, written once in `src/lib/consent-key.mjs`: `site.js`
+// reads them back out of the markup below, so the banner that writes a decision and the gate
 // that reads it cannot drift apart.
-import { CONSENT_KEY } from '../lib/consent-key.mjs'
+import { CONSENT_KEY, MARKETING_CONSENT_KEY } from '../lib/consent-key.mjs'
 ---
 
 <aside
@@ -118,20 +118,21 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   data-consent-always={alwaysOffer ? 'true' : undefined}
   data-analytics-id={measurementID}
   data-analytics-origin={analyticsOrigin}
-  data-marketing-consent-key={marketing?.key ?? marketingKey ?? undefined}
-  data-marketing-path={marketing?.path}
-  data-meta-pixel-id={marketing?.metaID}
-  data-meta-origin={marketing?.metaOrigin}
-  data-linkedin-partner-id={marketing?.linkedinID}
-  data-linkedin-origin={marketing?.linkedinOrigin}
-  data-calendly-url={marketing?.calendlyURL}
-  data-calendly-origin={marketing?.calendlyOrigin}
+  data-marketing-consent-key={MARKETING_CONSENT_KEY}
+  data-marketing-ask={asksMarketing ? 'true' : undefined}
+  data-meta-pixel-id={metaID}
+  data-meta-origin={metaOrigin}
+  data-marketing-path={campaign?.path}
+  data-linkedin-partner-id={campaign?.linkedinID}
+  data-linkedin-origin={campaign?.linkedinOrigin}
+  data-calendly-url={campaign?.calendlyURL}
+  data-calendly-origin={campaign?.calendlyOrigin}
   hidden
 >
   <div class="consent-banner__body">
     <div class="consent-banner__inner">
       <p class="consent-banner__text">
-        This site measures visits with cookies and identifiers: <strong>Google Analytics</strong> on every page, and marketing trackers, <strong>LinkedIn</strong>'s insight tag and <strong>Calendly</strong>'s booking widget on the four campaign pages. Nothing loads until you accept. <a href="/privacy/">What this site measures</a>
+        Every page measures visits with cookies and identifiers — <strong>Google Analytics</strong> and <strong>Meta</strong>'s pixel — and the four campaign pages also load <strong>LinkedIn</strong>'s insight tag and <strong>Calendly</strong>'s booking widget. Nothing loads until you accept. <a href="/privacy/">What this site measures</a>
       </p>
       <div class="consent-banner__choices">
         <button type="button" class="consent-banner__button consent-banner__button--accept" data-consent="granted">

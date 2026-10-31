@@ -17,9 +17,10 @@
  * invented. The page reads `site.yaml` through the content pipeline, exactly as the layout
  * does, and branches on `analytics.enabled`: with the flag off it says the site collects
  * nothing, and it names no vendor, because there is no vendor to name. With the flag on it
- * states what the site's own gate does — Google Analytics 4, one page view per page and, on the
- * four campaign pages, the three key events G2.4 names; no user id, Google Signals and ads
- * personalisation off, GA4's own IP anonymisation — and it does not restate Google's policy for
+ * states what the site's own gate does — Google Analytics 4 and, on every page too, Meta's
+ * pixel, one page view per page each, and the three key events G2.4 names on the campaign pages
+ * whose buttons they are about; no user id, Google Signals and ads personalisation off, GA4's
+ * own IP anonymisation — and it does not restate Google's policy for
  * Google. Four of its claims are held to the
  * artifact by `website/test/consent.mjs`: that no page carries a form or a field; that the
  * tool it names is the tool the build would load (the page names Google Analytics, and the
@@ -81,12 +82,18 @@
  * headline is on the display scale and in the gradient, the two part headings are too, and no
  * `h3` of the page is left outside a card.
  *
- * The page carries no script of its own and no copy of the consent key: the banner is the
- * layout's, rendered here because this page asks for it. The styles are scoped, token-only
+ * The page carries no script of its own and no copy of the consent keys — the two it prints are
+ * read out of `src/lib/consent-key.mjs`, which is where each is written once — and the banner
+ * is the layout's, rendered here because this page asks for it. The styles are scoped, token-only
  * (no colour literal, so the palette stays the one in force) and add no behaviour.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
+// The two keys a decision is kept under, printed here out of the one file that writes them:
+// this page tells a reader which name to look for in their browser, and a literal copied into
+// the statement is a name that would keep being printed after the key it describes moved
+// (`consent-key.mjs`: the marketing key's version moves with the question).
+import { CONSENT_KEY, MARKETING_CONSENT_KEY } from '../lib/consent-key.mjs'
 
 // The facts, through the pipeline the layout uses: a site.yaml this page cannot read stops
 // the build rather than shipping a statement about a configuration nobody checked (W1.3).
@@ -127,58 +134,60 @@ const repo = site.facts.repository
             <h3>What this site collects</h3>
             <p>
               This site counts visits with <strong>Google Analytics 4</strong>, to see which pages
-              are read. Google's script reports the page's path, without any query, and sets{' '}
+              are read, and with <strong>Meta</strong>'s pixel, which counts them for the ads that
+              bring people here. Both scripts report the page's path, without any query, and set{' '}
               <strong>identifiers</strong> in your browser.
             </p>
             <p>
-              The site asks for one page view per page and no user id, with Google Signals and ads
-              personalisation off. The four campaign pages add three events, under their own
-              names: <code>demo_booked</code> (a booking in Calendly's widget),{' '}
-              <code>install_click</code> (a press of <strong>Install free</strong>) and{' '}
-              <code>whatsapp_click</code> (a press of the chat link). Each carries nothing but its
-              own name.
+              Google is asked for one page view per page and no user id, with Google Signals and
+              ads personalisation off; the pixel is asked for one page view per page and nothing
+              of its own. Three events go to both, under their own names: <code>demo_booked</code>{' '}
+              (a booking in Calendly's widget), <code>install_click</code> (a press of{' '}
+              <strong>Install free</strong>) and <code>whatsapp_click</code> (a press of the chat
+              link), each on the campaign page whose buttons those are. Each carries nothing but
+              its own name.
             </p>
           </div>
 
           <div class="card privacy-card">
             <h3>Consent</h3>
             <p>
-              Google's script loads only after you accept; until then this page has asked Google
-              nothing, and the campaign pages have asked their trackers and Calendly nothing.{' '}
-              <strong>Decline</strong> loads nothing, now or on any later page, and takes the
-              campaign answer back as well. Dismissing the banner — Escape, or reading on — is a
-              refusal, and the answer is kept in this browser under{' '}
-              <code>fugaro:analytics-consent</code> in <code>localStorage</code>.
+              Neither script loads until you accept. Until then this page has asked Google and
+              Meta nothing, and the campaign pages have asked their two trackers and Calendly
+              nothing. <strong>Decline</strong> loads nothing, now or on any later page, and takes
+              the marketing answer back as well. Dismissing the banner — Escape, or reading on —
+              is a refusal, and the answer is kept in this browser under{' '}
+              <code>{CONSENT_KEY}</code> in <code>localStorage</code>.
             </p>
             <p>
               To withdraw, decline in the banner here: it always offers the choice again, and
               declining stops reporting at once, on this page too, and deletes Google's cookies
-              (<code>_ga</code> and the rest) from this browser, with the campaign trackers'
+              (<code>_ga</code> and the rest) from this browser, with the pixel's and LinkedIn's
               cookies listed below where they were set.
             </p>
             <p>
               Accepting here is narrower: it answers the site's question alone and leaves the
-              campaign question where it stands, since a yes to the campaign trackers is given on
-              a campaign page and never by implication.
+              marketing answer where it stands, since a yes to those trackers is given where they
+              run and never by implication.
             </p>
           </div>
 
           <div class="card privacy-card">
-            <h3>The campaign pages</h3>
+            <h3>The marketing trackers</h3>
             <p>
-              Four pages — <code>/save</code>, <code>/control</code>, <code>/scale</code> and{' '}
-              <code>/crew</code> — are where the ads land, and their banner asks a second
-              question: whether the marketing trackers that run there,{' '}
-              <strong>LinkedIn</strong>'s insight tag and <strong>Calendly</strong>'s booking
-              widget may load. The answer is kept under{' '}
-              <code>fugaro:marketing-consent</code>, apart from the analytics answer, and until
-              you accept it none of them is asked anything, on any page.
+              The banner asks a second question: whether the marketing trackers may load.{' '}
+              <strong>Meta</strong>'s pixel would load on every page, and on the four pages the
+              ads land on — <code>/save</code>, <code>/control</code>, <code>/scale</code> and{' '}
+              <code>/crew</code> — <strong>LinkedIn</strong>'s insight tag and{' '}
+              <strong>Calendly</strong>'s booking widget would load with it. The answer is kept
+              under <code>{MARKETING_CONSENT_KEY}</code>, apart from the analytics answer, and
+              until you accept it none of them is asked anything, on any page.
             </p>
             <p>
-              With that consent, the trackers run their own scripts on the campaign page, and this
-              site hands them the page's address built from the origin and the path, with no
-              query string; a script running there can read the address you arrived with,
-              campaign parameters included, though nothing this site sends carries them. They set
+              With that consent, each of them runs its own script where it loads, and this site
+              hands it the page's address built from the origin and the path, with no query
+              string; a script running there can read the address you arrived with, campaign
+              parameters included, though nothing this site sends carries them. They set
               identifiers of their own in this browser, and Calendly's widget is drawn on the
               page, with Calendly's own cookies.
             </p>
@@ -186,10 +195,10 @@ const repo = site.facts.repository
               Declining stops them on the next page and deletes their cookies from this browser:{' '}
               <code>_fbp</code>, <code>_fbc</code>, <code>li_sugr</code>,{' '}
               <code>AnalyticsSyncHistory</code>, <code>UserMatchHistory</code>,{' '}
-              <code>bcookie</code>, <code>lidc</code> and <code>li_gc</code>. A campaign page's
-              banner is gone once it has been answered, so the privacy page is where the answer is
-              taken back. A script already running keeps running until you reload, and a cookie a
-              vendor set on its own domain is the vendor's to remove.
+              <code>bcookie</code>, <code>lidc</code> and <code>li_gc</code>. The banner is gone
+              once it has been answered, so the privacy page is where the answer is taken back. A
+              script already running keeps running until you reload, and a cookie a vendor set on
+              its own domain is the vendor's to remove.
             </p>
           </div>
 
@@ -198,9 +207,8 @@ const repo = site.facts.repository
             <ul>
               <li>It sets no cookie of its own, and has no account, form or comment box.</li>
               <li>
-                It loads nothing from another origin except Google's script — and, on the four
-                campaign pages above, the trackers and the widget the second question covers — and
-                only after the consent that governs each.
+                It loads nothing from another origin except Google's script and the marketing
+                trackers above — every one of them only after the consent that governs it.
               </li>
               <li>
                 It keeps no log of its own. The host's request logs are the host's, and this

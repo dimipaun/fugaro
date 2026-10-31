@@ -88,8 +88,8 @@ interface Props {
   campaign?: boolean
   /**
    * The campaign page's own route, from `landing.yaml` (G2.3): the banner carries it, and the
-   * campaign loaders run on that page and on no other, so the configuration a page carries is
-   * the configuration of the page it is on.
+   * two campaign vendors' loaders run on that page and on no other, so the configuration a page
+   * carries is the configuration of the page it is on.
    */
   campaignPath?: string
   /**
@@ -259,20 +259,18 @@ const isCurrent = (href: string) => pagePath === href
 const ANALYTICS_ORIGIN = 'https://www.googletagmanager.com'
 const analyticsEnabled = facts.analytics.enabled
 
-// The campaign measurement (G2.3, D401): the pixel, the insight tag and Calendly's embed, on
-// the four campaign pages and nowhere else. The configuration is `site.yaml`'s own block — the
-// two ids, empty until the owner supplies them, and the three origins — plus the page this
-// layout is rendering, which is what the loader's path check reads, and the booking link the
+// The four campaign pages' own two vendors (G2.3, D401): LinkedIn's insight tag and Calendly's
+// embed, on those pages and nowhere else. The configuration is `site.yaml`'s own block — the
+// partner id, empty until the owner supplies one, and the two origins — plus the page this
+// layout is rendering, which is what the loaders' path check reads, and the booking link the
 // embed is built from. Nothing here is a host typed into a component: the origins come from
 // `site.yaml` and reach the loader through the banner's markup, so `public/scripts/site.js`
-// names no host and a build of a non-campaign page carries none of them.
-const marketing =
+// names no host and a build of a non-campaign page carries none of them. The pixel's own id and
+// origin are not here: it loads on every page, so the banner carries them everywhere.
+const campaignVendors =
   campaign && campaignPath && calendlyURL
     ? {
-        key: MARKETING_CONSENT_KEY,
         path: campaignPath,
-        metaID: facts.marketing.metaPixelID,
-        metaOrigin: facts.marketing.metaOrigin,
         linkedinID: facts.marketing.linkedinPartnerID,
         linkedinOrigin: facts.marketing.linkedinOrigin,
         calendlyURL,
@@ -478,7 +476,7 @@ const marketing =
       <script
         src="/scripts/consent-early.js"
         data-consent-key={CONSENT_KEY}
-        data-marketing-consent-key={marketing?.key}
+        data-marketing-consent-key={MARKETING_CONSENT_KEY}
         data-consent-always={alwaysOffer ? 'true' : undefined}></script>
     )}
   </head>
@@ -494,14 +492,14 @@ const marketing =
         analytics origin anywhere in the artifact. It sits after the skip link and before the
         header, which is where a keyboard reaches it first. */}
     {/* The campaign mode's own slot for it (G2.2, G2.3). On a campaign page the banner is the
-        campaign variant: the same element, the same two choices and the same consent key, with
-        the campaign measurement's own key and configuration beside them, so one press answers
-        every question that bar is asking. Every other page renders the site's own banner, with
-        no marketing configuration and none of the three origins in its markup — a visitor who
-        never opens a campaign page is unchanged by G2.3 (F17). The one exception is the page
-        that always offers the choice: it carries the campaign decision's key without the
-        configuration, which is what makes the withdrawal it offers reach the campaign
-        measurement too (`marketingKey`, and `site.js`'s refusal-only write). */}
+        campaign variant: the same element, the same two choices and the same two consent keys,
+        with the two campaign vendors' configuration beside them, so one press answers every
+        question that bar is asking. Every other page renders the site's own banner — the same
+        marketing question, because the pixel loads wherever the visitor reads (the owner's
+        ruling of 2026-10-31), and none of the two campaign vendors' addresses in its markup
+        (F17). The one exception is the page that always offers the choice: it carries the
+        marketing decision's key without the question (`asksMarketing`), which is what makes the
+        withdrawal it offers reach the pixel too (`site.js`'s refusal-only write). */}
     {campaign ? (
       <slot name="campaign-banner">
         {analyticsEnabled && (
@@ -509,7 +507,10 @@ const marketing =
             alwaysOffer={alwaysOffer}
             measurementID={facts.analytics.measurementID}
             analyticsOrigin={ANALYTICS_ORIGIN}
-            marketing={marketing}
+            metaID={facts.marketing.metaPixelID}
+            metaOrigin={facts.marketing.metaOrigin}
+            asksMarketing={!alwaysOffer}
+            campaign={campaignVendors}
           />
         )}
       </slot>
@@ -519,7 +520,9 @@ const marketing =
           alwaysOffer={alwaysOffer}
           measurementID={facts.analytics.measurementID}
           analyticsOrigin={ANALYTICS_ORIGIN}
-          marketingKey={alwaysOffer ? MARKETING_CONSENT_KEY : null}
+          metaID={facts.marketing.metaPixelID}
+          metaOrigin={facts.marketing.metaOrigin}
+          asksMarketing={!alwaysOffer}
         />
       )
     )}

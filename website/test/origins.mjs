@@ -58,21 +58,24 @@
 //      analytics origin appears anywhere, the page carries no inline script, and the gate that
 //      reads that configuration and fetches the script is the site's one script file.
 //
-//   5. **The campaign pages' own measurement, behind its own consent (G2.3, D401).** The four
-//      campaign pages carry three further vendors — Meta's pixel, LinkedIn's insight tag and
-//      Calendly's booking widget — under a consent of their own (its own key, its own
+//   5. **The marketing measurement, behind its own consent (G2.3, D401 as the owner amended
+//      it on 2026-10-31).** Three further vendors — Meta's pixel, LinkedIn's insight tag and
+//      Calendly's booking widget — wait for a consent of their own (its own key, its own
 //      question), and this file holds the same two halves for them: no page carries a vendor
 //      request, a vendor origin outside the gate's own configuration attributes, or a framed
-//      document; the configuration is written once, on the four campaign pages and on no other
-//      page, and it is complete (the page it was built for, the two ids, the three origins and
-//      the booking link); and the gate that reads it is the site's one script file, which
-//      names none of those origins itself. The origins reach the loader through the banner's
-//      markup exactly as the analytics origin does, so a page that carries none of them loads
-//      none of them.
+//      document; the configuration is complete where each vendor loads; and the gate that reads
+//      it is the site's one script file, which names none of those origins itself. **Where each
+//      one is configured is not one place**: the pixel is the site's, so its id and origin are
+//      on every page's banner — and so is the marketing question, on every page but the one
+//      that only withdraws it — while the insight tag and the widget are the four campaign
+//      pages' alone, configured there with the page each configuration was built for. The
+//      origins reach the loaders through the banner's markup exactly as the analytics origin
+//      does, so a page that carries none of the two campaign vendors loads none of them.
 //   6. The deployed policy, in `firebase.json`, admits exactly the origins Google documents
 //      for Google Analytics 4 without any Ads features, the exact three the campaign's three
 //      vendors document, and nothing else — no `'unsafe-inline'`, no `'unsafe-eval'`, no
-//      nonce, no hash, and no wildcard beyond the two Google documents.
+//      nonce, no hash, and no wildcard beyond the two Google documents and the one the owner
+//      ruled in for `img-src` alone (`https://*.licdn.com`, 2026-10-31).
 //
 // The red step this file was written against: the check, run over a page carrying a Google
 // Fonts stylesheet, has to report `fonts.googleapis.com is not on the allowed-host list` —
@@ -147,11 +150,16 @@ const SITE_SCRIPT = '/scripts/site.js'
 const EARLY_SCRIPT = '/scripts/consent-early.js'
 const BANNER_ID = 'consent-banner'
 
-// The campaign pages' own gate (G2.3, D401): its consent key, the attributes its configuration
-// is written in, and the identifiers `site.js` reads it out of the markup with. The key is the
-// same value `src/lib/consent-key.mjs` holds, and a change to it is a change to the gate.
-export const MARKETING_CONSENT_KEY = 'fugaro:marketing-consent'
+// The marketing gate (G2.3, D401 as the owner amended it on 2026-10-31): its consent key, the
+// attributes its configuration is written in, and the identifiers `site.js` reads it out of the
+// markup with. The key is the same value `src/lib/consent-key.mjs` holds, and a change to it is
+// a change to the gate.
+export const MARKETING_CONSENT_KEY = 'fugaro:marketing-consent:v2'
 export const MARKETING_KEY_ATTR = 'data-marketing-consent-key'
+// Whether a bar ASKS the marketing question. It is on every page's banner but the one that
+// only withdraws (the privacy page), which is the difference `site.js` reads to know whether a
+// press there may grant the marketing consent at all.
+const MARKETING_ASK_ATTR = 'data-marketing-ask'
 const MARKETING_PATH_ATTR = 'data-marketing-path'
 const META_ID_ATTR = 'data-meta-pixel-id'
 const META_ORIGIN_ATTR = 'data-meta-origin'
@@ -159,27 +167,35 @@ const LINKEDIN_ID_ATTR = 'data-linkedin-partner-id'
 const LINKEDIN_ORIGIN_ATTR = 'data-linkedin-origin'
 const CALENDLY_URL_ATTR = 'data-calendly-url'
 const CALENDLY_ORIGIN_ATTR = 'data-calendly-origin'
-// The attribute's own name, as it is written in markup: `site.js` reads the campaign decision
+// The attribute's own name, as it is written in markup: `site.js` reads the marketing decision
 // through a variable holding this string, and a file that names it is a file that asks the
-// campaign's question — which is what `gateFailures` scopes the whole campaign rule to.
+// marketing question — which is what `gateFailures` scopes the whole marketing rule to.
 const MARKETING_KEY_LITERAL = 'data-marketing-consent-key'
-// The eight attributes together, which is what says "this element is the campaign gate's
-// configuration": the one the loader keys off is the first, and the rest are what it then reads.
-const MARKETING_ATTRS = [
-  MARKETING_KEY_ATTR,
+// The site's own half of that configuration, on EVERY page's banner: the key a decision is
+// written under, the marker that says this bar asks the question, and the pixel's id and origin
+// — the pixel is the site's measurement, so it loads wherever a visitor reads (the owner's
+// ruling of 2026-10-31).
+const MARKETING_ATTRS = [MARKETING_KEY_ATTR, MARKETING_ASK_ATTR, META_ID_ATTR, META_ORIGIN_ATTR]
+// And the four campaign pages' own half: the page a configuration was built for, the insight
+// tag's partner id and origin, and the booking link and origin Calendly's widget is made of.
+// The element carrying the first of these is the one "the campaign's configuration" means, and
+// it carries the whole of this list.
+const CAMPAIGN_ATTRS = [
   MARKETING_PATH_ATTR,
-  META_ID_ATTR,
-  META_ORIGIN_ATTR,
   LINKEDIN_ID_ATTR,
   LINKEDIN_ORIGIN_ATTR,
   CALENDLY_URL_ATTR,
   CALENDLY_ORIGIN_ATTR,
 ]
+// Every attribute the gate's own configuration is written in, which is what "an element may
+// name a vendor host here" means: a host in any other attribute is a request wired around the
+// gate, whatever element carries it.
+const GATE_ATTRS = [...MARKETING_ATTRS, ...CAMPAIGN_ATTRS]
 
 /**
- * The three vendors' origins, from site.yaml: the campaign page's configuration carries these
- * and the deployed policy admits these, and a page naming one of their hosts anywhere else has
- * wired a request around the gate.
+ * The three vendors' origins, from site.yaml: the banner's configuration carries these and the
+ * deployed policy admits these, and a page naming one of their hosts anywhere else has wired a
+ * request around the gate.
  */
 function marketingOrigins(facts) {
   return [facts.marketing.metaOrigin, facts.marketing.linkedinOrigin, facts.marketing.calendlyOrigin]
@@ -188,6 +204,16 @@ function marketingOrigins(facts) {
 /** The three hosts above, as the strings a scan for a stray request matches on. */
 function marketingHosts(facts) {
   return new Set(marketingOrigins(facts).map((origin) => new URL(origin).host))
+}
+
+/**
+ * The two of the three that belong to the four campaign pages alone — the insight tag's and the
+ * widget's. The pixel's host is NOT one of them: the banner carries it on every page, because
+ * the pixel is the site's (the owner's ruling of 2026-10-31), so a scan that refused it outside
+ * the four would refuse the site's own configuration.
+ */
+function campaignHosts(facts) {
+  return new Set([facts.marketing.linkedinOrigin, facts.marketing.calendlyOrigin].map((origin) => new URL(origin).host))
 }
 
 /**
@@ -313,12 +339,15 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
   // The elements carrying the gate's configuration: the consent banner, with the property id
   // and the one admitted origin as attributes (W3.2).
   const configs = []
-  // And the campaign gate's configuration, which is the same element on the four campaign
-  // pages: the eight attributes are what say an element carries it (G2.3, D401), and the page
-  // it was built for is the one only the configuration carries.
+  // And the marketing gate's configuration: the site's own half is on every page's banner, and
+  // the four campaign pages' half is on those four (G2.3, D401). The page a configuration was
+  // built for is the one only the campaign half carries, which is what says an element IS the
+  // campaign configuration.
   const campaignConfigs = []
   const campaignKeys = []
-  const campaignHosts = marketingHosts(facts)
+  const marketingAsks = []
+  const vendors = marketingHosts(facts)
+  const campaignOnly = campaignHosts(facts)
 
   for (const el of walk(doc)) {
     for (const [name, value] of el.attrs) {
@@ -335,11 +364,12 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
       if (name === ANALYTICS_ORIGIN_ATTR) configs.push(el)
       if (name === MARKETING_KEY_ATTR) campaignKeys.push(el)
       if (name === MARKETING_PATH_ATTR) campaignConfigs.push(el)
+      if (name === MARKETING_ASK_ATTR) marketingAsks.push(el)
       // The three vendors' hosts, anywhere but the gate's own configuration attributes: an
       // attribute naming one is a request wired around the gate, whatever element carries it —
       // a preconnect, a `data-` hook a smaller script of someone's reads, a form action.
-      if (!MARKETING_ATTRS.includes(name)) {
-        for (const host of campaignHosts) {
+      if (!GATE_ATTRS.includes(name)) {
+        for (const host of vendors) {
           if (value.includes(host)) {
             at(el, `${name} names ${host}, one of the campaign gate's three origins: they reach the loader through the gate's own configuration attributes, so a page naming one anywhere else has wired a request around the consent (D401)`)
           }
@@ -488,43 +518,75 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
     if (scripts.length !== 1) out.push(`${rel}: carries ${scripts.length} ${SITE_SCRIPT} tags; the gate that reads the configuration above is that one file, loaded once (D183, W3.2)`)
   }
 
-  // The campaign gate's configuration (G2.3, D401). A page that carries it carries the whole
-  // of it — the loader reads eight attributes and a missing one is a loader that silently does
-  // nothing — and the three origins it names are site.yaml's own, so a page cannot point a
+  // The site's own half of the marketing gate, which every page's banner carries: the decision's
+  // key, the marker that says this bar asks the question, and the pixel's id and origin. The
+  // pixel is the site's measurement — it loads wherever a visitor reads, and fires its one
+  // PageView there (the owner's ruling of 2026-10-31) — so its configuration is on every page,
+  // and the origin it names is site.yaml's own (the deployed policy admits that exact host, O3).
+  for (const el of campaignKeys) {
+    if (el.name !== 'aside' || el.attrs.get('id') !== BANNER_ID) continue
+    for (const [attr, value] of [
+      [META_ID_ATTR, facts.marketing.metaPixelID],
+      [META_ORIGIN_ATTR, facts.marketing.metaOrigin],
+    ]) {
+      if (el.attrs.get(attr) !== value) {
+        out.push(`${rel}: the banner's ${attr} is ${el.attrs.get(attr)} and site.yaml names ${value}: the pixel's id and origin are one fact each, and the pixel loads on every page (the owner's ruling of 2026-10-31)`)
+      }
+    }
+  }
+
+  // The campaign half of the marketing gate (G2.3, D401). A page that carries it carries the
+  // whole of it — the loaders read every attribute and a missing one is a loader that silently
+  // does nothing — and the two origins it names are site.yaml's own, so a page cannot point a
   // vendor's script somewhere else. Which pages carry it is held by the case below, over the
   // built artifact: this reads the configuration, that one reads who has it.
   if (campaignConfigs.length !== 0 && campaignConfigs.length !== 1) {
-    out.push(`${rel}: ${campaignConfigs.length} elements carry ${MARKETING_PATH_ATTR}; the campaign gate's configuration is written once, in the banner the visitor answers`)
+    out.push(`${rel}: ${campaignConfigs.length} elements carry ${MARKETING_PATH_ATTR}; the campaign configuration is written once, in the banner the visitor answers`)
   }
-  // Two other elements may carry the campaign's key and nothing else, and each is a page where
-  // the decision is read or taken back rather than asked:
+  // Two elements carry the decision's key, and each is a place the decision is read rather than
+  // a second answer to it:
   //
-  //   - the banner's early-decision tag (`consent-early.js`, the owner's ruling of 2026-10-23),
-  //     which is the whole reason a campaign page carries the key where the banner is drawn from
-  //     the first frame; and
-  //   - the bar that always offers the choice — the privacy page, where a visitor withdraws
-  //     (`data-consent-always`). A campaign page's bar is gone once it has been answered, so
-  //     without this the campaign decision could be granted and never taken back; the key is
-  //     what `site.js` writes the refusal under, and the refusal is the only answer that bar may
-  //     give (a page that never named the three vendors grants nothing).
+  //   - the consent banner, which asks the question (the marker is on it on every page but the
+  //     one that only withdraws) and is the element the consumers below read; and
+  //   - its early-decision tag (`consent-early.js`, the owner's ruling of 2026-10-23), which is
+  //     the whole reason the key is in the markup where the banner is drawn from the first
+  //     frame.
   //
-  // Anywhere else, a key without a configuration is a decision nothing reads.
+  // A key anywhere else is a decision nothing reads.
   for (const el of campaignKeys) {
     if (el === campaignConfigs[0]) continue
-    const carried = MARKETING_ATTRS.filter((name) => el.attrs.has(name))
+    const carried = GATE_ATTRS.filter((name) => el.attrs.has(name))
     const early = el.name === 'script' && el.attrs.get('src') === EARLY_SCRIPT && carried.length === 1
-    const withdrawing = el.name === 'aside' && el.attrs.get('id') === BANNER_ID && el.attrs.get('data-consent-always') === 'true' && carried.length === 1
-    if (!early && !withdrawing) {
-      out.push(`${rel}: <${el.name}> carries ${MARKETING_KEY_ATTR} and is neither the consent banner, its early decision (${EARLY_SCRIPT}) nor the bar that always offers the choice: the campaign's key belongs to the banner that asks the campaign question, or to the page a visitor withdraws on, and a key anywhere else is a decision nothing reads`)
+    const banner = el.name === 'aside' && el.attrs.get('id') === BANNER_ID
+    if (!early && !banner) {
+      out.push(`${rel}: <${el.name}> carries ${MARKETING_KEY_ATTR} and is neither the consent banner nor its early decision (${EARLY_SCRIPT}): the marketing key belongs to the banner that asks the question, and a key anywhere else is a decision nothing reads`)
+    }
+  }
+  // And which bar may GRANT the marketing consent (the owner's ruling of 2026-10-31): the
+  // question is asked on every page but one — the bar that always offers the choice, which is
+  // the page a visitor takes a decision back on. That bar carries the key without the marker,
+  // so `site.js` writes a refusal with it and never a grant; every other bar that carries the
+  // key asks the question, and a bar that asks it carries the key a grant is stored under.
+  for (const el of campaignKeys) {
+    if (el.name !== 'aside' || el.attrs.get('id') !== BANNER_ID) continue
+    const asks = el.attrs.has(MARKETING_ASK_ATTR)
+    const withdrawing = el.attrs.get('data-consent-always') === 'true'
+    if (asks === withdrawing) {
+      out.push(`${rel}: the banner ${asks ? 'asks the marketing question' : 'does not ask the marketing question'} and ${withdrawing ? 'always offers the choice' : 'does not'}: the question is asked on every page but the one a visitor withdraws on, where site.js may only take the answer back (the owner's ruling of 2026-10-31)`)
+    }
+  }
+  for (const el of marketingAsks) {
+    if (!el.attrs.has(MARKETING_KEY_ATTR)) {
+      out.push(`${rel}: <${el.name}> carries ${MARKETING_ASK_ATTR} without ${MARKETING_KEY_ATTR}, so the question it asks stores no answer`)
     }
   }
   for (const el of campaignConfigs) {
     if (!el.attrs.has(MARKETING_KEY_ATTR)) {
-      out.push(`${rel}: the campaign gate's configuration carries no ${MARKETING_KEY_ATTR}, so the question it asks stores no answer`)
+      out.push(`${rel}: the campaign configuration carries no ${MARKETING_KEY_ATTR}, so the question it asks stores no answer`)
     }
-    const missing = MARKETING_ATTRS.filter((name) => !el.attrs.has(name))
+    const missing = CAMPAIGN_ATTRS.filter((name) => !el.attrs.has(name))
     if (missing.length) {
-      out.push(`${rel}: the campaign gate's configuration carries no ${missing.join(', no ')}: the loader reads every one of them, and a missing one is a loader that does nothing`)
+      out.push(`${rel}: the campaign configuration carries no ${missing.join(', no ')}: the loaders read every one of them, and a missing one is a loader that does nothing`)
     }
     if (el.attrs.get('id') !== BANNER_ID || !el.attrs.has('data-consent-key')) {
       out.push(`${rel}: the campaign gate's configuration is not on the consent banner: the element that asks the campaign's question is the element that carries its key and its configuration`)
@@ -539,12 +601,11 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
       out.push(`${rel}: the campaign gate's configuration is built for ${el.attrs.get(MARKETING_PATH_ATTR)} and this page is ${here}, so the loader would run on the page it was not built for (F18)`)
     }
     for (const [attr, origin] of [
-      [META_ORIGIN_ATTR, facts.marketing.metaOrigin],
       [LINKEDIN_ORIGIN_ATTR, facts.marketing.linkedinOrigin],
       [CALENDLY_ORIGIN_ATTR, facts.marketing.calendlyOrigin],
     ]) {
       if (el.attrs.get(attr) !== origin) {
-        out.push(`${rel}: ${attr} is ${el.attrs.get(attr)} and site.yaml names ${origin}: the three loaders' origins are one fact each, and the deployed policy admits those exact hosts (O3)`)
+        out.push(`${rel}: ${attr} is ${el.attrs.get(attr)} and site.yaml names ${origin}: the two loaders' origins are one fact each, and the deployed policy admits those exact hosts (O3)`)
       }
     }
     const booking = el.attrs.get(CALENDLY_URL_ATTR) ?? ''
@@ -574,28 +635,31 @@ export function gateFailures(js, rel, facts) {
   if (!/(?:stored\s*\([^)]*\)|getItem\s*\([^)]*\))[^;{}]*===\s*(?:GRANTED|'granted'|"granted")/.test(js)) {
     out.push(`${rel}: the gate never compares the decision it read out of storage with 'granted', so the flag alone would decide whether a Google script loads (D93)`)
   }
-  // The campaign's own half of the same contract (G2.3, D401): one file, two questions. Every
-  // part of the campaign configuration is read out of the campaign page's banner — the page the
-  // loader was built for, the two vendor ids, the three origins their scripts come from and the
-  // booking link the embed is made of — so a non-campaign page, which carries none of them,
-  // loads none of the three. And the decision is compared with the one answer that loads
+  // The marketing half of the same contract (G2.3, D401 as the owner amended it on 2026-10-31):
+  // one file, two questions. Every part of the marketing configuration is read out of the
+  // banner — the decision's key and the marker that says this bar asks the question, the pixel's
+  // id and origin, and, where the page carries them, the page a configuration was built for, the
+  // insight tag's partner id, the booking link the embed is made of and the two origins those
+  // loaders come from — because a part the loader never reads is a part that does nothing. The
+  // pixel's id and origin are read on EVERY page: the pixel is the site's measurement, so it
+  // loads wherever a visitor reads. And the decision is compared with the one answer that loads
   // anything, in one statement, the way the analytics decision is: a second question is not a
   // second rule.
   //
-  // It binds a file that reads the campaign decision at all: the rule is that a gate which asks
-  // the campaign's question reads the whole configuration the banner carries for it, so this is
-  // scoped to the attribute that makes the file a campaign gate, not to scripts in general.
+  // It binds a file that reads the marketing decision at all, and it is scoped to the attribute
+  // that makes the file a marketing gate, not to scripts in general.
   if (js.includes(MARKETING_KEY_LITERAL)) {
     for (const name of [
-      'MARKETING_KEY_ATTR', 'MARKETING_PATH_ATTR', 'META_ID_ATTR', 'META_ORIGIN_ATTR',
-      'LINKEDIN_ID_ATTR', 'LINKEDIN_ORIGIN_ATTR', 'CALENDLY_URL_ATTR', 'CALENDLY_ORIGIN_ATTR',
+      'MARKETING_KEY_ATTR', 'MARKETING_ASK_ATTR', 'META_ID_ATTR', 'META_ORIGIN_ATTR',
+      'MARKETING_PATH_ATTR', 'LINKEDIN_ID_ATTR', 'LINKEDIN_ORIGIN_ATTR', 'CALENDLY_URL_ATTR',
+      'CALENDLY_ORIGIN_ATTR',
     ]) {
       if (!js.includes(name)) {
-        out.push(`${rel}: the gate does not read ${name}: the campaign page's banner carries the whole configuration, and a part of it the loader never reads is a part of it that does nothing (G2.3)`)
+        out.push(`${rel}: the gate does not read ${name}: the banner carries the whole configuration, and a part of it the loader never reads is a part of it that does nothing (G2.3)`)
       }
     }
     if (!/(?:read|stored|getItem)\s*\([^)]*MARKETING_KEY_ATTR[^;{}]*===\s*(?:GRANTED|'granted'|"granted")/.test(js)) {
-      out.push(`${rel}: the gate never compares the campaign decision it read out of storage with 'granted', so a campaign page's three vendors would load on the flag alone (D401)`)
+      out.push(`${rel}: the gate never compares the marketing decision it read out of storage with 'granted', so the pixel and the campaign pages' two vendors would load on the flag alone (D401)`)
     }
   }
   return out
@@ -780,6 +844,53 @@ test('with analytics on, the one admitted origin is the banner configuration, an
   }
 })
 
+test('the site\'s pixel is switched on, on every page, and only after the marketing consent', () => {
+  // **This case is the red step of the owner's ruling of 2026-10-31.** Before it, the pixel was
+  // the fourth campaign page's like the other two vendors and its id was empty: the first
+  // assertion below failed against every page of the artifact, the second against all but the
+  // four, and the third against all of them.
+  //
+  // The pixel is the SITE's measurement, so its configuration and the marker that says this bar
+  // asks the marketing question are on every page's banner — including the privacy statement's,
+  // which carries the configuration because a visitor who granted elsewhere reads the page with
+  // the pixel running, and carries no marker because there the bar only takes an answer back.
+  const pages = builtPages(DIST)
+  assert.ok(pages.length > 4, `${pages.length} built pages: the site has more than the four campaign pages, so "every page" is a claim about more than them`)
+  for (const page of pages) {
+    const banner = [...tokenize(page.html)].find(
+      (t) => t.kind === 'start' && t.attrs.get('id') === BANNER_ID && t.attrs.has(MARKETING_KEY_ATTR),
+    )
+    assert.ok(banner, `${page.rel}: no element carries ${MARKETING_KEY_ATTR} on the consent banner, so the page asks no marketing question and the pixel is switched off there (F17)`)
+    assert.equal(
+      banner.attrs.get(META_ID_ATTR),
+      FACTS.marketing.metaPixelID,
+      `${page.rel}: the banner carries no pixel id, or not the one site.yaml carries: the pixel loads on every page, and an absent id is the loader switched off (the owner's ruling of 2026-10-31)`,
+    )
+    assert.ok(
+      banner.attrs.get(META_ID_ATTR),
+      `${page.rel}: the banner carries an empty pixel id, so the pixel fires nothing on the page: the OWNER supplied the id on 2026-10-31 and the switch is on (R3)`,
+    )
+    assert.equal(
+      banner.attrs.get(META_ORIGIN_ATTR),
+      FACTS.marketing.metaOrigin,
+      `${page.rel}: the banner names ${banner.attrs.get(META_ORIGIN_ATTR)} as the pixel's origin, and site.yaml names ${FACTS.marketing.metaOrigin}: the deployed policy admits that exact host (O3)`,
+    )
+    assert.equal(
+      banner.attrs.get(MARKETING_KEY_ATTR),
+      MARKETING_CONSENT_KEY,
+      `${page.rel}: the marketing decision is stored under ${banner.attrs.get(MARKETING_KEY_ATTR)}, not under ${MARKETING_CONSENT_KEY}: the key's version moves with the question, and the question widened on 2026-10-31 (F17, D401)`,
+    )
+    // And the question is asked here, except on the one page a visitor takes an answer back on:
+    // a bar that carries the configuration without the marker may not grant, so the pixel would
+    // never load for a visitor who reads only that page.
+    assert.equal(
+      banner.attrs.get(MARKETING_ASK_ATTR),
+      page.rel === 'privacy/index.html' ? undefined : 'true',
+      `${page.rel}: ${page.rel === 'privacy/index.html' ? 'the privacy statement\'s bar carries the ask marker' : 'the bar carries no ask marker'}, so \`site.js\` ${page.rel === 'privacy/index.html' ? 'would let a press there grant the marketing consent' : 'would write no grant and the pixel would never load'} (the owner's ruling of 2026-10-31)`,
+    )
+  }
+})
+
 test('the campaign gate\'s configuration is on the four campaign pages and on no other page', () => {
   // **This case is the red step G2.3 was written against.** Run over the build before the task
   // existed, it failed twice over: the four campaign pages carried no `data-marketing-path` (so
@@ -788,9 +899,10 @@ test('the campaign gate\'s configuration is on the four campaign pages and on no
   // halves of one defect read from two ends, a configuration nothing carries and a policy that
   // would block the load that configuration makes.
   //
-  // The configuration is keyed on `data-marketing-path`, not on the key: the key is also what
-  // the page a visitor withdraws on carries, without any of the configuration, so a bar that
-  // carries the key is not a page that has the vendors' addresses in it.
+  // The configuration is keyed on `data-marketing-path`, not on the key: the key is on every
+  // page now — the pixel is the site's, so every bar stores the marketing answer (the owner's
+  // ruling of 2026-10-31) — so a bar that carries the key is not a page that has the two
+  // campaign vendors' addresses in it.
   const campaign = builtPages(DIST).filter((page) => page.html.includes(`${MARKETING_PATH_ATTR}="`))
   assert.deepEqual(
     campaign.map((page) => page.rel).sort(),
@@ -816,10 +928,10 @@ test('the campaign gate\'s configuration is on the four campaign pages and on no
     ]) {
       assert.equal(configs[0].attrs.get(attr), FACTS.marketing[name], `${page.rel}: ${attr} is not the origin site.yaml names`)
     }
-    // The two ids are carried even while they are empty, and the empty state is the loader
-    // switched off: no identifier the owner has not supplied is anywhere in the artifact (R3).
+    // Both ids are carried here, and both are the owner's: the attribute is always written, so
+    // switching a vendor off is an empty value in site.yaml rather than a missing attribute (R3).
     for (const [attr, name] of [[META_ID_ATTR, 'metaPixelID'], [LINKEDIN_ID_ATTR, 'linkedinPartnerID']]) {
-      assert.ok(configs[0].attrs.has(attr), `${page.rel}: the campaign gate's configuration carries no ${attr}, so the loader has nothing to switch on when the owner supplies one`)
+      assert.ok(configs[0].attrs.has(attr), `${page.rel}: the campaign gate's configuration carries no ${attr}, so the loader has nothing to switch on`)
       assert.equal(configs[0].attrs.get(attr), FACTS.marketing[name], `${page.rel}: ${attr} is not the id site.yaml carries`)
     }
     assert.equal(
@@ -830,28 +942,14 @@ test('the campaign gate\'s configuration is on the four campaign pages and on no
   }
 
   // And the other half, read from the other end: a page that does not carry the configuration
-  // carries none of the three origins and none of the campaign's configuration, so a visitor who
-  // never opens a campaign page is unchanged by any of this (F17).
-  const hosts = [...marketingHosts(FACTS)]
+  // carries neither of the two campaign vendors' origins and none of their configuration, so a
+  // visitor who never opens a campaign page is untouched by them (F17, F18). The pixel is NOT
+  // one of the two scanned for here: its origin is on every page's banner, on purpose.
+  const hosts = [...campaignHosts(FACTS)]
   const campaignRels = new Set(campaign.map((page) => page.rel))
   for (const page of builtPages(DIST).filter((one) => !campaignRels.has(one.rel))) {
     for (const host of hosts) {
-      assert.ok(!page.html.includes(host), `${page.rel} names ${host}, one of the campaign gate's three origins, and it is not a campaign page: the origins reach the loader through the four campaign pages' own banner (F18)`)
-    }
-    // The key may be here, on one element only: the bar that always offers the choice, which is
-    // the page a visitor withdraws on — it carries the decision's key and none of the
-    // configuration, and `site.js` writes a refusal with it and never a grant. The key's literal
-    // is also a disclosure, and the privacy statement is the one page outside the four that
-    // names it, exactly as it names the analytics key.
-    if (page.rel !== 'privacy/index.html') {
-      assert.ok(!page.html.includes(MARKETING_CONSENT_KEY), `${page.rel} names the campaign decision's key and is neither a campaign page nor the privacy statement that discloses it`)
-    }
-    for (const el of [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.attrs.has(MARKETING_KEY_ATTR))) {
-      assert.equal(
-        el.attrs.get('data-consent-always'),
-        'true',
-        `${page.rel} carries the campaign decision's key on <${el.name}> and is not a campaign page: outside the four, the key belongs to the bar that always offers the choice, which is where a decision is taken back (W1.12). The gate's configuration — ${MARKETING_PATH_ATTR}, the ids and the three origins — is the four pages' alone (F18)`,
-      )
+      assert.ok(!page.html.includes(host), `${page.rel} names ${host}, one of the two origins the campaign pages' banner carries for the insight tag and the booking widget, and it is not a campaign page: they reach their loaders through the four campaign pages' own banner (F18)`)
     }
     assert.ok(!page.html.includes(MARKETING_PATH_ATTR), `${page.rel} carries the campaign gate's configuration and is not a campaign page`)
   }
@@ -860,7 +958,7 @@ test('the campaign gate\'s configuration is on the four campaign pages and on no
     if (campaign.some((page) => page.rel === rel)) continue
     const body = readFileSync(path.join(DIST, rel), 'utf8')
     for (const host of hosts) {
-      assert.ok(!body.includes(host), `${rel} names ${host}: the campaign's origins reach the artifact through the four campaign pages' banner and nowhere else, and the site's one script names no host at all (G2.3)`)
+      assert.ok(!body.includes(host), `${rel} names ${host}: the campaign's two origins reach the artifact through the four campaign pages' banner and nowhere else, and the site's one script names no host at all (G2.3)`)
     }
   }
 })
@@ -884,6 +982,10 @@ test('with analytics off, no page and no file of the artifact names the analytic
     assert.ok(!page.html.includes(ANALYTICS_HOST), `${page.rel} names the analytics origin while the flag is off`)
     assert.ok(!page.html.includes(ANALYTICS_ID_ATTR), `${page.rel} carries the gate's configuration while the flag is off`)
     assert.ok(!page.html.includes(CONSENT_KEY), `${page.rel} carries the consent key while the flag is off`)
+    // The marketing question is asked by that same bar, so the flag that switches the banner off
+    // switches the pixel's configuration off with it: one bar, one state (F17).
+    assert.ok(!page.html.includes(MARKETING_CONSENT_KEY), `${page.rel} carries the marketing key while the flag is off`)
+    assert.ok(!page.html.includes(META_ID_ATTR), `${page.rel} carries the pixel's configuration while the flag is off`)
   }
   for (const rel of filesUnder(built.dist)) {
     assert.ok(

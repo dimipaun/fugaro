@@ -100,34 +100,43 @@ analytics:
   enabled: true
   measurement_id: "G-DZ4F35D3EH"
 
-# The campaign measurement's configuration (plan Task G2.3, reconciliation F17, F18,
-# F22 and D401): the pixel's id, the insight tag's partner id, and the one origin
-# each of the three loaders fetches its script from. It is a separate block from
-# `analytics` above because it is a separate question, asked only on the four
-# campaign pages and stored under its own key -- and a separate origin list
-# because these origins are admitted by the consent check, not by
+# The marketing measurement's configuration (plan Task G2.3, reconciliation F17,
+# F18, F22 and D401 as the owner amended it on 2026-10-31): the pixel's id, the
+# insight tag's partner id, and the one origin each of the three loaders fetches
+# its script from. It is a separate block from `analytics` above because it is a
+# separate question, asked by the same bar under its own key -- and a separate
+# origin list because these origins are admitted by the consent check, not by
 # `allowed_hosts` below, which lists the hosts the site LINKS to.
 #
-# **The partner id is the owner's, supplied on 2026-10-31; the pixel id is still
-# empty, and an empty id disables its loader.** This repository publishes no
-# identifier the owner did not supply: an invented id would send a campaign
-# page's visitors into a stranger's ad account, which is the one failure this
-# file cannot take back. So the insight tag loads its script on the four campaign
-# pages behind the campaign consent, and the pixel is wired, gated and tested and
-# loads nothing until a line here carries the owner's own id. The origins are
-# exact hosts and not wildcards: the plan pins the narrowest origin each vendor
-# documents (O3), and `website/test/origins.mjs` holds the deployed policy to
-# this exact list -- with one wildcard, `https://*.licdn.com` in `img-src`, which
-# the owner ruled in explicitly and for that directive alone. Neither id is
-# written anywhere else; the deployed policy is firebase.json's and its token
-# list is the test's.
+# **Both ids are the owner's, supplied on 2026-10-31.** This repository publishes
+# no identifier the owner did not supply: an invented id would send a page's
+# visitors into a stranger's ad account, which is the one failure this file
+# cannot take back. An empty id is a loader that does not load, which is how a
+# vendor is switched off here without touching the gate or the deployed policy.
+#
+# The three loaders do not all run in the same place (the owner's ruling of
+# 2026-10-31): **the pixel is the SITE's**, so it loads on every page of the site
+# behind the marketing consent and fires its one PageView wherever the visitor
+# reads, while the insight tag and Calendly's embed are the four campaign pages'
+# -- `website/data/landing.yaml` writes those paths, and the banner carries the
+# page each configuration was built for so the two loaders run there and nowhere
+# else (F18). The consent question those three wait for is one question with one
+# key (`src/lib/consent-key.mjs`), asked on every page but the privacy
+# statement's, which is where a decision is taken back.
+#
+# The origins are exact hosts and not wildcards: the plan pins the narrowest
+# origin each vendor documents (O3), and `website/test/origins.mjs` holds the
+# deployed policy to this exact list -- with one wildcard, `https://*.licdn.com`
+# in `img-src`, which the owner ruled in explicitly and for that directive
+# alone. Neither id is written anywhere else; the deployed policy is
+# firebase.json's and its token list is the test's.
 #
 # The Calendly link is NOT here: it is `website/data/landing.yaml`'s
 # `calendly_url`, one value with one home, and the banner carries it to the
 # loader. What is here is only the origin Calendly's own widget script and
 # stylesheet come from.
 marketing:
-  meta_pixel_id: ""
+  meta_pixel_id: "1128028360082828"
   meta_origin: "https://connect.facebook.net"
   linkedin_partner_id: "10341636"
   linkedin_origin: "https://snap.licdn.com"

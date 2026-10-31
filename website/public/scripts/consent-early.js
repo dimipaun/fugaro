@@ -12,15 +12,20 @@
 //
 // It reads storage and nothing else: it loads nothing, sets no cookie and writes nothing to
 // storage. With scripts off it never runs, the attribute is never set and the banner is never
-// drawn, which is right: with scripts off nothing can be loaded from Google either. The key and
-// the "always" flag are its own tag's data attributes, written by the layout from
-// `src/lib/consent-key.mjs`.
+// drawn, which is right: with scripts off nothing can be loaded from Google or from a marketing
+// vendor either, because a decision is stored and read by script — which is also why the site
+// ships no `<noscript>` pixel, or a `<noscript>` anything: a tag in one would load for a visitor
+// who has decided nothing, before any consent could be asked (the owner's question of
+// 2026-10-31). The keys and the "always" flag are its own tag's data attributes, written by the
+// layout from `src/lib/consent-key.mjs`.
 //
-// **A campaign page carries a second key** (G2.3, D401): the page's third-party measurement is
-// asked by the same bar under its own decision, so a visitor who answered the site's question
-// and has not answered the campaign's is still undecided about the bar they are looking at, and
-// the bar has to be in its place from the first frame for that visitor too. The second key is
-// absent from every other page's tag, and a page that carries neither asks nothing.
+// **Every page carries a second key** (G2.3, D401 as the owner amended it on 2026-10-31): the
+// marketing measurement — the pixel on every page, and the two campaign vendors on the four
+// campaign pages — is asked by the same bar under its own decision, so a visitor who answered
+// the site's question and has not answered the marketing one is still undecided about the bar
+// they are looking at, and the bar has to be in its place from the first frame for that visitor
+// too. A tag that carries neither key asks nothing, which is the state a build with
+// `site.yaml`'s analytics flag off is in.
 ;(function () {
   var tag = document.currentScript
   if (!tag) return

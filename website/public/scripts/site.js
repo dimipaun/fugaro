@@ -824,12 +824,16 @@
   var ANALYTICS_ORIGIN_ATTR = 'data-analytics-origin'
   var SITE_KEY_ATTR = 'data-consent-key'
 
-  // The campaign's own measurement (G2.3, D401): its decision's key, the page the
-  // configuration was built for, the two vendor ids and the three origins their scripts come
-  // from, and the booking link the embed is built from. Every one of them is on the four
-  // campaign pages' banner and on no other page, so the loaders at the end of this section are
-  // inert everywhere else without a list of the campaign paths repeated here.
+  // The marketing consent (G2.3 and D401, as the owner amended D401 on 2026-10-31): its
+  // decision's key and the marker saying whether this bar asks the question, both on every
+  // page; the pixel's id and the origin its script comes from, on every page too, because the
+  // pixel is the site's and fires its PageView wherever the visitor reads; and the campaign page
+  // the rest of the configuration was built for — the insight tag's partner id, the two origins
+  // those vendors' scripts come from and the booking link the embed is made of — on the four
+  // campaign pages and on no other page, so the loaders that read those are inert everywhere
+  // else without a list of the campaign paths repeated here.
   var MARKETING_KEY_ATTR = 'data-marketing-consent-key'
+  var MARKETING_ASK_ATTR = 'data-marketing-ask'
   var MARKETING_PATH_ATTR = 'data-marketing-path'
   var META_ID_ATTR = 'data-meta-pixel-id'
   var META_ORIGIN_ATTR = 'data-meta-origin'
@@ -995,16 +999,30 @@
     'li_gc',
   ]
 
-  // Whether GA4 is loaded, which is the one thing the key events of the campaign pages wait
-  // for (G2.4): `load()` sets it, a withdrawal clears it, and nothing else reads or writes it.
-  // It is the gate's own state rather than a second reading of storage, so a visitor who has
-  // just answered the banner is measured from the same press that loaded the tag.
+  // Whether GA4 is loaded, which is the one thing its half of the key events waits for (G2.4):
+  // `load()` sets it, a withdrawal clears it, and nothing else reads or writes it. It is the
+  // gate's own state rather than a second reading of storage, so a visitor who has just answered
+  // the banner is measured from the same press that loaded the tag. `tracking` is the pixel's
+  // half of the same state, set and cleared by the `marketing()` gate below: the two questions
+  // are two answers, so each event is sent to the one that was granted and to no other.
   var measuring = false
+  var tracking = false
 
   // One call into the tag's queue. The queue is created by `load()` below, and the two callers
   // are both behind a check that it exists: this is the gate's own voice and not a second one.
   function gtag() {
     window.dataLayer.push(arguments)
+  }
+
+  // One vendor's script, appended to the head. The three loaders that fetch one (the pixel, the
+  // insight tag and Calendly's widget) each build their queue first, so nothing they are asked
+  // for before the fetch lands is lost; the address is always an origin the banner carries plus
+  // a path, and this file names neither.
+  function fetchScript(origin, path) {
+    var tag = document.createElement('script')
+    tag.async = true
+    tag.src = origin + path
+    document.head.appendChild(tag)
   }
 
   function analytics(banner) {
@@ -1038,10 +1056,7 @@
         page_location: bare(window.location && window.location.origin) + bare(window.location && window.location.pathname),
         page_referrer: bare(document.referrer),
       })
-      var script = document.createElement('script')
-      script.async = true
-      script.src = origin + '/gtag/js?id=' + encodeURIComponent(id)
-      document.head.appendChild(script)
+      fetchScript(origin, '/gtag/js?id=' + encodeURIComponent(id))
     }
 
     function withdraw() {
@@ -1086,22 +1101,92 @@
     })
   }
 
-  // ---- the campaign's own measurement, behind its own consent (G2.3, D401) ----------------
+  // ---- the pixel, on every page behind the marketing consent (G2.3, D401) ------------------
   //
-  // Three vendors the ads bring with them: Meta's pixel, LinkedIn's insight tag, and Calendly's
-  // widget — the last one the inline booking embed, which is why the campaign's primary call to
-  // action stays a plain link a visitor who declines still has. None of them is fetched until
-  // the visitor grants THIS decision, which is stored under its own key so that answering the
-  // site's analytics question does not answer this one, and so that a visitor who never opens a
-  // campaign page is asked nothing new (F17).
+  // The owner amended D401 on 2026-10-31: the pixel is the SITE's measurement, so it loads on
+  // every page of the site, fires its one PageView there, and is asked for at the banner on
+  // every page — while LinkedIn's insight tag and Calendly's widget stay the four campaign
+  // pages'. Nothing is fetched until the visitor grants this decision, which is stored under its
+  // own key so that answering the site's analytics question does not answer this one (F17).
   //
-  // The configuration is the banner's: the two ids site.yaml carries (empty until the owner
-  // supplies them, and an empty id is a loader that does not load), the three origins, the
-  // booking link, and the page the configuration was built for. That last one is the path
-  // check: the loader runs on the page it was built for and on no other, so a bar copied
-  // anywhere else loads nothing there (F18's "those pages only", O2). (This file names no host,
-  // not even in a comment: the origins reach it through the markup, and a build of a
-  // non-campaign page carries none of them.)
+  // The configuration is the banner's: the pixel's id and the origin its script comes from
+  // (site.yaml's, and an empty id is a loader that does not load), and the address the visit is
+  // reported under — the page's origin and path, with no query string and no fragment, so the
+  // campaign parameters a visitor arrived through stay the referrer's and are not passed on
+  // (F22). (This file names no host, not even in a comment: the origin reaches it through the
+  // markup.)
+  function marketing(banner) {
+    var key = banner.getAttribute(MARKETING_KEY_ATTR)
+    if (!key) return
+    var origin = banner.getAttribute(META_ORIGIN_ATTR)
+    var id = banner.getAttribute(META_ID_ATTR)
+    var page = bare(window.location && window.location.origin) + bare(window.location && window.location.pathname)
+    var loaded = false
+
+    // The pixel: its own queue first, so nothing is lost to the fetch, then its script. An id
+    // the owner has not supplied is a loader that does not load — no queue, no script, and the
+    // three key events have nothing to be sent into — which is the state every page is in until
+    // `site.yaml` carries one.
+    function load() {
+      if (!origin || !id) return
+      tracking = true
+      if (loaded) return
+      loaded = true
+      window.fbq = window.fbq || function () {
+        window.fbq.queue.push(Array.prototype.slice.call(arguments))
+      }
+      window.fbq.queue = window.fbq.queue || []
+      window.fbq('init', id)
+      window.fbq('track', 'PageView', { page_location: page })
+      fetchScript(origin, '/en_US/fbevents.js')
+    }
+
+    // A withdrawal stops what it can and says nothing it cannot do. The pixel takes a consent
+    // command and is told; no script already fetched can be unfetched, so the senders stop on
+    // the next page, and the privacy page says so. What is this site's to remove is removed:
+    // every first-party cookie the pixel and the insight tag set, which is the list above, read
+    // out of the jar before anything is written so that nothing else is touched.
+    //
+    // It is not gated on this page having loaded anything, because the withdrawal is not always
+    // made on the page that loaded: a visitor who accepted the pixel on one page withdraws on
+    // the privacy page, where it never runs. That list is the whole of what is read, so a
+    // visitor who never accepted has nothing deleted — and nothing is written but an expiry on a
+    // cookie this host already held.
+    function withdraw() {
+      tracking = false
+      if (window.fbq) window.fbq('consent', 'revoke')
+      var host = (window.location && window.location.hostname) || ''
+      var held = heldNames()
+      for (var i = 0; i < MARKETING_COOKIES.length; i++) {
+        if (held.indexOf(MARKETING_COOKIES[i]) !== -1) drop(MARKETING_COOKIES[i], host)
+      }
+    }
+
+    if (read(banner, MARKETING_KEY_ATTR) === GRANTED) load()
+    window.addEventListener(CONSENT_EVENT, function (event) {
+      var decision = event && event.detail && event.detail.marketing
+      if (decision !== GRANTED && decision !== DENIED) return
+      if (decision === GRANTED) load()
+      else withdraw()
+    })
+  }
+
+  // ---- the campaign pages' own two vendors, behind the same consent (G2.3, D401) -----------
+  //
+  // Two vendors the ads bring with them, on the four campaign pages and on no other page:
+  // LinkedIn's insight tag, and Calendly's widget — the last one the inline booking embed, which
+  // is why the campaign's primary call to action stays a plain link a visitor who declines still
+  // has. Neither is fetched until the visitor grants the marketing consent the pixel waits for
+  // too: it is one decision, asked once by one banner, and the two halves of it load where each
+  // vendor belongs.
+  //
+  // The configuration is the banner's: the page it was built for, the partner id, the two
+  // origins their scripts come from and the booking link. The page is the path check: these two
+  // loaders run on the page the configuration was built for and on no other, so a bar copied
+  // anywhere else loads nothing there (F18's "those pages only", O2) — which is what keeps the
+  // insight tag and the embed off the site's other pages. (This file names no host, not even in
+  // a comment: the origins reach it through the markup, and a build of a non-campaign page
+  // carries none of them.)
   // The campaign parameters the page may pass on, by name (G2.4, spec §6): the five the
   // agenda's links carry. A key outside this list is dropped rather than forwarded — the page
   // adds a query to one address, and that address is the owner's, so what goes on it is a list
@@ -1148,16 +1233,14 @@
   }
 
   function campaign(banner) {
-    var key = banner.getAttribute(MARKETING_KEY_ATTR)
-    if (!key) return
-    // What asks the question is the configuration; a bar that carries the key without one is
-    // the page a visitor withdraws on (W1.12), which loads none of the three and is here for
-    // the withdrawal at the end of this function.
+    // The configuration is what says this page is one of the four; a bar that carries the key
+    // without one (the privacy page) has none of the two vendors to load.
     var built = banner.getAttribute(MARKETING_PATH_ATTR)
+    if (built === null) return
     var here = bare(window.location && window.location.pathname)
     // And the loader runs on the page the configuration was built for and no other, so a
     // configuration copied to another page loads nothing there (F18's "those pages only", O2).
-    var mine = built !== null && route(here) === route(built)
+    var mine = route(here) === route(built)
 
     // The page as the site reports it: its origin and its path, with no query string and no
     // fragment — the campaign parameters a visitor arrived through are the referrer's, not
@@ -1165,25 +1248,6 @@
     // the window (F22).
     var page = bare(window.location && window.location.origin) + here
     var loaded = false
-
-    function fetchScript(origin, path) {
-      var tag = document.createElement('script')
-      tag.async = true
-      tag.src = origin + path
-      document.head.appendChild(tag)
-    }
-
-    // The pixel: its own queue first, so nothing is lost to the fetch, and then its script.
-    function pixel(origin, id) {
-      if (!origin || !id) return
-      window.fbq = window.fbq || function () {
-        window.fbq.queue.push(Array.prototype.slice.call(arguments))
-      }
-      window.fbq.queue = window.fbq.queue || []
-      window.fbq('init', id)
-      window.fbq('track', 'PageView', { page_location: page })
-      fetchScript(origin, '/en_US/fbevents.js')
-    }
 
     // The insight tag: the partner id on the window where its own snippet reads it, then its
     // script — and the same reported address, under the same key.
@@ -1219,72 +1283,61 @@
     function load() {
       if (!mine || loaded) return
       loaded = true
-      pixel(banner.getAttribute(META_ORIGIN_ATTR), banner.getAttribute(META_ID_ATTR))
       insight(banner.getAttribute(LINKEDIN_ORIGIN_ATTR), banner.getAttribute(LINKEDIN_ID_ATTR))
       embed(banner.getAttribute(CALENDLY_ORIGIN_ATTR), banner.getAttribute(CALENDLY_URL_ATTR))
     }
 
-    // A withdrawal stops what it can and says nothing it cannot do. The pixel takes a consent
-    // command and is told; the insight tag has none, and no script already fetched can be
-    // unfetched — so the senders stop on the next page, and the privacy page says so. What is
-    // this site's to remove is removed: every first-party cookie the two tags set, which is the
-    // list above, read out of the jar before anything is written so that nothing else is touched.
-    //
-    // It is not gated on this page having loaded anything, because the withdrawal is not always
-    // made on the page that loaded: a visitor who accepted the campaign measurement on a
-    // campaign page withdraws on the privacy page, where none of the three ever runs. That list
-    // is the whole of what is read, so a visitor who never accepted has nothing deleted — and
-    // nothing is written but an expiry on a cookie this host already held.
-    function withdraw() {
-      if (window.fbq) window.fbq('consent', 'revoke')
-      var host = (window.location && window.location.hostname) || ''
-      var held = heldNames()
-      for (var i = 0; i < MARKETING_COOKIES.length; i++) {
-        if (held.indexOf(MARKETING_COOKIES[i]) !== -1) drop(MARKETING_COOKIES[i], host)
-      }
-    }
-
+    // A withdrawal needs nothing here: the insight tag has no consent command and no script
+    // already fetched can be unfetched, so these two stop on the next page, where the grant is
+    // gone — and the cookies they left are the pixel's own withdrawal's to remove, on whichever
+    // page the visitor takes the answer back from.
     if (read(banner, MARKETING_KEY_ATTR) === GRANTED) load()
     window.addEventListener(CONSENT_EVENT, function (event) {
       var decision = event && event.detail && event.detail.marketing
       if (decision !== GRANTED && decision !== DENIED) return
       if (decision === GRANTED) load()
-      else withdraw()
     })
   }
 
-  // ---- the campaign's key events (G2.4, spec §13) -----------------------------------------
+  // ---- the funnel's key events (G2.4, spec §13, and the owner's ruling of 2026-10-31) -----
   //
-  // The funnel's three events, and the two things that make them worth reading. They are GA4's,
-  // so they wait for the analytics grant: `keyEvent` sends nothing while `measuring` is false,
-  // which is the state a visitor who has not answered the site's question is in and the state a
-  // withdrawal puts them back in. None of them carries a parameter — the count is the funnel,
-  // the page's own address reaches GA4 through the tag's `config` call, and a campaign
-  // parameter is the booking link's business and not GA4's (F22) — and nothing a vendor said is
-  // forwarded either.
+  // The funnel's three actions, each reported to BOTH gates that are open: GA4's event, which
+  // waits for the analytics grant, and the pixel's, which waits for the marketing one (the
+  // owner named the three on 2026-10-31: `Lead` for a booking, `Contact` for the chat click and
+  // `ViewContent` for the install click). Each is sent once per action, on the action it is
+  // about, and only where its own grant is in force: a visitor who has answered neither is
+  // measured by nothing, and one who has answered one of the two is measured by that one alone,
+  // because the two questions are two answers. A withdrawal clears the gate it withdrew from and
+  // leaves the other one standing.
+  //
+  // None of them carries a parameter — the count is the funnel, the page's own address reaches
+  // GA4 through the tag's `config` call and the pixel through its `PageView`, and a campaign
+  // parameter is the booking link's business and not a vendor's (F22) — and nothing a vendor
+  // said is forwarded either.
   //
   // Two of the three are the page's own calls to action, found by the ids the calls-to-action
-  // section gives them. The third is the embed's report, and it is taken from exactly one
-  // sender: the frame Calendly's script built inside this page's booking container, reporting
-  // from the origin the booking link names. Anything else that says `demo_booked` — another
-  // origin, another window of this page, a message this page never asked for — is dropped
-  // unread, and no field of the message that is accepted goes anywhere.
+  // section gives them, which only the four campaign pages carry. The third is the embed's
+  // report, and it is taken from exactly one sender: the frame Calendly's script built inside
+  // this page's booking container, reporting from the origin the booking link names. Anything
+  // else that says `calendly.event_scheduled` — another origin, another window of this page, a
+  // message this page never asked for — is dropped unread, and no field of the message that is
+  // accepted goes anywhere.
   function keyEvents(banner) {
-    function keyEvent(name) {
-      if (!measuring) return
-      gtag('event', name)
+    function keyEvent(name, tracked) {
+      if (measuring) gtag('event', name)
+      if (tracking && window.fbq) window.fbq('track', tracked)
     }
 
-    function press(id, name) {
+    function press(id, name, tracked) {
       var link = document.getElementById(id)
       if (!link || !link.addEventListener) return
       link.addEventListener('click', function () {
-        keyEvent(name)
+        keyEvent(name, tracked)
       })
     }
 
-    press(INSTALL_ID, 'install_click')
-    press(CHAT_ID, 'whatsapp_click')
+    press(INSTALL_ID, 'install_click', 'ViewContent')
+    press(CHAT_ID, 'whatsapp_click', 'Contact')
 
     // Which of the widget's messages is a booking. The frame reports several things over the
     // same channel — its own height, a viewed event type, a chosen date — and every one of them
@@ -1313,7 +1366,7 @@
       var host = document.getElementById(EMBED_ID)
       var frame = host && host.querySelector ? host.querySelector('iframe') : null
       if (!frame || !frame.contentWindow || event.source !== frame.contentWindow) return
-      keyEvent('demo_booked')
+      keyEvent('demo_booked', 'Lead')
     })
   }
 
@@ -1366,33 +1419,31 @@
       }
     }
 
-    // The campaign question, where this bar asks it (G2.3): the attribute is on the four
-    // campaign pages' banner and on no other page's, so this is null everywhere else and the
-    // press below is the one the site has always made. The privacy page's bar carries the key
-    // without the question — it is where a visitor withdraws one — and `asksCampaign` is what
-    // tells the two apart: the key is what a decision is written under, the question is what
-    // may be answered with a yes.
-    var marketing = banner.getAttribute(MARKETING_KEY_ATTR) ? MARKETING_KEY_ATTR : null
-    var asksCampaign = marketing !== null && banner.getAttribute(MARKETING_PATH_ATTR) !== null
+    // The marketing question, where this bar asks it: the marker is on every page's banner
+    // except the privacy page's, because the pixel is the site's and may load wherever the
+    // visitor reads (the owner's ruling of 2026-10-31) — but the page that only withdraws never
+    // put the pixel to the visitor, so its bar carries the key without the question. The key is
+    // what a decision is written under, the marker is what may be answered with a yes.
+    var key = banner.getAttribute(MARKETING_KEY_ATTR) ? MARKETING_KEY_ATTR : null
+    var asksMarketing = key !== null && banner.getAttribute(MARKETING_ASK_ATTR) === 'true'
 
     function choose(decision) {
       // One decision per banner: a second press or an Escape while the bar collapses is not a
       // new choice, exactly as it could not be once the bar was gone.
       if (closing) return
-      // Which questions this press answers. The campaign's, wherever the bar asks it — the
-      // visitor was asked it here and has answered it here. The site's, when they have not
-      // answered it yet, and always on a bar that asks nothing else: that second half is what
-      // makes a withdrawal on the privacy page overwrite the grant it is withdrawing. On a
-      // campaign page, a press about the campaign never rewrites an answer the visitor gave
-      // the site — a visitor who accepted analytics on another page keeps that answer, and one
-      // who declined it is not quietly granted it here.
-      var siteDecision = !asksCampaign || stored(banner) === null ? decision : null
-      // And a bar that carries the campaign key without asking the question answers it in the
-      // refusal direction only (the privacy page, `marketingKey`): this page never put the
-      // three vendors to the visitor, so the bar may take that answer away and may not give it.
-      var campaignDecision = asksCampaign || (decision === DENIED && marketing !== null) ? decision : null
+      // Which questions this press answers. Both of them, wherever the bar asks them: one pair
+      // of buttons carries one question about everything the site may load, so a press answers
+      // what it asked — "Accept all" grants the site's measurement and the pixel's together, and
+      // "Decline" refuses both, which is also how a visitor takes back an answer they gave on an
+      // earlier page.
+      var siteDecision = decision
+      // A bar that carries the key without asking the question answers it in the refusal
+      // direction only (the privacy page): this page never put the pixel to the visitor, so the
+      // bar may take that answer away and may not give one. Its "Accept all" therefore leaves
+      // the marketing answer exactly as it was.
+      var marketingDecision = asksMarketing || decision === DENIED ? decision : null
       var keptSite = siteDecision === null ? true : keep(banner, SITE_KEY_ATTR, siteDecision)
-      var keptCampaign = campaignDecision === null ? true : keep(banner, marketing, campaignDecision)
+      var keptMarketing = marketingDecision === null ? true : keep(banner, key, marketingDecision)
       // A refusal is honoured whether or not it could be remembered: the browser refused the
       // WRITE (a full quota, an old private mode), which is not the same as refusing the answer
       // — the tag this press stops is running on a page whose storage it can read, and a visitor
@@ -1400,18 +1451,18 @@
       // other way round: it is only honoured when it is kept, so nothing is loaded on a promise
       // the next page would not remember. A question this press did not answer is null, which
       // both gates ignore.
-      if (!keptSite || !keptCampaign) {
+      if (!keptSite || !keptMarketing) {
         // The answer cannot be kept, so it is not honoured: nothing is loaded, the banner
         // stays, and the status line says why.
         if (status) status.hidden = false
         announce(
           keptSite ? siteDecision : siteDecision === DENIED ? DENIED : null,
-          keptCampaign ? campaignDecision : campaignDecision === DENIED ? DENIED : null,
+          keptMarketing ? marketingDecision : marketingDecision === DENIED ? DENIED : null,
         )
         return
       }
       dismiss()
-      announce(siteDecision, campaignDecision)
+      announce(siteDecision, marketingDecision)
     }
 
     var controls = banner.querySelectorAll('[data-consent]')
@@ -1431,17 +1482,20 @@
     })
 
     // The choice is offered when there is no readable decision about a question this bar asks —
-    // the site's, the campaign's on a campaign page, or both — and always on the privacy page,
-    // which is where a visitor withdraws one.
+    // the site's, the marketing one where the bar asks it — and always on the privacy page,
+    // which is where a visitor withdraws one. The marketing key changed with the owner's ruling
+    // of 2026-10-31, so every visitor is asked once more: their old answer was given to a
+    // narrower question, and it does not stand for the pixel on every page.
     if (
       banner.getAttribute('data-consent-always') === 'true' ||
       stored(banner) === null ||
-      (asksCampaign && read(banner, marketing) === null)
+      (asksMarketing && read(banner, MARKETING_KEY_ATTR) === null)
     ) {
       banner.hidden = false
     }
 
     analytics(banner)
+    marketing(banner)
     campaign(banner)
     keyEvents(banner)
   }
