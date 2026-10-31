@@ -210,20 +210,26 @@ function bothPlans(value: GraphModel): GraphColumn {
  * `GRAPH_LAYOUT_CACHE_ENTRIES` without a fixture a person has to maintain. The
  * plans are chains of two tasks, which is the smallest shape that has an edge --
  * a stream with no cards would take no row and no cache entry.
+ *
+ * `changed` is the stream whose tasks are named differently: the same stream,
+ * its own plan, with the ids the layout's own key is read from moved -- so the
+ * picture one stream narrower with one of them edited is `manyStreams(count - 1,
+ * 0)`.
  */
-function manyStreams(count: number): GraphModel {
+function manyStreams(count: number, changed = -1): GraphModel {
   const plans: unknown[] = []
   let tasks = 0
   for (let index = 0; index < count; index += 1) {
     const stream = `stream-${String(index)}`
+    const edit = index === changed ? '-again' : ''
     const nodes = [0, 1].map((node) => ({
-      id: `${stream}-task-${String(node)}`,
+      id: `${stream}-task-${String(node)}${edit}`,
       title: `A task of ${stream}`,
       state: 'ready',
       closed: false,
       level: node,
       critical: false,
-      needs: node === 0 ? [] : [`${stream}-task-0`],
+      needs: node === 0 ? [] : [`${stream}-task-0${edit}`],
     }))
     tasks += nodes.length
     plans.push({
@@ -629,13 +635,12 @@ describe('the graph layout cache', () => {
   })
 
   it('holds every stream of a picture wider than the floor, so a second read lays nothing out', async () => {
-    // **The floor is not the bound.** A picture is asked for in one pass and the
-    // eviction runs between two of its streams, so a bound of
-    // `GRAPH_LAYOUT_CACHE_ENTRIES` on a picture of nine streams evicts the first
-    // stream before the last is added: no stream of that picture is a hit, and a
-    // redraw that changed nothing lays the whole picture out again. The bound is
-    // therefore the picture's own number of streams where that is larger than
-    // the floor, and the case reads both sides of the gap.
+    // **The floor is not the bound.** A read asks for its whole picture and
+    // trims the cache once it has it, so a bound of `GRAPH_LAYOUT_CACHE_ENTRIES`
+    // on a picture of nine streams trims away one of the nine streams it has just
+    // asked for: every read of that picture, changed or not, lays that stream out
+    // again. The bound is therefore the picture's own number of streams where
+    // that is larger than the floor, and the case reads both sides of the gap.
     for (const count of [GRAPH_LAYOUT_CACHE_ENTRIES + 1, 25]) {
       const { worker, layout } = layoutWith()
       const value = manyStreams(count)
@@ -651,6 +656,44 @@ describe('the graph layout cache', () => {
         worker.placements,
         `a second read of a ${String(count)}-stream picture asked the worker again`,
       ).toBe(before)
+    }
+  })
+
+  it('evicts once the read is over, so a narrower picture with one stream changed costs one run', async () => {
+    // **The eviction is the read's, not the stream's.** It used to run inside
+    // the read, between two streams of one picture: the first stream a miss adds
+    // trims the cache to the bound, and on a picture one stream narrower than
+    // the last the oldest entries are the ones this read has not reached yet --
+    // so the stream about to be asked for is evicted before it is asked for,
+    // every stream after that is evicted by the stream before it, and a read
+    // that should cost one run lays the whole picture out again. Evicting once,
+    // after the pass, leaves every entry the pass made or found the most recent:
+    // the oldest-first eviction then takes the stream that is gone and the
+    // stream that changed, and nothing the picture still wants.
+    for (const count of [10, 25, 60]) {
+      const { worker, layout } = layoutWith()
+      await settle(worker, layout, manyStreams(count))
+      expect(worker.placements).toBe(count)
+
+      // The last stream gone, and the first stream of what is left is a plan the
+      // engine has not placed: exactly that one stream is laid out again.
+      const before = worker.placements
+      await settle(worker, layout, manyStreams(count - 1, 0))
+      expect(
+        worker.placements - before,
+        `a ${String(count)}-stream picture, one stream narrower and one changed, was laid out again`,
+      ).toBe(1)
+
+      // A picture a stream wider, and then the one before it: the read that goes
+      // back is a read of entries it still holds, so the added stream is the
+      // only one that can cost a run -- and going back costs none at all.
+      await settle(worker, layout, manyStreams(count + 1))
+      const widened = worker.placements
+      await settle(worker, layout, manyStreams(count))
+      expect(
+        worker.placements - widened,
+        `going back to the ${String(count)}-stream picture was laid out again`,
+      ).toBeLessThanOrEqual(1)
     }
   })
 
