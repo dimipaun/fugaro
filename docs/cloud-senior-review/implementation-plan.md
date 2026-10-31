@@ -138,7 +138,10 @@ nothing here needs it), `internal/cli/root.go`, `internal/cli/api.go`, `website/
 
 ### R3. The review artifact: `review.json`, `review.md` and its schema
 
-**Decisions:** D884, D886, D890. **Findings:** F7, F11, F12, F13, **F23**. **Depends on:** R2.
+**Decisions:** D884, D886, D890. **Findings it acts on:** F11, F12, F13, **F23**. **Findings it is an
+answer to, not work it does:** **F7** (the reviewer's model and `agent.max_output_tokens.reviewer`
+exist today) is the observation D886 is sized against and the reason this task's schema has to fit a
+cap that is already deployed — R3 consumes it, it does not address it. **Depends on:** R2.
 
 - **Files:** `internal/runner/reviewartifact.go` (new), `internal/runner/reviewartifact_test.go`
   (new), `schemas/review.schema.json` (new), `schemas/schemas_test.go` (the corpus check),

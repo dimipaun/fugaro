@@ -53,9 +53,14 @@ policy key (an installation ceiling in the operator config, a repository may onl
 `agent.oauth_token` (layer-applied); then **`default`**, the unsuffixed `claude-oauth-token` secret
 every repository already uses. A name is judged by `claudeAccountAllowed`: it must be
 `oauth`-auth, and it must be in `config.AllowedClaudeAccounts(claudeAccounts, repo)` — that is, the
-account's `claude_accounts.<name>.allow_data_to` must list the repository. **The default account is
-always in that list and is gated by nothing** (`internal/config/claude_accounts.go`: the list is
-`{default} ∪ {names whose allow_data_to lists the repository}`). A follow-up `--pr N` keeps its
+account's `claude_accounts.<name>.allow_data_to` must list the repository. **`default` is not judged
+by any of that.** `claudeAccountAllowed` returns early on it (`internal/cli/run.go`: `if name ==
+config.DefaultClaudeAccount { return nil }`), so neither the `allow_data_to` list — which reads
+`{default} ∪ {names whose allow_data_to lists the repository}`
+(`internal/config/claude_accounts.go`) — nor the `oauth`-auth check applies to it; it is the account
+every repository already has, on the unsuffixed `claude-oauth-token` secret. **Every check named
+above decides a *named* account, and the default is the one account none of them reaches.** A
+follow-up `--pr N` keeps its
 previous run's account unless `--token` is given explicitly.
 
 **There is no failover in the launcher today.** The credential **cascade** — tier A the subscription

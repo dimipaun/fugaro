@@ -26,12 +26,17 @@ first, or reject. The job is **read-only on the forge**: it can fetch the head a
 
 ## The shape in one paragraph
 
-The coder's job runs the cheap loop and the in-job reviewer exactly as it does today, and it never
-holds the subscription token. When it has pushed its branch and opened its pull request, the
-**coordinator** (the owner's own session, the console, or a script) launches a **second job**: the
-**review job**, in review mode, on the account the owner named, whose forge credential is a
-**read-only** installation token minted by the launcher and whose only outputs are a run record and
-an artifact under `runs/<slug>/<review-run>/`. The artifact — `review.json` with a
+The coder's job runs the cheap loop and the in-job reviewer exactly as it does today. **It is a
+coding run, so it holds whatever account it was launched on** — `fugaro run --token team-a` puts that
+account's subscription token on the shared project job, which is what `agent.oauth_token` means today
+(spec §7); what this design adds is a *second* job that holds the token for the review, not a first
+job that does not. When the coder has pushed its branch and opened its pull request, the
+**coordinator** (the owner's own session, the console, or a script) launches that second job: the
+**review job**, in review mode, on a **review-only job variant that mounts no GitHub App key**, on the
+account the owner named, whose forge credential is a **read-only** installation token **minted where a
+key exists — the credentials service or the coordinator, never the launcher, which holds none** (F16,
+D883, spec §2), and whose only outputs are a run record and an artifact under
+`runs/<slug>/<review-run>/`. The artifact — `review.json` with a
 `schema_version` plus a human-readable `review.md` — carries the verdict `ship`, `fix first` or
 `reject`, and one entry per issue with a severity, a `file:line`, a class and a suggested fix. The
 coordinator reads that artifact by the review run's own id: `ship` means merge, `fix first` launches

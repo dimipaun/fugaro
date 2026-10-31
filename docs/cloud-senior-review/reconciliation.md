@@ -300,13 +300,18 @@ diff is exactly the sort of text the redaction exists for. **Consequence:** §3 
 something that passes through the same pass before it is published anywhere, and R3 has to make that
 true rather than assume it.
 
-**F26. `Rule` — `accounts rm` is not revocation, and the design said it was.** What
+**F26. `Rule` — `accounts rm` is not revocation. It said so in this pull request's *first* draft, and
+the current spec.md no longer does.** What
 `fugaro accounts rm` (E1, PR #1470) removes is the local record and the installation's copy of the
 secret; an OAuth token that has already left a container is revoked at the **provider**, in the
 person's own account, and no command of this CLI can reach it. The accounts design's rotation path is
-**re-running `add`**, and `accounts ls`'s mark is how a dead token is seen. **Consequence:** §7 says
-the token's blast radius is one person's subscription until *they* rotate it, and names rotation as
-the only remedy the design has.
+**re-running `add`**, and `accounts ls`'s mark is how a dead token is seen. **This finding is the rule
+and not a live contradiction:** the draft this pull request opened with said the owner "can revoke it
+(`fugaro accounts rm`…)", the fix round of commit `6753d669` corrected §7's bullet to what is written
+above, and there is nothing left in `spec.md` for a reader to reconcile — the finding is here so the
+correction is not undone by a later edit, and so the *reason* it was wrong is on the record.
+**Consequence for the design:** §7 says the token's blast radius is one person's subscription until
+*they* rotate it, and names rotation as the only remedy the design has.
 
 **F27. `Gap` — nothing bounds the fix ↔ review loop, and a subscription hides the cost.**
 `agent.max_budget_usd` reaches Claude Code as `--max-budget-usd` and is an estimate
