@@ -59,7 +59,7 @@ It prints what each step would do and exits 1 if anything is stale, so CI can ru
 1. It runs `fugaro version` and `fugaro upgrade --check`, then explains in plain words what is stale and why.
 2. It runs `fugaro upgrade --local`, shows the diff to commit, and says a restart is needed.
 3. It checks again with `fugaro upgrade --check`.
-4. It hands the user one command for their own terminal, in a `user-runs` block: `fugaro upgrade --yes`. It says why: a coding agent's session cannot apply cloud changes, by design.
+4. It hands the user one command for their own terminal, in a `user-runs` block: `fugaro update` — the whole upgrade, so the installation and the checkout it runs in both reach this release in one run. It says why: a coding agent's session cannot apply cloud changes, by design, and it never looks for a way around that refusal.
 
 It never runs the cloud step or any `claude plugin` command itself, never edits settings by hand, never passes `--allow-fork`, and never asks for or handles a secret.
 

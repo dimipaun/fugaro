@@ -36,11 +36,11 @@ Each checkout starts with a line `== ` and its directory, then one line per step
 
 ## cloud
 
-- `base images to move` (`stale`): the local project config records an older base image, or none, for a kind the workflows use. The user runs the cloud command (SKILL.md step 4).
+- `base images to move` (`stale`): the local project config records an older base image, or none, for a kind the workflows use. The user runs the command in SKILL.md step 4.
 - a custom base image (`stale` with `--check`, `failed` without): a development or hand-pushed base image stops the refresh; the fix it printed comes first.
 - `records this release's base image` (`current`): nothing to move. `--check` reads no build record, so a build that failed after the base moved does not show here.
 - `--local` (`skipped`): the reason names the command for the cloud step.
-- `a coding agent's session` (`skipped`): always, in this session; hand the user the cloud command (SKILL.md step 4).
+- `a coding agent's session` (`skipped`): always, in this session; hand the user the command in SKILL.md step 4.
 - `no local project config selects this checkout` (`skipped`): this machine is a teammate's; there is nothing to do here.
 - `not onboarded` or `no fugaro.yaml` (`skipped`): the repository has no job image yet; setting it up is a separate task (the `setup` skill).
 - `on this release's base image` (`done`) or `no base image to copy and no image to rebuild` (`current`): only when the user ran it in their own terminal.
