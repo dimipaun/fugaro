@@ -40,15 +40,15 @@
 //      to cover it.** The box is grown upward for its heading, and the engine's
 //      own room within a layer -- two cards of one layer are stacked one above
 //      the other, now that the picture is read left to right -- was less than
-//      that growth, so the heading was drawn inside the card above it -- and
-//      painted over, because the screen appends every box before every card. A screenshot cannot report
-//      this (a covered heading is a heading-shaped hole, which looks like a
-//      heading drawn faintly) and the unit suite cannot either: whether a point
-//      on a glyph belongs to the heading or to a card is the browser's own hit
-//      test, over the real worker's answer. The hit test is made **once per
-//      glyph**, because one point on a heading is a point a card can miss: a
-//      card covering all but the first character of a line leaves that one
-//      point over the heading and every other one under the card.
+//      that growth, so the heading was drawn inside the card above it, and
+//      painted over, because the screen appends every box before every card. A
+//      screenshot cannot report this (a covered heading is a heading-shaped
+//      hole, which looks like a heading drawn faintly) and the unit suite cannot
+//      either: whether a point on a glyph belongs to the heading or to a card is
+//      the browser's own hit test, over the real worker's answer. The hit test is
+//      made **once per glyph**, because one point on a heading is a point a card
+//      can miss: a card covering all but the first character of a line leaves
+//      that one point over the heading and every other one under the card.
 //
 // **The graph's document is the stub's `plan status --json` answer.** The stub
 // beside this suite answers that read (`test/fixtures/bin/fugaro`,
