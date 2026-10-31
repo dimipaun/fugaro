@@ -3974,7 +3974,7 @@ This command has no subcommands.
 Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
 
 upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in four
+processed one after the other, each on its own) up to this fugaro, in five
 steps, stopping that checkout at the first step that fails:
 
   pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
@@ -4003,6 +4003,20 @@ steps, stopping that checkout at the first step that fails:
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
           named-account jobs are updated by the same fugaro update --repo .
+  rules   the security rules generation a project policy is read under,
+          deployed into the project's Firebase database, the same deploy
+          fugaro update's rules stage makes: the plan is printed and the
+          project's name typed (--yes confirms it, and is the way past the
+          typed confirmation without a terminal). Deployed when the deployed
+          rules are absent, older, pre-policy or a different document.
+          Skipped where there is no shared budget backend, where the database
+          is one this installation may not write (the ownership check every
+          writer into it asks), where the deployed marker is newer or hand
+          edited, and where the rules or their marker could not be read.
+          --check makes no cloud call here either and says it cannot tell.
+          It is what fugaro update's rules stage does; both doors run it, and
+          this one runs it before the policy step because the policy writer
+          refuses a migration the deployed rules would not admit.
   policy  the project's published policy node, if an earlier Fugaro wrote it
           in an older version: migrated in place (never deleted and
           published again), after a diff of what changes, what is kept and
@@ -4019,15 +4033,16 @@ It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
 --local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud and policy steps are skipped
-before they read anything, never attempted, with the command to run in your
-own terminal, so the exit code is 0 when the local steps succeeded. --check
-writes nothing, runs no claude command and makes no cloud call: it reads the
-settings file, Claude Code's record of installed plugins and the local project
-config, prints what each step would do and exits 1 when anything is stale
-(build records are not read, and the published policy node is not either: the
-policy step says it cannot tell). Without --yes, --local or --check it needs a
-real terminal. There is no --json.
+session (CLAUDECODE and the like) the cloud, rules and policy steps are
+skipped before they read anything, never attempted, with the command to run in
+your own terminal, so the exit code is 0 when the local steps succeeded.
+--check writes nothing, runs no claude command and makes no cloud call: it
+reads the settings file, Claude Code's record of installed plugins and the
+local project config, prints what each step would do and exits 1 when anything
+is stale (build records are not read, and neither the deployed security rules
+nor the published policy node is: the rules and policy steps say they cannot
+tell). Without --yes, --local or --check it needs a real terminal. There is no
+--json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files
@@ -4054,7 +4069,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name of the repository; it must be the checkout's origin (one PATH only) |
 | `--workflow` | stringArray | `[]` | no | a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only) |
-| `--yes` | bool | `false` | no | confirm every step of the cloud step without asking (the base copy, the check-job update and each billable build, with no cap), and without a terminal; never in a coding agent's session |
+| `--yes` | bool | `false` | no | confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), and the security rules and published policy deployments; never in a coding agent's session |
 
 Subcommands:
 
