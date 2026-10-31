@@ -304,6 +304,14 @@ export interface CliStub {
    * exit 2, which is the state `test/e2e/no-checkout.spec.ts` relies on: the
    * specs that are not about Spend must keep seeing a refused report. */
   seedSpend(spend: SeededSpend): void
+  /** answeredReads is the reads the stub has answered, in the order it printed
+   * them: `report 7d`, `budget`, one line per answer, from `reads.log` beside
+   * the stub. It is what a spec waits on for an answer that draws **nothing** --
+   * the report read the console supersedes and drops -- because the screen has no
+   * signal for a thing that must not happen, and a sleep long enough for the
+   * slowest machine is a sleep that hides the bug. Empty until the stub has
+   * answered a Spend read. */
+  answeredReads(): readonly string[]
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
   setVersion(line: string): void
@@ -527,6 +535,17 @@ export function installCliStub(line: string): CliStub {
           writeFileSync(join(where, 'spend-budget-delay.txt'), `${spend.budget.delaySeconds}\n`)
         }
       }
+    },
+    answeredReads(): readonly string[] {
+      // The console runs whichever copy its own resolution finds, and the stub
+      // writes its log beside itself -- so both places it was installed are
+      // read. Neither having one is a run that has answered nothing, not an
+      // error.
+      for (const where of [wellKnown, dir]) {
+        const log = join(where, 'reads.log')
+        if (existsSync(log)) return readFileSync(log, 'utf8').split('\n').filter((line) => line !== '')
+      }
+      return []
     },
     setVersion(next: string): void {
       for (const where of [dir, wellKnown]) {

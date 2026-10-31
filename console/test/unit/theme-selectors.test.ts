@@ -499,9 +499,15 @@ function fillerHosts(
   once: ReadonlyMap<string, { tag: string; classes: string[] }>,
 ): ReadonlyMap<string, { tag: string; classes: string[] }> {
   const hosts = new Map<string, { tag: string; classes: string[] }>()
-  for (const match of text.matchAll(/(?:export\s+)?function\s+(\w+)\s*\(([^)]*)\)/g)) {
+  // The signature's own parentheses are read with `callArguments`, the balanced
+  // reader the call sites use: a parameter list is a bracket group like any
+  // other, and a scan that stopped at the first `)` would misread a signature
+  // whose default or callback parameter carries one (`change: (next: C) => void`).
+  for (const match of text.matchAll(/(?:export\s+)?function\s+(\w+)\s*\(/g)) {
     const name = match[1] ?? ''
-    const parameters = (match[2] ?? '').split(',').map((one) => /\w+/.exec(one)?.[0] ?? '')
+    const parameters = callArguments(text, (match.index ?? 0) + (match[0]?.length ?? 0) - 1).map(
+      (one) => /\w+/.exec(one)?.[0] ?? '',
+    )
     for (const call of text.matchAll(new RegExp(`\\b${name}\\(`, 'g'))) {
       const args = callArguments(text, (call.index ?? 0) + (call[0]?.length ?? 0) - 1)
       parameters.forEach((parameter, at) => {

@@ -61,14 +61,18 @@
 #     answer rather than one it guesses a document for. No document seeded for a
 #     window is refused (exit 2), exactly as an unsupported command is, because
 #     the specs that are *not* about Spend must keep seeing a refused report
-#     (`test/e2e/no-checkout.spec.ts`).
+#     (`test/e2e/no-checkout.spec.ts`). Every answer it prints is also a line in
+#     `reads.log` beside this script (`report 7d`), which is how a spec waits for
+#     the answer the console is going to drop: a dropped answer draws nothing, so
+#     the screen has no signal to wait on.
 #   * `budget show --json [--repo R] [--all] [--compute] --project P` -- the
 #     document in `spend-budget.json` beside it, likewise `seedSpend`'s, and
 #     likewise slow on purpose through `spend-budget-delay.txt`. This is the read
 #     the Spend view's **caps** section makes (`budget.show`), and the one the
 #     owner's own installation answers in about a second while the report takes
 #     about twenty-three: a spec that wants the two sections to land apart gives
-#     the two files different delays.
+#     the two files different delays. Its answer is a `budget` line in the same
+#     `reads.log`.
 #   * `coordinator status --from-store --all --json --project P` -- the document
 #     in `coordinator-status.json` beside it, which `cliStub.ts` writes from the
 #     committed `test/fixtures/coordinator-status.json` (Bitbucket credentials
@@ -125,15 +129,22 @@ refuse() {
 }
 
 # print_seeded prints the document a read answers with, after sleeping the
-# seconds a spec asked that read to take. `document` is the file the answer is
-# printed from, `delay` the optional file holding the seconds to wait first.
+# seconds a spec asked that read to take, and appends one line to `reads.log`
+# beside this script naming the read it answered. `document` is the file the
+# answer is printed from, `delay` the optional file holding the seconds to wait
+# first, `label` the line the log gets.
+#
 # The delay exists so a spec can make one window's read answer after another's,
 # which is what the Spend fix's own specs are about: the console must keep the
 # view of the change the operator made last, whatever order the answers arrive
-# in.
+# in. The log exists because a dropped answer leaves **no** trace on screen -- a
+# spec that has to know the superseded read has answered has nothing to wait on
+# but the stub, and a sleep long enough for the slowest machine is a sleep that
+# hides the very thing the spec is about.
 print_seeded() {
   document=$1
   delay=$2
+  label=$3
   if [ ! -f "$document" ]; then
     return 1
   fi
@@ -141,6 +152,7 @@ print_seeded() {
     sleep "$(cat "$delay")"
   fi
   cat "$document"
+  printf '%s\n' "$label" >> "${here}/reads.log"
 }
 
 command=${1:-}
@@ -252,7 +264,7 @@ case "$command" in
     if [ -z "$since" ]; then
       refuse "'report --json' was asked for no --since, and this stub answers one document per window"
     fi
-    if ! print_seeded "${here}/spend-report-${since}.json" "${here}/spend-report-${since}-delay.txt"; then
+    if ! print_seeded "${here}/spend-report-${since}.json" "${here}/spend-report-${since}-delay.txt" "report ${since}"; then
       refuse "no report document is seeded for '${since}' beside this stub"
     fi
     ;;
@@ -288,7 +300,7 @@ case "$command" in
           ;;
       esac
     done
-    if ! print_seeded "${here}/spend-budget.json" "${here}/spend-budget-delay.txt"; then
+    if ! print_seeded "${here}/spend-budget.json" "${here}/spend-budget-delay.txt" 'budget'; then
       refuse 'no budget document is seeded beside this stub'
     fi
     ;;

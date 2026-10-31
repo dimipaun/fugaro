@@ -1265,10 +1265,16 @@ test.describe('the Spend view in the dashboard', () => {
     await expect(since).toHaveText('2026-07-18')
     await expect(page.locator(THE_REPORT)).not.toHaveAttribute('aria-busy', 'true')
 
-    // The read asked for first answers last, and is dropped. Waiting it out is
-    // the assertion: there is no signal to wait on for a thing that must not
-    // happen, and three seconds is this stub's own delay for `7d`.
-    await page.waitForTimeout(4000)
+    // The read asked for first answers last, and is dropped -- and a dropped
+    // answer draws nothing, so there is no screen to wait on. The wait is on the
+    // stub's own log of the answers it printed, which is the one signal that says
+    // the superseded read exists: the ceiling is on that poll, so a loaded
+    // machine slows this case down rather than letting it pass before the answer
+    // it is about has been produced.
+    await expect.poll(() => cli.answeredReads(), { timeout: 30_000 }).toContain('report 7d')
+    // The answer has been printed by then; this is the hop to the renderer and
+    // not a read, and it is the only fixed wait the case has left.
+    await page.waitForTimeout(1000)
     await expect(since).toHaveText('2026-07-18')
     await expect(page.locator(THE_REPORT)).not.toHaveAttribute('aria-busy', 'true')
     await expect(page.locator(`${THE_REPORT} .console-busy`)).toHaveCount(0)
