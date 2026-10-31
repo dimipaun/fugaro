@@ -4709,16 +4709,30 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 
 	// The design amendment C8's answer requires, in the design and not only in
 	// the plan: rule 10 and section 7.4 now name the second write, in the same
-	// words the plan's answer column uses.
+	// words the plan's answer column uses. The same pair of places carries the
+	// third write and the two updater-owned locations, added by the owner's
+	// D768/D770 answers of 2026-10-30 (auto-update U5): C8's wording stays, as
+	// the earlier amendment, and the newer one sits beside it.
 	design := readDoc(t, "docs/design/desktop-console.md")
-	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, and the installations file, and nothing else.**") {
-		t.Error("design section 5.1 rule 10 was not amended to C8's wording")
+	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file and `updates.json`, and nothing else.**") {
+		t.Error("design section 5.1 rule 10 was not amended to name the app's three writes (C8's second, D768's third)")
 	}
-	if !strings.Contains(design, "**The app writes two things to disk and nothing else (§5.1 rule 10, amended 2026-10-18)") {
-		t.Error("design section 7.4 was not amended to C8's wording")
+	if !strings.Contains(design, "(Amended 2026-10-18 by the owner's C8 answer") {
+		t.Error("design section 5.1 rule 10 lost the 2026-10-18 C8 amendment: a later amendment sits beside the earlier one rather than replacing it")
+	}
+	if !strings.Contains(design, "Amended 2026-10-30 by the owner's D768 and D770 answers") {
+		t.Error("design section 5.1 rule 10 lost the 2026-10-30 D768/D770 amendment")
+	}
+	if !strings.Contains(design, "**The app writes three things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers)") {
+		t.Error("design section 7.4 was not amended to D768/D770's wording")
 	}
 	if !strings.Contains(design, "never a credential") {
 		t.Error("design section 5.1 rule 10's installations paragraph does not say the file holds no credential")
+	}
+	for _, want := range []string{"`updates.json`", "fugaro-console-updater", "ShipIt", "hardenUpdater", "x-user-staging-id"} {
+		if !strings.Contains(design, want) {
+			t.Errorf("design section 5.1 rule 10 or 7.4 no longer names %q: D768 and D770 are the amendment that puts the update switch and the updater's two locations on the write list", want)
+		}
 	}
 
 	// Task 3.3's own section, bounded by Task 3.4's heading so the text of 3.4
@@ -8458,9 +8472,9 @@ func TestCheck59IsSplitIntoAAndB(t *testing.T) {
 		"NOT RUNNABLE",
 		"published feed",
 		"Task 4.4",
-		"0.111.0",
+		"0.116.0",
 		"second",
-		"console-v0.110.0",
+		"installed by hand",
 	} {
 		if !strings.Contains(head, want) {
 			t.Errorf("Check 59b's first lines do not say %q: the section's opening is where the two preconditions that stop it running today have to be read", want)
@@ -8489,8 +8503,76 @@ func TestCheck59IsSplitIntoAAndB(t *testing.T) {
 	if !strings.Contains(rows["| 59a |"], "0.110.0") {
 		t.Error("the `| 59a |` row does not name the published release 59a runs against, which is the fact that makes it runnable today")
 	}
-	if !strings.Contains(rows["| 59b |"], "0.111.0") {
-		t.Error("the `| 59b |` row does not name the release that has to publish the feed before 59b can run")
+	if !strings.Contains(rows["| 59b |"], "0.116.0") {
+		t.Error("the `| 59b |` row does not name 0.116.0, the build the check installs by hand and updates away from (D771)")
+	}
+}
+
+// TestCheck59bPreconditionsAreTheUpdaterBuilds pins D771 -- the owner's ruling
+// of 2026-10-30 -- as the section's own preconditions: the check runs against
+// `OLD` = 0.116.0, the first build that carries an updater and so the first that
+// can be updated, installed by hand because it cannot update itself, and `NEW` =
+// the first console release after it. No release is cut only for the check. The
+// pair the section carried before -- `console-v0.110.0` and `console-v0.111.0`
+// -- named a build with no updater at all and a release that is not the one
+// after the first updater build, so naming either here again fails this test.
+//
+// The same ruling's U3 and U3b, and D768 and D770, are the section's new
+// assertions, each pinned as the fact a reader has to find: no `.updaterId`
+// under `userData` and no `x-user-staging-id` on any request; the app's own off
+// switch stops the checks; nothing installs on quit, and an update installs only
+// through the notice's "Restart to update"; and the two updater-owned locations
+// appear only after a download.
+func TestCheck59bPreconditionsAreTheUpdaterBuilds(t *testing.T) {
+	_, _, b := check59Sections(t)
+
+	head := b
+	if len(head) > 2400 {
+		head = head[:2400]
+	}
+	for _, want := range []string{
+		"0.116.0",
+		"installed by hand",
+		"first console release after",
+		"release is cut only for this check",
+	} {
+		if !strings.Contains(head, want) {
+			t.Errorf("Check 59b's opening does not say %q: D771 is what the check's two preconditions are, and the section's opening is where a reader meets them", want)
+		}
+	}
+
+	for _, bad := range []string{"0.111.0", "console-v0.110.0", "Mango", "Cherry"} {
+		if strings.Contains(b, bad) {
+			t.Errorf("Check 59b still names %q: D771's two builds are 0.116.0 and the first console release after it, and the section may not carry the pair the ruling replaces", bad)
+		}
+	}
+
+	for _, want := range []string{
+		"OLD=0.116.0",
+		".updaterId",
+		"x-user-staging-id",
+		"hardenUpdater",
+		"fugaro-console-updater",
+		"ShipIt",
+		"Restart to update",
+		"on quit",
+		"`updates.json`",
+		"Check for Updates Automatically",
+		"appear only after a download",
+	} {
+		if !strings.Contains(b, want) {
+			t.Errorf("Check 59b does not carry %q: D768, D770, U3 and U3b are what the check now asserts, and an assertion a reader cannot find is one nobody runs", want)
+		}
+	}
+
+	// The two opt-outs the console actually honours are the environment variable
+	// and the app's own switch -- never the CLI's `update_check`, which the
+	// console does not read (D769).
+	if !strings.Contains(b, "FUGARO_NO_UPDATE_CHECK=1") {
+		t.Error("Check 59b does not name `FUGARO_NO_UPDATE_CHECK=1` as one of the two opt-outs it exercises")
+	}
+	if strings.Contains(b, "update_check: false") {
+		t.Error("Check 59b still exercises a local `update_check: false`: the console never reads the CLI's `update_check` (D769), so the switch it honours is its own")
 	}
 }
 
