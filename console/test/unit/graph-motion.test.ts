@@ -234,6 +234,43 @@ const DASHES: readonly string[] = Object.freeze(['graph-comet', 'graph-flow'])
 const BUSY_SPINNER = 'span.console-busy-spinner'
 const BUSY_KEYFRAME = 'console-busy-turn'
 
+/** GRAPH_PREFIX is the prefix every forced-colors graph rule is written with and
+ * every graph rule in the theme carries, the list's own included. */
+const GRAPH_PREFIX = 'section.graph '
+
+/** GRAPH_MARK is a selector that names something this screen draws. */
+const GRAPH_MARK = /section\.graph\b|\.graph-/
+
+/** restated is a selector as the rule it restates reads: with the graph's own
+ * prefix taken off, so a rule and the arm written for it are one string. */
+function restated(selector: string): string {
+  return selector.startsWith(GRAPH_PREFIX) ? selector.slice(GRAPH_PREFIX.length) : selector
+}
+
+/**
+ * specificity is a selector's weight as a browser compares it: how many ids, how
+ * many classes -- an attribute selector and a pseudo-class included -- and how
+ * many types, a pseudo-element included. Nothing in this theme selects `*`, an
+ * id in a graph selector or a pseudo-element there, so the three counts are the
+ * whole of what the comparison below needs.
+ */
+function specificity(selector: string): readonly number[] {
+  const elements = (selector.match(/::[a-z-]+/g) ?? []).length
+  let rest = selector.replace(/::[a-z-]+/g, ' ')
+  const ids = (rest.match(/#[\w-]+/g) ?? []).length
+  rest = rest.replace(/#[\w-]+/g, ' ')
+  const classes = (rest.match(/\[[^\]]*\]|\.[\w-]+|:[a-z-]+(\([^)]*\))?/g) ?? []).length
+  rest = rest.replace(/\[[^\]]*\]|\.[\w-]+|:[a-z-]+(\([^)]*\))?/g, ' ')
+  return [ids, classes, elements + (rest.match(/[A-Za-z][\w-]*/g) ?? []).length]
+}
+
+/** atLeast is one weight at least another's, id by id, class by class, type by
+ * type: a selector that ties wins where it is written later, and these arms are
+ * the last rules of `screens.css`. */
+function atLeast(one: readonly number[], other: readonly number[]): boolean {
+  return one.every((count, at) => count >= (other[at] ?? 0))
+}
+
 /** declared is the one value a rule selecting `className` gives a property, or
  * `null` when no rule gives it one. The last rule wins, as it does in the
  * cascade, so a base rule and an arm that both set a property read as the arm. */
@@ -427,6 +464,68 @@ describe('the graph’s motion in the stylesheets', () => {
       expect(mine, 'a forced-colors animation rule is neither the graph screen’s nor the busy mark’s').toBe(true)
     }
     expect(armMisses(FORCED), 'forced colors leaves an animated selector running').toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The forced-colors arm: a restatement has to win
+// ---------------------------------------------------------------------------
+
+describe('the graph’s forced-colors arm', () => {
+  it('writes every graph rule on a selector at least as specific as the rule it restates', () => {
+    // **An arm is a restatement, and a restatement has to win.** A media query
+    // adds no specificity, so a rule in the arm overrides the rule it restates
+    // only where its selector is at least as specific: the graph's rules carry
+    // `section.graph` (flight-deck.css's canvas rules, the list's rows, the
+    // motion block above) and an arm rule written without it is one class short
+    // of every one of them. That is not hypothetical -- the selected edge's
+    // `Highlight` was written on `svg .graph-edge[data-selected='true']
+    // .graph-edge-path`, which loses to the base rule's reading tone, so the
+    // mark that says "these are the selected task's" was the first thing this
+    // mode, which has no colour left to say it with, took away.
+    //
+    // The pair is a rule and the rule with the prefix taken off -- the same
+    // element chain, written the two ways -- and a pair counts only where the
+    // two set the same property, because that is what a restatement is.
+    const arm = themeRules().filter((rule) => rule.media.some((query) => FORCED.test(query)))
+    const graph = arm.flatMap((rule) =>
+      rule.selector
+        .split(',')
+        .map((one) => one.trim())
+        .filter((one) => GRAPH_MARK.test(one))
+        .map((selector) => ({ rule, selector })),
+    )
+    expect(graph.length, 'the arm restates nothing this screen draws, so this case proves nothing').toBeGreaterThan(0)
+
+    const outside = themeRules().filter((rule) => !rule.media.some((query) => FORCED.test(query)))
+    const pairs: string[] = []
+    for (const { rule, selector } of graph) {
+      for (const other of outside) {
+        for (const theirs of other.selector.split(',').map((one) => one.trim())) {
+          if (restated(theirs) !== restated(selector)) continue
+          const shared = other.declarations.filter((one) =>
+            rule.declarations.some((mine) => mine.property === one.property),
+          )
+          if (shared.length === 0) continue
+          pairs.push(`${selector} over ${other.file}: ${theirs}`)
+          expect(
+            atLeast(specificity(selector), specificity(theirs)),
+            `${selector} (${specificity(selector).join('-')}) loses to ${other.file}'s ${theirs} (${specificity(theirs).join('-')}), which it restates`,
+          ).toBe(true)
+        }
+      }
+    }
+    expect(pairs.length, 'no arm rule restates a rule, so this case proves nothing').toBeGreaterThan(0)
+  })
+
+  it('reads the weight of the two selectors this arm was fixed for', () => {
+    // The parser above is a claim of its own, and a comparison between two
+    // selectors it read as equal would pass for the wrong reason. These two are
+    // the pair the fix is about: the unprefixed one the arm was written with,
+    // and the prefixed one that wins. Two classes and a type against four
+    // classes and two, which is the gap that made the first one lose.
+    expect(specificity('svg .graph-edge[data-selected=\'true\'] .graph-edge-path')).toEqual([0, 3, 1])
+    expect(specificity('section.graph svg .graph-edge[data-selected=\'true\'] .graph-edge-path')).toEqual([0, 4, 2])
   })
 })
 
