@@ -159,11 +159,11 @@ policy publish` and `project repos add` (F16).
   generation that has moved since — printing the three-way state (this machine's file, the generation
   it was written from, the object published now) and offering to re-seed the local file from the
   published one under confirmation, with a backup. `TestUpdateRefusesToPublishOverANewerGeneration`
-  is the red-on-removal test for it, and `TestUpdateOffersTheReseedAndWritesNothingWithoutIt` is the
-  second half: the refusal is a question, not a wall, and a declined re-seed leaves both sides as
-  they were. **The layer stage (the `rigor` design's R1) carries the same guard**, as
-  `TestLayerStageRefusesToPublishOverANewerGeneration` in R1's list; the two machines that can hold a
-  stale file are the two stages.
+  fails while the guard is absent, and `TestUpdateOffersTheReseedAndWritesNothingWithoutIt` is the
+  second half of it: the refusal is a question, not a wall, and a declined re-seed leaves both sides
+  as they were. **The layer stage (the `rigor` design's R1) carries the same guard**, as
+  `TestLayerStageRefusesToPublishOverANewerGeneration` in R1's list — the two stages are the two
+  writers that could otherwise replace a newer publish with this machine's older file.
 
 ## S4. The layer side of the read (SD4, D845)
 

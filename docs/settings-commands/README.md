@@ -120,7 +120,7 @@ stages and the same editor.
 
 It changes no code, no schema, no allow-list row and no existing document. It writes nothing under
 `console/`, `mobile/`, `shared/`, `ee/`, `plugin/` or `website/`; it names the sections those works
-would add, and nothing more. It proposes no new dependency. If the owner rejects the read command,
-the registry or the families, the files here are deleted rather than amended: they are a proposal,
-and [implementation-plan.md](implementation-plan.md) is written so that each task can be dropped on
-its own.
+would add, and nothing more. It proposes no new dependency. The design is approved and the tasks
+queue for the release named above, and [implementation-plan.md](implementation-plan.md) is written
+so that each task can be dropped on its own — a task that turns out not to be wanted is deleted
+rather than amended, which is why every one of them names its own files and its own tests.
