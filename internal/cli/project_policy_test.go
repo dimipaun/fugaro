@@ -1541,14 +1541,19 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 		what   string
 		marker any
 		want   string
+		// Where the refusal sends the operator. The rules marker is the state
+		// `fugaro update`'s own rules stage deploys over, so the missing-marker
+		// sentence names that one command; the pre-policy marker is worded by
+		// doctor's sentence, whose remedy is still the `--firebase-project` door.
+		fix string
 	}{
-		{"no marker at all", nil, "carry no policy marker"},
+		{"no marker at all", nil, "carry no policy marker", "run 'fugaro update'"},
 		// main's requirePolicyRules (#532) admits every marker at or above
 		// PolicyRulesVersion — those rules carry the policy nodes — and words a
 		// marker below it as its own case ("records generation N", the
 		// pre-policy sentence doctor prints): that is the marker behind this
 		// Fugaro's that still refuses the write.
-		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation"},
+		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation", "update --firebase-project"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -1564,8 +1569,8 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 				if err == nil {
 					t.Fatalf("%v was allowed with %s", args, tc.what)
 				}
-				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "update --firebase-project") {
-					t.Errorf("%v refused with %q, want it to say %q and to name the fix", args, err, tc.want)
+				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), tc.fix) {
+					t.Errorf("%v refused with %q, want it to say %q and to name the fix %q", args, err, tc.want, tc.fix)
 				}
 			}
 			if got := nodeJSON(t, f, projectpolicy.PathShared()); got != before {
