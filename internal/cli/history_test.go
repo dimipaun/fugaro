@@ -28,6 +28,13 @@ func newHistoryFixture(t *testing.T) *historyFixture {
 	f.job = gcp.JobName(appSlug, "web")
 	f.run.AddJob(f.job, "1", "2Gi")
 	f.db.Set("fugaro/project", "aurora")
+	// The installation's own mark, as init writes it: the rollover moves days
+	// out of, and then deletes nodes in, the database its environment names,
+	// and it may only do that to this installation's own — read from the mark
+	// (history_rollover.go). The fixture's Firebase project is deliberately
+	// not its GCP project (fp-1234 vs proj-1234), the shape of an installation
+	// created before 2026-10-23 and the only one where the pair decides.
+	f.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "version": 1, "project": "aurora", "gcp_project": "proj-1234"})
 	old := historyTest
 	historyTest = &historyWiring{noAuth: true, runURL: f.run.URL + "/", identityURL: f.idt.URL, now: func() time.Time { return time.Now() }}
 	t.Cleanup(func() { historyTest = old })

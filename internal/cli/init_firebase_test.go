@@ -1859,6 +1859,108 @@ func TestUpdateRulesNeverAdoptedSeparateProjectDoesNotMark(t *testing.T) {
 	}
 }
 
+// TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject: the policy
+// migration is the SECOND stage `fugaro update` writes into the budget database
+// with, and the rules stage being skipped over a database the installation
+// never adopted does not stop it. The whole of the policy stage's work — the
+// read of the published node, the ETag the write is conditional on, and the
+// write itself — lands in that same database, so the probe is the reviewer's:
+// a config naming another project, the database of ANOTHER installation
+// (workspace-a in proj-9999), the deployed rules marker current (so the
+// migration's own rules gate would pass), and a version-3 node with an
+// allow-list. Plain `fugaro update --yes` used to migrate THAT installation's
+// node to version 4 in place, merging this config's members into it.
+//
+// The stage holds the same gate the rules stage does (budgetDBUnadopted: the
+// config's separate project, then infra.DB.Check's mark), and the outcome is
+// the same shape: a skip, not a refusal, so the installation's other stages
+// still converge, and the sentence names the way out.
+func TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
+	_, db := updateBudgetRigFor(t, "other-project")
+	// Another installation's database: its mark names a Fugaro project and a
+	// GCP project that are not this installation's.
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
+	// The rules marker is current, so the migration's own gate (requirePolicyRules)
+	// is satisfied and the ownership gate is the only thing that can stop it.
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Policy); got != "skipped" {
+		t.Errorf("the policy stage is %q, want skipped:\n%s", got, out)
+	}
+	detail := res.stageDetail(t, initflow.Policy)
+	for _, want := range []string{"workspace-a", "proj-9999"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the skip does not name the installation whose database this is (%q): %q", want, detail)
+		}
+	}
+	if got := nodeVersionOn(t, db); got != 3 {
+		t.Errorf("the run migrated another installation's policy node to version %d", got)
+	}
+	if node, ok := db.Value(projectpolicy.PathShared()).(map[string]any); !ok {
+		t.Errorf("the node at %s is gone: %v", projectpolicy.PathShared(), db.Value(projectpolicy.PathShared()))
+	} else if repos, _ := node["allow_repos"].([]any); len(repos) != 2 {
+		t.Errorf("the migration rewrote another installation's node: %v", node)
+	}
+	if got := db.Value(budget.PathMark); got == nil || got.(map[string]any)["project"] != "workspace-a" {
+		t.Errorf("the run replaced another installation's mark: %v", got)
+	}
+}
+
+// TestUpdatePolicyMigrationNamesTheWayOutBeforeItReadsTheNode: the same gate on
+// the state a self-agreeing typo leaves (separateFirebaseRig: the config names
+// other-project and the database the URL points at is EMPTY, so nothing about
+// the pair looks wrong). The database has no node to migrate, so the two
+// answers this stage could give are the absent node's ("no policy is published
+// at ...") and the ownership gate's — and the gate's is the one this asserts:
+// the sentence has to name the project the config records and the command that
+// works, which is the installation's OWN project and not the one the config
+// names (--firebase-project takes only that, checkFirebaseProject), because a
+// skip that named `--firebase-project other-project` would send the reader to a
+// refusal.
+func TestUpdatePolicyMigrationNamesTheWayOutBeforeItReadsTheNode(t *testing.T) {
+	_, db := separateFirebaseRig(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("a config naming another project stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Policy); got != "skipped" {
+		t.Errorf("the policy stage is %q, want skipped:\n%s", got, out)
+	}
+	detail := res.stageDetail(t, initflow.Policy)
+	// The command the skip names is `selfCommand() + " update"`, which in a
+	// test binary is the test binary's own path (selfCommand is how the binary
+	// was run, os.Args[0]); what the assertion is about is the flag and the
+	// value, which is the part a reader acts on.
+	for _, want := range []string{"other-project", "budget.firebase_project", "update --firebase-project " + initProject} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the skip does not name %q: %q", want, detail)
+		}
+	}
+	if strings.Contains(detail, "fugaro update --firebase-project other-project") {
+		t.Errorf("the skip sends the reader to --firebase-project other-project, which checkFirebaseProject refuses: %q", detail)
+	}
+	if strings.Contains(detail, "no policy is published") {
+		t.Errorf("the stage answered about the node it should not have read: %q", detail)
+	}
+	if db.Value(budget.PathMark) != nil || db.Value(projectpolicy.PathShared()) != nil {
+		t.Errorf("the run wrote into a database in a Firebase project the installation never adopted: mark %v node %v", db.Value(budget.PathMark), db.Value(projectpolicy.PathShared()))
+	}
+}
+
 // TestUpdateRulesConvergesAdoptedLegacyInstallation: the state the skip's
 // sentence sends the owner to, one command later. An installation whose
 // Firebase project differs from its GCP project was adopted through `fugaro

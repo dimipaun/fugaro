@@ -78,6 +78,72 @@ func TestRolloverNoFirestoreDatabaseIsExit0(t *testing.T) {
 	}
 }
 
+// TestRolloverRefusesAnotherInstallationsDatabase: the rollover's one write to
+// the Realtime Database is destructive — a day node that is moved out is then
+// DELETED — so which database it may do that to is asked of the database and
+// not of the two names in its environment. Those names are Terraform's, not a
+// config file's, but an installation created before 2026-10-23 may have had a
+// Firebase project of its own, other than its GCP project, and the job carries
+// both (history.tf). infra.DB.Check is the gate every writer into the budget
+// database asks — the rules stage and the policy migration of `fugaro update`
+// ask it through the same predicate — and a database carrying ANOTHER
+// installation's mark is not this installation's, so nothing is moved and
+// nothing is pruned. It is a refusal and not a skip, unlike those stages: this
+// job is the whole of what it does, and its sibling the sweep refuses a
+// database that is not the project's for the same reason.
+func TestRolloverRefusesAnotherInstallationsDatabase(t *testing.T) {
+	f := newRolloverFixture(t)
+	d := budget.Day(f.now) - 12
+	f.seed(d, "20261008-100000-bbbb", 2_000_000)
+	before := len(f.db.Value("").(map[string]any))
+	f.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
+
+	_, _, err := execute(t, "budget", "history", "--rollover")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("another installation's database: err = %v, want exit 1", err)
+	}
+	for _, want := range []string{"workspace-a", "proj-9999", "nothing was moved"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if f.db.Value("spend/"+budget.DayKey(d)) == nil {
+		t.Error("a day was pruned out of another installation's database")
+	}
+	if len(f.fs.IDs("spendDaily")) != 0 {
+		t.Errorf("a day was archived out of another installation's database: %v", f.fs.IDs("spendDaily"))
+	}
+	if after := len(f.db.Value("").(map[string]any)); after != before {
+		t.Errorf("another installation's database changed: %d root keys, was %d", after, before)
+	}
+}
+
+// TestRolloverRefusesAnUnmarkedDatabase: the other half of the same state. An
+// EMPTY database passes infra.DB.Check whatever project its URL belongs to,
+// which is why the answer is asked and not read off the pair — a database with
+// no mark is not this installation's, however little of it there is to lose,
+// and the job says so rather than pruning in it. The pair itself is right here
+// (the URL is the fake's own), so the check is the only thing standing between
+// the rollover and the database.
+func TestRolloverRefusesAnUnmarkedDatabase(t *testing.T) {
+	f := newRolloverFixture(t)
+	f.db.Set("fugaro/project", nil)
+	f.db.Set(budget.PathMark, nil)
+
+	_, _, err := execute(t, "budget", "history", "--rollover")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("an unmarked database: err = %v, want exit 1", err)
+	}
+	for _, want := range []string{budget.PathMark, "empty", "not this installation's", "nothing was moved"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if got := f.db.Value(""); got != nil {
+		t.Errorf("the unmarked database was written in: %v", got)
+	}
+}
+
 func TestRolloverRefusalsAreExit1(t *testing.T) {
 	f := newRolloverFixture(t)
 	d := budget.Day(f.now) - 12

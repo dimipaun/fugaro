@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/firestore"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -40,7 +41,7 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 		return userErr("--force rewrites final documents and needs --day")
 	}
 	env := map[string]string{}
-	for _, k := range []string{envProject, envFirebaseFP, envRTDBURL, envRunsBucket, envFirestoreDB} {
+	for _, k := range []string{envProject, envGCPProject, envFirebaseFP, envRTDBURL, envRunsBucket, envFirestoreDB} {
 		if env[k] = getenv(k); env[k] == "" {
 			return userErr("the history job needs %s in its environment (Terraform sets it on the job)", k)
 		}
@@ -96,6 +97,29 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	db, err := rtdb.New(env[envRTDBURL], dbAuth)
 	if err != nil {
 		return userErr("%s: %v", envRTDBURL, err)
+	}
+	// The one thing this job does to the database is destructive — it moves
+	// finished days out and then DELETES their nodes — so which database it may
+	// do that to is asked of the database and not of the names beside it. The
+	// job's environment is Terraform's, not a config file's, but the two names
+	// still decide it: an installation created before 2026-10-23 may have had a
+	// Firebase project of its own, other than its GCP project (the job carries
+	// both, history.tf), and a database that is not this installation's is not
+	// one to prune. The answer is infra.DB.Check's — the same gate every writer
+	// into the budget database asks (the rules stage, the policy migration of
+	// `fugaro update`) — read from the mark the installation's own adopt wrote.
+	// An empty database passes that check whatever project its URL belongs to,
+	// which is why the answer is asked and not assumed from the pair's
+	// agreement; the ordinary installation, whose Firebase project IS its GCP
+	// project, asks nothing and is untouched.
+	if env[envFirebaseFP] != env[envGCPProject] {
+		marked, err := infra.NewDB(db, env[envProject], env[envGCPProject], "").Check(ctx)
+		if err != nil {
+			return userErr("%v: nothing was moved", oneLine(err.Error()))
+		}
+		if !marked {
+			return userErr("the database at %s is empty and carries no Fugaro mark (%s) of project %s in %s, and the job's Firebase project (%s) is not the installation's GCP project (%s): it is not this installation's database, so nothing was moved", oneLine(env[envRTDBURL]), budget.PathMark, oneLine(env[envProject]), oneLine(env[envGCPProject]), oneLine(env[envFirebaseFP]), oneLine(env[envGCPProject]))
+		}
 	}
 	fs, err := firestore.New(fsURL, env[envFirebaseFP], fsSrc)
 	if err != nil {

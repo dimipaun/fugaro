@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -68,16 +69,45 @@ func policyNodeUnreachable(lc *localcfg.Config) bool {
 	return lc.Budget == nil || lc.Budget.RTDBURL == ""
 }
 
+// policyMigrationNotOurs is the answer policyMigrationFor gives for a database
+// the config names in a Firebase project other than the installation's own that
+// carries no mark of this installation (budgetDBUnadopted): there is nothing to
+// migrate HERE, and the callers turn it into the skip their own vocabulary has
+// — `fugaro update`'s stage into a skipped stage, `fugaro upgrade` into a
+// skipped step — rather than into an error, because the rest of the run has
+// nothing to do with that database, exactly as the rules stage's skip is not a
+// refusal.
+//
+// It is a type and not a plain error so a caller cannot mistake it for a read
+// that failed (the two are the only two things this function returns): a failed
+// read is the run's error, and this is a state the operator resolves with the
+// two commands the sentence names.
+type policyMigrationNotOurs struct{ reason string }
+
+func (e *policyMigrationNotOurs) Error() string { return e.reason }
+
 // policyMigrationFor reads the published node and works out what it would be
 // written as. published is whether a node is there at all — a project with a
 // budget backend and no published policy is a state of its own, and one the
 // delete and show paths already word ("runs fall back to the ceiling their
 // job's environment carries"), not the same thing as a node already at this
 // version. The migration is nil when there is nothing to migrate.
+//
+// It is a writer, so it holds a writer's gate (budgetDBUnadopted), and it holds
+// it HERE, before the node is read: this is the second stage that writes into
+// the budget database, and the rules stage being skipped over a database the
+// installation never adopted does not stop this one from migrating the node in
+// it — the read, the ETag and the write all land in that same database, and
+// `fugaro upgrade` reaches this function with no rules stage in front of it at
+// all. The ordinary installation (budget.firebase_project equal to gcp_project)
+// asks nothing and is untouched.
 func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigration, published bool, err error) {
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return nil, false, err
+	}
+	if why := budgetDBUnadopted(ctx, lc, infra.NewDB(db, lc.Name, lc.GCPProject, ""), "this stage migrates no policy there", selfCommand()+" update"); why != "" {
+		return nil, false, &policyMigrationNotOurs{reason: why}
 	}
 	etag, found, raw, err := readPolicyNode(ctx, db, lc)
 	if err != nil {
@@ -369,6 +399,10 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{State: initflow.Skipped, Detail: policyNoDBReason}, nil
 	}
 	m, published, err := s.plan(ctx)
+	var notOurs *policyMigrationNotOurs
+	if errors.As(err, &notOurs) {
+		return initflow.Status{State: initflow.Skipped, Detail: notOurs.reason}, nil
+	}
 	if err != nil {
 		return initflow.Status{}, err
 	}
@@ -386,6 +420,10 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 		return initflow.Plan{NothingToDo: true, Detail: policyNoDBReason}, nil
 	}
 	m, published, err := s.plan(ctx)
+	var notOurs *policyMigrationNotOurs
+	if errors.As(err, &notOurs) {
+		return initflow.Plan{NothingToDo: true, Detail: notOurs.reason}, nil
+	}
 	if err != nil {
 		return initflow.Plan{}, err
 	}
@@ -416,6 +454,10 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		return initflow.Outcome{Detail: policyNoDBReason}, nil
 	}
 	m, _, err := s.plan(ctx)
+	var notOurs *policyMigrationNotOurs
+	if errors.As(err, &notOurs) {
+		return initflow.Outcome{Detail: notOurs.reason}, nil
+	}
 	if err != nil {
 		return initflow.Outcome{}, err
 	}

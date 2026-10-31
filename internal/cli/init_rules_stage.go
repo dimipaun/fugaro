@@ -126,8 +126,8 @@ func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
 		oneLine(lc.Budget.FirebaseProject), oneLine(lc.GCPProject))
 }
 
-// unadopted is why the database the config names may not be treated as this
-// installation's, "" when it may. A Firebase project other than the
+// budgetDBUnadopted is why the database the config names may not be treated as
+// this installation's, "" when it may. A Firebase project other than the
 // installation's own serves it only once the installation adopted it, and the
 // one thing that shows the adoption happened is the mark the adoption door
 // (`fugaro update --firebase-project`, which takes only the installation's own
@@ -142,11 +142,17 @@ func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
 // a skip and not a licence, and the skip names the way out — the config's pair
 // dropped, and the installation's own Firebase project adopted in one command.
 // A database that carries another installation's mark, or that holds data and no
-// mark, is a refusal from that same check and is reported here for the same
-// reason every other report in this stage is: `fugaro update`'s other stages
-// have nothing to do with the budget database.
-func (s *rulesStage) unadopted(ctx context.Context, db *infra.DB) string {
-	detail := rulesSeparateFirebaseProject(s.e.lc)
+// mark, is a refusal from that same check, and it too is reported rather than
+// raised: `fugaro update`'s other stages have nothing to do with the budget
+// database.
+//
+// Every stage that writes into the budget database asks this one question
+// (declined names what the caller would have written there, program the command
+// the way out is run with), so a database cannot come out safe for one of them
+// and unsafe for the next: the policy migration is a second writer, and the
+// rules stage being skipped is not a reason for it to go on.
+func budgetDBUnadopted(ctx context.Context, lc *localcfg.Config, db *infra.DB, declined, program string) string {
+	detail := rulesSeparateFirebaseProject(lc)
 	if detail == "" {
 		return ""
 	}
@@ -157,8 +163,14 @@ func (s *rulesStage) unadopted(ctx context.Context, db *infra.DB) string {
 	if marked {
 		return ""
 	}
-	return fmt.Sprintf("%s: nothing in the config proves the database at %s is this installation's (an empty database passes every check that asks it), and --firebase-project takes only this installation's own GCP project, so this stage neither marks nor writes there. Drop the config's budget.firebase_project (and the budget.rtdb_url beside it, which is that project's database) and run `%s --firebase-project %s` once to adopt the installation's own Firebase project: the mark that door writes is what lets plain %s converge there from then on",
-		detail, oneLine(s.e.lc.Budget.RTDBURL), s.e.r.o.doorProgram(), oneLine(s.e.lc.GCPProject), s.e.r.o.doorProgram())
+	return fmt.Sprintf("%s: nothing in the config proves the database at %s is this installation's (an empty database passes every check that asks it), and --firebase-project takes only this installation's own GCP project, so %s. Drop the config's budget.firebase_project (and the budget.rtdb_url beside it, which is that project's database) and run `%s --firebase-project %s` once to adopt the installation's own Firebase project: the mark that door writes is what lets plain %s converge there from then on",
+		detail, oneLine(lc.Budget.RTDBURL), declined, program, oneLine(lc.GCPProject), program)
+}
+
+// unadopted is budgetDBUnadopted for this stage: it is the stage that neither
+// marks the database nor deploys the rules into it when the answer is "".
+func (s *rulesStage) unadopted(ctx context.Context, db *infra.DB) string {
+	return budgetDBUnadopted(ctx, s.e.lc, db, "this stage neither marks nor writes there", s.e.r.o.doorProgram())
 }
 
 // rulesUnavailable is why the stage does not run, "" when it may: no shared

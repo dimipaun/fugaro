@@ -526,6 +526,10 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepSkipped, reason: policyNoDBReason}
 	}
 	m, published, err := policyMigrationFor(ctx, lc)
+	var notOurs *policyMigrationNotOurs
+	if errors.As(err, &notOurs) {
+		return stepResult{state: stepSkipped, reason: oneLine(notOurs.reason)}
+	}
 	if err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
