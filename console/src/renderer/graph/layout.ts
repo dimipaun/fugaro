@@ -61,12 +61,19 @@ export const GRAPH_LAYOUT_CACHE_ENTRIES = 8
  * to the request it sent by request id, so one constant is enough. */
 const GRAPH_ID = 'graph'
 
-/** LAYOUT_OPTIONS is what the engine is asked for: a layered graph, top to
- * bottom, which is the direction the spec's dependency arrows are read in (a
- * task above the tasks that need it). */
+/** LAYOUT_OPTIONS is what the engine is asked for: a layered graph whose depth
+ * runs **left to right**, with its edges routed orthogonally.
+ *
+ * The direction is the redesign's canvas (console redesign, step 6a): a task
+ * sits to the left of the tasks that need it, so the picture is read the way a
+ * sentence is, and the layers the engine computes are the columns a person reads
+ * across. `elk.edgeRouting` is set explicitly rather than left to the engine's
+ * default: the default is a spline per edge, and a dependency's arrow is read as
+ * a line that leaves one card's side and arrives at another's. */
 const LAYOUT_OPTIONS: Readonly<Record<string, string>> = Object.freeze({
   'elk.algorithm': 'layered',
-  'elk.direction': 'DOWN',
+  'elk.direction': 'RIGHT',
+  'elk.edgeRouting': 'ORTHOGONAL',
 })
 
 const REQUEST: LayoutRequest = Object.freeze({ layoutOptions: LAYOUT_OPTIONS })

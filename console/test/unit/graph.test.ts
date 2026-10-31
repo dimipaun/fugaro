@@ -39,15 +39,19 @@ import { PLAN_STATUS_MIN_INTERVAL_MS } from '../../src/source/cli'
 import type { PlanStatusView, RunView } from '../../src/shared/schema'
 import { nodeKey } from '../../src/renderer/graph/layout'
 import type { LayoutEdge, LayoutNode, WorkerLike } from '../../src/renderer/graph/layout-client'
-import { buildGraphModel } from '../../src/renderer/graph/model'
+import { GRAPH_MAX_TITLE_CODE_POINTS, buildGraphModel } from '../../src/renderer/graph/model'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
 import {
+  GRAPH_BAND_HEAD,
   GRAPH_COMPONENT_OPTION,
   GRAPH_INITIAL_STATE,
   GRAPH_LAYER_GAP,
   GRAPH_LAYER_OPTION,
   GRAPH_NO_CANVAS,
+  GRAPH_NODE_OPTION,
+  GRAPH_NODE_TITLE_LINES,
+  GRAPH_NODE_TITLE_LINE_CODE_POINTS,
   GRAPH_NO_PLANS,
   GRAPH_NOT_SHOWN_SINGULAR,
   GRAPH_PAD,
@@ -204,19 +208,21 @@ function screenWith(theme: GraphTheme = 'light'): { screen: GraphScreen; worker:
   return { screen, worker }
 }
 
-/** LayeredWorker answers a layout as rows, which is the engine's own shape and
- * the shape this file's other fake does not have (it puts every node in one row
- * at `y = 0`, where no heading can be covered by anything).
+/** LayeredWorker answers a layout as the layered engine does for a **left to
+ * right** graph, which is the screen's own direction and the shape this file's
+ * other fake does not have (it puts every node in one row at `y = 0`, where no
+ * heading can be covered by anything).
  *
- * Each node goes one row below the deepest node it waits on, the rows are
- * separated by the room the request asks for, and the nodes of one row sit side
- * by side -- so a release box's heading band is drawn where the request's
- * spacing puts it, which is the whole of what the cases below read. Two nodes
- * no edge joins are two **components**, and the engine places them apart by a
- * spacing of its own (`GRAPH_COMPONENT_OPTION`), so the components are stacked
- * here at the room the request asks for rather than sharing one set of rows. It
- * is not a fake of ELK: nothing here routes an edge or orders a row, and nothing
- * in the cases needs it to. */
+ * Each node goes one **layer** to the right of the deepest node it waits on
+ * (the picture's depth runs left to right), the layers are separated by the room
+ * the request asks for, and the nodes of one layer are stacked vertically --
+ * so a release box's heading band, and a stream band's own label above it, are
+ * drawn where the request's spacing puts them, which is the whole of what the
+ * cases below read. Two nodes no edge joins are two **components**, and the
+ * engine places them apart by a spacing of its own (`GRAPH_COMPONENT_OPTION`),
+ * so the components are stacked here at the room the request asks for rather
+ * than sharing one set of layers. It is not a fake of ELK: nothing here routes
+ * an edge or orders a layer, and nothing in the cases needs it to. */
 class LayeredWorker implements WorkerLike {
   readonly sent: Record<string, unknown>[] = []
   private readonly listeners = new Map<string, ((event: { data?: unknown }) => void)[]>()
@@ -240,20 +246,25 @@ class LayeredWorker implements WorkerLike {
     }
     const options = (request['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
     const gap = Number(options[GRAPH_LAYER_OPTION] ?? 20)
+    const nodeGap = Number(options[GRAPH_NODE_OPTION] ?? 20)
     const componentGap = Number(options[GRAPH_COMPONENT_OPTION] ?? 20)
     const placed = new Map<string, { readonly x: number; readonly y: number }>()
     let top = 0
     for (const component of componentsOf(graph.children, graph.edges)) {
-      const rows = rowsOf(component.nodes, component.edges)
-      const height = component.nodes[0]?.height ?? 0
-      rows.forEach((row, at) => {
-        row.forEach((id, column) => {
+      const layers = layersOf(component.nodes, component.edges)
+      const width = component.nodes[0]?.width ?? 0
+      let deepest = 0
+      layers.forEach((layer, at) => {
+        let y = top
+        for (const id of layer) {
           const node = component.nodes.find((each) => each.id === id)
-          if (node === undefined) return
-          placed.set(id, { x: column * (node.width + 24), y: top + at * (height + gap) })
-        })
+          if (node === undefined) continue
+          placed.set(id, { x: at * (width + gap), y })
+          y += node.height + nodeGap
+        }
+        deepest = Math.max(deepest, y - top - nodeGap)
       })
-      top += (rows.length - 1) * (height + gap) + height + componentGap
+      top += deepest + componentGap
     }
     const data = {
       children: graph.children.map((child) => ({
@@ -272,18 +283,18 @@ class LayeredWorker implements WorkerLike {
   }
 }
 
-/** rowsOf is the graph's nodes as rows: one node per row per depth, where a
- * node's depth is the longest chain of dependencies above it. */
-function rowsOf(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[]): readonly (readonly string[])[] {
+/** layersOf is the graph's nodes as layers: one layer per depth, where a node's
+ * depth is the longest chain of dependencies to its left. */
+function layersOf(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[]): readonly (readonly string[])[] {
   const depth = new Map<string, number>(nodes.map((node) => [node.id, 0]))
   for (let pass = 0; pass <= nodes.length; pass += 1) {
     let moved = false
     for (const edge of edges) {
       for (const from of edge.sources) {
         for (const to of edge.targets) {
-          const below = (depth.get(from) ?? 0) + 1
-          if (below > (depth.get(to) ?? 0)) {
-            depth.set(to, below)
+          const beyond = (depth.get(from) ?? 0) + 1
+          if (beyond > (depth.get(to) ?? 0)) {
+            depth.set(to, beyond)
             moved = true
           }
         }
@@ -291,13 +302,13 @@ function rowsOf(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[]): rea
     }
     if (!moved) break
   }
-  const rows: string[][] = []
+  const layers: string[][] = []
   for (const node of nodes) {
     const at = depth.get(node.id) ?? 0
-    while (rows.length <= at) rows.push([])
-    rows[at]?.push(node.id)
+    while (layers.length <= at) layers.push([])
+    layers[at]?.push(node.id)
   }
-  return rows
+  return layers
 }
 
 /** componentsOf is the graph's nodes as the engine's own connected components:
@@ -515,19 +526,22 @@ describe('the graph screen and the layout cache', () => {
 // ---------------------------------------------------------------------------
 
 describe('the graph screen and the room a release heading needs', () => {
-  it('asks the engine for the room a heading needs, between two rows and between two components', async () => {
+  it('asks the engine for the room a heading and a band label need, in a layer, between two layers and between two components', async () => {
     const { screen, worker } = screenWith()
     await screen.load(DOCUMENT, RUNS)
     const asked = worker.sent.filter((each) => each['cmd'] === 'layout')
     expect(asked.length).toBe(1)
     const options = (asked[0]?.['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
-    // The room is the lower box's heading and the padding both boxes keep: less
-    // than that and the heading is drawn on the row above, whose cards are drawn
-    // later and paint over it. The engine places separate components apart by a
-    // spacing of its own, and a heading does not know which of the two it is
-    // under, so the same room is asked for both.
-    expect(GRAPH_LAYER_GAP).toBe(GRAPH_PAD * 2 + GRAPH_RELEASE_HEAD)
+    // The room is the lower box's heading, the stream band's own label above it,
+    // and the padding both boxes keep: less than that and the heading or the
+    // label is drawn on the row above, whose cards are drawn later and paint
+    // over it. **The flow is left to right, so the room a heading needs is the
+    // vertical one** -- `elk.spacing.nodeNode`, the space between two cards of
+    // one layer -- and the layers themselves and the components are asked for
+    // the same room because neither knows which of the three it is under.
+    expect(GRAPH_LAYER_GAP).toBe(GRAPH_PAD * 2 + GRAPH_BAND_HEAD)
     expect(options[GRAPH_LAYER_OPTION]).toBe(String(GRAPH_LAYER_GAP))
+    expect(options[GRAPH_NODE_OPTION]).toBe(String(GRAPH_LAYER_GAP))
     expect(options[GRAPH_COMPONENT_OPTION]).toBe(String(GRAPH_LAYER_GAP))
   })
 
@@ -592,6 +606,171 @@ function expectNoHeadingUnderACard(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// The stream bands, and the card's own title
+// ---------------------------------------------------------------------------
+
+/** bandIn is one stream's band: the rectangle it draws, the stream it is drawn
+ * for, and the label it carries. */
+function bandsIn(root: FakeNode): readonly { readonly stream: string; readonly label: string; readonly rect: ReturnType<typeof rectOf> }[] {
+  return everyNode(root)
+    .filter((each) => each.getAttribute('class') === 'graph-band')
+    .map((each) => {
+      const box = each.children.find((child) => child.getAttribute('class') === 'graph-band-box')
+      const label = each.children.find((child) => child.getAttribute('class') === 'graph-band-label')
+      if (box === undefined) throw new Error('a band was drawn with no box')
+      return { stream: each.getAttribute('data-stream') ?? '', label: label?.textContent ?? '', rect: rectOf(box) }
+    })
+}
+
+/** titleLinesIn is one card's title as the lines the card drew: the text of
+ * every line of the title's own `text`, in the order it drew them. */
+function titleLinesIn(root: FakeNode, key: string): readonly string[] {
+  const card = everyNode(root).find((each) => each.getAttribute('data-key') === key)
+  const title = card?.children.find((child) => child.getAttribute('class') === 'graph-node-title')
+  return (title?.children ?? []).map((line) => line.textContent ?? '')
+}
+
+/** inside is whether a rectangle holds another whole: a card is on its stream's
+ * band when every one of its four edges is within the band's. */
+function inside(outer: ReturnType<typeof rectOf>, inner: ReturnType<typeof rectOf>): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  )
+}
+
+describe('the graph screen and its stream bands', () => {
+  it('draws one band per stream, behind the tasks, carrying the stream’s own name', async () => {
+    // **One horizontal band per stream** (the redesign's canvas): the model's
+    // stream grouping is the picture's own rows, so a reader sees which stream a
+    // task belongs to without reading a tab, and the plans that name no stream
+    // get a band of their own under the console's own words.
+    const screen = layeredScreen(new LayeredWorker())
+    await screen.load(DOCUMENT, RUNS)
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const root = mounted(drawing)
+    const model = screen.lastModel
+    if (model === null) throw new Error('no model')
+
+    const bands = bandsIn(root)
+    expect(bands.map((band) => band.stream)).toEqual(model.columns.map((column) => column.stream))
+    expect(bands.map((band) => band.label)).toEqual(model.columns.map((column) => (column.label.ok ? column.label.text : '')))
+    expect(bands.map((band) => band.label)).toEqual(['example', 'no stream'])
+
+    // A band is drawn **behind** the tasks: every band comes before every card in
+    // the canvas, so a card's own surface is never under a band's fill.
+    const drawn = everyNode(root).filter((each) => each.getAttribute('class') === 'graph-band' || each.getAttribute('class') === 'graph-node')
+    expect(drawn.filter((each) => each.getAttribute('class') === 'graph-band').length).toBe(bands.length)
+    expect(drawn.findIndex((each) => each.getAttribute('class') === 'graph-node')).toBeGreaterThan(bands.length - 1)
+
+    // Every task of a stream is inside that stream's band, and the bands do not
+    // overlap each other: one band per stream is a row of its own, not a box
+    // drawn around whatever happened to land near it.
+    const streamOf = new Map<string, string>()
+    for (const column of model.columns) {
+      for (const plan of column.plans) for (const node of plan.nodes) streamOf.set(nodeKey(plan.id, node.id), column.stream)
+    }
+    for (const card of cardsIn(root)) {
+      const band = bands.find((each) => each.stream === streamOf.get(card.key))
+      if (band === undefined) throw new Error(`no band for ${card.key}`)
+      expect(inside(band.rect, card.rect), `${card.key} is drawn outside its stream's band`).toBe(true)
+    }
+    for (const one of bands) {
+      for (const other of bands) {
+        if (one.stream === other.stream) continue
+        expect(overlaps(one.rect, other.rect), `${one.stream} and ${other.stream} overlap`).toBe(false)
+      }
+    }
+  })
+
+  it('draws the band’s label through the sanitizer, and never a stream name as markup', async () => {
+    // A stream's name is a checkout's own string, so it is drawn through the
+    // model's `Sanitized` label like every other document string: a hostile one
+    // is text, whole, with nothing under it.
+    const hostile = `<${'script'}>${'alert'}(1)</${'script'}>`
+    const screen = layeredScreen(new LayeredWorker())
+    await screen.load(patched(['plans', 0, 'stream'], hostile), RUNS)
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const root = mounted(drawing)
+    const labels = bandsIn(root).map((band) => band.label)
+    expect(labels).toContain(hostile)
+    expect(everyNode(root).every((each) => each.tagName !== 'SCRIPT')).toBe(true)
+  })
+})
+
+describe('the graph screen and a card’s title', () => {
+  it('wraps a title inside its card, and marks the cut only when the lines run out', async () => {
+    // The card is 260 x 88 and its title is drawn in lines: **a title that fits
+    // the card's lines is drawn whole** (the redesign: "wrap, don't truncate
+    // with an ellipsis where it fits"), and only one that does not is cut -- and
+    // then the cut is marked, because a title shortened in silence reads as the
+    // whole title.
+    const whole = 'a title of several words that a card wraps over its own lines'
+    const { screen } = screenWith()
+    await screen.load(patched(['plans', 0, 'nodes', 0, 'title'], whole), RUNS)
+    const drawing = screen.redraw()
+    if (drawing === null) throw new Error('no drawing')
+    const lines = titleLinesIn(mounted(drawing), nodeKey(PLAN, 'task-one'))
+
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines.length).toBeLessThanOrEqual(GRAPH_NODE_TITLE_LINES)
+    // The lines are the title's own words: a wrap breaks between two words, so
+    // joining the lines with the space the break took puts the whole title back.
+    expect(lines.join(' ')).toBe(whole)
+    expect(lines.join(' ')).not.toContain('…')
+    for (const line of lines) expect([...line].length).toBeLessThanOrEqual(GRAPH_NODE_TITLE_LINE_CODE_POINTS)
+
+    // A title the card's lines cannot hold is cut, with the cut marked -- and it
+    // is the card's cut and not the model's: the model's bound is 200 code
+    // points, which is a good deal more than three lines hold.
+    const long = 'word '.repeat(120)
+    const other = screenWith()
+    await other.screen.load(patched(['plans', 0, 'nodes', 0, 'title'], long), RUNS)
+    const cut = other.screen.redraw()
+    if (cut === null) throw new Error('no drawing')
+    const cutLines = titleLinesIn(mounted(cut), nodeKey(PLAN, 'task-one'))
+    expect(cutLines).toHaveLength(GRAPH_NODE_TITLE_LINES)
+    expect(cutLines[cutLines.length - 1]?.endsWith('…')).toBe(true)
+    expect([...cutLines.join(' ')].length).toBeLessThan([...long].length)
+    for (const line of cutLines) expect([...line].length).toBeLessThanOrEqual(GRAPH_NODE_TITLE_LINE_CODE_POINTS)
+    // And the cut is code-point-safe: no lone surrogate half is drawn.
+    const astral = '\u{1F600}'
+    const astralTitle = astral.repeat(40)
+    const third = screenWith()
+    await third.screen.load(patched(['plans', 0, 'nodes', 0, 'title'], astralTitle), RUNS)
+    const astralCut = third.screen.redraw()
+    if (astralCut === null) throw new Error('no drawing')
+    const drawn = titleLinesIn(mounted(astralCut), nodeKey(PLAN, 'task-one')).join(' ')
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    expect(lone.test(drawn)).toBe(false)
+    expect(drawn).toContain(astral)
+  })
+
+  it('draws a title the card cannot hold whole in the list, where the whole sentence is', async () => {
+    // The two drawings of one model: the card wraps and cuts, and the list is
+    // where a reader goes for the whole sentence (the reconciliation's F25). The
+    // title is under the model's own bound, so nothing but the card's lines cuts
+    // it -- a longer one is cut twice, and the list would carry that cut too.
+    const long = 'a long task title '.repeat(6).trim()
+    expect([...long].length).toBeGreaterThan(GRAPH_NODE_TITLE_LINE_CODE_POINTS * GRAPH_NODE_TITLE_LINES)
+    expect([...long].length).toBeLessThanOrEqual(GRAPH_MAX_TITLE_CODE_POINTS)
+    const { screen } = screenWith()
+    await screen.load(patched(['plans', 0, 'nodes', 0, 'title'], long), RUNS)
+    const canvas = screen.redraw()
+    if (canvas === null) throw new Error('no drawing')
+    expect(textOf(mounted(canvas))).not.toContain(long)
+
+    const list = screen.change({ view: 'list' })
+    if (list === null) throw new Error('no drawing')
+    expect(textOf(mounted(list))).toContain(long)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // The words
@@ -754,9 +933,14 @@ describe('the graph screen and a finished release', () => {
     await screen.load(FINISHED, RUNS)
     const element = screen.redraw()
     if (element === null) throw new Error('no drawing')
-    const groups = everyNode(mounted(element)).filter((each) => each.getAttribute('data-stream') !== null)
+    // Selected by their own class rather than by `data-stream`: a stream band is
+    // drawn behind its row and carries the same stream name in that attribute.
+    const groups = everyNode(mounted(element)).filter((each) => each.getAttribute('class')?.includes('graph-chip-group') === true)
     expect(groups.length).toBeGreaterThan(0)
-    expect(groups.every((each) => each.getAttribute('class')?.includes('graph-chip-group'))).toBe(true)
+    expect(groups.every((each) => (each.getAttribute('data-stream') ?? '') !== '')).toBe(true)
+    const labels = everyNode(mounted(element)).filter((each) => each.getAttribute('class')?.includes('graph-chip-stream') === true)
+    expect(labels).toHaveLength(groups.length)
+    expect(labels.every((each) => (each.textContent ?? '').trim() !== '')).toBe(true)
   })
 })
 

@@ -209,8 +209,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'barText(release)':
       '`barText` composes "n of m done" from two `formatReading` readings -- the console\'s only formatter, whose unavailable mark is what a release the document gave no counters reads -- and the words around them are this file\'s',
     'barText(box.release)': '`barText`, the same "n of m done" run the chip and the list heading draw, so one rule reads all three',
-    'cutForCard(node.title)':
-      '`cutForCard` answers the model\'s own `Sanitized` title cut to the room a card has, or the console\'s unavailable mark: the value has been through `sanitizeText` in `graph/model.ts`, and the cut is `[...text]` so a surrogate pair is never split',
+    line: {
+      within: 'nodeCard',
+      reason:
+        'one line of `titleLines(node.title)`, the model\'s own `Sanitized` title wrapped to the lines a card has and cut only past them: the value has been through `sanitizeText` in `graph/model.ts`, a refusal is the console\'s `UNAVAILABLE_MARK`, and every cut is `[...text]` so a surrogate pair is never split',
+    },
     '`#${String(node.prNumber)}`':
       'a pull request number the model read as a positive integer (`prNumberAt`), drawn as **text**: design section 5.1 rule 2 and its gap 7 leave the console no URL to build, so the number is the whole of it and its `title` carries `GRAPH_PR_NO_LINK_REASON` -- the treatment `live.ts` and `run.ts` give the same field',
     '`run …${node.run.text}`':
@@ -495,6 +498,10 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'group.stream': {
       within: 'chips',
       reason: 'a stream name, which the model holds as a **key**: `graph/model.ts` never spells one, the heading beside it is the `Sanitized` label, and a plan\'s `stream` is the same kind of value',
+    },
+    'one.stream': {
+      within: 'band',
+      reason: 'the same stream key the chip group carries, on the band drawn behind that stream\'s row: `graph/model.ts` never spells a stream name, and the label drawn at the band\'s head is the `Sanitized` one',
     },
     'box.key': { within: 'releaseBox', reason: '`releaseKey(plan, version)`, this file\'s own join of two ids the model holds as keys -- written as `data-release` and never drawn' },
     key: 'the layout key of a card, a row or a chip -- `nodeKey(plan.id, node.id)` or `releaseKey(plan.id, version)`, ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key`/`data-chip` and never drawn; the drawn text is the `Sanitized` title beside it',

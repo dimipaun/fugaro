@@ -1150,36 +1150,28 @@ main p {
  * is a percentage in an attribute). What the rules below paint is colour, weight
  * and dashes.
  *
+ * **The picture's own rules are not here** (console redesign, step 6a). The
+ * canvas's ground, the stream bands, the release box, the edges and the cards are
+ * painted in `flight-deck.css`, in the redesign's tokens; the markup they meet is
+ * the same markup this file used to draw them for, so there is one rule per hook
+ * and it is in one place. What is left here is the **chrome** of the screen that
+ * the redesign has not restyled yet -- the header, the tabs, the view switch, the
+ * chips of the finished releases and the list -- and the screen's motion, whose
+ * keyframes and both arms stay in one block in this file (design section 3.9's
+ * amendment, and `graph-motion.test.ts` reads them here).
+ *
  * **No state is carried by colour alone** (design section 3.5). Every state word
- * is an element in the DOM beside the tone -- `implementing`, `in review`,
- * `fixing`, `queued`, `waiting`, `halted`, `blocked`, `ready`, `done` -- and the
- * two edge facts a reader scans for are shapes rather than hues: the stroke
- * **width** of a critical edge and the **dashes** of a blocked task's box, both
- * of which survive `forced-colors` because neither is a colour (design section
- * 4.4).
+ * is an element in the DOM beside the tone, and the two facts a reader scans for
+ * are shapes rather than hues: the stroke **width** of a critical edge and the
+ * **dashes** of a blocked task's box, both of which survive `forced-colors`
+ * because neither is a colour (design section 4.4).
  *
- * **The tones are the state tokens' roles and not a second palette.** A task
- * being worked on is `--accent`, the token section 3.2 gives to structure; one
- * that cannot move is `--warn`, which is attention; a halt is `--halted`, whose
- * role cell is "a deliberate stop"; a finished task is `--text-muted`, because
- * it is no longer a reading anyone acts on. `--ok` is **not** used: the design
- * licenses that token to exactly two readings, and a finished task is neither
- * (`theme-tokens.test.ts`'s `OK_SELECTORS`).
- *
- * **The faint cross-release edge is faint by its width.** The palette's one dim
- * tone is `--border`, and the design licenses it to a `--rule-width` hairline
- * and to nothing else -- a stroke is not a hairline, and a rule that reached for
- * it here would fail the `--border`-is-decorative scan. So the three edge kinds
- * are 1, 2 and 3 px, of `--border-strong`, `--accent` and `--text`: a scale a
- * reader with no colour at all still reads, which is the same defence the dashes
- * above are.
- *
- * **Three things here move, and they are the design's three.** The graph is the
- * one screen the design's section 3.9 amendment lets animate: a comet on a
- * running card, a pulse on a critical one and a flow along a critical edge, each
- * drawn by the motion block below with its own static style under the graph's own
- * `prefers-reduced-motion` and `forced-colors` arms. Every other state here, and
- * every figure on every screen, stays still.
+ * **Three things move, and they are the design's three.** The graph is the one
+ * screen the design's section 3.9 amendment lets animate: a comet on a running
+ * card, a pulse on a critical one and a flow along a critical edge, each drawn by
+ * the motion block below with its own static style under the graph's own
+ * `prefers-reduced-motion` and `forced-colors` arms. Every other screen stays
+ * still, and so does every figure (§3.9).
  */
 
 section.graph {
@@ -1346,123 +1338,6 @@ span.graph-chip-task-title {
   color: var(--text);
 }
 
-/* The canvas: an `svg` with a `viewBox` and no width or height of its own, so it
- * takes the panel's width and the picture's ratio decides its height. */
-svg.graph-canvas {
-  display: block;
-  width: 100%;
-  height: auto;
-  background: var(--surface);
-  border: var(--rule-width) solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-/* A release's box is a frame drawn *around* its tasks, so it is an outline and
- * never a fill: filling it would put a surface under the cards' own surfaces. */
-svg .graph-release-box {
-  fill: none;
-  stroke: var(--border-strong);
-  stroke-width: 1;
-}
-
-svg .graph-release-heading,
-svg .graph-release-bar,
-svg .graph-release-stream,
-svg .graph-release-version {
-  fill: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-svg .graph-release-name {
-  fill: var(--text);
-}
-
-/* The edges, in the order the widths are read: a cross-release edge is the
- * thinnest, a plain one is 2 px, the critical path is 3 px of the accent, and a
- * selected task's edges are 3 px of the reading tone -- the loudest line on the
- * canvas, because the selection is a question and its answer is those edges. */
-svg .graph-edge-path {
-  fill: none;
-  stroke: var(--border-strong);
-  stroke-width: 2;
-}
-
-svg .graph-edge[data-cross='true'] .graph-edge-path {
-  stroke-width: 1;
-}
-
-svg .graph-edge[data-critical='true'] .graph-edge-path {
-  stroke: var(--accent);
-  stroke-width: 3;
-}
-
-svg .graph-edge[data-selected='true'] .graph-edge-path {
-  stroke: var(--text);
-  stroke-width: 3;
-}
-
-/* The tasks. A card is a surface with a boundary, and the boundary carries the
- * state: `data-state` is the node's first word, so a rule keyed on it draws the
- * same state the word beside it spells. A blocked task is dashed as well as
- * amber, because "this one is not going to move" is the one state a reader needs
- * at a glance, and a done one goes quiet rather than green. */
-svg .graph-node-box {
-  fill: var(--surface);
-  stroke: var(--border-strong);
-  stroke-width: 1;
-}
-
-svg .graph-node[data-state='implementing'] .graph-node-box,
-svg .graph-node[data-state='in review'] .graph-node-box,
-svg .graph-node[data-state='fixing'] .graph-node-box {
-  stroke: var(--accent);
-}
-
-svg .graph-node[data-state='blocked'] .graph-node-box {
-  stroke: var(--warn);
-  stroke-dasharray: 6 4;
-}
-
-svg .graph-node[data-state='halted'] .graph-node-box {
-  stroke: var(--halted);
-}
-
-svg .graph-node[data-state='done'] .graph-node-box {
-  stroke: var(--text-muted);
-}
-
-/* A done card goes quiet in its **text** as well as its boundary, which is the
- * second channel the row below keeps: a reader who cannot tell the muted stroke
- * from the strong one still reads a done task from the title, and a reader who
- * can reads it twice. */
-svg .graph-node[data-state='done'] .graph-node-title {
-  fill: var(--text-muted);
-}
-
-/* The selected card's boundary thickens and does not change tone: the tone is
- * the state's, and a selection that recoloured it would hide the state. */
-svg .graph-node[data-selected='true'] .graph-node-box {
-  stroke-width: 2;
-}
-
-svg .graph-node-title {
-  fill: var(--text);
-  font-size: var(--font-size-sm);
-}
-
-svg .graph-node-word,
-svg .graph-node-pr,
-svg .graph-node-run,
-svg .graph-node-mark {
-  fill: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-svg .graph-node-run {
-  font-family: var(--font-mono);
-}
-
 /* ---- The graph's motion (design section 3.9's amendment of 2026-10-24) -----
  *
  * Three things move on this screen and no more: a **comet** that travels a
@@ -1499,7 +1374,7 @@ svg .graph-node-run {
  * 0`, is the static style both arms below are left with. */
 section.graph svg .graph-node-comet {
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--live);
   stroke-width: 3;
   stroke-dasharray: 12 88;
   stroke-dashoffset: 0;
@@ -1512,14 +1387,15 @@ section.graph svg .graph-node[data-state='queued'] .graph-node-comet {
   animation: graph-comet 2.6s linear infinite;
 }
 
-/* The glow is a critical card's own second channel: a filled wash of `--accent`,
- * the tone the critical path is drawn in, behind a card whose boundary keeps the
- * state it was already carrying -- amber for blocked, muted for done. It is
- * blurred so its edge is light rather than a line, and it is drawn before the card
- * so only the spill shows: a glow is not a border. Its resting opacity is what the
+/* The glow is a critical card's own second channel: a filled wash of `--live`,
+ * the tone the critical path and the running card's boundary are drawn in,
+ * behind a card whose boundary keeps the state it was already carrying -- the
+ * `--decor` dash of a blocked one, the neutral boundary of a done. It is blurred
+ * so its edge is light rather than a line, and it is drawn before the card so
+ * only the spill shows: a glow is not a border. Its resting opacity is what the
  * two arms below are left with. */
 section.graph svg .graph-node-pulse {
-  fill: var(--accent);
+  fill: var(--live);
   filter: blur(4px);
   opacity: 0.45;
 }

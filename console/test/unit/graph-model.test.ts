@@ -29,7 +29,7 @@ import type { PlanStatusView } from '../../src/shared/schema'
 import type { Sanitized } from '../../src/shared/sanitize'
 import { GRAPH_LAYOUT_CACHE_ENTRIES, GraphLayout, graphOf, structureHash } from '../../src/renderer/graph/layout'
 import { LayoutClient } from '../../src/renderer/graph/layout-client'
-import type { Positions, WorkerLike } from '../../src/renderer/graph/layout-client'
+import type { LayoutGraph, Positions, WorkerLike } from '../../src/renderer/graph/layout-client'
 import {
   GRAPH_MAX_NEEDS,
   GRAPH_MAX_NODES,
@@ -499,6 +499,40 @@ describe('the graph layout cache', () => {
     expect(worker.placements).toBe(before + 1)
     worker.answer(placed(oldest))
     await pending
+  })
+
+  it('lays the graph out left to right, orthogonally, over the cards’ own box', async () => {
+    // **The geometry the redesign's Graph canvas is drawn with.** The picture is
+    // read left to right -- a task to the left of the tasks that need it -- and
+    // its edges are routed orthogonally rather than as the engine's default
+    // splines, because a dependency's arrow is read as a line that leaves one
+    // card's side and arrives at another's, and a spline between two boxes is a
+    // curve a reader has to follow rather than a run they can see.
+    const { worker, layout } = layoutWith()
+    await settle(worker, layout, model(null))
+    const asked = worker.sent.filter((message) => message['cmd'] === 'layout')[0]
+    if (asked === undefined) throw new Error('the worker was asked for no layout')
+    const options = (asked['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+    expect(options['elk.algorithm']).toBe('layered')
+    expect(options['elk.direction']).toBe('RIGHT')
+    expect(options['elk.edgeRouting']).toBe('ORTHOGONAL')
+
+    // And the box the engine is given is the card the screen draws: 260 x 88,
+    // which is the room a wrapped title is measured against.
+    const graph = asked['graph'] as LayoutGraph
+    expect(graph.children.length).toBeGreaterThan(0)
+    for (const child of graph.children) {
+      expect([child.width, child.height]).toEqual([GRAPH_NODE_WIDTH, GRAPH_NODE_HEIGHT])
+    }
+    expect([GRAPH_NODE_WIDTH, GRAPH_NODE_HEIGHT]).toEqual([260, 88])
+
+    // The box size is in the cache key -- each size length-prefixed, the way
+    // every part of the hash is written -- so a card that grows is a different
+    // structure and no answer laid out for the smaller card is reused.
+    const width = String(GRAPH_NODE_WIDTH)
+    const height = String(GRAPH_NODE_HEIGHT)
+    expect(structureHash(model(null))).toContain(`${String(width.length)}:${width}`)
+    expect(structureHash(model(null))).toContain(`${String(height.length)}:${height}`)
   })
 
   it('sends the worker ids and sizes and nothing a person wrote', () => {
