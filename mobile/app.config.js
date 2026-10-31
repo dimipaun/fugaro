@@ -114,9 +114,10 @@
 // `resolveConfig`) on a machine that has neither file. **In a build it is the
 // other way round (D260, P7.1b)**: `resolveConfig` refuses -- naming the
 // platform, the variable, where to change that name and README's section, and
-// never a value -- when a platform being built resolves to no readable file, so
-// an EAS build whose environment carries none is a stop rather than an artifact
-// with a nameless Firebase app. `native-config-guard.js` is that guard, and
+// never a value -- when a platform being built resolves to no readable file.
+// Prebuild refuses a missing file too, from the plugin's own code and after the
+// upload; this is the earlier and plainer stop on the same fact.
+// `native-config-guard.js` is that guard, and
 // `mobile/README.md`'s "Building for internal testing" says the same to the
 // owner. **The delivery mechanism is EAS environment variables with file
 // visibility**, set in the EAS environments the profiles name: `eas.json`
@@ -132,7 +133,12 @@
 // collection switches themselves are **not** here: the SDK reads them from
 // `mobile/firebase.json` at build time (see that file).
 
-import { builtPlatforms, nativeConfigError, nativeConfigMissing } from './native-config-guard.js';
+import {
+  GOOGLE_SERVICES_FIELD,
+  builtPlatforms,
+  nativeConfigError,
+  nativeConfigMissing,
+} from './native-config-guard.js';
 
 /** The two variables, by platform. The names are this task's, and a rename is deliberate. */
 export const ID_VARIABLES = Object.freeze({
@@ -328,9 +334,6 @@ export const NATIVE_CONFIG_VARIABLES = Object.freeze({
   ios: 'GOOGLE_SERVICE_INFO_PLIST',
   android: 'GOOGLE_SERVICES_JSON',
 });
-
-/** The field of `expo` each native config file path is written to. */
-const GOOGLE_SERVICES_FIELD = 'googleServicesFile';
 
 /**
  * Android's advertising-id permission: the one Play reads as "this app uses the

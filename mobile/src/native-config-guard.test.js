@@ -19,6 +19,7 @@ import test, { after } from 'node:test';
 
 import { ID_VARIABLES, NATIVE_CONFIG_VARIABLES, resolveConfig } from '../app.config.js';
 import {
+  GOOGLE_SERVICES_FIELD,
   NATIVE_CONFIG_README_SECTION,
   builtPlatforms,
   nativeConfigError,
@@ -150,6 +151,22 @@ test('the names are not enforced: the guard reads the resolved file, not a varia
   assert.match(nativeConfigError('android', NATIVE_CONFIG_VARIABLES.android).message, /GOOGLE_SERVICES_JSON/);
 });
 
+test('a path the environment did not carry still resolves: the guard reads the file', () => {
+  // The end-to-end half of the same rule, and the shape the module-level case
+  // above cannot reach: `resolveConfig` refuses on the **resolved** config, so
+  // a static `googleServicesFile` on the config itself is a file like any
+  // other even with the plan's variable unset. Mutation: refuse at the call
+  // site instead -- `resolveConfig` throwing when a `NATIVE_CONFIG_VARIABLES`
+  // entry is unset, which passes the case above -- and this resolution throws
+  // rather than returning.
+  const config = { ...EXPO, android: { ...EXPO.android, [GOOGLE_SERVICES_FIELD]: androidFile } };
+  const env = build({ [NATIVE_CONFIG_VARIABLES.ios]: iosFile });
+  assert.equal(NATIVE_CONFIG_VARIABLES.android in env, false, 'the plan’s Android variable is unset');
+
+  const resolved = resolveConfig(config, env);
+  assert.equal(resolved.android[GOOGLE_SERVICES_FIELD], androidFile);
+});
+
 test('EAS_BUILD_PLATFORM narrows the check to the platform being built', () => {
   assert.deepEqual(builtPlatforms({ EAS_BUILD_PLATFORM: 'android' }), ['android']);
   assert.deepEqual(builtPlatforms({ EAS_BUILD_PLATFORM: 'ios' }), ['ios']);
@@ -165,6 +182,22 @@ test('EAS_BUILD_PLATFORM narrows the check to the platform being built', () => {
   // ... and the reverse.
   const iosOnly = build({ EAS_BUILD_PLATFORM: 'ios', [NATIVE_CONFIG_VARIABLES.ios]: iosFile });
   assert.equal(resolveConfig(EXPO, iosOnly).ios.googleServicesFile, iosFile);
+});
+
+test('a platform name EAS does not use checks both, never one', () => {
+  // The unrecognised value is treated as "none named" rather than as a
+  // platform: an environment this file did not expect makes the guard check
+  // more and never less. Mutation: take any non-empty value as a platform name
+  // and the two shapes below become a check of one platform nobody builds.
+  for (const named of ['web', 'Android', 'android,ios', 'true']) {
+    assert.deepEqual(builtPlatforms({ EAS_BUILD_PLATFORM: named }), ['android', 'ios'], named);
+  }
+
+  // ... and the refusal that follows is real: only Android's file is there, so
+  // the unrecognised platform name is still a build that would carry no iOS
+  // config, and it is refused naming ios.
+  const env = build({ EAS_BUILD_PLATFORM: 'web', [NATIVE_CONFIG_VARIABLES.android]: androidFile });
+  assert.match(refusal(() => resolveConfig(EXPO, env)), /ios/);
 });
 
 test('nothing is required when neither switch is set', () => {

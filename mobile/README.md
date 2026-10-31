@@ -200,9 +200,10 @@ for the `@react-native-firebase` config plugin. **Neither file is ever
 committed** — `mobile/.gitignore` names both — so an EAS build whose environment
 carries no such file (or a path that names no file) **fails at config time, by
 design**: the failure names the platform, the variable `mobile/app.config.js`
-reads for it, and this section, and it is a stop rather than a build that ships
-a nameless Firebase app. The guard is `native-config-guard.js`, and
-`src/native-config-guard.test.js` is its test.
+reads for it, and this section. Prebuild refuses a missing file as well, from
+the plugin's own code and once the upload has already happened; this check is
+the earlier and plainer stop on the same fact. The guard is
+`native-config-guard.js`, and `src/native-config-guard.test.js` is its test.
 
 **Prerequisites: run `npm install` in `mobile/` first; the SDK is Expo SDK 58.**
 The manifest declares the app's runtime packages (`expo` 58.x, `react-native`
@@ -392,9 +393,15 @@ switch set — a developer's `expo start`, and `npm test` — **nothing is
 required**, so no store account is needed to run anything here; a variable that
 is set is still validated and used (that is the state `eas-cli` resolves the
 file in, above), and a static identity planted in `app.json` is dropped rather
-than passed through, so the file stays the single site for them. The file reads
-the two variables and the two switches, and **nothing else in the environment
-reaches the config**: it holds no credential, and it cannot.
+than passed through, so the file stays the single site for them. **The native
+config files are required by the same two switches**, with one difference: when
+that check runs, `EAS_BUILD_PLATFORM` narrows it to the platform EAS named — so
+`FUGARO_REQUIRE_IDS=1` on its own, and any build whose environment names no
+platform (which is what `eas-cli`'s local resolution looks like), requires
+**both** files, while one naming `android` requires only Android's. The file
+reads the two identities, the two native config variables, the two switches and
+that platform name, and **nothing else in the environment reaches the config**:
+it holds no credential, and it cannot.
 
 **The export-compliance answer is declared, not asked again.** `app.config.js`
 merges `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` into every

@@ -73,9 +73,12 @@ date and the same condition.
   are in the tree, so **P7.1 is built** and this document's status lines say so;
   the native config files themselves are still absent, and are ignored by
   `mobile/.gitignore` so they stay absent. **Still to come, in P7.2–P7.5**:
-  `shared/telemetry-consent/` with `mobile/src/telemetry/`, the always-on
+  `mobile/src/telemetry/`, the always-on
   statement and the link, the closed event allow-list and the scan that holds
-  it, and the store labels and the website's privacy paragraph.
+  it, and the store labels and the website's privacy paragraph. **Amended
+  2026-10-31: `shared/telemetry-consent/`, named here in the first version of
+  this sentence, is dropped — §6 removes it with the consent gate D255's answer
+  dropped, so it is nothing a task builds.**
 - **It runs no live step and it holds no secret.** The Firebase project is created by the
   owner, the native config files are delivered by EAS from the owner's own secrets, and **no
   agent creates a Firebase project, runs `eas build`, `eas secret:create` or `eas submit`, or
@@ -440,10 +443,15 @@ a test or a guard rather than a sentence:
    index proves the rule can fail.
 3. **A build-time guard that fails loudly.** `app.config.js` resolves the two file paths
    **from the environment** — `process.env.GOOGLE_SERVICES_JSON` and
-   `process.env.GOOGLE_SERVICE_INFO_PLIST` — and a profile that carries neither is a **stop**,
-   not a build. The guard's shape is check 89's own (`jq` reads the submit track *before*
-   anything is built; a profile naming a public track is a stop the owner takes there), and
-   its text says what is missing by **name** and never prints a value.
+   `process.env.GOOGLE_SERVICE_INFO_PLIST` — and a build whose **resolved config carries no
+   readable file** for a platform it is building is a **stop**, not a build. **Amended
+   2026-10-30 (P7.1b): the earlier sentence here, "a profile that carries neither", was the
+   check as planned and is retired with the `eas.json` wiring** — the guard reads the resolved
+   config, not a profile's `env` key, so a path that arrives as a static `googleServicesFile`
+   or under any variable name is a file like any other, and `EAS_BUILD_PLATFORM` narrows the
+   check to the platform EAS named. The guard's shape is check 89's own (`jq` reads the submit
+   track *before* anything is built; a profile naming a public track is a stop the owner takes
+   there), and its text says what is missing by **name** and never prints a value.
 4. **EAS file secrets deliver them** — **renamed 2026-10-30 (P7.1b): what delivers them is
    EAS environment variables with file visibility**; the commands below are one way to create
    such a file-valued variable, and the paragraph after them is the resolution. The owner
@@ -747,10 +755,11 @@ in D256**: turning the allow-list off and relying on the ban list.
 
 ### 7.4 The test that holds it
 
-P7.3 adds **two** tests in `mobile/src/telemetry/`, and P7.1 extends the app's own
-`mobile/src/app-config.test.js` with a **third** — the ad-ID test, whose subject is the build
-rather than the app's code. All three carry positive controls, all three in the
-shape the tree already uses (`mobile/src/mailbox/write-path.test.js`,
+P7.3 adds **two** tests in `mobile/src/telemetry/`, and P7.1 adds a **third** — the ad-ID test,
+whose subject is the build rather than the app's code. **Amended 2026-10-30 (P7.1b): the first
+sentence here said P7.1 "extends the app's own `mobile/src/app-config.test.js`"; the test is the
+new `mobile/src/ad-id.test.js`** (item 3 below is the record). All three carry positive controls,
+all three in the shape the tree already uses (`mobile/src/mailbox/write-path.test.js`,
 `mobile/src/boundary.test.js`):
 
 1. **The source scan.** Every `.js` under `mobile/` is walked (comments stripped, test files
@@ -985,7 +994,7 @@ step 4), `mobile/firebase.json` (new — the app-root
 `@react-native-firebase` dependencies), `mobile/README.md` (the Expo Go sentence D260 asks
 for), `mobile/src/app-config.test.js` (the tracked-file and ignore rules of §4.3, and the
 extension of the existing credential walk to `app.config.js`), **`mobile/native-config-guard.js`
-(new — D260's guard) and its tests `mobile/native-config-guard.test.js` and
+(new — D260's guard) and its tests `mobile/src/native-config-guard.test.js` and
 `mobile/src/ad-id.test.js`; **the ad-ID test of §7.4 is the new `mobile/src/ad-id.test.js`**, not
 an extension of `app-config.test.js`)**. The ad-ID walk reads the resolved config, the plugin
 options and `mobile/firebase.json` — **corrected 2026-10-30: it does not read
@@ -997,7 +1006,8 @@ files name, which app is the default, and where an installation's own connection
 rather than a question — as does every other dependency: D260 answered yes, and **D254 answered
 `fugaro-prod`**, the project that already exists, so the "project before its file" half is done
 the day the owner registers the two apps in it. **PR #675 is not a dependency**: it is merged, and P7.1 modifies `app.config.js` where it stands.
-**Verification.** `cd mobile && npm test` — the extended `app-config.test.js`: both native
+**Verification.** `cd mobile && npm test` — the extended `app-config.test.js`, the new
+`native-config-guard.test.js` and the ad-ID walk: both native
 paths are untracked and ignored; `app.config.js` contains no `AIza…`-shaped value (planted
 control); **a build whose resolved native config file is missing is refused (D260) — corrected
 2026-10-30: the guard checks the resolved *file*, not a profile's `env` key, so the planned
@@ -1113,7 +1123,7 @@ Phase 7's heading and step **7b**).
 
 | Level | Tasks | Reviewer | Files touched |
 |---|---|---|---|
-| **0** | **P7.1** the plugin, the native files, the development build | **SECURITY-SENSITIVE** | `mobile/app.config.js`, `mobile/eas.json`, `mobile/firebase.json`, `mobile/.gitignore`, `mobile/package.json`, `mobile/README.md`, `mobile/src/app-config.test.js` |
+| **0** | **P7.1** the plugin, the native files, the development build | **SECURITY-SENSITIVE** | `mobile/app.config.js`, `mobile/native-config-guard.js` and `mobile/src/native-config-guard.test.js`, `mobile/firebase.json`, `mobile/.gitignore`, `mobile/package.json`, `mobile/README.md`, `mobile/src/app-config.test.js`, `mobile/src/ad-id.test.js` — **and not `mobile/eas.json`, amended 2026-10-30: the files reach a build as EAS environment variables, so no `env` entry is written there** |
 | **1** | **P7.2** the always-on statement and the link · **P7.3** the allow-list and the scan | **both SECURITY-SENSITIVE** | `mobile/src/telemetry/notice.js`, `mobile/src/app/root.js` and `mobile/src/app/root.test.js` · `mobile/src/telemetry/` (the event module and its two tests), one entry in `mobile/src/mailbox/write-path.test.js` |
 | **2** | **P7.4** the labels and the website's paragraph | standard (website) / **owner** (the forms) | `website/src/pages/privacy.astro`, the website's gates |
 | **3** | **P7.5** checks 120–122 written | standard | `docs/gcp-live-checklist.md` |

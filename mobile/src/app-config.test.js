@@ -474,8 +474,9 @@ test('the native config paths come from the environment, and only when set', () 
     }
   }
   // ... while in a build the same unset-or-empty state is the stop D260 asks
-  // for, not a resolution: a build whose `googleServicesFile` is unset or `''`
-  // would prebuild into a nameless Firebase app. That refusal is
+  // for, not a resolution: prebuild would refuse a config whose
+  // `googleServicesFile` is unset or `''`, from the plugin's own code and after
+  // the upload, and this is the earlier stop on the same fact. That refusal is
   // `src/native-config-guard.test.js`'s own; what is pinned here is that this
   // file hands the guard nothing to pass on either value.
   for (const unset of [

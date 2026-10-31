@@ -17,8 +17,9 @@
 //     links no `AdSupport` framework.
 //
 // The generated native project is checked **when it exists** -- it is not
-// committed, and no test here runs `expo prebuild` -- and the walk says which
-// half it could not see rather than passing quietly. This walk deliberately
+// committed, and no test here runs `expo prebuild` -- so the manifest is its
+// own case, skipped with the reason on a machine that has none rather than
+// passing quietly. This walk deliberately
 // does **not** assert `firebase_crashlytics_collection_enabled`: the
 // Crashlytics library's own manifest hardcodes it `false` and RNFirebase's init
 // provider turns collection on from `firebase.json`'s
@@ -87,16 +88,26 @@ function adIdFailures({ config, firebase, manifest }) {
 /** The real inputs, and the resolved config a build reads. */
 const RESOLVED = resolveConfig(CONFIG.expo, {});
 
-test('the build enables no advertising-id collection, and declares no ad-ID permission', () => {
-  assert.deepEqual(adIdFailures({ config: RESOLVED, firebase: FIREBASE, manifest: MANIFEST }), []);
+test('the build enables no advertising-id collection: the source halves hold', () => {
+  // The two halves that are source -- `mobile/firebase.json` and the resolved
+  // config -- with the generated half named as unread rather than left to be
+  // whatever this machine happens to have.
+  assert.deepEqual(adIdFailures({ config: RESOLVED, firebase: FIREBASE, manifest: undefined }), []);
+});
 
-  // ... and it does not claim the generated half when it cannot see it: on a
-  // machine with no native project the walk judges source only, and this says
-  // so instead of passing quietly (the same rule §4.3's tracked-file test
-  // follows).
-  if (MANIFEST === undefined) {
-    assert.equal(existsSync(MANIFEST_PATH), false, 'the manifest is absent on this machine, so its half is unread');
-  }
+test('the generated Android manifest declares no ad-ID permission', {
+  // A machine with no native project cannot answer this, and says so: nothing
+  // in this repository prebuilds, so the manifest is absent in a checkout and
+  // present only where the owner ran one (the same rule §4.3's tracked-file
+  // test follows). Skipped rather than asserted away -- the assertion below is
+  // the only thing that reads the generated file, and it is real where there is
+  // one to read.
+  skip:
+    MANIFEST === undefined
+      ? 'this machine has no generated native project, so the manifest half of the walk is unread'
+      : false,
+}, () => {
+  assert.deepEqual(adIdFailures({ config: RESOLVED, firebase: FIREBASE, manifest: MANIFEST }), []);
 });
 
 test('every rule of the walk can fail: one planted control each', () => {
