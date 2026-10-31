@@ -275,55 +275,73 @@ func rulesStageState(skew rulesSkew) (initflow.State, string) {
 	return initflow.Skipped, rulesRulesUngeneratableText(skew.err)
 }
 
-// read opens the installation's budget database and classifies the deployed
-// rules and their marker, in the one order the classification is made in
-// (rulesSkewOf): the marker first, and the document only where the marker
+// rulesRead opens the installation's budget database and classifies the
+// deployed rules and their marker, in the one order the classification is made
+// in (rulesSkewOf): the marker first, and the document only where the marker
 // records this generation.
-func (s *rulesStage) read(ctx context.Context) (*infra.DB, rulesSkew, error) {
-	_, cl, err := budgetDBFor(ctx, s.e.lc)
+func rulesRead(ctx context.Context, lc *localcfg.Config) (*infra.DB, rulesSkew, error) {
+	_, cl, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return nil, rulesSkew{}, err
 	}
-	return infra.NewDB(cl, s.e.lc.Name, s.e.lc.GCPProject, ""), rulesSkewOf(ctx, cl), nil
+	return infra.NewDB(cl, lc.Name, lc.GCPProject, ""), rulesSkewOf(ctx, cl), nil
 }
 
-// state is one read of the stage: the database to deploy into, the state the
-// deployed rules are in, and the sentence the result carries.
+// rulesState is one read of the deployed rules for every caller that acts on
+// it: the database to deploy into, the state the deployed rules are in, and the
+// sentence the result carries. The rules stage of `fugaro update` and the rules
+// step of `fugaro upgrade` both go through it, so one installation cannot
+// converge through one front door into a state the other refuses, and declined
+// and program are budgetDBUnadopted's, so each door's skip names what THAT door
+// did not do and the command its own operator can run.
 //
 // The ownership predicate is asked first, before the classification, and it is
-// asked of EVERY state, not only of a deployable one (unadopted →
-// budgetDBUnadopted): whether the database is this installation's to write is a
-// question about the database, and the state of the document in it cannot be an
-// answer to it. A database the predicate refuses is REPORTED rather than fatal —
-// `fugaro update`'s other stages have nothing to do with it, and the run that
-// refused them all would be the one command that must work, not working.
+// asked of EVERY state, not only of a deployable one (budgetDBUnadopted):
+// whether the database is this installation's to write is a question about the
+// database, and the state of the document in it cannot be an answer to it. A
+// database the predicate refuses is REPORTED rather than fatal — `fugaro
+// update`'s other stages have nothing to do with it, and the run that refused
+// them all would be the one command that must work, not working.
 //
-// It is the same question, asked by the same function, that the policy migration
-// behind this stage asks (init_policy_migrate.go): a database this stage skips
-// cannot come out writable for the stage after it.
-func (s *rulesStage) state(ctx context.Context) (*infra.DB, initflow.State, string, error) {
-	db, skew, err := s.read(ctx)
+// It is the same question, asked by the same function, that the policy
+// migration behind this stage asks (init_policy_migrate.go): a database this
+// caller skips cannot come out writable for the stage after it.
+func rulesState(ctx context.Context, lc *localcfg.Config, declined, program string) (*infra.DB, initflow.State, string, error) {
+	db, skew, err := rulesRead(ctx, lc)
 	if err != nil {
 		return nil, initflow.Done, "", err
 	}
 	// Before the classification, because it is about the database and not about
 	// the deployed document: what a database that is not this installation's
-	// carries says nothing about what this stage may write there.
-	if why := s.unadopted(ctx, db); why != "" {
+	// carries says nothing about what this caller may write there.
+	if why := budgetDBUnadopted(ctx, lc, db, declined, program); why != "" {
 		return db, initflow.Skipped, why, nil
 	}
 	st, detail := rulesStageState(skew)
 	return db, st, detail, nil
 }
 
-// show writes what a plan would write, in the shape the database step of
+// rulesShow writes what a plan would write, in the shape the database step of
 // `--firebase-project` prints it (init_firebase.go's deployDatabase): what the
-// operator reads before confirming is the same account in both doors.
-func (s *rulesStage) show(w io.Writer, acts []infra.DBAction) {
-	fmt.Fprintf(w, "The security rules of the Firebase project %s:\n", s.e.lc.Budget.FirebaseProject)
+// operator reads before confirming is the same account in both doors and in
+// both commands.
+func rulesShow(w io.Writer, project string, acts []infra.DBAction) {
+	fmt.Fprintf(w, "The security rules of the Firebase project %s:\n", project)
 	for _, a := range acts {
 		fmt.Fprintf(w, "  %s: %s\n", a.Path, a.Text)
 	}
+}
+
+func (s *rulesStage) read(ctx context.Context) (*infra.DB, rulesSkew, error) {
+	return rulesRead(ctx, s.e.lc)
+}
+
+func (s *rulesStage) state(ctx context.Context) (*infra.DB, initflow.State, string, error) {
+	return rulesState(ctx, s.e.lc, "this stage neither marks nor writes there", s.e.r.o.doorProgram())
+}
+
+func (s *rulesStage) show(w io.Writer, acts []infra.DBAction) {
+	rulesShow(w, s.e.lc.Budget.FirebaseProject, acts)
 }
 
 // Check reports what the deployed rules and their marker are. A read that fails

@@ -59,6 +59,36 @@ func TestDocsNameUpgrade(t *testing.T) {
 	}
 }
 
+// TestDocsDesignListsEveryUpgradeStep: the design doc's step list is what the
+// next reader trusts, and the facts a later edit is most likely to soften are
+// the ones this pins: the five steps in the order they run (the rules step
+// before the policy step, because the policy write is gated on the deployed
+// generation), the owner's ruling that replaced the open decision, and the
+// two truths of the agent-session doors — a session moves no stale pin, and
+// the update door there leaves the checkout for the user and exits 1.
+func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
+	data, err := os.ReadFile("../../docs/design/upgrade.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"Each checkout runs five steps in order",
+		"4. **rules**",
+		"5. **policy**",
+		"ONE shared ownership check covers every config-driven budget-database write path",
+		"a stale plugin pin is **not** moved there",
+		"`left_for_you`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/design/upgrade.md does not say %q", want)
+		}
+	}
+	if strings.Contains(doc, "OPEN OWNER DECISION") {
+		t.Error("docs/design/upgrade.md still carries the open decision the owner ruled on 2026-10-31")
+	}
+}
+
 // TestDocsPolicyMigrationChecklistItem: the release checklist carries the item
 // this change depends on — a policy version bump and its migrator ship in the
 // same release — and the doc the item points at states the two things an
