@@ -117,6 +117,31 @@ func TestHistorySweepRefusesForeignDatabase(t *testing.T) {
 	}
 }
 
+// The name is not the whole answer. /fugaro/project is a string two
+// installations can both carry — two GCP projects, one project name — and the
+// mark records the GCP project beside it, which is the fact that tells them
+// apart. The sweep deletes registry nodes and Firebase users, so a database the
+// name alone would pass and the mark refuses is refused, by the same predicate
+// the stages of `fugaro update` and the rollover ask (budgetDBUnadopted).
+func TestHistorySweepRefusesADatabaseTheNameAloneWouldPass(t *testing.T) {
+	f := newHistoryFixture(t)
+	f.entry("20261002-090000-aaaa", time.Hour)
+	f.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "version": 1, "project": "aurora", "gcp_project": "proj-9999"})
+
+	_, _, err := execute(t, "budget", "history", "--sweep")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a database marked in another GCP project: err = %v, want exit 1", err)
+	}
+	for _, want := range []string{"proj-9999", "proj-1234", "nothing was swept"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if f.db.Value("agents/"+appSlug+"/20261002-090000-aaaa") == nil {
+		t.Fatal("the sweep ran in another GCP project's database")
+	}
+}
+
 func TestHistoryMissingEnvironment(t *testing.T) {
 	newHistoryFixture(t)
 	for _, k := range []string{"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL"} {

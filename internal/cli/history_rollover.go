@@ -122,7 +122,7 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	//
 	// It is a refusal and not a skip, unlike those stages: this job is the whole
 	// of what it does, and there is nowhere to carry on to.
-	if why := budgetDBUnadopted(ctx, rolloverConfig(env), infra.NewDB(db, env[envProject], env[envGCPProject], ""), "nothing was moved", selfCommand()+" update"); why != "" {
+	if why := budgetDBUnadopted(ctx, historyJobConfig(env), infra.NewDB(db, env[envProject], env[envGCPProject], ""), "nothing was moved", selfCommand()+" update"); why != "" {
 		return userErr("%v", oneLine(why))
 	}
 	fs, err := firestore.New(fsURL, env[envFirebaseFP], fsSrc)
@@ -171,13 +171,14 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	return remote(fmt.Errorf("%s", oneLine(err.Error())))
 }
 
-// rolloverConfig is the history job's environment read as the config the
+// historyJobConfig is the history job's environment read as the config the
 // ownership predicate takes (budgetDBUnadopted). The job has no config file —
 // Terraform sets its environment, history.tf — but the names it carries are the
 // same two facts, and handing them to the one predicate is what makes the job's
 // answer and the stages' answer the same answer rather than two that agree
-// today.
-func rolloverConfig(env map[string]string) *localcfg.Config {
+// today. Both halves of the job read it: --rollover before it moves and deletes
+// days, --sweep before it deletes users.
+func historyJobConfig(env map[string]string) *localcfg.Config {
 	return &localcfg.Config{
 		Name:       env[envProject],
 		GCPProject: env[envGCPProject],
