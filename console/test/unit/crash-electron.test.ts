@@ -376,6 +376,15 @@ describe('what the client is told', () => {
     expect(options).toMatch(/beforeSendLog\?:/)
     const optionFiles = ['node_modules/@sentry/core/build/types/types/options.d.ts'] as const
     for (const file of optionFiles) expect(types(file)).not.toMatch(/\benableLogs\??:/)
+    // A name existing is not a name working, and the round that asked for
+    // `beforeSendTransaction` asked for it as "the line that holds": the pinned
+    // version declares the callback and also declares that it runs only under
+    // `traceLifecycle: 'static'`, while spans stream by default -- and the
+    // replacement it points at cannot drop a span at all. Both mechanisms are
+    // pinned, so an SDK bump that changed the answer shows up here rather than
+    // as a transaction leaving with nobody the wiser.
+    expect(options).toMatch(/traceLifecycle\?: 'static' \| 'stream'/)
+    expect(options).toMatch(/BeforeSendStreamedSpanCallback = \(span: StreamedSpanJSON\) => StreamedSpanJSON/)
     // And the Electron SDK's own options are the object the wiring hands
     // `init`: it is `Options` above that the two callbacks come from.
     expect(types('node_modules/@sentry/electron/main/sdk.d.ts')).toMatch(/ElectronMainOptions/)

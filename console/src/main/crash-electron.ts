@@ -161,12 +161,26 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * other kinds of payload a Sentry client can be handed are refused here rather
  * than left to a default: `beforeSendTransaction` answers `null` for every
  * transaction (a trace is a record of *how long the session ran and what it did*
- * in that time, D733's rule is stack frames only, and `defaultIntegrations:
- * false` means nothing in this client opens one in the first place -- so this is
- * the line that holds if a later task adds one), and `beforeSendLog` answers
- * `null` for every log line for the same reason a log line is the wrong shape
- * for this rule: it is free text the console wrote about what it was doing.
- * `beforeSend` above is the third and the one that matters most.
+ * in that time and D733's rule is stack frames only), and `beforeSendLog`
+ * answers `null` for every log line for the same reason a log line is the wrong
+ * shape for this rule: it is free text the console wrote about what it was
+ * doing. `beforeSend` above is the third and the one that matters most.
+ *
+ * **What actually keeps transactions out today, and why it is not that line.**
+ * The pinned 11.7.0 ignores `beforeSendTransaction` unless `traceLifecycle` is
+ * `'static'`; it streams spans by default and says so out loud -- setting the
+ * option makes the client log "`beforeSendTransaction` ... ignored with
+ * `traceLifecycle: 'stream'`". The callback stays because it is the option a
+ * switch to `'static'` would need, and because writing it costs nothing, but a
+ * reader must not take it for the guard. The guard is that nothing in this
+ * client opens a span: `defaultIntegrations: false` installs no tracing
+ * integration and this module starts none by hand. The replacement the SDK
+ * points at is not one either -- `beforeSendSpan`'s callback returns a span and
+ * cannot answer `null`, so it cannot drop one, and `ignoreSpans` matches a
+ * span's description or op, so a span with neither passes it. A later task that
+ * adds tracing to this client therefore owes an errors-only decision rather than
+ * a new line beside these; the unit test pins both mechanisms in the types of
+ * the pinned version.
  *
  * `enableLogs` is deliberately *not* among them: the pinned 8.2.0 does not have
  * it. `@sentry/electron`'s renderer JSDoc says logs "require `enableLogs` to be
