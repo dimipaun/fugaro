@@ -6,8 +6,10 @@ own gate: a task starts only when the decisions it names are answered.
 
 **Written to:** [spec.md](spec.md) and [reconciliation.md](reconciliation.md). **Where they
 disagree, the reconciliation wins.** The findings (**F1–F27**), the dependencies (**E1–E6**) and the
-decisions (**D880–D891**, every one of them answered — D891 by the owner, option (a)) are that
-document's, and each task below names the ones it needs.
+decisions (**D880–D893** — D880–D891 answered, D891 by the owner with option (a), and **D892**
+(how a verdict's provenance is established before a coordinator acts on it) and **D893** (how the
+read-only token reaches the job) **open questions for the owner**) are that document's, and each task
+below names the ones it needs.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -47,7 +49,9 @@ may do, and the job it launches must exist: R1 names the scope, R7 builds the co
 it without the App key, R2 starts it. **R3 before R5**, because the fix brief reads the artifact R3
 defines. **R4 is independent of R5** and can ship after R3 in either order; **D891 is answered —
 option (a) — so R4 is unblocked** and carries the machinery the answer names (a token-scrubbed
-subprocess with egress denied, and Bash denied for the rest of the stage). **R6 carries the
+subprocess with egress denied, and Bash denied for the rest of the stage), **on one condition: the
+answer assumes a fence nobody has measured, so U7's gate is R4's first step and the task stops for the
+owner if the fence is not there** (see R4). **R6 carries the
 gates and cannot be split**: a field that lands without its gate is a field an older image silently
 ignores.
 
@@ -67,6 +71,7 @@ writes. Every task that touches a shared file takes it **alone**, and the others
 | `internal/cli/run.go` | R2, R5 | the launch path. R2 adds a sibling command that reuses `claudeAccountFor`/`claudeAccountAllowed` and the job placement; R5 adds the findings brief. One task holds it at a time |
 | `internal/runner/prompts.go` | R3, R4, R5 | the review prompt, its template sections, and the fix brief's findings posture |
 | `internal/runner/reviewmode.go` | R2, R3 | the review bootstrap and the comment path R2 stops taking |
+| `internal/runner/runner.go` | R3, R4, **only if** the hook is there — otherwise no task here | **reserved**: one writer across work streams. Every task prefers `reviewmode.go`; a task that needs the stage machine or the finalize path takes this file alone and says so (see the paragraph below) |
 | `schemas/` (new files only) | R3, R4 | each schema's own new file; no shared edit |
 | `internal/cli/recipes_skew.go` | R2, R3, R6, R7 | one writer (R6) for the gate constants; R2/R3/R7 declare what they need |
 | `internal/infra/projectjobs.go` + `projectjobs_test.go` | R7 | the `ProjectJob` set the installation root deploys. R7 adds the review-only variant and its service account; nothing else here reads the set |
@@ -76,11 +81,21 @@ writes. Every task that touches a shared file takes it **alone**, and the others
 | `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl` | R7 | R7's positive test lives beside the retention it contradicts: the variant asserts **no** App key mount and **no** accessor, in the file that pins the opposite for the shared job |
 | `internal/cli/doctor.go` + `doctor_secret_readers.go` | R7 | the job census and the secret-readers report read `config.ProjectJobAccounts`; a variant the census does not know about is a converged installation `fugaro doctor` calls wrong |
 
-**Not touched by this plan, and named so it is not discovered later:** `internal/runner/runner.go`
-(the 0.15.0 rulings make it one writer across work streams; R3/R4 add no stage to the run loop, so
-nothing here needs it), `internal/cli/root.go`, `internal/cli/api.go`, `website/**`,
-`plugin/**`, `console/**`, `mobile/**`, `shared/**`, `ee/**`, `docs/releases/**`,
-`docs/gcp-live-checklist.md`, `SECURITY.md` and `docs/design/v1.md`.
+**`internal/runner/runner.go` is reserved, and R3/R4 may have to take it — the one rule that decides
+it.** The 0.15.0 rulings make that file one writer across work streams, and an earlier draft of this
+plan said nothing here needs it because neither task adds a stage to the run loop. **That is not safe
+to assert, and the review of this branch's fix round is right to say so:** the artifact upload that R3
+wants to ride (`internal/runner/artifact.go`'s `uploadArtifacts`) is *triggered* from the `mode:
+artifact` flow (`collectArtifacts`, driven by a recipe's `outputs:` block) and a `mode: review` recipe
+has no such block, and R4's mutation subprocess is the runner's own child rather than a stage. So the
+rule each of those tasks follows: **prefer the file it already holds** — a review run's whole flow is
+`runReviewMode` in `internal/runner/reviewmode.go`, which R2/R3 already share — and **if the hook it
+needs turns out to be in `runner.go`, the task takes that file alone under the one-writer rule, adds
+it to its own Files list and says so in its pull request**; it never edits it silently.
+
+**Not touched by this plan, and named so it is not discovered later:** `internal/cli/root.go`,
+`internal/cli/api.go`, `website/**`, `plugin/**`, `console/**`, `mobile/**`, `shared/**`, `ee/**`,
+`docs/releases/**`, `docs/gcp-live-checklist.md`, `SECURITY.md` and `docs/design/v1.md`.
 
 ## 3. Tasks
 
@@ -155,8 +170,10 @@ cap that is already deployed — R3 consumes it, it does not address it. **Depen
   (new), `schemas/review.schema.json` (new), `schemas/schemas_test.go` (the corpus check),
   `internal/runner/prompts.go`, `internal/runner/verdict.go` (the reader of the **in-run** format,
   to assert it is **not** this one), `internal/runstore/runstore.go` (the record's own artifact list
-  and `ReviewedPR`, unchanged in shape), `internal/runner/artifact.go` if a name rule needs it.
-  **At most 8 files.**
+  and `ReviewedPR`, unchanged in shape), `internal/runner/artifact.go` if a name rule needs it, and
+  **`internal/runner/runner.go` only if** the upload hook proves to be in its finalize path rather
+  than in `runReviewMode` (§2's one-writer rule; the task says so in its pull request if it takes it).
+  **At most 9 files.**
 - **Interfaces:** produces the versioned artifact of [spec.md](spec.md) §3 — `schema_version`,
   `review_run`, `pr`, `head_sha`, `base`, `reviewer{account, model, effort}`, `verdict` ∈ {`ship`,
   `fix first`, `reject`}, `overview`, `strengths[]`, `issues[]` (`severity`, `class`, `file`, `line`,
@@ -188,11 +205,21 @@ cap that is already deployed — R3 consumes it, it does not address it. **Depen
 machinery for**. **Findings:** F13, F19, **F24**. **Depends on:** R3. **Unblocked:** the answer is
 (a), so the task is neither dropped nor reduced, and it carries the posture in its own files.
 
+- **First step — a gate, before any file is opened: U7.** D891(a) assumes egress can be denied for a
+  child process inside the container, and **no network namespace or `unshare` in Cloud Run's gen2 has
+  been checked**. So the task measures it first (a subprocess that tries to reach the network and
+  fails, in a scratch execution), and **the answer decides the task**: if a child can be fenced, the
+  rest of this task proceeds as written; **if it cannot, the task stops and the owner is asked again**
+  — the fallbacks are D891's **(b)** (no mutation check in the reviewer at all) or **(c)** (the check
+  in a separate execution), both of which are a different task, and the design does not quietly fall
+  back to `denyWeb`. **Nothing in this task's Files is touched before that gate returns.**
 - **Files:** `internal/runner/mutation.go` (new), `internal/runner/mutation_test.go` (new),
   `internal/runner/reviewartifact.go` (the `mutation_checks` field it fills),
   `internal/runner/prompts.go`, **`internal/agent/settings.go`** + `settings_test.go` (D891(a): the
-  review stage's `DenyRules` gains **Bash** for the rest of the stage), `schemas/review.schema.json`.
-  **7 files.**
+  review stage's `DenyRules` gains **Bash** for the rest of the stage), `schemas/review.schema.json`,
+  and **`internal/runner/runner.go` only if** the subprocess has to be reaped from a stage-machine
+  hook rather than from `runReviewMode` (§2's one-writer rule; the task says so in its pull request if
+  it takes it). **At most 8 files.**
 - **Interfaces:** produces the bounded, opt-in check of [spec.md](spec.md) §2 — one mutant, one
   named test, a worktree that is reverted before the stage ends, and **no push ever**
   (`gitops`'s push functions are not reachable from the path). The artefact records what was applied,
@@ -201,9 +228,8 @@ machinery for**. **Findings:** F13, F19, **F24**. **Depends on:** R3. **Unblocke
   and the account's secret scrubbed from its environment and egress denied** — and the agent's shell
   is denied for the rest of the stage, so the reviewer reads and reasons with no shell to exfiltrate
   through (D891(a), F24). **How egress is denied inside a Cloud Run container is U7**
-  ([reconciliation.md](reconciliation.md) §6): a network namespace or `unshare` in gen2 has not been
-  checked, and this task's first step is to find out; if it cannot be done, that amends D891's answer
-  rather than being papered over.
+  ([reconciliation.md](reconciliation.md) §6), and the task's very first step is the gate above:
+  until it returns, D891(a) is an answered decision with an unmeasured mechanism, not a fact.
 - **Tests:** `TestMutationAppliesRunsRevertsAndPushesNothing` (the git fake records no push),
   `TestMutationRefusesMoreThanOneMutant`, `TestMutationRevertsOnFailure` (a test that errors still
   leaves the worktree clean), `TestMutationAbsentUnlessAskedFor`,
@@ -263,8 +289,10 @@ machinery for**. **Findings:** F13, F19, **F24**. **Depends on:** R3. **Unblocke
 
 ### R7. The review-only job variant and its service account — no App key (SEC)
 
-**Decisions:** D883, D888, **UNVERIFIED-2** (the hand-in; **D891**'s stage posture is **R4**'s, not
-this task's, and this task only needs the variant to mount the account's Claude token and no key).
+**Decisions:** D883, D888, **D893** — the owner's answer to how the minted read-only installation token
+reaches the job, which **this task implements and does not re-decide** (**UNVERIFIED-2** is closed by
+D893). **D891**'s stage posture is **R4**'s, not this task's, and this task only needs the variant to
+mount the account's Claude token and no key.
 **Findings:**
 **F3**, **F14**, **F16**. **Depends on:** E1, R1. **Precedes R2** (see §1). **SEC flag: yes — this is
 the task that makes the read-only scope a boundary instead of a comment on the launcher's intent.**
@@ -283,9 +311,12 @@ the task that makes the read-only scope a boundary instead of a comment on the l
   `gcp.ProjectJobName` shape with a review suffix, its own service account, a `secret_env` carrying
   the account's `CLAUDE_CODE_OAUTH_TOKEN` and **no `github-app-key`**, and **no `secretAccessor` on
   that key** — deployed by `fugaro update` with the rest of the job set, and recognised by the census.
-  It also settles **UNVERIFIED-2**: how the minted read-only installation token reaches the job (the
-  execution override, or a per-launch secret), decided in this task's pull request with its cost
-  written down.
+  It also **implements D893's answer** to how the minted read-only installation token reaches the job —
+  the channel the owner names (this design recommends the per-launch secret, which the execution
+  override is not, since a plain value there is readable by any project member holding `run.viewer`),
+  including the cleanup that deletes what it wrote. The task **waits on D893**: it does not pick a
+  channel of its own, and its test asserts the channel's own property — with (a), that the token is not
+  readable by a holder of `run.viewer` alone.
 - **Tests:** `TestReviewJobVariantMountsNoAppKey` (the variant's `SecretEnv` names no
   `github-app-key`), `TestReviewJobVariantServiceAccountHasNoAppKeyAccessor` (the account's grant list
   holds no accessor on the key — the exact assertion
@@ -307,8 +338,11 @@ the task that makes the read-only scope a boundary instead of a comment on the l
 - **A failover loop.** D882 keeps the retry with the coordinator; the cascade in `internal/creds` is
   the credentials service's and needs no change.
 - **A signature over the verdict artifact.** §6 records that the ordering, not a signature, is what
-  makes a forged verdict hard; building one is its own design (a key, a verification path and a
-  client that checks it).
+  makes a forged verdict hard **today**, and **D892** is the owner's decision about that gap —
+  option (a) is exactly this signature (a per-account review-signing secret, mounted only on R7's
+  variant, verified by the coordinator), so if the owner picks it, building it is its own task (a key,
+  a verification path and a client that checks it) and it is **not** in R1–R7. Until the owner answers,
+  this plan relies on none of D892's options.
 - **Posting the review as a pull request comment.** R2 removes the comment from the review job's
   path; a coordinator-side poster is the coordinator's work.
 - **A console or mobile surface for the artifact.** The console contract is another work stream's

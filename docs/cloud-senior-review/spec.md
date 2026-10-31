@@ -183,9 +183,12 @@ App key in its bundle for exactly this, where the installation has opted into on
 the token has to **reach the job**: the launch path hands a job its per-run variables through a Cloud
 Run execution override (`internal/backend/gcp/run.go:169`, `ContainerOverrides[].Env`), and an
 override's value is a **plain value in the execution object**, readable by anyone who can read that
-execution in the project. Whether that is acceptable, or whether the hand-in has to be a
-short-lived secret mounted rather than an override, is **UNVERIFIED-2** in
-[reconciliation.md](reconciliation.md) §6 and is settled by the task that builds it.
+execution in the project. **That is not an implementation detail to be settled while building it: it
+is the owner's decision D893** ([reconciliation.md](reconciliation.md) §4), which puts the three
+channels side by side — a **per-launch Secret Manager secret** the minter writes and the variant's
+service account alone may read (recommended), **the execution override** above, and **the job fetching
+the token from the credentials service by name** where the installation has one. **The design claims
+no channel until the owner answers**, and R7's first step is that answer.
 
 **The review job writes nothing to the pull request**: not a comment, not a review, not a label. Its
 verdict is an artifact, and the coordinator decides what, if anything, to post on its own credential.
@@ -461,6 +464,16 @@ under it — for that writer the ordering buys nothing at all, and only the narr
 out of scope, or a signature over the artifact, would. **The design records that gap rather than
 claiming a boundary it does not have.**
 
+**And the gap is a decision now, not a footnote: D892.** Recording it was not enough, because the
+design's own `ship` path — *the coordinator merges* — is what the gap would defeat. So the three ways
+out are put to the owner with their costs ([reconciliation.md](reconciliation.md) §4): **(a) sign the
+artifact with a per-account review-signing secret mounted only on R7's variant, and have the
+coordinator verify it before it acts**; **(b) narrow the bucket so only the review job's account can
+write a review run's prefix** (the project-job work's, and the opposite of the owner's 2026-10-17
+ruling); **(c) accept it, and make "a verdict never merges on its own" the coordinator's rule**. Until
+the owner answers, **this design relies on none of them** and says so: a verdict is advice, and the
+merge keeps the owner's own look.
+
 ---
 
 ## 7. The threat model
@@ -495,9 +508,12 @@ by the **runner** as its own subprocess with the token scrubbed from that subpro
 the agent's own shell stops being a general exfiltration path and the reviewer's environment and the
 network are no longer routes out. **How egress is denied for a subprocess inside a Cloud Run container
 is UNVERIFIED** — a network namespace or `unshare` in gen2 has not been checked, and
-[reconciliation.md](reconciliation.md) §6's **U7** is where that is settled. What is left either way
-is the **`/proc` read**, which `mixed-credentials.md` §6 already lives with and which only the
-separate container reduces.
+[reconciliation.md](reconciliation.md) §6's **U7** is where that is settled. **So the answer is
+conditional, and the design says so:** if a child process cannot be fenced, D891(a) cannot be
+implemented as written, the fallback is the owner's **(b)** or **(c)**, and the owner is asked again —
+which is why **the plan makes R4's first step U7's gate** rather than starting the task on the
+assumption. What is left either way is the **`/proc` read**, which `mixed-credentials.md` §6 already
+lives with and which only the separate container reduces.
 
 What the design still buys, and it is worth having: a container that **did not run the coder**, a
 read-only forge scope, no App key in that container, and a run whose whole purpose is the review. What
@@ -544,8 +560,9 @@ reviewer must read it — that is its job — so the injection surface is not re
 
 **The verdict artifact's integrity.** Covered in §6: the ordering (the review run's id does not exist
 while the coder runs) is a real property **for that coder and not for a concurrent job on the same
-shared job**, which can list `runs/` and write under the prefix it sees; a signature over the artifact
-is not built, and the design says so rather than claiming one.
+shared job**, which can list `runs/` and write under the prefix it sees; neither a signature over the
+artifact nor a narrowed prefix is built, the design says so rather than claiming one, and **D892** puts
+the choice between those two and accepting the gap to the owner.
 
 **Cost runaway, which a subscription hides.** A review job is not priced by the gateway (§1), so none
 of the dollar caps is a bound on it, and the loop this design is meant to serve has **no cap at all**:

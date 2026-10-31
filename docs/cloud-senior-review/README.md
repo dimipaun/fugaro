@@ -21,7 +21,7 @@ first, or reject. The job is **read-only on the forge**: it can fetch the head a
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The design: what exists today for a reviewer on an OAuth account, how a cloud review of a pushed branch runs, the output contract, how it differs from the in-job reviewer, the trigger, what the coordinator does with the verdict, the threat model, and the owner-run live check |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E6**, and the owner decisions **D880–D891**. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E6**, and the owner decisions **D880–D893** (D880–D891 answered, D892 and D893 open). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The tasks **R1–R7** (at most 12 files each), the shared-files table, the first slice and the release slot. **Nothing in it is approved** |
 
 ## The shape in one paragraph
@@ -46,8 +46,8 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
 
 | Block | State |
 | --- | --- |
-| **D880–D899** | **this work's block: D880–D891 written (D891 answered by the owner, option (a)), D892–D899 reserved and unused.** Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
-| **Check 125** | **claimed here, and not written in the register.** `docs/gcp-live-checklist.md` reads **124 as the next free number above 123** and the Cloud Batch backend took it, so the number free above it is **125**; this work claims it for the owner-run live check in [spec.md](spec.md) §8. The register's own file is another work stream's (`docs/gcp-live-checklist.md` is not this task's to touch), so the row and the `## Check 125` section are written by the task that implements the check, under the number free at **that** merge — the register's rule that whichever of two open claims merges second renumbers itself. A reserved number is never reused and never renumbered |
+| **D880–D899** | **this work's block: D880–D893 written — D880–D891 answered (D891 by the owner, option (a)), and D892 and D893 open questions for the owner, both raised by the review of this branch's fix round — with D894–D899 reserved and unused.** Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
+| **Check 125** | **claimed here, and not written in the register.** The register's own sentence is *"Check 124 is the Cloud Batch backend's own, and it is the next number free above 123"*: it reads **124 as a number the Cloud Batch backend took**, in four written parts (**124a–124d**), not as one still free — so the highest number in use is **124**, and the number free above it, which this work claims for the owner-run live check in [spec.md](spec.md) §8, is **125**. The register's own file is another work stream's (`docs/gcp-live-checklist.md` is not this task's to touch), so the row and the `## Check 125` section are written by the task that implements the check, under the number free at **that** merge — the register's rule that whichever of two open claims merges second renumbers itself. A reserved number is never reused and never renumbered |
 
 ## What this design does not do
 
@@ -68,12 +68,24 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
   test runs in a subprocess with **the token scrubbed from its environment and egress denied**, and
   **Bash is denied for the rest of the review stage**, the mutant being run by the runner rather than
   by the agent's shell. What is left is the `/proc` read, which §7 states as the residual and which
-  only the separate container reduces. **R4 is unblocked** and carries that machinery.
+  only the separate container reduces. **R4 is unblocked and carries that machinery, subject to one
+  gate:** no network namespace or `unshare` in Cloud Run's gen2 has been checked (**U7**), so **R4's
+  first step is that measurement**, and if a child process cannot be fenced the answer falls back to
+  **(b)** or **(c)** and the owner is asked again — the design does not assume a fence it has not
+  seen.
 - **It does not launch on a job that already exists.** The shared project job of
   `(profile, provider, account)` mounts the GitHub App key, so a read-only scope on it would be a
   comment on the launcher's intent rather than a boundary; the design adds a **review-only job variant
   and service account per account, with no App key** (**R7**), and it says who mints the read-only
   token — never the launcher, which holds no key.
+- **It does not settle the verdict's provenance, and it says so.** Ordering keeps a *coder* from
+  forging its own review (spec §6), but another job on the same shared project job can write under the
+  review run's prefix; the mitigation — a signature, a narrower prefix, or accepting the reach — is
+  **D892, still open**, and until the owner answers **this design relies on none of the three**.
+- **It does not settle how the minted read-only token reaches the job either.** That is **D893, still
+  open**: the design recommends a per-launch secret over the execution override (a plain value there
+  is readable by any project member holding `run.viewer`), and **R7 implements whichever the owner
+  names, claiming no channel of its own before then**.
 
 ## Related
 
