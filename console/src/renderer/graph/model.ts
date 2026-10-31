@@ -71,10 +71,14 @@ export const GRAPH_MAX_TITLE_CODE_POINTS = 200
  * cache is keyed by the graph's structure, a title that resized a box would
  * have to be in that key, and a watch frame that rewrote one word of one title
  * would then re-lay-out every node. A box is a fixed card, and a long title is
- * cut to fit rather than resizing it.
+ * wrapped and -- only past what its lines hold -- cut, rather than resizing it.
+ *
+ * 260 x 88 is the redesign's card (console redesign, step 6a): three lines of a
+ * title, the state's own word under them, and the pull request, the run and the
+ * reading's mark along the foot.
  */
-export const GRAPH_NODE_WIDTH = 220
-export const GRAPH_NODE_HEIGHT = 64
+export const GRAPH_NODE_WIDTH = 260
+export const GRAPH_NODE_HEIGHT = 88
 
 /**
  * STATE_WORDS is every word a node can carry, in the order the design's §3.9
