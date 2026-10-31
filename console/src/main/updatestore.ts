@@ -16,11 +16,17 @@
 //     not a boolean.** The default the console ships, and the safe direction
 //     for a file nobody moved: an operator who hand-edited it keeps their edit
 //     and gets one constant line, and the console never deletes or repairs it.
-//     **Read through `lstat`, and only a regular file of a boolean's length**:
-//     a symlink, a directory or a FIFO is the same refusal as a malformed one,
-//     so no name in this directory can be made to point the read elsewhere or
-//     to block it. The line is one per file per process, because the gate reads
-//     this switch before every check, every prompt and every install.
+//     **Opened with `O_NOFOLLOW` and `O_NONBLOCK`, and the descriptor
+//     `fstat`ed before a byte is read**: the kernel refuses a symlink at the
+//     name (ELOOP) rather than resolving it, a FIFO cannot make the open wait
+//     for a writer that is never coming, and the regular-file and length rules
+//     are asked of the very object the read returns -- one `open` rather than a
+//     name looked at and then opened, which is two questions a name can answer
+//     differently. A symlink, a directory or a FIFO is the same refusal as a
+//     malformed one, so no name in this directory can be made to point the read
+//     elsewhere or to block it. The line is one per file per process, because
+//     the gate reads this switch before every check, every prompt and every
+//     install.
 //   - **atomic, and only on a change.** The document goes to a fresh temporary
 //     file and a rename publishes it, exactly as `installations.json` does, and
 //     a write whose value is already the file's is no write at all.
@@ -32,7 +38,7 @@
 //     and the toggle under plain Node.
 
 import { randomBytes } from 'node:crypto'
-import { closeSync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { UpdateController } from './updates'
@@ -67,6 +73,16 @@ export const UPDATES_SWITCH_UNWRITTEN = 'the console could not write its update 
  * and is refused by its length rather than parsed. */
 export const UPDATES_FILE_MAX_BYTES = 8
 
+/** UPDATES_READ_FLAGS is how the switch is opened: read-only, `O_NOFOLLOW`, so
+ * the kernel answers ELOOP for a name that is a symlink instead of resolving it
+ * to whatever it points at, and `O_NONBLOCK`, so a FIFO is opened rather than
+ * waited on -- a read-only open of a FIFO blocks until a writer appears, and
+ * the writer of a name like this one is never coming. A platform that does not
+ * define one of the flags contributes nothing to the mask: `undefined` in a
+ * bitwise or is zero, and there the regular-file rule below is the whole of the
+ * refusal. */
+export const UPDATES_READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+
 /** UpdatesFs is `node:fs` as this module uses it, and nothing more. Every call
  * is here so the tests can hold the mode, the atomic rename and the "only on a
  * change" rule against a filesystem that records what it was asked to do. */
@@ -74,11 +90,17 @@ export interface UpdatesFs {
   mkdir(path: string, options: { readonly recursive: true; readonly mode: number }): void
   writeFile(path: string, data: string, options: { readonly flag: 'wx'; readonly mode: number }): void
   rename(from: string, to: string): void
-  /** lstat is `lstat`, not `stat`: it answers about the name itself, so a
-   * symlink is reported as one rather than followed, and the size it carries is
-   * what bounds the read below. */
-  lstat(path: string): { readonly isFile: () => boolean; readonly size: number }
-  readFile(path: string, maxBytes: number): string
+  /** open is `open`, and it is the only way this module reaches the switch for
+   * reading: the flags decide what a name is allowed to be, and the descriptor
+   * it answers is what everything below is asked about. */
+  open(path: string, flags: number): number
+  /** fstat answers about the descriptor the open returned, not about the name
+   * again: there is one object behind both calls, so nothing can be put at that
+   * name in between the rules and the read. `isFile` is the regular-file rule
+   * and `size` is what bounds the read below. */
+  fstat(handle: number): { readonly isFile: () => boolean; readonly size: number }
+  readFile(handle: number, maxBytes: number): string
+  close(handle: number): void
   unlink(path: string): void
 }
 
@@ -96,16 +118,15 @@ export const nodeUpdatesFs: UpdatesFs = Object.freeze<UpdatesFs>({
   rename: (from, to) => {
     renameSync(from, to)
   },
-  lstat: (path) => lstatSync(path),
-  readFile: (path, maxBytes) => {
-    const handle = openSync(path, 'r')
-    try {
-      const buffer = Buffer.alloc(maxBytes)
-      const read = readSync(handle, buffer, 0, maxBytes, 0)
-      return buffer.toString('utf8', 0, read)
-    } finally {
-      closeSync(handle)
-    }
+  open: (path, flags) => openSync(path, flags),
+  fstat: (handle) => fstatSync(handle),
+  readFile: (handle, maxBytes) => {
+    const buffer = Buffer.alloc(maxBytes)
+    const read = readSync(handle, buffer, 0, maxBytes, 0)
+    return buffer.toString('utf8', 0, read)
+  },
+  close: (handle) => {
+    closeSync(handle)
   },
   unlink: (path) => {
     unlinkSync(path)
@@ -128,46 +149,66 @@ function reportUnreadable(path: string): void {
  * answer the next ask gets. */
 export function readUpdateSwitch(directory: string, fs: UpdatesFs = nodeUpdatesFs): boolean {
   const path = join(directory, UPDATES_FILE_NAME)
-  let info: { readonly isFile: () => boolean; readonly size: number }
+  let handle: number
   try {
-    info = fs.lstat(path)
+    handle = fs.open(path, UPDATES_READ_FLAGS)
   } catch (error) {
     // A first run has no file, and that is not worth a line: it is the default
     // the console ships rather than something to report. Everything else -- a
-    // permission, a name this process may not look at -- is one sentence, and
-    // the answer is the same one.
+    // permission, a name this process may not look at, a symlink the kernel
+    // refused with ELOOP -- is one sentence, and the answer is the same one.
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') reportUnreadable(path)
     return true
   }
-  // The name has to be a regular file of a boolean's length before anything is
-  // read out of it. `lstat` does not follow a symlink, so a link pointing at
-  // another file -- anywhere at all -- is never the switch; a directory or a
-  // FIFO is refused here rather than by the read, which on a FIFO would wait for
-  // a writer that is never coming. The length rule is the read's cap: the
-  // document is one boolean, so a longer file is not this console's own.
-  if (!info.isFile() || info.size > UPDATES_FILE_MAX_BYTES) {
-    reportUnreadable(path)
-    return true
-  }
-  let text: string
   try {
-    text = fs.readFile(path, UPDATES_FILE_MAX_BYTES)
-  } catch {
-    reportUnreadable(path)
-    return true
+    // The rules are asked of the descriptor rather than of the name: what is
+    // read below is the object that was opened, so nothing can be put at that
+    // name between the question and the read. The name has to be a regular file
+    // of a boolean's length before anything is read out of it -- a directory or
+    // a FIFO is refused here, and the length rule is the read's cap, because the
+    // document is one boolean and a longer file is not this console's own.
+    let info: { readonly isFile: () => boolean; readonly size: number }
+    try {
+      info = fs.fstat(handle)
+    } catch {
+      reportUnreadable(path)
+      return true
+    }
+    if (!info.isFile() || info.size > UPDATES_FILE_MAX_BYTES) {
+      reportUnreadable(path)
+      return true
+    }
+    let text: string
+    try {
+      text = fs.readFile(handle, UPDATES_FILE_MAX_BYTES)
+    } catch {
+      reportUnreadable(path)
+      return true
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text) as unknown
+    } catch {
+      reportUnreadable(path)
+      return true
+    }
+    if (typeof parsed !== 'boolean') {
+      reportUnreadable(path)
+      return true
+    }
+    return parsed
+  } finally {
+    // Every path above leaves through here, so a refused file is a descriptor
+    // the process does not keep: the gate reads this switch before every check,
+    // every prompt and every install, and a read that leaked one would run the
+    // process out of them.
+    try {
+      fs.close(handle)
+    } catch {
+      /* the answer is already decided; a descriptor that will not close is not
+         a reason to change it */
+    }
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text) as unknown
-  } catch {
-    reportUnreadable(path)
-    return true
-  }
-  if (typeof parsed !== 'boolean') {
-    reportUnreadable(path)
-    return true
-  }
-  return parsed
 }
 
 /** writeUpdateSwitch writes the switch, and does nothing at all when the file
