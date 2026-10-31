@@ -610,12 +610,7 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepSkipped, reason: "--local; for the cloud step, run in your own terminal window: " + u.o.cloudLine(u.loc.Root, false)}
 	}
 	if u.agent != "" {
-		reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (it confirms every step itself, each billable build included), or %s to be asked at each step",
-			u.agent, u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false))
-		if h := initflow.IDEHint(u.agent); h != "" {
-			reason += " (" + h + ")"
-		}
-		return stepResult{state: stepSkipped, reason: reason}
+		return stepResult{state: stepSkipped, reason: cloudAgentRefusal(u)}
 	}
 	v, failed := verdict()
 	if failed != nil {
@@ -638,6 +633,21 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepCurrent, reason: "no base image to pin and no image to rebuild"}
 	}
 	return stepResult{state: stepDone, reason: "the repository is on this release's base image"}
+}
+
+// cloudAgentRefusal is why the cloud step applies nothing in a coding agent's
+// session (U7), in one place: cloudStep returns it as its own skip, and the
+// checkout stage of the converge refuses the step with it before the step is
+// reached, its plan being local-only under a marker
+// (init_checkout_upgrade.go). One refusal, one wording, so the two doors say
+// the same thing about the same session.
+func cloudAgentRefusal(u *upgradeCtx) string {
+	reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (it confirms every step itself, each billable build included), or %s to be asked at each step",
+		u.agent, u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false))
+	if h := initflow.IDEHint(u.agent); h != "" {
+		reason += " (" + h + ")"
+	}
+	return reason
 }
 
 // cloudLine is the command that runs the cloud step for root in the user's

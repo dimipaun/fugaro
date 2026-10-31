@@ -33,7 +33,10 @@
 //      beside the copy — is taken out the same way and for the same reason: the request and
 //      the three jobs are drawn inside the picture, the caption says it is an illustration,
 //      and it is not prose the page promises anything with (the owner's approved board,
-//      `website/design-ref/HomeV3.dc.html`). A hero whose install block sat between the
+//      `website/design-ref/HomeV3.dc.html`). A campaign hero carries the class on the console
+//      screen it shows instead (`CampaignHero.astro`, D411), and it is a picture for the same
+//      reason; rule 1 is the homepage's own, so the class is read here on the homepage only.
+//      A hero whose install block sat between the
 //      promise and that heading would put the commands, the slider and the "every install
 //      path" link inside the lead, and the page would say nothing about the promise above them.
 //   2. **Getting Started's first section opens with its commands.** Inside `#install`, no
@@ -148,6 +151,8 @@ export function foldFailures(dist) {
         // Since the owner's ruling of 2026-10-23 (the redesign's Step 3, levers 2 and 3) the card
         // and the real `fugaro watch` capture under it are one stage, `div.hero-stage`, and the
         // stage is the picture taken out; a page with no stage falls back to the card alone.
+        // `hero-shot` is the class a hero's picture carries whether it is drawn or, as on the
+        // four campaign pages, a real screen of the console (`CampaignHero.astro`, D411).
         const has = (el, name) => (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
         const picture = els.find((el) => has(el, 'hero-stage')) ?? els.find((el) => has(el, 'hero-shot'))
         const lead = els

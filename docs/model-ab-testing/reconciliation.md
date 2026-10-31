@@ -105,7 +105,7 @@ no separate type-check kind), `Record.Reviews` (rounds, verdict, finding count, 
 `Record.Outcome`, `Record.Stages` with `calls`, `agents`, `repeats` and per-stage dollars,
 `Record.ReviewScope`, wall time from `StartedAt`/`FinishedAt`. *Consequence:* a hard-signal score is
 computable from records alone, without a model call (D561). Caveat: the review signals are produced by
-the run's own reviewer; in this repository that is `deepseek/deepseek-v4.1-flash` (`fugaro.yaml`
+the run's own reviewer; in this repository that is `deepseek/deepseek-v4-pro` (`fugaro.yaml`
 `agent.models.reviewer`), a weaker same-run judge, so review findings are a comparable signal only when
 both arms share the reviewer (D555).
 

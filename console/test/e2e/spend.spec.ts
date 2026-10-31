@@ -119,6 +119,7 @@ const SPEC = 'spend.spec.ts'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/notice.js',
   'shared/version.js',
   'renderer/app.js',
   'renderer/screens/spend.js',

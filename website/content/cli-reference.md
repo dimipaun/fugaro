@@ -1520,7 +1520,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
   anthropic-api-key                the project's Anthropic API key (tier B)
   github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
-  bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy forwards with it)
+  bitbucket-token                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro creds set claude-oauth-token < token-file), or, when stdin is a terminal, paste it
@@ -1644,14 +1644,24 @@ fugaro doctor --plugin --strict.
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
 
+What doctor prints is a verdict and then only what to do: one sentence and one
+fix per item, each item fugaro update puts right ending in that command.
+--all prints every check, the informational lines included, and --security the
+IAM and security sweep (who can read a stored credential, who can sign a
+budget token, what a launcher may start). The default view never hides a
+security finding that is a warning, and it says how many findings it left out
+when it leaves any out. Every check, with its full text, is in --json whatever
+the flags.
+
 Exit 1 when a check fails, with the one-line fix to run.
 
-Usage: `fugaro doctor [--json] [--plugin] [--strict]`
+Usage: `fugaro doctor [--json] [--all] [--security] [--plugin] [--strict]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | print every check, the informational and audit lines included |
 | `--check-github-app` | bool | `false` | no | also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |
@@ -1661,6 +1671,7 @@ Flags:
 | `--plugin` | bool | `false` | no | check only the plugin's wiring (offline, no credentials) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
 
 Subcommands:
@@ -2390,8 +2401,8 @@ job's environment was deployed with.
 
 Publishing refuses without the rules marker (config/limits/policyRules): a
 policy published before the rules are deployed is one the runs it bounds
-cannot read, so run fugaro update --firebase-project with a Fugaro that deploys them
-first. It also refuses a node written by a newer Fugaro.
+cannot read, so run fugaro update with a Fugaro that deploys them first. It
+also refuses a node written by a newer Fugaro.
 
 allow_repos is seeded from this machine's repos: map and from the shared
 config's repository list, and only when the node is absent or --seed-repos is
@@ -3915,7 +3926,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) update applies nothing, --yes included (except update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) update applies nothing, --yes included (except update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 
@@ -3963,7 +3974,7 @@ This command has no subcommands.
 Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
 
 upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in three
+processed one after the other, each on its own) up to this fugaro, in four
 steps, stopping that checkout at the first step that fails:
 
   pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
@@ -3992,19 +4003,31 @@ steps, stopping that checkout at the first step that fails:
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
           named-account jobs are updated by the same fugaro update --repo .
+  policy  the project's published policy node, if an earlier Fugaro wrote it
+          in an older version: migrated in place (never deleted and
+          published again), after a diff of what changes, what is kept and
+          what is derived from the local config, and the project's name typed
+          at a terminal. --yes confirms it, and is the way past the refusal a
+          run in flight makes without it. Skipped where there is no local
+          project config or the repository is not onboarded, and in a coding
+          agent's session, with the command to run in your own terminal. It
+          reads the published node, so --check makes no call here either and
+          says it cannot tell. This is what fugaro update does for the same
+          node; both doors run it.
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
 --local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud step is skipped before it reads
-anything, never attempted, with the command to run in your own terminal, so
-the exit code is 0 when the local steps succeeded. --check writes nothing,
-runs no claude command and makes no cloud call: it reads the settings file,
-Claude Code's record of installed plugins and the local project config,
-prints what each step would do and exits 1 when anything is stale (build
-records are not read). Without --yes, --local or --check it needs a real
-terminal. There is no --json.
+session (CLAUDECODE and the like) the cloud and policy steps are skipped
+before they read anything, never attempted, with the command to run in your
+own terminal, so the exit code is 0 when the local steps succeeded. --check
+writes nothing, runs no claude command and makes no cloud call: it reads the
+settings file, Claude Code's record of installed plugins and the local project
+config, prints what each step would do and exits 1 when anything is stale
+(build records are not read, and the published policy node is not either: the
+policy step says it cannot tell). Without --yes, --local or --check it needs a
+real terminal. There is no --json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files

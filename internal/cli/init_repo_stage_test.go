@@ -28,6 +28,7 @@ func stageEngine(t *testing.T, stdin string, o *initOptions) (*initEngine, *sync
 	for _, k := range agentMarkers {
 		t.Setenv(k, "") // this session may be a coding agent's
 	}
+	noClaudeOnPath(t) // and the checkout stage may not run the developer's claude
 	out := &syncBuf{}
 	cmd := NewRootCmd()
 	cmd.SetIn(strings.NewReader(stdin))

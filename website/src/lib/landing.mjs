@@ -27,9 +27,17 @@
 //      roundness: a figure the measurement backs is read as the file wrote it. The copy's own
 //      rhetoric — `/save`'s "a tenth of the price", which the spec writes as a headline — is
 //      copy, and it is not a `proof_number`.
-//   2. **Media is self-hosted.** A variant's video and image are paths the site serves, never an
-//      absolute URL: an external player would be a fourth third party the consent work never
-//      admitted (F20, D107).
+//   2. **Media is self-hosted, and the hero's screenshot is a screen this site already
+//      renders.** A variant's video and image are paths the site serves, never an absolute URL:
+//      an external player would be a fourth third party the consent work never admitted (F20,
+//      D107). Its `screenshot` is a name — the file under `public/screenshots/` the hero shows —
+//      and it is held to the rows of `website/data/console-screens.yaml`, the file the console
+//      page's own slider renders its slides from — the homepage's "See it" panel is the same
+//      component over `website/data/home-screens.yaml`, whose console rows are these files
+//      held to this one's alt and caption — so: the page fetches one of the four
+//      pictures the site already serves, a name no row carries is refused rather than rendered
+//      as a broken image, and the picture's alt text and its own pixel size come from that row
+//      rather than from a second copy written here (F14, D190).
 //   3. **The four variants are the spec's four campaigns**, at the spec's own paths, and the
 //      pre-fill message names the variant its page is (spec §6). A fifth path is a page no
 //      campaign sends anyone to.
@@ -45,7 +53,12 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { asList, asMap, asString, describe, loadSiteFacts, loadTypicalCosts, parseYAML, refuseUnknownKeys, SITE_ROOT } from '../content.ts'
+import { asList, asMap, asString, describe, loadConsoleScreens, loadSiteFacts, loadTypicalCosts, parseYAML, refuseUnknownKeys, SITE_ROOT } from '../content.ts'
+
+/** One row of a screenshots data file, as `src/content.ts` reads it: the file's name and the site
+ * path composed from it, its alt text, its caption and its own pixel size. A variant's
+ * `screenshot` is one of these rows, because the hero shows a screen the site already serves.
+ * @typedef {import('../content.ts').Screen} Screen */
 
 /** Where the file lives, relative to the repository root: what every message below names. */
 export const LANDING_FILE = 'website/data/landing.yaml'
@@ -64,6 +77,13 @@ const SENTINEL = 'unmeasured'
 // the file a figure has to be drawn from.
 const TYPICAL_COSTS = 'website/data/typical-costs.yaml'
 
+// `website/data/console-screens.yaml`, named in the messages a screenshot's refusal prints: the
+// file whose rows are the pictures under `website/public/screenshots/`, and the one place a
+// screen's alt text, its caption and its pixel size are written (the console page's slider and
+// this loader read its rows through the same `loadConsoleScreens()`; the homepage's "See it"
+// panel reads `website/data/home-screens.yaml`, whose console rows are held to this file's).
+const CONSOLE_SCREENS = 'website/data/console-screens.yaml'
+
 // The pre-fill message the spec writes, with the variant's own name in it (spec §6: "Hi Dimi, I
 // saw Fugaro on the save page."). The name is the only thing that varies, and it is what makes
 // the visitor's message say which campaign brought them in. It also keeps the file's promise
@@ -73,7 +93,7 @@ const WHATSAPP_TEXT = /^Hi Dimi, I saw Fugaro on the (save|control|scale|crew) p
 // The keys each level of the document may carry. A key nobody reads is a failure here rather
 // than a value no page and no test would ever see, exactly as `content.ts` reads site.yaml.
 const DOCUMENT_KEYS = ['calendly_url', 'partner_logos', 'variants', 'version', 'whatsapp_number']
-const VARIANT_KEYS = ['headline', 'image', 'path', 'proof_number', 'supporting_line', 'tone', 'video', 'whatsapp_text']
+const VARIANT_KEYS = ['headline', 'image', 'path', 'proof_number', 'screenshot', 'supporting_line', 'tone', 'video', 'whatsapp_text']
 const PROOF_KEYS = ['source', 'value']
 const LOGO_KEYS = ['image', 'name']
 
@@ -100,6 +120,44 @@ function selfHosted(value, file, what) {
     )
   }
   return text
+}
+
+/**
+ * The console screen a variant's hero shows: the file's NAME under
+ * `website/public/screenshots/`, resolved against the rows of
+ * `website/data/console-screens.yaml`.
+ *
+ * A name and not a path or a URL, for the reason a variant's media is self-hosted (F20, D107)
+ * and for one more: the picture is one of the four the site already serves, so the row is what
+ * the page reads the alt text, the caption and the pixel size from — the site path the browser
+ * fetches is composed from the name, and no file under `website/` carries a second copy of any
+ * of them (Global Constraint 9, D190).
+ *
+ * **A name no row carries is refused**, unlike a variant's video or image, whose file the owner
+ * produces later and whose absence the page survives (F14, G2.5). The screen is already in this
+ * repository — the console page renders all four of them — so a hero naming one of them that
+ * does not exist is a typo or a removed file, and a build that rendered it would put a broken
+ * picture on the one page a visitor reached from an ad.
+ *
+ * @param {*} value @param {string} file @param {string} what
+ * @param {{ screens: Screen[] }} site
+ * @returns {Screen}
+ */
+function screenShot(value, file, what, site) {
+  const name = asString(value, file, what)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    throw new Error(
+      `${file}: ${what} is ${JSON.stringify(name)}, and it is the file's NAME under website/public/screenshots/ — letters, digits, dots, dashes and underscores, with no directory, no scheme and no space. The site path the browser fetches is derived from the name, so a name that is a path or a URL is a fact this file is not allowed to carry (Global Constraint 9).`,
+    )
+  }
+  const screen = site.screens.find((row) => row.file === name)
+  if (screen === undefined) {
+    const known = site.screens.map((row) => row.file)
+    throw new Error(
+      `${file}: ${what} names ${JSON.stringify(name)}, and ${CONSOLE_SCREENS} carries no row for it: its rows are ${known.join(', ') || '(none)'}. A campaign hero shows a screen this repository already serves, and the row is what the page reads that picture's alt text and its own pixel size from — a name no row carries is a broken picture on the page a visitor reached from an ad (F14, D190).`,
+    )
+  }
+  return screen
 }
 
 /**
@@ -224,6 +282,7 @@ function variant(value, index, file, site) {
     tone,
     proofNumber: proofNumber(entry.proof_number, file, `${what}.proof_number`, site),
     whatsappText: text,
+    screenshot: entry.screenshot === undefined ? null : screenShot(entry.screenshot, file, `${what}.screenshot`, site),
     video: entry.video === undefined ? null : selfHosted(entry.video, file, `${what}.video`),
     image: entry.image === undefined ? null : selfHosted(entry.image, file, `${what}.image`),
   }
@@ -309,6 +368,9 @@ function waNumber(value, file) {
  *   entry of the measured costs that backs it, or the sentinel in both.
  * @property {string} whatsappText The pre-filled message, naming this variant's page.
  * @property {string} whatsappURL The `wa.me` link, built from the file's number and that message.
+ * @property {Screen | null} screenshot The console screen the hero shows — the row of
+ *   `website/data/console-screens.yaml` this variant names — or null when the variant names
+ *   none, which renders the campaign's own drawing in the hero instead.
  * @property {string | null} video A self-hosted video path, or null while none exists.
  * @property {string | null} image A self-hosted image path, or null.
  */
@@ -325,13 +387,15 @@ function waNumber(value, file) {
  */
 
 /**
- * The four variants, read from a document already in memory. `site` is what a proof number is
- * held against — `site.yaml`'s own `min_runs` and the entries `loadTypicalCosts(minRuns)` returns
- * for `typical-costs.yaml` — so a test passes its own facts through the same seam
- * `loadLanding()` fills from the site's own files.
+ * The four variants, read from a document already in memory. `site` is what the two keys that
+ * point at another data file are held against — `site.yaml`'s own `min_runs` and the entries
+ * `loadTypicalCosts(minRuns)` returns for `typical-costs.yaml`, for a proof number, and the rows
+ * `loadConsoleScreens()` returns for `console-screens.yaml`, for a variant's `screenshot` — so a
+ * test passes its own facts through the same seam `loadLanding()` fills from the site's own
+ * files.
  *
  * @param {string} raw @param {string} file
- * @param {{ facts: { minRuns: number }, typicalCosts: { jobs: { id: string, name: string, runs: number }[] } }} site
+ * @param {{ facts: { minRuns: number }, typicalCosts: { jobs: { id: string, name: string, runs: number }[] }, screens: Screen[] }} site
  * @returns {LandingFacts}
  */
 export function parseLanding(raw, file, site) {
@@ -397,7 +461,10 @@ let loaded = null
 /**
  * The four campaign variants, read from `website/data/landing.yaml` and held against the site's
  * own facts — `loadSiteFacts()` for `min_runs` and `loadTypicalCosts(min_runs)` for the entries a
- * figure may be drawn from, which are the same two the caps-and-costs guide reads.
+ * figure may be drawn from, which are the same two the caps-and-costs guide reads, and
+ * `loadConsoleScreens()` for the rows a variant's `screenshot` is one of, which are the rows the
+ * console page's own slider renders (the homepage's "See it" panel reads `home-screens.yaml`,
+ * whose console rows are held to these).
  *
  * A file that is missing, empty, or written in a shape the reader does not know throws, and every
  * message names the file: there is no fallback value anywhere below, because a default is how a
@@ -409,7 +476,11 @@ let loaded = null
 export function loadLanding() {
   if (loaded !== null) return loaded
   const facts = loadSiteFacts()
-  const parsed = parseLanding(readLandingFile(SITE_ROOT), LANDING_FILE, { facts, typicalCosts: loadTypicalCosts(facts.minRuns) })
+  const parsed = parseLanding(readLandingFile(SITE_ROOT), LANDING_FILE, {
+    facts,
+    typicalCosts: loadTypicalCosts(facts.minRuns),
+    screens: loadConsoleScreens().screens,
+  })
   loaded = { ...parsed, variants: parsed.variants.map((one) => ({ ...one, video: carried(one.video), image: carried(one.image) })) }
   return loaded
 }

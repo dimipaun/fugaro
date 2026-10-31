@@ -588,6 +588,22 @@ func checkoutConfig(ctx context.Context, repo string) *config.Config {
 	return cfg
 }
 
+// refuseSharedCheckout refuses a launch from repo's checkout when its
+// fugaro.yaml (or the project layer it resolves over) declares checkout:
+// shared before the release that builds shared images. A launch reads that
+// file leniently, so without this the refused file just reads as no file and
+// the launch fails on whatever it then lacks (the git provider, the
+// workflow), or starts a job the runner refuses at bootstrap.
+func refuseSharedCheckout(ctx context.Context, repo string) error {
+	_, problems := checkoutParse(ctx, repo)
+	for _, p := range problems {
+		if strings.Contains(p.Message, config.SharedCheckoutRefusal) {
+			return userErr("fugaro.yaml: %s (see fugaro validate)", p)
+		}
+	}
+	return nil
+}
+
 // checkoutRoot is the working directory's checkout root when its origin is
 // repo, and "" otherwise.
 func checkoutRoot(ctx context.Context, repo string) string {

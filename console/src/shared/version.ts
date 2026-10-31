@@ -20,9 +20,9 @@
 //     decode -- a field removed or retyped -- is refused on its own screen with
 //     the decoder's sentence (`shared/schema.ts`), not by this handshake;
 //   * **below the set and at or above the floor, or a line that is not a plain
-//     release number** -- it proceeds in a **reduced mode**: a banner naming
-//     both versions, and the views whose figures it cannot vouch for are not
-//     drawn (`hidesView` below);
+//     release number** -- it proceeds in a **reduced mode**: a card naming both
+//     versions at the top of the window, and the views whose figures it cannot
+//     vouch for are not drawn (`hidesView` below);
 //   * **below a hard floor** -- it refuses, because "a dashboard that
 //     misreports spend because it read a shape it did not understand is worse
 //     than one that says it cannot read it" (D7). `src/main/window.ts` is where
@@ -53,23 +53,30 @@
 // **Why the drawing is here and not in a screen.** The skew state is the
 // console's own -- it is a fact about the version comparison, not about any
 // document -- and `renderer/screens/spend.ts` says so: "Task 3.2 owns the skew
-// state and a screen that invented its own would be two". The banner a screen
-// prepends to itself and the refusal screen a refused console draws instead of a
-// dashboard are the two presentations of that one state, and they live beside
-// the comparison that produces it.
+// state and a screen that invented its own would be two". The reduced mode's
+// card at the top of the window and the refusal screen a refused console draws
+// instead of a dashboard are the two presentations of that one state, and they
+// live beside the comparison that produces it.
 //
-// This is the one file in `shared/` that draws, and it is also imported by the
-// **main** process (`src/main/window.ts` runs the handshake with it), so it
-// depends on nothing in `renderer/`: the one writer below (`literal`) is this
-// file's own rather than `renderer/app.ts`'s, the string a binary chose is
-// sanitized by the `versionText` reader above it rather than by `putText`, and
-// the element shape it draws into is declared here as the six DOM members it
-// uses rather than imported from a screen. All of that is one rule: the renderer
-// depends on `shared/`, and `shared/` does not depend on the renderer -- and the
-// consequence for a reviewer is that this file's drawing is audited by
-// `test/unit/screen-literals.test.ts`, which reads it from
-// `src/shared/version.ts` with the same rules it holds the screens to.
+// This file composes the state's text and hands it to the notice card
+// (`shared/notice.ts`), and it is also imported by the **main** process
+// (`src/main/window.ts` runs the handshake with it), so it depends on nothing in
+// `renderer/`: the card's writer is `shared/`'s own rather than
+// `renderer/app.ts`'s, the string a binary chose is sanitized by the
+// `versionText` reader above it rather than by `putText`, and the element shape
+// it draws into is declared there as the six DOM members a drawing uses rather
+// than imported from a screen. All of that is one rule: the renderer depends on
+// `shared/`, and `shared/` does not depend on the renderer -- and the consequence
+// for a reviewer is that the two together are audited by
+// `test/unit/screen-literals.test.ts`, which reads the card's writer for the
+// strings it draws and this file for the strings it composes.
 
+import {
+  renderNotice,
+  type DrawnNotice,
+  type NoticeDetail,
+  type NoticeSpec,
+} from './notice'
 import { sanitizeText } from './sanitize'
 
 /**
@@ -277,7 +284,7 @@ export const CONSOLE_CLI_UPGRADE_COMMAND = 'brew upgrade dimipaun/tap/fugaro'
  */
 export type ReducedView = 'spend' | 'caps' | 'kill'
 
-/** REDUCED_VIEWS is the closed list, in the order the banner draws it. */
+/** REDUCED_VIEWS is the closed list, in the order the card draws it. */
 export const REDUCED_VIEWS: readonly ReducedView[] = Object.freeze(['spend', 'caps', 'kill'])
 
 /**
@@ -386,13 +393,14 @@ export function parseCliVersion(text: string): CliVersionParse {
  * screen or a test can branch on it without matching prose.
  */
 export type CliSkewName =
-  /** a member of the supported set: the console proceeds and draws no banner */
+  /** a member of the supported set: the console proceeds and says nothing about
+   * versions */
   | 'supported'
   /** a plain release newer than the newest member: the console is the older
    * one, and proceeds exactly as for a member (the owner's ruling of 2026-10-30) */
   | 'newer'
-  /** older than the newest member, not one, and at or above the floor: a
-   * banner, and the spend views held back */
+  /** older than the newest member, not one, and at or above the floor: a card,
+   * and the spend views held back */
   | 'older'
   /** a line at or above the floor that is not a plain release number -- a
    * prerelease or build tail, a leading zero, a missing patch: the same */
@@ -409,7 +417,7 @@ export type CliSkewName =
 export type CliCompatibilityMode =
   /** proceed */
   | 'ok'
-  /** proceed with a banner naming both versions, without the views withheld */
+  /** proceed with a card naming both versions, without the views withheld */
   | 'reduced'
   /** draw no dashboard */
   | 'refused'
@@ -621,19 +629,45 @@ export const SKEW_HEADLINES: Readonly<Record<CliCompatibilityMode, string>> = Ob
 })
 
 /**
- * skewSentence is the banner's sentence, in the console's own words, and it is
+ * NOTICE_REASONS is the one plain sentence the card opens with, per drawn skew:
+ * what is wrong and what the operator does about it, in the console's own words
+ * and with no version number, range or jargon in it. The technical text -- the
+ * range this console reads, the version the binary reported, the upgrade command
+ * -- is what the card's details hold (`skewSentence` carries it), so the sentence
+ * a reader sees first is a sentence, not a specification.
+ *
+ * The record is keyed by the skew **name** and not by the mode: the two modes are
+ * drawn from five skews, and a name added to `CliSkewName` -- a sixth way a
+ * version can be wrong -- is a compile error here until it has a sentence of its
+ * own, which is the whole reason this is a typed record rather than a lookup.
+ */
+export const NOTICE_REASONS: Readonly<
+  Record<Exclude<CliSkewName, 'supported' | 'newer'>, string>
+> = Object.freeze({
+  older:
+    'This fugaro is older than the versions this console fully reads, so spend, caps and the kill controls are hidden until you upgrade fugaro.',
+  irregular:
+    'This fugaro reports a version that is not a plain release number, so spend, caps and the kill controls are hidden until you run a released fugaro.',
+  unplaceable:
+    'This is a development build of fugaro, so spend, caps and the kill controls are hidden because the console cannot vouch for them.',
+  'below-floor': 'This fugaro is too old for this console to read, so upgrade fugaro to see the dashboard.',
+  unreadable: 'The console could not tell which fugaro it is driving, so it shows no dashboard.',
+})
+
+/**
+ * skewSentence is the card's sentence, in the console's own words, and it is
  * deliberately **without the CLI's text**: the console's own constants are the
  * only versions it composes into a sentence, and the version the CLI reported is
- * drawn in its own cell through the one writer (`renderVersionSkew`). That way the
- * line a binary printed is never concatenated into prose this file wrote, and
- * the sentence is the same string whatever the binary said.
+ * drawn in its own fact row (`versionCell`). That way the line a binary printed
+ * is never concatenated into prose this file wrote, and the sentence is the same
+ * string whatever the binary said.
  */
 /**
  * RANGE_PHRASE is the half-sentence every mode's sentence carries: what this
  * console was built against, and what it therefore reads. One fragment rather
  * than six hand-written copies, so no mode can be written without saying which
  * versions are in question -- which is the design's own requirement that the
- * banner name both versions.
+ * notice name both versions.
  */
 const RANGE_PHRASE = `this console was built against ${CLI_VERSION_BUILT_AGAINST} and reads ${SUPPORTED_CLI_MINORS.join(', ')} and every later release`
 
@@ -692,9 +726,9 @@ export const UNREADABLE_VERSION = 'a version line the console could not read'
  * the binary chose goes through: `sanitizeText` with the `'label'` class --
  * the same class `renderer/app.ts`'s `putText` uses, so the version line is held
  * to the same rules as every other label -- and the console's own sentence when
- * it is refused. It returns text rather than writing an element, so this file
- * has exactly one writer (`literal` below) and no second place a slot is
- * assigned.
+ * it is refused. It returns text rather than writing an element, so the card
+ * that draws it (`shared/notice.ts`) is the only writer and this file has no
+ * place a slot is assigned at all.
  *
  * The refused case is not drawn as `n/a` with the reason in a tooltip, which is
  * what `putText` does: a version line the console will not draw is not a value
@@ -706,118 +740,129 @@ function versionText(raw: string, field: string): string {
   return result.ok ? result.text : UNREADABLE_VERSION
 }
 
-/** literal writes the console's own vocabulary into an element. Nothing a
- * document or a binary wrote reaches this function: every argument is a string
- * literal, a module constant of this file, or the sanitized text `versionText`
- * returned. */
-function literal(element: SkewElement, text: string): SkewElement {
-  element.textContent = text
-  return element
-}
-
-/** cell is a fresh element with its classes, appended to a parent. */
-function cell(
-  parent: SkewElement,
-  factory: SkewFactory,
-  tag: string,
-  ...classes: string[]
-): SkewElement {
-  const element = factory.create(tag)
-  element.setAttribute('class', classes.join(' '))
-  parent.append(element)
-  return element
-}
-
 /**
- * versionRow draws one labelled version. The CLI's version goes through
- * `versionText` -- it is a string a binary chose -- and `null` (the unreadable
- * case) is drawn as the console's own sentence, because there is no value to
- * draw and an `n/a` with a title nobody can see would be less than the truth.
+ * versionCell is the text a version row draws: `null` (the unreadable case) is
+ * the console's own sentence, because there is no value to draw and an `n/a`
+ * with a title nobody can see would be less than the truth, and a version there
+ * is goes through `versionText` -- it is a string a binary chose.
  */
-function versionRow(
-  parent: SkewElement,
-  factory: SkewFactory,
-  label: string,
-  labelClass: string,
-  version: string | null,
-  valueClass: string,
-  field: string,
-): void {
-  const row = cell(parent, factory, 'div', 'skew-row')
-  literal(cell(row, factory, 'span', 'skew-label', labelClass), label)
-  const value = cell(row, factory, 'span', valueClass)
-  literal(value, version === null ? UNREADABLE_VERSION : versionText(version, field))
+function versionCell(version: string | null, field: string): string {
+  return version === null ? UNREADABLE_VERSION : versionText(version, field)
 }
 
 /**
- * renderVersionSkew draws the handshake's state: the banner a screen prepends to
- * itself when the mode is `reduced`, and the whole screen a refused console
- * draws instead of a dashboard.
+ * noticeReason is the one plain sentence the card opens with. The five drawn
+ * skews each have their own (`NOTICE_REASONS`); the two that are not drawn -- a
+ * supported and a newer CLI -- say the `ok` headline, because a console that
+ * reads what it is driving has no reason to give.
+ */
+function noticeReason(compatibility: CliCompatibility): string {
+  if (compatibility.skew === 'supported' || compatibility.skew === 'newer') {
+    return SKEW_HEADLINES.ok
+  }
+  return NOTICE_REASONS[compatibility.skew]
+}
+
+/**
+ * skewNoticeSpec is the handshake's state as a notice: the same card in both
+ * modes, differing in what the reader needs from it. The reduced mode is a
+ * console that still works, so its card folds the technical text away
+ * (`'toggle'`) and can be dismissed; the refused mode is the whole document, so
+ * its title is the document's one `h1` and its details are drawn open -- the
+ * range and the version line are what the operator acts on, and folding them
+ * behind a button on the only screen there is would hide the reason there is no
+ * dashboard.
  *
- * `data-mode` and `data-skew` are the machine-readable form of both, `data-theme`
- * is the theme, and `data-hidden` marks every view the mode withholds -- so a
- * test asserts the withheld views by name rather than by reading the sentence.
- * The root carries `console-skew` and **not** `live`: a refused console draws no
- * dashboard, and the absence of that root is how a spec says so.
+ * The `console-skew` class is what the stylesheets and the specs reach the skew
+ * notice by, and the per-row classes are the hooks the tests read: `skew-sentence`
+ * holds the sentence, `skew-because` the reader's reason, and `data-hidden` marks
+ * every view the mode withholds -- so a test asserts the withheld views by name
+ * rather than by reading the sentence.
+ */
+function skewNoticeSpec(compatibility: CliCompatibility): NoticeSpec {
+  const details: NoticeDetail[] = [
+    { label: 'what happened', text: skewSentence(compatibility), classes: ['skew-sentence'] },
+  ]
+  // Why the console could not read a version, when its reader said: a reader's
+  // reason is what `runVersionHandshake` kept from `probeVersion` (rule 4's
+  // search, a spawn that failed, a deadline), and a screen that says only "it
+  // could not read one" leaves the operator with nothing to act on. It reaches
+  // the sink through `unreadableReason`, which is where `sanitizeText` runs, and
+  // when the reader kept no reason at all the row is not created rather than
+  // drawn empty, so there is no blank cell to misread.
+  const because = unreadableReason(compatibility)
+  if (because !== null) details.push({ label: 'why', text: because, classes: ['skew-because'] })
+  details.push({
+    label: 'this console reads',
+    labelClasses: ['skew-console-label'],
+    text: versionCell(compatibility.consoleVersion, 'the console version'),
+    classes: ['notice-version', 'skew-console-version'],
+  })
+  details.push({
+    label: 'the fugaro it is driving reports',
+    labelClasses: ['skew-cli-label'],
+    text: versionCell(compatibility.cliVersion, 'the CLI version'),
+    classes: ['notice-version', 'skew-cli-version'],
+  })
+  if (compatibility.mode !== 'ok') {
+    details.push({
+      label: 'withheld',
+      classes: ['skew-hidden-views'],
+      list: compatibility.hidden.map((view) => ({
+        text: HIDDEN_VIEW_WORDS[view],
+        classes: ['skew-hidden'],
+        attributes: { 'data-hidden': view },
+      })),
+    })
+  }
+  const refused = compatibility.mode === 'refused'
+  return {
+    severity: 'warning',
+    dismissible: compatibility.mode === 'reduced',
+    heading: refused ? 'h1' : 'h2',
+    disclosure: refused ? 'expanded' : 'toggle',
+    title: SKEW_HEADLINES[compatibility.mode],
+    titleClasses: ['skew-headline'],
+    reason: noticeReason(compatibility),
+    reasonClasses: ['skew-reason'],
+    details,
+    classes: ['console-skew'],
+  }
+}
+
+/**
+ * renderVersionSkew draws the handshake's state: the card a reduced console puts
+ * at the top of the window, and the whole document a refused console draws
+ * instead of a dashboard.
+ *
+ * It hands back the drawn notice rather than the root -- a caller that mounts it
+ * (`renderer/app.ts`) needs the root, and the entry that wires the disclosure and
+ * the dismissal needs the toggle, the dismiss button and the title they move
+ * focus to.
+ *
+ * `data-mode` and `data-skew` are the machine-readable form of both and
+ * `data-theme` is the theme; the root carries `console-skew` and **not** `live`:
+ * a refused console draws no dashboard, and the absence of that root is how a
+ * spec says so.
  */
 export function renderVersionSkew(
   factory: SkewFactory,
   compatibility: CliCompatibility,
   theme: SkewTheme,
-): SkewElement {
-  const root = factory.create('section')
-  root.setAttribute('class', 'console-skew')
+): DrawnNotice {
+  const notice = renderNotice(factory, skewNoticeSpec(compatibility))
+  const root = notice.root
   root.setAttribute('data-theme', theme)
   root.setAttribute('data-mode', compatibility.mode)
   root.setAttribute('data-skew', compatibility.skew)
-  literal(cell(root, factory, 'h1', 'skew-headline'), SKEW_HEADLINES[compatibility.mode])
-  literal(cell(root, factory, 'p', 'skew-sentence'), skewSentence(compatibility))
-  const because = unreadableReason(compatibility)
-  if (because !== null) {
-    // Why the console could not read a version, when its reader said: a reader's
-    // reason is what `runVersionHandshake` kept from `probeVersion` (rule 4's
-    // search, a spawn that failed, a deadline), and a screen that says only "it
-    // could not read one" leaves the operator with nothing to act on. It is
-    // drawn through the sanitizer like every other text this module writes
-    // (`unreadableReason`, the `sentence` class), so a token shape inside the
-    // reason is redacted there before it can reach this sink; and when the
-    // reader kept no reason at all, the element is not created rather than
-    // drawn empty, so there is no blank cell to misread.
-    literal(cell(root, factory, 'p', 'skew-because'), because)
-  }
-  versionRow(
-    root,
-    factory,
-    'this console reads',
-    'skew-console-label',
-    compatibility.consoleVersion,
-    'skew-console-version',
-    'the console version',
-  )
-  versionRow(
-    root,
-    factory,
-    'the fugaro it is driving reports',
-    'skew-cli-label',
-    compatibility.cliVersion,
-    'skew-cli-version',
-    'the CLI version',
-  )
-  if (compatibility.mode !== 'ok') {
-    const list = cell(root, factory, 'ul', 'skew-hidden-views')
-    for (const view of compatibility.hidden) {
-      const item = cell(list, factory, 'li', 'skew-hidden')
-      item.setAttribute('data-hidden', view)
-      literal(item, HIDDEN_VIEW_WORDS[view])
-    }
-  }
-  return root
+  return notice
 }
 
 /**
  * unreadableReason is the console's own sentence for a compatibility that came
- * from a failed read, when one was kept, and `renderVersionSkew` draws it under
- * the banner's sentence (`p.skew-because`) -- the reader's reason is why the
+ * from a failed read, when one was kept, and `renderVersionSkew` draws it as the
+ * card's own `why` row (`dd.skew-because`, under the sentence) -- the reader's
+ * reason is why the
  * operator sees a reduced or refused console at all, and "it could not read a
  * version" without it is a screen with nothing to act on.
  *

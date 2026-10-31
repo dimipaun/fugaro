@@ -192,8 +192,8 @@ redesign step 1). The entry draws the body's two children, in this order, all fr
 in an `ok` run. The header holds the wordmark, the installation switcher, the navigation, the
 fleet gauge and Halt fleet; the switcher's menu holds the installation line and the rail's tree
 (§4.1), and the page holds the panel. **A third child precedes these two whenever the mode is
-not `ok`**: `startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1),
-and in **refused** mode it is the whole document.
+not `ok`**: `startConsole` appends the version-skew notice to the same mount first (§2.8,
+§2.14, §4.1), and in **refused** mode it is the whole document.
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
@@ -207,7 +207,8 @@ and in **refused** mode it is the whole document.
 | Page | `main.console-page` → `div.console-panel` | the page scrolls and the header does not; the panel is the page container (`max-width: var(--page-max)`, centred, padding 28 px 32 px 64 px) and holds the mounted screen's root, the installation issue view, or the onboarding view |
 | Onboarding | `section.installation-onboarding` → `h1.installation-onboarding-title`, `p.installation-onboarding-body`, `p.installation-onboarding-reason` (the CLI resolution's own sentence, only when no CLI was found), `code.installation-onboarding-command` | drawn by `drawOnboarding` into the panel when the machine has no installation at all: the picker's own words for the two onboarding screens (`ONBOARDING_COPY`) and the command the main process names (`src/main/onboarding.ts`). Nothing is read |
 | Installation issue | `section.installation-issue` → `h1.installation-issue-headline`, `p.installation-issue-sentence`, `code.installation-issue-command`, `details.installation-issue-details` (`summary.installation-issue-summary`, `pre.installation-issue-lines`), `div.installation-issue-actions` (`button.installation-issue-choose`, `button.installation-issue-remove`, `button.installation-issue-reveal`, `p.installation-issue-checkout-lead`, `button.installation-issue-checkout`) | drawn by `drawIssue` into the panel when a rail row with an issue is clicked, or at boot when no installation can be read (§4.1): the installation's name, **one plain sentence first** with the exact command, the CLI's own text behind the `details` disclosure, and the row's actions. No banner. The `data-issue` it carries is the main process's classification and no rule selects it |
-| Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the header and the page | see §2.8 |
+| Reduced/refused notice | `section.notice` with `console-skew`, drawn by `renderVersionSkew` through `renderNotice` into the mount, **first of all** — before the header and the page: `data-severity`, `span.notice-mark`, `div.notice-body` → `h1\|h2.notice-title`, `p.notice-reason`, `button.notice-toggle`, `div.notice-details` → `dl.notice-facts` → `dt`/`dd`, and `button.notice-dismiss` when it can be put away | see §2.8 and §2.14 |
+| Reduced-mode chip | `button.console-reduced-chip` (`data-severity="warning"`, `aria-describedby`) with `span.console-reduced-chip-reason` beside it, in the header **after** `div.console-switcher` and before `nav.console-views` | drawn in the reduced mode and no other: the mode's headline for a reader who reaches the chip, and what brings a dismissed notice back (§2.14) |
 
 - **`VIEWS`** is `live`, `graph` and `coordinator` (never withheld), `spend` (view `spend`)
   and `projects` (view `caps`). A view the mode withholds is **not offered**: no link is
@@ -559,29 +560,78 @@ exported: it is the sentence a row draws, not a vocabulary anything reads.
 
 Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
 (where there is one) `data-operation`: `caps`, `kill`, `repositories`, `jobs`, `accounts`,
-`secrets`, `policy`, `enrollment`.
+`secrets`, `policy`, `enrollment`. **The panel's state is a word as well as a frame**:
+`span.projects-state` draws `read`, `not read`, or the design's word for a card this CLI
+cannot read at all — `locked` — so no rule has to carry a state on a tone alone (§3.5).
 
 | Group | Class hooks |
 |---|---|
-| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
+| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-state`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
 | Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches all three**, and the third is **unreachable today** — see below |
-| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
-| Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
-| Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
-| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-job-mode`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
-| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-accounts-note` |
-| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed` |
+| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-word`, `projects-reserve-value`, `projects-cap-table`, `projects-cap-head`, `projects-cap`, `projects-cap-scope`, `projects-cap-cell`, `projects-cap-value`, `projects-cap-source` |
+| Kill | `projects-kills`, `projects-kill-list`, `projects-kill-row`, `projects-kill-scope`, `projects-kill-repo`, `projects-kill-state`, `projects-kill-action`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
+| Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-both`, `projects-only-enrolled-repo`, `projects-only-seen-repo`, `projects-repo-card-none`, `projects-repo-card-note`, `projects-repo-add` |
+| Jobs | `projects-jobs`, `projects-job-table`, `projects-job-head`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-mode`, `projects-job-mode-cell`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
+| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
 `read`, `unavailable`, `not-built`**; `data-operation`
 (`budget.show|runs.list|accounts.inventory|secrets.inventory`, absent on `policy` and
-`enrollment`); `data-scope` (`global|defaults|repo`); `data-slug`; `data-killed` (`true`).
+`enrollment`); `data-scope` (`global|defaults|repo`, on a caps row and on a kill row);
+`data-slug` (the same two rows); `data-killed` (`true`|`false` on a kill row, and `true` on
+the banner a killed row carries); `data-kind` (`both|enrolled|seen`, on a repository card).
 
 The `not-built` state is the design's own honesty rule in the DOM: `policy` and
 `enrollment` carry `data-state="not-built"` and a `projects-because` sentence ("not
 readable with this CLI: …"). An `unavailable` panel carries the CLI's sentence or "no
 document arrived for …". A `read` panel carries a count and a body; **a panel in any other
 state has no body at all**, so a rule that painted an empty body would be painting nothing.
+The two `not-built` panels are the design's locked cards: a dashed frame, the state word
+`locked` beside the title, and no body, no list and no count behind it.
+
+**The caps are one table and every cell in it is labelled.** `table.projects-cap-table`
+carries a `th.projects-cap-head` per column, and each row — the project (`global`), the
+repository defaults (`defaults`) and one per repository — opens with
+`th.projects-cap-scope` naming what the caps are set for, before the two
+`td.projects-cap-cell`s. Each of those carries its figure as money
+(`span.projects-cap-value`) **with the cap's source word** (`span.projects-cap-source`, from
+`CAP_SOURCES`) beside it, because a bare column of numbers names nothing: a rule that
+right-aligned three `$` figures would align a cap the CLI derived from the project's
+defaults with one an operator typed on the repository. A source this build does not know is
+drawn as `unknown` and not guessed at. Above the table, `p.projects-reserve` carries the
+largest single lease the project has out (`span.projects-reserve-word` names it,
+`span.projects-reserve-value` is the money).
+
+**The switches are rows whose state is a word.** `ul.projects-kill-list` holds one
+`li.projects-kill-row` for the project and one per repository, each with
+`data-killed="true"` or `"false"` and a `span.projects-kill-state` that draws `KILLED` or
+`live`. A killed row carries the badge banner, `div.projects-kill` — itself
+`data-killed="true"`, with `span.projects-kill-word` (`KILLED by`) and the who, when and why
+only when the document has them, and nothing invented when it does not. The row's own action
+is drawn through `disabledWrite` (§5.1): `Kill` on a live row, `Revive` on a killed one.
+
+**The repositories are three cards**, `article.projects-repo-card`, one per state of the
+document: a repository with a cap row and a run (`data-kind="both"`), one with a cap row and
+no run yet (`data-kind="enrolled"`, saying so in `p.projects-repo-card-note`), and one that
+ran with no cap row (`data-kind="seen"`, in the warn tone, saying so, and the one card that
+draws an action: `Add cap`, through `disabledWrite`). A known but empty set says `none` in
+`p.projects-repo-card-none` rather than drawing an empty card or nothing at all. The panel's
+reason for an unread set stays `projects-because` (`repositoriesBecause`), so a set no
+document reported is never drawn as an empty one.
+
+**The jobs are a table**, `table.projects-job-table`: the run, the repository, the workflow,
+the status, the stage, the requester, the launcher, the timestamp, the mode where the column
+exists, and **the three cost accounts in three cells** — the subscription's model dollars
+(notional), the compute dollars (billed) and their total — each through `numberCell`, so
+every figure carries its own reading's state and a value the document does not carry is
+`n/a` and never `$0.00`.
+
+The accounts and secrets panels draw their rows as lists (`ul.projects-account-list`,
+`ul.projects-secret-list`). **Neither read is wired in this build**, so the two panels are
+drawn with their own "not read" sentence and no list at all — and the secrets panel's
+`p.projects-secrets-managed` sentence ("All managed by fugaro.") waits for a document whose
+every entry says so.
 
 **`projects-accounts-note` is a hook no document this CLI produces can reach.** `fugaro
 accounts ls --json` writes `note` with `omitempty` and answers `complete: false` whenever
@@ -593,12 +643,13 @@ hook is emitted by the code and reachable by no feed today; it becomes reachable
 `complete: true` and a non-empty `note` can arrive together, which is why it stays in the
 vocabulary rather than being deleted.
 
-Readings: money (`usd`) for the reserve, the caps and the job figures; counts for panel
-counts, dropped/total, enrolled/seen, secret versions. **No reading is a time on this
-screen** — every date is text.
+Readings: money (`usd`) for the reserve, the caps and the job figures; counts for the panel
+counts, the jobs panel's dropped/total line and the secret versions. **No reading is a time
+on this screen** — every date is text.
 
 **`projects-job-mode` is the jobs row's rigor mode, and the column is conditional.** The
-cell draws the mode's word — the five §2.3 names — or the record's own value when this
+cell, `td.projects-job-mode-cell`, draws the mode's word — the five §2.3 names — or the
+record's own value when this
 build does not know it, or `-` for a run whose record carries no block; and **no cell is
 drawn at all unless some listed run carries a block**, which is the rule `fugaro runs ls`
 writes for its own MODE column (`internal/cli/runs.go`'s `showMode`). A project whose runs
@@ -813,11 +864,15 @@ affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound
   `REFUSAL_UNREADABLE` ("the CLI refused this read, and its own sentence is longer than the
   console will draw").
 
-The **version-skew banner** (`renderVersionSkew` in `shared/version.ts`) is the third: the
-whole screen when the console refused, a banner a screen is mounted under when it is
-reduced. It is drawn into the mount — `document.body` — **before** the installation line,
-the nav and the panel, so it is the document's first child and their sibling rather than a
-child of `div.console-panel` (§4.1).
+The **version-skew notice** (`renderVersionSkew` in `shared/version.ts`, drawn through
+`renderNotice` in `shared/notice.ts`) is the third: the whole screen when the console
+refused, a card a screen is mounted under when it is reduced. It is `section.console-skew`
+and it carries `data-theme`, `data-mode` and `data-skew`; it is drawn into the mount —
+`document.body` — **before** the installation line, the nav and the panel, so it is the
+document's first child and their sibling rather than a child of `div.console-panel`
+(§4.1). It is a card in the flow and not a banner across the window (§2.14), and a reduced
+one can be put away — in which case it stays where it is, the body's first child, and only
+its `hidden` attribute changes.
 
 `refusal.html` itself is a **document**, not a screed: `<main>` with an `<h1>` ("Fugaro
 console") and one `<p>` ("This console will not draw a dashboard for the fugaro it
@@ -828,7 +883,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
+| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (a kill row, and the banner that row carries). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, on Live's repository block itself, and on Projects' kill row** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), and `li.projects-kill-row` carries `true`/`false` with the banner appended into the row, so `.live-repo[data-killed="true"]` and `li.projects-kill-row[data-killed="true"]` are rules this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
 | silent / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
@@ -842,7 +897,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
 | no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |
-| skew (refused / reduced) | chrome | the version-skew banner; the nav is missing the withheld buttons |
+| skew (refused / reduced) | chrome | the version-skew notice `section.console-skew` (§2.14): `data-mode`, `data-skew`, the reason, the facts, and every withheld view as an `li[data-hidden]`. The nav is missing the withheld buttons, and a dismissed notice is `[hidden]` on that same root with `button.console-reduced-chip` left in the header saying so |
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
 | empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` key and row, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and nothing in the document separates them — `queued_note` is absent both when the read succeeded and when it has not happened yet (§2.3) |
@@ -1092,6 +1147,62 @@ and apart from that they carry only what `base.css`'s reset gives every `dt` and
 rule that wanted a hook on a row itself adds it here first.
 
 ---
+
+### 2.14 Notices — `console/src/shared/notice.ts` + `console/src/renderer/entry.ts`
+
+**A notice is a card in the flow, never full-bleed.** The version-skew state — the reduced
+mode's statement, and the refusal screen — is drawn by one reusable card, `renderNotice`
+(`console/src/shared/notice.ts`). That module imports no renderer module: its element and
+factory are declared structurally, the same choice `shared/version.ts` makes, so
+`src/shared` still depends on no screen, and the module attaches no listener — the entry
+that mounts the card is the only place with `nodeOf`, and it is where the disclosure, the
+dismissal and the chip are wired. **The two ids the card's ARIA names are its own** (a
+per-card number, not a fixed pair): a document may hold more than one card, and two cards
+sharing an id would each be named by the other's title and open the other's facts. **The
+version-skew notice is the only caller so far**: a second caller is a second row in its own
+section, and this is the table its hooks are added to.
+
+| Hook | Element | What it is |
+|---|---|---|
+| `section.notice` | the card's root | `display: grid` in three columns — the mark, the body, the dismiss button — on `--surface` with a 1 px `--border` edge, `--radius-md` and a 3 px left edge in the severity's colour. The root carries the caller's own extra class beside `notice` (`console-skew`), `aria-labelledby` pointing at the title, and the `data-severity` below |
+| `data-severity` | the card's root | `warning`\|`info`, and it is the **tone**: the left edge's colour and the mark's ink. §3.5 is why it is never the only carrier — the mark's shape differs, and a reader who cannot tell amber from blue reads the same card |
+| `span.notice-mark` | the mark | decoration (`aria-hidden`), drawn entirely by the stylesheet: a `!` in a triangle for a warning, an `i` in a circle for information. No rule gives it text |
+| `div.notice-body` | the card's column | the title, the reason and the disclosure |
+| `h1.notice-title` / `h2.notice-title` | the title | the console's own headline (`SKEW_HEADLINES`), one line, `--font-size-base`, semibold, ellipsised. It is an `h1` for the refused notice — the whole document, and its one `h1` — and an `h2` for a card under the window's own heading. It carries `tabindex="-1"` so the chip can put the keyboard on it |
+| `p.notice-reason` | the reason | **one plain sentence, in the console's voice** (`NOTICE_REASONS`): what is wrong and what to do about it, with no version number, range or command in it. The technical text is the facts below. The skew notice's paragraph carries `skew-reason` beside it |
+| `dl.notice-facts` → `dt`/`dd` | the facts | a real definition list: two columns, `max-content 1fr`. A value is a run of text or a real `ul` inside its `dd` — the withheld views are `li.skew-hidden` with `data-hidden`, and the reset's `list-style: none` does not reach them |
+| `dd.notice-version` | a version value | the mono face with tabular figures (§3.7): a version is compared character by character |
+| `button.notice-toggle` | the disclosure | `type="button"`, `aria-expanded` and `aria-controls` naming the details region, and its label flips between "Show details" and "Hide details". The region is `hidden` while folded — the state is the attribute, not a class |
+| `div.notice-details` | the disclosure region | the `dl.notice-facts`, and the element `aria-controls` names. `hidden` while folded |
+| `button.notice-dismiss` | the dismissal | drawn only when the notice is `dismissible`; a visible `×` that is `aria-hidden` and an `aria-label` that says what it does |
+| `button.console-reduced-chip` | the header's chip | the reduced mode's standing statement, in the header after `div.console-switcher` and before `nav.console-views`. `type="button"`, `data-severity="warning"` and the headline in `title` |
+| `span.console-reduced-chip-reason` | the chip's reason | visually hidden and **not** `aria-hidden`: the chip's visible word is two words long, so the mode's headline ("fugaro version skew: reduced mode") is what a reader who only reaches the chip is owed. `aria-describedby` on the chip names it |
+| `hidden` | any of the above | the theme's way of putting a thing away — a folded menu, a folded notice, a dismissed card. The reset maps it to `display: none !important` because it has to outrank the `display` the element's own rule sets |
+
+- **A card, and the one exception.** The card is `margin: var(--space-sm) auto 0` and
+  `max-width: var(--page-max)` — centred, inside the window's own edges, and never
+  full-bleed. The **refused** notice is the exception and it is not a card at all: it is
+  `section.notice:only-child`, the whole document, so it takes the room it is given
+  (`flex: 1 1 auto`) and drops the card's margins.
+- **The disclosure is one button and one region.** `aria-expanded` and the region's `hidden`
+  move together, and the label says which state the button is in. The refused notice has no
+  button at all: its details are drawn open (`disclosure: 'expanded'`), because the range and
+  the version line are what the operator acts on and folding them behind a button on the only
+  screen there is would hide the reason there is no dashboard.
+- **The dismissal is the session's and nothing else.** It is the card root's `hidden`
+  attribute and no storage, no IPC and no preference: a reload is a fresh window and draws
+  the notice again. The card keeps its place in the document — it stays the body's **first
+  child** (§4.1) — and clicking dismiss moves focus to the chip. **Escape does not
+  dismiss**: the card is not a dialog and has no key handling of its own.
+- **The chip is why dismissal is safe.** A reduced console withholds spend, caps and the
+  kill controls (§2.9): a window whose nav has no such button and no word about why is
+  exactly the state §4.4's first rule refuses. So the chip is drawn for as long as the mode
+  is — not for as long as the notice is — and activating it un-hides the notice and moves
+  focus to the card's title. In the `ok` mode there is no notice and no chip; in the refused
+  mode there is no dashboard and so no chip either.
+- **The tone is a shape first.** The mark's glyph and outline differ per severity
+  (`!` in a triangle, `i` in a circle), which is §3.5's rule read where it matters most: the
+  one card an operator may see before anything else they can act on.
 
 ## 3. The theme system
 
@@ -1646,7 +1757,8 @@ The entry appends up to **three** children to `document.body`, which is the moun
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ section.console-skew                               reduced mode only     │
+│ section.console-skew (section.notice)              reduced mode only     │
+│   and button.console-reduced-chip, in the header below                    │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ header.console-header   wordmark · switcher · nav · gauge · Halt fleet   │
 ├──────────────────────────────────────────────────────────────────────────┤
@@ -1657,11 +1769,14 @@ The entry appends up to **three** children to `document.body`, which is the moun
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **The version-skew banner is not in the panel.** `startConsole` appends it to the mount it
-  was handed, so the banner is the body's **first child**, appended before the header and the
-  page. It is `section.console-skew` and it carries `data-theme`, `data-mode` and `data-skew`
-  (`shared/version.ts`). In **refused** mode it is the whole document, because `bootDashboard`
-  returns straight after it and **the other two children are never appended**.
+- **The version-skew notice is not in the panel.** `startConsole` appends it to the mount it
+  was handed, so the notice is the body's **first child**, appended before the header and the
+  page. It is `section.console-skew` — a `section.notice` card (§2.14) — and it carries
+  `data-theme`, `data-mode`, `data-skew` and `data-severity` (`shared/version.ts`). A
+  dismissed notice keeps that place and takes `hidden`; the header's
+  `button.console-reduced-chip` is what says the mode is still reduced (§2.14). In
+  **refused** mode it is the whole document, because `bootDashboard` returns straight after
+  it and **the other two children are never appended**.
 - **The header is chrome and never scrolls**; the page scrolls. It wraps on a narrow window.
 - **`nav.console-views` is five tabs** (`button.console-view`, at least 44 px tall; the
   redesign draws links, and the renderer writes no `href`), the

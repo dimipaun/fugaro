@@ -398,7 +398,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	covers := "a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it)"
 	never := "creating a project, linking a billing account, the Firestore database's location, or a secret value"
 	if d.takes("forget") {
-		covers = "the Firestore database's location, " + covers
+		// update is also the door that runs the checkout's own steps, whose
+		// cloud half is the image refresh: every one of its billable builds —
+		// a rebuild of the workflow images this checkout already has — is
+		// asked for by itself, and --yes answers each of them, the same
+		// answer the door gives a repository's first build
+		// (internal/cli/image_refresh_steps.go, askBuild).
+		covers = "the Firestore database's location, a rebuild of the checkout's workflow images, " + covers
 		// The location is one of this door's covered steps, so it is not in
 		// this door's never list; the two that cannot arise here at all are
 		// still true of --yes wherever they can (they are the other door's
@@ -3225,6 +3231,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// answer that judges no entry — never an empty node, which would read a
 	// node the operator cannot reach as "nothing is proxied" and refuse their
 	// entry over it.
+	//
+	// None of it is conditioned on --plan-only: a disagreement is a
+	// contradiction in the configuration, not a change to make, and a plan
+	// that cannot be applied is not a plan — so the refusal lands before the
+	// plan is written, in every mode.
 	p, found, err := r.policy.read(ctx, lc)
 	in.Policy = repoPolicyInput(lc, p, found, err)
 	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {

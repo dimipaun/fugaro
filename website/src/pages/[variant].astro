@@ -13,9 +13,10 @@
  * **Every word a variant owns comes from the file.** The headline and the supporting line are
  * the file's (G2.1, D102), the proof band prints the file's figure or the sentinel in its place
  * (F6), and the tone the page's look keys off is the file's own word. What this page writes is
- * the section order the spec fixes — hero, proof, how it works, social proof, the calls to
- * action — and the two links of the last of them, which are `landing.yaml`'s booking link and
- * `site.yaml`'s repository rather than URLs typed here.
+ * the section order — the spec's five, hero, proof, how it works, social proof, the calls to
+ * action, with the console's screens between the last two (the owner's feedback of 2026-10-30,
+ * D412's finding 3) — and the two links of the calls to action, which are `landing.yaml`'s
+ * booking link and `site.yaml`'s repository rather than URLs typed here.
  *
  * **The page is rendered through the layout's campaign mode** (`campaign` on `Base.astro`):
  * `noindex` and canonical to the home page, the wordmark's row with no menu, the minimal
@@ -32,6 +33,7 @@ import CampaignHero from '../components/CampaignHero.astro'
 import CampaignProof from '../components/CampaignProof.astro'
 import CampaignSteps from '../components/CampaignSteps.astro'
 import CampaignSocialProof from '../components/CampaignSocialProof.astro'
+import CampaignScreens from '../components/CampaignScreens.astro'
 import CampaignCalls from '../components/CampaignCalls.astro'
 import { loadLanding } from '../lib/landing.mjs'
 import { loadSite } from '../content.ts'
@@ -72,21 +74,31 @@ const { variant } = Astro.props
     </Fragment>
   )}
 
-  {/* The hero draws the campaign's picture only while the variant has no media of its own: the
-      slot above the headline is the variant's own file when there is one, and the drawing does
-      not compete with it (F14, G2.5). */}
+  {/* The hero's picture: the console screen the variant names (`screenshot`, a row of
+      `website/data/console-screens.yaml`, whose `src`, `alt`, caption and pixel size the hero
+      renders), or the campaign's own drawing when the variant names no screen, and nothing while
+      the variant carries media of its own — the slot above the headline is the variant's own file
+      when there is one, and the hero's picture does not compete with it. One picture in the hero,
+      whichever of the three it is (F14, G2.5). */}
   <CampaignHero
     headline={variant.headline}
     supportingLine={variant.supportingLine}
     tone={variant.tone}
     calendlyURL={landing.calendlyURL}
     art={variant.video === null && variant.image === null}
+    screenshot={variant.screenshot}
   />
   <CampaignProof value={variant.proofNumber.value} source={variant.proofNumber.source} />
   <CampaignSteps />
   {/* Hidden while the file names no partner: the section is not rendered at all, so a campaign
       page with no proof of a partnership does not claim one (F11, F12, D405). */}
   {landing.partnerLogos.length > 0 && <CampaignSocialProof logos={landing.partnerLogos} />}
+  {/* The console's screens, in the homepage's own slider: below the hero and above the closing
+      call to action, which is the owner's bound (the feedback of 2026-10-30, D412's finding 3), so the
+      page shows what a run looks like before it asks for the booking. It reads the rows through
+      `loadHomeSliderScreens()`, which is the homepage's own list, so the two sliders are one
+      set of pictures rather than two. */}
+  <CampaignScreens />
   <CampaignCalls calendlyURL={landing.calendlyURL} repository={site.facts.repository} whatsappURL={variant.whatsappURL} />
 </Base>
 

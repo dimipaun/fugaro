@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -125,14 +126,18 @@ func TestLaunchRefusesSharedJobOnOldRunner(t *testing.T) {
 	}
 }
 
-// TestRunSharedWorkflowRefusedBelowSharedSince is the same gate driven the
-// way an operator meets it: a real `fugaro run` of a checkout: shared
-// workflow, from its checkout, refused before anything is written. It is
-// what holds internal/cli/run.go's call to the gate and the checkout kind it
-// reads — drop either the `shared` assignment or the `if shared { … }` block
-// and the launch below goes through, because nothing else refuses a shared
-// workflow on this image.
-func TestRunSharedWorkflowRefusedBelowSharedSince(t *testing.T) {
+// TestRunRefusesSharedWorkflowBefore0150 is the same repository driven the
+// way an operator meets it, and in 0.14.0 it stops before the gate above:
+// validation refuses checkout: shared until the release that builds a
+// shared image (config/image.go's sharedCheckoutShipped), so the launch has
+// no workflow to read the kind from and never starts a job — not even on an
+// image built from sharedSince, which is what this test's lock holds. What
+// it pins is the refusal a person is owed, and the key it is about: fugaro
+// validate reads the same file and prints both, where the launch stops on
+// the refused file itself (it leaves no config to read the workflow's kind
+// from). The sharedSince gate keeps its own test above, which a launch
+// cannot reach until the flag flips.
+func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
 	other := mustSlug("github", "acme/other")
@@ -144,27 +149,67 @@ func TestRunSharedWorkflowRefusedBelowSharedSince(t *testing.T) {
 		"  svc: { checkout: shared, commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
 	const key = "9f2c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"
-	lockWith(t, f, key, "ghcr.io/dimipaun/fugaro-base:0.13.0", "acme/other", other, "svc")
-	_, _, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "how to clone for a shared image (FUGARO_CHECKOUT) (fugaro "+sharedSince+" or later)") ||
-		!strings.Contains(err.Error(), "acme/other workflow svc was built from base image ghcr.io/dimipaun/fugaro-base:0.13.0, release 0.13.0") ||
-		!strings.Contains(err.Error(), "fugaro update --base base") ||
-		!strings.Contains(err.Error(), "fugaro image refresh --repo acme/other --workflow svc") {
-		t.Fatalf("err = %v", err)
-	}
-	// The same launch on an image built from sharedSince: nothing to refuse,
-	// which is what says the refusal above is this gate's and not a launch
-	// that would have failed anyway.
 	lockWith(t, f, key, "ghcr.io/dimipaun/fugaro-base:"+sharedSince, "acme/other", other, "svc")
-	if _, _, err := execute(t, "run", "--run-id", "20261030-100000-abce", "A task"); err != nil {
-		t.Fatalf("a shared image at %s: %v", sharedSince, err)
+	out, errOut, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a run of a checkout: shared workflow = %v, want refused", err)
+	}
+	if want := "workflows.svc.checkout: shared images arrive in " + config.SharedCheckoutSince; !strings.Contains(err.Error(), want) {
+		t.Errorf("the launch's refusal = %v, want it to carry %q, the sentence fugaro validate prints, not whatever later step trips over the refused file", err, want)
+	}
+	if n := len(f.run.Requests()); n != 0 {
+		t.Errorf("the launch made %d call(s) to the Cloud Run API, want none: a shared workflow's fugaro.yaml is refused before anything is started", n)
+	}
+	out, errOut, err = execute(t, "validate")
+	if err == nil {
+		t.Fatalf("fugaro validate accepted a checkout: shared workflow:\n%s%s", out, errOut)
+	}
+	for _, want := range []string{"workflows.svc.checkout", "shared images arrive in " + config.SharedCheckoutSince} {
+		if !strings.Contains(out+errOut+err.Error(), want) {
+			t.Errorf("the refusal does not carry %q:\nstdout:\n%s\nstderr:\n%s\n%v", want, out, errOut, err)
+		}
+	}
+}
+
+// TestRunRefusesSharedCheckoutWhenLocalConfigNamesTheRepo is the launch a
+// set-up repository makes: its local config entry gives the provider and the
+// workflow, so nothing the launch needs comes from the refused fugaro.yaml,
+// and without the refusal it started a job the runner would refuse at
+// bootstrap. The --pr path reads the same checkout and is held to the same
+// sentence.
+func TestRunRefusesSharedCheckoutWhenLocalConfigNamesTheRepo(t *testing.T) {
+	f := newCloudFixture(t)
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\nworkflows:\n" +
+		"  web: { checkout: shared, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	want := "workflows.web.checkout: shared images arrive in " + config.SharedCheckoutSince
+	for _, args := range [][]string{
+		{"run", "A task"},
+		{"run", "--pr", "7", "A follow-up"},
+	} {
+		_, _, err := execute(t, args...)
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), want) {
+			t.Errorf("%v = %v, want refused with %q", args, err, want)
+		}
+	}
+	if n := len(f.run.Requests()); n != 0 {
+		t.Errorf("the launches made %d call(s) to the Cloud Run API, want none", n)
 	}
 }
 
 // TestSharedSinceHasAReleaseBullet: sharedSince names 0.14.0, which is not
 // tagged, so docs/release.md's "Before you tag" list is the only thing that
 // holds the number to the release actually cut — the same job every other
-// *Since constant's bullet does.
+// *Since constant's bullet does. It also holds the bullet to the second
+// release this feature has: sharedSince is the release whose *runner* clones
+// for a shared job, while the image such a job runs is 0.15.0's
+// (config.SharedCheckoutSince, the release validation refuses checkout:
+// shared until), and a bullet that calls 0.14.0 the release the shared
+// images ship in would have an operator verify the wrong number.
 func TestSharedSinceHasAReleaseBullet(t *testing.T) {
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
@@ -178,5 +223,13 @@ func TestSharedSinceHasAReleaseBullet(t *testing.T) {
 	}
 	if !strings.Contains(bullet, "currently `\""+sharedSince+"\"`") {
 		t.Errorf("docs/release.md's sharedSince bullet does not carry the constant's release (%q)", sharedSince)
+	}
+	if sharedSince == config.SharedCheckoutSince {
+		t.Fatalf("sharedSince and config.SharedCheckoutSince are both %q: the runner release and the image release are two facts", sharedSince)
+	}
+	for _, want := range []string{"the release whose runner clones", config.SharedCheckoutSince} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's sharedSince bullet does not say %q: the images arrive in %s, not in the runner's release", want, config.SharedCheckoutSince)
+		}
 	}
 }

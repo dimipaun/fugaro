@@ -122,10 +122,11 @@ LinkedIn's insight tag and Calendly's booking widget.
   `data/landing.yaml` writes. `site.js` names no host, so a page that is not one of the four
   carries none of it and loads none of them, and a campaign page served from another path
   loads none of them either.
-- **Both ids are empty in `site.yaml`, and an empty id is a loader switched off** (R3): the
-  owner has not supplied a pixel id or a partner id, and this repository publishes no
-  identifier the owner did not supply. `internal/cli`'s boundary test pins both empty and the
-  three origins exact, so the day they arrive is the day that pin is relaxed.
+- **An empty id is a loader switched off** (R3), and this repository publishes no identifier
+  the owner did not supply. The owner supplied the LinkedIn Partner ID on 2026-10-31, so the
+  insight tag loads on the four campaign pages behind the campaign consent; the pixel's id is
+  still theirs to supply and stays empty, which is the loader switched off. `internal/cli`'s
+  boundary test pins the pixel id empty, the partner id present and the three origins exact.
 - **Each vendor is handed the page's path and no query** (F22): the site builds the address it
   reports from the origin and the path, and passes it to the pixel and the insight tag as
   `page_location` rather than leaving them to read the address in the window, so what this site
@@ -143,8 +144,9 @@ LinkedIn's insight tag and Calendly's booking widget.
   privacy statement says in those words.
 - **The deployed policy gains each vendor's origin per directive** — `script-src` for the
   three scripts, `img-src` and `connect-src` for the pixel's and the insight tag's beacons,
-  `style-src` for Calendly's stylesheet, and a new `frame-src` for the booking page — with no
-  wildcard anywhere and nothing else added to `script-src`. `test/origins.mjs` holds the exact
+  `style-src` for Calendly's stylesheet, and a new `frame-src` for the booking page — with
+  nothing added to `script-src` and one wildcard, `https://*.licdn.com` in `img-src`, which
+  the owner ruled in on 2026-10-31 for that directive alone. `test/origins.mjs` holds the exact
   per-directive list, `test/brand.mjs` the coarse one, and `test/consent.mjs` the cross-check
   that the gate loads from exactly the origins the policy admits. The Calendly booking link
   itself stays a plain `<a href>`: a visitor who declines the campaign consent keeps it.
@@ -1150,7 +1152,7 @@ added or removed without this sentence moving fails there:
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
     page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
-    is 309; the privacy statement, at 1069, is the page the words-per-page ceiling itself is
+    is 309; the privacy statement, at 1073, is the page the words-per-page ceiling itself is
     derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
@@ -1279,7 +1281,9 @@ added or removed without this sentence moving fails there:
     count, and both are named: the hero's illustration — `figure.hero-shot`, the terminal
     card the bold redesign draws beside the copy, which is a picture with a caption rather
     than the page's opening prose, and which `test/fold.mjs`'s rule 1 takes out of the lead
-    region in the same way — and the block the first `h2` belongs to, which is how the
+    region in the same way (the four campaign heroes carry the class on the console screen
+    they show rather than on a drawn card, `CampaignHero.astro`, D411, and it is a picture
+    there for the same reason) — and the block the first `h2` belongs to, which is how the
     slider's tab labels stayed out of the region when the block's heading moved above them.
     Before the bold redesign the same region held the request the hero printed under the
     headline, the promise, its three calls to action and the slider's three tab labels: 30
@@ -1296,7 +1300,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 1337 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1342 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1317,14 +1321,16 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **1069
-    words** — plus 25 %, rounded up, which is **1337**. The count moved four times since
+    site's pitch; the number is that page's own count on the gates' own build — **1073
+    words** — plus 25 %, rounded up, which is **1342**. The count moved five times since
     G2.3: the campaign section took the page 988 → 1030, the owner's ruling of 2026-10-29 on
     the banner's wording — one question, worded for everything the site may load, with the
     refusal's reach stated in the consent card — took it 1030 → 1144, G2.4's sentence
-    naming the campaign pages' three key events took it 1144 → 1213, and the owner's feedback
+    naming the campaign pages' three key events took it 1144 → 1213, the owner's feedback
     of 2026-10-30, which cut the banner to two sentences and the statement's website part to
-    what a reader has to be told, took it 1213 → 1069. `budget.mjs`'s
+    what a reader has to be told, took it 1213 → 1069, and naming LinkedIn, whose insight
+    tag the owner switched on with the Partner ID of 2026-10-31, took it 1069 → 1073.
+    `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
@@ -1830,7 +1836,12 @@ the site's console downloads follow the console's own release), so `release.vers
 artifacts, the same signing and notarisation, and the same derived URLs. **And on 2026-10-24 it
 moved again, to `console-v0.110.0`, which is the release the console's own stream published:**
 `release.version`, the four `sha256` values and the sums file moved as before, and the Linux pair
-came with them, so the section grew the block below.
+came with them, so the section grew the block below. **On 2026-10-30 it moved to
+`console-v0.115.0`**, the first release whose sums file also names the update feed,
+`latest-mac.yml`: the feed is summed so the one cosign signature covers it, but it is
+electron-updater's to fetch and not a download. The sums file is still copied byte for byte,
+and the two checks that every name in it is offered (`TestWebsiteConsoleReleaseFactsAreComplete`
+and `website/test/console.mjs`) pass over that one name.
 
 **The tag's prefix is checked in the build, not only in the gates.** `src/lib/console-downloads.mjs`
 reads `CONSOLE_TAG="<prefix>$VERSION"` out of `.github/workflows/console-release.yml` and refuses a
@@ -1918,7 +1929,15 @@ it is served because `public/` is served, and it is what `test/console-screens.m
 file's `alt` texts to.
 
 `src/components/ScreenshotSlider.astro` renders the rows of `data/console-screens.yaml` and
-nothing else, so adding, replacing or removing a screenshot is a data-file edit and a file:
+nothing else, so adding, replacing or removing a screenshot is a data-file edit and a file. Two
+things are worth knowing before editing the file. The four campaign pages' heroes are a second
+consumer of those rows: each variant names one in `data/landing.yaml` and the loader refuses a
+name no row carries, so removing a row a variant names stops the campaign build rather than
+quietly shrinking a page (D411). And the homepage's "See it" panel and the four campaign pages'
+own slideshow are the same component over `data/home-screens.yaml`, not over this file — its
+console rows mirror these three files and `test/home.mjs` holds them equal row for row, so a
+change here reaches the homepage and the campaign pages only through that file, whose rows the
+campaign slider is held to slide for slide by `test/landing-pages.mjs` (D412):
 
 1. **The file**, under `public/screenshots/`. The name is letters, digits, dots, dashes and
    underscores; the extension is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`.

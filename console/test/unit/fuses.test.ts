@@ -606,8 +606,9 @@ describe('the packaging configuration the fuses belong to', () => {
     // GITHUB_TOKEN in the environment electron-builder infers a GitHub
     // provider, writes app-update.yml into the bundle and uploads on a CI tag.
     // `null` turns the inference off; the `--publish never` asserted on the
-    // script below turns the upload off from the other side. Task 4.4 is the
-    // auto-update task, and the feed is its decision.
+    // script below turns the upload off from the other side. Task 4.4's
+    // auto-update is unaffected: it sets its own feed URL at runtime, so
+    // publishing stays off and the feed stays this file's answer.
     expect(Object.hasOwn(build, 'publish')).toBe(true)
     expect(build.publish).toBeNull()
   })

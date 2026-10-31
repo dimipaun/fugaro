@@ -979,9 +979,12 @@ test('the release the download URLs are built from is one this repository has re
     `${DOWNLOADS_JSON}'s assets do not each carry their own sha256 (${data.downloads.map((entry) => entry.sha256).join(', ')}): two assets with one checksum is one asset's checksum printed beside the other, and a reader who checked that download would be checking it against the wrong bytes`,
   )
   // And the release publishes nothing the site leaves out: a reader who wants an asset the
-  // release carries and the page does not offer has nowhere to get it.
+  // release carries and the page does not offer has nowhere to get it. The one exception is the
+  // console's update feed, `latest-mac.yml`: the release job sums it into this file so the one
+  // cosign signature covers it, but electron-updater fetches it and no reader downloads it.
+  // Leaving its line in keeps the file byte for byte the signed one.
   assert.deepEqual(
-    [...sums.keys()].sort(),
+    [...sums.keys()].filter((name) => name !== 'latest-mac.yml').sort(),
     data.downloads.map((entry) => entry.file.split('{version}').join(release.version)).sort(),
     `${SUMS_FILE} and ${DOWNLOADS_JSON} name different sets of assets: the site offers the release's assets, and an asset the release carries and the page does not is a download a reader cannot reach`,
   )

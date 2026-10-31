@@ -32,16 +32,46 @@
  * G2.5). The hero therefore renders complete without it rather than with a hole where a file
  * would go.
  *
- * **What the eye lands on is the campaign's own drawing.** The owner's feedback of 2026-10-30
- * asked the hero to hold a picture that carries the idea in one look rather than a third
- * paragraph saying it again, and `CampaignHeroArt.astro` is that picture: a task, the
- * short-lived cloud job it starts and the pull request the job ends in, drawn inline and painted
- * from the variant's tone. It is rendered here rather than in the layout's `media` slot because
- * that slot sits *above* the headline — a variant's own video belongs there, and a phone's first
- * screen belongs to the promise and the sentence that backs it — so the drawing follows the
- * words on a narrow viewport and sits beside them from the wide breakpoint, and it is
- * suppressed outright while a variant names its own media, which then takes that slot instead
- * (F14, G2.5).
+ * **What the eye lands on is a real screen of the console** (the owner's instruction of
+ * 2026-10-30, after the design pass; D411): the variant's `screenshot`, a row of
+ * `website/data/console-screens.yaml` that `website/data/landing.yaml` names by file — the Spend
+ * screen for `/save`, whose subject is what a run is priced at, the run detail for `/control` —
+ * the ledger, the verification and the findings a review policy's rounds end in — and the Live
+ * screen for `/scale` and `/crew`, where the same console runs many at once. The picture is
+ * shown large: it takes the hero's wider column on a wide viewport, where it is about half of a
+ * 900 px first screen (a 16:10 capture in a column of the 1168 px band), and the full width of
+ * the page under the booking action on a phone. It is framed the way the console page's slider
+ * and the homepage's "See it" panel frame a screen — the panel behind it, the site's radius on
+ * the picture and the screen's own caption under it — and everything about it but its size is
+ * the data file's:
+ * the `src` is derived from the row's name, and the `alt`, the caption and the two pixel
+ * dimensions are the row's own, so nothing here writes a second copy of a sentence or a size
+ * (F14, D190).
+ *
+ * **The picture is what the page fetches, and it is the page's one raster file.** It is the
+ * hero's, so it is fetched with the page (`loading="eager"`) rather than when it comes near the
+ * viewport, and it is the picture a reader on paid traffic came for, so it is asked for at
+ * `fetchpriority="high"`. The `width` and `height` are the row's own pixels and are what
+ * reserves the picture's box before its bytes land: the page does not move as it arrives.
+ *
+ * **The drawing is the fallback, and only a variant that names no screen renders it.**
+ * `CampaignHeroArt.astro` draws the campaign's own picture — a task, the short-lived cloud job
+ * it starts and the pull request the job ends in, painted from the variant's tone — and it is
+ * what a variant with no `screenshot` shows in this slot. A variant that names one shows the
+ * screen: one picture in the hero, and the two do not compete for it. Either way the picture is
+ * rendered here rather than in the layout's `media` slot, because that slot sits *above* the
+ * headline — a variant's own video belongs there, and a phone's first screen belongs to the
+ * promise, the sentence that backs it and the booking action — so the picture follows the words
+ * on a narrow viewport and sits beside them from the wide breakpoint, and it is suppressed
+ * outright while a variant names media of its own, which takes that slot instead (F14, G2.5).
+ *
+ * **The figure carries `hero-shot` as well as the campaign's own class.** `hero-shot` is the
+ * class the site's own lead readers take a hero's picture out of a page's opening by
+ * (`website/test/budget.mjs`'s `heroIllustration` and `website/test/fold.mjs`'s rule 1 read it on
+ * the homepage): a hero's picture is a picture rather than the page's opening prose, and the
+ * campaign hero's is one. Without it the screen's alt text — which is the console's own and is
+ * written for a reader who is not shown the picture — would be counted as the campaign's lead
+ * (website/test/landing-pages.mjs holds the class there).
  *
  * **The tone rides on the section.** `data-tone` is the variant's own word from the file
  * (`playful` is `/crew`'s), written on the band beside the section's name and the file it was
@@ -50,6 +80,8 @@
  * states and no page types a colour of its own.
  */
 import CampaignHeroArt from './CampaignHeroArt.astro'
+import CampaignIcon from './CampaignIcon.astro'
+import type { Screen } from '../content.ts'
 
 interface Props {
   /** The variant's headline, from `website/data/landing.yaml`: the page's one `h1`. */
@@ -65,9 +97,15 @@ interface Props {
    * its own, which takes the layout's `media` slot at the top of the page instead.
    */
   art: boolean
+  /**
+   * The console screen the hero shows, or null when the variant names no `screenshot` and the
+   * drawing takes its place. A row of `website/data/console-screens.yaml`, so its `src`, its
+   * `alt`, its caption and its two pixel dimensions are the data file's.
+   */
+  screenshot: Screen | null
 }
 
-const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
+const { headline, supportingLine, tone, calendlyURL, art, screenshot } = Astro.props
 ---
 
 <section class="campaign-hero" data-section="hero" data-tone={tone} data-source="website/data/landing.yaml">
@@ -78,11 +116,35 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
   <div class="campaign-hero-body">
     <div class="campaign-hero-copy">
       <p class="campaign-hero-line">{supportingLine}</p>
+      {/* The first screen's one action, and the same booking the closing band offers: the same
+          link, and the same calendar mark beside the same words (`CampaignIcon.astro`), so the
+          two actions a page offers are one control a reader meets twice rather than two
+          buttons that happen to share a label. */}
       <p class="campaign-hero-action">
-        <a class="campaign-hero-button" href={calendlyURL}>Book a demo</a>
+        <a class="campaign-hero-button" href={calendlyURL}><CampaignIcon name="calendar" />Book a demo</a>
       </p>
     </div>
-    {art && <CampaignHeroArt tone={tone} />}
+    {/* One picture and no second one: the screen the variant named, or the drawing when it named
+        none, or nothing while the variant carries media of its own in the slot above.
+        `hero-shot` is beside the campaign's own class for the reason the header gives. */}
+    {art &&
+      (screenshot === null ? (
+        <CampaignHeroArt tone={tone} />
+      ) : (
+        <figure class="campaign-hero-shot hero-shot">
+          <img
+            class="campaign-hero-shot-image"
+            src={screenshot.src}
+            alt={screenshot.alt}
+            width={screenshot.width}
+            height={screenshot.height}
+            loading="eager"
+            fetchpriority="high"
+            decoding="async"
+          />
+          <figcaption class="campaign-hero-shot-caption">{screenshot.caption}</figcaption>
+        </figure>
+      ))}
   </div>
 </section>
 
@@ -144,6 +206,9 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    /* The calendar mark and the label are one row, spaced by the layout rather than by a margin
+       on the icon — the same pair the closing band's booking is. */
+    gap: var(--space-xs);
     box-sizing: border-box;
     min-height: 56px;
     padding: 0 var(--space-xl);
@@ -165,6 +230,53 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
     }
   }
 
+  /* The hero's picture: the console screen the variant names, in the frame the console page's
+     slider and the homepage's "See it" panel give a screen — the panel one step above the
+     ground, the site's radius, and the screen's own caption under the picture at its right
+     edge — so a reader who has met the screens there meets them the same way here. The
+     figure's own margin is reset:
+     a `<figure>` arrives with one, and the hero's stack is spaced by its rules rather than by
+     the user agent's. There is no width rule here because the picture needs none: on a phone the
+     hero is a plain stack and the figure takes the content box, and from the wide breakpoint it
+     is the second grid column, where it is the wider of the two (3fr of the band's 1168 px on a
+     1440 px viewport, and a 16:10 capture is then about 420 px of a 900 px first screen, which
+     is the half the owner asked for). */
+  .campaign-hero-shot {
+    margin: 0;
+    padding: var(--space-sm);
+    border-radius: var(--radius-lg);
+    background: var(--panel);
+  }
+
+  /* The picture takes its box and its own ratio, which the row's `width` and `height` reserve
+     before the file lands (base.css caps an image at its container's width and keeps its
+     ratio). The hairline step of the surface behind it is what separates a screen whose own
+     background is the page's colour from the page. */
+  .campaign-hero-shot-image {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+  }
+
+  /* The line under the picture is the data file's, and its box is its own words' width at the
+     picture's right edge, the way the slider sets the same sentence. */
+  .campaign-hero-shot-caption {
+    width: fit-content;
+    margin: var(--space-2xs) 0 0 auto;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* A phone's frame takes less of the picture's width: at 390 px the content box is 358 px and
+     the frame's own padding is a visible share of the screen a reader came to see. */
+  @media (max-width: 30rem) {
+    .campaign-hero-shot {
+      padding: var(--space-2xs);
+    }
+  }
+
   /* The entrance (the owner's feedback of 2026-10-30, finding 5). The headline's own rise is
      `base.css`'s — `main h1.display-xl:not(.hero-tagline)` is every inner page's header, and a
      campaign hero is one — so what is written here is the rest of the stagger: the sentence
@@ -176,7 +288,13 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
      press — is declared here too and for the same reason: the campaign's motion is written for
      a reader who has not asked for less, so nothing on these four pages leans on a rule
      elsewhere to undo it (`website/test/base-styles.mjs` reads that, and `base.css`'s universal
-     reduce rule is the second half of the pair for everything the site does not gate). */
+     reduce rule is the second half of the pair for everything the site does not gate).
+
+     **The picture is the screen here rather than the drawing, and the two are one class.** The
+     drawing carries the same 300 ms entrance in its own file, and that rule is the one that runs
+     on a page whose variant names no screen. On the pages as shipped the hero's picture is the
+     console screen, so the element that rises is this class's, and the drawing's rule is for an
+     element the page does not render. */
   @media (prefers-reduced-motion: no-preference) {
     .campaign-hero-button {
       transition:
@@ -184,8 +302,30 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
         transform var(--duration-fast) var(--ease-out);
     }
 
+    /* The calendar mark travels with the plate it sits on, the 2 px lift and nudge the closing
+       band's booking answers a pointer with: the first screen's action and the last one are the
+       same booking, so they answer the same way (`CampaignCalls.astro`). */
+    .campaign-hero-button :global(.campaign-icon) {
+      transition: transform var(--duration-fast) var(--ease-out);
+    }
+
+    /* `:not(:active)` for the same reason the closing band's rules carry it: the press below is
+       this rule's sibling at the same specificity, and a mouse press is `:hover` and `:active` at
+       once — without the exclusion the lift would answer it and the press would read as nothing
+       (`CampaignCalls.astro`). */
+    @media (hover: hover) and (pointer: fine) {
+      .campaign-hero-button:hover:not(:active) {
+        transform: translateY(-2px);
+      }
+
+      .campaign-hero-button:hover:not(:active) :global(.campaign-icon[data-icon='calendar']) {
+        transform: translateY(-2px);
+      }
+    }
+
     .campaign-hero-line,
-    .campaign-hero-action {
+    .campaign-hero-action,
+    .campaign-hero-shot {
       transition:
         opacity var(--duration-entrance) var(--ease-out),
         transform var(--duration-entrance) var(--ease-out);
@@ -199,9 +339,14 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
       transition-delay: 200ms;
     }
 
+    .campaign-hero-shot {
+      transition-delay: 300ms;
+    }
+
     @starting-style {
       .campaign-hero-line,
-      .campaign-hero-action {
+      .campaign-hero-action,
+      .campaign-hero-shot {
         opacity: 0;
         transform: translateY(18px);
       }
@@ -209,7 +354,7 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
   }
 
   /* The wide viewport is where the hero becomes two columns: the sentence and the action on the
-     reading start and the drawing on the outer edge, level with each other. The headline is
+     reading start and the picture on the outer edge, level with each other. The headline is
      above both, which is what lets it be the width of the band at every width — the measure the
      owner asked for — and it is the reason the picture can be the biggest thing in the hero
      without the action being under it. The two-column rule is inside the breakpoint and nowhere
@@ -226,8 +371,8 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
       column-gap: var(--space-xl);
     }
 
-    /* The copy keeps the first column and the drawing the second, whether or not a drawing is
-       rendered: a variant with media of its own is the same hero with one column painted. */
+    /* The copy keeps the first column and the picture the second, whether it is a screen or the
+       drawing: a variant with media of its own is the same hero with one column painted. */
     .campaign-hero-copy {
       grid-column: 1;
     }

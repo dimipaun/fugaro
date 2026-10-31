@@ -424,6 +424,9 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 	if _, err := task.CanonicalRepo(repo); err != nil {
 		return "", nil, false, userErr("--repo: %v", err)
 	}
+	if err = refuseSharedCheckout(ctx, repo); err != nil {
+		return "", nil, false, err
+	}
 	if slug, err = env.repoSlug(repo, checkoutOf(ctx, repo)); err != nil {
 		return "", nil, false, err
 	}

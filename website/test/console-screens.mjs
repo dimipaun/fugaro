@@ -80,7 +80,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { buildCopy } from './lib/build.mjs'
+import { buildCopy, dropCampaignScreenshots } from './lib/build.mjs'
 import { fakeDOM, SCRIPT_SOURCE } from './lib/dom.mjs'
 import { SITE, parse, textOf, walk } from './lib/html.mjs'
 
@@ -501,10 +501,14 @@ function fixtureYAML(rows, extra = []) {
   return `${lines.join('\n')}\n`
 }
 
-/** Build a copy with the data file replaced, and hand back what it produced. */
+/** Build a copy with the data file replaced, and hand back what it produced. The campaigns'
+ *  screenshots are dropped with it: a row set of this fixture's own is not the file the four
+ *  campaign heroes name their screens in, and the campaign pages' build would stop on a name
+ *  this file's fixture took away (`dropCampaignScreenshots`). */
 function buildWithScreens(t, contents) {
   return buildCopy(t, ({ site }) => {
     writeFileSync(path.join(site, 'data', 'console-screens.yaml'), contents)
+    dropCampaignScreenshots(site)
   })
 }
 
@@ -739,6 +743,7 @@ test('the autoplay gate reads every spelling of the property, not just the short
   )
   const built = buildCopy(t, ({ site }) => {
     writeFileSync(path.join(site, 'data', 'console-screens.yaml'), fixtureYAML(FIXTURE))
+    dropCampaignScreenshots(site)
     writeFileSync(path.join(site, component), mutated)
   })
   const animations = animationDeclarations(stylesOf(consolePage(built)))

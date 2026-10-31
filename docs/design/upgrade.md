@@ -22,7 +22,7 @@ fugaro upgrade [PATH...] [--check | --local | --yes] [--allow-fork]
 
 The first line names the binary (`fugaro upgrade with fugaro 0.5.2`) and says the command never upgrades `fugaro` itself. **The upgrade sequence is `brew upgrade dimipaun/tap/fugaro && fugaro upgrade`.**
 
-Each PATH (the default is `.`) is a checkout, and each is processed on its own. Two paths in the same checkout count once. Each checkout runs three steps in order and stops at the first step that fails:
+Each PATH (the default is `.`) is a checkout, and each is processed on its own. Two paths in the same checkout count once. Each checkout runs four steps in order and stops at the first step that fails:
 
 1. **pin**: what `fugaro update-skills` does. The plugin's marketplace and enablement are merged into `.claude/settings.json`, pinned to this binary's tag. The diff is shown, and the command never commits. A fork's marketplace moves only with `--allow-fork`, and a file that is not valid JSON is never rewritten. One rule is new: a pin **newer** than this binary is never moved down. Instead, that checkout stops and the output names `brew upgrade`. This matters because `update-skills` itself does lower such a pin today, even though its own fix text says it never does.
 2. **plugin**: the plugin is installed or updated in Claude Code through the `claude` CLI on `PATH`:
@@ -39,6 +39,7 @@ Each PATH (the default is `.`) is a checkout, and each is processed on its own. 
    - there is no local project config (a teammate's machine);
    - the repository is not onboarded;
    - the binary is a development build.
+4. **policy**: the project's published policy node, when an earlier `fugaro` wrote it in a version this binary does not read (update-converge UC2, `docs/policy-migration.md`). The node is migrated **in place** with `projectpolicy.Migrate`, with the members a publish derives from the local config (`bitbucket_token`, `bitbucket_api_roots`) patched in first, and written back under the ETag it was read at. One diff is printed, then the project's name is typed (or `--yes`), exactly as `fugaro project policy publish --delete` asks for a removal. It is the last step: the cloud step's own verdicts — a real local-file error stops the checkout in every mode, `--check` included, and a checkout with nothing to refresh is skipped — are read first. It is skipped where there is no local project config, where the repository is not onboarded, where the config names no budget backend (there is no node to read), in a coding agent's session, and under `--check` (see below).
 
 At the end, a summary gives one line per checkout, with each step's state (`current`, `done`, `stale`, `skipped`, `failed`, `not run`) and, for a checkout that stopped, the exact line to rerun. The exit code is the worst over all checkouts: 0 when everything finished or was current, 1 for a refusal, a failed local step or (with `--check`) anything stale, and 2 for a cloud failure. When a rerun finds everything current, it prints `nothing to do` and changes nothing.
 
@@ -47,7 +48,7 @@ At the end, a summary gives one line per checkout, with each step's state (`curr
 - Claude Code's `installed_plugins.json`;
 - the local config's `base_images`.
 
-It prints what each step would do and exits 1 if anything is stale, so CI can run it without credentials. It cannot see a build that failed after the base moved, because build records live in the cloud; the output says so. Without `--yes`, `--local` or `--check`, the command needs a real terminal and refuses before any step runs.
+It prints what each step would do and exits 1 if anything is stale, so CI can run it without credentials. It cannot see a build that failed after the base moved, because build records live in the cloud; the output says so, and the policy step says the same about the published node: reading it needs credentials, so `--check` skips it and says it cannot tell whether the node is current. Without `--yes`, `--local` or `--check`, the command needs a real terminal and refuses before any step runs.
 
 **Inside a coding agent's session** (`CLAUDECODE` and the like), only the local steps run. The cloud step is skipped and the output prints the exact command to run in the user's own terminal, with and without `--yes`. The exit code is 0 when the local steps succeeded: the command did everything it may do there, and the skipped step is named. `--check` reports the cloud state the same way everywhere, so CI and the skill still see `stale`. `fugaro upgrade` never even reads the cloud in that session, and the refusal inside `image refresh` stays as a backstop.
 
