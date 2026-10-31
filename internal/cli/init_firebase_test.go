@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1289,6 +1290,21 @@ func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 	}
 }
 
+// stageDetail is the detail line the result carries for one stage. It is the
+// stage's own account of itself — what a skipped state says about why, and what
+// a done one says about what it found — which is the half of a stage result the
+// state alone does not carry.
+func (c convergeJSON) stageDetail(t *testing.T, name string) string {
+	t.Helper()
+	for _, s := range c.Stages {
+		if s.Name == name {
+			return s.Detail
+		}
+	}
+	t.Errorf("the result has no %s stage: %+v", name, c.Stages)
+	return ""
+}
+
 // updateBudgetRig is updateRig with the shared budget backend an installation
 // that ran `fugaro update --firebase-project` has: budget.firebase_project is
 // set in the local config (nothing else writes it), and the project's Realtime
@@ -1360,5 +1376,283 @@ func TestUpdateConvergesV3NodeWithoutRulesMarkerInOneRun(t *testing.T) {
 	}
 	if !strings.Contains(out, initflow.Rules) {
 		t.Errorf("the account does not name the rules stage:\n%s", out)
+	}
+}
+
+// TestUpdateRulesStageRunsBeforePolicy: the ORDER, which is the whole point of
+// the stage. The policy stage's write holds the publisher's gate on the deployed
+// rules marker (requirePolicyRules), so a rules stage after it would deploy the
+// rules too late for the migration that same run had already refused — the state
+// UC3c-1 exists for. The canonical order and the order initStages registers are
+// both checked, because the loop sorts by the first and a reader of the second
+// sees who runs when.
+func TestUpdateRulesStageRunsBeforePolicy(t *testing.T) {
+	pos := func(names []string, name string) int {
+		for i, n := range names {
+			if n == name {
+				return i
+			}
+		}
+		return -1
+	}
+	canonical := initflow.Names()
+	rules, policy := pos(canonical, initflow.Rules), pos(canonical, initflow.Policy)
+	switch {
+	case rules < 0:
+		t.Fatalf("%s is not a canonical stage: %v", initflow.Rules, canonical)
+	case policy < 0:
+		t.Fatalf("%s is not a canonical stage: %v", initflow.Policy, canonical)
+	case rules > policy:
+		t.Errorf("the canonical order runs %s at %d and %s at %d: the rules generation is what the policy node is read under, so it is deployed first", initflow.Rules, rules, initflow.Policy, policy)
+	}
+	if !slices.Contains(initflow.Needs(initflow.Policy), initflow.Rules) {
+		t.Errorf("the policy stage does not need %s: %v", initflow.Rules, initflow.Needs(initflow.Policy))
+	}
+	registered := namesOf(initStages(prodEngine(initOptions{door: updateDoor.name})))
+	if r, p := pos(registered, initflow.Rules), pos(registered, initflow.Policy); r < 0 || p < 0 || r > p {
+		t.Errorf("update registers the rules stage at %d and the policy stage at %d in %v: the rules stage is registered before the policy stage", r, p, registered)
+	}
+}
+
+// TestUpdateDeploysStaleRulesWithoutFirebaseProjectFlag: the state the stage
+// exists for, one generation short of this binary's (a marker below
+// RulesVersion but above the policy generation, so the deployed document is not
+// what this release carries while the policy nodes are already readable). One
+// plain `fugaro update` deploys this binary's generation and records it, with
+// no --firebase-project: that flag is the door that ADOPTS a Firebase project,
+// and an installation that has one does not need to adopt it again.
+func TestUpdateDeploysStaleRulesWithoutFirebaseProjectFlag(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("fugaro update did not deploy stale rules: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Firebase); got != "skipped" {
+		t.Errorf("the firebase stage is %q: no --firebase-project was given, so the rules stage is what deploys the rules", got)
+	}
+	if got := res.state(initflow.Rules); got != "changed" {
+		t.Errorf("the rules stage is %q, want changed:\n%s", got, out)
+	}
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Errorf("the deployed rules are not this Fugaro's generation:\n%s", out)
+	}
+	if db.RulePuts() == 0 {
+		t.Error("the run reports the rules deployed and wrote no document")
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+		t.Errorf("the rules generation marker is %q, want %q:\n%s", got, want, out)
+	}
+}
+
+// TestUpdateDeploysWhenRulesMarkerAbsent: no marker node at all, which is the
+// state of an installation whose rules were deployed before the marker existed
+// (and of one whose redeploy an older CLI rolled back). Neither the marker nor
+// the document says the rules are this Fugaro's, so the stage deploys — and this
+// is the arm that would fail if "absent" were read as "nothing to do", the
+// reading requirePolicyRules cannot make for itself (any marker >= 1 passes its
+// gate) and which the doctor's own check leaves to the policy-published line.
+func TestUpdateDeploysWhenRulesMarkerAbsent(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	db.SetRules([]byte(`{"rules":{}}`))
+	if got := rulesMarkerOn(t, db); got != "" {
+		t.Fatalf("the fixture has a marker: %q", got)
+	}
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("fugaro update did not deploy rules under an absent marker: %v\n%s%s", err, out, errOut)
+	}
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Errorf("the deployed rules are not this Fugaro's generation:\n%s", out)
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+		t.Errorf("the rules generation marker is %q, want %q:\n%s", got, want, out)
+	}
+}
+
+// TestUpdateNeverDowngradesNewerRules: a marker above this binary's generation
+// means a newer Fugaro deployed these rules, and this release's template must
+// never be written over them — not the document and not the number. The stage
+// reports the state, in the doctor's own sentence, and the run goes on: an owner
+// whose installation is ahead of their CLI has other work in the same update
+// (the images, the pin, the plugin), and refusing all of it would leave them no
+// way through but an upgrade they may not be able to take yet.
+func TestUpdateNeverDowngradesNewerRules(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	newer := projectpolicy.RulesVersion + 1
+	theirs := []byte(`{"rules":{".read":"auth != null"}}`)
+	db.Set(projectpolicy.PathRulesMarker(), newer)
+	db.SetRules(theirs)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("a newer deployed generation stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Rules); got != "skipped" {
+		t.Errorf("the rules stage is %q, want skipped: nothing may be deployed over a newer generation:\n%s", got, out)
+	}
+	if db.RulePuts() != 0 {
+		t.Error("the run deployed this binary's rules over a newer generation")
+	}
+	if !bytes.Equal(db.Rules(), theirs) {
+		t.Errorf("the deployed document changed:\n%s", db.Rules())
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(newer); got != want {
+		t.Errorf("the rules generation marker is %q, want %q: the marker must not be rewritten down", got, want)
+	}
+	if text := out + errOut + res.stageDetail(t, initflow.Rules); !strings.Contains(text, "a newer Fugaro deployed them") {
+		t.Errorf("the run does not report why it deployed nothing: %s", text)
+	}
+}
+
+// TestUpdateLeavesCurrentRulesAlone: the marker at this generation with the
+// deployed document equal to the one this Fugaro generates is the state every
+// installation converges to, and a second `fugaro update` must do nothing at all
+// to it — no plan, no confirmation, no write. A stage that redeployed here would
+// make every update a security-rules write, which is exactly what the doctor's
+// line exists to keep quiet about.
+func TestUpdateLeavesCurrentRulesAlone(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetRules(gen)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Rules); got != "done" {
+		t.Errorf("the rules stage is %q, want done:\n%s", got, out)
+	}
+	if db.RulePuts() != 0 {
+		t.Error("the run rewrote rules that are already this generation")
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+		t.Errorf("the rules generation marker is %q, want %q", got, want)
+	}
+	if text := out + errOut; strings.Contains(text, "deploys the security rules listed") {
+		t.Errorf("the run asked to deploy rules that are already current:\n%s", text)
+	}
+	if detail := res.stageDetail(t, initflow.Rules); !strings.Contains(detail, "this Fugaro's own") {
+		t.Errorf("the account of the settled state is %q", detail)
+	}
+}
+
+// TestUpdateWithoutSharedBudgetDoesNotTouchFirebase: an installation with no
+// shared budget backend (budget.firebase_project is written by `fugaro update
+// --firebase-project` and by nothing else) has no deployed generation to read,
+// and the stage does nothing: no rule deploy, no marker, and no refusal — a
+// project that never adopted a Firebase backend converges as it always did.
+func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
+	r := updateRig(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMode, budget.ModeEnforce)
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+" }\n")
+	r.save(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Rules); got != "skipped" {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
+	}
+	if !strings.Contains(res.stageDetail(t, initflow.Rules), "budget.firebase_project") {
+		t.Errorf("the skip does not say what is missing: %q", res.stageDetail(t, initflow.Rules))
+	}
+	if db.RulePuts() != 0 || rulesMarkerOn(t, db) != "" {
+		t.Errorf("the run wrote to a database no shared budget names: %d rule deploy(s), marker %q", db.RulePuts(), rulesMarkerOn(t, db))
+	}
+}
+
+// TestUpdateRulesDeclinedRefusesPolicyWrite: the deploy is behind the
+// confirmation the database step of `--firebase-project` takes, and declining it
+// stops the run where it stands. It must not go on to migrate the policy node:
+// the gate the migration holds (requirePolicyRules) is the marker the refused
+// deploy would have written, so a run that carried on would write a policy under
+// the very rules it just declined to deploy. A person at a terminal who does not
+// type the project's name is what a decline is — no other answer confirms this
+// step for them — and the rules and the node are read back exactly as they were.
+//
+// The first run converges the installation, so the second one's first step with
+// something to do is the rules deploy: on a fixture that has never run, the
+// installation stage's own confirmation comes first, and the answer typed there
+// would be the one this test is about.
+func TestUpdateRulesDeclinedRefusesPolicyWrite(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("the converging run: %v\n%s", err, out)
+	}
+	puts := db.RulePuts()
+	if puts == 0 {
+		t.Fatal("the converging run deployed no rules: the second run would be declining a deploy that is not there")
+	}
+	// The state the two stages are ordered for, one run later: rules one
+	// generation behind, and a published node one version behind.
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	stale := []byte(`{"rules":{".read":false}}`)
+	db.SetRules(stale)
+
+	old := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = old })
+
+	out, errOut, err := executeStdin(t, "\n\n\n\n\n\n\n\n", "update")
+	if err == nil {
+		t.Fatalf("a declined rules deploy exited 0:\n%s%s", out, errOut)
+	}
+	if text := out + errOut + ErrorText(err); !strings.Contains(text, "not confirmed") {
+		t.Errorf("the refusal is not the declined confirmation: %s", text)
+	}
+	// And it is the rules step's own decline: the run reaches this stage's
+	// confirmation and stops there, not at a step of a stage before it.
+	if !strings.Contains(out, "stopped at "+initflow.Rules) {
+		t.Errorf("the run did not stop at the rules stage's own confirmation:\n%s", out)
+	}
+	if db.RulePuts() != puts {
+		t.Errorf("the rules were deployed anyway: %d deploy(s), want the %d the converging run made", db.RulePuts(), puts)
+	}
+	if !bytes.Equal(db.Rules(), stale) {
+		t.Errorf("the deployed document changed:\n%s", db.Rules())
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.PolicyRulesVersion); got != want {
+		t.Errorf("the rules generation marker is %q, want the stale %q the deploy would have moved", got, want)
+	}
+	if got := nodeVersionOn(t, db); got != 3 {
+		t.Errorf("the published policy moved to version %d after the rules deploy was declined: the migration's own gate is the marker that deploy did not write", got)
 	}
 }
