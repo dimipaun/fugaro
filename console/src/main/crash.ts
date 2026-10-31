@@ -205,10 +205,38 @@ const HOME_PATH_RE = /\/Users\/[^/]+\/|\/home\/[^/]+\//
  * though it does not begin with a separator. */
 const WINDOWS_DRIVE_RE = /^[A-Za-z]:\//
 
+/** SCHEME_RE splits a URL's own prefix off a frame's path: the scheme name, and
+ * the `//` an authority adds where there is one. */
+const SCHEME_RE = /^([A-Za-z][A-Za-z0-9+.-]*):(\/\/)?/
+
+/** FILE_SCHEMES are the two schemes whose remainder is still a path on a disk,
+ * and the only two this module looks behind. `file://` is how a build reports a
+ * frame, and `app://` is the archive's own URL in the Electron SDK; a frame
+ * arrives under one of them as readily as it arrives bare. */
+const FILE_SCHEMES: readonly string[] = ['file', 'app']
+
+/** withoutScheme takes the URL off a path, and answers null when the URL is not
+ * a path at all: for anything but `FILE_SCHEMES` the remainder is a host, a
+ * query or a body rather than a file, and a path smuggled inside one of those is
+ * a directory name this module would never look at. */
+function withoutScheme(source: string): string | null {
+  const scheme = SCHEME_RE.exec(source)
+  if (scheme === null) return source
+  const name = (scheme[1] ?? '').toLowerCase()
+  if (FILE_SCHEMES.includes(name)) return source.slice(scheme[0].length)
+  // A drive letter is one character with no authority behind it, and every
+  // Windows path starts with one -- reading it as a scheme would refuse the
+  // frames this console does have and does want.
+  if (scheme[1]?.length === 1 && scheme[2] === undefined) return source
+  return null
+}
+
 /** appRelative is the one thing a kept frame says about where it came from: the
  * part of the path inside the app, POSIX-separated, or `EXTERNAL`. */
 function appRelative(source: string, appRoot: string): string {
-  const path = source.replace(/\\/g, '/')
+  const bare = withoutScheme(source)
+  if (bare === null) return EXTERNAL
+  const path = bare.replace(/\\/g, '/')
   const root = appRoot.replace(/\\/g, '/').replace(/\/+$/, '')
   let rest: string | null
   if (root !== '' && path.startsWith(`${root}/`)) rest = path.slice(root.length + 1)

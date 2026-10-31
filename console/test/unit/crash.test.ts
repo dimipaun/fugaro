@@ -71,6 +71,11 @@ const HOME_PATH = '/Users/person-1'
 const HOST_A = 'build-host-a'
 const REPO_A = 'owner/repo-a'
 
+/** DIRECTORY_A is a placeholder directory name -- what a checkout is called on
+ * the machine that built the app, and the part of a path a URL must not carry
+ * out of a frame. */
+const DIRECTORY_A = 'acme-secret-repo'
+
 /** TOKEN_A is a credential-shaped placeholder, assembled here. */
 function tokenPlaceholder(): string {
   return inert('gh', 'p_', 'a'.repeat(36))
@@ -90,6 +95,22 @@ type HostileEvent = CrashEvent & Record<string, unknown>
  * is `off`, and nothing is ever sent. */
 function startupStub(dsn: string | null): { readonly started: boolean } {
   return { started: crashReportingDecision({ dsn, optedIn: null }).enabled }
+}
+
+/** scrubbedFrame is one frame through the whole scrubber, which is the only
+ * route a frame's path has: a case about a path is a case about the event it
+ * arrives in. */
+function scrubbedFrame(abs_path: string, filename?: string, appRoot = APP_ROOT): ScrubbedFrame {
+  const scrubbed = scrubCrashEvent(
+    { exception: { values: [{ type: 'Error', stacktrace: { frames: [{ abs_path, filename }] } }] } },
+    appRoot,
+  )
+  const kept = scrubbed.exception?.values?.[0]?.stacktrace?.frames?.[0]
+  // Every frame in is a frame out: the stack's shape is what the processor
+  // groups by, so a frame this module cannot place is `<external>` rather than a
+  // hole in the middle of a report.
+  if (kept === undefined) throw new Error('the frame was dropped')
+  return kept
 }
 
 describe('crash', () => {
@@ -295,41 +316,74 @@ describe('crash', () => {
   })
 
   it('the scrubber keeps a frame of the app and marks every other one external', () => {
-    const frame = (abs_path: string, filename?: string, appRoot = APP_ROOT): ScrubbedFrame => {
-      const scrubbed = scrubCrashEvent(
-        { exception: { values: [{ type: 'Error', stacktrace: { frames: [{ abs_path, filename }] } }] } },
-        appRoot,
-      )
-      const kept = scrubbed.exception?.values?.[0]?.stacktrace?.frames?.[0]
-      // Every frame in is a frame out: the stack's shape is what the processor
-      // groups by, so a frame this module cannot place is `<external>` rather
-      // than a hole in the middle of a report.
-      if (kept === undefined) throw new Error('the frame was dropped')
-      return kept
-    }
-
     // A frame inside the app, however the path is spelled: a Windows install's
     // separators are the same frame as a macOS one's, because the output is
     // POSIX-separated either way.
-    expect(frame(`${APP_ROOT}/dist/main/index.js`).filename).toBe('dist/main/index.js')
-    expect(frame('C:\\console\\dist\\main\\index.js', undefined, 'C:\\console').filename).toBe(
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/index.js`).filename).toBe('dist/main/index.js')
+    expect(scrubbedFrame('C:\\console\\dist\\main\\index.js', undefined, 'C:\\console').filename).toBe(
       'dist/main/index.js',
     )
     // A path still carrying a home directory after the root came off is out --
     // the root is not trusted to be the only place a user name hides.
-    expect(frame(`${APP_ROOT}/vendor/home/person-1/leak.js`).filename).toBe('<external>')
+    expect(scrubbedFrame(`${APP_ROOT}/vendor/home/person-1/leak.js`).filename).toBe('<external>')
     expect(
-      frame(
+      scrubbedFrame(
         'C:\\Users\\person-1\\AppData\\Local\\console\\resources\\app.asar\\..\\..\\..\\Users\\person-1\\notes.txt',
       ).filename,
     ).toBe('<external>')
     // Anything outside the app is the fixed word, and never the path.
-    expect(frame('/opt/vendor/node_modules/dep-a/index.js').filename).toBe('<external>')
-    expect(frame(`${HOME_PATH}/dev/elsewhere/main.js`).filename).toBe('<external>')
+    expect(scrubbedFrame('/opt/vendor/node_modules/dep-a/index.js').filename).toBe('<external>')
+    expect(scrubbedFrame(`${HOME_PATH}/dev/elsewhere/main.js`).filename).toBe('<external>')
     // A filename the SDK already made relative is kept as it is, and a frame
     // with no path at all is kept and not placed.
-    expect(frame('', 'dist/main/index.js').filename).toBe('dist/main/index.js')
-    expect(frame('', undefined)).toEqual({ filename: '<external>' })
+    expect(scrubbedFrame('', 'dist/main/index.js').filename).toBe('dist/main/index.js')
+    expect(scrubbedFrame('', undefined)).toEqual({ filename: '<external>' })
+  })
+
+  it('the scrubber cuts a frame path that arrives as a URL, and refuses a URL that is not a file', () => {
+    // A path is not always a path: a build reports frames as `file://` URLs as
+    // often as it reports them bare, and an Electron frame comes as an `app://`
+    // one. Both name a file, so the scheme comes off and what is left is
+    // scrubbed exactly as a bare path is -- the same cut, the same separator
+    // handling, the same refusal of a home directory.
+    expect(scrubbedFrame(`file://${APP_ROOT}/dist/main/index.js`).filename).toBe('dist/main/index.js')
+    expect(scrubbedFrame(`FILE://${APP_ROOT}/dist/main/index.js`).filename).toBe('dist/main/index.js')
+    expect(scrubbedFrame(`file://${PACKAGED_ROOT}/app.asar/dist/main/index.js`, undefined, PACKAGED_ROOT).filename).toBe(
+      'dist/main/index.js',
+    )
+    expect(scrubbedFrame(`file://${APP_ROOT}/vendor/home/person-1/leak.js`).filename).toBe('<external>')
+
+    // Every other scheme is refused whole, and that is the point rather than a
+    // tidiness rule: what follows the colon is a host, a query or a body, none
+    // of which is a frame's to report, and a path smuggled inside one of them
+    // would be a directory name this module never looked at.
+    const refused = [
+      `file:///opt/${DIRECTORY_A}/main.js`,
+      `file:///D:/work/${DIRECTORY_A}/main.js`,
+      `file:///C:\\work\\${DIRECTORY_A}\\main.js`,
+      `FILE:///opt/${DIRECTORY_A}/main.js`,
+      `app:///workspace/${DIRECTORY_A}/main.js`,
+      `APP:///workspace/${DIRECTORY_A}/main.js`,
+      `https://${HOST_A}/${DIRECTORY_A}/x.js`,
+      `data:text/javascript,//${DIRECTORY_A}/main.js`,
+      `blob:https://${HOST_A}/${DIRECTORY_A}/0f1e`,
+      `my-scheme://${DIRECTORY_A}/main.js`,
+    ]
+    const kept = refused.map((source) => scrubbedFrame(source).filename)
+    expect(JSON.stringify(kept)).not.toContain(DIRECTORY_A)
+    expect(kept).toEqual(refused.map(() => '<external>'))
+    // The archive URL a packaged Electron frame arrives under is a path once its
+    // scheme is off, and it is nobody's root here, so it is the fixed word: what
+    // places such a frame is the absolute path beside it, which the reporter
+    // carries for exactly this reason.
+    expect(scrubbedFrame('app:///dist/main/index.js').filename).toBe('<external>')
+
+    // A drive letter is not a one-letter scheme: reading `C:` as one would take
+    // the Windows form of the frame the case above keeps, which is a path the
+    // console does have and does want.
+    expect(scrubbedFrame('C:\\console\\dist\\main\\index.js', undefined, 'C:\\console').filename).toBe(
+      'dist/main/index.js',
+    )
   })
 
   it('the scrubber reads the app root and the packaged path', () => {
