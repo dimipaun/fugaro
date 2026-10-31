@@ -338,7 +338,9 @@ export function startUpdates(options: UpdateAdapterOptions): UpdateController | 
       app,
       onReadyToRestart: (version) => {
         readyNotice(dialog, version, () => {
-          holder.controller?.restartRequested()
+          // The version the notice was opened with, and not the one this app
+          // holds now: the operator answered about the download it named.
+          holder.controller?.restartRequested(version)
         })
       },
     })

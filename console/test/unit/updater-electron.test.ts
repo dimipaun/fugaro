@@ -745,6 +745,33 @@ describe('the install the client would do on the way out', () => {
 
     expect(updater.autoInstallOnAppQuit).toBe(true)
   })
+
+  it('leaves the flag off on the real client even when the policy never configures', async () => {
+    // The test above leaves the flag off through the policy's `configure()`, and
+    // this one is a different promise: the adapter's own write. A gate that never
+    // opens -- CI here, the local opt-out, the visible switch off -- runs no
+    // `configure()` at all, and a client left at the library's default is one
+    // armed to install on the way out with nobody having decided anything. The
+    // null `requestHeaders` is the witness that nothing else touched this client:
+    // the library's constructor leaves it null (AppUpdater.js ~178) and only
+    // `configure()` writes `{}`.
+    const updater = new MacUpdater(NO_CONFIG, appAdapter(directory))
+    const controller = startUpdates({
+      isLaunchFlowIdle: () => true,
+      platform: 'darwin',
+      app: packageFacts(),
+      env: { CI: '1' },
+      net: netFake({ ok: true, body: bodyOf('[]').body }).net,
+      dialog: noticeDialog(1).dialog,
+      timers: neverFires(),
+      updater: updater as unknown as UpdaterPort,
+    })
+    await untilSettled()
+
+    expect(controller).not.toBeNull()
+    expect(updater.requestHeaders).toBeNull()
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+  })
 })
 
 describe('the notice', () => {
