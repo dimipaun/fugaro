@@ -203,10 +203,9 @@ were answered as recommended. The recommendation and the cost of the alternative
 ## 4. This design's decisions D840–D854
 
 Everything the audit left open that is **not** one of its SDs. The recommendation comes first; the
-alternative and its cost are the second column. **Fourteen of the fifteen — D840 to D853 — were
-answered by the owner on 2026-10-31, every one as recommended.** **D854, the stale local copy, has
-no recorded owner ruling and is stated OPEN**, with both of its outcomes written down below the
-table so that either can land without the rest of the design moving.
+alternative and its cost are the second column. **Every one of the fifteen — D840 to D854 — was
+answered by the owner on 2026-10-31, all as recommended, the stale local copy D854 included: the
+generation is recorded** (outcome (a), written out below the table).
 
 | D | Question | Recommendation | The alternative, and its cost | Answer |
 | --- | --- | --- | --- | --- |
@@ -224,10 +223,10 @@ table so that either can land without the rest of the design moving.
 | **D851** | Is the `STATE` vocabulary closed? | **Closed** (spec §2.5); a new state is a new member of the set and an addition to `--json` | **Free text:** a consumer cannot branch on the column, which is the only reason the column exists | **Answered 2026-10-31: the recommendation** |
 | **D852** | `settings get` on a key set nowhere, and on an unknown key | **Set nowhere prints the default row and exits 0; unknown exits non-zero with the nearest registry names** | **Non-zero for set nowhere:** an idempotent script fails on a state that is already the answer — the argument `rigor unset` makes for its no-op | **Answered 2026-10-31: the recommendation** |
 | **D853** | Which keys does the generic path own? | **Every scalar and string-list key; a map key, and any key whose `Owner` is a family, is refused with that family's command** | **Let the generic path write maps:** typing a provider map or an area rule on a command line loses the cross-key checks (route overlap, `Area.Validate`, the cascade's silence rules) the families exist for | **Answered 2026-10-31: the recommendation** |
-| **D854** | A stale local copy overwriting a newer publish: does `update` remember the generation this machine's file was written from, and refuse when the published object has moved since? | **Record it.** `update` records the generation the local file was seeded from or last published at; when the published generation has moved since, it refuses to publish, shows the three-way state (this machine's file, the generation it was written from, the object published now), and offers to re-seed the local file from the published one under confirmation, with a backup | **Publish on difference anyway** (today's behaviour): on a second machine, one operator's newer layer or policy node is silently replaced by this machine's older file. Nothing reports it — every later `update` on the losing machine rewrites the same stale content — so the change is noticed only when a run behaves in a way nobody chose, and the newer publish is unrecoverable unless someone kept a copy | **OPEN. No owner ruling is recorded, and this design does not invent one.** Both outcomes stay live: **(a) record the generation and refuse** (the recommendation) and **(b) publish on difference anyway**. Where the recorded generation would live, what the first `update` does when nothing is recorded, and the test names for each outcome are under the table |
+| **D854** | A stale local copy overwriting a newer publish: does `update` remember the generation this machine's file was written from, and refuse when the published object has moved since? | **Record it.** `update` records the generation the local file was seeded from or last published at; when the published generation has moved since, it refuses to publish, shows the three-way state (this machine's file, the generation it was written from, the object published now), and offers to re-seed the local file from the published one under confirmation, with a backup | **Publish on difference anyway** (today's behaviour): on a second machine, one operator's newer layer or policy node is silently replaced by this machine's older file. Nothing reports it — every later `update` on the losing machine rewrites the same stale content — so the change is noticed only when a run behaves in a way nobody chose, and the newer publish is unrecoverable unless someone kept a copy | **Answered 2026-10-31: the recommendation — record the generation and refuse.** This is outcome **(a)**, and it is the answer: outcome **(b)**, publishing on difference anyway, is the rejected alternative in the column before this one. Where the recorded generation lives, what the first `update` does when nothing is recorded, and the test names are under the table |
 
-**D840–D853 are answered (2026-10-31) and closed.** **D854 is open**, and everything its two
-outcomes need is here:
+**D840–D854 are all answered (2026-10-31) and closed.** D854's answer is outcome (a), and everything
+it needs is here:
 
 - **The two guards, which are not the same guard.** The **within one run** guard is not in question
   and both designs carry it: the stage reads the published object, and the write it then makes
@@ -238,10 +237,9 @@ outcomes need is here:
   documents is how a reviewer ends up thinking there are two guards — and S3's
   `TestUpdatePolicyStageRefusesWhenTheNodeMovedUnderIt` for the policy stage. The **across runs**
   guard is D854: remembering the generation this machine's file was written from, which is what
-  catches a second machine that published a week ago, long after this run's read. Only the second
-  one is open, and it is the stronger of the two: the ETag guard cannot see a change that happened
-  before its own read.
-- **Where the recorded generation would live**, if (a) lands: in the project's local config,
+  catches a second machine that published a week ago, long after this run's read. The second guard
+  is the stronger of the two: the ETag guard cannot see a change that happened before its own read.
+- **Where the recorded generation lives:** in the project's local config,
   `~/.config/fugaro/projects/<project>.yaml` — two new fields on `localcfg.Config`
   (`internal/localcfg/localcfg.go`), `policy_generation` and `layer_generation`, written by the
   stage that publishes and read by the next one. A local file, not the wire: the console and the
@@ -249,14 +247,12 @@ outcomes need is here:
   and no existing field changes meaning.
 - **What the first `update` does when nothing is recorded**, which is every installation today and
   any node published before this release by `fugaro project policy publish` with no local file
-  behind it: nothing is recorded, so nothing can have moved. Under **(a)** there are two spellings —
-  **adopt** (the first `update` publishes as it would, then records the generation it read, and says
-  it adopted it) or **refuse once** (it stops and asks whether to adopt). The recommendation is
-  adopt: refusing on the first run after an upgrade asks a question with no information in it, since
-  the machine has no baseline to compare against, and the HARD RULE wants `update` to be one
-  command that finishes. Under **(b)** there is nothing to compare, so the first `update` behaves
-  exactly as every later one does — it publishes on difference.
-- **The names, if (a) lands:** `TestUpdatePolicyStageRefusesWhenThePublishedGenerationIsNewer` and
+  behind it: nothing is recorded, so nothing can have moved. The first `update` **adopts**: it
+  publishes as it would, then records the generation it read, and says it adopted it. Refusing once
+  was the other spelling, and it is rejected: refusing on the first run after an upgrade asks a
+  question with no information in it, since the machine has no baseline to compare against, and the
+  HARD RULE wants `update` to be one command that finishes.
+- **The names:** `TestUpdatePolicyStageRefusesWhenThePublishedGenerationIsNewer` and
   `TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer` (one per stage), with
   `TestUpdatePolicyStageAdoptsTheGenerationWhenNothingIsRecorded` and its layer twin for the first
   run. `TestUpdateRefusesToPublishOverANewerGeneration` is **not** used: it is one word away from

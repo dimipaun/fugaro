@@ -1,12 +1,12 @@
 # `fugaro settings`: implementation plan
 
 **The design is approved; the tasks queue for CLI 0.15.0 (and console 0.117.0).** SD1–SD18 were
-answered by the owner on 2026-10-31 ([reconciliation.md](reconciliation.md) §3), and of this plan's
-own decisions (§4) **D840–D853 were answered the same day, every one as recommended, while D854 — the
-stale local copy — is open**; S3 is written so that either of its outcomes can land. A decision
-answered the other way would change the tasks that cite it; none was. Each task touches at most 12
-files, names its tests, starts with a red step, and ends at the gates below. **The first slice is
-S0–S3.**
+answered by the owner on 2026-10-31 ([reconciliation.md](reconciliation.md) §3), and so were this
+plan's own decisions (§4): **all of D840–D854 were answered that day, every one as recommended,
+D854 — the stale local copy — included, its answer being the generation recorded**, which is what S3
+builds. A decision answered the other way would change the tasks that cite it; none was. Each task
+touches at most 12 files, names its tests, starts with a red step, and ends at the gates below. **The
+first slice is S0–S3.**
 
 ## Order, and what this plan does not own
 
@@ -178,6 +178,11 @@ ETag-guarded write as `add`, and the only refusal any of them carries today is
   `TestUpdatePolicyStageRefusesWhenTheNodeMovedUnderIt` (a node another writer changed between the
   read and the write is a conflict, not an overwrite: nothing is written and the sentence says whose
   generation won),
+  `TestUpdatePolicyStageRefusesWhenThePublishedGenerationIsNewer` and
+  `TestUpdatePolicyStageAdoptsTheGenerationWhenNothingIsRecorded` (D854's across-runs guard: a
+  generation recorded in the local config that the published object has moved past is a refusal and
+  not a publish, and the first update on an installation with no baseline adopts the generation it
+  read instead of asking),
   `TestUpdatePolicyStageAppliesNothingInAnAgentSessionEvenWithYes`,
   `TestUpdateStageAndTheExplicitDoorBuildTheSameNode` (both go through `buildProjectPolicy` and
   produce the same bytes from one local config — the guard against a second build path appearing
@@ -217,17 +222,18 @@ ETag-guarded write as `add`, and the only refusal any of them carries today is
   generation the read returned, so a publish someone else slipped in between them is a conflict and
   not an overwrite — `TestUpdatePolicyStageRefusesWhenTheNodeMovedUnderIt`, above. The layer stage
   carries the same guard as R1's `TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed`.
-- **D854 is OPEN, and this task holds its policy half either way.** No owner ruling is recorded; both
-  outcomes are set out in [reconciliation.md](reconciliation.md) §4. If **(a) record the generation
-  and refuse** lands, the stage records the generation the local file was seeded from or last
-  published at (`policy_generation` on `localcfg.Config`, in the project's local config), refuses to
-  publish over a generation that has moved since, prints the three-way state, and offers to re-seed
-  the local file from the published one under confirmation with a backup —
+- **D854 is answered — the generation is recorded** (owner ruling 2026-10-31;
+  [reconciliation.md](reconciliation.md) §4) — and this task builds its policy half. The stage
+  records the generation the local file was seeded from or last published at (`policy_generation`
+  on `localcfg.Config`, in the project's local config), refuses to publish over a generation that
+  has moved since, prints the three-way state, and offers to re-seed the local file from the
+  published one under confirmation with a backup —
   `TestUpdatePolicyStageRefusesWhenThePublishedGenerationIsNewer` and its
   `…AdoptsTheGenerationWhenNothingIsRecorded` twin are the two halves, the second pinning the first
-  run on an installation that has no baseline. If **(b) publish on difference anyway** lands, nothing
-  in the task changes except that this bullet is deleted: the ETag guard and the diff/backup/confirm
-  triple already cover a publish this run itself raced, which is the part both outcomes share.
+  run on an installation that has no baseline (it adopts: refusing once would ask a question with no
+  information in it). **Rejected: publish on difference anyway** — it loses the newer publish on the
+  second machine, and the ETag guard and the diff/backup/confirm triple cover only a publish this
+  run itself raced.
 
 ## S4. The layer side of the read (SD4, D845)
 
