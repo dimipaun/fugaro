@@ -150,6 +150,10 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
 /** startCrashReporting asks the gate and, only when it opens, initialises the
  * SDK's main-process client. A closed gate is not an error and not a log line:
  * it is the console's normal state, and the answer the switch slice will change.
+ * It asks the gate in the gate's own order -- the switch first, the build's DSN
+ * artifact second -- so the disk is untouched by a start that could not have
+ * reported anything anyway, and `index.ts` asks the same question with the
+ * switch alone before it decides to load this module at all.
  *
  * The options are `CRASH_CLIENT_OPTIONS` corrected against 8.2.0, plus the four
  * this file owns: the DSN, `NO_IPC`, the non-offline transport, and `beforeSend`.
@@ -192,6 +196,15 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * no log without it answering, which is the behaviour the missing option was
  * wanted for; the unit test pins all three names against the SDK's types. */
 export function startCrashReporting(input: CrashReportingInput): CrashReportingHandle {
+  // The switch is asked before the artifact is read, which is the half of the
+  // gate that is about the disk rather than about the wire: a start whose switch
+  // is unread or off reads nothing and starts nothing, and the DSN the build
+  // wrote is opened only for a switch that said yes. `'no-dsn'` is the answer a
+  // yes gets while the artifact has not been consulted -- there is no other way
+  // to be asked with the switch alone -- so it is the one reason that carries on.
+  if (crashReportingDecision({ optedIn: input.optedIn }).reason !== 'no-dsn') {
+    return { close: () => Promise.resolve() }
+  }
   const dsn = input.dsn ?? crashDsnFromBuild(input.appRoot)
   const decision = crashReportingDecision({ dsn, optedIn: input.optedIn })
   if (!decision.enabled) return { close: () => Promise.resolve() }

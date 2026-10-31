@@ -251,10 +251,20 @@ describe('console/package.json', () => {
       pkg.scripts?.['test:unit'],
       'test:unit must run vitest over test/unit: it is the command the plan names (Task 1.0) and the one the staged console workflow calls (Task 1.4)',
     ).toBe('vitest run --dir test/unit')
+    // Task 2.1b's fix round B edits the string again, deliberately: the packed
+    // console's notices are held to the archive the packer produces
+    // (`scripts/check-packed-notices.mjs`, which packs the app itself), and the
+    // e2e script is the step the console's CI job already runs after `npm run
+    // build` -- so the check rides there rather than in a step of its own that
+    // would mean editing the workflow.
     expect(
       pkg.scripts?.['test:e2e'],
-      'test:e2e must build first (the spec runs what `main` points at, which only `npm run build` writes) and must still pass --pass-with-no-tests, so a tree with no e2e spec stays green',
-    ).toBe('npm run build && playwright test --pass-with-no-tests')
+      'test:e2e must build first (the spec runs what `main` points at, which only `npm run build` writes), then check the packed app against the notices, and must still pass --pass-with-no-tests, so a tree with no e2e spec stays green',
+    ).toBe('npm run build && npm run check:packed && playwright test --pass-with-no-tests')
+    expect(
+      pkg.scripts?.['check:packed'],
+      'check:packed must run the packed-set check, which is the only thing that reads the packer\'s own answer',
+    ).toBe('node scripts/check-packed-notices.mjs')
   })
 
   // The runtime dependency set, as an allow-list rather than a prohibition.

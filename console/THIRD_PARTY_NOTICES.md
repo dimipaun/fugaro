@@ -6,16 +6,15 @@ The Fugaro console ships files that are not ours: the elkjs layout worker; the s
 Instrument Sans and IBM Plex Mono, both under the SIL Open Font License 1.1 (their versions and
 digests are `src/renderer/fonts/README.md`); and the two runtime dependencies the main process
 runs, `electron-updater` 6.8.10 with the fifteen packages of its tree, and `@sentry/electron`
-8.2.0 with the fourteen packages of its, plus `has-flag` 4.0.0, which reaches the tree through
-`@sentry/node`'s bundler subpath and stays in the package because the update client's own `debug`
-loads it at run time. Every licence text is in this file, one section each: elkjs's first, then the
-two fonts', then the update client's and its tree's, then the crash reporter's and its tree's.
+8.2.0 with the fourteen packages of its. Every licence text is in this file, one section each:
+elkjs's first, then the two fonts', then the update client's and its tree's, then the crash
+reporter's and its tree's.
 
 Both runtime dependencies are packed into the asar's `node_modules` because the main process
 requires them at run time -- `dist/main/updater-electron.js` for the update client, and
 `dist/main/crash-electron.js` for the crash reporter, which is the one file in the console that
 imports it (the owner's rulings D733 and D734 of 2026-10-30) -- and the packages of their trees are packed beside
-them. Their sections are the last thirty-one in this file, and every version in them is the one
+them. Their sections are the last thirty in this file, and every version in them is the one
 `package-lock.json` pins.
 
 **What is no longer in this file, and why.** `@sentry/node` carries `@sentry/bundler-plugins`,
@@ -29,6 +28,19 @@ sections are gone with them. The one that is worth a sentence: `sentry` 0.45.0 i
 **Functional Source License 1.1**, the one licence of that tree that restricts what a licensee may
 do with the code rather than only what they must reproduce, and the console neither calls it nor
 carries it any more.
+
+**And two that left in fix round B, one of them having arrived without anybody deciding it.** The
+packer resolves a dependency edge that no walk of `package-lock.json` can see: the update client's
+`debug` does `require('supports-color')` inside a `try`, an optional require rather than a declared
+one (the same idiom `debug`'s own source comments on). The packer therefore hoisted
+`supports-color` 8.1.1 and its one dependency `has-flag` 4.0.0 **out of the excluded
+`@sentry/bundler-plugins` tree** and into the archive's own `node_modules`, so both shipped while
+this file -- which reasoned from the lockfile, where the top-level `supports-color` is a
+development 7.2.0 -- listed neither. `build.files` now excludes both by name, and the console
+still runs: that `require` fails, `debug` catches it and turns colours off, nothing else loads
+either package, and the probe recorded in the pull request shows the packed app reporting and
+starting normally without them. `scripts/check-packed-notices.mjs` is the check that would have
+caught this: it packs the app, opens the archive and holds this file to what is inside it.
 
 The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.11.0**, copied
 verbatim by `npm run build` from `node_modules/elkjs/lib/elk-worker.min.js`.
@@ -2073,33 +2085,6 @@ The licence text below is copied verbatim from that package's `LICENSE`.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
-```
-
-## has-flag 4.0.0 -- MIT License
-
-`package-lock.json` reaches this package through `@sentry/electron` 8.2.0's bundler subpath, and it
-stays in the package even though that subpath does not, because it is the one package of that tree
-a run-time `require` reaches: `debug`, which the update client loads, requires `supports-color`
-from inside a `try` -- an optional require that no `package.json` declares, so only a probe sees it
--- and `supports-color` requires this. Task 2.1b's fix round A kept it shipped on that evidence
-rather than excluding it with the rest of the tree.
-
-Its source is the `has-flag@4.0.0` package from the npm registry
-(https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz), whose repository is
-sindresorhus/has-flag.
-
-The licence text below is copied verbatim from that package's `license`.
-
-```text
-MIT License
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ## @sentry/opentelemetry 11.7.0 -- MIT License

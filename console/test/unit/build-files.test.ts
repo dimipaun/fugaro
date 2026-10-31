@@ -136,6 +136,7 @@ const BUILD_ONLY: readonly string[] = [
   'brace-expansion',
   'dotenv',
   'glob',
+  'has-flag',
   'lru-cache',
   'magic-string',
   'minimatch',
@@ -143,18 +144,26 @@ const BUILD_ONLY: readonly string[] = [
   'oxc-parser',
   'path-scurry',
   'sentry',
+  'supports-color',
 ]
 
 /**
- * STILL_SHIPPED are the two packages that were candidates for the exclusion
- * above and are **not** excluded, because they load. `debug` (shipped, and
- * required by `electron-updater`) does `require('supports-color')` inside a
- * `try` and swallows the failure -- an undeclared, optional require, so
- * `package-lock.json` records the edge only under `@sentry/bundler-plugins` and
- * `chalk`, and only a probe catches it. `supports-color` requires `has-flag`.
- * Both stay; the probe in the PR description shows them loading.
+ * Two of the names above are the round B finding, and they are excluded for a
+ * reason the walk of the lockfile cannot see: `debug` (shipped, required by
+ * `electron-updater`) does `require('supports-color')` inside a `try` and
+ * swallows the failure -- an undeclared, optional require, so
+ * `package-lock.json` records that edge only under `@sentry/bundler-plugins` and
+ * `chalk`, and no walk reaches it. The packer's own collector does follow it, so
+ * it hoisted `supports-color` and `has-flag` **out of the excluded tree** and
+ * into the archive's own `node_modules` -- which is how a package the notices
+ * never described shipped anyway (round A's `notices.test.ts` could not see it:
+ * it reasons from the lockfile, whose top-level `supports-color` is the dev
+ * 7.2.0). Excluding them here is what puts the packed app back on the notices'
+ * set, and it is safe because that `require` is the optional-dependency idiom:
+ * with the package gone `debug` catches the failure and turns colours off.
+ * `scripts/check-packed-notices.mjs` runs the packer and checks the archive
+ * itself, so this list is no longer the only thing standing behind the claim.
  */
-const STILL_SHIPPED: readonly string[] = ['has-flag', 'supports-color']
 
 /** globToRegExp turns one electron-builder `files` pattern into a matcher. `**`
  * spans directories, `*` and `?` do not cross a `/`. */
@@ -291,14 +300,6 @@ describe('the packaged console carries what it loads', () => {
     expect(BUILD_ONLY.length).toBeGreaterThan(10)
     for (const name of BUILD_ONLY) {
       expect(patterns, `${name} is a build-time package and must be excluded by name`).toContain(
-        `!node_modules/${name}/**`,
-      )
-    }
-    // The two that do load -- `debug` requires `supports-color` from inside a
-    // `try`, undeclared, so no lockfile walk can see the edge -- stay shipped,
-    // and a later edit that quietly excluded them fails here.
-    for (const name of STILL_SHIPPED) {
-      expect(patterns, `${name} is loaded at run time and must stay in the package`).not.toContain(
         `!node_modules/${name}/**`,
       )
     }

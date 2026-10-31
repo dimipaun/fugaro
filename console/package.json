@@ -16,7 +16,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.bundle-renderer.json && node .bundle-renderer/index.js && tsc -p tsconfig.crash-dsn.json && node .crash-dsn/index.js",
     "test:unit": "vitest run --dir test/unit",
-    "test:e2e": "npm run build && playwright test --pass-with-no-tests",
+    "test:e2e": "npm run build && npm run check:packed && playwright test --pass-with-no-tests",
+    "check:packed": "node scripts/check-packed-notices.mjs",
     "typecheck": "tsc --noEmit",
     "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
     "screenshots": "npm run build && tsc -p tsconfig.screenshots.json && node .screenshots/tools/screenshots/capture.js",
@@ -67,13 +68,15 @@
       "!node_modules/brace-expansion/**",
       "!node_modules/dotenv/**",
       "!node_modules/glob/**",
+      "!node_modules/has-flag/**",
       "!node_modules/lru-cache/**",
       "!node_modules/magic-string/**",
       "!node_modules/minimatch/**",
       "!node_modules/minipass/**",
       "!node_modules/oxc-parser/**",
       "!node_modules/path-scurry/**",
-      "!node_modules/sentry/**"
+      "!node_modules/sentry/**",
+      "!node_modules/supports-color/**"
     ],
     "afterPack": "dist/main/fuses.js",
     "publish": null,

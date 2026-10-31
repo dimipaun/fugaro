@@ -19,17 +19,20 @@
 //      headline case below is this slice's mutation proof: with `beforeSend`
 //      changed to hand the event back untouched, the token, the home path and
 //      the message are what the transport receives.
-//   3. **Nothing is written to disk.** The SDK's default transport is the
-//      *offline* one, whose store persists every envelope it could not deliver
-//      under `<userData>/sentry/queue`. The fake models that store -- it writes
-//      when it is asked to build one -- so "the temp userData is still empty"
-//      is a claim about which transport the adapter chose rather than a claim
-//      that nothing ran.
-//   4. **No IPC, no protocol, no preload.** The fake `electron` records every
-//      one of those registrations, and `ipcMode` is asserted to be the value
-//      that keeps the SDK from making any.
+//   3. **The entry loads this module only when the gate can open, and the wiring
+//      reads the artifact only after the switch says yes.** That is a claim
+//      about two files this suite cannot import (one of them imports Electron's
+//      runtime), so the two cases below read them as text -- with the comments
+//      blanked, because both explain the order in prose.
+//   4. **The parts only a running client can answer are in
+//      `test/e2e/crash-init.spec.ts`**: that the transport it asked for keeps
+//      nothing on disk, that no `ipcMain` handler, protocol scheme or session
+//      preload is registered, and that the profile is untouched by a report that
+//      was sent. Round B moved them out of this file, where each of them could
+//      only assert what the fake had been told to do, and into a real Electron
+//      main process running the pinned SDK.
 
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,12 +44,10 @@ import { scrubCrashEvent, type CrashEvent } from '../../src/main/crash'
 import { crashDsnFromBuild, startCrashReporting } from '../../src/main/crash-electron'
 import { CRASH_DSN_VARIABLE, writeCrashDsnArtifact } from '../../tools/crash-dsn'
 
-/** harness is the shared state the mocked SDK and the mocked Electron write
- * into. It is `vi.hoisted` because both factories are hoisted above this file's
- * imports, so neither can close over a variable declared below. */
+/** harness is the shared state the mocked SDK writes into. It is `vi.hoisted`
+ * because the factory below is hoisted above this file's imports, so it cannot
+ * close over a variable declared here. */
 const harness = vi.hoisted(() => ({
-  /** The temp directory `app.getPath('userData')` answers with, per test. */
-  userData: '',
   /** Every options object `init` was handed, in order. */
   initOptions: [] as Record<string, unknown>[],
   /** What the client's transport received, in order. */
@@ -55,66 +56,50 @@ const harness = vi.hoisted(() => ({
   transport: { send: async (_envelope: unknown): Promise<unknown> => ({ statusCode: 200 }) },
   /** How many times the client was closed. */
   closes: 0,
-  /** The two registrations the console must never make. */
-  ipcChannels: [] as string[],
-  registeredProtocols: [] as string[],
-  preloads: [] as string[],
-  /** Set when the offline transport's store was built -- the disk write. */
-  offlineStoreBuilt: false,
 }))
 
-vi.mock('electron', () => ({
-  app: {
-    getPath: (name: string) => (name === 'userData' ? harness.userData : ''),
-    whenReady: () => Promise.resolve(),
-  },
-  net: { request: () => ({ setHeader: () => undefined, on: () => undefined, end: () => undefined }) },
-  ipcMain: {
-    on: (channel: string) => harness.ipcChannels.push(channel),
-    handle: (channel: string) => harness.ipcChannels.push(channel),
-  },
-  protocol: { handle: (scheme: string) => harness.registeredProtocols.push(scheme) },
-  session: { defaultSession: { registerPreloadScript: () => harness.preloads.push('a preload') } },
-  webContents: { getAllWebContents: () => [] },
-  utilityProcess: undefined,
-}))
+/** artifactReads is every path this module graph asked `node:fs` to read, in
+ * order. It is a probe rather than a fake -- the real `readFileSync` still runs,
+ * and the value a reader gets is the file's -- so that "the artifact was not
+ * read" is an observation about the wiring's own call and not an inference from
+ * the fact that a read of a missing file answers null anyway. */
+const artifactReads = vi.hoisted(() => ({ paths: [] as string[] }))
 
-vi.mock('@sentry/electron/main', async () => {
-  const { mkdirSync, writeFileSync } = await import('node:fs')
-  const { join } = await import('node:path')
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  const reading = actual.readFileSync as (...args: unknown[]) => unknown
   return {
-    init: (options: Record<string, unknown>) => {
-      harness.initOptions.push(options)
-      // The client builds its transport here, from the factory it was given --
-      // the order @sentry/core's `NodeClient` has it in, and the reason the
-      // adapter can hand `init` a factory rather than an instance.
-      const factory = options.transport as (transportOptions: unknown) => { send: (e: unknown) => Promise<unknown> }
-      const transport = factory({ url: 'the endpoint the DSN resolves to', recordDroppedEvent: () => undefined })
-      harness.transport = transport
-    },
-    close: async () => {
-      harness.closes += 1
-      return true
-    },
-    makeElectronTransport: (options: unknown) => ({
-      send: async (envelope: unknown) => {
-        harness.sent.push(envelope)
-        return { statusCode: 200 }
-      },
-      flush: async () => true,
-      options,
-    }),
-    // The transport the adapter must NOT ask for: it is the SDK's default, and
-    // it persists what it could not deliver under `<userData>/sentry/queue`.
-    makeElectronOfflineTransport: () => (options: Record<string, unknown>) => {
-      harness.offlineStoreBuilt = true
-      const queue = join(harness.userData, 'sentry', 'queue')
-      mkdirSync(queue, { recursive: true })
-      writeFileSync(join(queue, 'an-undelivered-envelope'), 'the offline store')
-      return { send: async () => ({ statusCode: 200 }), flush: async () => true, options }
+    ...actual,
+    readFileSync: (path: unknown, ...rest: unknown[]) => {
+      artifactReads.paths.push(String(path))
+      return reading(path, ...rest)
     },
   }
 })
+
+vi.mock('@sentry/electron/main', () => ({
+  init: (options: Record<string, unknown>) => {
+    harness.initOptions.push(options)
+    // The client builds its transport here, from the factory it was given --
+    // the order @sentry/core's `NodeClient` has it in, and the reason the
+    // adapter can hand `init` a factory rather than an instance.
+    const factory = options.transport as (transportOptions: unknown) => { send: (e: unknown) => Promise<unknown> }
+    const transport = factory({ url: 'the endpoint the DSN resolves to', recordDroppedEvent: () => undefined })
+    harness.transport = transport
+  },
+  close: async () => {
+    harness.closes += 1
+    return true
+  },
+  makeElectronTransport: (options: unknown) => ({
+    send: async (envelope: unknown) => {
+      harness.sent.push(envelope)
+      return { statusCode: 200 }
+    },
+    flush: async () => true,
+    options,
+  }),
+}))
 
 /** dsnPlaceholder is a DSN's shape -- scheme, public key, host, project id --
  * assembled from fragments at run time, for the reason `fakeSecrets` exists and
@@ -192,18 +177,10 @@ function hostileEvent(appRoot: string): CrashEvent & Record<string, unknown> {
 }
 
 beforeEach(() => {
-  // A fresh, empty directory the SDK would write its offline queue into if the
-  // adapter asked for the offline transport. It is separate from the app root
-  // each test writes its DSN artifact into, so "nothing was written here" is a
-  // claim about the directory the SDK writes to.
-  harness.userData = mkdtempSync(join(tmpdir(), 'fugaro-crash-userdata-'))
   harness.initOptions = []
   harness.sent = []
   harness.closes = 0
-  harness.ipcChannels = []
-  harness.registeredProtocols = []
-  harness.preloads = []
-  harness.offlineStoreBuilt = false
+  artifactReads.paths = []
 })
 
 afterEach(() => {
@@ -228,6 +205,26 @@ describe('the crash reporter starts only when the gate opens', () => {
       expect(harness.initOptions, name).toEqual([])
       void handle.close()
     }
+  })
+
+  it('does not read the build\'s DSN artifact for a switch that is not a yes', () => {
+    // The order the wiring asks the gate in is a claim about the disk, and this
+    // is the disk: the artifact is present in every case below, so a wiring that
+    // read it first would be visible here as a path the probe recorded, and the
+    // null a read of a missing file answers with could not stand in for that.
+    const appRoot = tempAppRoot()
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    for (const optedIn of [null, false, 'true', 1, { consent: true }]) {
+      void startCrashReporting({ optedIn, appRoot }).close()
+    }
+    expect(artifactReads.paths.filter((path) => path.includes('crash-dsn.json'))).toEqual([])
+
+    // ...and the same probe answers for the other direction, so a wiring that
+    // had stopped reading the artifact altogether could not pass the assertion
+    // above by reading nothing anywhere.
+    artifactReads.paths = []
+    void startCrashReporting({ optedIn: true, appRoot }).close()
+    expect(artifactReads.paths.filter((path) => path.includes('crash-dsn.json'))).toHaveLength(1)
   })
 
   it('starts nothing when the build carried no DSN, or a blank one', () => {
@@ -304,20 +301,84 @@ describe('the crash reporter starts only when the gate opens', () => {
     void handle.close()
   })
 
-  it('the entry point starts it once, with the switch unread, and closes it on the way out', () => {
+  it('the entry point loads the module only when the gate can open, and closes it on the way out', () => {
     // `src/main/index.ts` cannot be imported under `vitest` -- it imports the
     // Electron runtime -- so this is the text of it, which is what
-    // `test/unit/startup.test.ts` reads too. Three shapes, because each one
-    // fails differently: a second call would start a second client (two
-    // transports, two event ids), a call with anything but `null` would be a
-    // slice deciding the switch before the switch exists, and no call on the
-    // quit path is a report cut off mid-send.
-    const entry = readFileSync(fileURLToPath(new URL('../../src/main/index.ts', import.meta.url)), 'utf8')
+    // `test/unit/startup.test.ts` and `test/unit/entry-wiring.test.ts` read too,
+    // and it is read with its comments blanked, because the wiring explains this
+    // decision in prose that names both modules and a scan that read the prose
+    // would be answered by the explanation rather than by the call.
+    //
+    // Four shapes, because each one fails differently: a second call would start
+    // a second client (two transports, two event ids); a call with anything but
+    // `null` would be a slice deciding the switch before the switch exists; a
+    // **static** import of the module would load `@sentry/electron/main` and the
+    // fourteen packages it reaches at every start, whatever the gate answers;
+    // and no call on the quit path is a report cut off mid-send.
+    const entry = withoutComments(
+      readFileSync(fileURLToPath(new URL('../../src/main/index.ts', import.meta.url)), 'utf8'),
+    )
     const starts = [...entry.matchAll(/startCrashReporting\(\{([^}]*)\}\)/g)].map((match) => match[1]?.trim())
     expect(starts).toEqual(['optedIn: null, appRoot: app.getAppPath()'])
     expect([...entry.matchAll(/crashReporting\?\.close\(\)/g)]).toHaveLength(1)
+
+    // The module is reached dynamically, once, and only from behind the gate: a
+    // static reach would load it before the decision exists to make, so the only
+    // line allowed to carry `from './crash-electron'` is the erased type import.
+    const staticLoads = entry
+      .split('\n')
+      .filter((line) => line.includes("from './crash-electron'") && !line.trimStart().startsWith('import type'))
+    expect(staticLoads).toEqual([])
+    expect(entry).toContain("import { crashReportingDecision } from './crash'")
+    expect([...entry.matchAll(/import\('\.\/crash-electron\.js'\)/g)]).toHaveLength(1)
+
+    // ...and the decision comes first, with the switch's two shut answers in the
+    // branch between the two: the load is inside it, so a start whose switch is
+    // unread loads nothing.
+    const gate = entry.indexOf('crashReportingDecision({ optedIn: null })')
+    const load = entry.indexOf("import('./crash-electron.js')")
+    expect(gate, 'the entry asks the gate with the switch unread').toBeGreaterThan(-1)
+    expect(load).toBeGreaterThan(gate)
+    const branch = entry.slice(gate, load)
+    expect(branch).toContain('if (')
+    expect(branch).toContain("gate.reason !== 'opt-in-not-read'")
+    expect(branch).toContain("gate.reason !== 'opt-in-off'")
+  })
+
+  it('the module the entry loads to ask the gate imports nothing, and the wiring reads the artifact second', () => {
+    // The gate is worth loading for because of what it is not: `./crash` imports
+    // nothing at all -- no SDK, no file, no environment -- so asking it costs a
+    // start nothing but the module itself. And inside the wiring the switch is
+    // asked before `crashDsnFromBuild`, which is the half of the gate that is
+    // about the disk: a start whose switch is off must not have opened the
+    // artifact the build wrote.
+    const gate = readFileSync(fileURLToPath(new URL('../../src/main/crash.ts', import.meta.url)), 'utf8')
+    expect(gate).not.toMatch(/^\s*import\s/m)
+
+    const wiring = withoutComments(
+      readFileSync(fileURLToPath(new URL('../../src/main/crash-electron.ts', import.meta.url)), 'utf8'),
+    )
+    const start =
+      /export function startCrashReporting\(input: CrashReportingInput\): CrashReportingHandle \{[\s\S]*?\n\}\n/.exec(
+        wiring,
+      )
+    if (start === null) throw new Error('the scan found no startCrashReporting: it would pass by finding nothing')
+    const switchAt = start[0].indexOf('crashReportingDecision({ optedIn: input.optedIn })')
+    const artifactAt = start[0].indexOf('crashDsnFromBuild(input.appRoot)')
+    expect(switchAt, 'the switch is asked at all').toBeGreaterThan(-1)
+    expect(artifactAt, 'the artifact is read at all').toBeGreaterThan(-1)
+    expect(artifactAt, 'the switch is asked before the artifact is read').toBeGreaterThan(switchAt)
   })
 })
+
+/** withoutComments blanks a source's comments, so a scan over it reads the code
+ * rather than the prose -- the wiring discusses both modules and both calls in
+ * the comments above them. `test/unit/entry-wiring.test.ts` blanks the same way
+ * for the same reason; the `//` is only a comment where it is not part of a URL,
+ * which is what the character before it is for. */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/gm, '$1')
+}
 
 describe('what the client is told', () => {
   it('carries no default integrations and no IPC of either kind', () => {
@@ -390,29 +451,6 @@ describe('what the client is told', () => {
     expect(types('node_modules/@sentry/electron/main/sdk.d.ts')).toMatch(/ElectronMainOptions/)
   })
 
-  it('hands `init` the SDK transport that keeps nothing on disk', () => {
-    const appRoot = tempAppRoot()
-    const userData = harness.userData
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
-    const handle = startCrashReporting({ optedIn: true, appRoot })
-    // The factory, not an instance: `init`'s own options type takes a factory,
-    // and the client is what calls it with the resolved endpoint.
-    expect(typeof harness.initOptions[0]?.transport).toBe('function')
-    expect(harness.offlineStoreBuilt).toBe(false)
-    expect(readdirSync(userData)).toEqual([])
-    void handle.close()
-  })
-
-  it('registers no ipcMain handler, no protocol and no session preload', () => {
-    const appRoot = tempAppRoot()
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
-    const handle = startCrashReporting({ optedIn: true, appRoot })
-    expect(harness.ipcChannels).toEqual([])
-    expect(harness.registeredProtocols).toEqual([])
-    expect(harness.preloads).toEqual([])
-    void handle.close()
-  })
-
   it('closes the client when the caller closes the handle', async () => {
     const appRoot = tempAppRoot()
     writeCrashDsnArtifact(appRoot, dsnPlaceholder())
@@ -478,15 +516,4 @@ describe('what reaches the transport', () => {
     void handle.close()
   })
 
-  it('the temp userData is untouched by a report that was sent', async () => {
-    const appRoot = tempAppRoot()
-    const userData = harness.userData
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
-    const handle = startCrashReporting({ optedIn: true, appRoot })
-    const beforeSend = (harness.initOptions[0] ?? {}).beforeSend as (event: CrashEvent) => unknown
-    await harness.transport.send(beforeSend(hostileEvent(appRoot)))
-    expect(readdirSync(userData)).toEqual([])
-    expect(harness.offlineStoreBuilt).toBe(false)
-    void handle.close()
-  })
 })

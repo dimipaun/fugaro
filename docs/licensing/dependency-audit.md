@@ -127,6 +127,21 @@ package is not shipped and no file of it is copied.
 
 **No package in the console's lockfile declares no licence.**
 
+**Five moderate advisories at the lockfile level, and none of them in the shipped set.** `npm audit
+--omit=dev` on 2026-10-31 answers five moderate, no high and no critical, over five entries and two
+underlying advisories: `minimatch`'s globparts amplification (a denial of service) and `glob`'s
+`AbortSignal` cancellation bypass (a post-timeout filesystem traversal, reported against `glob`
+*through* `minimatch`). The other three entries are the propagation path rather than a second
+problem — `@sentry/bundler-plugins`, which depends on them, and `@sentry/node` and
+`@sentry/electron`, which depend on it. Neither advisory is in the artifact: `glob`, `minimatch` and
+`@sentry/bundler-plugins` are all excluded by name in `build.files` (Task 2.1b's fix round A), so no
+distributed file carries the code either advisory is about. The two entries that do ship,
+`@sentry/node` and `@sentry/electron`, carry no advisory of their own — npm reports them because a
+dependency below them does — and the console calls neither build-plugin subpath. This paragraph is
+the read of that command on that date, not a standing claim: `npm audit` is a query against the
+registry's advisory database, and a package that gains an advisory later arrives here as a new
+paragraph rather than as a change to this one.
+
 ## The mobile app, `mobile/`
 
 488 packages, 6 of them direct, all 6 in `dependencies`:

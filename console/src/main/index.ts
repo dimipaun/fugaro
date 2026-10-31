@@ -61,7 +61,7 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
-import { startCrashReporting } from './crash-electron'
+import { crashReportingDecision } from './crash'
 import type { CrashReportingHandle } from './crash-electron'
 import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
@@ -890,16 +890,38 @@ let crashReporting: CrashReportingHandle | null = null
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
-  // **The crash reporter comes up before anything it could report on.** It is
-  // dormant: `optedIn` is `null` -- nothing has read the installation's switch
-  // yet, and reading it is T2.1's own last part, which decodes
-  // `settings.crash_reports` from T1.3's `project show --json` -- and
-  // `crashReportingDecision` makes that third state off, so this call starts
-  // nothing today and will start reporting the day the switch can say yes *and*
-  // the build was given a DSN. It is here rather than beside the window because
-  // a crash before the window opens is the one an operator most wants back, and
-  // because the handle has to be closed on the way out.
-  crashReporting = startCrashReporting({ optedIn: null, appRoot: app.getAppPath() })
+  // **The crash reporter comes up before anything it could report on, and the
+  // module that holds the SDK comes up with it and not before.** The gate is
+  // asked first, and with the switch alone: `optedIn` is `null` -- nothing has
+  // read the installation's switch yet, and reading it is T2.1's own last part,
+  // which decodes `settings.crash_reports` from T1.3's `project show --json` --
+  // and `crashReportingDecision` answers `'opt-in-not-read'` for that third
+  // state, which is one of the two answers that shut the gate whatever the build
+  // was given. What follows from it is the whole of this slice's cost: in a
+  // console whose switch is not a yes, `./crash-electron` and the fourteen
+  // packages `@sentry/electron/main` reaches are never loaded, `crashDsnFromBuild`
+  // never reads the artifact the build wrote, and no client exists to start -- so
+  // a start that reports nothing pays nothing for the wiring that would.
+  //
+  // The two reasons a yes-switch can still leave the gate shut are `'no-dsn'`
+  // and `'enabled'`: the first is a yes whose DSN nobody has offered yet, which
+  // is exactly what `startCrashReporting` reads the artifact for, and the second
+  // is a caller that passed one. Every other answer is the switch itself saying
+  // no, and it is asked here rather than inside the module because loading the
+  // module is the thing being decided.
+  //
+  // The reporter is wired here rather than beside the window because a crash
+  // before the window opens is the one an operator most wants back, and because
+  // the handle has to be closed on the way out.
+  const gate = crashReportingDecision({ optedIn: null })
+  if (gate.reason !== 'opt-in-not-read' && gate.reason !== 'opt-in-off') {
+    // The `.js` is the CommonJS build's spelling rather than a file this source
+    // tree has: `dist/main/index.js` requires `dist/main/crash-electron.js`, and
+    // `tsconfig.build.json` is the config that resolves both (the type-checking
+    // config resolves either spelling, so this is the build that decides it).
+    const { startCrashReporting } = await import('./crash-electron.js')
+    crashReporting = startCrashReporting({ optedIn: null, appRoot: app.getAppPath() })
+  }
   // The icon first, and before any window exists: an unpackaged console has no
   // bundle to carry `build/icon.png`, so until this runs the dock shows
   // Electron's own icon rather than the website's mark (the owner's brief of

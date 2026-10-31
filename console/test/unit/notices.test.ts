@@ -40,15 +40,21 @@ const TARGETS: readonly (readonly [string, string])[] = [
   ['linux', 'x64'],
 ]
 
-/** UNDECLARED_LOADS are the packages a run-time `require` reaches that no
- * `package.json` in the tree declares, so no walk of `package-lock.json` can
- * follow the edge: `debug` requires `supports-color` from inside a `try` and
- * swallows the failure. The walk would lose both the loader and the package it
- * loads, which is the wrong half; `supports-color` is therefore a root here like
- * a `dependencies` entry, and `has-flag` comes back through its own `dependencies`.
- * This round's probe found the edge, and the notices file says the same beside
- * the `has-flag` section. */
-const UNDECLARED_LOADS: readonly string[] = ['supports-color']
+/** UNDECLARED_LOADS is empty, and it is here rather than deleted because of what
+ * made it non-empty once: `debug` reaches `supports-color` from inside a `try`,
+ * an optional `require` no `package.json` declares, so a walk of the lockfile
+ * cannot follow that edge -- and round A therefore treated the package as a root
+ * of the derivation (with `has-flag` coming back through its `dependencies`).
+ * That was the wrong half of the answer. The edge is real, but the console does
+ * not need what it loads: `debug` catches the failure and turns colours off. The
+ * packer's own collector follows the edge *for the exclusion* as well as the
+ * inclusion, so `supports-color` and `has-flag` were being hoisted out of the
+ * excluded tree and into the archive no matter what this walk believed, which
+ * `scripts/check-packed-notices.mjs` found on the packed app. Both are now
+ * excluded by name, and the derivation below is back to following declared
+ * dependencies alone -- with the packed-set check as the authority behind it,
+ * since this file is still a model of the packer rather than the packer. */
+const UNDECLARED_LOADS: readonly string[] = []
 
 /** BUNDLED are the notices sections whose code ships inside a build output. They
  * are not packages of the packed `node_modules`, so the derivation below leaves
@@ -223,12 +229,19 @@ describe('the notices file lists what ships, for every platform', () => {
       )
       expect(holders, `no lockfile package is named ${tree}`).not.toEqual([])
     }
-    // And the other way: nothing that loads is excluded by accident. `has-flag`
-    // is the one package of the bundler subpath's tree the walk keeps, because
-    // the probe found `debug` loading it at run time.
+    // And the other way: nothing that loads is excluded by accident -- the four
+    // below are build-time, and the two the packer used to hoist out of that
+    // tree (`supports-color` and `has-flag`) are excluded with it, because the
+    // `require` that reaches them is optional and `debug` runs without them.
     const shipped = shippedOn(['linux', 'x64'])
-    expect(shipped).toContain('has-flag 4.0.0')
-    for (const gone of ['sentry 0.45.0', 'oxc-parser 0.152.0', '@sentry/bundler-plugins 11.7.0', 'glob 13.0.6']) {
+    for (const gone of [
+      'sentry 0.45.0',
+      'oxc-parser 0.152.0',
+      '@sentry/bundler-plugins 11.7.0',
+      'glob 13.0.6',
+      'supports-color 8.1.1',
+      'has-flag 4.0.0',
+    ]) {
       expect(shipped, `${gone} is build-time and must not ship`).not.toContain(gone)
     }
   })
