@@ -1407,15 +1407,21 @@ test('the marketing grant loads the three vendors on the page they were built fo
   assert.equal(page.store[CONSENT_KEY], 'granted', 'the press that answered the campaign question did not answer the site\'s, on a page where both were open')
 
   // The vendors are told the page without its query and without its fragment (F22), and the
-  // pixel is told nothing else: `init`, then one `PageView`.
+  // pixel is told nothing else: the automatic collection off, then its id, then one `PageView`.
+  // The order is Meta's own — `autoConfig` is read while the pixel is configured, which is what
+  // `init` does — and the page's events are the three the handlers send rather than the button
+  // clicks and page metadata Meta would collect for it.
   const page_location = `https://site.example${CAMPAIGN_PATH}`
   const fbq = (page.window.fbq.queue ?? []).map((entry) => Array.from(entry))
   assert.deepEqual(
-    fbq.map((call) => call.slice(0, 2).map(String)),
-    [['init', META_ID], ['track', 'PageView']],
-    `the pixel was handed ${JSON.stringify(fbq.map((c) => String(c[0])))}: its id once and one page view is what the campaign asks for`,
+    fbq,
+    [
+      ['set', 'autoConfig', false, META_ID],
+      ['init', META_ID],
+      ['track', 'PageView', { page_location }],
+    ],
+    `the pixel was handed ${JSON.stringify(fbq)}: the automatic collection off before the id, and then one page view on the page it was built for`,
   )
-  assert.deepEqual(fbq[1][2], { page_location }, 'the pixel was handed an address other than the page\'s path')
   assert.deepEqual(
     (page.window.lintrk.q ?? []).map((entry) => Array.from(entry)),
     [['track', { page_location }]],

@@ -7,7 +7,7 @@
 // key events in GA4 (spec §13), the same three actions are sent to Meta's pixel under its own
 // names (the owner's ruling of 2026-10-31), and the campaign parameters a visitor arrived
 // through are passed on to the booking link so that a booking can be attributed to the campaign
-// that paid for it. Four promises come out of that, and each is a case below.
+// that paid for it. Five promises come out of that, and each is a case below.
 //
 //   1. **The events are GA4's, so they wait for the analytics grant.** A visitor who has not
 //      granted it is measured by nothing — not by the tag, and not by an event the tag would
@@ -37,6 +37,12 @@
 //      beyond the booking — and the gate is the other consent: a visitor who has answered the
 //      campaign question and not the site's is sent the pixel's three and none of GA4's, and a
 //      page whose pixel id is empty sends Meta nothing at all (R3).
+//   5. **The stub the page builds is Meta's own shape, so a call made after its script has
+//      loaded still arrives.** `fbevents.js` attaches `callMethod` to the stub the page already
+//      has and drains the queue through it once; from then on a call pushed onto the queue is
+//      never read, so the page's stub hands a call to `callMethod` whenever one is there. A stub
+//      that only ever pushed would strand every event a press sends after the load — and the
+//      withdrawal's revoke with it, which is the privacy page's own claim about the pixel.
 //
 // **The red step, and what it was.** The plan's red step reads: "the tests fail because the
 // events are not emitted." That is what they did: with G2.3 merged and G2.4 unwritten, the
@@ -46,6 +52,12 @@
 // belongs to did not exist on the page either — G2.2 left the calls to action as the booking
 // and the repository, and the plan gives the chat link to this task (spec §6) — so the chat
 // case failed on a page with no such link until G2.4 rendered it.
+//
+// **The fix round's red step.** The stub the page built was the page's own: it pushed every call
+// onto `queue` and never looked for `callMethod`, so once Meta's script had drained the queue
+// nothing the page sent afterwards was read — the events a press and a booking send, and the
+// withdrawal's revoke. The case below that loads a fake script and reads what it is handed fails
+// on that stub and passes on Meta's own shape.
 //
 // **It runs the page the way a browser does**, in the same stub the other gates that run
 // `site.js` use (`test/lib/dom.mjs`), against the artifact `npm run check` builds: the built
@@ -199,6 +211,27 @@ function tracked(dom) {
   return pixelCalls(dom)
     .filter((call) => call[0] === 'track' && call[1] !== 'PageView')
     .map((call) => call[1])
+}
+
+/**
+ * Meta's own script arriving, as `fbevents.js` does it: it attaches `callMethod` to the stub the
+ * page already has — the stub `site.js` builds is that stub — and drains the queue through it
+ * once. From then on a call that is still pushed onto `queue` is never read again, which is the
+ * half a case has to model to tell a live stub from a stranded one: a loader that only recorded
+ * the queue would read the same either way. What it returns is every call the script was handed,
+ * the drained ones first, so a case can read what reached Meta rather than what the page meant.
+ * The script is never fetched — no network — and what Meta does with a call afterwards is Meta's
+ * business and not this site's.
+ */
+function loadPixelScript(dom) {
+  const fbq = dom.window.fbq
+  assert.ok(fbq, 'the page built no pixel stub, so no case could watch Meta\'s own script arrive')
+  const reached = []
+  fbq.callMethod = function () {
+    reached.push(Array.from(arguments))
+  }
+  for (const queued of fbq.queue.splice(0)) fbq.callMethod.apply(fbq, queued)
+  return reached
 }
 
 /** The booking address the page handed the embed, which is what Calendly's script builds from. */
@@ -357,6 +390,43 @@ test('each pixel event is sent once, on the action it is about, and only after t
   )
 })
 
+test('once Meta\'s own script has loaded, a later event and the withdrawal\'s revoke reach it rather than the queue', () => {
+  // The stub the page builds is Meta's own shape, and the half that matters is what happens
+  // after `fbevents.js` arrives: it attaches `callMethod` to the stub the page already has and
+  // drains the queue through it once, and from then on a call that is still pushed onto `queue`
+  // is never read. A stub that only ever pushed would strand every event a visitor's press sends
+  // after the load — and the withdrawal's revoke with them, which is the privacy page's own
+  // claim that the pixel is told to revoke.
+  const dom = run()
+  const reached = loadPixelScript(dom)
+  assert.deepEqual(
+    reached.map((call) => call.slice(0, 2).map(String)),
+    [['set', 'autoConfig'], ['init', PIXEL_ID], ['track', 'PageView']],
+    `the script read ${JSON.stringify(reached)} out of the queue: the queue the page left is what Meta's own script drains when it loads, in the order the page made the calls`,
+  )
+
+  press(dom, WHATSAPP_ID)
+  report(dom)
+  assert.deepEqual(
+    reached.map((call) => String(call[1])),
+    ['autoConfig', PIXEL_ID, 'PageView', 'Contact', 'Lead'],
+    `after the script had loaded, a press and a booking left ${JSON.stringify(reached)} with the tag: a call made after the load goes to \`callMethod\`, because the queue it would otherwise be pushed onto is one Meta's script has already drained`,
+  )
+  assert.deepEqual(
+    pixelCalls(dom),
+    [],
+    `the page left ${JSON.stringify(pixelCalls(dom))} in the queue after Meta's script had drained it, where nothing reads them again`,
+  )
+
+  dom.choose('denied')
+  assert.deepEqual(
+    reached.map((call) => call.slice(0, 2).map(String)).slice(-1),
+    [['consent', 'revoke']],
+    `the withdrawal left ${JSON.stringify(reached)} with the tag: the privacy page says the pixel is told to revoke, and a revoke pushed onto a queue Meta has already drained is a revoke nobody hears`,
+  )
+  assert.deepEqual(pixelCalls(dom), [], `the withdrawal left ${JSON.stringify(pixelCalls(dom))} in the queue after Meta's script had drained it`)
+})
+
 test('the pixel waits for the campaign answer alone, and the site\'s own answer is not it', () => {
   // The two questions are two answers (F17). A visitor who granted the campaign measurement on
   // another page arrives with the pixel running and GA4 absent, and the events follow the same
@@ -364,9 +434,9 @@ test('the pixel waits for the campaign answer alone, and the site\'s own answer 
   const dom = run({ granted: false, storage: { [MARKETING_CONSENT_KEY]: 'granted' } })
   assert.deepEqual(tracked(dom), [], 'the stored campaign grant did not load the pixel, so the events below would prove nothing')
   assert.deepEqual(
-    pixelCalls(dom).map((call) => String(call[1])),
-    [PIXEL_ID, 'PageView'],
-    `the pixel was handed ${JSON.stringify(pixelCalls(dom))}: the id site.yaml writes, once, and one page view on the page it was built for`,
+    pixelCalls(dom).map((call) => call.slice(0, 2).map(String)),
+    [['set', 'autoConfig'], ['init', PIXEL_ID], ['track', 'PageView']],
+    `the pixel was handed ${JSON.stringify(pixelCalls(dom))}: the automatic collection off, then the id site.yaml writes, once, and one page view on the page it was built for`,
   )
 
   press(dom, WHATSAPP_ID)
