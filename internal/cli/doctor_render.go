@@ -74,16 +74,19 @@ const (
 //     installation: `fugaro upgrade --local` (or the marketplace command in
 //     Claude Code) is what installs it.
 //
-// policy-rules-skew is here, and its line is the plain `fugaro update`: the
-// rules stage (init_rules_stage.go, the owner's rule of 2026-10-30) deploys
-// this release's document over a marker that is absent or below this
-// generation, and over a document that is not the one this Fugaro generates —
-// what the warning sent the reader here for. The line named
-// --firebase-project until that stage existed, and a bare --firebase-project
-// is not a command at all: it is a string flag, so `fugaro update
-// --firebase-project` fails on the missing value. And cli-version's line names
-// the upgrade first: the newer release is not installed yet, so `fugaro
-// update` alone would run the old binary.
+// policy-rules-skew is here, and its line is the plain `fugaro update` in the
+// states that command repairs: the rules stage (init_rules_stage.go, the
+// owner's rule of 2026-10-30) deploys this release's document over a marker
+// that is absent or below this generation, and over a document that is not the
+// one this Fugaro generates — what the warning sent the reader here for. The
+// line named --firebase-project until that stage existed, and a bare
+// --firebase-project is not a command at all: it is a string flag, so `fugaro
+// update --firebase-project` fails on the missing value. Two of its states are
+// not the update's work and carry their own line (ownFix): the hand-edited
+// marker, which the stage reports rather than deploys over, and a marker above
+// this binary's generation, whose fix is the newer binary. And cli-version's
+// line names the upgrade first: the newer release is not installed yet, so
+// `fugaro update` alone would run the old binary.
 var doctorUpdatePrefixes = []string{
 	"cli-version",
 	"plugin-pin",
@@ -605,6 +608,14 @@ func doctorShortProblem(c doctorCheck) string {
 // does not fit. That fallback is why a short fix in the table is reachable:
 // none of them is written to be replaced.
 func doctorShortFix(c doctorCheck) string {
+	if c.ownFix {
+		// The state is not `fugaro update`'s work, whatever class its ID is
+		// in: the check's own first sentence is the command, and the rest of
+		// its text stays where it is (--all, --json).
+		if own := firstSentence(c.Fix); own != "" {
+			return own
+		}
+	}
 	if doctorClassOf(c) == doctorClassUpdate {
 		if f, ok := doctorUpdateFixes[c.ID]; ok {
 			return f

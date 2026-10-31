@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -284,6 +285,89 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	}
 }
 
+// agentUpdateCheckout is agentCheckout for the WHOLE converge: an installation
+// that has something to converge (updateRig), a checkout of a repository the
+// project lists, a plugin pin older than this binary, and CLAUDECODE set. The
+// stage-order test needs every stage before the plugin to be done, which is
+// what the installation state is for; the checkout-stage tests above drive one
+// stage and need none of it.
+func agentUpdateCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]string) {
+	t.Helper()
+	r := updateRig(t)
+	r.repoReady(t)
+	// The checkout's own secrets are the last stage before the plugin, so they
+	// are stored here: the run has to reach the plugin stage for the order to
+	// be what the test reads.
+	r.seedRepoSecret(t, "bitbucket-token", []byte(tokenValue))
+	r.seedRepoSecret(t, "claude-oauth-token", []byte(tokenValue))
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", initProjectName, ""))
+	t.Chdir(dir)
+	settings := filepath.Join(dir, ".claude", "settings.json")
+	checkoutFile(t, settings, wiredAt("v0.1.0"))
+	noClaudeOnPath(t)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	useFakeClaude(t, f)
+	ran := fakeSteps(t, "", nil)
+	t.Setenv("CLAUDECODE", "1")
+	return settings, f, ran
+}
+
+// TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout: the stage ORDER,
+// which is what makes the checkout's local steps a thing a session reaches only
+// when everything before them is done. The plugin stage runs BEFORE the
+// checkout stage on the same checkout and the same pin, it is not
+// LocalUnderAgent, so under a marker it is left for the user (`fugaro
+// update-skills`) and the loop stops there: the checkout stage is blocked and
+// its local writes never happen. One stage at a time cannot see that — the
+// checkout stage alone runs its local half, which is what the tests above pin —
+// so this one drives the whole converge the way `fugaro update` does and reads
+// the two stages' lines out of the result.
+//
+// It is the failure the `--yes` help used to promise the other way round ("the
+// writes on this machine's own files ... the plugin in Claude Code"): in a
+// session whose plugin is stale, an update writes nothing at all. The help says
+// what happens now; making the plugin stage run under the marker is a product
+// decision of its own, not a wording fix.
+func TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout(t *testing.T) {
+	settings, f, ran := agentUpdateCheckout(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	var res convergeJSON
+	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
+		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
+	}
+	if err == nil {
+		t.Errorf("the run reported success with the plugin and the checkout both unmoved:\n%s", out)
+	}
+	if got, want := res.state(initflow.Plugin), "needs-you"; got != want {
+		t.Errorf("the plugin stage is %q under the marker, want %q:\n%s", got, want, out)
+	}
+	leftPlugin := false
+	for _, l := range res.Left {
+		if l["stage"] == initflow.Plugin && strings.Contains(l["text"], selfCommand()+" update-skills") {
+			leftPlugin = true
+		}
+	}
+	if !leftPlugin {
+		t.Errorf("the run does not leave the plugin wiring for the user:\n%s", out)
+	}
+	if got, want := res.state(initflow.Checkout), "blocked"; got != want {
+		t.Errorf("the checkout stage is %q, want %q:\n%s", got, want, out)
+	}
+	if detail := res.stageDetail(t, initflow.Checkout); !strings.Contains(detail, "waits for "+initflow.Plugin) {
+		t.Errorf("the checkout stage does not say what it waits for: %q", detail)
+	}
+	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin == pluginwire.OK {
+		t.Errorf("the pin moved in a session whose plugin stage never ran: %+v\n%s", r, out)
+	}
+	if len(f.Changes(t)) != 0 {
+		t.Errorf("the plugin was installed in Claude Code in a session that stopped at the plugin stage:\n%s", out)
+	}
+	if len(*ran) != 0 {
+		t.Errorf("the session reached the cloud: steps %q\n%s", *ran, out)
+	}
+}
+
 // TestUpdateAgentSessionLeavesTheCloudStepForTheUser: what a coding agent's
 // session does with the half it may not take. The step is left for the user —
 // named, with the command that runs it in a terminal, in the result and in the
@@ -298,7 +382,8 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 // reports the checkout changed with exit 0 — which is what the loop's
 // left-for-you accounting is here for. The two tests above fail with it too.
 func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
-	_, _, ran := agentCheckout(t)
+	settings, f, ran := agentCheckout(t)
+	root := filepath.Dir(filepath.Dir(settings))
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
 	res := stageOutcome(t, e, checkoutStageOf(t, e))
@@ -315,14 +400,31 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	if !strings.Contains(l.Text, "terminal window") {
 		t.Errorf("the left-for-you does not say where the step can be run: %q", l.Text)
 	}
-	if want := []string{selfCommand() + " " + updateDoor.name}; !slices.Equal(l.Commands, want) {
-		t.Errorf("the left-for-you names %q, want %q (the door this run is, in a terminal)", l.Commands, want)
+	if want := []string{
+		selfCommand() + " upgrade --yes " + root,
+		selfCommand() + " upgrade " + root,
+	}; !slices.Equal(l.Commands, want) {
+		t.Errorf("the left-for-you names %q, want %q (the parked step's own two commands, as its refusal words them)", l.Commands, want)
 	}
 
 	// The second run of the session: the pin is current, no cloud step is
 	// reached, and the step the session may not take is still left for the
 	// user. The stage's check says so (it does not read the parked step as
 	// done), the plan's line keeps naming it, and the JSON carries it.
+	//
+	// Claude Code's own record of the plugin is written here first, so that
+	// the parked step is the ONLY step of the second run's plan: with the
+	// plugin step undone too, an apply that reported the checkout unfinished
+	// for that reason would pass this test as well, and the arm it is here
+	// for (the stage's check reading a plan whose one step is parked) would
+	// never be reached.
+	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
+	// And what Claude Code answers the marketplace list with, which the fake
+	// only moves when the add call runs: the step reads that list before it
+	// decides, so a list that still lacks the marketplace is a change to make
+	// on every run.
+	f.Write(t, "marketplaces.json", ourMarket)
 	*ran = nil
 	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
 	res2 := stageOutcome(t, e2, checkoutStageOf(t, e2))
@@ -335,6 +437,9 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	if !strings.Contains(out2.String(), "pin: current") {
 		t.Errorf("the second run did not find the pin already moved:\n%s", out2)
 	}
+	if !strings.Contains(out2.String(), "plugin: current") {
+		t.Errorf("the second run's plugin step is not current, so the parked cloud step is not the only step its plan holds:\n%s", out2)
+	}
 	if !strings.Contains(out2.String(), "skipped here: cloud") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
 	}
@@ -342,7 +447,7 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" "+updateDoor.name) {
+	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" upgrade --yes "+root) {
 		t.Errorf("the JSON does not carry the step left for the user:\n%s", b)
 	}
 }
