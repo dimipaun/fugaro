@@ -199,8 +199,13 @@ test.describe('the Graph with no installation checkout', () => {
     // is still up would be about the switch's timing rather than about what the
     // tab drew.
     await page.locator(nav('spend')).click()
-    await expect(page.locator(REFUSED)).toHaveCount(1)
-    await expect(page.locator(`${PANEL} ${OPERATION}`)).toHaveText('spend.report')
+    // **Two** refusals, one per section: the stub answers neither `budget show`
+    // nor the report, and each of the tab's two reads draws its own refusal into
+    // its own section -- the caps' beside the report's, not one refusal standing
+    // for the whole panel.
+    await expect(page.locator(REFUSED)).toHaveCount(2)
+    await expect(page.locator(`${PANEL} ${OPERATION}`, { hasText: 'budget.show' })).toHaveCount(1)
+    await expect(page.locator(`${PANEL} ${OPERATION}`, { hasText: 'spend.report' })).toHaveCount(1)
     await expect(page.locator(PANEL)).not.toContainText(NO_PLAN_CHECKOUT)
 
     await page.locator(nav('projects')).click()

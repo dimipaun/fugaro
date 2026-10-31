@@ -3223,6 +3223,45 @@ describe('the sections Spend fills as their own reads land', () => {
     expect(theSpendView(document)).toEqual([])
   })
 
+  it('draws the caps answer that follows a refusal, and not the refusal it replaced', async () => {
+    // A refusal is about **one answer** and not about the installation: the read
+    // is made again on every visit, and the sentence the section draws from used
+    // to outlive the read that set it -- `forgetLive` was the only thing that
+    // cleared it, so a `budget show` the CLI refused once left the caps refusing
+    // for the rest of the session, whatever the next answer said.
+    const answers: ReturnType<typeof holding>[] = []
+    const fake = spendBridge({
+      showBudget: () => {
+        const answer = holding()
+        answers.push(answer)
+        return answer.reply()
+      },
+      runReport: () => ({ ok: true, data: { document: reportDoc('2026-10-01') } }),
+    })
+    const document = await openSpend(fake.bridge)
+    answers[0]?.release({ ok: false, reason: BUDGET_REFUSAL })
+    await flush()
+    expect(
+      holdsText(sectionOf(document, 'spend-caps'), BUDGET_REFUSAL),
+      'the refused read drew no refusal: the case proves nothing',
+    ).toBe(true)
+    // And the refusal names its own read: the caps' is `budget show`, which is
+    // what tells the two sections' refusals apart on the panel.
+    expect(operationOf(document)).toBe('budget.show')
+
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'spend').click()
+    answers[1]?.release({ ok: true, data: { document: {} } })
+    await flush()
+    const caps = sectionOf(document, 'spend-caps')
+    expect(holdsText(caps, BUDGET_REFUSAL), 'the refusal outlived the answer that replaced it').toBe(false)
+    // `data-available` is `fillSpendCaps`'s own attribute, so it says the section
+    // was drawn from an answer rather than from the sentence beside it.
+    expect(caps.getAttribute('data-available')).toBe('true')
+    expect(caps.getAttribute(BUSY_ATTRIBUTE)).toBeNull()
+  })
+
   it('starts `budget show` and the report together, and neither waits for the other', async () => {
     const caps = holding()
     const report = holding()

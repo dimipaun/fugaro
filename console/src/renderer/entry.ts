@@ -3699,8 +3699,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         rail.setSpend(railSpend(reply.data))
         setGauge(gaugeFromBudget(reply.data))
         spendBudget = reply.data
+        // The sentence and the document are one answer between them, and
+        // `paintCaps` reads the sentence first: a refusal left standing here is
+        // the section refusing for the rest of the session, whatever the reads
+        // that follow say (only `forgetLive` used to clear it).
+        spendCapsSentence = null
       } else {
         spendCapsSentence = reply.sentence
+        spendBudget = null
       }
       // The token goes first, for the report's own reason: the mark this section
       // wears may belong to a later read, and `end` would take it down with it.
