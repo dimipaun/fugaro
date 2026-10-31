@@ -115,8 +115,11 @@ type factsDriver struct {
 	objects       map[string][]byte
 	sizes         map[string]int64
 	fail          map[string]error
-	wait          time.Duration // how long a read holds the bucket open waiting for the declared width
-	want          int           // the width a read waits for; 0 reads without waiting
+	hold          map[string]bool // reads that wait for the pass's own cancel, as a real driver's do
+	cancelled     int             // reads the pass's cancel turned back
+	gaveUp        int             // reads that waited for a cancel that never came
+	wait          time.Duration   // how long a read holds the bucket open waiting for the declared width
+	want          int             // the width a read waits for; 0 reads without waiting
 	open          int
 	peak          int
 	reached       bool          // open has been want at least once
@@ -131,7 +134,7 @@ var errNoSuchObject = errors.New("no such object")
 
 func newFactsDriver() *factsDriver {
 	return &factsDriver{
-		objects: map[string][]byte{}, sizes: map[string]int64{}, fail: map[string]error{},
+		objects: map[string][]byte{}, sizes: map[string]int64{}, fail: map[string]error{}, hold: map[string]bool{},
 		width: make(chan struct{}),
 	}
 }
@@ -183,12 +186,31 @@ func (d *factsDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (*d
 	return &page, nil
 }
 
-func (d *factsDriver) NewRangeReader(_ context.Context, key string, offset, length int64, _ *driver.ReaderOptions) (driver.Reader, error) {
+func (d *factsDriver) NewRangeReader(ctx context.Context, key string, offset, length int64, _ *driver.ReaderOptions) (driver.Reader, error) {
 	d.mu.Lock()
 	err := d.fail[key]
 	body, ok := d.objects[key]
 	size := d.sizes[key]
+	hold := d.hold[key]
 	d.mu.Unlock()
+	if hold {
+		// A read that answers the context it was given, which is what a real
+		// driver's does: a pass that cancelled the reads this failure left in
+		// flight gets them back at once, and one that waits them out is what
+		// the timeout below names.
+		select {
+		case <-ctx.Done():
+			d.mu.Lock()
+			d.cancelled++
+			d.mu.Unlock()
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+			d.mu.Lock()
+			d.gaveUp++
+			d.mu.Unlock()
+			return nil, errors.New("the read waited out a bucket that had already refused another")
+		}
+	}
 	switch {
 	case err != nil:
 		return nil, err
@@ -503,6 +525,49 @@ func TestFactsFailedReadFailsThePass(t *testing.T) {
 	// in.
 	if !strings.Contains(err.Error(), "20261018-120000-bbbb/result.json") || strings.Contains(err.Error(), "aaaa") {
 		t.Fatalf("error = %v, want the first failure in read order", err)
+	}
+}
+
+// TestFactsCancelsTheReadsAFailureLeavesInFlight: a record read the bucket
+// refused ends the pass then, rather than after every read the pass had in
+// flight has come back. The driver's reads answer the context they are given,
+// as a real one's do, so a pass that waited them out is the one that stalls on
+// the first refusal of a window that has hundreds of runs in it.
+// Mutation caught: reading without the pass's own cancel, which leaves every
+// other read to its own timeout.
+func TestFactsCancelsTheReadsAFailureLeavesInFlight(t *testing.T) {
+	day := budget.Day(time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC))
+	const runs = 8
+	var seeds []factsRun
+	for i := range runs {
+		// Newest first, so the first read the pass makes is the one that fails.
+		seeds = append(seeds, factsRun{
+			slug: "acme-app", id: fmt.Sprintf("20261018-%02d0000-%04x", 17-i, i),
+			rec: runstore.Record{Repo: "acme/app", StartedAt: time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)},
+		})
+	}
+	_, d := factsBuckets(t, seeds)
+	refused := errors.New("the runs bucket refused the read")
+	d.fail["runs/acme-app/"+seeds[0].id+"/result.json"] = refused
+	for _, s := range seeds[1:] {
+		d.hold["runs/acme-app/"+s.id+"/result.json"] = true
+	}
+
+	facts, repos, err := budget.BucketFacts{Bucket: blob.NewBucket(d)}.Facts(context.Background(), day, day)
+	if !errors.Is(err, refused) {
+		t.Fatalf("error = %v, want the read the bucket refused", err)
+	}
+	if facts != nil || repos != nil {
+		t.Errorf("a failed pass returned facts %v and repos %v", facts, repos)
+	}
+	d.mu.Lock()
+	cancelled, gaveUp := d.cancelled, d.gaveUp
+	d.mu.Unlock()
+	if cancelled != runs-1 {
+		t.Errorf("%d of the %d reads the failure left in flight were cancelled, want all of them", cancelled, runs-1)
+	}
+	if gaveUp != 0 {
+		t.Errorf("%d reads waited out a bucket that had already refused one: the pass ends when the read that failed does", gaveUp)
 	}
 }
 

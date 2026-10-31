@@ -43,10 +43,18 @@ func (b BucketFacts) warnf(format string, a ...any) {
 // Facts lists, for each day of [from, to], the runs started on it. The run
 // records are read factsWorkers at a time; the walk over them is still one
 // pass in the order the runs were listed, so a day's facts and the failures
-// that reach the caller are what reading them one at a time gave, with one
-// exception: every repository is listed before any record is read, so a
-// repository whose listing fails is reported ahead of an earlier repository's
-// record that failed to read.
+// that reach the caller are what reading them one at a time gave, with these
+// exceptions, both of them about a pass that stops early rather than about
+// what it returns:
+//
+//   - Every repository is listed before any record is read, so a repository
+//     whose listing fails is reported ahead of an earlier repository's record
+//     that failed to read.
+//   - A record read the bucket refused ends the pass, so the reads it had in
+//     flight are cancelled rather than waited out and the later ones are never
+//     made. The failure reported is the one that ended the pass: a read that
+//     was cancelled has no failure of its own to report, where reading them
+//     one at a time would have given it one.
 func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]RunFact, map[string]string, error) {
 	out := map[int64][]RunFact{}
 	repos := map[string]string{}
@@ -91,9 +99,9 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 	// writes only its own index, so the pass below is the same walk whichever
 	// read finishes first.
 	//
-	// A read that fails the pass ends it: the reads still queued are not
-	// made, and the ones in flight are cancelled rather than waited out, so a
-	// bucket that refused a read does not cost the rest of the window's reads
+	// A read that fails the pass ends it: the reads in flight and the ones
+	// still to come are cancelled rather than waited out, so a bucket that
+	// refused a read does not cost the rest of the window's round trips
 	// before the caller hears about it.
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -116,7 +124,7 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 		rec, err := recs[i], errs[i]
 		switch {
 		case err == nil && rec == nil:
-			continue // not made: a hard failure ended the pass before it
+			continue // cancelled: the read that ended the pass is the failure reported, and this slot holds nothing
 		case errors.Is(err, runstore.ErrNotFound):
 			continue
 		case err != nil && !fatalRead(err):
