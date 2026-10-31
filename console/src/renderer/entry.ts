@@ -2297,7 +2297,8 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   }
   const railBridge = railBridgeFrom(scope.fugaro)
   const listed = await railBridge.listInstallations({})
-  const rows = railRows(listed) ?? currentRailRows(installation)
+  const listedRows = railRows(listed)
+  const rows = listedRows ?? currentRailRows(installation)
   const onboarding = railOnboarding(listed)
   // The rail is drawn before the dashboard for the DOM order, and a click on it
   // is answered by the dashboard's own views: `mountDashboard` binds `activate`.
@@ -2355,6 +2356,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
     rows,
+    railListed: listedRows !== null,
     onboarding,
     wiring,
     navigator: scope.navigator,
@@ -2451,6 +2453,12 @@ interface DashboardDeps {
    * only operation of this console that spends money. */
   readonly launchBridge: LaunchBridge
   readonly rows: readonly RailRow[]
+  /** railListed is whether `rows` is the CLI's own list answer rather than the
+   * fallback for a list this console could not read (`currentRailRows`). The
+   * two are not the same fact: a fallback row carries an empty `checkouts`
+   * because nothing was read, and the Graph's no-checkout card decides whether
+   * it has an action from whether the CLI listed one. */
+  readonly railListed: boolean
   /** onboarding is the screen the list answer names for a machine with no
    * installation, or `null`. */
   readonly onboarding: RailOnboarding | null
@@ -3065,8 +3073,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * ships.
    */
   const drawNoCheckout = (sentence: string): void => {
-    const drawn = renderNoCheckout(factory, sentence, theme)
+    // The card's action opens the picker, and the picker's only word about a
+    // checkout is one `Use <dir>` per checkout the CLI listed for the row. So
+    // the action is offered for an installation the CLI listed a checkout for,
+    // and the card says what to do instead when the CLI listed none -- while a
+    // console that never read the list at all keeps the action, because "no
+    // checkout is recorded" is not a claim it can make.
+    const open = railNow.find((row) => row.open)
+    const choosable = !deps.railListed || open === undefined || open.checkouts.length > 0
+    const drawn = renderNoCheckout(factory, sentence, theme, { choosable })
     replace(drawn.root)
+    if (drawn.choice === null) return
     surface.nodeOf(drawn.choice).addEventListener('click', () => {
       void railBridge.openInstallations({})
     })

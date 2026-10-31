@@ -106,6 +106,7 @@ import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
 import {
   NO_CHECKOUT_CHOICE_LABEL,
+  NO_CHECKOUT_EMPTY_SENTENCE,
   NO_CHECKOUT_HEADLINE,
   NO_CHECKOUT_KIND,
 } from '../../src/renderer/screens/nocheckout'
@@ -3416,6 +3417,48 @@ describe('the Graph’s no-checkout state', () => {
     expect(holdsText(details, NO_PLAN_CHECKOUT), 'the CLI’s own sentence is not in the disclosure').toBe(true)
     expect(holdsText(classed(card, 'unavailable-body')[0] as FakeNode, NO_PLAN_CHECKOUT)).toBe(true)
 
+    buttonLabelled(card, NO_CHECKOUT_CHOICE_LABEL).click()
+    expect(rail.at(-1), 'the card’s button does not open the picker').toEqual({
+      name: 'openInstallations',
+      args: {},
+    })
+  })
+
+  /** checkoutBridge is a console whose rail read answered with one row and
+   * whose plan read refused for want of a checkout: the two facts the card's
+   * action depends on. `checkouts` is what the CLI listed for that row, which is
+   * what the picker's own `Use <dir>` buttons are drawn from. */
+  function checkoutBridge(checkouts: readonly string[]): FakeBridge & {
+    readonly rail: readonly { readonly name: string; readonly args: unknown }[]
+  } {
+    const base = railBridge([listRow('acme', { open: true, checkouts })])
+    base.bridge['planStatus'] = () => ({ ok: false, reason: NO_PLAN_CHECKOUT })
+    return base
+  }
+
+  it('says what to do instead of drawing an action for an installation that lists no checkout', async () => {
+    const { bridge, rail } = checkoutBridge([])
+    const document = await openGraph(bridge)
+    const card = panelOf(document).children[0] as FakeNode
+    expect(card.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    // The picker's only word about a checkout is one `Use <dir>` per checkout
+    // the CLI listed, so for a row with none the card offers no action and says
+    // what records one instead.
+    expect(holdsText(card, NO_CHECKOUT_EMPTY_SENTENCE)).toBe(true)
+    expect(
+      everyNode(card).some((node) => node.tagName === 'BUTTON' && node.textContent === NO_CHECKOUT_CHOICE_LABEL),
+      'the card drew an action that leads nowhere',
+    ).toBe(false)
+    expect(rail.map((call) => call.name), 'the card opened the picker for a row it has no action for').toEqual([
+      'listInstallations',
+    ])
+  })
+
+  it('draws the action, and opens the picker, when the CLI listed a checkout', async () => {
+    const { bridge, rail } = checkoutBridge(['/home/operator/src/acme'])
+    const document = await openGraph(bridge)
+    const card = panelOf(document).children[0] as FakeNode
+    expect(holdsText(card, NO_CHECKOUT_EMPTY_SENTENCE)).toBe(false)
     buttonLabelled(card, NO_CHECKOUT_CHOICE_LABEL).click()
     expect(rail.at(-1), 'the card’s button does not open the picker').toEqual({
       name: 'openInstallations',
