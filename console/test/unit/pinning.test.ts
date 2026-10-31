@@ -262,11 +262,15 @@ describe('console/package.json', () => {
   // and no charting library -- and section 5.2 applies the pinning rule to
   // "dependencies and devDependencies alike", so a runtime dependency is
   // allowed as long as it is exact and belongs to the main process. There is
-  // one: everything a `dependencies` entry names is packed into the shipped
-  // asar, and electron-updater downloads and installs code, so it is the
-  // package whose presence needs the most saying. Task 4.4 adds it, with the
-  // one file that imports it.
-  const runtimeDependencyAllowList: string[] = ['electron-updater']
+  // two, and each with the case for it written down. Everything a
+  // `dependencies` entry names is packed into the shipped asar, so a row here
+  // is a package the operator's download carries: electron-updater downloads
+  // and installs code, and @sentry/electron is the crash reporter the owner's
+  // ruling of 2026-10-30 names, which the build wires in only when it was given
+  // a DSN and the installation's own switch says on (Task 2.1b). Task 4.4 added
+  // the first with the one file that imports it; Task 2.1b adds the second the
+  // same way, and the boundary below is what keeps the two to one importer each.
+  const runtimeDependencyAllowList: string[] = ['electron-updater', '@sentry/electron']
 
   it('ships exactly the main process runtime dependencies it names', () => {
     const runtime = Object.keys((pkg.dependencies ?? {}) as Record<string, string>).toSorted()
@@ -299,6 +303,29 @@ describe('console/package.json', () => {
       importers,
       `electron-updater is imported by ${JSON.stringify(importers)}; it must be imported by src/main/updater-electron.ts and by nothing else`,
     ).toEqual(['main/updater-electron.ts'])
+  })
+
+  it('imports the crash reporter from one file, its main entry, and no other', () => {
+    // The same shape as the update client's, and a stricter pin for the same
+    // kind of reason. `@sentry/electron` ships three entries -- `main`,
+    // `renderer` and `preload` -- and each one wires a *different process*: the
+    // renderer entry reports the page's errors, and the preload entry exists to
+    // carry the renderer's events across to main. The owner's ruling of
+    // 2026-10-30 is main process only, with no preload and no new IPC surface,
+    // so `main` and nothing else is imported, from exactly one file. A second
+    // importer is a second place a DSN, an integration or an IPC mode can be
+    // configured, which is the surface this test keeps to one.
+    const specifiers = sourceFiles().flatMap((file) =>
+      [
+        ...codeOnly(file.source).matchAll(
+          /(?:from|require\(|import\(|import)\s*['"](@sentry\/electron(?:\/[^'"]*)?)['"]/g,
+        ),
+      ].map((match) => `${file.path}: ${match[1]}`),
+    )
+    expect(
+      specifiers,
+      `@sentry/electron is reached as ${JSON.stringify(specifiers)}; it must be reached as src/main/crash-electron.ts and '@sentry/electron/main' and nothing else`,
+    ).toEqual(['main/crash-electron.ts: @sentry/electron/main'])
   })
 
   // One test per section, each naming its own offender, so "a ^ was added to

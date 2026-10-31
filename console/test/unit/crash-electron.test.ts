@@ -1,0 +1,440 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
+// The crash reporter's wiring, held to its four promises (desktop-console plan
+// Task 2.1, the SDK slice; D733, D734; design section 7.4).
+//
+// The module under test is the console's only importer of `@sentry/electron`,
+// and the SDK it imports is replaced here by a fake that models the one part of
+// 8.2.0 this wiring depends on: `init` builds the client's transport from the
+// factory it was handed, and `beforeSend` runs before an envelope reaches that
+// transport. Everything else the fake does not model is a thing this file
+// asserts the adapter never asked for.
+//
+//   1. **Nothing starts before the switch is read, and nothing starts without a
+//      DSN.** The gate is `./crash`'s, and this file is about the half the
+//      wiring owns: that a closed answer calls no `init` at all rather than
+//      starting a reporter that decides later to send nothing.
+//   2. **What reaches the transport is the scrubbed event, and only it.** The
+//      headline case below is this slice's mutation proof: with `beforeSend`
+//      changed to hand the event back untouched, the token, the home path and
+//      the message are what the transport receives.
+//   3. **Nothing is written to disk.** The SDK's default transport is the
+//      *offline* one, whose store persists every envelope it could not deliver
+//      under `<userData>/sentry/queue`. The fake models that store -- it writes
+//      when it is asked to build one -- so "the temp userData is still empty"
+//      is a claim about which transport the adapter chose rather than a claim
+//      that nothing ran.
+//   4. **No IPC, no protocol, no preload.** The fake `electron` records every
+//      one of those registrations, and `ipcMode` is asserted to be the value
+//      that keeps the SDK from making any.
+
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { inert } from '../support/fakeSecrets'
+import { scrubCrashEvent, type CrashEvent } from '../../src/main/crash'
+import { crashDsnFromBuild, startCrashReporting } from '../../src/main/crash-electron'
+import { CRASH_DSN_VARIABLE, writeCrashDsnArtifact } from '../../tools/crash-dsn'
+
+/** harness is the shared state the mocked SDK and the mocked Electron write
+ * into. It is `vi.hoisted` because both factories are hoisted above this file's
+ * imports, so neither can close over a variable declared below. */
+const harness = vi.hoisted(() => ({
+  /** The temp directory `app.getPath('userData')` answers with, per test. */
+  userData: '',
+  /** Every options object `init` was handed, in order. */
+  initOptions: [] as Record<string, unknown>[],
+  /** What the client's transport received, in order. */
+  sent: [] as unknown[],
+  /** The transport the client built, as `init` left it. */
+  transport: { send: async (_envelope: unknown): Promise<unknown> => ({ statusCode: 200 }) },
+  /** How many times the client was closed. */
+  closes: 0,
+  /** The two registrations the console must never make. */
+  ipcChannels: [] as string[],
+  registeredProtocols: [] as string[],
+  preloads: [] as string[],
+  /** Set when the offline transport's store was built -- the disk write. */
+  offlineStoreBuilt: false,
+}))
+
+vi.mock('electron', () => ({
+  app: {
+    getPath: (name: string) => (name === 'userData' ? harness.userData : ''),
+    whenReady: () => Promise.resolve(),
+  },
+  net: { request: () => ({ setHeader: () => undefined, on: () => undefined, end: () => undefined }) },
+  ipcMain: {
+    on: (channel: string) => harness.ipcChannels.push(channel),
+    handle: (channel: string) => harness.ipcChannels.push(channel),
+  },
+  protocol: { handle: (scheme: string) => harness.registeredProtocols.push(scheme) },
+  session: { defaultSession: { registerPreloadScript: () => harness.preloads.push('a preload') } },
+  webContents: { getAllWebContents: () => [] },
+  utilityProcess: undefined,
+}))
+
+vi.mock('@sentry/electron/main', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  return {
+    init: (options: Record<string, unknown>) => {
+      harness.initOptions.push(options)
+      // The client builds its transport here, from the factory it was given --
+      // the order @sentry/core's `NodeClient` has it in, and the reason the
+      // adapter can hand `init` a factory rather than an instance.
+      const factory = options.transport as (transportOptions: unknown) => { send: (e: unknown) => Promise<unknown> }
+      const transport = factory({ url: 'the endpoint the DSN resolves to', recordDroppedEvent: () => undefined })
+      harness.transport = transport
+    },
+    close: async () => {
+      harness.closes += 1
+      return true
+    },
+    makeElectronTransport: (options: unknown) => ({
+      send: async (envelope: unknown) => {
+        harness.sent.push(envelope)
+        return { statusCode: 200 }
+      },
+      flush: async () => true,
+      options,
+    }),
+    // The transport the adapter must NOT ask for: it is the SDK's default, and
+    // it persists what it could not deliver under `<userData>/sentry/queue`.
+    makeElectronOfflineTransport: () => (options: Record<string, unknown>) => {
+      harness.offlineStoreBuilt = true
+      const queue = join(harness.userData, 'sentry', 'queue')
+      mkdirSync(queue, { recursive: true })
+      writeFileSync(join(queue, 'an-undelivered-envelope'), 'the offline store')
+      return { send: async () => ({ statusCode: 200 }), flush: async () => true, options }
+    },
+  }
+})
+
+/** dsnPlaceholder is a DSN's shape -- scheme, public key, host, project id --
+ * assembled from fragments at run time, for the reason `fakeSecrets` exists and
+ * for the same reason the scrubber's own test does it: a DSN-shaped literal in
+ * this repository is a defect even when it is invented, and `example.invalid` is
+ * the reserved name, so nothing here resolves anywhere. */
+function dsnPlaceholder(): string {
+  return inert('https', '://', 'a'.repeat(32), '@', 'example', '.invalid', '/', '1')
+}
+
+/** tokenPlaceholder is a credential-shaped value, assembled here. */
+function tokenPlaceholder(): string {
+  return inert('gh', 'p_', 'a'.repeat(36))
+}
+
+/** tempAppRoot is a fresh temp directory per test: the DSN artifact's root and
+ * the prefix a kept frame's path is cut at. It is what `app.getAppPath()`
+ * answers with, and the DSN the build wrote is the only thing in it. */
+function tempAppRoot(): string {
+  return mkdtempSync(join(tmpdir(), 'fugaro-crash-app-'))
+}
+
+/** consoleFrame is a frame path that is genuinely inside this app, so the
+ * scrubber has something to place; `hostileEvent` takes the prefix because the
+ * app root is a temp directory here. */
+function appFrame(appRoot: string, ...rest: string[]): string {
+  return join(appRoot, ...rest)
+}
+
+/** writeRawDsn puts arbitrary bytes where the artifact goes. The happy path goes
+ * through the build step itself (`writeCrashDsnArtifact`); this is for the two
+ * files the build step never writes -- one that is not JSON, and one that is
+ * JSON of another shape -- which the reader still has to refuse. */
+function writeRawDsn(appRoot: string, contents: string): void {
+  mkdirSync(join(appRoot, 'dist', 'main'), { recursive: true })
+  writeFileSync(join(appRoot, 'dist', 'main', 'crash-dsn.json'), contents)
+}
+
+/** hostileEvent is an event as a reporter builds one for a real crash: the
+ * fields the scrubber keeps, and the ones it must not -- a message somebody
+ * typed, a home path in a frame, and a credential that reached the event. The
+ * second frame is inside this app's root, which is the one a payload is allowed
+ * to carry a path for. */
+function hostileEvent(appRoot: string): CrashEvent & Record<string, unknown> {
+  return {
+    event_id: 'a'.repeat(32),
+    timestamp: 1700000000.5,
+    platform: 'node',
+    level: 'error',
+    release: '0.116.0',
+    message: `launching ${inert('gh', 'p_', 'a'.repeat(36))} failed`,
+    server_name: 'build-host-a',
+    user: { id: 'person-1', email: `${inert('per', 'son-1')}@example.invalid` },
+    request: { url: `https://example.invalid/x?token=${inert('gh', 'p_', 'a'.repeat(36))}` },
+    contexts: { device: { name: 'a machine' } },
+    tags: { 'acme-secret-repo': 'owner/repo-a' },
+    extra: { task: 'acme secret task text' },
+    breadcrumbs: [{ message: 'a breadcrumb a person typed' }],
+    exception: {
+      values: [
+        {
+          type: 'Error',
+          value: `ENOENT: /Users/person-1/acme-secret-repo/x.js`,
+          mechanism: { type: 'onuncaughtexception' },
+          stacktrace: {
+            frames: [
+              { abs_path: '/Users/person-1/acme-secret-repo/dist/main/index.js', function: 'main', lineno: 12 },
+              { abs_path: appFrame(appRoot, 'dist', 'main', 'x.js'), function: 'run', lineno: 3 },
+            ],
+          },
+        },
+      ],
+    },
+  }
+}
+
+beforeEach(() => {
+  // A fresh, empty directory the SDK would write its offline queue into if the
+  // adapter asked for the offline transport. It is separate from the app root
+  // each test writes its DSN artifact into, so "nothing was written here" is a
+  // claim about the directory the SDK writes to.
+  harness.userData = mkdtempSync(join(tmpdir(), 'fugaro-crash-userdata-'))
+  harness.initOptions = []
+  harness.sent = []
+  harness.closes = 0
+  harness.ipcChannels = []
+  harness.registeredProtocols = []
+  harness.preloads = []
+  harness.offlineStoreBuilt = false
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('the crash reporter starts only when the gate opens', () => {
+  it('starts nothing while the switch is unread, off, or not a yes', () => {
+    const appRoot = tempAppRoot()
+    // The DSN the build was given is present in every case below: the point is
+    // that a DSN alone does not open the gate, which is D734 and the reason the
+    // switch is read first.
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    for (const [name, optedIn] of [
+      ['unread', null],
+      ['off', false],
+      ['the string "true"', 'true'],
+      ['the number 1', 1],
+      ['an object', { consent: true }],
+    ] as const) {
+      const handle = startCrashReporting({ optedIn, appRoot })
+      expect(harness.initOptions, name).toEqual([])
+      void handle.close()
+    }
+  })
+
+  it('starts nothing when the build carried no DSN, or a blank one', () => {
+    const appRoot = tempAppRoot()
+    // No artifact at all: the dormant build the owner's ruling describes.
+    void startCrashReporting({ optedIn: true, appRoot })
+    expect(harness.initOptions).toEqual([])
+    // A build that was handed a blank variable writes nothing, so the next call
+    // sees the same absent artifact: the blank value and the unset one are one
+    // case here, which is what they are on the build side too.
+    writeCrashDsnArtifact(appRoot, '   ')
+    void startCrashReporting({ optedIn: true, appRoot })
+    expect(harness.initOptions).toEqual([])
+    // And a file that is not the shape the build step writes is refused rather
+    // than read for whatever it holds.
+    writeRawDsn(appRoot, 'not json at all')
+    expect(crashDsnFromBuild(appRoot)).toBeNull()
+    const wrongShape = tempAppRoot()
+    writeRawDsn(wrongShape, JSON.stringify({ endpoint: 'somewhere' }))
+    expect(crashDsnFromBuild(wrongShape)).toBeNull()
+    void startCrashReporting({ optedIn: true, appRoot: wrongShape })
+    expect(harness.initOptions).toEqual([])
+  })
+
+  it('reads the artifact the build step writes, and nothing from the environment', () => {
+    // The two halves of one mechanism, held together: `npm run build`'s last
+    // step writes the artifact and this module reads it, so what the build puts
+    // down has to be what the app picks up. The env is set to a different value
+    // on purpose -- the running console is launched by whatever launcher a
+    // person used, so the environment is not the build's, and reading it would
+    // be reading a setting of the machine.
+    const appRoot = tempAppRoot()
+    const dsn = dsnPlaceholder()
+    expect(writeCrashDsnArtifact(appRoot, dsn)).toBe('written')
+    vi.stubEnv(CRASH_DSN_VARIABLE, 'a value the running app must not read')
+    expect(crashDsnFromBuild(appRoot)).toBe(dsn)
+    vi.unstubAllEnvs()
+  })
+
+  it('the build step removes the artifact when it was given no DSN', () => {
+    // This is the dormant release: the owner's build without the variable. The
+    // removal is the assertion that matters -- an artifact an earlier build left
+    // in the same directory would otherwise ship one build's DSN inside a bundle
+    // whose builder believes reporting is off.
+    const appRoot = tempAppRoot()
+    expect(writeCrashDsnArtifact(appRoot, dsnPlaceholder())).toBe('written')
+    expect(crashDsnFromBuild(appRoot)).not.toBeNull()
+    expect(writeCrashDsnArtifact(appRoot, '   ')).toBe('removed')
+    expect(crashDsnFromBuild(appRoot)).toBeNull()
+    expect(writeCrashDsnArtifact(appRoot, undefined)).toBe('removed')
+    expect(crashDsnFromBuild(appRoot)).toBeNull()
+  })
+
+  it('the build step names the release variable once, and the app never reads it', () => {
+    // One spelling in the tree, and this is it: a second one could only drift
+    // from this one, and a drifted name means a release build the owner believes
+    // reports and a console that stays dormant.
+    expect(CRASH_DSN_VARIABLE).toBe('FUGARO_CONSOLE_CRASH_DSN')
+    const reader = readFileSync(
+      fileURLToPath(new URL('../../src/main/crash-electron.ts', import.meta.url)),
+      'utf8',
+    )
+    expect(reader).not.toContain(CRASH_DSN_VARIABLE)
+    expect(reader).not.toContain('process.env')
+  })
+
+  it('starts the client with the artifact DSN when the switch says yes', () => {
+    const appRoot = tempAppRoot()
+    const dsn = dsnPlaceholder()
+    writeCrashDsnArtifact(appRoot, dsn)
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    expect(harness.initOptions).toHaveLength(1)
+    expect(harness.initOptions[0]?.dsn).toBe(dsn)
+    void handle.close()
+  })
+
+  it('the entry point starts it once, with the switch unread, and closes it on the way out', () => {
+    // `src/main/index.ts` cannot be imported under `vitest` -- it imports the
+    // Electron runtime -- so this is the text of it, which is what
+    // `test/unit/startup.test.ts` reads too. Three shapes, because each one
+    // fails differently: a second call would start a second client (two
+    // transports, two event ids), a call with anything but `null` would be a
+    // slice deciding the switch before the switch exists, and no call on the
+    // quit path is a report cut off mid-send.
+    const entry = readFileSync(fileURLToPath(new URL('../../src/main/index.ts', import.meta.url)), 'utf8')
+    const starts = [...entry.matchAll(/startCrashReporting\(\{([^}]*)\}\)/g)].map((match) => match[1]?.trim())
+    expect(starts).toEqual(['optedIn: null, appRoot: app.getAppPath()'])
+    expect([...entry.matchAll(/crashReporting\?\.close\(\)/g)]).toHaveLength(1)
+  })
+})
+
+describe('what the client is told', () => {
+  it('carries no default integrations and no IPC of either kind', () => {
+    const appRoot = tempAppRoot()
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    const options = harness.initOptions[0] ?? {}
+    // `defaultIntegrations: false` is what keeps out the three the header of
+    // the module names: the preload injection, the main-process session and
+    // the minidump integration -- the last two of which are the session file
+    // and the native dumps.
+    expect(options.defaultIntegrations).toBe(false)
+    // Neither `Classic` (1) nor `Protocol` (2): the SDK's `IPCMode` has no
+    // member for "off", so the adapter spells it 0 and this pins the number.
+    expect(options.ipcMode).toBe(0)
+    // Nothing else is added: an integrations list here would be a way to turn
+    // one of those back on without touching CRASH_CLIENT_OPTIONS.
+    expect(options.integrations).toBeUndefined()
+    void handle.close()
+  })
+
+  it('hands `init` the SDK transport that keeps nothing on disk', () => {
+    const appRoot = tempAppRoot()
+    const userData = harness.userData
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    // The factory, not an instance: `init`'s own options type takes a factory,
+    // and the client is what calls it with the resolved endpoint.
+    expect(typeof harness.initOptions[0]?.transport).toBe('function')
+    expect(harness.offlineStoreBuilt).toBe(false)
+    expect(readdirSync(userData)).toEqual([])
+    void handle.close()
+  })
+
+  it('registers no ipcMain handler, no protocol and no session preload', () => {
+    const appRoot = tempAppRoot()
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    expect(harness.ipcChannels).toEqual([])
+    expect(harness.registeredProtocols).toEqual([])
+    expect(harness.preloads).toEqual([])
+    void handle.close()
+  })
+
+  it('closes the client when the caller closes the handle', async () => {
+    const appRoot = tempAppRoot()
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    await handle.close()
+    expect(harness.closes).toBe(1)
+  })
+
+  it('closing a reporter that never started closes nothing', async () => {
+    const appRoot = tempAppRoot()
+    await startCrashReporting({ optedIn: null, appRoot }).close()
+    expect(harness.closes).toBe(0)
+  })
+})
+
+describe('what reaches the transport', () => {
+  it('a thrown error arrives scrubbed, and nothing else does', async () => {
+    const appRoot = tempAppRoot()
+
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    const options = harness.initOptions[0] ?? {}
+    const beforeSend = options.beforeSend as (event: CrashEvent) => unknown
+    const raw = hostileEvent(appRoot)
+
+    // The SDK's own order: it builds the event, runs `beforeSend`, and sends
+    // what comes back. The mutation proof for this slice is one edit to the
+    // adapter -- `beforeSend: (event) => event` -- after which the token, the
+    // home path and the message below are what the transport holds.
+    const kept = beforeSend(raw)
+    await harness.transport.send(kept)
+
+    const onTheWire = JSON.stringify(harness.sent)
+    expect(onTheWire).not.toContain(tokenPlaceholder())
+    expect(onTheWire).not.toContain('person-1')
+    expect(onTheWire).not.toContain('acme-secret-repo')
+    expect(onTheWire).not.toContain('acme secret task text')
+    expect(onTheWire).not.toContain('build-host-a')
+    expect(onTheWire).not.toContain('failed')
+    expect(onTheWire).not.toContain('a breadcrumb a person typed')
+    // What is left is the type and the frames, which is the whole payload rule.
+    expect(harness.sent).toEqual([scrubCrashEvent(raw, appRoot)])
+    expect(kept).toEqual({
+      event_id: 'a'.repeat(32),
+      timestamp: 1700000000.5,
+      platform: 'node',
+      level: 'error',
+      release: '0.116.0',
+      exception: {
+        values: [
+          {
+            type: 'Error',
+            stacktrace: {
+              frames: [
+                { filename: '<external>', function: 'main', lineno: 12 },
+                { filename: 'dist/main/x.js', function: 'run', lineno: 3 },
+              ],
+            },
+          },
+        ],
+      },
+    })
+    void handle.close()
+  })
+
+  it('the temp userData is untouched by a report that was sent', async () => {
+    const appRoot = tempAppRoot()
+    const userData = harness.userData
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    const beforeSend = (harness.initOptions[0] ?? {}).beforeSend as (event: CrashEvent) => unknown
+    await harness.transport.send(beforeSend(hostileEvent(appRoot)))
+    expect(readdirSync(userData)).toEqual([])
+    expect(harness.offlineStoreBuilt).toBe(false)
+    void handle.close()
+  })
+})

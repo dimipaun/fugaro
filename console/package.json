@@ -14,7 +14,7 @@
   },
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.bundle-renderer.json && node .bundle-renderer/index.js",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.bundle-renderer.json && node .bundle-renderer/index.js && tsc -p tsconfig.crash-dsn.json && node .crash-dsn/index.js",
     "test:unit": "vitest run --dir test/unit",
     "test:e2e": "npm run build && playwright test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
@@ -36,6 +36,7 @@
       "THIRD_PARTY_NOTICES.md",
       "dist/main/**/*.js",
       "!dist/main/fuses.js",
+      "dist/main/crash-dsn.json",
       "dist/preload/index.js",
       "dist/preload/installations.js",
       "dist/preload/confirm.js",
@@ -114,6 +115,7 @@
     "vitest": "5.0.5"
   },
   "dependencies": {
+    "@sentry/electron": "8.2.0",
     "electron-updater": "6.8.10"
   }
 }

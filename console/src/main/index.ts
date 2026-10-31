@@ -61,6 +61,8 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import { startCrashReporting } from './crash-electron'
+import type { CrashReportingHandle } from './crash-electron'
 import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
@@ -877,10 +879,26 @@ const lifecycle = createConsoleLifecycle({
 let picker: InstallationPicker | null = null
 
 /**
+ * crashReporting is the handle `startCrashReporting` answered, and it is null
+ * until `main` runs -- and stays null when the gate is shut, which is every
+ * start today. The quit path below is the one thing that needs it.
+ */
+let crashReporting: CrashReportingHandle | null = null
+
+/**
  * main is what `whenReady` resolves into: serve the bundle once, then run the
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
+  // **The crash reporter comes up before anything it could report on.** It is
+  // dormant: `optedIn` is `null` -- nothing has read the installation's switch
+  // yet, and reading it is the switch slice's (T2.2) -- and
+  // `crashReportingDecision` makes that third state off, so this call starts
+  // nothing today and will start reporting the day the switch can say yes *and*
+  // the build was given a DSN. It is here rather than beside the window because
+  // a crash before the window opens is the one an operator most wants back, and
+  // because the handle has to be closed on the way out.
+  crashReporting = startCrashReporting({ optedIn: null, appRoot: app.getAppPath() })
   // The icon first, and before any window exists: an unpackaged console has no
   // bundle to carry `build/icon.png`, so until this runs the dock shows
   // Electron's own icon rather than the website's mark (the owner's brief of
@@ -1055,10 +1073,16 @@ app.on('before-quit', (event) => {
   // it running would leave a check that finishes -- and prompts -- into a
   // process on its way out.
   updates?.stop()
-  void boundSource
-    .close()
-    .catch(() => undefined)
-    .finally(() => app.quit())
+  // The reporter goes with the child, and the quit waits for both: `close`
+  // flushes the request the transport has in flight and gives up on it after the
+  // SDK's own timeout, so a report that was on its way is not cut off by the
+  // process ending. The two run together rather than one after the other,
+  // because neither has anything to do with the other -- one is a socket and one
+  // is a `SIGTERM`.
+  void Promise.all([
+    crashReporting?.close() ?? Promise.resolve(),
+    boundSource.close().catch(() => undefined),
+  ]).finally(() => app.quit())
 })
 
 // Note which of the two halves this calls. `serveBundle` here would re-register

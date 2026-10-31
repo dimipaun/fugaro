@@ -94,9 +94,10 @@ export function crashReportingDecision(input: CrashReportingInput): CrashReporti
  * CRASH_CLIENT_OPTIONS is what the SDK slice passes to the client's `init`
  * beside the DSN, and each entry is a decision rather than a default:
  *
- *   - nothing is collected that is about the *person* -- no default PII, no
- *     breadcrumb trail, and no local variables off the stack, which is where a
- *     credential is most likely to be sitting when something throws;
+ *   - nothing is collected that is about the *person* -- no user information
+ *     filled in from the instrumentation, no breadcrumb trail, and no local
+ *     variables off the stack, which is where a credential is most likely to be
+ *     sitting when something throws;
  *   - nothing is collected that is about the *session* -- no session tracking
  *     and no client reports, so the service receives error events and no
  *     account of who was running the app or for how long;
@@ -112,11 +113,15 @@ export function crashReportingDecision(input: CrashReportingInput): CrashReporti
  *
  * The names are the SDK's own and are not checked here, since this module
  * imports nothing: the slice that adds the dependency confirms each one against
- * the pinned version before it initialises anything.
+ * the pinned version before it initialises anything, and two of them moved in
+ * the two major versions between here and 11.7.0 -- `sendDefaultPii` is
+ * `dataCollection.userInfo` there, and `autoSessionTracking` is gone, because
+ * v8's sessions arrive only through the `mainProcessSessionIntegration` that
+ * `defaultIntegrations: false` refuses to install. Both corrections are the SDK
+ * slice's, and the object below is what is handed to `init`.
  */
 export const CRASH_CLIENT_OPTIONS = Object.freeze({
-  sendDefaultPii: false,
-  autoSessionTracking: false,
+  dataCollection: Object.freeze({ userInfo: false }),
   sendClientReports: false,
   attachStacktrace: false,
   maxBreadcrumbs: 0,

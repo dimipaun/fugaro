@@ -16,6 +16,11 @@ playwright-report/
 # The screenshot tool's build output (`tsconfig.screenshots.json`, owner ruling
 # 2026-10-20): the compiled tool `npm run screenshots` runs.
 .screenshots/
+# The DSN build step's build output (`tsconfig.crash-dsn.json`, Task 2.1b): the
+# compiled tool `npm run build` runs. The artifact that tool writes is under
+# `dist/`, above, and is gitignored with the rest of the build's output -- which
+# is the point of writing it there: no build's DSN is ever a committed file.
+.crash-dsn/
 # What that tool leaves: the PNGs the website's Console page is illustrated from,
 # and their manifest. Never committed -- a picture of the console is an artefact
 # of a machine and a day, and the website owner copies the one they want into

@@ -504,11 +504,20 @@ describe('the packaging configuration the fuses belong to', () => {
     // is not shipped; and the two compiled files the app never loads -- the
     // packing hook (it needs a devDependency) and the fixture loader (tests and
     // the recorder) -- are excluded by name.
+    //
+    // The one non-JavaScript file the main process loads at runtime is Task
+    // 2.1b's DSN artifact, named exactly like the preloads: `npm run build`
+    // writes `dist/main/crash-dsn.json` only when the release build was given a
+    // DSN, and `src/main/crash-electron.ts` reads it back at startup. It is not
+    // a `.js` module and no glob would carry it, so it is an exact path -- and a
+    // list that omitted it would ship a console whose reporting can never start.
+    // Note what it is not: a source map, or any other build output of `tsc`.
     expect(build.files).toEqual([
       'LICENSE.md',
       'THIRD_PARTY_NOTICES.md',
       'dist/main/**/*.js',
       '!dist/main/fuses.js',
+      'dist/main/crash-dsn.json',
       'dist/preload/index.js',
       'dist/preload/installations.js',
       'dist/preload/confirm.js',
@@ -544,7 +553,7 @@ describe('the packaging configuration the fuses belong to', () => {
     const patterns = build.files ?? []
     for (const pattern of patterns) {
       expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css)|dist\/bundle\/[A-Za-z-]+\.woff2|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/,
+        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css|json)|dist\/bundle\/[A-Za-z-]+\.woff2|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/,
       )
     }
     const ships = (file: string): boolean => {
@@ -590,6 +599,9 @@ describe('the packaging configuration the fuses belong to', () => {
     ]) {
       expect(ships(dead), `${dead} must not ship`).toBe(false)
     }
+    // And the one file the main process reads that is not compiled JavaScript:
+    // it is data rather than code, and it is still loaded at runtime.
+    expect(ships('dist/main/crash-dsn.json'), 'the crash reporter reads this at startup').toBe(true)
   })
 
   it('ships no source map', () => {
@@ -597,8 +609,10 @@ describe('the packaging configuration the fuses belong to', () => {
     // the asar is a full copy of the sources with a pointer to it. Every
     // include in the list ends in `.js`, names one of the `.html` documents, or
     // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
-    // pattern that started to would fail here.
-    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css|md|woff2)$/)
+    // pattern that started to would fail here. Task 2.1b's DSN artifact is the
+    // one `.json` in the list, and it is a value the build baked in rather than
+    // a copy of any source.
+    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css|json|md|woff2)$/)
   })
 
   it('publishes nowhere: publish is null, not merely absent', () => {

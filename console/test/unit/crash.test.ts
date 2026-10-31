@@ -1110,10 +1110,14 @@ describe('crash', () => {
 
   it('no minidump, no session and no client report', () => {
     // Each option is pinned by name, because the wiring's whole safety is that
-    // the SDK is told these things rather than trusted to default to them.
+    // the SDK is told these things rather than trusted to default to them. The
+    // names are the pinned SDK's own (@sentry/core 11.7.0): `sendDefaultPii` is
+    // `dataCollection.userInfo` there, and `autoSessionTracking` no longer
+    // exists at all -- a session now arrives only through the
+    // `mainProcessSessionIntegration` that `defaultIntegrations: false` keeps
+    // out, which is why the key is gone rather than renamed.
     expect(CRASH_CLIENT_OPTIONS).toEqual({
-      sendDefaultPii: false,
-      autoSessionTracking: false,
+      dataCollection: { userInfo: false },
       sendClientReports: false,
       attachStacktrace: false,
       maxBreadcrumbs: 0,
