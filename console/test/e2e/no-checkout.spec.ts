@@ -37,11 +37,14 @@
 // `coordinator-status.json` the project view draws. Nothing here reaches the
 // network or a real CLI.
 
+import { realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { isToolOwnedPath } from '../../src/main/installationstate'
 import { PICKER_ENTRY_URL } from '../../src/main/picker'
 import {
   NO_CHECKOUT_CHOICE_CLASS,
@@ -86,6 +89,15 @@ function nav(view: string): string {
  * absence of a button rather than the button. It exists, because a checkout is a
  * directory. */
 const CHECKOUT = consoleDir
+
+/** CHECKOUT_TOOL_OWNED is whether the picker would refuse this repository's own
+ * directory as a checkout. It is a fact about where the repository was cloned to
+ * and not about the console: CI clones into a workspace directory, and a scratch
+ * clone under the OS's temporary root is a directory the picker never offers
+ * (`isToolOwnedPath`, asked about both spellings the picker asks about --
+ * `src/main/picker.ts`). */
+const CHECKOUT_TOOL_OWNED =
+  isToolOwnedPath(CHECKOUT, tmpdir()) || isToolOwnedPath(realpathSync(CHECKOUT), tmpdir())
 
 let cli: CliStub
 let app: ElectronApplication
@@ -139,6 +151,16 @@ test.describe('the Graph with no installation checkout', () => {
   })
 
   test('opens the installation picker and its chooser with the card’s one action', async () => {
+    // The chooser is one `Use <dir>` button per checkout the CLI listed, and the
+    // picker offers none for a path it refuses. A repository cloned under the
+    // OS's temporary root therefore has no chooser button to find, and this case
+    // -- which is about the chooser -- is skipped with that reason rather than
+    // failing on the machine's clone path. The card's action itself is asserted
+    // in the case above, which runs everywhere.
+    test.skip(
+      CHECKOUT_TOOL_OWNED,
+      `this repository is checked out under a temporary root (${CHECKOUT}), and the picker never offers one as a checkout`,
+    )
     const opened = app.waitForEvent('window')
     await page.locator(`${CARD} button.${NO_CHECKOUT_CHOICE_CLASS}`).click()
     const picker = await opened

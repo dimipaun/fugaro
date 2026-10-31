@@ -49,6 +49,26 @@
 #     view makes (GV2.3b), and it is the one the stub answers with `--all` and
 #     without it alike: `--all` is the screen's own control over how much of the
 #     document the CLI lists, and the document is the same document.
+#   * `report --json [--by B] [--since S] [--until D] [--repo R] --project P` --
+#     one document per `--since`, in `spend-report-<since>.json` beside it, which
+#     `cliStub.ts`'s `seedSpend` writes. This is the read the **Spend** view's
+#     report section makes (console 0.116.1's fix, `spend.report`), and it is the
+#     read those specs need to be slow on purpose: `spend-report-<since>-delay.txt`
+#     holds a number of seconds the stub sleeps **before** it prints, so a spec
+#     can make the window the operator asked for first answer **last** and watch
+#     which view the console keeps. `--since` is required and not defaulted: the
+#     document is chosen by it, and a read with no window is one this stub cannot
+#     answer rather than one it guesses a document for. No document seeded for a
+#     window is refused (exit 2), exactly as an unsupported command is, because
+#     the specs that are *not* about Spend must keep seeing a refused report
+#     (`test/e2e/no-checkout.spec.ts`).
+#   * `budget show --json [--repo R] [--all] [--compute] --project P` -- the
+#     document in `spend-budget.json` beside it, likewise `seedSpend`'s, and
+#     likewise slow on purpose through `spend-budget-delay.txt`. This is the read
+#     the Spend view's **caps** section makes (`budget.show`), and the one the
+#     owner's own installation answers in about a second while the report takes
+#     about twenty-three: a spec that wants the two sections to land apart gives
+#     the two files different delays.
 #   * `coordinator status --from-store --all --json --project P` -- the document
 #     in `coordinator-status.json` beside it, which `cliStub.ts` writes from the
 #     committed `test/fixtures/coordinator-status.json` (Bitbucket credentials
@@ -102,6 +122,25 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 refuse() {
   echo "the stub fugaro: $1" >&2
   exit 2
+}
+
+# print_seeded prints the document a read answers with, after sleeping the
+# seconds a spec asked that read to take. `document` is the file the answer is
+# printed from, `delay` the optional file holding the seconds to wait first.
+# The delay exists so a spec can make one window's read answer after another's,
+# which is what the Spend fix's own specs are about: the console must keep the
+# view of the change the operator made last, whatever order the answers arrive
+# in.
+print_seeded() {
+  document=$1
+  delay=$2
+  if [ ! -f "$document" ]; then
+    return 1
+  fi
+  if [ -f "$delay" ]; then
+    sleep "$(cat "$delay")"
+  fi
+  cat "$document"
 }
 
 command=${1:-}
@@ -172,6 +211,86 @@ case "$command" in
     ;;
   doctor)
     printf '{"ok":true,"checks":[{"id":"project","ok":true}],"project":"%s"}\n' "$project"
+    ;;
+  report)
+    # The Spend view's report section (console 0.116.1): one document per
+    # `--since`, and a spec-chosen delay before it is printed. The row's own
+    # arguments are `--by`, `--since`, `--until` and `--repo`, all of them
+    # values; `--since` is the one this branch holds, because it is the one that
+    # names which document answers.
+    if [ "${1:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'report --json' and was asked for 'report $*'"
+    fi
+    shift
+    since=''
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --by | --until | --repo)
+          if [ $# -lt 2 ]; then
+            refuse "'report --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        --since)
+          if [ $# -lt 2 ]; then
+            refuse "'report --json' was given '--since' with no value"
+          fi
+          since=$2
+          shift 2
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'report --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'report --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if [ -z "$since" ]; then
+      refuse "'report --json' was asked for no --since, and this stub answers one document per window"
+    fi
+    if ! print_seeded "${here}/spend-report-${since}.json" "${here}/spend-report-${since}-delay.txt"; then
+      refuse "no report document is seeded for '${since}' beside this stub"
+    fi
+    ;;
+  budget)
+    # The Spend view's caps section (console 0.116.1), the read the owner's own
+    # installation answers in about a second. `--repo`, `--all` and `--compute`
+    # are the row's optional flags and are accepted as the allow-list emits them;
+    # the document is one, because the caps are a fact about the installation
+    # rather than about the view the operator chose.
+    if [ "${1:-}" != 'show' ] || [ "${2:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'budget show --json' and was asked for 'budget $*'"
+    fi
+    shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --repo)
+          if [ $# -lt 2 ]; then
+            refuse "'budget show --json' was given '--repo' with no value"
+          fi
+          shift 2
+          ;;
+        --all | --compute)
+          shift
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'budget show --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'budget show --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if ! print_seeded "${here}/spend-budget.json" "${here}/spend-budget-delay.txt"; then
+      refuse 'no budget document is seeded beside this stub'
+    fi
     ;;
   plan)
     # `plan status --json` takes one flag of its own -- `--all`, the Graph
@@ -288,6 +407,6 @@ case "$command" in
       "$project" "$run_id" "$repository" "$run_id"
     ;;
   *)
-    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json' and 'run --task-file - --json', and was asked for '$command'"
+    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json' and 'run --task-file - --json', and was asked for '$command'"
     ;;
 esac

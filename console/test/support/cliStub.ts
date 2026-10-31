@@ -162,6 +162,25 @@ export interface SeededLaunchRecords {
   readonly checkouts?: readonly SeededCheckout[]
 }
 
+/** SeededSpendRead is one seeded Spend read: the document the stub answers with
+ * and how long it takes to answer. */
+export interface SeededSpendRead {
+  readonly document: unknown
+  /** the seconds the stub sleeps before it prints the document. Absent is
+   * immediate, which is what a spec that is not about timing wants. */
+  readonly delaySeconds?: number
+}
+
+/** SeededSpend is the Spend view's two reads, as a spec seeds them. Both keys
+ * are optional, and a key left out is a read the stub refuses rather than one it
+ * answers with an empty document -- see `CliStub.seedSpend`. */
+export interface SeededSpend {
+  /** one report document per `--since` the screen may ask for */
+  readonly reports?: Readonly<Record<string, SeededSpendRead>>
+  /** the caps document, which is one for the installation and not per window */
+  readonly budget?: SeededSpendRead
+}
+
 /** CliStub is an installed stub, and the environment that makes the console
  * find it. */
 export interface CliStub {
@@ -268,6 +287,23 @@ export interface CliStub {
    * change: a **chip** exists only for a finished release, and the committed
    * document has none (the unit suite patches the same flag). */
   seedPlan(document: unknown): void
+  /** seedSpend seeds the Spend view's two reads (console 0.116.1): the report
+   * section's document per window, and the caps section's one, each with the
+   * seconds the stub waits before it prints.
+   *
+   * **The delay is the point of the seeder.** The fix's claim is that a control
+   * change is answered in the frame it happened in and that the view of the
+   * *last* change is the one that stays, whatever order the answers arrive in --
+   * and that is only observable if one read can be made to answer after another.
+   * `reports` is keyed by the `--since` the picker sends (`7d`, `30d`, `90d`,
+   * `12w`, or a UTC day): the stub answers the document seeded under the window
+   * the console asked for and refuses every window it has no document for, so a
+   * spec that seeds two windows says which two the screen may ask for.
+   *
+   * Unseeded, no document exists beside the stub and both reads are refused with
+   * exit 2, which is the state `test/e2e/no-checkout.spec.ts` relies on: the
+   * specs that are not about Spend must keep seeing a refused report. */
+  seedSpend(spend: SeededSpend): void
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
   setVersion(line: string): void
@@ -472,6 +508,25 @@ export function installCliStub(line: string): CliStub {
     seedPlan(document: unknown): void {
       plan = `${JSON.stringify(document)}\n`
       writeSupport()
+    },
+    seedSpend(spend: SeededSpend): void {
+      // Beside **both** copies of the stub, like every other document: either
+      // copy can be the one the resolution picks, and a spec must not have to
+      // know which. The documents are one JSON object per file and the delays
+      // one number per file, because that is what the stub reads them as.
+      for (const where of [dir, wellKnown]) {
+        for (const [since, read] of Object.entries(spend.reports ?? {})) {
+          writeFileSync(join(where, `spend-report-${since}.json`), `${JSON.stringify(read.document)}\n`)
+          if (read.delaySeconds !== undefined) {
+            writeFileSync(join(where, `spend-report-${since}-delay.txt`), `${read.delaySeconds}\n`)
+          }
+        }
+        if (spend.budget === undefined) continue
+        writeFileSync(join(where, 'spend-budget.json'), `${JSON.stringify(spend.budget.document)}\n`)
+        if (spend.budget.delaySeconds !== undefined) {
+          writeFileSync(join(where, 'spend-budget-delay.txt'), `${spend.budget.delaySeconds}\n`)
+        }
+      }
     },
     setVersion(next: string): void {
       for (const where of [dir, wellKnown]) {
