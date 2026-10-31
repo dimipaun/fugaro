@@ -486,7 +486,13 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	case "ship":
 		return fmt.Sprintf("%sreview: ship in round %d", who, last.Round)
 	case "none":
-		return fmt.Sprintf("%sreview round %d: skipped, no verdict", who, last.Round)
+		if last.Tier == runstore.TierFirst {
+			return fmt.Sprintf("first-line review round %d: skipped, no verdict", last.Round)
+		}
+		// A senior round is never skipped: this is one whose answer carried no
+		// parseable verdict, retried once and then let through (seniorLoop,
+		// Decide), and the line is the reason Decide gave for it.
+		return fmt.Sprintf("%sreview round %d returned no parseable verdict: tolerated", who, last.Round)
 	}
 	return fmt.Sprintf("%sreview round %d: %s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last))
 }

@@ -2669,18 +2669,27 @@ func (r *run) agentLoop(ctx context.Context) {
 // is followed by another cheap loop (firstLine) instead of going straight to
 // the next senior round; a bounce with FirstRounds == 0 behaves like a plain
 // review step, since there is no cheap loop to bounce back to.
+//
+// A round whose answer carries no parseable verdict is asked once more
+// (seniorRound) and, failing that, recorded as the `none` a skipped review is
+// recorded as and let through: a reviewer that answered nothing asked for
+// nothing, so it is not a finding, and no fix round and no phantom blocker are
+// spent on it (D4's rule is about a round that names what it wants). The run
+// then carries on to finalize, where the record and the pull request status say
+// what happened (Decide, reviewsPart).
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
 	for round := 1; ; round++ {
-		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
-		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
-		// The review's own session is saved like a work stage's (C1.17,
-		// D138), and not made the one a fix resumes: see noteReviewSession.
-		r.noteReviewSession(req, res)
-		r.countTokens(res)
+		v, parsed, ok := r.seniorRound(ctx, round, reviewPrompt)
 		if !ok {
 			return
 		}
-		v := ParseVerdict(res)
+		if !parsed {
+			r.lastSenior = seniorRound{Round: round}
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none"})
+			r.save(ctx)
+			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on without one", "round", round)
+			return
+		}
 		// The round is kept whole as well as counted: the mode's threshold
 		// table reads the findings' scores, which the summary does not carry
 		// (outcome.go, T3.1).
@@ -2704,6 +2713,38 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			}
 		}
 	}
+}
+
+// noVerdictRetries is how many times one round's review is asked again after an
+// answer with no parseable verdict: one, so a round costs at most two calls.
+const noVerdictRetries = 1
+
+// seniorRound runs one senior review round's stage calls, retrying the review
+// when the answer carries no parseable verdict (TryVerdict). It reports the
+// verdict, whether there was one to read, and whether the run may go on at all
+// — a failed stage ends the loop whether or not the round had a verdict.
+//
+// The retry is a stage of its own, in a session of its own, exactly as another
+// round would be: the reviewer is asked the same question again rather than
+// reminded of the answer that did not parse, because what the run needs is a
+// verdict, not a repair of the one it got.
+func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (Verdict, bool, bool) {
+	for attempt := 1; attempt <= noVerdictRetries+1; attempt++ {
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
+		// The review's own session is saved like a work stage's (C1.17,
+		// D138), and not made the one a fix resumes: see noteReviewSession.
+		r.noteReviewSession(req, res)
+		r.countTokens(res)
+		if !ok {
+			return Verdict{}, false, false
+		}
+		if v, parsed := TryVerdict(res); parsed {
+			return v, true, true
+		}
+		r.d.Log.Warn("the review round produced no parseable verdict", "round", round, "attempt", attempt)
+	}
+	return Verdict{}, false, true
 }
 
 // fix runs a fix stage for review v in the implement session and reports the
