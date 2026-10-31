@@ -13,6 +13,13 @@
 //      have carried. The queue they go into (`dataLayer`) does not exist before a grant, and
 //      the cases below watch it rather than the source: the two links are pressed and the
 //      booking frame reports on a page that has granted nothing, and the queue is still absent.
+//
+//      **Each action is also one of the pixel's, and it waits for the marketing grant** (the
+//      owner's ruling of 2026-10-31). The same press reports both, so the same cases are made
+//      twice: `ViewContent` for the install press, `Contact` for the chat press and `Lead` for a
+//      booking, each sent into `fbq`'s queue once per action and only while that visitor has
+//      granted the marketing consent — and the pixel's `PageView`, which is the site's and fires
+//      wherever a visitor reads, on the same grant. Neither grant stands for the other.
 //   2. **A booking is the widget's own booking report, from one sender only.** `demo_booked` is
 //      a message Calendly's inline widget posts when a booking is made, so it is accepted only
 //      when the message *is* that report — the widget posts several others over the same
@@ -52,7 +59,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fakeDOM } from './lib/dom.mjs'
-import { DIST, builtPages, findAll, parse, textOf } from './lib/html.mjs'
+import { DIST, builtPages, findAll, parse, siteFacts, textOf } from './lib/html.mjs'
 import { loadLanding } from '../src/lib/landing.mjs'
 import { CONSENT_KEY, MARKETING_CONSENT_KEY } from '../src/lib/consent-key.mjs'
 
@@ -93,6 +100,13 @@ const CHAT_LABEL = 'Chat with the founder'
 // literal — it is the file's link, read the way the script reads it.
 const BOOKING_ORIGIN = new URL(LANDING.calendlyURL).origin
 
+// The pixel's id, read from `site.yaml` the way the banner carries it: it is a public identifier
+// with one home, and a literal here would be the second copy this repository refuses. The owner
+// supplied it on 2026-10-31, so the built page loads the pixel — which is what lets the cases
+// below watch its three events on the page the site actually serves.
+const PIXEL_ID = siteFacts().marketing.metaPixelID
+assert.notEqual(PIXEL_ID, '', 'site.yaml carries no pixel id, so the pixel is switched off and the cases below would watch nothing')
+
 /** The built campaign page, as the artifact serves it. */
 function builtPage(rel = CAMPAIGN_REL) {
   const found = builtPages(DIST).find((one) => one.rel === rel)
@@ -105,12 +119,12 @@ function builtPage(rel = CAMPAIGN_REL) {
  * `search` is the campaign parameters the ads carry — and, in the cases below, the ones the
  * page must not pass on.
  */
-function address(search = '') {
+function address(search = '', path = CAMPAIGN_PATH) {
   return {
-    href: `${PAGE_ORIGIN}${CAMPAIGN_PATH}${search}`,
+    href: `${PAGE_ORIGIN}${path}${search}`,
     origin: PAGE_ORIGIN,
     hostname: 'site.example',
-    pathname: CAMPAIGN_PATH,
+    pathname: path,
     search,
     hash: '',
   }
@@ -135,8 +149,8 @@ function withFrame(html) {
  * already holds — the answers they have given on other pages — and `granted` presses the
  * banner's own yes, which on a campaign page answers both questions at once.
  */
-function run({ search = '', storage = {}, granted = true, html = withFrame(builtPage()) } = {}) {
-  const dom = fakeDOM(html, { location: address(search), storage })
+function run({ search = '', storage = {}, granted = true, html = withFrame(builtPage()), location = address(search) } = {}) {
+  const dom = fakeDOM(html, { location, storage })
   if (granted) dom.choose('granted')
   return dom
 }
@@ -341,6 +355,141 @@ test('a booking is the widget\'s own booking report, and none of its other messa
   assert.deepEqual(sent(dom), ['demo_booked'], `the widget's booking report sent ${JSON.stringify(sent(dom))}`)
 })
 
+// ---- 3b. the same three actions, for the pixel (the owner's ruling of 2026-10-31) -----------
+//
+// Each of the funnel's three actions is reported to BOTH gates that are open: the GA4 event the
+// cases above hold, and the pixel's own event, which waits for the marketing grant instead. The
+// owner named the three on 2026-10-31 — `ViewContent` for the install press, `Contact` for the
+// chat press and `Lead` for a booking — and the pixel is the SITE's measurement, so its
+// `PageView` fires wherever a visitor reads, while the two events a press fires exist only where
+// those buttons do. Nothing here is a second listener: the same press sends both, and the pixel
+// is asked only where its own grant is in force.
+
+/**
+ * Every call the page queued for the pixel, as plain arrays and plain objects: what `fbq` was
+ * asked for, in order. `Array.from` and a spread rather than the queue's own `map` — the queue is
+ * built inside the page's own realm, and neither an array nor an object of that realm is
+ * `deepStrictEqual` to one of this file's (the same reason `queued` above maps its queue).
+ */
+function pixel(dom) {
+  const queue = dom.window.fbq && dom.window.fbq.queue
+  return Array.from(queue ?? [], (call) => Array.from(call, (value) => (value && typeof value === 'object' ? { ...value } : value)))
+}
+
+/** The pixel's events, in order, and nothing else it queued — the tag's load is the page view. */
+function tracked(dom) {
+  return pixel(dom)
+    .filter((call) => call[0] === 'track' && call[1] !== 'PageView')
+    .map((call) => call[1])
+}
+
+/**
+ * A built page with the banner's pixel id blanked, which is `site.yaml`'s switched-off state
+ * written into the markup: a loader with no id loads nothing and has no queue for an event to go
+ * into, so the case below can hold that promise without a second id of its own.
+ */
+function withEmptyPixelId(html) {
+  const blanked = html.replace(/data-meta-pixel-id="[^"]*"/, 'data-meta-pixel-id=""')
+  assert.notEqual(blanked, html, 'the built page carries no pixel id attribute to blank, so the switched-off case below could not run')
+  return blanked
+}
+
+test('the pixel loads on its own grant and fires one page view wherever the visitor reads', () => {
+  const here = `${PAGE_ORIGIN}${CAMPAIGN_PATH}`
+  const campaign = run()
+  assert.deepEqual(
+    pixel(campaign),
+    [['init', PIXEL_ID], ['track', 'PageView', { page_location: here }]],
+    `the pixel was handed ${JSON.stringify(pixel(campaign))}: its id once, and one page view of the page the visitor is reading — the address without its query or fragment (F22)`,
+  )
+  assert.equal(campaign.store.get(MARKETING_CONSENT_KEY), 'granted', 'the press that loaded the pixel did not store the marketing answer, so the next page would not load it')
+
+  // And on a page that is not a campaign page: the pixel is the site's, so its banner carries
+  // the configuration there too and the same press loads it, with the page's own address.
+  const home = run({ html: builtPage('index.html'), location: address('', '/') })
+  assert.deepEqual(
+    pixel(home),
+    [['init', PIXEL_ID], ['track', 'PageView', { page_location: `${PAGE_ORIGIN}/` }]],
+    `a page that is not one of the four loaded ${JSON.stringify(pixel(home))}: the pixel is the site's measurement and loads on every page (the owner's ruling of 2026-10-31)`,
+  )
+  assert.deepEqual(
+    sent(home),
+    [],
+    `the home page sent ${JSON.stringify(sent(home))} to GA4: the funnel's actions are the campaign pages' buttons, and this case is about the pixel's page view alone`,
+  )
+})
+
+test('each action sends its own pixel event once, and only after the marketing grant', () => {
+  const dom = run()
+  assert.deepEqual(tracked(dom), [], 'the page sent a pixel event on its own load, and every one of the three is about something a visitor did')
+
+  // One press is one event for each gate: the same handler asks both, so a case that watched
+  // only GA4 could not see a pixel event sent twice.
+  press(dom, INSTALL_ID)
+  assert.deepEqual(tracked(dom), ['ViewContent'], `pressing Install free sent the pixel ${JSON.stringify(tracked(dom))}`)
+  press(dom, INSTALL_ID)
+  assert.deepEqual(tracked(dom), ['ViewContent', 'ViewContent'], `the second press sent the pixel ${JSON.stringify(tracked(dom))}: one press is one event`)
+  press(dom, WHATSAPP_ID)
+  assert.deepEqual(tracked(dom), ['ViewContent', 'ViewContent', 'Contact'], `pressing the chat link sent the pixel ${JSON.stringify(tracked(dom))}`)
+  report(dom)
+  assert.deepEqual(
+    tracked(dom),
+    ['ViewContent', 'ViewContent', 'Contact', 'Lead'],
+    `the booking frame's own report sent the pixel ${JSON.stringify(tracked(dom))}`,
+  )
+
+  // Each event is its own name and nothing else: the funnel counts actions, and no field of the
+  // message that reported a booking goes to the vendor either (F22).
+  assert.deepEqual(
+    pixel(dom).filter((call) => call[0] === 'track'),
+    [['track', 'PageView', { page_location: `${PAGE_ORIGIN}${CAMPAIGN_PATH}` }], ['track', 'ViewContent'], ['track', 'ViewContent'], ['track', 'Contact'], ['track', 'Lead']],
+    `a pixel event carried more than its own name: ${JSON.stringify(pixel(dom))}`,
+  )
+
+  // A message that is not the embedded frame's own booking report is not a booking for either
+  // gate: the pixel's `Lead` is taken by the same listener, from the same one sender.
+  const foreign = run()
+  foreignReport(foreign, { origin: 'https://not-the-booking-host.example' })
+  foreignReport(foreign, { source: {} })
+  assert.deepEqual(tracked(foreign), [], `a message that is not the booking frame's own report sent the pixel ${JSON.stringify(tracked(foreign))}`)
+
+  // And the answer the pixel waits for is the marketing one: a visitor who granted analytics on
+  // another page fires the GA4 events and has no queue at all, because the pixel never loaded.
+  const analyticsOnly = run({ granted: false, storage: { [CONSENT_KEY]: 'granted' } })
+  press(analyticsOnly, INSTALL_ID)
+  press(analyticsOnly, WHATSAPP_ID)
+  report(analyticsOnly)
+  assert.deepEqual(
+    sent(analyticsOnly),
+    ['install_click', 'whatsapp_click', 'demo_booked'],
+    `an analytics-only visitor sent GA4 ${JSON.stringify(sent(analyticsOnly))}: the analytics answer is theirs, and it is the one they gave`,
+  )
+  assert.deepEqual(
+    pixel(analyticsOnly),
+    [],
+    `the pixel was handed ${JSON.stringify(pixel(analyticsOnly))} for a visitor who answered the analytics question and not the marketing one: the two are two questions with two answers (F17)`,
+  )
+
+  // The third answer, too: a visitor who answered the marketing question and not the site's is
+  // measured by the pixel and by nothing else.
+  const marketingOnly = run({ granted: false, storage: { [MARKETING_CONSENT_KEY]: 'granted' } })
+  press(marketingOnly, INSTALL_ID)
+  assert.deepEqual(tracked(marketingOnly), ['ViewContent'], `a marketing-only visitor sent the pixel ${JSON.stringify(tracked(marketingOnly))}`)
+  assert.equal(marketingOnly.window.dataLayer, undefined, `a marketing-only visitor queued ${JSON.stringify(queued(marketingOnly))} for GA4, which they did not accept`)
+})
+
+test('an empty pixel id fires nothing, and the events it would have carried go nowhere', () => {
+  // `site.yaml` is where a vendor is switched off, by clearing its id: the loader then loads
+  // nothing and queues nothing, so the three actions are counted by GA4 alone.
+  const dom = run({ html: withFrame(withEmptyPixelId(builtPage())) })
+  press(dom, INSTALL_ID)
+  press(dom, WHATSAPP_ID)
+  report(dom)
+  assert.deepEqual(sent(dom), ['install_click', 'whatsapp_click', 'demo_booked'], `the GA4 events were ${JSON.stringify(sent(dom))}: the pixel's id is what the site switched off, not the funnel's events`)
+  assert.deepEqual(pixel(dom), [], `the page queued ${JSON.stringify(pixel(dom))} while its banner carries an empty pixel id`)
+  assert.equal(dom.window.fbq, undefined, 'the page built a pixel queue while `site.yaml` carries no pixel id, so a switched-off loader is not switched off')
+})
+
 // ---- 4. the campaign parameters, into the booking link and nowhere else --------------------
 
 test('the campaign parameters a visitor arrived through reach the booking address', () => {
@@ -464,6 +613,35 @@ test('a withdrawal stops the key events, and a stored refusal never starts them'
     `after withdrawing, the page sent ${JSON.stringify(sent(dom))}: a withdrawal stops the key events as well as the tag, and a visitor who has taken the answer back is not measured by the next press`,
   )
 
+  // The pixel's half of the same press, on the same page and with both answers stored: the
+  // script is already fetched and cannot be unfetched, so what a withdrawal can do is leave the
+  // queue it goes into empty and tell the vendor to stop — which is what the vendored events
+  // wait for, exactly as GA4's wait for the tag's flag (the owner's ruling of 2026-10-31).
+  const both = run({
+    granted: false,
+    storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' },
+    html: withdrawingPage(),
+  })
+  press(both, INSTALL_ID)
+  assert.deepEqual(
+    tracked(both),
+    ['ViewContent'],
+    `a visitor whose stored marketing answer is a grant sent the pixel ${JSON.stringify(tracked(both))}: the stored grant is what the events wait for, so the withdrawal below would prove nothing without it`,
+  )
+  both.choose('denied')
+  press(both, INSTALL_ID)
+  press(both, WHATSAPP_ID)
+  assert.deepEqual(
+    tracked(both),
+    ['ViewContent'],
+    `after withdrawing, the page sent the pixel ${JSON.stringify(tracked(both))}: a withdrawal stops the vendored events too`,
+  )
+  assert.deepEqual(
+    pixel(both).filter((call) => call[0] === 'consent'),
+    [['consent', 'revoke']],
+    `the pixel was told ${JSON.stringify(pixel(both).filter((call) => call[0] === 'consent'))} on withdrawal: a tag that is running has to be told the answer changed`,
+  )
+
   // And the page a withdrawn answer leads to: the next campaign page the visitor reads asks
   // Google for nothing, so the events have no queue to be sent into at all.
   const next = run({ granted: false, storage: { [CONSENT_KEY]: 'denied' } })
@@ -490,6 +668,10 @@ test('the campaign parameters reach the booking link and no other address on the
   assert.ok(
     !JSON.stringify(queued(dom)).includes('newsletter'),
     `a campaign parameter reached GA4: ${JSON.stringify(queued(dom))}`,
+  )
+  assert.ok(
+    !JSON.stringify(pixel(dom)).includes('newsletter'),
+    `a campaign parameter reached the pixel: ${JSON.stringify(pixel(dom))}. The page view and the three events report the page's origin and path, and the parameters a visitor arrived through are the booking link's business alone (F22)`,
   )
 
   const doc = parse(withFrame(builtPage()))

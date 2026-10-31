@@ -98,24 +98,26 @@ const PRIVACY_PATH = '/privacy/'
 // The site's one script file (D183), which is the gate itself since W3.2 moved the banner's
 // controller and the gated loader out of the markup and into it.
 const SITE_SCRIPT = '/scripts/site.js'
-// The campaign pages' own consent (G2.3, D401): its key, its three origins — read from
-// `site.yaml`, which is where the loader reads them too — and the page the cases below run on.
-// The three are in the order `firebase.json`'s `script-src` lists them, which is the order
-// site.yaml writes them in.
-export const MARKETING_CONSENT_KEY = 'fugaro:marketing-consent'
+// The marketing consent (G2.3, D401 as the owner amended it on 2026-10-31): its key, the three
+// origins it covers — read from `site.yaml`, which is where the loader reads them too — and the
+// page the cases below run on. The three are in the order `firebase.json`'s `script-src` lists
+// them, which is the order site.yaml writes them in. The pixel is the SITE's, so it is
+// configured on every page and loads wherever the visitor reads; the other two are the four
+// campaign pages', which is why the two lists below are not the same list.
+export const MARKETING_CONSENT_KEY = 'fugaro:marketing-consent:v2'
 const CAMPAIGN = siteFacts().marketing
-const CAMPAIGN_ORIGINS = [CAMPAIGN.metaOrigin, CAMPAIGN.linkedinOrigin, CAMPAIGN.calendlyOrigin]
+const MARKETING_ORIGINS = [CAMPAIGN.metaOrigin, CAMPAIGN.linkedinOrigin, CAMPAIGN.calendlyOrigin]
+const CAMPAIGN_ORIGINS = [CAMPAIGN.linkedinOrigin, CAMPAIGN.calendlyOrigin]
 // The four campaign pages `website/data/landing.yaml` writes, and the one the cases below use.
 // The path is the browser's own spelling — the pages are directories, so a visitor is at
 // `/save/` — which is also the spelling the gate's path check has to read.
 const CAMPAIGN_PAGE = 'save/index.html'
 const CAMPAIGN_PATH = '/save/'
-// The pixel id the cases below plant into a built page's banner, because it is the one value
-// the owner has not supplied: `site.yaml` carries it empty, which is the loader switched off,
-// so a case that watches the pixel load has to put a value there itself. The partner id needs
-// no planting — the owner supplied it (2026-10-31) and the built page carries it — and the
-// cases that read it are the shipped-state and withdrawal cases, on the page as served.
-const META_ID = 'TESTMETA0001'
+// The two ids are the owner's, supplied on 2026-10-31, so the built page carries both and the
+// cases below read them off the page as served. What a case plants instead is the EMPTY value,
+// which is the loader switched off: `emptyPixelId` blanks the banner's own attribute, so a case
+// that has to tell "the pixel is switched off" from "the pixel is missing" can, without a
+// second id — a literal here would be the copy `site.yaml` is the single home of.
 // The consent banner's early decision (the owner's ruling of 2026-10-23, the redesign's Step 3:
 // JavaScript allowed, same-origin only; the banner must not cover the first screen's content).
 // A page that renders the banner loads it after the site's one script; it is a first-party file
@@ -999,12 +1001,22 @@ test('the banner appears on a first visit, accepting loads the script once, and 
   assert.equal(refused.store[CONSENT_KEY], 'denied', 'declining did not store the decision')
   assert.deepEqual(refused.analyticsRequests(), [], 'the page requested the analytics script after the visitor declined')
 
+  // A visitor who answered the SITE's question and not the marketing one is asked again, on this
+  // page and on every other: the pixel is the site's measurement, so the question about it is
+  // every page's too (the owner's ruling of 2026-10-31). The answer they gave is not read as an
+  // answer to a question they were never asked.
   const remembered = runPage(html, { storage: { [CONSENT_KEY]: 'denied' } })
-  assert.equal(remembered.banner.hidden, true, 'the banner is offered again to a visitor who already refused')
+  assert.equal(remembered.banner.hidden, false, 'the banner is withheld from a visitor whose marketing answer is not given, so the pixel is never put to them')
   assert.deepEqual(remembered.analyticsRequests(), [], 'a stored refusal still loaded the analytics script')
 
-  const granted = runPage(html, { storage: { [CONSENT_KEY]: 'granted' } })
-  assert.equal(granted.banner.hidden, true, 'the banner is offered again to a visitor who already accepted')
+  // And with both answers stored the bar is gone, which is the state a visitor reaches by
+  // answering the pair the bar offers.
+  const done = runPage(html, { storage: { [CONSENT_KEY]: 'denied', [MARKETING_CONSENT_KEY]: 'denied' } })
+  assert.equal(done.banner.hidden, true, 'the banner is offered again to a visitor who has answered both questions')
+  assert.deepEqual(done.analyticsRequests(), [], 'a stored refusal still loaded the analytics script')
+
+  const granted = runPage(html, { storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' } })
+  assert.equal(granted.banner.hidden, true, 'the banner is offered again to a visitor who has answered both questions')
   assert.equal(granted.analyticsRequests().length, 1, 'a stored grant did not load the analytics script')
 })
 
@@ -1017,12 +1029,25 @@ test('dismissing the banner declines, and a dismissal cannot overwrite a stored 
   assert.deepEqual(dismissed.analyticsRequests(), [], 'dismissing the banner loaded the analytics script')
   assert.equal(dismissed.banner.hidden, true, 'the banner stayed on the page after it was dismissed')
 
-  // A visitor who has already accepted is not asked again, so Escape on that page is not a
+  // The bar is offered while either question is open, and a dismissal answers the questions the
+  // bar asks — both of them, because the pair it offers is one question about everything the
+  // site may load (the owner's ruling of 2026-10-31). So a visitor whose marketing answer is not
+  // given is asked again, and their Escape refuses what the bar asked.
+  const marketingOpen = runPage(html, { storage: { [CONSENT_KEY]: 'granted' } })
+  assert.equal(marketingOpen.analyticsRequests().length, 1, 'a stored grant did not load the analytics script')
+  assert.equal(marketingOpen.banner.hidden, false, 'the bar is withheld from a visitor whose marketing answer is not given')
+  marketingOpen.escape()
+  assert.equal(marketingOpen.store[MARKETING_CONSENT_KEY], 'denied', 'dismissing the bar left the marketing question open, so the pixel would be asked for again on every page')
+  assert.equal(marketingOpen.store[CONSENT_KEY], 'denied', 'dismissing the bar answered the marketing question and left the site\'s own answer standing, although the pair it offers is one question')
+
+  // A visitor who has answered BOTH is not asked again, so Escape on that page is not a
   // decision at all: the site must not read it as one.
-  const granted = runPage(html, { storage: { [CONSENT_KEY]: 'granted' } })
-  assert.equal(granted.analyticsRequests().length, 1, 'a stored grant did not load the analytics script')
-  granted.escape()
-  assert.equal(granted.store[CONSENT_KEY], 'granted', 'Escape overwrote a stored grant with a decision the visitor never made')
+  const answered = runPage(html, { storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' } })
+  assert.equal(answered.banner.hidden, true, 'the bar is offered to a visitor who has answered both questions')
+  assert.equal(answered.analyticsRequests().length, 1, 'a stored grant did not load the analytics script')
+  answered.escape()
+  assert.equal(answered.store[CONSENT_KEY], 'granted', 'Escape overwrote a stored grant with a decision the visitor never made')
+  assert.equal(answered.store[MARKETING_CONSENT_KEY], 'granted', 'Escape overwrote the stored marketing answer with a decision the visitor never made')
 })
 
 test('the banner collapses before it is hidden, and the decision is already made while it does', () => {
@@ -1138,33 +1163,46 @@ test('the banner is asked for before the first frame, on the campaign pages too'
   // of its behaviour is a fact about the page it ran on, and G2.3 gave it a second key to read
   // there. This is the case that runs it: the stub executes the file's own source out of the
   // artifact, where the page put it, so a key the layout forgot to write, or wrote under
-  // another name than this file reads, is a bar missing from the first frame on the four
-  // pages that ask the campaign question — and no other case would notice.
+  // another name than this file reads, is a bar missing from the first frame — and no other case
+  // would notice. Since the owner's ruling of 2026-10-31 the second key is on EVERY page's tag
+  // rather than the four campaign pages', because the question about the pixel is every page's.
   const campaign = pageOf(SHIPPED, CAMPAIGN_PAGE)
   const tag = findAll(parse(campaign), (el) => el.name === 'script' && el.attrs.get('src') === EARLY_SCRIPT)[0]
   assert.ok(tag, `the campaign page carries no ${EARLY_SCRIPT}, so the bar is not in its place from the first frame`)
-  assert.equal(tag.attrs.get('data-consent-key'), CONSENT_KEY, 'the campaign page\'s early decision reads no key of the site\'s, so a visitor who has not answered the site\'s question is shown no bar')
+  assert.equal(tag.attrs.get('data-consent-key'), CONSENT_KEY, 'the early decision reads no key of the site\'s, so a visitor who has not answered the site\'s question is shown no bar')
   assert.equal(
     tag.attrs.get('data-marketing-consent-key'),
     MARKETING_CONSENT_KEY,
-    'the campaign page\'s early decision carries no campaign key, so a visitor who answered the site\'s question and not the campaign\'s is shown no bar',
+    'the early decision carries no marketing key, so a visitor who answered the site\'s question and not the marketing one — which is every visitor who answered under the old, narrower question — is shown no bar',
   )
   assert.ok(!tag.attrs.has('data-consent-always'), 'the campaign page always offers the choice, which is the privacy page\'s arrangement and not this page\'s')
 
   const asked = (storage) => runPage(campaign, { location: CAMPAIGN_LOCATION, storage })
   const mark = (storage) => asked(storage).document.documentElement.getAttribute('data-consent-ask')
+  const markOf = (rel, storage = {}) => runPage(pageOf(SHIPPED, rel), { storage }).document.documentElement.getAttribute('data-consent-ask')
 
   assert.equal(mark({}), '', 'the early decision left no mark on <html> for a visitor who has answered nothing, so the bar is not drawn in its place from the first frame')
   assert.equal(
     mark({ [CONSENT_KEY]: 'granted' }),
     '',
-    'a visitor who answered the site\'s question but not the campaign\'s is given no bar, so the campaign question is never asked',
+    'a visitor who answered the site\'s question but not the marketing one is given no bar, so the pixel\'s question is never asked',
+  )
+  assert.equal(
+    mark({ [MARKETING_CONSENT_KEY]: 'granted' }),
+    '',
+    'the other way round: a visitor who answered only the marketing question is given no bar, so the site\'s own question is never asked',
   )
   assert.equal(mark({ [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' }), null, 'the early decision marks a page whose every question is answered, so the bar is drawn under a visitor who has already decided')
   assert.equal(
-    runPage(pageOf(SHIPPED, 'docs/index.html'), { storage: { [CONSENT_KEY]: 'granted' } }).document.documentElement.getAttribute('data-consent-ask'),
-    null,
-    'a page that asks nothing is marked as if it asked something, so the bar is drawn under a visitor who has decided',
+    markOf('docs/index.html', { [CONSENT_KEY]: 'granted' }),
+    '',
+    'a page that is not a campaign page is marked as asking nothing, so the pixel\'s question never reaches a visitor there — although the pixel loads on that page (the owner\'s ruling of 2026-10-31)',
+  )
+  assert.equal(markOf('docs/index.html', { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' }), null, 'a page whose every question is answered is marked as if it asked something, so the bar is drawn under a visitor who has decided')
+  assert.equal(
+    markOf('privacy/index.html', { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' }),
+    '',
+    'the page that only withdraws is not marked as asking, so a visitor who answered both questions finds no bar there and cannot take either answer back',
   )
 })
 
@@ -1333,28 +1371,37 @@ test('accepting and withdrawing again on the same page deletes what the second g
 // after an analytics-only consent, which is the state a visitor who accepted on the homepage
 // arrives in. The withdrawal is the third case, because a second purpose is a second answer.
 
-/** The requests a page made to the campaign's three, in the order it made them. */
+/** The requests a page made to all three vendors, in the order it made them. */
+function marketingRequests(page) {
+  return page.requests.filter((url) => MARKETING_ORIGINS.some((origin) => String(url).startsWith(origin)))
+}
+
+/** And the two of them that are the four campaign pages' alone — the insight tag and the widget. */
 function campaignRequests(page) {
   return page.requests.filter((url) => CAMPAIGN_ORIGINS.some((origin) => String(url).startsWith(origin)))
 }
 
-/**
- * A built campaign page with the pixel's id planted in its banner, because `site.yaml` ships
- * that one empty and an empty id is the loader switched off. The partner id is not planted:
- * the owner supplied it (2026-10-31), the built banner already carries it, and planting a
- * second value would be a case watching a configuration the site does not have. Nothing else
- * about the page changes: the origins, the booking link and the path are the ones the build
- * wrote.
- */
-function withPixelId(html) {
-  const planted = html.replace('data-meta-pixel-id ', `data-meta-pixel-id="${META_ID}" `)
-  assert.ok(planted.includes(`data-meta-pixel-id="${META_ID}"`), 'the fixture did not plant the pixel id in the banner, so no case below could watch the pixel load')
-  assert.ok(/data-linkedin-partner-id="[^"]+"/.test(planted), 'the built campaign page carries no partner id, so no case below could watch the insight tag load')
-  return planted
+/** The pixel's own script request, wherever the case below is watching the site's measurement. */
+function pixelRequests(page) {
+  return page.requests.filter((url) => String(url).startsWith(CAMPAIGN.metaOrigin))
 }
 
-/** The campaign page the cases below run, with the pixel's id in place beside the owner's. */
-const CAMPAIGN_HTML = withPixelId(pageOf(SHIPPED, CAMPAIGN_PAGE))
+/**
+ * A built page with the banner's pixel id blanked, which is `site.yaml`'s "switched off" state
+ * written into the markup: the loader reads an empty id as no loader, so a case below can hold
+ * that promise against the page as it is built rather than against a page that never had one.
+ * Nothing else about the page changes — the origin, the partner id and the booking link are the
+ * build's own.
+ */
+function withEmptyPixelId(html) {
+  const blanked = html.replace(/data-meta-pixel-id="[^"]*"/, 'data-meta-pixel-id=""')
+  assert.ok(/data-meta-pixel-id=""/.test(blanked), 'the fixture did not blank the pixel id in the banner, so no case below could watch the switched-off loader')
+  assert.ok(/data-linkedin-partner-id="[^"]+"/.test(blanked), 'the built page carries no partner id, so no case below could watch the insight tag load')
+  return blanked
+}
+
+/** The shipped campaign page the cases below run: the owner's ids are already in its banner. */
+const CAMPAIGN_HTML = pageOf(SHIPPED, CAMPAIGN_PAGE)
 
 /**
  * The cookies the campaign withdrawal deletes, read out of the script the site ships rather
@@ -1371,42 +1418,47 @@ function marketingCookies() {
   return names
 }
 
-test('no page asks any of the three vendors anything before the marketing consent is granted', () => {
+test('no page asks any vendor anything before the marketing consent is granted', () => {
   // A first visit to a campaign page: the banner is offered and nothing of the three is
   // fetched, though the page carries all three addresses in its own banner.
   const first = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION })
-  assert.deepEqual(campaignRequests(first), [], 'a campaign page fetched a vendor before the visitor answered the campaign question')
+  assert.deepEqual(marketingRequests(first), [], 'a campaign page fetched a vendor before the visitor answered the marketing question')
   assert.ok(first.byId.get('calendly-embed').hidden, 'the booking frame is in the page before the visitor granted the marketing consent')
   assert.equal(first.banner.hidden, false, 'the campaign page does not offer the banner on a first visit')
 
-  // A visitor who granted analytics on an earlier page: the campaign question is still open,
+  // A visitor who granted analytics on an earlier page: the marketing question is still open,
   // the banner asks it again, and the three are still asked nothing — accepting analytics is
-  // not accepting the campaign (F17).
+  // not accepting the marketing measurement (F17).
   const analyticsOnly = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION, storage: { [CONSENT_KEY]: 'granted' } })
-  assert.deepEqual(campaignRequests(analyticsOnly), [], 'an analytics-only consent loaded a campaign vendor')
+  assert.deepEqual(marketingRequests(analyticsOnly), [], 'an analytics-only consent loaded a vendor')
   assert.equal(analyticsOnly.analyticsRequests().length, 1, 'the page did not load the analytics script the visitor had already accepted')
-  assert.equal(analyticsOnly.banner.hidden, false, 'a visitor who has answered only the site\'s question is not asked the campaign one')
+  assert.equal(analyticsOnly.banner.hidden, false, 'a visitor who has answered only the site\'s question is not asked the marketing one')
 
-  // A page that is not a campaign page at all: same script, no configuration, so nothing of
-  // the three can load there even after a grant (the origins are not in it).
-  const elsewhere = runPage(pageOf(SHIPPED, 'index.html'), { storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' } })
-  assert.deepEqual(campaignRequests(elsewhere), [], 'a non-campaign page loaded a campaign vendor')
+  // And the site's own pages, where the pixel is the only vendor there is to load: the same
+  // first visit fetches nothing, and a stored grant loads the pixel there — it is the site's
+  // measurement, so it is not one of the four campaign pages' (the owner's ruling of 2026-10-31).
+  const home = pageOf(SHIPPED, 'index.html')
+  const homeFirst = runPage(home)
+  assert.deepEqual(marketingRequests(homeFirst), [], 'the homepage fetched a vendor before the visitor answered the marketing question')
+  const elsewhere = runPage(home, { storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' } })
+  assert.deepEqual(campaignRequests(elsewhere), [], 'a non-campaign page loaded one of the two campaign vendors')
+  assert.deepEqual(pixelRequests(elsewhere), [`${CAMPAIGN.metaOrigin}/en_US/fbevents.js`], 'a page that is not a campaign page did not load the pixel its own banner is configured for')
 })
 
-test('the marketing grant loads the three vendors on the page they were built for, and nowhere else', () => {
+test('the marketing grant loads the three vendors on the page they were built for, and the pixel anywhere', () => {
   const page = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION })
   page.click('granted')
 
   assert.deepEqual(
-    campaignRequests(page),
+    marketingRequests(page),
     [
       `${CAMPAIGN.metaOrigin}/en_US/fbevents.js`,
       `${CAMPAIGN.linkedinOrigin}/li.lms-analytics/insight.min.js`,
       `${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`,
     ],
-    'the campaign grant did not load exactly the pixel, the insight tag and the booking widget, in that order, from the origins the banner carries',
+    'the marketing grant did not load exactly the pixel, the insight tag and the booking widget, in that order, from the origins the banner carries',
   )
-  assert.equal(page.store[MARKETING_CONSENT_KEY], 'granted', 'the campaign decision was not stored under its own key')
+  assert.equal(page.store[MARKETING_CONSENT_KEY], 'granted', 'the marketing decision was not stored under its own key')
   assert.equal(page.store[CONSENT_KEY], 'granted', 'the press that answered the campaign question did not answer the site\'s, on a page where both were open')
 
   // The vendors are told the page without its query and without its fragment (F22), and the
@@ -1415,8 +1467,8 @@ test('the marketing grant loads the three vendors on the page they were built fo
   const fbq = (page.window.fbq.queue ?? []).map((entry) => Array.from(entry))
   assert.deepEqual(
     fbq.map((call) => call.slice(0, 2).map(String)),
-    [['init', META_ID], ['track', 'PageView']],
-    `the pixel was handed ${JSON.stringify(fbq.map((c) => String(c[0])))}: its id once and one page view is what the campaign asks for`,
+    [['init', CAMPAIGN.metaPixelID], ['track', 'PageView']],
+    `the pixel was handed ${JSON.stringify(fbq.map((c) => String(c[0])))}: its id once and one page view is what the site asks for`,
   )
   assert.deepEqual(fbq[1][2], { page_location }, 'the pixel was handed an address other than the page\'s path')
   assert.deepEqual(
@@ -1436,28 +1488,32 @@ test('the marketing grant loads the three vendors on the page they were built fo
     'the booking frame was handed something other than the booking link website/data/landing.yaml writes',
   )
 
-  // The path check: the same page, served from another path of the site, loads nothing —
-  // a bar copied onto a page it was not built for is a bar with no vendors behind it (F18).
+  // The path check: the same page, served from another path of the site, loads neither of the
+  // two campaign vendors — a bar copied onto a page it was not built for is a bar with no
+  // campaign vendors behind it (F18) — while the pixel, which is the site's and not the page's,
+  // still loads there (the owner's ruling of 2026-10-31).
   const stale = runPage(CAMPAIGN_HTML, { location: PAGE_LOCATION, storage: { [MARKETING_CONSENT_KEY]: 'granted' } })
-  assert.deepEqual(campaignRequests(stale), [], 'a campaign page served from another path loaded the three vendors')
+  assert.deepEqual(campaignRequests(stale), [], 'a campaign page served from another path loaded the insight tag or the booking widget')
+  assert.deepEqual(pixelRequests(stale), [`${CAMPAIGN.metaOrigin}/en_US/fbevents.js`], 'the pixel did not load on a page it is configured for, although it is the site\'s measurement')
 
   // And the gate is the same one that `origins.mjs` holds to a contract: no URL is typed in
   // the script, so the request above can only come from the banner's own configuration.
   const script = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
-  for (const origin of CAMPAIGN_ORIGINS) {
+  for (const origin of MARKETING_ORIGINS) {
     assert.ok(!script.includes(new URL(origin).host), `${SITE_SCRIPT} names ${new URL(origin).host}: the three reach the loader through the campaign page's own banner`)
   }
 })
 
-test('an empty vendor id is a loader that does not load, which is the pixel\'s state today', () => {
-  // No planted ids: the page the site actually serves. The booking widget has no id to need,
-  // so it loads; the pixel is configured but switched off, which is what its empty `site.yaml`
-  // value means until the owner supplies one (R3); and the insight tag now loads, because the
-  // owner has supplied its id (ruling of 2026-10-31) — which is the other half of the switch.
-  assert.equal(CAMPAIGN.metaPixelID, '', 'site.yaml names a pixel id, so this case is no longer the shipped state')
+test('an empty pixel id is a loader that does not load, and it fires no event either', () => {
+  // The three ids are the owner's now, so the switched-off state is held by blanking the
+  // banner's own attribute rather than by a page that never had one: an empty id is a loader
+  // that does not load, which is how a vendor is switched off here without touching the gate or
+  // the deployed policy (R3, site.yaml). The other two vendors have no id to blank, so the case
+  // can tell a switched-off loader from a vendor that stopped loading with it.
+  assert.notEqual(CAMPAIGN.metaPixelID, '', 'site.yaml carries no pixel id, so this case is no longer about the switched-off state')
   assert.notEqual(CAMPAIGN.linkedinPartnerID, '', 'site.yaml carries no partner id, so the shipped page has no insight tag and this case could not tell a switched-off loader from a missing one')
 
-  const page = runPage(pageOf(SHIPPED, CAMPAIGN_PAGE), { location: CAMPAIGN_LOCATION })
+  const page = runPage(withEmptyPixelId(pageOf(SHIPPED, CAMPAIGN_PAGE)), { location: CAMPAIGN_LOCATION })
   page.click('granted')
   assert.deepEqual(
     campaignRequests(page),
@@ -1467,7 +1523,11 @@ test('an empty vendor id is a loader that does not load, which is the pixel\'s s
     ],
     'with the pixel id empty the page still asked a vendor for something other than the insight tag and the booking widget',
   )
-  assert.ok(!page.window.fbq, 'the page queued a pixel call while `site.yaml` carries no pixel id, so a switched-off loader is not switched off')
+  assert.deepEqual(pixelRequests(page), [], 'the page fetched the pixel\'s script although its banner carries an empty id')
+  // No queue at all, which is the other half: the site asks `window.fbq` before sending anything
+  // into it, so an empty id leaves the three key events nowhere to go (`landing-events.mjs`
+  // holds that from the events' own end).
+  assert.ok(!page.window.fbq, 'the page queued a pixel call while its banner carries an empty id, so a switched-off loader is not switched off')
 })
 
 test('the shipped page loads the insight tag after consent only, and the withdrawal stops it', () => {
@@ -1533,14 +1593,14 @@ test('withdrawing the marketing consent stops the three and deletes the cookies 
     storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' },
     cookies: [...marketingCookies().map((name) => `${name}=planted; path=/`), '_gate=1; path=/'],
   })
-  assert.equal(campaignRequests(page).length, 3, 'the stored campaign grant did not load the three vendors, so the withdrawal below would prove nothing')
+  assert.equal(marketingRequests(page).length, 3, 'the stored marketing grant did not load the three vendors, so the withdrawal below would prove nothing')
   for (const name of marketingCookies()) {
     assert.ok(page.held().includes(name), `the cookie double did not hold ${name}, so its deletion below would prove nothing`)
   }
 
   page.click('denied')
-  assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'withdrawing did not overwrite the stored campaign grant')
-  assert.equal(page.store[CONSENT_KEY], 'granted', 'a press about the campaign rewrote the site\'s answer, which the visitor gave on another page')
+  assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'withdrawing did not overwrite the stored marketing grant')
+  assert.equal(page.store[CONSENT_KEY], 'denied', 'the press answered the bar\'s marketing question and left the site\'s own answer standing: one pair of buttons answers the one question the bar asks, which is about the whole of what the site may load (the owner\'s ruling of 2026-10-31)')
   assert.deepEqual(
     (page.window.fbq.queue ?? []).map((entry) => Array.from(entry)).filter((call) => call[0] === 'consent'),
     [['consent', 'revoke']],
@@ -1554,16 +1614,17 @@ test('withdrawing the marketing consent stops the three and deletes the cookies 
 
   // The next page view asks the three nothing: the decision is stored, and it is a refusal.
   const next = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION, storage: page.store })
-  assert.deepEqual(campaignRequests(next), [], 'the withdrawn consent still loaded a vendor on the next page view')
+  assert.deepEqual(marketingRequests(next), [], 'the withdrawn consent still loaded a vendor on the next page view')
 })
 
-test('the privacy page withdraws the campaign consent too, because the campaign bar is gone by then', () => {
-  // Where a withdrawal is REACHABLE, which is the half the case above cannot see: the campaign
-  // bar is offered only while the campaign question is open, so a visitor who accepted on /save
-  // finds no control on /save again, and the page that says how consent is withdrawn is the one
-  // whose bar is always offered (W1.12). G2.3's consent is withdrawn there or nowhere, and the
-  // privacy page's bar carries the campaign key without the campaign configuration so that the
-  // refusal it offers takes back both answers — the three still load on no page after it.
+test('the privacy page withdraws the marketing consent too, because the campaign bar is gone by then', () => {
+  // Where a withdrawal is REACHABLE, which is the half the case above cannot see: the marketing
+  // bar is offered only while that question is open, so a visitor who accepted on /save finds no
+  // control on /save again, and the page that says how consent is withdrawn is the one whose bar
+  // is always offered (W1.12). G2.3's consent is withdrawn there or nowhere, and the privacy
+  // page's bar carries the marketing key without the question so that the refusal it offers
+  // takes back every answer — the pixel stops there, and the two campaign vendors were never
+  // loaded there at all and load on no page after it.
   const granted = { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' }
   const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), {
     storage: granted,
@@ -1576,10 +1637,14 @@ test('the privacy page withdraws the campaign consent too, because the campaign 
     'the privacy page hides the bar from a visitor who answered both questions, so the campaign consent cannot be withdrawn from the one page that says how',
   )
   assert.ok(page.held().includes('li_sugr'), 'the cookie double did not hold the insight tag\'s cookie, so the deletion below would prove nothing')
-  assert.deepEqual(campaignRequests(page), [], 'the privacy page loaded one of the campaign\'s three vendors: it carries the decision\'s key and none of the origins')
+  // The pixel IS loaded here, because this visitor granted it and every page is the pixel's:
+  // the privacy statement is a page a granted visitor reads. The two campaign vendors are not,
+  // which is what this page's bar is built without (the owner's ruling of 2026-10-31).
+  assert.deepEqual(campaignRequests(page), [], 'the privacy page loaded one of the two campaign vendors: its bar carries the decision\'s key and none of the origins those two loaders read')
+  assert.deepEqual(pixelRequests(page), [`${CAMPAIGN.metaOrigin}/en_US/fbevents.js`], 'the privacy page did not load the pixel a visitor granted on an earlier page, so the withdrawal below would not stop anything here')
 
   page.click('denied')
-  assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'declining on the privacy page left the campaign grant standing, so the three load again on the next campaign page')
+  assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'declining on the privacy page left the marketing grant standing, so the three load again on the next campaign page')
   assert.equal(page.store[CONSENT_KEY], 'denied', 'declining on the privacy page did not overwrite the site\'s own grant')
   const left = page.held()
   for (const name of marketingCookies()) {
@@ -1588,33 +1653,32 @@ test('the privacy page withdraws the campaign consent too, because the campaign 
   assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is neither tag\'s')
 
   const next = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION, storage: page.store })
-  assert.deepEqual(campaignRequests(next), [], 'the consent withdrawn on the privacy page still loaded a vendor on the next campaign page view')
+  assert.deepEqual(marketingRequests(next), [], 'the consent withdrawn on the privacy page still loaded a vendor on the next campaign page view')
 })
 
-test('a bar that carries the campaign key without the question grants nothing with it', () => {
-  // The other half of the rule above: only the four campaign pages may answer the campaign
-  // question with a yes, so a visitor is never reported to Meta or LinkedIn by a press made on
-  // a page that never named them. The privacy page's bar is the one that carries the key
-  // without the configuration, and its Accept is the site's answer alone.
+test('a bar that carries the marketing key without the question grants nothing with it', () => {
+  // The other half of the rule above: only the pages whose bar asks the marketing question may
+  // answer it with a yes, so a visitor is never reported to Meta by a press made on the one page
+  // that never asks it. The privacy page's bar is the one that carries the key without the
+  // question, and its Accept is the site's answer alone.
   //
   // **What this leaves open, and it is a decision and not an oversight** (raised in review of
-  // G2.3): a campaign page's bar is offered only while the campaign question is open, so once
-  // the answer is `denied` — given there, or taken back on the privacy page — no page asks the
-  // campaign question again, and the three cannot be turned back on without clearing this
-  // browser's storage. The site's own question is the other way round: the privacy page's bar
-  // always offers it, so an analytics refusal is revocable. Making the campaign answer
-  // round-trippable means either asking it again on the four campaign pages after a refusal
-  // (asking a visitor who said no) or letting this page's Accept grant it (a yes the page never
-  // asked for, and one whose three loaders that page does not even carry) — both are product
+  // G2.3): a bar asks the marketing question only while that answer is open, so once it is
+  // `denied` — given on a page that asks it, or taken back on the privacy page — no page asks it
+  // again, and the pixel cannot be turned back on without clearing this browser's storage. The
+  // site's own question is the other way round: the privacy page's bar always offers it, so an
+  // analytics refusal is revocable. Making the marketing answer round-trippable means either
+  // asking it again on the pages that ask it after a refusal (asking a visitor who said no) or
+  // letting this page's Accept grant it (a yes the page never asked for) — both are product
   // decisions, neither is taken here, and the owner has them in this PR.
   const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), { storage: {} })
   page.click('granted')
   assert.equal(page.store[CONSENT_KEY], 'granted', 'accepting on the privacy page did not answer the site\'s question')
   assert.ok(
     !(MARKETING_CONSENT_KEY in page.store),
-    'accepting on the privacy page granted the campaign measurement, which that page never asked about',
+    'accepting on the privacy page granted the marketing measurement, which that page never asked about',
   )
-  assert.deepEqual(campaignRequests(page), [], 'accepting on the privacy page loaded one of the campaign\'s three vendors')
+  assert.deepEqual(marketingRequests(page), [], 'accepting on the privacy page loaded a vendor')
 })
 
 
@@ -1764,7 +1828,16 @@ test('the banner asks one question about everything the site may load, and names
         `${page.rel}: the banner does not name ${named}, so a choice made in it does not cover everything the site may load (the owner's ruling of 2026-10-29)`,
       )
     }
-    assert.match(text, /marketing trackers/i, `${page.rel}: the banner no longer describes the campaign pages' measurement, so a choice in it does not cover what those pages load`)
+    assert.match(
+      text,
+      /every page measures/i,
+      `${page.rel}: the banner no longer says the measurement is on every page, so a choice in it does not cover what every page loads (the owner's ruling of 2026-10-31)`,
+    )
+    assert.match(
+      text,
+      /four campaign pages/i,
+      `${page.rel}: the banner no longer says which pages carry the two extra trackers, so a reader cannot tell what their choice covers there`,
+    )
     for (const [vendor, configured] of campaignVendors) {
       const names = text.includes(vendor)
       assert.equal(
@@ -1779,22 +1852,22 @@ test('the banner asks one question about everything the site may load, and names
   }
 
   // The bar the finding was about. The privacy page is the one page whose bar carries the
-  // campaign decision's key without the campaign's configuration (`Base.astro`), so a refusal
-  // there writes the campaign answer down as a refusal — taking back a grant given on a campaign
-  // page — and its accept is the analytics question alone. The bar's two sentences are the same
-  // on every page since the owner's feedback of 2026-10-30, so both claims are made by the
-  // statement beside it, which the bar links: a reader who pressed "Accept all" on the page that
-  // states the campaign question must not be left thinking they agreed to it.
+  // marketing decision's key without the question (`Base.astro`), so a refusal there writes the
+  // marketing answer down as a refusal — taking back a grant given on a page that asks — and its
+  // accept is the analytics question alone. The bar's two sentences are the same on every page
+  // since the owner's feedback of 2026-10-30, so both claims are made by the statement beside
+  // it, which the bar links: a reader who pressed "Accept all" on the page that states the
+  // marketing question must not be left thinking they agreed to it.
   const privacy = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
   assert.match(
     privacy,
-    /takes the campaign answer back/i,
-    'the privacy statement no longer says what the bar\'s refusal covers: that bar carries the campaign decision\'s key and writes it down as a refusal, and the wording has to say so',
+    /takes the marketing answer back/i,
+    'the privacy statement no longer says what the bar\'s refusal covers: that bar carries the marketing decision\'s key and writes it down as a refusal, and the wording has to say so',
   )
   assert.match(
     privacy,
-    /leaves the campaign question where it stands/i,
-    'the privacy statement no longer says the bar\'s accept is the analytics question alone, so a reader who accepted there could think the campaign trackers were agreed to',
+    /leaves the marketing answer where it stands/i,
+    'the privacy statement no longer says the bar\'s accept is the analytics question alone, so a reader who accepted there could think the marketing trackers were agreed to',
   )
 })
 
@@ -1853,7 +1926,7 @@ test('the privacy page states what is collected in the state the site is built i
   const on = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
   assert.match(on, /Google Analytics/i, 'the privacy page does not name the tool the site would load (D93)')
   assert.match(on, /identifiers/i, 'the privacy page does not state that the tool sets identifiers (D93)')
-  assert.match(on, /after you accept|after consent/i, 'the privacy page does not state that analytics load only after consent')
+  assert.match(on, /until you accept/i, 'the privacy page does not state that the load waits for the visitor\'s consent')
   assert.match(on, /Decline/, 'the privacy page does not say how consent is withdrawn')
   assert.match(on, new RegExp(CONSENT_KEY), 'the privacy page does not say where the choice is stored')
 })
@@ -1995,19 +2068,19 @@ test("the privacy defaults the page states are the ones the site's script makes"
 
 test('the privacy statement names the campaign vendors the site is configured to load, and no others', () => {
   // The page is the claim and this file is the fact (W3.2), and G2.3 adds three claims to it:
-  // which vendors the four campaign pages may load, which pages those are, and what withdrawing
-  // deletes. Each is held to the artifact that makes it true rather than to a list kept here, so
-  // a vendor, a page or a cookie that moves takes the sentence with it — including the two
-  // vendors the owner has not supplied an id for, which the page describes without naming (the
-  // owner's feedback of 2026-10-30).
+  // which vendors the site may load and where each of them loads, which pages the second question
+  // is asked on, and what withdrawing deletes. Each is held to the artifact that makes it true
+  // rather than to a list kept here, so a vendor, a page or a cookie that moves takes the
+  // sentence with it — and a vendor with no id, which the artifact does not load, is described
+  // without being named (the owner's feedback of 2026-10-30).
   const text = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
   const script = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
 
   const facts = siteFacts()
   // A vendor is named only where the site is configured to load it (the owner's feedback of
-  // 2026-10-30), and both directions are held: the ids `site.yaml` ships empty name nothing, and
-  // a value supplied there is a name the page owes. The ones that are not named are still
-  // covered as a class, which is what the campaign question asks about.
+  // 2026-10-30), and both directions are held: an id `site.yaml` ships empty names nothing, and a
+  // value supplied there is a name the page owes. The ones that are not named are still covered
+  // as a class, which is what the marketing question asks about.
   for (const [vendor, configured] of [
     ['Meta', facts.marketing.metaPixelID],
     ['LinkedIn', facts.marketing.linkedinPartnerID],
@@ -2017,11 +2090,19 @@ test('the privacy statement names the campaign vendors the site is configured to
       text.includes(vendor),
       configured.length > 0,
       configured.length > 0
-        ? `the privacy page does not name ${vendor}, which the campaign pages are configured to load (G2.3, D401)`
+        ? `the privacy page does not name ${vendor}, which the site is configured to load (G2.3, D401)`
         : `the privacy page names ${vendor} while nothing supplies the value that would load it: a vendor with no id is not loaded, and the page may not say it is (the owner's feedback of 2026-10-30)`,
     )
   }
-  assert.match(text, /marketing trackers/i, 'the privacy page describes the campaign pages\' measurement as nothing at all, so a reader cannot tell what their question covers')
+  assert.match(text, /marketing trackers/i, 'the privacy page describes the marketing measurement as nothing at all, so a reader cannot tell what their question covers')
+  // And WHERE each loads, which is the claim the owner's ruling of 2026-10-31 changed: the pixel
+  // is not the campaign pages' any more, so a page that says it is would be untrue on every page
+  // a visitor reads it from.
+  assert.match(
+    text,
+    /would load on every page/i,
+    "the privacy page does not say the pixel loads on every page, which is what the owner's ruling of 2026-10-31 made true and the artifact does (the pixel's id and origin are in every page's banner)",
+  )
   for (const variant of loadLanding().variants) {
     assert.ok(text.includes(variant.path), `the privacy page does not name ${variant.path}, one of the four campaign pages the second question is asked on, so a reader cannot tell where it applies`)
   }
@@ -2088,12 +2169,14 @@ test("the deployed policy admits exactly the origins the gate loads from, and th
 
   // `origins.mjs` reads the whole policy against the contract Google's documentation states.
   // What this file adds is the cross-check the gate needs: the policy admits exactly the
-  // origins the gate loads from — Google's, and the campaign's three (G2.3, D401). A policy
-  // narrower than the gate blocks a load that was consented to; a wider one admits a request
-  // nothing consented to.
+  // origins the gate loads from — Google's, and the marketing measurement's three (G2.3, D401).
+  // A policy narrower than the gate blocks a load that was consented to; a wider one admits a
+  // request nothing consented to. All three are here whether or not their loader runs on the
+  // page in front of the reader, because the policy is the site's and not the page's: the pixel
+  // loads on every page, and the other two whenever a visitor reads a campaign page.
   assert.deepEqual(
     remoteScriptSources(csp.value),
-    [ANALYTICS_ORIGIN, ...CAMPAIGN_ORIGINS],
+    [ANALYTICS_ORIGIN, ...MARKETING_ORIGINS],
     'firebase.json\'s script-src does not admit exactly the origins the gate loads from',
   )
   assert.ok(!/script-src[^;]*'unsafe-inline'/.test(csp.value), "firebase.json's script-src carries 'unsafe-inline'")

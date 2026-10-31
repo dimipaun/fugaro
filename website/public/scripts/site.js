@@ -1002,11 +1002,15 @@
   // Whether GA4 is loaded, which is the one thing its half of the key events waits for (G2.4):
   // `load()` sets it, a withdrawal clears it, and nothing else reads or writes it. It is the
   // gate's own state rather than a second reading of storage, so a visitor who has just answered
-  // the banner is measured from the same press that loaded the tag. `tracking` is the pixel's
-  // half of the same state, set and cleared by the `marketing()` gate below: the two questions
-  // are two answers, so each event is sent to the one that was granted and to no other.
+  // the banner is measured from the same press that loaded the tag. `marketingLoaded` is the
+  // marketing half of the same state, set by the two loaders that fetch a vendor's script — the
+  // pixel's, on every page, and the insight tag's, on the four campaign pages — and cleared by
+  // the withdrawal below: the two questions are two answers, so each event is sent to the one
+  // that was granted and to no other. What the vendor's events wait for is the pixel's own queue
+  // as well (`window.fbq`, which only its loader builds), and what the withdrawal owes a cookie
+  // deletion to is this flag, exactly as the analytics half owes one to `loaded`.
   var measuring = false
-  var tracking = false
+  var marketingLoaded = false
 
   // One call into the tag's queue. The queue is created by `load()` below, and the two callers
   // are both behind a check that it exists: this is the gate's own voice and not a second one.
@@ -1129,7 +1133,7 @@
     // `site.yaml` carries one.
     function load() {
       if (!origin || !id) return
-      tracking = true
+      marketingLoaded = true
       if (loaded) return
       loaded = true
       window.fbq = window.fbq || function () {
@@ -1147,13 +1151,15 @@
     // every first-party cookie the pixel and the insight tag set, which is the list above, read
     // out of the jar before anything is written so that nothing else is touched.
     //
-    // It is not gated on this page having loaded anything, because the withdrawal is not always
-    // made on the page that loaded: a visitor who accepted the pixel on one page withdraws on
-    // the privacy page, where it never runs. That list is the whole of what is read, so a
-    // visitor who never accepted has nothing deleted — and nothing is written but an expiry on a
-    // cookie this host already held.
+    // It is gated on this page having loaded something, the way the analytics half's withdrawal
+    // is: a visitor who never accepted has nothing of a vendor's to delete here, so the jar is
+    // not even read — and the page a visitor takes the answer back on is not a special case,
+    // because the pixel's configuration is on every page's banner and a stored grant loads it
+    // there too. That list is the whole of what is deleted, so nothing is written but an expiry
+    // on a cookie this host already held.
     function withdraw() {
-      tracking = false
+      if (!marketingLoaded) return
+      marketingLoaded = false
       if (window.fbq) window.fbq('consent', 'revoke')
       var host = (window.location && window.location.hostname) || ''
       var held = heldNames()
@@ -1253,6 +1259,7 @@
     // script — and the same reported address, under the same key.
     function insight(origin, id) {
       if (!origin || !id) return
+      marketingLoaded = true
       window._linkedin_data_partner_ids = window._linkedin_data_partner_ids || []
       window._linkedin_data_partner_ids.push(id)
       window.lintrk = window.lintrk || function () {
@@ -1325,7 +1332,7 @@
   function keyEvents(banner) {
     function keyEvent(name, tracked) {
       if (measuring) gtag('event', name)
-      if (tracking && window.fbq) window.fbq('track', tracked)
+      if (marketingLoaded && window.fbq) window.fbq('track', tracked)
     }
 
     function press(id, name, tracked) {
