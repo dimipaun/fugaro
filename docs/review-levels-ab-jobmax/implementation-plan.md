@@ -98,7 +98,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L0.1 Answer U1: how Claude Code takes an effort setting
 
 - **Files:** `docs/multi-model.md` (its section on what was measured against Claude Code, beside `MAX_THINKING_TOKENS`).
-- **Interfaces:** produces the closed set of effort values and the per-process mechanism (a flag, an environment variable or a settings key) for the pinned Claude Code version. It is measured with the fake `claude` and the pinned binary's own `--help`, offline. If there is no per-process mechanism, the task says so and L4.3 is dropped (D725 then has nothing to apply).
+- **Interfaces:** produces the closed set of effort values and the per-process mechanism (a flag, an environment variable or a settings key) for the pinned Claude Code version. It is measured with the fake `claude` and the pinned binary's own `--help`, offline. If there is no per-process mechanism, the task says so and L4.3 is dropped (D725 then has nothing to apply). **Done** (#1422, measured locally because this repository's cloud loop pins no Claude model): the mechanism exists, so L4.3 stays.
 - **Tests and command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Depends on:** none.
 - **Red step:** none. It is a measurement recorded in a doc, and L1.1's closed set is built from it.
@@ -107,7 +107,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L1.1 The task's `review_levels` field (D724)
 
 - **Files:** `internal/config/levelsetting.go` (new), `internal/config/levelsetting_test.go` (new), `internal/task/task.go`, `schemas/task.schema.json`, `internal/task/task_test.go`.
-- **Interfaces:** produces `config.LevelSetting{Model, Effort, Off bool, Focus string}` and `config.ReviewLevels{L1, L2, L3 *LevelSetting}`. They live in `internal/config` because `internal/task` already imports `internal/config`, so a resolver in `config` cannot import `task`. `task.Spec.ReviewLevels` reuses the type. `Off` is the YAML/JSON `none`. `Effort` is decoded against a closed set (`config.Efforts`, from L0.1), so an unknown value is refused at decode time. `Focus` is at most 500 bytes, is never put through a shell, and reaches the reviewer only as quoted data (L4.2). Consumed by L3.1 and L4.2. Inert until L3.1.
+- **Interfaces:** produces `config.LevelSetting{Model, Effort, Off bool, Focus string}` and `config.ReviewLevels{L1, L2, L3 *LevelSetting}`. They live in `internal/config` because `internal/task` already imports `internal/config`, so a resolver in `config` cannot import `task`. `task.Spec.ReviewLevels` reuses the type. `Off` is the YAML/JSON `none`. `Effort` is decoded against a closed set, `config.Efforts` = `low`, `medium`, `high`, `xhigh`, `max` (L0.1, [multi-model.md](../multi-model.md) "How the pinned Claude Code takes an effort setting"), so an unknown value is refused at decode time. The refusal has to be Fugaro's: Claude Code never refuses a bad value (its flag warns and sends the default, its variable and settings key drop it silently). `Focus` is at most 500 bytes, is never put through a shell, and reaches the reviewer only as quoted data (L4.2). Consumed by L3.1 and L4.2. Inert until L3.1.
 - **Schema change:** `task.schema.json` gains `review_levels` (closed objects, `additionalProperties: false`).
 - **Tests:** `TestReviewLevelsRoundTrip`, `TestReviewLevelsRefusesUnknownKey`, `TestReviewLevelsFocusBound`, `TestLevelSettingRefusesUnknownEffort`, and `schemas/schemas_test.go`'s existing schema-vs-struct check.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/config ./internal/task ./schemas -run 'ReviewLevels|LevelSetting|Schema' -count=1`.
@@ -174,7 +174,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Interfaces:** consumes L1.1, L1.3, L1.4 and L2.2. Produces `config.ResolveLevels(in LevelInputs) (Levels, []Warning, error)`. `LevelInputs` carries the merged config, the mode, the floor, the task's `*config.ReviewLevels`, the recipe, the providers map (which models a provider claims) and the effective `allowed_models`. Precedence is rigor defaults < project < repository < task, and the floor is applied last. **O7 as ruled (2026-10-30): the rigor mode wins.** An enabled level whose step the recipe lacks is inserted in its fixed place: L1 before `review`, L3 after `review` with `bounce: first_line`, its knobs from `agent.*`. `none` removes a step the recipe has, unless the owner's floor requires it. The same function is the runner's bootstrap check (L4.2), so a task written straight to the bucket meets the same refusals.
   - Refuses L1 = L2 by exact model ID.
   - Warns when L2 equals the coder's model, or when L1 and L2 share a vendor family. It creates `config.ModelFamily`: a Claude ID is `anthropic`, a provider ID is its vendor prefix. A/B D553 reuses it.
-  - Refuses `effort` for a model a provider claims, with the reason.
+  - Refuses `effort` for a model a provider claims, with the reason (D725).
+  - Warns when `effort` is set for a Claude model that ignores it (`claude-haiku-4-5` sends no effort by any mechanism, L0.1).
   - Refuses a level model outside `allowed_models`.
 - **Tests:** `TestResolveLevelsPrecedence`, `TestResolveLevelsFloorRefusesNone`, `TestResolveLevelsRefusesSameModel`, `TestResolveLevelsInsertsMissingStep`, `TestResolveLevelsWarnsCoderAndFamily`, `TestResolveLevelsRefusesProviderEffort`, `TestResolveLevelsRefusesModelOutsideAllowList`, `TestResolveLevelsSoloUnaffected` (`solo`, `lint-fix`, and a coder = reviewer configuration on the catalog `default` recipe, resolve with no refusal at every mode), and `TestResolveLevelsRefusesFirstLineRecipeWithCoderEqualsReviewer`. A recipe carrying `first_line: {}` (`standard`, `test-and-fix`) always runs L1 (`docs/recipes.md` §2), so a coder = reviewer configuration on it **is** refused under D721. That includes this repository's own `fugaro.yaml` launched with `--recipe standard`. See O11.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/config -run 'ResolveLevels' -count=1`.
@@ -206,9 +207,9 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### L4.3 Effort for a Claude stage (D725)
 
-- **Files:** `internal/agent/env.go`, `internal/agent/effort_test.go` (new).
-- **Interfaces:** produces `agent.EffortVars(effort string, provider bool) (map[string]string, error)`. It is empty for a provider stage and for "", and it returns an error for a value outside `config.Efforts`. The variable or flag it sets is the one L0.1 recorded.
-- **Tests:** `TestEffortVarsClaudeOnly`, `TestEffortVarsNeverOnProviderStage`, `TestEffortVarsRefusesUnknown`.
+- **Files:** `internal/agent/env.go`, `internal/agent/effort_test.go` (new), and `internal/agent/settings.go` only if its managed settings could carry `maxEffortLevel`.
+- **Interfaces:** produces `agent.EffortVars(effort string, provider bool) (map[string]string, error)`. It is empty for a provider stage and for "", and it returns an error for a value outside `config.Efforts`. It sets `CLAUDE_CODE_EFFORT_LEVEL` (L0.1: the variable beats the `--effort` flag and the `effortLevel` settings key, and a `maxEffortLevel` in any settings file, the managed one included, clamps all three). So the agent's managed settings file must carry no `maxEffortLevel` below the value set, and the stage's record keeps the value Fugaro set, because Claude Code's stream-json output does not show the level. `claude-haiku-4-5` sends no effort by any mechanism: setting one there is a no-op, and L3.1 warns about it.
+- **Tests:** `TestEffortVarsClaudeOnly`, `TestEffortVarsNeverOnProviderStage`, `TestEffortVarsRefusesUnknown`, `TestEffortVarsSetsTheVariable` (the name is `CLAUDE_CODE_EFFORT_LEVEL`), and `TestManagedSettingsCarryNoEffortCap`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/agent -run 'EffortVars' -count=1`.
 - **Depends on:** L1.1 (`config.Efforts`, fixed by L0.1, so this task changes no schema).
 - **Red step:** an undefined function fails the test.
