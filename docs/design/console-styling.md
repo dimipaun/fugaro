@@ -538,7 +538,26 @@ read was resolved for, drawing the document's totals and **no row at all**); run
 never started (a count in no row and no total, drawn after the totals as
 `span.spend-people-unlaunched` beside the word `never started` in
 `span.spend-people-unlaunched-word`).
-**There is no loading state, no stale state and no halted state on this screen.** The one
+**A section that is being read says so, and keeps what it had.** The owner's rule of
+2026-10-31 — "we need to render parts of screen as soon as we get that data, not wait for
+it all before we show anything" — gives this screen two sections, each with a read of its
+own (`budget show` for the caps, the report for everything else), and a read that has not
+answered draws a **busy mark** at the top of its own section instead of blanking it: the
+section carries `data-busy="true"` and `aria-busy="true"` and fades every child but its
+slot, and the mark itself is `div.console-busy` — `span.console-busy-spinner`, the static
+word `span.console-busy-still-mark` a reader with the reduced-motion preference sees
+**instead of** the spinning element, and the label `span.console-busy-label` naming what is
+being read. The section's own first child is `div.console-busy-slot`, which is where the
+mark goes and where a cached view's stamp is drawn, and a read that outlives fifteen
+seconds adds `p.console-busy-still` to it. A view that came out of the session cache is
+drawn at once, stamped `p.console-stamp` — `span.console-stamp-at` carrying the words
+`as of HH:MM` on the console's own clock, and the `button.console-stamp-refresh` that reads
+it again beside them, in the line but not inside the element that says *when*, because a
+node's `textContent` is its whole subtree's and a hook on the line would answer
+`as of 09:05Refresh`. The mark and the stamp are drawn by
+`console/src/renderer/section.ts`, the helper every tab adopts as it is rebuilt around
+sections, so the hooks above are the console's rather than this screen's.
+**There is no halted state on this screen.** The one
 cap-reached marker it draws is the caps panel's own word `at cap` (above), beside the
 figures it was measured from; nothing else on the screen carries one, and a rule may not
 read the tone alone as the state.
@@ -1744,10 +1763,12 @@ animated would be a figure whose last frame is a lie about when the value was re
 
 **Amendment, 2026-10-24: one screen animates, and this section carries its states and their static styles.** The owner's console dependency graph spec of 2026-10-22 asks for a moving graph — a light streak circling a running node, a glow behind the critical ones, a flow along the critical path's edges — and the owner's answer GD4 of that day, confirmed by the reconciliation's ruling (b) ([reconciliation](../console-dependency-graph/reconciliation.md)), amends this section **for that screen alone**: the graph screen (GV2.3, GV2.4 in [the plan](../console-dependency-graph/implementation-plan.md)) may animate, and everything above stands unchanged for every other screen. The exception is bounded by four rules, and a reader should be able to check a build against them:
 
-- **The animation belongs to the graph and to nothing else.** Three keyframes, no more: a **comet** on a node that is running, a **pulse** on a critical node, and a **flow** along an edge of the critical path. No other screen gains one, and **no figure animates anywhere** — which is the paragraph above, kept: a number whose last frame is stale is a number that lies. The test that matters here is a negative one: no animation outside the graph screen.
+- **The animation belongs to the graph and to nothing else.** Three keyframes, no more — the one exception the later amendment below adds is the busy mark's single turn: a **comet** on a node that is running, a **pulse** on a critical node, and a **flow** along an edge of the critical path. No other screen gains one, and **no figure animates anywhere** — which is the paragraph above, kept: a number whose last frame is stale is a number that lies. The test that matters here is a negative one: no animation outside the graph screen.
 - **Every animated state carries its word.** §3.5's rule, unchanged and load-bearing on this screen: the states are `implementing`, `in review`, `fixing`, `queued`, `waiting`, `halted`, `stuck`, `blocked`, `ready`, `done` and `critical`, each drawn as text on the node with its colour second. A reader who cannot tell two colours apart reads the same graph, and a screenshot read in greyscale is still a graph.
 - **Reduced motion gets a static style per state, not the global freeze.** The rule above *freezes* an animation rather than restyling it: `animation-duration: 0.01ms` with one iteration leaves a comet wherever it stopped, which is a picture of something that is not happening, and the same freeze is the whole of what `base.css` does (F36 in the reconciliation is where that gap was found). So the graph screen writes **one explicit static style per animated state** under its own `@media (prefers-reduced-motion: reduce)` block in `console/src/renderer/theme/screens.css`, each keeping its word above it, and the global freeze stays exactly where it is.
 - **Forced colours draw no animation at all** (§4.4): under `forced-colors: active` every state is its mark and its border, the same drawing the reduced-motion arm leaves behind.
+
+**Amendment, 2026-10-31: the busy mark's one turn, and nothing else moves.** The owner's rule of 2026-10-31 — "we need to render parts of screen as soon as we get that data, not wait for it all before we show anything" — needs the other half of the same complaint: a control change used to look like nothing had happened, and a section whose read has not answered has to say so **in the frame the click happened in**. A mark that says "reading" without moving is a mark a reader takes for a stopped console, so the busy mark (`console/src/renderer/section.ts`, drawn into a section's own slot) may draw **one** spinning element, `span.console-busy-spinner` in `flight-deck.css`, turned by **one** keyframe, `console-busy-turn`, whose only property is `transform`. The count above therefore becomes four. It is not a figure and not a state of a screen: it carries no number and no word about the data, it is drawn only while a read is in flight, and it is the only motion the console has outside the graph screen. Its two arms follow the rules above rather than restating them: under `prefers-reduced-motion: reduce` the element is **not drawn at all** (`display: none`, with the animation stopped on that same selector) and the static word `span.console-busy-still-mark` is shown in its place, because the global freeze would leave a ring wherever its last frame put it — a picture of half a circle rather than of reading; under `forced-colors: active` it declares no animation at all.
 
 **What this amendment does not change.** The 120 ms `--duration-fast` hover and focus transitions are still the only motion on every other screen, the reduce rule is still written once in `base.css` and still applies to everything this screen does not restate, and the graph screen still takes its colours and its spacing from the shared token layer — which is why this is an amendment to the motion rule and to nothing else in this design.
 

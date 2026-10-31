@@ -70,8 +70,10 @@ import {
   keyClass,
   peopleArguments,
   renderSpend,
+  renderSpendFrame,
   scopeOf,
 } from '../../src/renderer/screens/spend'
+import { BUSY_SLOT_CLASS } from '../../src/renderer/section'
 import { drawnRows } from '../support/spend'
 import type {
   SpendAccount,
@@ -2582,6 +2584,47 @@ function rowDrawn(node: ScreenElement, key: string): FakeScreen {
   if (first === undefined) throw new Error(`no row for ${key}`)
   return first
 }
+
+describe('renderSpendFrame', () => {
+  it('draws the two sections and no figure, each section holding its busy slot first', () => {
+    // The shell is what the entry mounts the moment the first of the two reads
+    // lands (console 0.116.1, the owner's rule of 2026-10-31): one element per
+    // section and not a word of either document, so a section whose read has
+    // not answered yet is an empty element and not a blank screen.
+    const frame = renderSpendFrame(factory, 'light')
+    expect(frame.root.getAttribute('data-theme')).toBe('light')
+    expect((frame.root as FakeScreen).classes).toContain('spend')
+    expect(drawn(frame.root)).toBe('')
+    expect((frame.report as FakeScreen).classes).toContain('spend-report')
+    expect((frame.caps as FakeScreen).classes).toContain('spend-caps')
+    // The slot is the section's **first** child and the shell's own element, not
+    // something a filler appends: a mark put there in the click's own frame sits
+    // at the top of the section, over the figures that section already drew,
+    // rather than under a table nobody has scrolled to.
+    expect(frame.report.childNodes()[0]).toBe(frame.reportSlot)
+    expect(frame.caps.childNodes()[0]).toBe(frame.capsSlot)
+    expect((frame.reportSlot as FakeScreen).classes).toContain(BUSY_SLOT_CLASS)
+    expect((frame.capsSlot as FakeScreen).classes).toContain(BUSY_SLOT_CLASS)
+  })
+
+  it('fills each section without appending a second slot, so the one-shot drawing keeps the shell', () => {
+    // `renderSpend` is the shell with both sections filled, and the fillers find
+    // the slot the shell drew rather than drawing one of their own: a filler that
+    // appended would leave two slots per section, and the entry's mark would land
+    // in one of them depending on which drawing path ran.
+    const tree = renderSpend(factory, modelOf(), 'light')
+    const report = one(tree, 'spend-report')
+    const caps = one(tree, 'spend-caps')
+    expect(all(report, BUSY_SLOT_CLASS)).toHaveLength(1)
+    expect(all(caps, BUSY_SLOT_CLASS)).toHaveLength(1)
+    expect((report.childNodes()[0] as FakeScreen).classes).toContain(BUSY_SLOT_CLASS)
+    expect((caps.childNodes()[0] as FakeScreen).classes).toContain(BUSY_SLOT_CLASS)
+    // Filled, the same shell now reads: the range is the **document's** own, so
+    // the section that was empty above carries a figure, and the slot is still
+    // the first thing in it.
+    expect(texts(tree, 'spend-since')).toEqual(['2026-10-12'])
+  })
+})
 
 describe('renderSpend', () => {
   it('puts the theme on the root, so a stylesheet has two palettes to draw', () => {
