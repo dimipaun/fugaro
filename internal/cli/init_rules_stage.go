@@ -187,6 +187,11 @@ func (s *rulesStage) read(ctx context.Context) (*infra.DB, rulesSkew, error) {
 // REPORTED rather than fatal: `fugaro update`'s other stages have nothing to do
 // with it, and the run that refused them all would be the one command that must
 // work, not working.
+//
+// The config's own pair is checked before this, never after (rulesUnavailable):
+// a database the URL names and a Firebase project that is not its own is a
+// config no read of that database can settle, and the stage must not open it to
+// find out.
 func (s *rulesStage) state(ctx context.Context) (*infra.DB, initflow.State, string, error) {
 	db, skew, err := s.read(ctx)
 	if err != nil {
