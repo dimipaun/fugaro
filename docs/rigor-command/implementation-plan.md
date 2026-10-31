@@ -216,15 +216,15 @@ installation that has never had one.
   dropped at any time. It is written through the write the converge already gives that file —
   `writeConfig` on the engine, which holds `lc`, `spec`, `path` and `old`, the way the credentials
   stage calls it (`internal/cli/init_credentials.go`) — so the field gets the diff, the confirmation
-  and the backup every other config write gets, and the project config gains no second writer. Every later `update` compares that record with the generation it reads: equal
-  or older, it publishes as usual and records what it read; **newer** — someone else published since
-  this machine last wrote — it refuses
-  (`TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer`, below), shows the **three-way
-  state** (this machine's file, the generation it was written from, the object published now) and
-  offers to **re-seed** the local file from the published one under its own confirmation and with a
-  backup — the seeding half this same stage already carries, aimed at a file that is there instead
-  of one that is not. A refusal that showed nothing would leave the owner to guess which of the two
-  files to keep.
+  and the backup every other config write gets, and the project config gains no second writer. Every
+  later `update` compares that record with the generation it reads: equal or older, it publishes as
+  usual and records what it read; **newer** — someone else published since this machine last wrote —
+  it refuses (`TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer`, below), shows the
+  **three-way state** (this machine's file, the generation it was written from, the object published
+  now) and offers to **re-seed** the local file from the published one under its own confirmation
+  and with a backup — the seeding half this same stage already carries, aimed at a file that is
+  there instead of one that is not. A refusal that showed nothing would leave the owner to guess
+  which of the two files to keep.
 - **First run, nothing recorded: this stage adopts.** An installation that carries no
   `layer_generation` — every installation the release reaches — is not refused and not re-seeded: the
   stage publishes as it would, then **records the generation it read** and says that it adopted it
