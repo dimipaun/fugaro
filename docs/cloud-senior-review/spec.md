@@ -88,7 +88,23 @@ job's service account holds `secretAccessor` on that secret. The runner's own en
 carries `CLAUDE_CODE_OAUTH_TOKEN` for the whole job, and the coding agent runs as the same OS user in
 the same container — so a prompt-injected coder can read it from `/proc/<runner>/environ` or from
 the metadata server (`mixed-credentials.md` §6; the plan's Review Focus 1 and 2). That residual is
-accepted today for an `oauth` workflow and is the whole reason `stage_auth` is **held** (D9).
+accepted today for an `oauth` workflow.
+
+**It is not why `stage_auth` is held, and this design had that wrong.** D9 states the hold itself,
+in `docs/design/project-centric.md` §7: *"#363 OAuth reviewer stage — Multiplies per-repository
+variant jobs; widens token blast radius under sharing — **Hold** until phase 5."* The two costs D9
+names are a **job per repository** and a token **shared wider by a shared job** — not the `/proc`
+read, which the in-job spec already lives with in every `oauth` workflow.
+
+**Is phase 5's precondition met now? Half of it, and the half that is missing is the one that
+matters.** Phase 5 is *"OAuth pool: person-owned secrets, references, `accounts share`, CLI
+failover; #363 rebased"* (`project-centric.md` §7). The **per-(profile, account) job** half exists
+today: `gcp.ProjectJobName` and `config.ProjectJobAccounts` build exactly that axis, so a token no
+longer has to widen a job beyond one account (F14). The **pool** half does not: person-owned secrets,
+the share operation and the launcher's own failover are the `accounts add` design, E1 in PR #1470 —
+open, not merged. So D9's worst cost (a job per repository) is answerable by this design, and D9 is
+still not lifted: its subject is `agent.stage_auth`, which this design does not need. **D881** states
+that in [reconciliation.md](reconciliation.md) §4 with the cost of each way.
 
 ---
 
@@ -102,28 +118,67 @@ recipe. Its whole input is the pull request number and the head commit it resolv
 **Why a separate job.** `mixed-credentials.md` §6 mitigation 4 says it plainly: *"a separate job
 execution for the reviewer, with its own container and service account, is the only mitigation that
 closes the gap"* — the `/proc` read and the metadata server. The token is then held in a container
-that has never run a line of the repository's code, has read nothing but the head it fetched, and
-will be gone when the review is over. It also removes a configuration the owner has to reason about:
-in the coder's job there are two credentials and a per-stage environment to get right (the held
-plan's P10, P11, P14); in a separate job there is one credential and one stage.
+that the pull request's coder never ran in, that holds no write credential, and that is gone when the
+review is over. **It is not a container that never runs repository code, and this design will not
+claim that it is:** the reviewer drives Claude Code with Bash (the review stage's deny list is
+`WebSearch`, `WebFetch` and the binary reads — `internal/agent/settings.go`'s `DenyRules`), and
+D885's mutation check runs a test from the head under review by design. §7 states that residual as a
+residual, and D891 asks the owner what to do about it. What the separate container does remove is a
+configuration the owner has to reason about: in the coder's job there are two credentials and a
+per-stage environment to get right (the held plan's P10, P11, P14); in a separate job there is one
+credential and one stage.
 
-**The forge token is read-only, and the job holds no key that could mint anything else.** A run's
-installation token today asks for `{contents: write, pull_requests: write, issues: read, metadata:
-read}` (`internal/gitprov/github/apptoken.go`'s `tokenPermissions`, exported as
-`RunTokenPermissions`), because a run pushes its branch and opens its pull request. Two narrower
-read-only sets are already minted in this tree: the image build's `{contents: read, metadata: read}`
-(`buildTokenPermissions`/`BuildTokenPermissions`), used by `internal/cli/gitcred.go` and
-`internal/cli/imagecheck.go`, and the coordinator's `{pull_requests: read, metadata: read}`.
+**The forge token is read-only — and that needs a job that does not exist yet.** A run's installation
+token today asks for `{contents: write, pull_requests: write, issues: read, metadata: read}`
+(`internal/gitprov/github/apptoken.go`'s `tokenPermissions`, exported as `RunTokenPermissions`),
+because a run pushes its branch and opens its pull request. Three narrower read-only sets are already
+in this tree: the image build's `{contents: read, metadata: read}`
+(`buildTokenPermissions`/`BuildTokenPermissions`, used by `internal/cli/gitcred.go` and
+`internal/cli/imagecheck.go`), the coordinator's (`coordinatorTokenPermissions`, exported as
+`CoordinatorTokenPermissions`, `apptoken.go:128`), and the challenger arm's
+`shadowTokenPermissions` (`{contents: read, metadata: read}`, `apptoken.go:111`).
 
-The review job's set is the third: **`{contents: read, pull_requests: read, metadata: read}`** — read
+The review job's set is a fourth: **`{contents: read, pull_requests: read, metadata: read}`** — read
 the head, read the pull request's metadata, write nothing. **A permission set is not a boundary by
-itself**: a GitHub App's private key can mint *any* subset the App holds, so a job that mounts the
-App key can mint a write token whatever the launcher asked for. The review job therefore **mounts no
-App private key at all**; the launcher mints the read-only installation token and hands it in (a
-short-lived secret, the `mintBuildToken` precedent, or the credentials service where the
-installation has opted into one). **The review job writes nothing to the pull request**: not a
-comment, not a review, not a label. Its verdict is an artifact, and the coordinator — which already
-holds the write credential — decides what, if anything, to post.
+itself**: a GitHub App's private key can mint *any* subset the App holds, so a job that mounts the App
+key can mint a write token whatever the launcher asked for.
+
+**`fugaro run --token <name>` already puts the token on a job that mounts that key, and this design's
+first draft said otherwise.** The shared project job of `(profile, provider, account)` — the job an
+`accounts add` deploys (`+ standard/github/team-a`) and the job a coding run on that account executes
+— mounts `FUGARO_GITHUB_APP_PRIVATE_KEY` from the installation's project-wide copy, with
+`secretAccessor` for that job's own service account
+(`deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl`'s
+`shared_job_mounting_the_app_key_keeps_the_accessor`, which pins both the mount and the grant). So a
+review job launched on it would inherit **both** the account's OAuth token **and** the App key, and
+"mounts no App key" would be false of the thing this design launches.
+
+**The review job must therefore be its own job variant, with its own service account, per account.**
+Same `(profile, provider, account)` axis and the same `gcp.ProjectJobName` shape (a suffix or a
+parallel entry in the installation root's `project_jobs`), and one difference that is the whole
+point: its `secret_env` (the Terraform module's env→secret map, `internal/infra/projectjobs.go`'s
+`ProjectJob.SecretEnv`) carries **the account's Claude OAuth token and no `github-app-key`**, and its
+service account holds **no `secretAccessor`** on that key. It is deployed by `fugaro update` with the
+rest of the job set, and the implementation plan carries it as its own task (R7) because a launcher
+cannot launch a job that does not exist.
+
+**Who mints the read-only installation token, since the launcher holds no key.** The two mints in
+this tree both happen *inside* something that mounts the App key — `mintBuildToken`
+(`internal/cli/gitcred.go:92`) reads `FUGARO_GITHUB_APP_ID`/`FUGARO_GITHUB_APP_PRIVATE_KEY` from its
+own environment and is called from a build, and `internal/cli/imagecheck.go:530` does the same inside
+a check job. **Neither is a precedent for a launcher on the owner's laptop**, which has no key and
+must not be given one. So the mint is either the **credentials service** (which already holds the
+App key in its bundle for exactly this, where the installation has opted into one) or the
+**coordinator** (which already holds the write credential this installation trusts). Whoever mints,
+the token has to **reach the job**: the launch path hands a job its per-run variables through a Cloud
+Run execution override (`internal/backend/gcp/run.go:169`, `ContainerOverrides[].Env`), and an
+override's value is a **plain value in the execution object**, readable by anyone who can read that
+execution in the project. Whether that is acceptable, or whether the hand-in has to be a
+short-lived secret mounted rather than an override, is **UNVERIFIED-2** in
+[reconciliation.md](reconciliation.md) §6 and is settled by the task that builds it.
+
+**The review job writes nothing to the pull request**: not a comment, not a review, not a label. Its
+verdict is an artifact, and the coordinator decides what, if anything, to post on its own credential.
 
 **Worktree isolation, and mutation checks in the cloud.** The review job checks out the pull
 request's head at the SHA the provider reports (`FetchPRHead`, already what review mode does) into
@@ -135,16 +190,20 @@ worktree, and never with a push. That is a scratch edit inside a container that 
 is off unless asked for, it is bounded (one mutant, one named test, a time limit, and a revert
 before the stage ends), and the artifact says which test was run and what it did.
 
-**The job never holds a credential it does not need.** It mounts exactly one secret — the named
-account's Claude OAuth token — and receives exactly one credential — the read-only installation
-token. It does not mount the App private key, the Bitbucket token, the credentials bundle, the
-budget token or the git signing material. The billing identity this design chooses is the thing to
-check against the tree: a review job launched on the **shared project job** of `(profile, account)`
-inherits that job's bucket condition, which is the whole of `runs/` (`gcp.ProjectBucketCondition`,
-`docs/design/bucket-iam.md` §2.1) — the accepted, installation-wide reach the owner ruled on
-2026-10-17. A review job needs to write one run's own record and artifact, so that reach is more
-than it needs; narrowing it is a bucket-layout change this design does **not** make and instead
-records as a finding (**F12**).
+**The job never holds a credential it does not need — which is why R7's variant is not optional.** It
+mounts exactly one secret — the named account's Claude OAuth token — and receives exactly one
+credential — the read-only installation token, minted by the credentials service or the coordinator
+above. It does not mount the App private key (**the difference from the shared project job it would
+otherwise reuse**), the Bitbucket token, the credentials bundle, the budget token or the git signing
+material. The billing identity this design chooses is the thing to check against the tree: the
+variant it inherits its shape from is the **shared project job** of `(profile, account)`, whose bucket
+condition is the whole of `runs/` (`gcp.ProjectBucketCondition`, `docs/design/bucket-iam.md` §2.1) —
+the accepted, installation-wide reach the owner ruled on 2026-10-17. A review job needs to write one
+run's own record and artifact, so that reach is more than it needs; narrowing it is a bucket-layout
+change this design does **not** make and instead records as a finding (**F15**). Note what the
+variant therefore *keeps*: the reach, and the `CLOUD_RUN_JOB` identity the runner matches itself
+against. `fugaro doctor`'s job census (`internal/cli/doctor.go`) has to learn the suffix, or a
+converged installation reports a job it does not know about.
 
 ---
 
@@ -192,9 +251,17 @@ overview, strengths, issues to flag, security, performance, test coverage, verdi
 reader never has to read JSON to understand a review, and so a comment or a PR description can be
 the markdown verbatim.
 
+**Nothing of it leaves the run unredacted.** `review.md` is reviewer prose generated from an
+untrusted diff, and the coordinator (or a person) may paste it into a comment, a pull request
+description or a chat — so it passes through `internal/agent/redact.go` before it is published
+anywhere, exactly as the transcript does (§7). Today that pass covers what is published *from agent
+output*; this design names the artifact as one of those things, and R3 is the task that has to make
+it true rather than assume it.
+
 **The fields, and where they come from.** `severity` is the vocabulary the runner already reads
 (`blocker`/`major`/`minor` — the in-job spec's §6; `runstore.Finding` keeps `Severity` free-form and
-reads the three anchored axes `likelihood`, `impact` and `fix_cost` instead, [docs/rigor-modes/]).
+reads the three anchored axes `likelihood`, `impact` and `fix_cost` instead,
+[docs/rigor-modes/](../rigor-modes/spec.md)).
 `class` is the closed set `runner.VerdictSchema` already carries: `correctness`, `performance`,
 `security`, `data_loss`, `maintainability`, `cosmetic`. `file:line` is one location, and **the line
 is a claim the reviewer makes about the head it read**, so `head_sha` is recorded beside it and a
@@ -264,7 +331,7 @@ prompt inside it.
 | **When** | during the run, between `implement` and `fix`, changing what the run does next | **after** the run, on a head that is already pushed and already has a pull request |
 | **What it reads** | the working tree and the run's own session history | a **fresh clone of the pushed head**, with no memory of the coder's reasoning and no diff against an earlier round |
 | **Model** | `agent.models.reviewer` — often a cheap provider model on the same family as the coder | the strongest Claude model available, on a **named OAuth account** the owner controls |
-| **Credential** | the coder's job credential, in a container that also runs repository code | its own job, its own account, a **read-only** forge token, and no App key |
+| **Credential** | the coder's job credential, in a container that also runs repository code | its own job **variant** and service account (§2), the account's own token, a **read-only** forge token, and no App key |
 | **Context** | shares the run's context budget, its pins and its settings file | a session of its own, with its own output limit and effort |
 | **Checklist** | the review prompt's rules | the same rules plus the **security-sensitive checklist** and, on request, a **mutation check** |
 | **Effect** | a `changes` verdict drives a `fix` stage inside the same job | a **verdict artifact** the coordinator acts on; the review job itself changes nothing |
@@ -282,9 +349,16 @@ and the coordinator's own §7 on what an independent review of a security-sensit
 
 **Recommendation first: a new command, `fugaro review --pr N`.** It launches the review job
 described in §2 for pull request `N` in the current checkout's repository, picks the account by
-§1's rule (`--token` over `agent.oauth_token` over `default`), and prints the review run's id so the
-coordinator can read its artifact. `fugaro review --pr N --json` prints the artifact's JSON.
-`--mutate <file:test>` asks for a mutation check (§2).
+§1's rule (`--token` over `agent.oauth_token` over `default`), and prints the review run's id.
+`--mutate <file:test>` asks for a mutation check (§2), and `--json` prints the **launch's** own result
+(the run id, the job, the account) as JSON, like every other command's `--json`.
+
+**Reading the artifact back is the same command family's second verb, and it ships with the first.**
+`fugaro review show <review-run>` prints `review.json` and `review.md`; `fugaro review show <review-run>
+--json` prints the artifact's JSON alone. **An earlier draft of this document had the launch itself
+printing the artifact** — which cannot be true of a launch, because the verdict does not exist until
+the job has finished — and `show` appeared only in the plan's later task. **Both verbs are R2's**,
+and §8's live check uses both.
 
 **Why a command and not one of the two existing spellings.** `fugaro run --pr N --recipe
 review-only` already does an independent review, and it is the right low-level verb — but **it runs
@@ -357,12 +431,25 @@ wrote. Either way the coordinator sees a run that did not produce a verdict and 
 
 **The verdict artifact's integrity.** A coded run must not be able to forge its reviewer's verdict
 (§7). What makes that true, honestly: the review run's id is minted by the launcher **after** the
-coding run's job has ended, so a coder that wanted to write the artifact would have had to write a
-path under an id that did not exist yet; and the artifact's provenance is the review run's own record
-— its id, its account and its timestamps — which the coordinator reads beside the object. This is a
-real property of the ordering and **not** a signature: nothing in the object is cryptographically
-bound to the review job, and a shared project job's bucket condition reaches every run's prefix
-(F12). The design records that gap rather than claiming a boundary it does not have.
+coding run's job has ended, so *that* coder would have had to write a path under an id that did not
+exist yet; and the artifact's provenance is the review run's own record — its id, its account and its
+timestamps — which the coordinator reads beside the object. This is a real property of the ordering
+and **not** a signature: nothing in the object is cryptographically bound to the review job, and the
+job's bucket condition reaches every run's prefix (F15).
+
+**The ordering argument covers the reviewed pull request's own coder and stops there.** It says
+nothing about **another run executing at the same time on the same shared job**: that job's account
+can write any `runs/<slug>/<run>` prefix, so a concurrent run of a *different* repository on the same
+profile — or a second run of this one, waiting behind the review — can write under any prefix it can
+name. What the design can honestly claim is narrower than that: the review run's prefix does not
+exist while the coder's job runs (`task.NewRunID` mints a timestamp and four hex digits *at launch*),
+and the coordinator reads the artifact **beside the review run's own record**, so an object written
+under a prefix of the writer's own choosing is an orphan rather than a verdict. A concurrent job is a
+different matter: that account holds `objectUser` on the whole of `runs/`, which reaches
+`storage.objects.list`, so once the review run exists such a job can **see** the prefix and write
+under it — for that writer the ordering buys nothing at all, and only the narrowing F15 records as
+out of scope, or a signature over the artifact, would. **The design records that gap rather than
+claiming a boundary it does not have.**
 
 ---
 
@@ -375,31 +462,58 @@ installation's. Who may use whose is decided in two places and nowhere else: the
 `claude_accounts.<name>.allow_data_to` in the owner's local config, which the launcher checks at
 launch; and, where the account is shared beyond one person, the policy's reference record with its
 own `allowed profiles/repositories` and the **one job service account per (profile, account)** that
-mounts exactly that person's secret (`project-centric.md` §7, `project-named-oauth-tokens.md`). This
-design adds one more thing and it is the important one: **the token is mounted on the review job and
-on no other job.** The coder's job does not have it, so the container that runs the pull request's
-code — the container a prompt injection actually reaches — has nothing to steal. That is the
-difference between this design and the held `stage_auth` plan, and it is what
-`mixed-credentials.md` §6 mitigation 4 promised.
+mounts exactly that person's secret (`project-centric.md` §7, `project-named-oauth-tokens.md`).
 
-**The read-only forge scope is one scope among several, so the job holds no minting key.** The
-review job receives `{contents: read, pull_requests: read, metadata: read}` and **no GitHub App
-private key** (§2): a key would let the job mint a write token whatever the launcher asked for, so
-the scope is a token handed in and not a permission the container could widen. The consequence is
-that the review job cannot push, cannot merge, cannot comment and cannot label; whatever is posted
-to the pull request is posted by the coordinator, which already holds the write credential this
-installation already trusts.
+**What this design adds, stated at its true size.** The token is mounted on the **review job variant
+and on the account's other jobs**: `fugaro run --token team-a` puts the same token on the shared
+project job, because that is what `agent.oauth_token` means today, and the review job is a *second*
+job that holds it rather than the only one. **So the older claim in this document — "the coder's job
+does not have it, so the container a prompt-injection reaches has nothing to steal" — was false**, and
+it was false twice over:
+
+- a **coding run on a named account already mounts that account's token**, so the container that runs
+  the pull request's code *does* hold it, exactly as `mixed-credentials.md` §6 describes;
+- the **review job itself runs repository code** (§2): the reviewer has Bash, and the mutation check
+  runs a test from the head under review. The token is reachable from that stage — through its own
+  environment (`CLAUDE_CODE_OAUTH_TOKEN` is a mounted secret env var), through `/proc`, and through
+  **network egress**, which a job has by default and which no deny rule closes: `denyWeb` denies
+  Claude Code's `WebSearch`/`WebFetch` **tools**, and does not stop `curl` from Bash.
+
+What the design still buys, and it is worth having: a container that **did not run the coder**, a
+read-only forge scope, no App key in that container, and a run whose whole purpose is the review. What
+it does **not** buy is a container the token cannot leave. **D891 asks the owner which of three
+postures to take** (reconciliation.md §4), and until it is answered this design claims no mitigation
+it has not built.
+
+**The read-only forge scope is one scope among several, so the job holds no minting key — in the
+variant R7 adds.** The review job receives `{contents: read, pull_requests: read, metadata: read}`
+and, **on the job variant of §2 and not on the shared project job**, no GitHub App private key: a key
+would let the job mint a write token whatever the launcher asked for, so the scope is a token handed
+in and not a permission the container could widen. The consequence is that the review job cannot push,
+cannot merge, cannot comment and cannot label; whatever is posted to the pull request is posted by the
+coordinator, which already holds the write credential this installation already trusts. The scope
+itself is a **provider-side** property: it bounds what the *token* can do, and says nothing about what
+the *container* can do with the token it holds.
 
 **Prompt injection from the pull request's own diff.** The reviewed code is untrusted input. A
 reviewer must read it — that is its job — so the injection surface is not removable, only bounded:
 
-- **the job has nothing worth taking except its own reviewer's token.** No write credential, no App
-  key, no other account's secret, no bucket reach beyond the run prefixes it already has;
-- **the token it does hold is a person's, and the owner can revoke it** (`fugaro accounts rm`, the
-  rotation path the accounts design describes) and see it refused (`accounts ls`'s mark);
-- **the job writes nothing outward.** No web tool (`denyWeb: true`, which the held plan's P10 already
-  calls for and which a direct stage needs most), no comment, no push, no artifact outside the run's
-  own prefix;
+- **what the job can take is bounded, not absent.** It holds no write credential, no App key and no
+  other account's secret — and it *does* hold a person's subscription token in a container that runs
+  the diff's code. There is no version of this design in which that is not true, and §7's first
+  paragraph says so;
+- **the token's revocation is the provider's, not ours.** `fugaro accounts rm` deletes the local
+  record and the installation's secret; it does not revoke an OAuth token that has already left, and
+  it cannot — only the person's own account settings can. What the accounts design offers instead is
+  **rotation by re-running `add`**, and the mark (`accounts ls`) is how a dead or exhausted token is
+  seen. A stolen token therefore stays valid until the person rotates it at the provider, and the
+  honest mitigation is that the review job's token is the *account's*, not the installation's, so the
+  blast radius is one person's subscription rather than everyone's;
+- **the job writes nothing outward it was given a way to write.** No comment, no push, no artifact
+  outside the run's own prefix, and no web **tool** (`denyWeb: true`, which the held plan's P10 already
+  calls for). **`denyWeb` is a tool rule, not a network rule**: it does not stop `curl` or anything
+  else the reviewer's Bash can run against a job's default egress. Closing that is D891(a)'s
+  "egress denied", and this design does not already have it;
 - **everything the reviewer says is treated as data downstream.** The artifact is read and rendered,
   never executed; the findings that become a fix round's brief are quoted and bounded (§6);
 - **what this does not close, stated plainly:** an injected reviewer can put anything it likes into
@@ -409,8 +523,32 @@ reviewer must read it — that is its job — so the injection surface is not re
   advice, not evidence.
 
 **The verdict artifact's integrity.** Covered in §6: the ordering (the review run's id does not exist
-while the coder runs) is a real property; a signature over the artifact is not built, and the design
-says so rather than claiming one.
+while the coder runs) is a real property **for that coder and not for a concurrent job on the same
+shared job**, which can list `runs/` and write under the prefix it sees; a signature over the artifact
+is not built, and the design says so rather than claiming one.
+
+**Cost runaway, which a subscription hides.** A review job is not priced by the gateway (§1), so none
+of the dollar caps is a bound on it, and the loop this design is meant to serve has **no cap at all**:
+
+- **the fix ↔ review loop is unbounded by design here.** `fix first` launches a fix round (§6) and the
+  coordinator then asks for another review of the new head; nothing in this design counts the rounds,
+  and the plan defers the counting to the coordinator, where the owner's `max_rounds`/budget policy
+  can see it. A design that looped until `ship` would loop until a person noticed;
+- **the run's own bound is a wall clock, not a cost.** A review job inherits a task timeout (the
+  profile's `timeout_class` → the deployed job's `task_timeout_s` → Cloud Run's task timeout, plus
+  `backend.TaskTimeoutSlack`, `internal/config/config.go`), and the launch sets the execution's own
+  timeout from the workflow's `timeouts.total` (`internal/backend/gcp/run.go`'s
+  `Overrides.Timeout`); `agent.max_budget_usd` is passed to Claude Code as `--max-budget-usd` and is
+  **Claude Code's
+  own estimate**, accurate for a Claude model and about twenty-five times too high for a provider
+  model (`docs/multi-model.md`) — an estimate, not an enforcement;
+- **and the subscription's usage windows are shared with the owner's own work.** Every review job on a
+  named account spends the same weekly and five-hour windows the person spends interactively, on the
+  *same* account: an expensive review does not cost dollars, it costs the owner their session. That
+  is the bound the owner actually feels, and the design states it rather than leaving it implicit.
+
+The live check observes the accounting (§8's step 5); nothing here enforces a figure, and the design
+does not pretend to.
 
 **The crash reporter and the logs never capture the token.** The rules exist and this design reuses
 rather than invents them: `internal/agent/redact.go` redacts anything published from agent output;

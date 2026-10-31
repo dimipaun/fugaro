@@ -21,8 +21,8 @@ first, or reject. The job is **read-only on the forge**: it can fetch the head a
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The design: what exists today for a reviewer on an OAuth account, how a cloud review of a pushed branch runs, the output contract, how it differs from the in-job reviewer, the trigger, what the coordinator does with the verdict, the threat model, and the owner-run live check |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F23**, the dependencies **E1–E6**, and the owner decisions **D880–D890**. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **R1–R6** (at most 12 files each), the shared-files table, the first slice and the release slot. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E6**, and the owner decisions **D880–D891**. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | The tasks **R1–R7** (at most 12 files each), the shared-files table, the first slice and the release slot. **Nothing in it is approved** |
 
 ## The shape in one paragraph
 
@@ -41,7 +41,7 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
 
 | Block | State |
 | --- | --- |
-| **D880–D899** | **this work's block: D880–D890 written, D891–D899 reserved and unused.** Taken above every number on `main` (the highest is **D859**, the tail of the `settings` design's D840–D859, which merged as #1464) and above every open pull request's numbers (the highest is **D879**, reserved by the `accounts add` design, PR #1470, whose written range is D860–D870). The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and the open pull requests listed in [reconciliation.md](reconciliation.md) §2; it is re-checked at launch, and the block recorded again if it moved |
+| **D880–D899** | **this work's block: D880–D891 written (D891 written OPEN, as a question for the owner), D892–D899 reserved and unused.** Taken above every number on `main` (the highest is **D859**, the tail of the `settings` design's D840–D859, which merged as #1464) and above every open pull request's numbers (the highest is **D879**, reserved by the `accounts add` design, PR #1470, whose written range is D860–D870). The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and the open pull requests listed in [reconciliation.md](reconciliation.md) §2; it is re-checked at launch, and the block recorded again if it moved |
 | **Check 125** | **claimed here, and not written in the register.** `docs/gcp-live-checklist.md` reads **124 as the next free number above 123** and the Cloud Batch backend took it, so the number free above it is **125**; this work claims it for the owner-run live check in [spec.md](spec.md) §8. The register's own file is another work stream's (`docs/gcp-live-checklist.md` is not this task's to touch), so the row and the `## Check 125` section are written by the task that implements the check, under the number free at **that** merge — the register's rule that whichever of two open claims merges second renumbers itself. A reserved number is never reused and never renumbered |
 
 ## What this design does not do
@@ -58,6 +58,15 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
   today.
 - It writes no pull request and no comment of its own on any path: the review job's verdict is an
   artifact, and the coordinator decides what to say.
+- **It does not claim the review job is contained.** The reviewer runs the diff's code (Bash, and
+  D885's mutation test) in the container that holds the person's token, and the token is reachable
+  there through the environment, `/proc` and the job's default egress; §7 states that residual and
+  **D891** asks the owner which of three postures to take, so **R4 is blocked until they answer**.
+- **It does not launch on a job that already exists.** The shared project job of
+  `(profile, provider, account)` mounts the GitHub App key, so a read-only scope on it would be a
+  comment on the launcher's intent rather than a boundary; the design adds a **review-only job variant
+  and service account per account, with no App key** (**R7**), and it says who mints the read-only
+  token — never the launcher, which holds no key.
 
 ## Related
 
