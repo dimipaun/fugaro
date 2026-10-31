@@ -1,8 +1,6 @@
 # `fugaro models`: managing a project's models with one command
 
-**Status: design; no task approved.** D780–D783 were answered on 2026-10-30 (D783 against the recommendation); D784–D795 are open: each carries a recommendation
-and the cost of the alternative, and nothing in the plan may be launched until the owner has
-answered them. The plan is written to the recommendations.
+**Status: design approved; the tasks queue behind CLI 0.14.1 (0.15.0).** D780–D783 were answered on 2026-10-30 (D783 against the recommendation); D784–D795 were answered on 2026-10-31, all as recommended. The plan is written to the answers.
 
 **Asked by:** the owner, 2026-10-30: "we should have fugaro commands to manage the models".
 **Reconciled against** `origin/main` at `2d849e802` and the 15 pull requests open on 2026-10-30.
@@ -30,5 +28,5 @@ command that carries the change to the cloud.
 
 | Block | Use |
 | --- | --- |
-| **D780–D799** | this work's block: **D780–D795** written, open; **D796–D799** reserved and unused. Taken above every number on `main` (the highest is D759, the top of review-levels-ab-jobmax's reserved D720–D759) and above every open pull request's docs: the console auto-update plan (#1377) writes D760–D772, and #715 names D800, so D773–D779 are left as a gap rather than packed against #1377's block |
+| **D780–D799** | this work's block: **D780–D795** written, answered; **D796–D799** reserved and unused. Taken above every number on `main` (the highest is D759, the top of review-levels-ab-jobmax's reserved D720–D759) and above every open pull request's docs: the console auto-update plan (#1377) writes D760–D772, and #715 names D800, so D773–D779 are left as a gap rather than packed against #1377's block |
 | **Checks** | none: every behaviour this work adds is a local file edit or an offline read, and the plan tests each one hermetically. No live check is proposed, so no check number is taken |

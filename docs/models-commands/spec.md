@@ -1,7 +1,7 @@
 # `fugaro models`: the spec
 
 The commands below are written to the recommended answer of each decision (D780–D795,
-[reconciliation.md](reconciliation.md) §3; D780–D783 answered, the rest open). A decision answered the other way changes the
+[reconciliation.md](reconciliation.md) §3; D780–D783 answered 2026-10-30, D784–D795 answered 2026-10-31 as recommended). A decision answered the other way changes the
 paragraph that names it. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`).
 
 ## 1. The rule this serves
