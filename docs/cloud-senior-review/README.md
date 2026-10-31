@@ -22,7 +22,7 @@ first, or reject. The job is **read-only on the forge**: it can fetch the head a
 | --- | --- |
 | [spec.md](spec.md) | The design: what exists today for a reviewer on an OAuth account, how a cloud review of a pushed branch runs, the output contract, how it differs from the in-job reviewer, the trigger, what the coordinator does with the verdict, the threat model, and the owner-run live check |
 | [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F22**, the dependencies **E1–E6**, and the owner decisions **D880–D889**. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **R0–R6** (at most 12 files each), the shared-files table, the first slice and the release slot. **Nothing in it is approved** |
+| [implementation-plan.md](implementation-plan.md) | The tasks **R1–R6** (at most 12 files each), the shared-files table, the first slice and the release slot. **Nothing in it is approved** |
 
 ## The shape in one paragraph
 
