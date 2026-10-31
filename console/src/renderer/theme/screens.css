@@ -1154,11 +1154,12 @@ main p {
  * canvas's ground, the stream bands, the release box, the edges and the cards are
  * painted in `flight-deck.css`, in the redesign's tokens; the markup they meet is
  * the same markup this file used to draw them for, so there is one rule per hook
- * and it is in one place. What is left here is the **chrome** of the screen that
- * the redesign has not restyled yet -- the header, the tabs, the view switch, the
- * chips of the finished releases and the list -- and the screen's motion, whose
- * keyframes and both arms stay in one block in this file (design section 3.9's
- * amendment, and `graph-motion.test.ts` reads them here).
+ * and it is in one place. What is left here is the **chrome** the redesign has not
+ * restyled yet -- the header, the tabs, the view switch, the chips of the finished
+ * releases and the list -- the screen's motion, whose keyframes and both arms stay
+ * in one block in this file (design section 3.9's amendment, and
+ * `graph-motion.test.ts` reads them here), and the theme's one `forced-colors` arm,
+ * which is one list for every screen of the console.
  *
  * **No state is carried by colour alone** (design section 3.5). Every state word
  * is an element in the DOM beside the tone, and the two facts a reader scans for
@@ -2233,6 +2234,18 @@ span.coordinator-unread-retry {
   svg.graph-canvas {
     background: Canvas;
     border-color: CanvasText;
+  }
+
+  /* The band is a background in this mode as well, so it is the ground's own
+   * colour and its boundary: a band painted `CanvasText` would be a fill, and a
+   * fill is this file's word for the two marks that were one. */
+  section.graph svg .graph-band-box {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  section.graph svg .graph-band-label {
+    fill: CanvasText;
   }
 
   svg .graph-release-box,

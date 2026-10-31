@@ -38,9 +38,10 @@
 //      animation, which parks a comet off the card's far edge at `opacity: 0`).
 //   6. **a release heading is hit-tested as itself and not as the card that used
 //      to cover it.** The box is grown upward for its heading, and the engine's
-//      own room between two rows of tasks was less than that growth, so the
-//      heading was drawn inside the row above -- and painted over, because the
-//      screen appends every box before every card. A screenshot cannot report
+//      own room within a layer -- two cards of one layer are stacked one above
+//      the other, now that the picture is read left to right -- was less than
+//      that growth, so the heading was drawn inside the card above it -- and
+//      painted over, because the screen appends every box before every card. A screenshot cannot report
 //      this (a covered heading is a heading-shaped hole, which looks like a
 //      heading drawn faintly) and the unit suite cannot either: whether a point
 //      on a glyph belongs to the heading or to a card is the browser's own hit
@@ -526,7 +527,7 @@ test.describe('the graph view in a window', () => {
 
   test('keeps the dash and the edge scale when forced colors is active', async () => {
     // A task is selected first: the selection is a width as well as a tone
-    // (`svg .graph-node[data-selected='true'] .graph-node-box`), and a window with
+    // (`.graph-node[data-selected='true'] .graph-node-box`), and a window with
     // nothing selected has no such element at all -- a `null` read there would
     // make the assertion below pass whatever the stylesheet says.
     await page.locator('g.graph-node').first().click()
@@ -559,8 +560,10 @@ test.describe('the graph view in a window', () => {
       expect(widths.critical).toBe('3px')
       expect(widths.plain).toBe('2px')
       // The selection is a width too, and the tone it is drawn in is the
-      // reading's -- which forced colors takes away, leaving the thickness.
-      expect(widths.selected).toBe('2px')
+      // reading's -- which forced colors takes away, leaving the thickness. It is
+      // 3 px against a running card's 2, which is what keeps the selected card
+      // distinguishable from the state it also carries.
+      expect(widths.selected).toBe('3px')
     } finally {
       await page.emulateMedia({ forcedColors: 'none' })
     }
