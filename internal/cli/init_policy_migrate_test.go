@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -67,12 +68,12 @@ func (h *migrationRig) apply(t *testing.T, yes bool) (string, error) {
 	return h.out.String(), err
 }
 
-// nodeVersionOnTheFake is the version the node at the shared path carries, read
-// as the fake stores it: the assertion every refusal in this file makes is that
-// the node did not move.
-func nodeVersionOnTheFake(t *testing.T, f *projectFixture) int {
+// nodeVersionOn is the version the node at the shared path carries, read as the
+// fake database stores it: the assertion every refusal in this file makes is
+// that the node did not move.
+func nodeVersionOn(t *testing.T, db *gcpfake.RTDB) int {
 	t.Helper()
-	v := f.db.Value(projectpolicy.PathShared())
+	v := db.Value(projectpolicy.PathShared())
 	n, ok := v.(map[string]any)
 	if !ok {
 		t.Fatalf("the node at %s is %T, not an object: %v", projectpolicy.PathShared(), v, v)
@@ -136,7 +137,7 @@ func TestUpdateMigratesAV3PolicyNodeAfterConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the migration was refused: %v\n%s", err, out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
 	}
 	if !strings.Contains(out, "published (version 3) and rewritten in place as version 4") {
@@ -164,7 +165,7 @@ func TestUpdateMigrationDoesNotWriteWithoutTheTypedName(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not confirmed") {
 		t.Fatalf("typing something else was accepted: %v\n%s", err, out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 3 {
+	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d on a refusal", got)
 	}
 }
@@ -179,7 +180,7 @@ func TestUpdatePolicyMigrationPreservesHandEditedAllowList(t *testing.T) {
 	if out, err := h.apply(t, true); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
 	}
 	p := publishedPolicy(t, f)
@@ -211,7 +212,7 @@ func TestUpdatePolicyMigrationRefusesANewerNode(t *testing.T) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
-	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version+1 {
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version+1 {
 		t.Errorf("the node moved to version %d", got)
 	}
 	out, err2 := h.apply(t, true)
@@ -243,7 +244,7 @@ func TestUpdatePolicyMigrationRefusesAVersionNoMigratorReaches(t *testing.T) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 1 {
+	if got := nodeVersionOn(t, f.db); got != 1 {
 		t.Errorf("the node moved to version %d", got)
 	}
 	out, err2 := h.apply(t, true)
@@ -294,7 +295,7 @@ func TestUpdatePolicyMigrationLeavesAMalformedNodeUntouched(t *testing.T) {
 	if !strings.Contains(err.Error(), "its version is 0") {
 		t.Errorf("the refusal does not say which version it read: %v", err)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 0 {
+	if got := nodeVersionOn(t, f.db); got != 0 {
 		t.Errorf("the node moved to version %d", got)
 	}
 	out, err2 := h.apply(t, true)
@@ -327,7 +328,7 @@ func TestUpdatePolicyMigrationSurfacesRunsInFlight(t *testing.T) {
 	if strings.Contains(out, "rewritten in place as version") {
 		t.Errorf("the diff was printed for a write that was refused:\n%s", out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 3 {
+	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d while a run was in flight", got)
 	}
 }
@@ -346,7 +347,7 @@ func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--yes did not confirm the migration a run in flight stops without it: %v\n%s", err, out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
 	}
 }
@@ -419,7 +420,7 @@ func TestUpdatePolicyMigrationRefusedInAgentSession(t *testing.T) {
 	if !strings.Contains(err.Error(), "coding agent") {
 		t.Errorf("the refusal does not say why: %v", err)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 3 {
+	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d in an agent session", got)
 	}
 }
@@ -446,7 +447,7 @@ func TestUpdatePolicyMigrationETagConflictWritesNothing(t *testing.T) {
 	if !strings.Contains(err.Error(), "changed while this migration was being confirmed") {
 		t.Errorf("the refusal is not the ETag one: %v", err)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 3 {
+	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d", got)
 	}
 	raw, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
@@ -483,7 +484,7 @@ func TestUpdateMigrationDerivesTheBitbucketBlockFromLocalConfig(t *testing.T) {
 	if strings.Contains(out, "republish to derive the Bitbucket block") {
 		t.Errorf("the diff asks for a republish the derivation just made unnecessary:\n%s", out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
 	}
 }
@@ -599,7 +600,7 @@ func TestUpdateMigrationRefusesWhenBitbucketDerivationFails(t *testing.T) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 3 {
+	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d on a refusal", got)
 	}
 	if out, err := h.apply(t, true); err == nil {
@@ -675,7 +676,7 @@ func TestUpdateCurrentNodeWithUnderivableBitbucketDoesNotFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a node already at version %d was not left alone: %v\n%s", projectpolicy.Version, err, out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node's version is %d, want %d", got, projectpolicy.Version)
 	}
 }
@@ -696,15 +697,23 @@ func TestUpdateMigrationRefusedOnOldRulesMarker(t *testing.T) {
 	if err == nil {
 		t.Fatal("a policy node was migrated under rules that carry no policy marker: every run of the project would read a policy its rules cannot serve")
 	}
-	for _, want := range []string{"predate the policy model", "fugaro update --firebase-project"} {
+	for _, want := range []string{"predate the policy model", "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
+	// And the move it names is the plain door: `fugaro update`'s rules stage
+	// deploys this binary's generation over rules whose marker is absent, in the
+	// same run as the migration, so sending the operator to --firebase-project
+	// (the door that adopts a Firebase project) would be a command they need not
+	// run (init_rules_stage.go).
+	if strings.Contains(err.Error(), "--firebase-project") {
+		t.Errorf("the refusal still sends the operator to --firebase-project, which fugaro update no longer needs: %v", err)
+	}
 	if out, err := h.apply(t, true); err == nil {
 		t.Errorf("the migration wrote the node anyway:\n%s", out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 3 {
+	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d on a refusal", got)
 	}
 }
@@ -726,7 +735,7 @@ func TestUpdateLeavesACurrentNodeAloneWhateverTheRulesAre(t *testing.T) {
 	if out, err := h.apply(t, true); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node's version is %d, want %d", got, projectpolicy.Version)
 	}
 }
@@ -750,7 +759,7 @@ func TestUpdatePolicyMigrationRefusesOverUnknownFields(t *testing.T) {
 	if strings.Contains(err.Error(), "true") {
 		t.Errorf("the refusal prints a value out of the node: %v", err)
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 3 {
+	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d", got)
 	}
 }
@@ -812,7 +821,7 @@ func TestUpgradePolicyCheckMakesNoCloudCall(t *testing.T) {
 	if !strings.Contains(out.String(), "makes no cloud call") || !strings.Contains(out.String(), "cannot tell") {
 		t.Errorf("--check does not say it cannot tell:\n%s", out.String())
 	}
-	if got := nodeVersionOnTheFake(t, f); got != 3 {
+	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d under --check", got)
 	}
 	if err := newMigrationRig(t, f, &initOptions{}).check(); err == nil {
@@ -848,7 +857,7 @@ func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
 			if !strings.Contains(r.reason, tc.want) {
 				t.Errorf("the skip does not say why (%q): %s", tc.want, r.reason)
 			}
-			if got := nodeVersionOnTheFake(t, f); got != 3 {
+			if got := nodeVersionOn(t, f.db); got != 3 {
 				t.Errorf("the node moved to version %d", got)
 			}
 		})

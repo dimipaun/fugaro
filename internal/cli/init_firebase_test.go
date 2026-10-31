@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,9 +12,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -1283,5 +1286,79 @@ func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// updateBudgetRig is updateRig with the shared budget backend an installation
+// that ran `fugaro update --firebase-project` has: budget.firebase_project is
+// set in the local config (nothing else writes it), and the project's Realtime
+// Database is the fake, marked as this installation's. It is the state the rules
+// stage acts on, and the fixture every test below starts from.
+func updateBudgetRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
+	r := updateRig(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	db.Set(budget.PathProject, initProjectName)
+	// The mode and the largest lease are the database's own, seeded when the
+	// backend was set up: the rules stage is about the rules document and its
+	// two markers, and the plan it shows must carry nothing else.
+	db.Set(budget.PathMode, budget.ModeEnforce)
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+	r.save(t)
+	return r, db
+}
+
+// rulesMarkerOn is the deployed generation marker as the fake holds it, "" when
+// the node is absent.
+func rulesMarkerOn(t *testing.T, db *gcpfake.RTDB) string {
+	t.Helper()
+	v := db.Value(projectpolicy.PathRulesMarker())
+	if v == nil {
+		return ""
+	}
+	if n, ok := v.(json.Number); ok {
+		return n.String()
+	}
+	return fmt.Sprint(v)
+}
+
+// TestUpdateConvergesV3NodeWithoutRulesMarkerInOneRun: the owner's rule of
+// 2026-10-30 — `fugaro update` is the whole upgrade, and it works perfectly — at
+// the state this stage exists for: the installation's published policy node is a
+// version behind this Fugaro, and the deployed rules carry no policy marker at
+// all (a deploy that never ran, or one an older CLI's redeploy rolled back).
+// One `fugaro update --yes` has to converge it, the rules generation deployed
+// and then the node migrated, because a state that needs a second run of the
+// same command — or a 'fugaro update --firebase-project' beside it — is the
+// operator step the rule forbids.
+//
+// Red before the rules stage existed: the policy stage's writer gate
+// (requirePolicyRules) refuses to migrate a node under rules that predate the
+// policy model, which is exactly this state, and no stage before it deployed the
+// rules that gate is about.
+func TestUpdateConvergesV3NodeWithoutRulesMarkerInOneRun(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	out, _, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("one fugaro update --yes did not converge a version-3 node under rules that carry no policy marker: %v\n%s", err, out)
+	}
+	if got := nodeVersionOn(t, db); got != projectpolicy.Version {
+		t.Errorf("the published policy is version %d, want %d:\n%s", got, projectpolicy.Version, out)
+	}
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Errorf("the rules deployed are not this Fugaro's generation, so the migrated node sits under rules no run reads it with:\n%s", out)
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+		t.Errorf("the rules generation marker is %q, want %q:\n%s", got, want, out)
+	}
+	if !strings.Contains(out, initflow.Rules) {
+		t.Errorf("the account does not name the rules stage:\n%s", out)
 	}
 }

@@ -2362,18 +2362,19 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // claim, and there is nothing for the rules to be older than; what an absent
 // marker does to a node is doctorPolicyChecks's line to draw.
 func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
-	marker := projectpolicy.PathRulesMarker()
-	var raw json.RawMessage
-	found, err := db.Get(ctx, marker, &raw)
-	if err != nil || !found {
-		// Unreadable, or absent: absent is generation 0, the pre-policy rules,
-		// under which no policy can have been published (publishing refuses
-		// without the marker) — there is nothing for the rules to be older
-		// than, and nothing to warn about.
+	skew := rulesSkewOf(ctx, db)
+	marker, gen := projectpolicy.PathRulesMarker(), skew.gen
+	switch skew.kind {
+	case rulesSkewCurrent, rulesSkewAbsentMarker, rulesSkewMarkerUnreadable:
+		// Absent is generation 0, the pre-policy rules, under which no policy
+		// can have been published (publishing refuses without the marker) —
+		// there is nothing for the rules to be older than, and nothing to warn
+		// about. Current is the state the check exists to find nothing in. A
+		// marker read that failed is a read like any other here: doctor's
+		// policy-published line is where a database doctor cannot read is
+		// reported, and this check has no more to add to it.
 		return nil
-	}
-	var gen int
-	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+	case rulesSkewBadMarker:
 		// Two values, one state: a node that is not an integer at all, and one
 		// that is a negative integer no deploy writes. Read reads both as a
 		// MarkerError (projectpolicy's MarkerHandEdited carries the argument),
@@ -2385,10 +2386,9 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// redeploy rules that are not what is wrong (the review finding on this
 		// change).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
+			Problem: rulesMarkerBadText(skew.raw),
 			Fix:     "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
-	}
-	if gen > projectpolicy.RulesVersion {
+	case rulesSkewNewer:
 		// A marker above this binary's RulesVersion, and the review of PR
 		// #402's point: a newer Fugaro wrote it, so the deployed rules are a
 		// generation this binary does not know. The sentence this check used
@@ -2402,12 +2402,10 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// refuses the state — and the operator who was told the policy is
 		// unreadable would look for the wrong thing.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's own rules carry: a newer Fugaro deployed them, so a policy published under them is read (a marker at or above this Fugaro's generation reads as deployed) while the rules themselves are a shape this binary cannot verify, and it cannot deploy its own over them",
-				marker, gen, projectpolicy.RulesVersion),
+			Problem: rulesMarkerNewerText(marker, gen),
 			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro update --firebase-project' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
 				projectpolicy.RulesVersion)}}
-	}
-	if gen < projectpolicy.PolicyRulesVersion {
+	case rulesSkewPrePolicy:
 		// Present and below the generation that carries the policy nodes is a
 		// state of its own, not an absent marker: it records rules that predate
 		// the policy nodes, so `fugaro project policy publish` refuses
@@ -2423,8 +2421,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			Problem: rulesMarkerPrePolicyText(gen),
 			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				policySince, projectpolicy.RulesVersion)}}
-	}
-	if gen < projectpolicy.RulesVersion {
+	case rulesSkewOlder:
 		// The state between the two generations, and the one the bump to
 		// generation 2 created: generation 1 carries the policy nodes, so the
 		// policy this installation published is read and enforced by every run
@@ -2446,9 +2443,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			Problem: rulesMarkerOlderText(gen),
 			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document, which adds %s, and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				projectpolicy.RulesVersion, adds)}}
-	}
-	live, err := db.Rules(ctx)
-	if err != nil {
+	case rulesSkewUnreadableRules:
 		// A read that failed is not "the rules are current", and it is not the
 		// skew either: doctor cannot tell a document it was refused from one
 		// that matches what this generation generates, so it says what it
@@ -2459,11 +2454,9 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// do with one (doctorPolicyChecks's "the project policy could not be
 		// read"): the remedy is a credential, not the owner's rules deploy.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
-			Problem: fmt.Sprintf("the deployed rules could not be read (%v), so whether %s is the generation this Fugaro reads a project policy under, and whether the policy it carries is the one deployed, is unknown", err, marker),
+			Problem: rulesRulesUnreadableText(skew.err, marker),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
-	}
-	want, err := rulesGenerate()
-	if err != nil {
+	case rulesSkewUngeneratable:
 		// The rules this Fugaro would generate are what the comparison needs,
 		// and not generating them is not "the rules are current": folding this
 		// into the no-skew branch below reported nothing at all, which reads
@@ -2473,15 +2466,149 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// Fugaro reads a project policy under — so it is the same info note,
 		// naming what failed.
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "info",
-			Problem: fmt.Sprintf("the rules this Fugaro would generate could not be generated (%v), so whether the deployed rules are the generation this Fugaro reads a project policy under, and whether the policy they carry is the one deployed, is unknown", err),
+			Problem: rulesRulesUngeneratableText(skew.err),
 			Fix:     fmt.Sprintf("this binary's embedded rules template is broken, so nothing can be said about %s; report it, and check the installation with a release build (fugaro doctor from one)", marker)}}
 	}
-	if infra.SameJSON(live, want) {
-		return nil
-	}
+	// rulesSkewDocument: the marker records this generation and the deployed
+	// document is not the one this Fugaro generates.
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
 		Fix:     fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
+}
+
+// The sentences below are the states in which a Fugaro must not deploy its own
+// rules over the deployed ones, and each is one text for doctor's line and for
+// `fugaro update`'s rules stage, which reports the state instead of repairing it
+// (init_rules_stage.go): a refusal and a report that describe the same state in
+// different words are how the operator ends up looking for the wrong thing
+// (the reviews of PR #402).
+
+// rulesMarkerBadText is the marker's wrong value, from the one predicate that
+// reads it: a node that is not an integer, and the negative generation no
+// deploy writes, are both projectpolicy's MarkerError.
+func rulesMarkerBadText(raw string) string {
+	return "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: raw}).Error()
+}
+
+// rulesMarkerNewerText is a marker above this binary's generation: a newer
+// Fugaro wrote it, and this binary must not replace rules it cannot verify.
+func rulesMarkerNewerText(marker string, gen int) string {
+	return fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's own rules carry: a newer Fugaro deployed them, so a policy published under them is read (a marker at or above this Fugaro's generation reads as deployed) while the rules themselves are a shape this binary cannot verify, and it cannot deploy its own over them",
+		marker, gen, projectpolicy.RulesVersion)
+}
+
+// rulesRulesUnreadableText is a deployed document doctor could not read: not
+// "the rules are current" and not the skew either, since a document refused to
+// the reader cannot be told from one that matches.
+func rulesRulesUnreadableText(err error, marker string) string {
+	return fmt.Sprintf("the deployed rules could not be read (%v), so whether %s is the generation this Fugaro reads a project policy under, and whether the policy it carries is the one deployed, is unknown", err, marker)
+}
+
+// rulesRulesUngeneratableText is this binary's own rules failing to generate,
+// the unreadable-read case's sibling: the comparison has nothing to compare.
+func rulesRulesUngeneratableText(err error) string {
+	return fmt.Sprintf("the rules this Fugaro would generate could not be generated (%v), so whether the deployed rules are the generation this Fugaro reads a project policy under, and whether the policy they carry is the one deployed, is unknown", err)
+}
+
+// rulesSkewKind is which state the deployed security rules and their generation
+// marker are in, as one value. Two callers ask the same question of the same
+// two nodes and may not answer it differently: `fugaro doctor`'s
+// policy-rules-skew line, which reports the state, and `fugaro update`'s rules
+// stage, which deploys this generation over it (init_rules_stage.go). A stage
+// with a copy of this classification could deploy over rules the doctor calls
+// current, or leave alone the state the doctor sends the owner here to fix.
+type rulesSkewKind int
+
+const (
+	// rulesSkewCurrent is the marker at this generation with the deployed
+	// document equal to the one this Fugaro generates: the state every
+	// installation converges to, and the only one with nothing to report and
+	// nothing to deploy.
+	rulesSkewCurrent rulesSkewKind = iota
+	// rulesSkewAbsentMarker is no marker node at all: generation 0 without a
+	// claim. It is the rules an installation deployed before this marker
+	// existed — and, since no deploy writes the marker without the document,
+	// rules that may be any generation — which is why the rules stage deploys
+	// over it rather than reading it as "the document is current".
+	rulesSkewAbsentMarker
+	// rulesSkewMarkerUnreadable is a marker node that could not be read.
+	rulesSkewMarkerUnreadable
+	// rulesSkewBadMarker is a marker that is not a generation any deploy
+	// writes: not an integer at all, or the negative one
+	// projectpolicy.MarkerHandEdited names.
+	rulesSkewBadMarker
+	// rulesSkewNewer is a marker above this binary's generation: a newer
+	// Fugaro deployed these rules, so this binary must never deploy its own
+	// over them, whatever it would find in the document.
+	rulesSkewNewer
+	// rulesSkewPrePolicy is a marker below the generation that carries the
+	// policy nodes.
+	rulesSkewPrePolicy
+	// rulesSkewOlder is a marker between the policy generation and this one's.
+	rulesSkewOlder
+	// rulesSkewDocument is the marker at this generation and a deployed
+	// document that is not the one this Fugaro generates (a console hand-edit
+	// of /.settings/rules.json, or the redeploy an older CLI did while the
+	// marker stayed).
+	rulesSkewDocument
+	// rulesSkewUnreadableRules is a deployed document that could not be read.
+	rulesSkewUnreadableRules
+	// rulesSkewUngeneratable is rules.Generate failing: this binary's own
+	// rules cannot be produced, so there is nothing to compare the deployed
+	// document with.
+	rulesSkewUngeneratable
+)
+
+// rulesSkew is one classification, with what the sentences about the state
+// need: the marker's generation when it is one a deploy writes, its value when
+// it is not, and the error of a read or a generation that failed.
+type rulesSkew struct {
+	kind rulesSkewKind
+	gen  int
+	raw  string
+	err  error
+}
+
+// rulesSkewOf reads the generation marker and — only where the marker records
+// this generation — the deployed document, and classifies the two. The order is
+// the one the states are decided in: the marker first, because every state but
+// the last is its, and the document only where the marker claims this
+// generation, because a document read under a marker that says otherwise is not
+// what any caller acts on.
+func rulesSkewOf(ctx context.Context, db *rtdb.Client) rulesSkew {
+	marker := projectpolicy.PathRulesMarker()
+	var raw json.RawMessage
+	found, err := db.Get(ctx, marker, &raw)
+	if err != nil || !found {
+		if err != nil {
+			return rulesSkew{kind: rulesSkewMarkerUnreadable, err: err}
+		}
+		return rulesSkew{kind: rulesSkewAbsentMarker}
+	}
+	var gen int
+	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+		return rulesSkew{kind: rulesSkewBadMarker, raw: oneLine(string(raw))}
+	}
+	switch {
+	case gen > projectpolicy.RulesVersion:
+		return rulesSkew{kind: rulesSkewNewer, gen: gen}
+	case gen < projectpolicy.PolicyRulesVersion:
+		return rulesSkew{kind: rulesSkewPrePolicy, gen: gen}
+	case gen < projectpolicy.RulesVersion:
+		return rulesSkew{kind: rulesSkewOlder, gen: gen}
+	}
+	live, err := db.Rules(ctx)
+	if err != nil {
+		return rulesSkew{kind: rulesSkewUnreadableRules, err: err}
+	}
+	want, err := rulesGenerate()
+	if err != nil {
+		return rulesSkew{kind: rulesSkewUngeneratable, err: err}
+	}
+	if infra.SameJSON(live, want) {
+		return rulesSkew{kind: rulesSkewCurrent, gen: gen}
+	}
+	return rulesSkew{kind: rulesSkewDocument, gen: gen}
 }
 
 // rulesGenerate is rules.Generate, indirect so a test can drive the branch

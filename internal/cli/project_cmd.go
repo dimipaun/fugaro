@@ -319,7 +319,14 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 		// deserves its own sentence: there is nothing to be older than, and a
 		// message naming a node that does not exist sends the operator
 		// looking for it.
-		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; re-run 'fugaro update --firebase-project' with fugaro >= %s first",
+		//
+		// The move is plain `fugaro update`, not `--firebase-project`: the
+		// rules stage of the converge deploys this binary's generation over
+		// rules whose marker is absent, and it does so in the same run as the
+		// migration this refusal blocks (init_rules_stage.go, the owner's rule
+		// of 2026-10-30). `--firebase-project` is the door that adopts a
+		// Firebase project, which an installation that has one does not need.
+		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; run 'fugaro update' with fugaro >= %s first, which deploys this Fugaro's rules under the policy",
 			projectpolicy.PathRulesMarker(), policySince)
 	}
 	var gen int
