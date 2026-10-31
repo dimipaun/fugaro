@@ -473,4 +473,3 @@ func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
 		})
 	}
 }
-
