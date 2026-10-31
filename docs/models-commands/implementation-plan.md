@@ -1,6 +1,6 @@
 # `fugaro models`: implementation plan
 
-**Nothing in this plan is approved.** It is written to the recommendations of D780–D795
+**Nothing in this plan is approved.** It is written to the owner's answers (D780–D783, 2026-10-30) and to the recommendations of D784–D795
 ([reconciliation.md](reconciliation.md) §3). A decision answered the other way changes the tasks that
 cite it. Each task touches at most 12 files, names its tests, starts with a red step and ends at the
 gates below.
@@ -92,10 +92,12 @@ It widens where code may go (a route's claim) and what a run may cost (a price).
 
 ## M4. `fugaro models rm` (D783, D789). **SEC**
 
+D783 was answered against the recommendation: `rm` warns and removes, it never refuses a pinned model. The consequence is stated in the warning: the next run of each pinning repository fails with a no-provider error.
+
 - **Files (3):** `internal/cli/models_rm.go` (new), `internal/cli/models_rm_test.go` (new),
   `internal/cli/models.go`.
-- **Red step:** `TestModelsRmRefusesAPinnedModel` fails while the subcommand does not exist.
-- **Tests:** `TestModelsRmRefusesAPinnedModel`, `TestModelsRmWarnsForRepositoriesWithoutACheckout`,
+- **Red step:** `TestModelsRmWarnsNamingEachPinningRepository` fails while the subcommand does not exist.
+- **Tests:** `TestModelsRmWarnsNamingEachPinningRepository` (the warning names repository, role and the no-provider failure; the write still happens), `TestModelsRmWarnsForRepositoriesWithoutACheckout`,
   `TestModelsRmLeavesAClaimingPatternAndSaysSo`, `TestModelsRmRefusesEmptyingTheAllowList`,
   `TestModelsRmRefusesInAnAgentSession`, `TestModelsRmKeepsTheRestOfTheFile`.
 

@@ -1,7 +1,7 @@
 # `fugaro models`: the spec
 
 The commands below are written to the recommended answer of each decision (D780–D795,
-[reconciliation.md](reconciliation.md) §3). A decision answered the other way changes the
+[reconciliation.md](reconciliation.md) §3; D780–D783 answered, the rest open). A decision answered the other way changes the
 paragraph that names it. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`).
 
 ## 1. The rule this serves
@@ -92,9 +92,11 @@ Edits the **selected local project config** and nothing else (D780). In order:
 
 The reverse of `add`, through the same check, diff, backup and atomic write: it drops the ID's exact
 entry from its route's `models` (a pattern that claims it is left, and the command says the ID stays
-claimed by it), its `model_prices` entry and its `budget.allowed_models` entry. It **refuses** when a
-repository this machine can see pins the model, naming each repository and role, and warns for each
-repository it cannot see (no checkout) (D783). `budget.allowed_models` is never left as an empty list,
+claimed by it), its `model_prices` entry and its `budget.allowed_models` entry. It **does not refuse**
+when a repository pins the model (D783, the owner's answer, not the recommendation): it warns, naming each
+repository and role this machine can see that pins it and each repository it cannot see (no checkout), and
+the warning says the next run of that repository fails at launch with a no-provider error until the pin is
+changed (`fugaro models use`) or the model is added back. `budget.allowed_models` is never left as an empty list,
 which the loader refuses: removing its last entry is refused with the reason.
 
 ## 6. `fugaro models use <repo> <coder|reviewer|background> <id> [--yes]`

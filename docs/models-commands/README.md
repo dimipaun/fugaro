@@ -1,6 +1,6 @@
 # `fugaro models`: managing a project's models with one command
 
-**Status: design; no task approved.** Decisions D780–D795 are open: each carries a recommendation
+**Status: design; no task approved.** D780–D783 were answered on 2026-10-30 (D783 against the recommendation); D784–D795 are open: each carries a recommendation
 and the cost of the alternative, and nothing in the plan may be launched until the owner has
 answered them. The plan is written to the recommendations.
 
