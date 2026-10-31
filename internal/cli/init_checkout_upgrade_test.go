@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -281,6 +282,89 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	// everything and looked right by saying nothing.
 	if stateOf(res, checkoutStageName) != initflow.Changed || !strings.Contains(out.String(), "pin: done") {
 		t.Errorf("the stage's local steps did not run in an agent's session:\n%s", out)
+	}
+}
+
+// agentUpdateCheckout is agentCheckout for the WHOLE converge: an installation
+// that has something to converge (updateRig), a checkout of a repository the
+// project lists, a plugin pin older than this binary, and CLAUDECODE set. The
+// stage-order test needs every stage before the plugin to be done, which is
+// what the installation state is for; the checkout-stage tests above drive one
+// stage and need none of it.
+func agentUpdateCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]string) {
+	t.Helper()
+	r := updateRig(t)
+	r.repoReady(t)
+	// The checkout's own secrets are the last stage before the plugin, so they
+	// are stored here: the run has to reach the plugin stage for the order to
+	// be what the test reads.
+	r.seedRepoSecret(t, "bitbucket-token", []byte(tokenValue))
+	r.seedRepoSecret(t, "claude-oauth-token", []byte(tokenValue))
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", initProjectName, ""))
+	t.Chdir(dir)
+	settings := filepath.Join(dir, ".claude", "settings.json")
+	checkoutFile(t, settings, wiredAt("v0.1.0"))
+	noClaudeOnPath(t)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	useFakeClaude(t, f)
+	ran := fakeSteps(t, "", nil)
+	t.Setenv("CLAUDECODE", "1")
+	return settings, f, ran
+}
+
+// TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout: the stage ORDER,
+// which is what makes the checkout's local steps a thing a session reaches only
+// when everything before them is done. The plugin stage runs BEFORE the
+// checkout stage on the same checkout and the same pin, it is not
+// LocalUnderAgent, so under a marker it is left for the user (`fugaro
+// update-skills`) and the loop stops there: the checkout stage is blocked and
+// its local writes never happen. One stage at a time cannot see that — the
+// checkout stage alone runs its local half, which is what the tests above pin —
+// so this one drives the whole converge the way `fugaro update` does and reads
+// the two stages' lines out of the result.
+//
+// It is the failure the `--yes` help used to promise the other way round ("the
+// writes on this machine's own files ... the plugin in Claude Code"): in a
+// session whose plugin is stale, an update writes nothing at all. The help says
+// what happens now; making the plugin stage run under the marker is a product
+// decision of its own, not a wording fix.
+func TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout(t *testing.T) {
+	settings, f, ran := agentUpdateCheckout(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	var res convergeJSON
+	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
+		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
+	}
+	if err == nil {
+		t.Errorf("the run reported success with the plugin and the checkout both unmoved:\n%s", out)
+	}
+	if got, want := res.state(initflow.Plugin), "needs-you"; got != want {
+		t.Errorf("the plugin stage is %q under the marker, want %q:\n%s", got, want, out)
+	}
+	leftPlugin := false
+	for _, l := range res.Left {
+		if l["stage"] == initflow.Plugin && strings.Contains(l["text"], selfCommand()+" update-skills") {
+			leftPlugin = true
+		}
+	}
+	if !leftPlugin {
+		t.Errorf("the run does not leave the plugin wiring for the user:\n%s", out)
+	}
+	if got, want := res.state(initflow.Checkout), "blocked"; got != want {
+		t.Errorf("the checkout stage is %q, want %q:\n%s", got, want, out)
+	}
+	if detail := res.stageDetail(t, initflow.Checkout); !strings.Contains(detail, "waits for "+initflow.Plugin) {
+		t.Errorf("the checkout stage does not say what it waits for: %q", detail)
+	}
+	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin == pluginwire.OK {
+		t.Errorf("the pin moved in a session whose plugin stage never ran: %+v\n%s", r, out)
+	}
+	if len(f.Changes(t)) != 0 {
+		t.Errorf("the plugin was installed in Claude Code in a session that stopped at the plugin stage:\n%s", out)
+	}
+	if len(*ran) != 0 {
+		t.Errorf("the session reached the cloud: steps %q\n%s", *ran, out)
 	}
 }
 

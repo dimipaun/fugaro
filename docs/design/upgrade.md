@@ -60,6 +60,20 @@ It prints what each step would do and exits 1 if anything is stale, so CI can ru
 
 It never runs the cloud step or any `claude plugin` command itself, never edits settings by hand, never passes `--allow-fork`, and never asks for or handles a secret.
 
+## `fugaro update` and a Firebase project that is not the installation's
+
+`fugaro update` is the whole upgrade, and it works without a second command: the one exception is an installation whose `budget.firebase_project` is not its own GCP project. That project is one the installation **adopted** through `fugaro update --firebase-project NAME`, and the config's `budget.firebase_project` alone never proves the adoption happened — a name in a config is a name someone typed, and a typo that agrees with itself (`budget.firebase_project: other` beside `other-default-rtdb`) leaves a pair that looks right.
+
+So the run asks the **database**, not the config. A stage that writes into the budget database (the security rules generation, before the policy migration) does nothing when the recorded project differs from the installation's own **unless the database carries this installation's Fugaro mark**, which only the adoption door writes into a project that is not the installation's. An empty database is not proof: the mark check that every deploy goes through passes an empty database whatever project its URL belongs to, which is exactly how a config like that would otherwise have marked and deployed into a database nobody adopted. A database another installation marked, or one that holds data and no mark, is refused the same way.
+
+It is a **skip, not a refusal**: the installation's other stages (the images, the pin, the plugin) have nothing to do with that database, so `fugaro update` still does everything else, and the skip names the one command that ends the state:
+
+```
+fugaro update --firebase-project NAME
+```
+
+Once run, the mark is in that database, and plain `fugaro update` converges there like anywhere else — the adoption is not a step that repeats. The ordinary installation (`budget.firebase_project` equal to `gcp_project`) is untouched by any of this.
+
 ## Safety
 
 - **The `claude` calls.** Every argv is one of seven fixed lists, or the marketplace add, whose one variable word is the marketplace repository: `dimipaun/fugaro`, or a fork that the checkout's pin names, passed only with `--allow-fork` and only after it matches a GitHub `owner/name` pattern that cannot start with `-`.
