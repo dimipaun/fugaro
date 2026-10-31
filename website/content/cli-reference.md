@@ -3976,15 +3976,6 @@ steps, stopping that checkout at the first step that fails:
           the claude CLI on PATH: a fixed set of claude plugin commands, never
           with -y. Without claude it prints the slash commands to type in
           Claude Code. Running Claude Code sessions apply it after a restart.
-  policy  the project's published policy node, if an earlier Fugaro wrote it
-          in an older version: migrated in place (never deleted and
-          published again), after a diff of what changes, what is kept and
-          what is derived from the local config, and the project's name typed
-          at a terminal. --yes confirms it, and is refused while a run is in
-          flight. Skipped where there is no local project config or the
-          repository is not onboarded, and in a coding agent's session, with
-          the command to run in your own terminal. This is what fugaro
-          update does for the same node; both doors run it.
   cloud   what fugaro image refresh does for the checkout's repository: this
           release's base image, the daily image check job, the builds. It
           asks at each step, or with --yes confirms every step itself, each
@@ -4001,12 +3992,21 @@ steps, stopping that checkout at the first step that fails:
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
           named-account jobs are updated by the same fugaro update --repo .
+  policy  the project's published policy node, if an earlier Fugaro wrote it
+          in an older version: migrated in place (never deleted and
+          published again), after a diff of what changes, what is kept and
+          what is derived from the local config, and the project's name typed
+          at a terminal. --yes confirms it, and is refused while a run is in
+          flight. Skipped where there is no local project config or the
+          repository is not onboarded, and in a coding agent's session, with
+          the command to run in your own terminal. This is what fugaro
+          update does for the same node; both doors run it.
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
 --local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the policy and cloud steps are skipped
+session (CLAUDECODE and the like) the cloud and policy steps are skipped
 before they read anything, never attempted, with the command to run in your
 own terminal, so the exit code is 0 when the local steps succeeded. --check
 writes nothing, runs no claude command and makes no cloud call: it reads the

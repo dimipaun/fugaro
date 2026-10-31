@@ -431,10 +431,10 @@ func TestUpgradeRunsThePolicyMigration(t *testing.T) {
 	for i, s := range upgradeSteps {
 		names[i] = s.name
 	}
-	if want := []string{"pin", "plugin", "policy", "cloud"}; !slices.Equal(names, want) {
+	if want := []string{"pin", "plugin", "cloud", "policy"}; !slices.Equal(names, want) {
 		t.Fatalf("the steps are %v, want %v", names, want)
 	}
-	if got := reflect.ValueOf(upgradeSteps[2].run).Pointer(); got != reflect.ValueOf(policyStep).Pointer() {
+	if got := reflect.ValueOf(upgradeSteps[3].run).Pointer(); got != reflect.ValueOf(policyStep).Pointer() {
 		t.Error("the policy step is registered under some other function")
 	}
 }

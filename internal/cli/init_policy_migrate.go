@@ -56,6 +56,16 @@ type policyMigration struct {
 	derived []string // the top-level members derived from the local config, sorted
 }
 
+// policyNodeUnreachable is whether this project has no published policy node to
+// read at all. The node lives in the project's Realtime Database, so a config
+// that names no budget backend has none — not a failure of this stage but the
+// absence of the thing it migrates, which is why it is a skip and not an error
+// (a config written before the budget backend, or one whose operator never
+// configured it, is a state `fugaro update` must not stop on).
+func policyNodeUnreachable(lc *localcfg.Config) bool {
+	return lc.Budget == nil || lc.Budget.RTDBURL == ""
+}
+
 // policyMigrationFor reads the published node and works out what it would be
 // written as, or nil when there is nothing to migrate: no node is published, or
 // it is already the version this Fugaro writes.
@@ -107,6 +117,7 @@ const (
 	bitbucketTokenKey    = "bitbucket_token"
 	bitbucketAPIRootsKey = "bitbucket_api_roots"
 	policyMigrationWhat  = "this rewrites the published policy node in place"
+	policyNoDBReason     = "the project's config names no Firebase budget backend, so there is no published policy node to read"
 )
 
 // migrateWithDerivedMembers retries the migration with the members Migrate
@@ -251,6 +262,9 @@ func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, error)
 // is not something the operator of this binary can finish by hand, and the
 // message says which of the two it is.
 func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error) {
+	if policyNodeUnreachable(s.e.lc) {
+		return initflow.Status{State: initflow.Skipped, Detail: policyNoDBReason}, nil
+	}
 	m, err := s.plan(ctx)
 	if err != nil {
 		return initflow.Status{}, err
@@ -262,6 +276,9 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 }
 
 func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, error) {
+	if policyNodeUnreachable(s.e.lc) {
+		return initflow.Plan{NothingToDo: true, Detail: policyNoDBReason}, nil
+	}
 	m, err := s.plan(ctx)
 	if err != nil {
 		return initflow.Plan{}, err
@@ -282,6 +299,9 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	if marker := agentMarker(os.Getenv); marker != "" {
 		return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+	}
+	if policyNodeUnreachable(s.e.lc) {
+		return initflow.Outcome{Detail: policyNoDBReason}, nil
 	}
 	m, err := s.plan(ctx)
 	if err != nil {
