@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1552,5 +1554,91 @@ func TestDiagnoseShowsADerivedStatus(t *testing.T) {
 	}
 	if out := b.String(); !strings.Contains(out, "Status:   halted\n") {
 		t.Errorf("the halted status line changed shape:\n%s", out)
+	}
+}
+
+// TestRunsLsParallelOrderStable: ls reads every run's objects lsWorkers at a
+// time, and what comes out is what reading them one at a time produced. The
+// rows are the listing's own order over the whole set, and each unreadable
+// object is still its own error row warned about as its run is reached:
+// repository by repository in slug order, and the newest run first within
+// each, which is the order the reads are handed out in.
+func TestRunsLsParallelOrderStable(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	slugs := []string{appSlug, mustSlug("github", "acme/other"), mustSlug("github", "acme/third")}
+	type seeded struct{ slug, id string }
+	var all []seeded
+	var corrupt []seeded
+	for si, slug := range slugs {
+		repo := "acme/" + strings.TrimPrefix(slug, "acme-")
+		for i := range 6 {
+			id := fmt.Sprintf("20261018-%02d0000-%04x", 10+i, si*8+i)
+			s := runstore.Open(b, slug, id)
+			if err := s.CreateTask(ctx, &task.Spec{Version: 1, RunID: id, Repo: repo, Ref: "main", Workflow: "web", Task: "x"}); err != nil {
+				t.Fatal(err)
+			}
+			all = append(all, seeded{slug, id})
+			if (si == 1 && i == 5) || (si == 2 && i == 3) {
+				if err := s.PutFile(ctx, "result.json", []byte("{nope"), "application/json"); err != nil {
+					t.Fatal(err)
+				}
+				corrupt = append(corrupt, seeded{slug, id})
+				continue
+			}
+			rec := &runstore.Record{Version: 1, RunID: id, Repo: repo, Workflow: "web", Status: runstore.StatusSucceeded}
+			if err := s.WriteRecord(ctx, rec); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	out, errOut, err := execute(t, "runs", "ls", "--all", "--since", "0", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	var got lsOut
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	want := make([]string, 0, len(all))
+	for _, s := range all {
+		want = append(want, s.slug+"/"+s.id)
+	}
+	// The listing's order: start time newest first, the full run reference
+	// breaking a tie.
+	slices.SortStableFunc(want, func(a, b string) int {
+		at, _ := runstore.RunTime(a[strings.Index(a, "/")+1:])
+		bt, _ := runstore.RunTime(b[strings.Index(b, "/")+1:])
+		if c := bt.Compare(at); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	have := make([]string, 0, len(got.Runs))
+	for _, r := range got.Runs {
+		have = append(have, r.Run)
+	}
+	if !slices.Equal(have, want) {
+		t.Fatalf("rows = %v, want %v", have, want)
+	}
+
+	var warned []string
+	for _, line := range strings.Split(errOut, "\n") {
+		if after, ok := strings.CutPrefix(line, "warning: run "); ok {
+			warned = append(warned, strings.SplitN(after, ": ", 2)[0])
+		}
+	}
+	var wantWarned []string
+	for _, s := range corrupt {
+		wantWarned = append(wantWarned, s.slug+"/"+s.id)
+	}
+	if !slices.Equal(warned, wantWarned) {
+		t.Fatalf("warnings = %v, want %v: the runs are read in slug order, newest first within each", warned, wantWarned)
 	}
 }
