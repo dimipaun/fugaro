@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -105,21 +106,24 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	// still decide it: an installation created before 2026-10-23 may have had a
 	// Firebase project of its own, other than its GCP project (the job carries
 	// both, history.tf), and a database that is not this installation's is not
-	// one to prune. The answer is infra.DB.Check's — the same gate every writer
-	// into the budget database asks (the rules stage, the policy migration of
-	// `fugaro update`) — read from the mark the installation's own adopt wrote.
-	// An empty database passes that check whatever project its URL belongs to,
-	// which is why the answer is asked and not assumed from the pair's
-	// agreement; the ordinary installation, whose Firebase project IS its GCP
-	// project, asks nothing and is untouched.
-	if env[envFirebaseFP] != env[envGCPProject] {
-		marked, err := infra.NewDB(db, env[envProject], env[envGCPProject], "").Check(ctx)
-		if err != nil {
-			return userErr("%v: nothing was moved", oneLine(err.Error()))
-		}
-		if !marked {
-			return userErr("the database at %s is empty and carries no Fugaro mark (%s) of project %s in %s, and the job's Firebase project (%s) is not the installation's GCP project (%s): it is not this installation's database, so nothing was moved", oneLine(env[envRTDBURL]), budget.PathMark, oneLine(env[envProject]), oneLine(env[envGCPProject]), oneLine(env[envFirebaseFP]), oneLine(env[envGCPProject]))
-		}
+	// one to prune.
+	//
+	// It is the SAME question, and now the same function, that the stages of
+	// `fugaro update` ask (budgetDBUnadopted): the environment is read as the
+	// config that predicate takes (rolloverConfig) and the answer is asked of
+	// every shape, not only of a job whose two names differ. One predicate is
+	// what keeps a database the rules stage skips from coming out writable for
+	// this job, and this job is the last place a drift between the two would
+	// ever be noticed: it DELETES what it moves out. The gate above
+	// (checkDatabaseHost) still refuses the mismatched pair before a client is
+	// built; what is left for the predicate is the database's own mark
+	// (infra.DB.Check), which an EMPTY database passes whatever project its URL
+	// belongs to — that is why it is asked and not assumed from the pair.
+	//
+	// It is a refusal and not a skip, unlike those stages: this job is the whole
+	// of what it does, and there is nowhere to carry on to.
+	if why := budgetDBUnadopted(ctx, rolloverConfig(env), infra.NewDB(db, env[envProject], env[envGCPProject], ""), "nothing was moved", selfCommand()+" update"); why != "" {
+		return userErr("%v", oneLine(why))
 	}
 	fs, err := firestore.New(fsURL, env[envFirebaseFP], fsSrc)
 	if err != nil {
@@ -165,4 +169,21 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 		return userErr("%s", oneLine(err.Error()))
 	}
 	return remote(fmt.Errorf("%s", oneLine(err.Error())))
+}
+
+// rolloverConfig is the history job's environment read as the config the
+// ownership predicate takes (budgetDBUnadopted). The job has no config file —
+// Terraform sets its environment, history.tf — but the names it carries are the
+// same two facts, and handing them to the one predicate is what makes the job's
+// answer and the stages' answer the same answer rather than two that agree
+// today.
+func rolloverConfig(env map[string]string) *localcfg.Config {
+	return &localcfg.Config{
+		Name:       env[envProject],
+		GCPProject: env[envGCPProject],
+		Budget: &localcfg.Budget{
+			FirebaseProject: env[envFirebaseFP],
+			RTDBURL:         env[envRTDBURL],
+		},
+	}
 }

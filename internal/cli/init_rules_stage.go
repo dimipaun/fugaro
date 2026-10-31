@@ -169,14 +169,18 @@ func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
 // what every first run on a fresh backend is.
 //
 // declined names what the caller would have written there and program the
-// command the way out is run with, so one sentence serves every door.
+// command the way out is run with, so one sentence serves every door. declined
+// ends the sentence on every path, the two halves of the config and the
+// database's own refusals alike: what was NOT done is the caller's fact and not
+// the database's, and the operator reading a skipped stage or a refused job has
+// to know nothing was written.
 func budgetDBUnadopted(ctx context.Context, lc *localcfg.Config, db *infra.DB, declined, program string) string {
 	if detail := rulesUnavailable(lc); detail != "" {
 		return detail
 	}
 	marked, err := db.Check(ctx)
 	if err != nil {
-		return err.Error()
+		return fmt.Sprintf("%v: %s", oneLine(err.Error()), declined)
 	}
 	if marked {
 		return ""

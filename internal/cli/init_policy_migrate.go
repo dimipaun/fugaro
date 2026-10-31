@@ -70,10 +70,9 @@ func policyNodeUnreachable(lc *localcfg.Config) bool {
 }
 
 // policyMigrationNotOurs is the answer policyMigrationFor gives for a database
-// the config names in a Firebase project other than the installation's own that
-// carries no mark of this installation (budgetDBUnadopted): there is nothing to
-// migrate HERE, and the callers turn it into the skip their own vocabulary has
-// — `fugaro update`'s stage into a skipped stage, `fugaro upgrade` into a
+// the shared ownership predicate refuses (budgetDBUnadopted): there is nothing
+// to migrate HERE, and the callers turn it into the skip their own vocabulary
+// has — `fugaro update`'s stage into a skipped stage, `fugaro upgrade` into a
 // skipped step — rather than into an error, because the rest of the run has
 // nothing to do with that database, exactly as the rules stage's skip is not a
 // refusal.
@@ -81,7 +80,8 @@ func policyNodeUnreachable(lc *localcfg.Config) bool {
 // It is a type and not a plain error so a caller cannot mistake it for a read
 // that failed (the two are the only two things this function returns): a failed
 // read is the run's error, and this is a state the operator resolves with the
-// two commands the sentence names.
+// sentence the refusal carries — Check's own words, or the command the config's
+// half names.
 type policyMigrationNotOurs struct{ reason string }
 
 func (e *policyMigrationNotOurs) Error() string { return e.reason }
@@ -99,8 +99,17 @@ func (e *policyMigrationNotOurs) Error() string { return e.reason }
 // installation never adopted does not stop this one from migrating the node in
 // it — the read, the ETag and the write all land in that same database, and
 // `fugaro upgrade` reaches this function with no rules stage in front of it at
-// all. The ordinary installation (budget.firebase_project equal to gcp_project)
-// asks nothing and is untouched.
+// all.
+//
+// That gate is the rules stage's own, the same function and not a second one
+// worded alike (the second review's finding: the two drifted, and a database the
+// rules stage skipped came out writable for this stage). It is asked of every
+// shape — no Firebase project recorded, the installation's own project with a
+// URL pointing at the database beside it, a project other than the
+// installation's own — so the two stages answer the same question the same way
+// by construction, and the ordinary installation (budget.firebase_project equal
+// to gcp_project, its own database and its own mark) asks a read it already had
+// to make anyway.
 func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigration, published bool, err error) {
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {

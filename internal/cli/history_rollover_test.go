@@ -179,6 +179,40 @@ func TestRolloverRefusesAnUnmarkedDatabase(t *testing.T) {
 	}
 }
 
+// TestRolloverRefusesAnUnmarkedDatabaseWhosePairAgrees: the same state with the
+// two names agreeing, which is the ordinary installation's shape and the one the
+// job used to read nothing for — the pair agreeing was taken for the licence.
+// It is not one: the job moves days out and DELETES the nodes it moved, so a
+// database that is not this installation's is not one to prune whatever its two
+// names are, and a name in an environment is a name Terraform set. The way the
+// job asks is the predicate every writer into the budget database asks
+// (budgetDBUnadopted), which asks the mark of every shape for exactly this
+// reason (the second review's finding: the stages drifted, and a database one
+// of them skipped came out writable for the other).
+func TestRolloverRefusesAnUnmarkedDatabaseWhosePairAgrees(t *testing.T) {
+	f := newRolloverFixture(t)
+	t.Setenv("FUGARO_GCP_PROJECT", "aurora-fp")
+	d := budget.Day(f.now) - 12
+	f.seed(d, "20261008-100000-bbbb", 2_000_000)
+	f.db.Set(budget.PathMark, nil)
+
+	_, _, err := execute(t, "budget", "history", "--rollover")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("an unmarked database with the pair agreeing: err = %v, want exit 1", err)
+	}
+	for _, want := range []string{budget.PathMark, "nothing was moved"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if f.db.Value("spend/"+budget.DayKey(d)) == nil {
+		t.Error("a day was pruned out of a database that carries no mark")
+	}
+	if ids := f.fs.IDs("spendDaily"); len(ids) != 0 {
+		t.Errorf("a day was archived out of a database that carries no mark: %v", ids)
+	}
+}
+
 func TestRolloverRefusalsAreExit1(t *testing.T) {
 	f := newRolloverFixture(t)
 	d := budget.Day(f.now) - 12
