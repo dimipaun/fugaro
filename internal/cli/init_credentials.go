@@ -343,7 +343,7 @@ func (s *credentialsStage) requireCredsRules(ctx context.Context) error {
 	}
 	var raw json.RawMessage
 	found, err := db.Get(ctx, rules.PathCredsRulesMarker(), &raw)
-	if false && err != nil {
+	if err != nil {
 		// FAILS CLOSED, and the refusal says which read it was: a database
 		// that could not answer is not a database that answered "the rules
 		// carry the credentials children". The stage below is the one that
