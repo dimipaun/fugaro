@@ -27,9 +27,15 @@ import { describe, expect, it } from 'vitest'
 import { PLAN_STATES, decodePlanStatus } from '../../src/shared/schema'
 import type { PlanStatusView } from '../../src/shared/schema'
 import type { Sanitized } from '../../src/shared/sanitize'
-import { GRAPH_LAYOUT_CACHE_ENTRIES, GraphLayout, graphOf, structureHash } from '../../src/renderer/graph/layout'
+import {
+  GRAPH_LAYOUT_CACHE_ENTRIES,
+  GraphLayout,
+  crossStreamRoute,
+  graphOf,
+  structureHash,
+} from '../../src/renderer/graph/layout'
 import { LayoutClient } from '../../src/renderer/graph/layout-client'
-import type { Positions, WorkerLike } from '../../src/renderer/graph/layout-client'
+import type { LayoutGraph, PlacedNode, Point, Positions, WorkerLike } from '../../src/renderer/graph/layout-client'
 import {
   GRAPH_MAX_NEEDS,
   GRAPH_MAX_NODES,
@@ -42,7 +48,7 @@ import {
   buildGraphModel,
   stateWords,
 } from '../../src/renderer/graph/model'
-import type { GraphInputs, GraphModel, GraphNode } from '../../src/renderer/graph/model'
+import type { GraphColumn, GraphInputs, GraphModel, GraphNode } from '../../src/renderer/graph/model'
 
 /** FakeWorker is the protocol without a browser: it records what was posted and
  * answers when the test says so. */
@@ -66,12 +72,32 @@ class FakeWorker implements WorkerLike {
   /** answer replies to the layout the client asked for last, so a reply is
    * matched to the request that was actually sent rather than to a guessed id. */
   answer(data: unknown): void {
-    for (const listener of this.listeners.get('message') ?? []) listener({ data: { id: this.lastId, data } })
+    this.answerTo(this.lastId, data)
+  }
+
+  /** answerTo replies to the layout with `id`: a picture is one ask per stream,
+   * so a case that answered only the last ask would leave the other stream's
+   * layout outstanding and hang. */
+  answerTo(id: number, data: unknown): void {
+    for (const listener of this.listeners.get('message') ?? []) listener({ data: { id, data } })
+  }
+
+  /** asked is every layout this worker was asked to run: the graph it was asked
+   * about and the id to reply with. */
+  get asked(): readonly { readonly id: number; readonly graph: LayoutGraph }[] {
+    const found: { id: number; graph: LayoutGraph }[] = []
+    for (const message of this.sent) {
+      if (message['cmd'] !== 'layout') continue
+      const id = message['id']
+      if (typeof id !== 'number') throw new Error('a layout with no id')
+      found.push({ id, graph: message['graph'] as LayoutGraph })
+    }
+    return found
   }
 
   /** placements counts the layouts this worker was actually asked to run. */
   get placements(): number {
-    return this.sent.filter((message) => message['cmd'] === 'layout').length
+    return this.asked.length
   }
 
   private get lastId(): number {
@@ -160,24 +186,121 @@ function layoutWith(): { worker: FakeWorker; layout: GraphLayout } {
   return { worker, layout: new GraphLayout(new LayoutClient(() => worker)) }
 }
 
-/** placed is a reply the client accepts for `value`: every node of it at a fixed
- * coordinate, and every edge routed with no sections. */
-function placed(value: GraphModel): unknown {
-  const graph = graphOf(value)
+/** streamOf is one of a model's streams by index. The layout key is a stream's,
+ * so a case that compares two models compares one stream of each, and a case
+ * about a stream's own geometry lays that stream's graph out. */
+function streamOf(value: GraphModel, index: number): GraphColumn {
+  const column = value.columns[index]
+  if (column === undefined) throw new Error(`the model has no stream ${String(index)}`)
+  return column
+}
+
+/** bothPlans is the stream holding the two plans a boundary case is about: those
+ * cases patch the fixture down to exactly two plans, and the ids a case reads
+ * apart are one engine run's ids -- one stream's, not the picture's. */
+function bothPlans(value: GraphModel): GraphColumn {
+  const column = value.columns.find((each) => each.plans.length === 2)
+  if (column === undefined) throw new Error('the model has no stream of two plans')
+  return column
+}
+
+/**
+ * manyStreams is a document of `count` streams of one plan each, through the
+ * real decoder: it is how the bound cases read a picture wider than
+ * `GRAPH_LAYOUT_CACHE_ENTRIES` without a fixture a person has to maintain. The
+ * plans are chains of two tasks, which is the smallest shape that has an edge --
+ * a stream with no cards would take no row and no cache entry.
+ *
+ * `changed` is the stream whose tasks are named differently: the same stream,
+ * its own plan, with the ids the layout's own key is read from moved -- so the
+ * picture one stream narrower with one of them edited is `manyStreams(count - 1,
+ * 0)`.
+ */
+function manyStreams(count: number, changed = -1): GraphModel {
+  const plans: unknown[] = []
+  let tasks = 0
+  for (let index = 0; index < count; index += 1) {
+    const stream = `stream-${String(index)}`
+    const edit = index === changed ? '-again' : ''
+    const nodes = [0, 1].map((node) => ({
+      id: `${stream}-task-${String(node)}${edit}`,
+      title: `A task of ${stream}`,
+      state: 'ready',
+      closed: false,
+      level: node,
+      critical: false,
+      needs: node === 0 ? [] : [`${stream}-task-0${edit}`],
+    }))
+    tasks += nodes.length
+    plans.push({
+      id: `plans/2026-10-31-${stream}`,
+      artifact: `docs/plans/2026-10-31-${stream}.graph.json`,
+      plan: `The ${stream} plan`,
+      stream,
+      nodes,
+      releases: [],
+      tasks: nodes.length,
+      closed: 0,
+      open: nodes.length,
+    })
+  }
+  return buildGraphModel({
+    document: decoded({
+      repo: 'example-owner/example-repo',
+      plans,
+      totals: { plans: plans.length, tasks, closed: 0, open: tasks },
+      streams: [],
+      warnings: [],
+    }),
+    tab: null,
+  })
+}
+
+/** lastAsk is the graph of the layout this worker was asked for last, and so
+ * what a reply to that ask has to cover. */
+function lastAsk(worker: FakeWorker): LayoutGraph {
+  const asked = worker.asked[worker.asked.length - 1]
+  if (asked === undefined) throw new Error('this worker was asked for no layout')
+  return asked.graph
+}
+
+/** placed is a reply the client accepts for one stream's own graph: every node
+ * of it at a fixed coordinate, and every edge routed with no sections. It is
+ * built from the ask rather than from the model, because a picture is one ask
+ * per stream and each ask is about a different graph. */
+function placed(graph: LayoutGraph): unknown {
   return {
     children: graph.children.map((child, index) => ({ ...child, x: 0, y: index * 10 })),
     edges: graph.edges.map((edge) => ({ id: edge.id, sections: [] })),
   }
 }
 
-/** settle asks for `value`'s layout and answers it when the worker was actually
- * asked -- a cache hit posts nothing, and a reply to a layout nobody asked for
- * would drop the worker. */
+/** settle asks for `value`'s picture and answers every stream the worker was
+ * actually asked about, with the graph that ask carried: a stream whose
+ * structure is cached posts nothing, and which streams those are is the cache's
+ * business and not something a reply can be built from the model for.
+ *
+ * A reply to a layout nobody asked for would drop the worker, so the asks are
+ * answered as they were posted and no other reply is sent. */
 async function settle(worker: FakeWorker, layout: GraphLayout, value: GraphModel): Promise<Positions> {
-  const before = worker.placements
+  const before = worker.asked.length
   const pending = layout.positions(value)
-  if (worker.placements > before) worker.answer(placed(value))
+  for (const ask of worker.asked.slice(before)) worker.answerTo(ask.id, placed(ask.graph))
   return pending
+}
+
+/** orthogonal asserts a run of points is a set of horizontal and vertical
+ * segments: one coordinate at a time, never both and never neither. */
+function orthogonal(points: readonly Point[]): void {
+  for (let at = 0; at + 1 < points.length; at += 1) {
+    const one = points[at]
+    const two = points[at + 1]
+    if (one === undefined || two === undefined) throw new Error('a point went missing')
+    expect(
+      (one.x === two.x) !== (one.y === two.y),
+      `the segment from ${JSON.stringify(one)} to ${JSON.stringify(two)} is neither horizontal nor vertical`,
+    ).toBe(true)
+  }
 }
 
 describe('the graph model', () => {
@@ -441,39 +564,47 @@ describe('the graph model', () => {
 })
 
 describe('the graph layout cache', () => {
-  it('lays a structure out once, and again only when the structure changes', async () => {
+  it('lays a stream out once, and again only when that stream’s structure changes', async () => {
     // **The red step.** This is the claim the whole cache is for: a watch frame
-    // that changed a node's state or stage is not a reason to send the graph to
-    // the engine again -- the boxes have not moved.
+    // that changed a node's state or stage is not a reason to send a stream to
+    // the engine again -- the boxes have not moved. The key is a stream's, so the
+    // runs a picture costs are its streams, one each.
     const { worker, layout } = layoutWith()
     const before = model(null)
+    expect(before.columns).toHaveLength(2)
     await settle(worker, layout, before)
-    expect(worker.placements).toBe(1)
+    expect(worker.placements).toBe(2)
 
     // The same structure with drawn words changed: `task-two` goes from
     // `running`/`implement` to `done`, and `task-three` from `ready` to
     // `blocked`. Nothing an engine can see has moved.
     const changed = built(['plans', 0, 'nodes', 1, 'state'], 'done')
     const recoded = built(['plans', 0, 'nodes', 2, 'state'], 'blocked')
-    expect(structureHash(changed)).toBe(structureHash(before))
-    expect(structureHash(recoded)).toBe(structureHash(before))
+    expect(structureHash(streamOf(changed, 0))).toBe(structureHash(streamOf(before, 0)))
+    expect(structureHash(streamOf(recoded, 0))).toBe(structureHash(streamOf(before, 0)))
     expect(nodeOf(changed, 'task-two')?.words).toEqual(['done', 'critical'])
     expect(nodeOf(recoded, 'task-three')?.words).toEqual(['blocked'])
     await settle(worker, layout, changed)
     await settle(worker, layout, recoded)
-    expect(worker.placements).toBe(1)
+    expect(worker.placements).toBe(2)
 
     // ...and a structure that did change is laid out: `task-six` gains a
-    // dependency on `task-three`, which is an edge the engine has to route.
+    // dependency on `task-three`, which is an edge the engine has to route. The
+    // change is one stream's, so one run is added and the stream beside it keeps
+    // the positions it was already given -- the key follows the run.
     const edgeAdded = built(['plans', 0, 'nodes', 5, 'needs'], ['task-three', 'task-five'])
-    expect(structureHash(edgeAdded)).not.toBe(structureHash(before))
+    expect(structureHash(streamOf(edgeAdded, 0))).not.toBe(structureHash(streamOf(before, 0)))
+    expect(structureHash(streamOf(edgeAdded, 1))).toBe(structureHash(streamOf(before, 1)))
     await settle(worker, layout, edgeAdded)
-    expect(worker.placements).toBe(2)
+    expect(worker.placements).toBe(3)
   })
 
   it('does not keep a layout the worker refused, and bounds how many it keeps', async () => {
     const { worker, layout } = layoutWith()
-    const value = model(null)
+    // One stream, so the refusal is one stream's and the ask after it is that
+    // stream's again.
+    const value = model('')
+    expect(value.columns).toHaveLength(1)
     const refused = layout.positions(value)
     worker.answer({ children: [{ id: 'nowhere', x: 0, y: 0, width: 1, height: 1 }], edges: [] })
     await expect(refused).rejects.toThrow(/did not ask about/)
@@ -481,7 +612,7 @@ describe('the graph layout cache', () => {
     // to the worker rather than getting the rejection again.
     const again = layout.positions(value)
     expect(worker.placements).toBe(2)
-    worker.answer(placed(value))
+    worker.answer(placed(lastAsk(worker)))
     await expect(again).resolves.toBeTruthy()
 
     // A handful of other structures in, the cache holds
@@ -496,9 +627,118 @@ describe('the graph layout cache', () => {
     const oldest = many[0]
     if (oldest === undefined) throw new Error('no model')
     const pending = layout.positions(oldest)
+    // The evicted entry is the one stream that was patched; the stream beside it
+    // is still cached, so its row costs no run.
     expect(worker.placements).toBe(before + 1)
-    worker.answer(placed(oldest))
+    worker.answer(placed(lastAsk(worker)))
     await pending
+  })
+
+  it('holds every stream of a picture wider than the floor, so a second read lays nothing out', async () => {
+    // **The floor is not the bound.** A read asks for its whole picture and
+    // trims the cache once it has it, so a bound of `GRAPH_LAYOUT_CACHE_ENTRIES`
+    // on a picture of nine streams trims away one of the nine streams it has just
+    // asked for: every read of that picture, changed or not, lays that stream out
+    // again. The bound is therefore the picture's own number of streams where
+    // that is larger than the floor, and the case reads both sides of the gap.
+    for (const count of [GRAPH_LAYOUT_CACHE_ENTRIES + 1, 25]) {
+      const { worker, layout } = layoutWith()
+      const value = manyStreams(count)
+      expect(value.columns, `the document of ${String(count)} streams read as fewer`).toHaveLength(count)
+      await settle(worker, layout, value)
+      expect(worker.placements).toBe(count)
+
+      // The same model again: one run per stream is what a picture of `count`
+      // streams costs the first time, and nothing at all the second.
+      const before = worker.placements
+      await settle(worker, layout, value)
+      expect(
+        worker.placements,
+        `a second read of a ${String(count)}-stream picture asked the worker again`,
+      ).toBe(before)
+    }
+  })
+
+  it('evicts once the read is over, so a narrower picture with one stream changed costs one run', async () => {
+    // **The eviction is the read's, not the stream's.** It used to run inside
+    // the read, between two streams of one picture: the first stream a miss adds
+    // trims the cache to the bound, and on a picture one stream narrower than
+    // the last the oldest entries are the ones this read has not reached yet --
+    // so the stream about to be asked for is evicted before it is asked for,
+    // every stream after that is evicted by the stream before it, and a read
+    // that should cost one run lays the whole picture out again. Evicting once,
+    // after the pass, leaves every entry the pass made or found the most recent:
+    // the oldest-first eviction then takes the stream that is gone and the
+    // stream that changed, and nothing the picture still wants.
+    for (const count of [10, 25, 60]) {
+      const { worker, layout } = layoutWith()
+      await settle(worker, layout, manyStreams(count))
+      expect(worker.placements).toBe(count)
+
+      // The last stream gone, and the first stream of what is left is a plan the
+      // engine has not placed: exactly that one stream is laid out again.
+      const before = worker.placements
+      await settle(worker, layout, manyStreams(count - 1, 0))
+      expect(
+        worker.placements - before,
+        `a ${String(count)}-stream picture, one stream narrower and one changed, was laid out again`,
+      ).toBe(1)
+
+      // A picture a stream wider, and then the one before it: the read that goes
+      // back is a read of entries it still holds, so the added stream is the
+      // only one that can cost a run -- and going back costs none at all.
+      await settle(worker, layout, manyStreams(count + 1))
+      const widened = worker.placements
+      await settle(worker, layout, manyStreams(count))
+      expect(
+        worker.placements - widened,
+        `going back to the ${String(count)}-stream picture was laid out again`,
+      ).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('lays the graph out left to right, orthogonally, over the cards’ own box', async () => {
+    // **The geometry the redesign's Graph canvas is drawn with.** The picture is
+    // read left to right -- a task to the left of the tasks that need it -- and
+    // its edges are routed orthogonally rather than as the engine's default
+    // splines, because a dependency's arrow is read as a line that leaves one
+    // card's side and arrives at another's, and a spline between two boxes is a
+    // curve a reader has to follow rather than a run they can see.
+    const { worker, layout } = layoutWith()
+    await settle(worker, layout, model(null))
+    const asks = worker.sent.filter((message) => message['cmd'] === 'layout')
+    // One ask per stream, and every one of them carries the whole request: a
+    // stream is laid out on its own, so no ask there is left to the engine's
+    // defaults.
+    expect(asks).toHaveLength(2)
+    for (const ask of asks) {
+      const options = (ask['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+      expect(options['elk.algorithm']).toBe('layered')
+      expect(options['elk.direction']).toBe('RIGHT')
+      expect(options['elk.edgeRouting']).toBe('ORTHOGONAL')
+    }
+
+    // And the box the engine is given is the card the screen draws: 260 x 88,
+    // which is the room a wrapped title is measured against.
+    const first = asks[0]
+    if (first === undefined) throw new Error('the worker was asked for no layout')
+    const graph = first['graph'] as LayoutGraph
+    expect(graph.children.length).toBeGreaterThan(0)
+    for (const child of graph.children) {
+      expect([child.width, child.height]).toEqual([GRAPH_NODE_WIDTH, GRAPH_NODE_HEIGHT])
+    }
+    expect([GRAPH_NODE_WIDTH, GRAPH_NODE_HEIGHT]).toEqual([260, 88])
+
+    // The box size is in the cache key **of every stream** -- each size
+    // length-prefixed, the way every part of the hash is written -- so a card
+    // that grows is a different structure and no answer laid out for the smaller
+    // card is reused.
+    const width = String(GRAPH_NODE_WIDTH)
+    const height = String(GRAPH_NODE_HEIGHT)
+    for (const index of [0, 1]) {
+      expect(structureHash(streamOf(model(null), index))).toContain(`${String(width.length)}:${width}`)
+      expect(structureHash(streamOf(model(null), index))).toContain(`${String(height.length)}:${height}`)
+    }
   })
 
   it('sends the worker ids and sizes and nothing a person wrote', () => {
@@ -507,7 +747,7 @@ describe('the graph layout cache', () => {
     // the screen writes it into the box's own element.
     const hostile = `<${'img'} ${'src'}=${'x'} ${'onerror'}=${'1'}>`
     const value = built(['plans', 0, 'nodes', 0, 'title'], hostile)
-    const graph = graphOf(value)
+    const graph = graphOf(streamOf(value, 0))
     expect(graph.children.map((child) => child.width)).toEqual(graph.children.map(() => GRAPH_NODE_WIDTH))
     expect(graph.children.map((child) => child.height)).toEqual(graph.children.map(() => GRAPH_NODE_HEIGHT))
     expect(graph.edges).toHaveLength(4)
@@ -520,8 +760,8 @@ describe('the graph layout cache', () => {
   })
 
   it('tells two structures apart when a part boundary could be moved', () => {
-    // The parts of the hash are a flat run of values, and a run of lengths alone
-    // does not say where one level ends: a plan `p` (stream `s`) holding a node
+    // The parts of one stream's hash are a flat run of values, and a run of
+    // lengths alone does not say where one level ends: a plan `p` holding a node
     // whose id and release are both `1.4`, followed by an empty plan `1.4`, is
     // the same sequence of parts as plan `p` empty followed by plan `1.4`
     // holding that node. The two are different pictures -- the engine's own ids
@@ -536,14 +776,15 @@ describe('the graph layout cache', () => {
     ]
     const here = built(['plans'], plans(true))
     const there = built(['plans'], plans(false))
-    expect(graphOf(here).children.map((child) => child.id)).toEqual(['1:p:1.4'])
-    expect(graphOf(there).children.map((child) => child.id)).toEqual(['3:1.4:1.4'])
-    expect(structureHash(here)).not.toBe(structureHash(there))
+    expect(graphOf(bothPlans(here)).children.map((child) => child.id)).toEqual(['1:p:1.4'])
+    expect(graphOf(bothPlans(there)).children.map((child) => child.id)).toEqual(['3:1.4:1.4'])
+    expect(structureHash(bothPlans(here))).not.toBe(structureHash(bothPlans(there)))
   })
 
   it('keeps two plans apart when an id and its prefix could be split two ways', () => {
     // `ab` + `c` and `a` + `bc` are the same characters joined with no length in
-    // front of the first part, and the engine's ids have to tell them apart.
+    // front of the first part, and the engine's ids have to tell them apart
+    // within one run: both plans are the same stream's.
     const base = rawPlan(1)
     const node = rawNodes(base)[0]
     if (node === undefined) throw new Error('the fixture has no second plan')
@@ -551,7 +792,59 @@ describe('the graph layout cache', () => {
       { ...base, id: 'ab', nodes: [{ ...node, id: 'c' }] },
       { ...base, id: 'a', nodes: [{ ...node, id: 'bc' }] },
     ]
-    const graph = graphOf(built(['plans'], plans))
+    const graph = graphOf(bothPlans(built(['plans'], plans)))
     expect(new Set(graph.children.map((child) => child.id)).size).toBe(2)
+  })
+
+  it('routes an edge whose ends were placed in two rows through the gutter between them', () => {
+    // **The line no engine drew.** Each stream is laid out on its own run, so an
+    // edge whose two ends were placed in different rows is an edge no run ever
+    // saw, and one handed to the engine would simply have been lost. The route
+    // is this module's own: three segments, out of the upper card's bottom and
+    // into the lower card's top, meeting on the ground between the two rows.
+    //
+    // No document this console can build carries such an edge today -- a plan's
+    // `needs` name tasks of that plan, and a plan belongs to one stream -- so
+    // this is pinned on the function rather than through a model, and it is
+    // pinned because the change that made two runs possible is the change that
+    // made a route of our own necessary.
+    const above: PlacedNode = { id: 'above', x: 0, y: 0, width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT }
+    const below: PlacedNode = { id: 'below', x: 400, y: 212, width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT }
+    const down = crossStreamRoute(above, below)[0]
+    if (down === undefined) throw new Error('no route between the two rows')
+    const middle = (GRAPH_NODE_HEIGHT + 212) / 2
+    expect(down.startPoint).toEqual({ x: GRAPH_NODE_WIDTH / 2, y: GRAPH_NODE_HEIGHT })
+    expect(down.endPoint).toEqual({ x: 400 + GRAPH_NODE_WIDTH / 2, y: 212 })
+    expect(down.bendPoints).toEqual([
+      { x: GRAPH_NODE_WIDTH / 2, y: middle },
+      { x: 400 + GRAPH_NODE_WIDTH / 2, y: middle },
+    ])
+    // The bends are in the gutter and not in either row: the ground between a
+    // card's bottom and the next row's top is the only place a horizontal run
+    // crosses neither a card nor a band.
+    expect(down.startPoint.y).toBeLessThan(middle)
+    expect(middle).toBeLessThan(down.endPoint.y)
+    orthogonal([down.startPoint, ...(down.bendPoints ?? []), down.endPoint])
+
+    // And the same route read upward: the two ends face each other whatever the
+    // model's own order put first, so the line leaves the card's top and arrives
+    // at the other's bottom.
+    const up = crossStreamRoute(below, above)[0]
+    if (up === undefined) throw new Error('no route upward')
+    expect(up.startPoint).toEqual({ x: 400 + GRAPH_NODE_WIDTH / 2, y: 212 })
+    expect(up.endPoint).toEqual({ x: GRAPH_NODE_WIDTH / 2, y: GRAPH_NODE_HEIGHT })
+    expect(up.bendPoints).toEqual([
+      { x: 400 + GRAPH_NODE_WIDTH / 2, y: middle },
+      { x: GRAPH_NODE_WIDTH / 2, y: middle },
+    ])
+    // The same gutter, read the other way. The midpoint is the gutter in both
+    // directions and not only when the second card is the lower one: two rows
+    // never overlap -- `GRAPH_ROW_GAP` is ground between them -- so both ends of
+    // the pair always leave that ground to route through, and a bend above the
+    // upper card's bottom could only be reached by a pair the stacking cannot
+    // produce.
+    expect(middle).toBeLessThan(up.startPoint.y)
+    expect(middle).toBeGreaterThan(up.endPoint.y)
+    orthogonal([up.startPoint, ...(up.bendPoints ?? []), up.endPoint])
   })
 })
