@@ -104,8 +104,8 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"job's environment was deployed with.\n\n" +
 			"Publishing refuses without the rules marker (config/limits/policyRules): a\n" +
 			"policy published before the rules are deployed is one the runs it bounds\n" +
-			"cannot read, so run fugaro update --firebase-project with a Fugaro that deploys them\n" +
-			"first. It also refuses a node written by a newer Fugaro.\n\n" +
+			"cannot read, so run fugaro update with a Fugaro that deploys them first. It\n" +
+			"also refuses a node written by a newer Fugaro.\n\n" +
 			"allow_repos is seeded from this machine's repos: map and from the shared\n" +
 			"config's repository list, and only when the node is absent or --seed-repos is\n" +
 			"passed: a later publish never re-adds a name an operator removed. It is never\n" +
@@ -319,7 +319,14 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 		// deserves its own sentence: there is nothing to be older than, and a
 		// message naming a node that does not exist sends the operator
 		// looking for it.
-		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; re-run 'fugaro update --firebase-project' with fugaro >= %s first",
+		//
+		// The move is plain `fugaro update`, not `--firebase-project`: the
+		// rules stage of the converge deploys this binary's generation over
+		// rules whose marker is absent, and it does so in the same run as the
+		// migration this refusal blocks (init_rules_stage.go, the owner's rule
+		// of 2026-10-30). `--firebase-project` is the door that adopts a
+		// Firebase project, which an installation that has one does not need.
+		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; run 'fugaro update' with fugaro >= %s first, which deploys this Fugaro's rules under the policy",
 			projectpolicy.PathRulesMarker(), policySince)
 	}
 	var gen int
@@ -344,14 +351,15 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 
 // rulesSkewText is the one sentence for "the deployed rules are older than
 // the marker": the marker records this generation, and the *document* deployed
-// at .settings/rules is not the one this generation generates. `fugaro update
-// --firebase-project` redeploys over it (infra.DB.Plan compares the same way), and
-// doctor's policy-rules-skew check prints the sentence (plan task 1.6 step 4's
-// fifth check), so the state reads the same whether the operator met it as a
-// report or in the deploy's own words. It is a plain sentence and not an
+// at .settings/rules is not the one this generation generates. `fugaro update`
+// redeploys over it — the rules stage of the converge (init_rules_stage.go)
+// deploys this binary's generation for the state, and infra.DB.Plan compares the
+// same way — and doctor's policy-rules-skew check prints the sentence (plan task
+// 1.6 step 4's fifth check), so the state reads the same whether the operator met
+// it as a report or in the deploy's own words. It is a plain sentence and not an
 // error, because doctor has no error to wrap it in.
 func rulesSkewText() string {
-	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro update --firebase-project' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
+	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro update' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
 		projectpolicy.PathRulesMarker(), policySince)
 }
 
@@ -380,7 +388,7 @@ func rulesSkewText() string {
 // nothing made (the review of PR #402 found the two texts disagreeing; this is
 // one text per state, shared by both readers).
 func rulesMarkerPrePolicyText(gen int) string {
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro update --firebase-project' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro update' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.PolicyRulesVersion, policySince, projectpolicy.RulesVersion)
 }
 
@@ -403,10 +411,10 @@ const rulesDeviceGeneration = 3
 // coordinator's read grant (coordinator plan P3).
 func rulesMarkerOlderText(gen int) string {
 	if gen >= rulesDeviceGeneration {
-		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of %s/ until it is deployed; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of %s/ until it is deployed; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, coordpath.PathRoot, projectpolicy.RulesVersion)
 	}
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, rules.PathDevices, projectpolicy.RulesVersion)
 }
 
@@ -463,8 +471,15 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 	case !found:
 		return nil, nil
 	case len(p.UnknownKeys) > 0:
-		return nil, userErr("%s lists %s, which this Fugaro does not know: publishing would drop them; upgrade Fugaro (fugaro upgrade), or fix the node by hand",
-			projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
+		// The count is named and the values never are: what a key nobody
+		// models holds is the node's, and the publisher prints it in no
+		// message (the keys themselves are printed escaped, which only
+		// says which names were not understood). The remedy is the one
+		// that works, and for the owner's rule of 2026-10-30 it is two
+		// commands: a newer Fugaro knows the keys, and `fugaro update` is
+		// what carries the node over without a deletion.
+		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (fugaro upgrade), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
+			projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, nil
 }

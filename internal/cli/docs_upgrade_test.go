@@ -58,3 +58,39 @@ func TestDocsNameUpgrade(t *testing.T) {
 		t.Error("README.md's Upgrading section never says /fugaro:upgrade does the local half and hands the user the rest")
 	}
 }
+
+// TestDocsPolicyMigrationChecklistItem: the release checklist carries the item
+// this change depends on — a policy version bump and its migrator ship in the
+// same release — and the doc the item points at states the two things an
+// operator has to be able to find: that `fugaro update` migrates the node in
+// place, and when `--delete` is still the answer. The pin is the sentence, not
+// the file: the checklist is read by whoever tags, and an item that drifts into
+// "publish again" is the 0.14.0 failure again.
+func TestDocsPolicyMigrationChecklistItem(t *testing.T) {
+	release, err := os.ReadFile("../../docs/release.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"**Every policy version bump ships its migrator.**",
+		"docs/policy-migration.md",
+	} {
+		if !strings.Contains(string(release), want) {
+			t.Errorf("docs/release.md does not carry %q", want)
+		}
+	}
+	doc, err := os.ReadFile("../../docs/policy-migration.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"migrates the node **in place**",
+		"## When `--delete` is still the answer",
+		"### For operators",
+		"Run `fugaro update`.",
+	} {
+		if !strings.Contains(string(doc), want) {
+			t.Errorf("docs/policy-migration.md does not say %q", want)
+		}
+	}
+}

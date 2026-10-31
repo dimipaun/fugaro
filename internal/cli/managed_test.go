@@ -734,6 +734,9 @@ var propertyAgentSites = map[string]string{
 	"init.go ask":            "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class)",
 	"init.go conditions":     "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
 	"init_stages.go options": "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker (the stage loop's agent gate)",
+	// The policy stage refuses a marker itself rather than leaning on the
+	// loop's gate: it is SelfConfirming, so the loop would call it.
+	"init_policy_migrate.go Apply": "TestUpdatePolicyMigrationRefusedInAgentSession",
 }
 
 // outsideAgentSites are the agent-marker sites the property does not cover,

@@ -1177,6 +1177,19 @@ where `setup` keeps it typed. Those **four** rows are the whole of what this
 answer changes about a confirmation; the location is the one that moves in one
 door rather than two, and the paragraph above is where that is stated.
 
+**A fifth row, added later (update-converge UC3b, 2026-10-31).** `fugaro update`
+gained a `checkout` stage that runs `fugaro upgrade`'s own pin, plugin and cloud
+steps for the checkout it is run in, so `update` reaches the image refresh too:
+**a rebuild of the checkout's workflow images** — one billable build, one
+confirmation each, as `fugaro upgrade` and `fugaro image refresh` ask — is now
+one of the steps `update` owns, and `--yes` covers it the same way this answer
+covers a repository's first build. It is `update`'s alone (`setup` registers no
+such stage), it is listed on `update`'s review screen beside the other steps that
+keep their own confirmations, and without `--yes` and without a terminal the
+stage leaves the whole checkout for the user rather than asking. Everything else
+in this answer stands: an image rebuild is an **ordinary** covered row, so it
+moves nothing in the "never covers" list.
+
 What does **not** move: `canType()`'s four conditions and every refusal of F8 (an
 agent session still applies nothing, `--yes` or not); the secrets stage's
 `noYes` in both front doors — a secret is a *value*, typed in a hidden prompt,
