@@ -130,7 +130,11 @@ func doctorClassOf(c doctorCheck) string {
 	case c.OK && c.Severity == "":
 		// doctor's own bookkeeping: nothing prints it, in any view.
 		return ""
-	case !c.OK && doctorHasPrefix(c.ID, doctorUpdatePrefixes):
+	case !c.OK && c.Severity != "info" && doctorHasPrefix(c.ID, doctorUpdatePrefixes):
+		// Not an "info" check: that severity is what doctor says when it could
+		// not read the state at all (the deployed rules were unreadable, a
+		// plugin state cannot be compared), and `fugaro update` is no fix for a
+		// read that did not happen.
 		return doctorClassUpdate
 	case doctorDecisionIDs[c.ID]:
 		return doctorClassDecision
@@ -181,13 +185,18 @@ type doctorView struct {
 func doctorVisible(checks []doctorCheck, v doctorView) (shown, hiddenSecurity []doctorCheck) {
 	for _, c := range checks {
 		class := doctorClassOf(c)
-		if class == "" || class == doctorClassAudit {
-			if class == doctorClassAudit && !v.all && !v.security && doctorHasPrefix(c.ID, doctorSecurityPrefixes) {
-				hiddenSecurity = append(hiddenSecurity, c)
-			}
+		if class == "" {
 			continue
 		}
-		shown = append(shown, c)
+		security := doctorHasPrefix(c.ID, doctorSecurityPrefixes)
+		switch {
+		case class != doctorClassAudit:
+			shown = append(shown, c)
+		case v.all || (v.security && security):
+			shown = append(shown, c)
+		case security:
+			hiddenSecurity = append(hiddenSecurity, c)
+		}
 	}
 	return shown, hiddenSecurity
 }

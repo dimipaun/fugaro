@@ -2,11 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
 // doctorOwnerCase is the state the owner pasted on 2026-10-30: "fugaro doctor
@@ -174,5 +177,168 @@ func TestDoctorDefaultIsAddressedToTheReader(t *testing.T) {
 	}
 	if strings.Contains(got, "Fix:") || strings.Contains(got, "(run fugaro config publish") {
 		t.Errorf("the default view still prints the raw fix parenthesis:\n%s", got)
+	}
+}
+
+// TestDoctorSecurityIsBehindItsFlag: the IAM and security sweep leaves the
+// default view — the owner's complaint was that it crowded out the items — and
+// the default view says how many it left out, so a short output is never read
+// as a clean one. --security prints them.
+func TestDoctorSecurityIsBehindItsFlag(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
+		Members: []string{"user:a@example.com"}})
+
+	quiet, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+	if strings.Contains(quiet, "launcher-jobs") {
+		t.Errorf("the default view prints the launcher sweep:\n%s", quiet)
+	}
+	if !strings.Contains(quiet, "security findings: `fugaro doctor --security`") {
+		t.Errorf("the default view hides security findings without saying so:\n%s", quiet)
+	}
+
+	shown, _, _ := execute(t, "doctor", "--security", "--dir", t.TempDir())
+	if !strings.Contains(shown, "launcher-jobs") {
+		t.Errorf("--security does not print the launcher sweep:\n%s", shown)
+	}
+	if strings.Contains(shown, "security findings: `fugaro doctor --security`") {
+		t.Errorf("--security still says findings are hidden:\n%s", shown)
+	}
+}
+
+// TestDoctorWarningSecurityFindingIsNeverHidden: a security check that is a
+// warning is a finding, not a measurement, and hiding it would hide a live
+// grant from the default view. The classification hides the sweep's info
+// lines only.
+func TestDoctorWarningSecurityFindingIsNeverHidden(t *testing.T) {
+	got := doctorDefaultOutput(t, []doctorCheck{
+		{ID: "secret-readers-unexpected", Severity: "warning",
+			Problem: "secret fugaro-owner-repo-a-api-key grants a role that reads every version to user:x@example.com",
+			Fix:     "review each member and remove the ones Fugaro did not create"},
+		{ID: "runs-bucket-iam-1", Severity: "warning",
+			Problem: "bucket fugaro-runs-proj-1234 grants roles/storage.admin to allUsers",
+			Fix:     "remove the public grant: gcloud storage buckets remove-iam-policy-binding"},
+		{ID: "token-signers-2", Severity: "info", Problem: "the signer list also names a service account"},
+	})
+	for _, want := range []string{"warning secret-readers-unexpected: ", "warning runs-bucket-iam-1: "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a warning security finding is hidden: %q missing from\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "1 security findings") {
+		t.Errorf("the one hidden info finding is not counted:\n%s", got)
+	}
+}
+
+// TestDoctorAllPrintsEveryCheck: --all is the long-standing output — one line
+// per check, informational and audit lines included — so nothing an operator
+// could read before is gone.
+func TestDoctorAllPrintsEveryCheck(t *testing.T) {
+	fixture := doctorOwnerCase()
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	_ = emitDoctor(cmd, doctorOutput{Checks: fixture}, false, doctorView{all: true})
+	got := buf.String()
+	for _, c := range fixture {
+		if c.OK && c.Severity == "" {
+			continue
+		}
+		if !strings.Contains(got, c.ID+": ") {
+			t.Errorf("--all does not print %s:\n%s", c.ID, got)
+		}
+	}
+	if !strings.Contains(got, "info launcher-jobs: ") {
+		t.Errorf("--all does not print the security sweep:\n%s", got)
+	}
+}
+
+// TestDoctorUpdateItemsAreOneCommand: an item `fugaro update` puts right says
+// so and says nothing else, however long the check's own text is (CLAUDE.md's
+// hard rule: that one command is the whole upgrade). The check's text is not
+// lost: --all and --json still carry it.
+func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
+	updateIDs := []string{
+		"cli-version", "plugin-pin", "plugin-install", "base-image", "image-config-web",
+		"policy-older-than-binary", "policy-rules-skew", "policy-vs-jobs",
+	}
+	for _, id := range updateIDs {
+		c := doctorCheck{ID: id, Severity: "warning",
+			Problem: "a long problem sentence that says what is wrong here, in the check's own words",
+			Fix:     "a long fix that names every step of a manual migration, which the default view must not print"}
+		if got := doctorClassOf(c); got != doctorClassUpdate {
+			t.Errorf("%s is %q, want %q", id, got, doctorClassUpdate)
+		}
+		line := doctorItemLine(t, c)
+		// cli-version's newer release has to be installed before the update can
+		// run, so its line ends in the upgrade and then the same command.
+		if !strings.Contains(line, "fugaro update`") || !strings.HasSuffix(line, "`") {
+			t.Errorf("%s's line does not end in the fugaro update command: %q", id, line)
+		}
+		if strings.Contains(line, "manual migration") {
+			t.Errorf("%s's line prints the check's own long fix: %q", id, line)
+		}
+		// And the item is gone once it passes: nothing prints it, and the
+		// verdict is the ok one (UC4's convergence).
+		ok := c
+		// A check that passes carries no severity at all: that is what the
+		// plugins states and the layer checks set when there is nothing to say.
+		ok.OK, ok.Severity, ok.Problem, ok.Fix = true, "", "", ""
+		if got := doctorDefaultOutput(t, []doctorCheck{ok}); !strings.Contains(got, "fugaro doctor: ok") {
+			t.Errorf("%s still prints when it passes:\n%s", id, got)
+		}
+	}
+}
+
+// doctorItemLine is one check's default-view line, joined when the fix went to
+// its own line.
+func doctorItemLine(t *testing.T, c doctorCheck) string {
+	t.Helper()
+	var buf bytes.Buffer
+	printDoctorItem(&buf, c)
+	return strings.Join(strings.Fields(buf.String()), " ")
+}
+
+// TestDoctorJSONKeepsEveryCheckAndClassifiesIt: --json is the complete and
+// stable surface the console and the mobile app read: every check is there with
+// the same fields whatever the view flags say, and the class is the one new
+// field — added, never a field whose meaning changed.
+func TestDoctorJSONKeepsEveryCheckAndClassifiesIt(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+
+	plain := r.runDoctorJSON(t)
+	all, _, err := execute(t, "doctor", "--json", "--all", "--dir", t.TempDir())
+	if err != nil {
+		t.Fatalf("doctor --json --all: %v", err)
+	}
+	var full doctorOutput
+	if err := json.Unmarshal([]byte(all), &full); err != nil {
+		t.Fatalf("json: %v\n%s", err, all)
+	}
+	if len(plain.Checks) != len(full.Checks) {
+		t.Fatalf("--all changed what --json carries: %d checks against %d", len(full.Checks), len(plain.Checks))
+	}
+	classes := map[string]bool{
+		doctorClassActionable: true, doctorClassUpdate: true, doctorClassAudit: true, doctorClassDecision: true,
+	}
+	for _, c := range full.Checks {
+		if c.ID == "" {
+			t.Fatalf("a check has no id: %+v", c)
+		}
+		if c.Class != "" && !classes[c.Class] {
+			t.Errorf("%s carries the class %q, which is not one of the four views use: %+v", c.ID, c.Class, c)
+		}
+		if !c.OK && c.Problem == "" {
+			t.Errorf("%s is not ok and carries no problem in --json: %+v", c.ID, c)
+		}
+	}
+	// The full text the default view shortens is still in --json.
+	c, ok := doctorCheckByID(full.Checks, "launcher-jobs")
+	if !ok || !strings.Contains(c.Problem, "launcher grants on Cloud Run jobs") {
+		t.Errorf("launcher-jobs lost its text in --json: %+v", c)
 	}
 }
