@@ -1,6 +1,6 @@
 ---
 name: upgrade
-description: "Bring this checkout up to the fugaro on the PATH: the plugin pin in .claude/settings.json, the plugin installed in Claude Code, the repository's job images and the project's published policy node. Checks with fugaro upgrade --check, explains what is stale, does the local half with fugaro upgrade --local, and hands the user the one command for the cloud half. Use when the user has upgraded fugaro, asks to upgrade or update Fugaro, its plugin or its skills, or when fugaro warns that the plugin pin or the installed plugin is stale."
+description: "Bring this checkout up to the fugaro on the PATH: the plugin pin in .claude/settings.json, the plugin installed in Claude Code, the repository's job images, the project's deployed security rules and its published policy node. Checks with fugaro upgrade --check, explains what is stale, does the local half with fugaro upgrade --local, and hands the user the one command for the cloud half. Use when the user has upgraded fugaro, asks to upgrade or update Fugaro, its plugin or its skills, or when fugaro warns that the plugin pin or the installed plugin is stale."
 ---
 
 <!-- fugaro-skill name=upgrade fugaro-version=0.14.0 -->
@@ -8,14 +8,15 @@ description: "Bring this checkout up to the fugaro on the PATH: the plugin pin i
 
 # Upgrade a checkout
 
-`fugaro upgrade` brings a checkout up to the `fugaro` binary on the PATH in four steps, and prints one line per step (`pin:`, `plugin:`, `cloud:`, `policy:`):
+`fugaro upgrade` brings a checkout up to the `fugaro` binary on the PATH in five steps, and prints one line per step (`pin:`, `plugin:`, `cloud:`, `rules:`, `policy:`):
 
 - **pin**: the Fugaro plugin in the repository's `.claude/settings.json` is pinned to this binary's release. It shows a diff and never commits.
 - **plugin**: the plugin is installed or updated in Claude Code on this machine, through the `claude` CLI. Running Claude Code sessions, this one included, keep the old skills until they are restarted.
 - **cloud**: the repository's job images move onto this release's base image (the same work as `fugaro image refresh`). This changes the user's cloud project and starts billable builds.
-- **policy**: the project's published policy node, when an earlier Fugaro wrote it in a version this binary does not read, is rewritten in place as the version it does — never deleted and published again, so everything the owner edited into the node by hand survives. It shows the diff, then asks for the project's name.
+- **rules**: the security rules generation a project policy is read under, deployed into the project's Firebase database when the deployed one is absent, older, pre-policy or a different document (the same deploy the update door's rules stage makes, so both front doors deploy one document). This changes the user's cloud project. It shows the plan, then asks for the project's name.
+- **policy**: the project's published policy node, when an earlier Fugaro wrote it in a version this binary does not read, is rewritten in place as the version it does — never deleted and published again, so everything the owner edited into the node by hand survives. It shows the diff, then asks for the project's name. It runs after the rules step, whose deploy its write is gated on.
 
-The first two steps are local and safe to run here. The cloud and policy steps are not: `fugaro upgrade` never runs them inside a coding agent's session, by design, and you hand them to the user.
+The first two steps are local and safe to run here. The cloud, rules and policy steps are not: `fugaro upgrade` never runs them inside a coding agent's session, by design, and you hand them to the user.
 
 Ground rules:
 - **Three commands.** You run only `fugaro version`, `fugaro upgrade --check` and `fugaro upgrade --local`, from the repository root (`git rev-parse --show-toplevel`). You never run a `claude` plugin command, `fugaro image refresh` or `brew` yourself, and you never pass `--allow-fork`: trusting a fork's marketplace is the user's call, at their own terminal.
@@ -31,9 +32,9 @@ Run `fugaro version`. `fugaro upgrade` upgrades a checkout to that version; it n
 
 ## 2. Check
 
-Run `fugaro upgrade --check`. It writes nothing, runs no `claude` command, makes no cloud call and needs no credentials. Exit 1 means something is stale, not that the check failed. For each `pin:`, `plugin:`, `cloud:` and `policy:` line, tell the user in plain words what it says and why it matters, one sentence per stale step ([reference/states.md](reference/states.md) explains every state and reason).
+Run `fugaro upgrade --check`. It writes nothing, runs no `claude` command, makes no cloud call and needs no credentials. Exit 1 means something is stale, not that the check failed. For each `pin:`, `plugin:`, `cloud:`, `rules:` and `policy:` line, tell the user in plain words what it says and why it matters, one sentence per stale step ([reference/states.md](reference/states.md) explains every state and reason).
 
-The `policy:` line is `skipped` under `--check`, with a `note:` saying so: whether the published policy node is current is a fact of the user's project, and reading it needs credentials `--check` does not use. Say it cannot tell, and that the upgrade below migrates the node in place when it is an older Fugaro's.
+The `rules:` and `policy:` lines are `skipped` under `--check`, each with a `note:` saying so: which generation of the security rules the project's database has deployed, and whether its published policy node is current, are facts of the user's project, and reading either needs credentials `--check` does not use. Say it cannot tell, and that the upgrade below deploys the rules generation and migrates the node in place when it is an older Fugaro's, in that order.
 
 If every line is `current` or `skipped`, say the checkout is up to date, name what was skipped and why, and stop.
 
@@ -60,10 +61,12 @@ Before they run it, say what it does. It prints the whole plan first, then copie
 
 If `cloud:` names a custom base image (a development or hand-pushed image), the fix it printed comes first; give it to the user as printed. If `cloud:` is `skipped` because no local project config selects the checkout, this machine is not the operator's: the cloud step belongs to whoever set the project up, and there is nothing to hand over. `--check` cannot see a build that failed after the base moved, because build records live in the cloud: when the user reports one, the same command is the fix.
 
+If `rules:` is `skipped` in this session, or `--check` said it could not tell, the same command hands it over: it deploys the security rules generation a project policy is read under into the project's database, prints the plan and asks for the project's name (or takes `--yes`). It runs before the policy step, whose write is gated on the deployed generation.
+
 If `policy:` is `stale`, or `skipped` in this session while `cloud:` is `current`, the same command hands it over: it rewrites the project's published policy node in place, prints what changes and what is kept, and asks for the project's name (or takes `--yes`). Tell the user that nothing is deleted and nothing has to be published again: the migration keeps the fields they edited into the node by hand, and a removal with the publisher's own delete flag, followed by a fresh publish, would drop them.
 
 After a real cloud step, a `note:` line may say the deployed job's whole copy of the local project config (multi-model `providers` and `model_prices`, budget settings, the region's custom compute price, the GitHub App ID) no longer matches the local config: a version upgrade never refreshes it. The note names the one command that does; give it to the user as printed, for their own terminal, and never run it yourself or treat `--yes` as covering it (its own apply confirmations stay theirs). Under `--check` the same note instead says it cannot tell, because `--check` makes no cloud call.
 
 ## 5. Report
 
-End with what changed (the pin, the plugin version), what the user still does (commit the settings diff, restart Claude Code sessions, run the cloud and policy command in their own terminal), and nothing else.
+End with what changed (the pin, the plugin version), what the user still does (commit the settings diff, restart Claude Code sessions, run the cloud, rules and policy command in their own terminal), and nothing else.
