@@ -460,6 +460,11 @@ func printImageResult(w io.Writer, res *image.LocalResult, asJSON bool) error {
 	return nil
 }
 
+// imageKeyFlag is the dependency-set key flag the image build passes to render,
+// named once so the flag the build template sets and the refusal that names it
+// cannot drift apart.
+const imageKeyFlag = "key"
+
 func newImageRenderCmd() *cobra.Command {
 	var workflow, cloudOutputs, layerBucket, layerSlug, layerSHA, key string
 	cmd := &cobra.Command{
@@ -511,8 +516,8 @@ func newImageRenderCmd() *cobra.Command {
 	cmd.Flags().StringVar(&layerBucket, "layer-bucket", "", "the runs bucket holding the repository's copy of the project layer (used by the image build)")
 	cmd.Flags().StringVar(&layerSlug, "layer-slug", "", "the repository's storage slug (used by the image build)")
 	cmd.Flags().StringVar(&layerSHA, "layer-sha256", "", "the project layer's sha256 the build was submitted with (used by the image build)")
-	cmd.Flags().StringVar(&key, "key", "", "the normalised dependency-set key the operator's machine computed, which the record writes as it was given it (used by the image build)")
-	for _, n := range []string{"layer-bucket", "layer-slug", "layer-sha256", "key"} {
+	cmd.Flags().StringVar(&key, imageKeyFlag, "", "the normalised dependency-set key the operator's machine computed, which the record writes as it was given it (used by the image build)")
+	for _, n := range []string{"layer-bucket", "layer-slug", "layer-sha256", imageKeyFlag} {
 		_ = cmd.Flags().MarkHidden(n)
 	}
 	return cmd
@@ -547,7 +552,7 @@ func isDependencyKey(key string) bool {
 // operator's key would name an image no build made.
 func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf resolvedFile, name, dir, key string) error {
 	if key != "" && !isDependencyKey(key) {
-		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("--key %q is not a 64-character lower-case hex dependency-set key", key)}
+		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("--%s %q is not a 64-character lower-case hex dependency-set key", imageKeyFlag, key)}
 	}
 	cfg := rf.Cfg
 	git := func(args ...string) (string, error) {
@@ -624,6 +629,9 @@ func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf
 		// This binary's runner reads the sealed budget token; render runs
 		// the base image's own fugaro, so this is the base's statement
 		// (imagecheck.Record.SealedBudgetToken, what the seal gate trusts).
+		// A shared image is built by this same build, whose render step is the
+		// same base image's binary (design §2.6, §11), so the field is that
+		// binary's statement there too and not the shared repository's.
 		SealedBudgetToken: true,
 		// The key is the operator's machine's, computed before the build was
 		// submitted and handed to it as an input, and the record writes it as

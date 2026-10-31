@@ -157,11 +157,11 @@ type LockReader interface {
 // none: absence means "this installation has not migrated", which a caller
 // permits, so it is not an error.
 //
-// A read this machine is not allowed to make is. It is ReadStrict for that
-// reason (LockWriter's comment has the whole of it): Read folds an HTTP 403
-// into ErrNotExist, so through it a credentials fault would arrive as an
-// absent lock — the one answer a caller may act on by doing nothing, and a
-// gate that would then permit what it cannot see.
+// A read this machine is not allowed to make is an error, which is why the read
+// is ReadStrict (LockWriter's comment has the whole of it): Read folds an HTTP
+// 403 into ErrNotExist, so through it a credentials fault would arrive as an
+// absent lock — the one answer a caller may act on by doing nothing, and a gate
+// that would then permit what it cannot see.
 func ReadLock(ctx context.Context, r LockReader) (*Lock, error) {
 	data, _, err := r.ReadStrict(ctx, LockKey)
 	switch {

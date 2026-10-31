@@ -270,6 +270,46 @@ func TestReducePackageLockToNameAndVersion(t *testing.T) {
 	}
 }
 
+// TestReducePackageLockEntryUnderABareNodeModulesSegment: a path that ends at
+// node_modules/ names no package after it, so the entry's own name is what says
+// which one it is. Reading the empty last segment as the name would drop a
+// package the file states out of the key — and a key that omits a package its
+// own lockfile resolved is a key another dependency set can share.
+func TestReducePackageLockEntryUnderABareNodeModulesSegment(t *testing.T) {
+	data := `{"packages":{"":{"name":"app","version":"9.9.9"},` +
+		`"node_modules/":{"name":"left-pad","version":"1.3.0",` +
+		`"resolved":"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz","integrity":"sha512-aaa"}}}`
+	want := []string{factOf("left-pad", "1.3.0", "sha512-aaa")}
+	if got := reduced(t, "package-lock.json", data); !slices.Equal(got, want) {
+		t.Errorf("an entry under a bare node_modules/ path = %v, want %v", got, want)
+	}
+	// An entry under that path which names nothing still names nothing: it is
+	// skipped, never keyed with an empty name.
+	nameless := `{"packages":{"node_modules/":{"version":"1.0.0",` +
+		`"resolved":"https://registry.npmjs.org/x/-/x-1.0.0.tgz"}}}`
+	if got := reduced(t, "package-lock.json", nameless); len(got) != 0 {
+		t.Errorf("a nameless entry under a bare node_modules/ path = %v, want no fact", got)
+	}
+}
+
+// TestUnkeyedErrorNamesEveryReason: each reason a key file can be refused with
+// reads as a clause of its own in the error, so a reason whose case is missing
+// from Error fails here rather than reaching an operator as a refusal with no
+// reason written in it.
+func TestUnkeyedErrorNamesEveryReason(t *testing.T) {
+	for _, reason := range []UnkeyedReason{UnkeyedUnknownFormat, UnkeyedUnpinned, UnkeyedUnreadable,
+		UnkeyedNonRegistry, UnkeyedTooLarge, UnkeyedTooManyEntries} {
+		err := (&UnkeyedError{Path: "package-lock.json", Reason: reason}).Error()
+		clause, _, ok := strings.Cut(err, ", so this repository is unkeyed")
+		if !ok {
+			t.Fatalf("the error for %s does not read as an unkeyed refusal: %q", reason, err)
+		}
+		if _, why, found := strings.Cut(clause, ": "); !found || why == "" {
+			t.Errorf("the error for %s states no reason: %q", reason, err)
+		}
+	}
+}
+
 func TestReducePnpmLock(t *testing.T) {
 	// A package's integrity is in its packages entry's resolution, and a
 	// snapshots entry of the same package adds no fact of its own.

@@ -277,7 +277,9 @@ func factOf(name, version, integrity string) string {
 // quotes every fact, so one holding a newline cannot forge a line of its own —
 // but a name, a version or an integrity holding a control character is not
 // what any ecosystem writes, and a key built from one would be a key no
-// registry could have produced.
+// registry could have produced. It reads characters rather than bytes, which
+// is what makes a UTF-8-encoded C1 control (U+0085, the bytes 0xc2 0x85) a
+// control here: a check of the bytes for C0 and DEL alone would pass it.
 func hasControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) })
 }
@@ -454,7 +456,14 @@ func npmName(p string, e npmPackage) (string, bool) {
 	name := e.Name
 	const segment = "node_modules/"
 	if i := strings.LastIndex(p, segment); i >= 0 {
-		name = p[i+len(segment):]
+		// A path that ends at the segment names no package after it, and the
+		// entry's own name is then the only thing that says which one it is:
+		// reading the empty last segment as the name would drop a package the
+		// file states out of the key, and a key that omits a package its own
+		// lockfile resolved is a key another set can share.
+		if last := p[i+len(segment):]; last != "" {
+			name = last
+		}
 	}
 	return name, name != ""
 }
