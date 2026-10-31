@@ -32,6 +32,7 @@ import {
   CACHE_FRESH_MS,
   CACHE_LIMIT,
   NODE_TIMERS,
+  STAMP_AT_CLASS,
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
   STAMP_REFRESH_LABEL,
@@ -237,7 +238,13 @@ describe('the stamp a cached view is drawn with', () => {
     const root = drawn.root as FakeSection
     expect(root.tag).toBe('p')
     expect(root.attributes.get('class')).toBe(STAMP_CLASS)
-    expect(root.textContent).toBe('as of 09:05')
+    // The words are their own element, and that is what makes the hook exact: a
+    // DOM node's `textContent` is its whole subtree's, so the line that holds the
+    // control too answers `as of 09:05Refresh` in a browser.
+    const words = drawn.at as FakeSection
+    expect(words.tag).toBe('span')
+    expect(words.attributes.get('class')).toBe(STAMP_AT_CLASS)
+    expect(words.textContent).toBe('as of 09:05')
     const refresh = drawn.refresh as FakeSection
     expect(refresh.tag).toBe('button')
     expect(refresh.attributes.get('class')).toBe(STAMP_REFRESH_CLASS)
@@ -245,7 +252,8 @@ describe('the stamp a cached view is drawn with', () => {
     // inside a form without it is a submit, and this one is a redraw.
     expect(refresh.attributes.get('type')).toBe('button')
     expect(refresh.textContent).toBe(STAMP_REFRESH_LABEL)
-    expect(root.children[0]).toBe(refresh)
+    expect(root.children[0]).toBe(words)
+    expect(root.children[1]).toBe(refresh)
   })
 
   it('pads both fields, so the stamp is one width and the screen does not jump', () => {
@@ -276,6 +284,19 @@ describe('the session cache', () => {
     // The bound is small on purpose: every entry is a whole report, and the
     // point is the view the operator just left and comes back to.
     expect(CACHE_LIMIT).toBeLessThan(32)
+  })
+
+  it('holds at least one view, whatever bound a caller hands it', () => {
+    // `resultCache` is exported for the screens that adopt the helper, and a
+    // bound of nothing is a cache whose `put` looks like it stored something
+    // while every `get` answers `null` -- the one shape that would make a
+    // caller's "this session already read it" untrue without saying so.
+    const cache = resultCache<string>(0)
+    cache.put('a', 'first', 1)
+    expect(cache.get('a')).toEqual({ value: 'first', at: 1 })
+    cache.put('b', 'second', 2)
+    expect(cache.size).toBe(1)
+    expect(cache.get('a')).toBeNull()
   })
 
   it('forgets everything when the installation changes', () => {

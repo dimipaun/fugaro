@@ -2740,3 +2740,44 @@ div[data-busy='true'] > *:not(.console-busy-slot) {
     animation: none;
   }
 }
+
+/* ---- A cached view's stamp (console 0.116.1) ----------------------------- */
+
+/* The other half of the session cache: a view that came out of memory is drawn
+ * with the clock it was read at and the one control that reads it again, so a
+ * figure that arrived without a read is never silently old
+ * (`renderer/section.ts`'s `renderStamp`). It is drawn into the section's busy
+ * slot -- the same first child a mark goes into -- and it is a wrapping row of
+ * two things: when, and the door out.
+ *
+ * **The words are `span.console-stamp-at` and this rule does not select it.** A
+ * DOM node's `textContent` is its whole subtree's, so the line that holds the
+ * control answers `as of 09:05Refresh` to whatever reads it; the element that
+ * says *when* is the span, and the test that pins the stamp reads that element
+ * rather than the line around it. */
+
+p.console-stamp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+button.console-stamp-refresh {
+  padding: var(--space-3xs) var(--space-sm);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  transition: color var(--duration-fast) ease;
+}
+
+button.console-stamp-refresh:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}

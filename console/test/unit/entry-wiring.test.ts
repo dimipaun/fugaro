@@ -118,6 +118,7 @@ import {
   BUSY_SPINNER_CLASS,
   BUSY_STILL_CLASS,
   CACHE_FRESH_MS,
+  STAMP_AT_CLASS,
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
 } from '../../src/renderer/section'
@@ -3027,9 +3028,12 @@ function busyLabels(document: FakeDocument): readonly string[] {
 }
 
 /** stamped is the panel's "as of HH:MM" line, or `null` when what is on screen
- * came out of a read rather than out of the session cache. */
+ * came out of a read rather than out of the session cache. It is read from the
+ * words' own element (`span.console-stamp-at`) and not from the line around
+ * them: the line also holds the refresh control, and a DOM node's `textContent`
+ * is its whole subtree's, so the line answers `as of 09:05Refresh`. */
 function stamped(document: FakeDocument): string | null {
-  return classed(panelOf(document), STAMP_CLASS)[0]?.textContent ?? null
+  return classed(panelOf(document), STAMP_AT_CLASS)[0]?.textContent ?? null
 }
 
 /** theSpendView is the range the report section says it is drawn for: the
@@ -3251,6 +3255,49 @@ describe('the view a session already read', () => {
         .map((call) => (call.args as { readonly since?: unknown }).since),
     ).toEqual(['30d', '30d'])
     expect(stamped(document), 'the re-read view is still stamped as a cached one').toBeNull()
+  })
+
+  it('says when the view was read in an element of its own, not in the line around the control', async () => {
+    const { document } = await readSpendOnce()
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'spend').click()
+
+    const line = classed(panelOf(document), STAMP_CLASS)[0]
+    expect(line, 'the cached view drew no stamp').toBeDefined()
+    const words = classed(line as FakeNode, STAMP_AT_CLASS)
+    expect(words, 'the stamp has no element of its own saying when').toHaveLength(1)
+    expect(words[0]?.textContent).toMatch(/^as of \d\d:\d\d$/)
+    // And the control is in the line beside the words: a DOM node's `textContent`
+    // is its whole subtree's, so a hook on the line itself would answer
+    // "as of 09:05Refresh" to whatever read it -- a test, or a screen reader.
+    expect(classed(line as FakeNode, STAMP_REFRESH_CLASS)).toHaveLength(1)
+  })
+
+  it('starts one read per click, however many times the cached view has been drawn', async () => {
+    const { fake, document } = await readSpendOnce()
+    const offered = classed(panelOf(document), 'spend-window').length
+
+    // Leave Spend and come back twice: the cached view is drawn again on each
+    // visit, which is the path where a control could be wired a second time and
+    // one click would start two reads racing on the same token.
+    for (let visit = 0; visit < 2; visit += 1) {
+      buttonFor(document, 'live').click()
+      await flush()
+      buttonFor(document, 'spend').click()
+      await flush()
+    }
+    expect(
+      classed(panelOf(document), 'spend-window'),
+      'a visit left the picker it drew behind, beside the one it drew next',
+    ).toHaveLength(offered)
+
+    const before = fake.calls.filter((call) => call.name === 'runReport').length
+    windowButton(document, '7d').click()
+    await flush()
+    const reads = fake.calls.filter((call) => call.name === 'runReport')
+    expect(reads.length - before, 'one click started more than one read').toBe(1)
+    expect((reads[reads.length - 1]?.args as { readonly since?: unknown }).since).toBe('7d')
   })
 
   it('draws a view older than five minutes and reads it again at once', async () => {

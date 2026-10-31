@@ -253,10 +253,12 @@ export function sectionRead(options: {
   }
 }
 
-/** STAMP_CLASS is the cached view's own line, STAMP_LEAD its first words and
- * STAMP_REFRESH_CLASS the control beside it. The words are this file's own
- * vocabulary, like the busy mark's, so `literal` is the only writer they need. */
+/** STAMP_CLASS is the cached view's own line, STAMP_AT_CLASS the words it says,
+ * STAMP_LEAD their first word and STAMP_REFRESH_CLASS the control beside them.
+ * The words are this file's own vocabulary, like the busy mark's, so `literal`
+ * is the only writer they need. */
 export const STAMP_CLASS = 'console-stamp'
+export const STAMP_AT_CLASS = 'console-stamp-at'
 export const STAMP_REFRESH_CLASS = 'console-stamp-refresh'
 export const STAMP_LEAD = 'as of'
 export const STAMP_REFRESH_LABEL = 'Refresh'
@@ -266,6 +268,7 @@ export const STAMP_REFRESH_LABEL = 'Refresh'
  * the caller has one. */
 export interface DrawnStamp {
   readonly root: SectionElement
+  readonly at: SectionElement
   readonly refresh: SectionElement
 }
 
@@ -278,17 +281,28 @@ export interface DrawnStamp {
  * visible, and the refresh control is the door the operator's own doubt goes
  * through -- both of them are drawn for every cached view, fresh or not, so a
  * figure that arrived without a read is always labelled as such.
+ *
+ * **The words are their own element, and that is not decoration.** A DOM node's
+ * `textContent` is its whole subtree's, so a `<p>` holding the words *and* the
+ * control answers `as of 14:05Refresh` -- to a test reading the hook, and to a
+ * reader whose screen reader concatenates them. The words are therefore
+ * `span.console-stamp-at` inside the line, which is the one element that says
+ * when the view was read, while the line as a whole still reads "as of 14:05
+ * Refresh" to a person.
  */
 export function renderStamp(factory: SectionFactory, at: number): DrawnStamp {
   const root = factory.create('p')
   root.setAttribute('class', STAMP_CLASS)
-  literal(root, `${STAMP_LEAD} ${stampOf(at)}`)
+  const words = factory.create('span')
+  words.setAttribute('class', STAMP_AT_CLASS)
+  literal(words, `${STAMP_LEAD} ${stampOf(at)}`)
+  root.append(words)
   const refresh = factory.create('button')
   refresh.setAttribute('class', STAMP_REFRESH_CLASS)
   refresh.setAttribute('type', 'button')
   literal(refresh, STAMP_REFRESH_LABEL)
   root.append(refresh)
-  return { root, refresh }
+  return { root, at: words, refresh }
 }
 
 /** CACHE_LIMIT is how many views a session keeps. It is small on purpose: the
@@ -330,9 +344,15 @@ export interface ResultCache<T> {
  * the oldest goes out. Insertion order is the eviction order (`Map` keeps it),
  * and a `put` for a key already held replaces the value and moves it to the end,
  * which is what "the views the operator actually uses" means.
+ *
+ * A limit below one is read as one rather than honoured: this is exported for
+ * other screens, and a cache of nothing is a cache that answers every `get` with
+ * `null` while its `put` still looks like it stored something -- the one shape
+ * that would make a caller's "I already read this" untrue without saying so.
  */
 export function resultCache<T>(limit: number = CACHE_LIMIT): ResultCache<T> {
   const entries = new Map<string, Cached<T>>()
+  const bound = Math.max(1, Math.trunc(limit))
   return {
     get(key: string): Cached<T> | null {
       return entries.get(key) ?? null
@@ -340,7 +360,7 @@ export function resultCache<T>(limit: number = CACHE_LIMIT): ResultCache<T> {
     put(key: string, value: T, at: number): void {
       entries.delete(key)
       entries.set(key, { value, at })
-      while (entries.size > limit) {
+      while (entries.size > bound) {
         const oldest = entries.keys().next()
         if (oldest.done === true) break
         entries.delete(oldest.value)

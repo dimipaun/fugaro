@@ -3588,7 +3588,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         const stamp = renderStamp(factory, at)
         appendTo(drawn.reportSlot, stamp.root)
         surface.nodeOf(stamp.refresh).addEventListener('click', () => {
-          refresh(readWith)
+          // Through `change` and not `refresh`: the stamp's control is a control
+          // like the picker's, so the visit's own `controls` is what the read is
+          // started from -- one path in and one path out, whatever drew the
+          // control the operator pressed.
+          change(readWith)
         })
       }
       wireSpendControls(drawn.root, readWith, change)

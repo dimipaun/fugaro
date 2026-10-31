@@ -550,8 +550,11 @@ word `span.console-busy-still-mark` a reader with the reduced-motion preference 
 being read. The section's own first child is `div.console-busy-slot`, which is where the
 mark goes and where a cached view's stamp is drawn, and a read that outlives fifteen
 seconds adds `p.console-busy-still` to it. A view that came out of the session cache is
-drawn at once, stamped `p.console-stamp` (`as of HH:MM`, the console's own clock) with the
-`button.console-stamp-refresh` that reads it again. The mark and the stamp are drawn by
+drawn at once, stamped `p.console-stamp` — `span.console-stamp-at` carrying the words
+`as of HH:MM` on the console's own clock, and the `button.console-stamp-refresh` that reads
+it again beside them, in the line but not inside the element that says *when*, because a
+node's `textContent` is its whole subtree's and a hook on the line would answer
+`as of 09:05Refresh`. The mark and the stamp are drawn by
 `console/src/renderer/section.ts`, the helper every tab adopts as it is rebuilt around
 sections, so the hooks above are the console's rather than this screen's.
 **There is no halted state on this screen.** The one
