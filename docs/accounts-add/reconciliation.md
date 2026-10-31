@@ -1,7 +1,7 @@
 # `fugaro accounts add`: reconciliation against the code
 
-Read against `origin/main` at `ccc5f7e7` — which now carries #1464 (the settings design, D840–D859),
-#1468 and #1471 — and the pull requests open on 2026-10-31. The findings were first written against
+Read against `origin/main` at `802ae65eb` — which now carries #1464 (the settings design, D840–D859),
+#1468, #1471, #1463 and #1467 — and the pull requests open on 2026-10-31. The findings were first written against
 `0a1f5694` and re-checked against the merge; the rows that moved say so. Each finding is
 **Exists**, **Missing**, **Conflicts** or **Ungoverned**, with its consequence for [spec.md](spec.md).
 Citations name a file and a symbol, never a line number: a line number is stale the moment anything above
@@ -103,8 +103,8 @@ are the two converge doors, and both marshal the whole struct (`localcfg.Config.
 one key. *Consequence:* `accounts add` is the first targeted writer of the project's local config, and
 it is why F12 exists.
 
-**F12: Missing (dependency). `internal/yamledit` is not on `main` — re-checked after the merge of
-#1464, #1468 and #1471, and still absent.** It is open PR **#1467**, whose own
+**F12: Exists (dependency landed). `internal/yamledit` is on `main` — PR **#1467**, merged as
+`802ae65eb`.** Its own
 package doc promises exactly what this work needs: `SetScalar`, `AddListItem`, `RemoveListItem`,
 `UpsertSeqItemByKey`, `RemoveSeqItemByKey`, `Changed`, a result that re-parses, and refusals that never
 echo document bytes. *Consequence:* spec §2.3 depends on it. Dependency **E1**.
@@ -181,7 +181,7 @@ this document wins where it disagrees with [spec.md](spec.md).
 
 | E | What it is | What this design needs from it | Order |
 | --- | --- | --- | --- |
-| **E1** | `internal/yamledit` — **#1467, open** | The comment-preserving edit of `claude_accounts.<name>.allow_data_to` and `profiles.<p>.claude_accounts` (spec §2.3). If its API differs from the promise above, the accounts task adapts to it; if it does not merge, this work **may not write its own splice** — the settings design's shared-files rule — so A1 waits | E1 before A1 |
+| **E1** | `internal/yamledit` — **#1467, merged (`802ae65eb`)** | The comment-preserving edit of `claude_accounts.<name>.allow_data_to` and `profiles.<p>.claude_accounts` (spec §2.3). If its API differs from the promise above, the accounts task adapts to it; if it does not merge, this work **may not write its own splice** — the settings design's shared-files rule — so A1 waits | E1 before A1 |
 | **E2** | Settings **S3** — `fugaro update` publishes the policy node from the local config — **design merged as #1464; S3 unimplemented** | The publish half of spec §2.5 (F10), reaching the node through `policyMigrationFor` (F14). A2's own red step (`TestAccountsAddLeavesNothingToRun`) asserts that the published node carries `accounts.<name>.allow_repos` and the job set carries the account's job, and neither is reachable until the `Policy` stage publishes from the local config (F10). Starting A2 earlier leaves only two ways to make that test green — weaken it or skip it | E2 **before A2 starts** |
 | **E3** | Settings **S5** — `internal/cli/settings_write.go` — **design merged as #1464; S5 unimplemented** (the file is absent from the tree, F13) | The diff, the confirmation, the agent refusal, `backupFile`, `writeFileAtomic`, in one copy (F13) | E3 before A1 |
 | **E4** | The `claude` lookup and the pty decision | `claudeplugin.Find` is already production code (F16), so only the runner is new; the pty package's promotion is E5 | E4 with A0 |

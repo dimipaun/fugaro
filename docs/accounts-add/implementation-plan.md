@@ -16,7 +16,7 @@ recorded length and alphabet, never a plausible credential in the source.
 
 | Level | Task | Blocked by |
 | --- | --- | --- |
-| 0 | **E1** `internal/yamledit` (#1467, still open) · **E3** `internal/cli/settings_write.go` (#1464's S5: the design merged, the file is not in the tree) · **E2** `internal/cli/init_policy_migrate.go` publishing from the local config (#1464's S3: the design merged, the stage still only migrates) | other work streams |
+| 0 | **E1** `internal/yamledit` (#1467, merged) · **E3** `internal/cli/settings_write.go` (#1464's S5: the design merged, the file is not in the tree) · **E2** `internal/cli/init_policy_migrate.go` publishing from the local config (#1464's S3: the design merged, the stage still only migrates) | other work streams |
 | 1 | **A0** the pty answer, taken and pinned | D862/D863; E5's owner |
 | 2 | **A1** the local config edit | E1, E3, A0 |
 | 3 | **A2** the converge half, and the test that says the command is one command | A1, **E2 landed** |
@@ -99,7 +99,7 @@ back with `accounts ls`, and end on the line that names a `fugaro run`.
 `internal/cli/accounts_add_converge_test.go`, `internal/cli/accounts_add_converge_fake_test.go`.
 *Named tests:* `TestAccountsAddLeavesNothingToRun` (**the red step**: after the command returns, the
 published node carries `accounts.<name>.allow_repos` for the named repositories **and** the job set
-carries `<profile>/<provider>/<name>` with `secretAccessor` on that account's secret and no other, and
+carries `<profile>/<provider>/<name>` with `secretAccessor` on that account's secret and no other account's, and
 the command's own last line names a `run` and not an `update`),
 `TestAccountsAddPublishHoldsTheAdoptionGate` (a database in a Firebase project the installation never
 adopted is skipped, exactly as the Rules stage skips it — the sibling of the settings design's

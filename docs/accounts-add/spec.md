@@ -129,7 +129,7 @@ and runs the converge again.
 The two keys are edited through the **shared comment-preserving editor**, never by marshalling
 `localcfg.Config`: `yaml.Marshal` drops the file's comments, reorders its keys, and turns a
 commented-out `allow_data_to` into an absent one (§F9 in [reconciliation.md](reconciliation.md)). The
-editor is `internal/yamledit` (open PR **#1467**), whose `SetScalar`, `AddListItem` and
+editor is `internal/yamledit` (PR **#1467**, merged), whose `SetScalar`, `AddListItem` and
 `UpsertSeqItemByKey` are the operations this needs; the settings design (#1464) makes the same package
 the tree's one editor, and its own rule — a second hand-written splice fails the review, not a test —
 binds this work too.
@@ -163,7 +163,7 @@ This is the half that makes the command one command, and it is `fugaro update`'s
 | Work | The stage it is | Today's door |
 | --- | --- | --- |
 | re-derive the policy node from the local config — `profiles`, the derived `accounts` block, the per-repository admissions — and write it under the ETag it read | the `Policy` stage (`initflow.Policy`, `internal/cli/init_policy_migrate.go`) **once the settings design's S3 lands**, which is what turns that stage from a migration into a publish | `fugaro project policy publish` |
-| one Cloud Run job and one job service account per `(profile, provider, account)`, with `secretAccessor` on that account's secret and no other | the `Installation` stage through `infra.ProjectJobs` (`internal/infra/projectjobs.go`), the one place that computes the job set with `config.ProjectJobAccounts` | `fugaro update`'s installation apply |
+| one Cloud Run job and one job service account per `(profile, provider, account)`, with `secretAccessor` on that account's secret and no other account's | the `Installation` stage through `infra.ProjectJobs` (`internal/infra/projectjobs.go`), the one place that computes the job set with `config.ProjectJobAccounts` | `fugaro update`'s installation apply |
 | the running checkout's own repository root, whose workflows mount the named secret when they select it | the `Repository` stage (`e.repo`, `internal/cli/init_stages.go`) | `fugaro update` in that checkout |
 
 `fugaro accounts add` **invokes those stages in-process**, through the registered stage list
@@ -430,7 +430,7 @@ implied.
 the repository", and the page's own §1 — and a launcher that may start a run on an account job can have
 that run print the token (design D2). Widening `allow_data_to` therefore widens who may
 reach that token's account, and it is the one step of this command whose confirmation is **typed**, not
-a `y` (D868).
+a `y` (D868). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see #1472, F3).
 
 ## 7. Owner-only boundaries
 
@@ -479,7 +479,7 @@ a *shape* (length, alphabet, which line) and never a value.
 | **LC2** | the browser, the code, and **the shape of each prompt** | The same run: whether a browser opens, whether a URL is printed, whether a code is pasted back, what the child prints between them, and **for every prompt the owner has to answer: whether it ends with a newline, and how long the child is silent before it prints one**. That last pair is what §3.2's idle flush is sized against — a prompt that never prints a newline is the case the flush exists for, and the silence before it is the window |
 | **LC3** | multi-account (U2, Check 35) | On a machine already holding another account's login: whether `claude setup-token` logs out, whether it takes an account or profile flag (`claude setup-token --help` is the authority), and what it says about the existing login. This decides the **warning text** in `docs/project-claude-accounts.md`, nothing in the code |
 | **LC4** | the guard, end to end | `fugaro accounts add <name> --claude` on a throwaway installation, in the owner's terminal: confirm the token never appears on the terminal, that `~/.bash_history` holds only `fugaro accounts add <name> --claude`, that nothing under `~/.config/fugaro/` holds a value, and that a run with `--token <name>` starts |
-| **LC5** | the deploy half | After LC4: `gcloud run jobs describe` the new account's job and confirm exactly one `secret_env` entry for that account's secret, its service account holds `secretAccessor` on that secret and **no other account's**, and `fugaro doctor` is green |
+| **LC5** | the deploy half | After LC4: `gcloud run jobs describe` the new account's job and confirm exactly one account-token `secret_env` entry, beside the profile's own mounts (which include `github-app-key`), its service account holds `secretAccessor` on that secret and **no other account's**, and `fugaro doctor` is green |
 
 LC4 and LC5 are the ones that can falsify the design rather than the code: if the guard's floor or
 alphabet is wrong for the real token, LC1 says so before anyone writes the guard.
