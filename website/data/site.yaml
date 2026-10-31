@@ -108,15 +108,19 @@ analytics:
 # because these origins are admitted by the consent check, not by
 # `allowed_hosts` below, which lists the hosts the site LINKS to.
 #
-# **Both ids are empty, and an empty id disables its loader.** The owner has not
-# supplied a pixel id or a partner id yet, and this repository publishes no
+# **The partner id is the owner's, supplied on 2026-10-31; the pixel id is still
+# empty, and an empty id disables its loader.** This repository publishes no
 # identifier the owner did not supply: an invented id would send a campaign
 # page's visitors into a stranger's ad account, which is the one failure this
-# file cannot take back. So the loaders are wired, gated and tested, and they
-# load nothing until a line here carries the owner's own id. The origins are
+# file cannot take back. So the insight tag loads its script on the four campaign
+# pages behind the campaign consent, and the pixel is wired, gated and tested and
+# loads nothing until a line here carries the owner's own id. The origins are
 # exact hosts and not wildcards: the plan pins the narrowest origin each vendor
 # documents (O3), and `website/test/origins.mjs` holds the deployed policy to
-# this exact list.
+# this exact list -- with one wildcard, `https://*.licdn.com` in `img-src`, which
+# the owner ruled in explicitly and for that directive alone. Neither id is
+# written anywhere else; the deployed policy is firebase.json's and its token
+# list is the test's.
 #
 # The Calendly link is NOT here: it is `website/data/landing.yaml`'s
 # `calendly_url`, one value with one home, and the banner carries it to the
@@ -125,7 +129,7 @@ analytics:
 marketing:
   meta_pixel_id: ""
   meta_origin: "https://connect.facebook.net"
-  linkedin_partner_id: ""
+  linkedin_partner_id: "10341636"
   linkedin_origin: "https://snap.licdn.com"
   calendly_origin: "https://assets.calendly.com"
 
