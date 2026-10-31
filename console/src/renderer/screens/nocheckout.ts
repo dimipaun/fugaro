@@ -65,6 +65,39 @@ export const NO_CHECKOUT_CHOICE_LABEL = 'Choose a checkout'
  * behind it is the CLI's text, and the word says that and nothing else. */
 export const NO_CHECKOUT_DETAILS_LABEL = 'details'
 
+/**
+ * NO_CHECKOUT_EMPTY_SENTENCE is what the card says **instead of** its action for
+ * an installation the CLI lists no checkout for.
+ *
+ * The action opens the installation picker, and the picker's only word about a
+ * checkout is one `Use <dir>` button per checkout the CLI listed for a row
+ * (`src/renderer/installations.ts`): there is no folder dialog and no path to
+ * type. So for a row with none, the button opens a window that cannot resolve
+ * this state, and a card that offered it would be an action that leads nowhere
+ * -- the operator clicks, the window opens, and nothing there is about the
+ * missing checkout. The honest thing is the state and the two commands that
+ * record one, which is what this sentence says.
+ */
+export const NO_CHECKOUT_EMPTY_SENTENCE =
+  'No checkout is recorded for this installation yet: run `fugaro config init` or a `fugaro run` from a checkout of its repository once, then reopen this.'
+
+/** NoCheckoutOptions is what the caller knows and this screen cannot: whether
+ * the installation lists a checkout the picker would offer. */
+export interface NoCheckoutOptions {
+  /**
+   * `choosable` is whether the CLI's own list for this installation holds a
+   * checkout, which is exactly the fact the picker's `Use <dir>` buttons are
+   * drawn from.
+   *
+   * It is **not** `checkouts.length > 0` asked of a row this console built
+   * itself: the dashboard's fallback row for a list read that failed carries an
+   * empty list because nothing was read, not because the CLI listed none, and
+   * the card must not say "no checkout is recorded" about a list this console
+   * never saw.
+   */
+  readonly choosable: boolean
+}
+
 /** NO_CHECKOUT_OPERATION is the read this state is about. It names the operation
  * in the tree rather than on the card: nothing is drawn from it, and a reader of
  * the document is owed the fact that this is the Graph's own precondition
@@ -128,7 +161,9 @@ function cell(parent: ScreenElement, factory: ScreenFactory, tag: string, ...cla
  * and only the entry has one (`DrawnNotice`'s rule, `src/shared/notice.ts`). */
 export interface DrawnNoCheckout {
   readonly root: ScreenElement
-  readonly choice: ScreenElement
+  /** choice is the card's one action, or `null` for an installation that lists
+   * no checkout at all: see `NO_CHECKOUT_EMPTY_SENTENCE`. */
+  readonly choice: ScreenElement | null
 }
 
 /**
@@ -146,6 +181,7 @@ export function renderNoCheckout(
   factory: ScreenFactory,
   sentence: string,
   theme: SkewTheme,
+  options: NoCheckoutOptions,
 ): DrawnNoCheckout {
   const root = make(factory, 'section', 'console-unavailable')
   root.setAttribute('data-theme', theme)
@@ -155,9 +191,21 @@ export function renderNoCheckout(
 
   const body = cell(root, factory, 'div', 'unavailable-body')
   literal(cell(body, factory, 'h1', 'unavailable-headline'), NO_CHECKOUT_HEADLINE)
-  const choice = cell(body, factory, 'button', NO_CHECKOUT_CHOICE_CLASS)
-  choice.setAttribute('type', 'button')
-  literal(choice, NO_CHECKOUT_CHOICE_LABEL)
+  // The action and the sentence that stands in for it are one cell of the card
+  // either way: the operator is told what to do next, in the console's own words
+  // or in the one command that records a checkout.
+  let choice: ScreenElement | null = null
+  if (options.choosable) {
+    choice = cell(body, factory, 'button', NO_CHECKOUT_CHOICE_CLASS)
+    choice.setAttribute('type', 'button')
+    literal(choice, NO_CHECKOUT_CHOICE_LABEL)
+  } else {
+    // It wears the card's own sentence hook (`unavailable-sentence`, the class
+    // the CLI's text behind the disclosure uses) rather than a class of its own:
+    // it is a sentence in this card, and a hook the theme has no rule for would
+    // draw it as bare text beside the styled one.
+    literal(cell(body, factory, 'p', NO_CHECKOUT_SENTENCE_CLASS), NO_CHECKOUT_EMPTY_SENTENCE)
+  }
 
   const details = cell(body, factory, 'details', NO_CHECKOUT_DETAILS_CLASS)
   literal(cell(details, factory, 'summary', NO_CHECKOUT_SUMMARY_CLASS), NO_CHECKOUT_DETAILS_LABEL)

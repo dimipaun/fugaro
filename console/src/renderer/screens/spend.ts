@@ -162,6 +162,7 @@ import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
+import { BUSY_SLOT_CLASS } from '../section'
 
 // ---------------------------------------------------------------------------
 // The vocabulary.
@@ -1609,8 +1610,14 @@ export function buildChart(
 
 /** capsOf reads `budget show --json`. A missing document is not an empty one:
  * `available: false` is a different fact from "this project has no caps", and
- * the panel draws the difference. */
-function capsOf(raw: JSONDoc | null): SpendCaps {
+ * the panel draws the difference.
+ *
+ * It is exported because the caps are a **section of their own**: the entry
+ * paints `fillSpendCaps` from the budget document the moment that read lands,
+ * which can be long before the report's, so it needs the document turned into
+ * the caps the section draws. `readSpend` calls it too, for the model it hands
+ * `renderSpend`, and the two are the same reading of the same document. */
+export function capsOf(raw: JSONDoc | null): SpendCaps {
   const document = raw === null ? null : objectAt(raw)
   if (document === null) {
     return {
@@ -2242,6 +2249,25 @@ function cell(parent: ScreenElement, factory: ScreenFactory, tag: string, ...cla
   const element = make(factory, tag, ...classes)
   parent.append(element)
   return element
+}
+
+/** sectionSlot is a section's own read-state slot: the first child the entry
+ * puts a read's busy mark into, and the element a cached view's stamp is drawn
+ * into.
+ *
+ * **It is answered rather than made when the host already has one.** The shell
+ * (`renderSpendFrame`) draws both slots before either read starts, so the entry
+ * has somewhere to put a mark from the first frame; `renderSpend` fills hosts
+ * that have none, which is what keeps the one-shot drawing the same tree.
+ */
+function sectionSlot(host: ScreenElement, factory: ScreenFactory): ScreenElement {
+  const found = host
+    .childNodes()
+    .find((child) => (child.getAttribute('class') ?? '').split(/\s+/).includes(BUSY_SLOT_CLASS))
+  if (found !== undefined) return found
+  const slot = make(factory, 'div', BUSY_SLOT_CLASS)
+  host.append(slot)
+  return slot
 }
 
 /** textCell is `cell` with a document's string written into it through
@@ -2938,14 +2964,27 @@ function capsBar(parent: ScreenElement, factory: SpendFactory, row: SpendCapRow,
   return element
 }
 
-/** capsPanel draws what binds today: the console's own heading, the mode as a
- * chip, the largest single lease, the repository defaults, the global row and
- * one row per repository -- each figure under its own word, each cap beside the
- * scope that binds it, and each repository's counted dollars drawn against its
- * daily cap. */
-function capsPanel(factory: SpendFactory, model: SpendModel): ScreenElement {
-  const caps = model.caps
-  const element = make(factory, 'section', 'spend-caps')
+/**
+ * fillSpendCaps draws what binds today into the caps section's own element: the
+ * console's own heading, the mode as a chip, the largest single lease, the
+ * repository defaults, the global row and one row per repository -- each figure
+ * under its own word, each cap beside the scope that binds it, and each
+ * repository's counted dollars drawn against its daily cap.
+ *
+ * **It fills a host rather than building one, and it answers the busy slot it
+ * drew first.** The caps are one *section* of the Spend screen (the owner's rule
+ * of 2026-10-31): its read is `budget show`, it starts together with the
+ * report's, and it paints the moment its own answer lands -- which is a patch of
+ * this element and of nothing else. The slot is the element the entry puts a
+ * read's busy mark into, and it is drawn first so the mark is at the top of the
+ * section rather than under a table nobody scrolls to.
+ */
+export function fillSpendCaps(
+  factory: SpendFactory,
+  caps: SpendCaps,
+  element: ScreenElement,
+): ScreenElement {
+  const slot = sectionSlot(element, factory)
   element.setAttribute('data-available', caps.available ? 'true' : 'false')
   if (!caps.available) {
     // The one thing this panel must not do is draw an empty one: a cap of $0
@@ -2953,7 +2992,7 @@ function capsPanel(factory: SpendFactory, model: SpendModel): ScreenElement {
     // makes about caps are promises about the second.
     const none = cell(element, factory, 'p', 'spend-note')
     literal(none, 'no budget show document was read, so this console does not know the caps: every cap here is n/a, not zero')
-    return element
+    return slot
   }
   literal(cell(element, factory, 'h2', 'spend-caps-title'), CAPS_TITLE)
   if (caps.project !== null) {
@@ -3028,7 +3067,7 @@ function capsPanel(factory: SpendFactory, model: SpendModel): ScreenElement {
     // shown verbatim").
     textCell(element, factory, 'p', warning, 'sentence', 'warnings[]', 'spend-warning')
   }
-  return element
+  return slot
 }
 
 /** personAmounts draws the columns a person's row and a currency's total line
@@ -3219,35 +3258,98 @@ export function renderSpend(
   theme: SpendTheme,
   controls: SpendControls = SPEND_DEFAULT_CONTROLS,
 ): ScreenElement {
+  const frame = renderSpendFrame(factory, theme)
+  fillSpendReport(factory, model, theme, controls, frame.report)
+  fillSpendCaps(factory, model.caps, frame.caps)
+  return frame.root
+}
+
+/** SPEND_REPORT_CLASS is the report section's own element: everything the
+ * `report --json` read draws -- the title and the range it came back with, the
+ * three controls, the totals, the chart, the table and the by-person panel --
+ * and nothing the caps read draws. */
+export const SPEND_REPORT_CLASS = 'spend-report'
+
+/** DrawnSpendFrame is the Spend screen's shell: the two sections' elements and
+ * the slot each one puts a read's busy mark into.
+ *
+ * **The shell is drawn once and patched per section**, which is the owner's rule
+ * of 2026-10-31 in this screen's own terms: `budget show` and the report start
+ * together, and each section is filled the moment *its* answer lands rather than
+ * the whole screen being replaced when both have. A section whose read has not
+ * answered yet holds its slot and nothing else. */
+export interface DrawnSpendFrame {
+  readonly root: ScreenElement
+  readonly report: ScreenElement
+  readonly reportSlot: ScreenElement
+  readonly caps: ScreenElement
+  readonly capsSlot: ScreenElement
+}
+
+/**
+ * renderSpendFrame draws the Spend shell: one element per section and no figure
+ * at all. It is what the entry mounts the moment the first of the two reads
+ * lands, and `renderSpend` is this frame with both sections filled.
+ *
+ * **The two slots are drawn here and not by the fillers**, so the entry has
+ * somewhere to put a section's busy mark or a cached view's stamp from the
+ * first frame on: a section that is still being read holds its slot and nothing
+ * else, and the mark is at the top of the section rather than under a table
+ * nobody scrolls to.
+ */
+export function renderSpendFrame(factory: SpendFactory, theme: SpendTheme): DrawnSpendFrame {
   const root = make(factory, 'section', 'spend')
   root.setAttribute('data-theme', theme)
-  root.append(header(factory, model))
+  const report = cell(root, factory, 'div', SPEND_REPORT_CLASS)
+  const reportSlot = cell(report, factory, 'div', BUSY_SLOT_CLASS)
+  const caps = cell(root, factory, 'section', 'spend-caps')
+  const capsSlot = cell(caps, factory, 'div', BUSY_SLOT_CLASS)
+  return { root, report, reportSlot, caps, capsSlot }
+}
+
+/**
+ * fillSpendReport draws the report section into its own element, and answers the
+ * busy slot it drew first.
+ *
+ * The title and the range are the **document's** (`header`), so they arrive with
+ * the report and not with the shell: a title drawn from the controls would name
+ * a range the history may not hold, which is the one thing this screen's two
+ * range statements exist to keep apart.
+ */
+export function fillSpendReport(
+  factory: SpendFactory,
+  model: SpendModel,
+  theme: SpendTheme,
+  controls: SpendControls,
+  element: ScreenElement,
+): ScreenElement {
+  const slot = sectionSlot(element, factory)
+  element.append(header(factory, model))
 
   // The controls and their two one-line notes sit in one row under the title:
   // the picker and the breakdown switch side by side, and the person switch's
   // own note beside it.
-  const controlsRow = cell(root, factory, 'div', 'spend-controls')
+  const controlsRow = cell(element, factory, 'div', 'spend-controls')
   controlsRow.append(picker(factory, controls))
   controlsRow.append(tabs(factory, model))
   const peopleRow = cell(controlsRow, factory, 'div', 'spend-knob')
   personKnob(peopleRow, factory, model)
 
-  root.append(totalsLine(factory, model))
-  root.append(chart(factory, model))
-  root.append(spendTable(factory, model))
+  element.append(totalsLine(factory, model))
+  element.append(chart(factory, model))
+  element.append(spendTable(factory, model))
 
   // The by-person panel sits beside the report's own totals -- it is the same
   // window read a second way -- and it is drawn only while the operator's knob
   // is on: `buildSpendModel` has no panel when it is off (design D15).
-  if (model.people !== null) root.append(peoplePanel(factory, model.people))
+  if (model.people !== null) element.append(peoplePanel(factory, model.people))
 
   for (const note of model.notes) {
-    const element = cell(root, factory, 'p', 'spend-note')
-    literal(element, note)
+    const drawn = cell(element, factory, 'p', 'spend-note')
+    literal(drawn, note)
   }
   for (const warning of model.warnings) {
-    textCell(root, factory, 'p', warning, 'sentence', 'warnings[]', 'spend-warning')
+    textCell(element, factory, 'p', warning, 'sentence', 'warnings[]', 'spend-warning')
   }
-  root.append(capsPanel(factory, model))
-  return root
+  return slot
 }

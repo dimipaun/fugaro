@@ -585,7 +585,7 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "scope.known ? scope.source : 'unknown'": "a known scope's word is on the console's `SCOPES` table; an unknown one is drawn as `unknown`",
     'people.view': '`PeopleView`, the closed three words `peopleViewOf` resolves (`all`, `own`, and `unknown` for a word this build does not know)',
     'drawnKey(currency)': 'read back from a cell `putText` wrote, so it is the sanitized text',
-    theme: { within: 'renderSpend', reason: 'a `SpendTheme`, the closed theme tuple' },
+    theme: { within: 'renderSpendFrame', reason: 'a `SpendTheme`, the closed theme tuple' },
     'chartUnits(SPEND_CHART_SIZE - (share / 100) * SPEND_CHART_SIZE)': {
       within: 'gridline',
       reason:
@@ -1380,6 +1380,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/reading.ts',
       'screens/run.ts',
       'screens/spend.ts',
+      'section.ts',
       'writes.ts',
     ])
   })

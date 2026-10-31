@@ -2652,3 +2652,132 @@ span.projects-secret-bound-word {
   text-transform: uppercase;
   color: var(--text-3);
 }
+
+/* ---- A section's read: the busy mark (console 0.116.1) ------------------- */
+
+/* The owner's rule of 2026-10-31 -- a screen renders each part the moment its
+ * data arrives -- has a second half: the operator has to be told that a part is
+ * being read *now*, in the frame their click happened in. The mark below is that
+ * half, drawn by `renderer/section.ts` into a section's own empty first child,
+ * and it is one block for every screen that adopts it.
+ *
+ * **The spinning element and the still word are both drawn, and this stylesheet
+ * picks one.** A renderer that chose would have to ask the machine for the
+ * motion preference, and the console answers that preference in exactly one
+ * place (`base.css`, design section 3.9); the reduced-motion arm below is that
+ * one place's own exception, the way the graph's arm is. The global freeze in
+ * `base.css` alone would leave the ring wherever its last frame put it, which is
+ * a mark that says "half a circle" rather than "reading", so the element is not
+ * drawn at all.
+ *
+ * **A section being re-read keeps its content and dims it.** `data-busy` is on
+ * the section and the rule below fades every child but the busy slot: the
+ * operator's figures stay on screen while the next read runs, which is what
+ * makes the change answer in the same frame without blanking the view. */
+
+div.console-busy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+span.console-busy-spinner {
+  align-self: center;
+  inline-size: 0.75em;
+  block-size: 0.75em;
+  border: 2px solid var(--line);
+  border-top-color: var(--live);
+  border-radius: 50%;
+  animation: console-busy-turn 900ms linear infinite;
+}
+
+@keyframes console-busy-turn {
+  from {
+    transform: rotate(0turn);
+  }
+
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+span.console-busy-still-mark {
+  display: none;
+}
+
+p.console-busy-still {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-label);
+  color: var(--text-3);
+}
+
+section[data-busy='true'] > *:not(.console-busy-slot),
+div[data-busy='true'] > *:not(.console-busy-slot) {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  span.console-busy-spinner {
+    display: none;
+    /* `display` alone would leave the animation running on an element nobody
+     * sees; the design's rule is that the arm stops it on the selector that
+     * started it, so a later rule that put the ring back would still draw it
+     * still. */
+    animation: none;
+  }
+
+  span.console-busy-still-mark {
+    display: inline;
+  }
+}
+
+@media (forced-colors: active) {
+  span.console-busy-spinner {
+    animation: none;
+  }
+}
+
+/* ---- A cached view's stamp (console 0.116.1) ----------------------------- */
+
+/* The other half of the session cache: a view that came out of memory is drawn
+ * with the clock it was read at and the one control that reads it again, so a
+ * figure that arrived without a read is never silently old
+ * (`renderer/section.ts`'s `renderStamp`). It is drawn into the section's busy
+ * slot -- the same first child a mark goes into -- and it is a wrapping row of
+ * two things: when, and the door out.
+ *
+ * **The words are `span.console-stamp-at` and this rule does not select it.** A
+ * DOM node's `textContent` is its whole subtree's, so the line that holds the
+ * control answers `as of 09:05Refresh` to whatever reads it; the element that
+ * says *when* is the span, and the test that pins the stamp reads that element
+ * rather than the line around it. */
+
+p.console-stamp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+button.console-stamp-refresh {
+  padding: var(--space-3xs) var(--space-sm);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  transition: color var(--duration-fast) ease;
+}
+
+button.console-stamp-refresh:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
