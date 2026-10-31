@@ -2232,7 +2232,10 @@ span.coordinator-unread-retry {
    * design section 4.4's rule 1: a state keeps its word, and here its shape as
    * well.
    *
-   * **Every selector below carries `section.graph`, and that is load-bearing.**
+   * **Every graph selector below carries `section.graph`, and that is
+   * load-bearing.** The rule is about the graph's own rules and not about this
+   * whole arm: what follows is the graph's block, and the arm's rules for the
+   * other screens above are written against their own screens' selectors.
    * A media query adds no specificity: a rule in this arm only overrides the
    * rule it restates where its selector is at least as specific as that rule,
    * and the graph's rules are written `section.graph svg ...` -- in
@@ -2247,25 +2250,51 @@ span.coordinator-unread-retry {
     border-color: CanvasText;
   }
 
-  /* The band is a background in this mode as well, so it is the ground's own
-   * colour and its boundary: a band painted `CanvasText` would be a fill, and a
-   * fill is this file's word for the two marks that were one. */
+  /* The band is a background in this mode as well, so its fill is the ground's
+   * own colour and not `CanvasText`, which is this file's word for a mark. Its
+   * boundary is the one stroke here that is **not** `CanvasText`: both fills are
+   * `Canvas` in this mode, so a band drawn in the reading tone is a card the size
+   * of a row, and the band is the wash and the hairline at the lowest contrast
+   * the theme has (its `--line-subtle`). `GrayText` is this file's own word for
+   * "not the primary reading", which is the tone the burn-rate figures take when
+   * a figure was a fill. */
   section.graph svg .graph-band-box {
     fill: Canvas;
-    stroke: CanvasText;
+    stroke: GrayText;
   }
 
   section.graph svg .graph-band-label {
     fill: CanvasText;
   }
 
-  section.graph svg .graph-release-box,
+  /* The card is a raised surface, so it takes the ground's own colour, and the
+   * release's box is an **outline and never a fill** -- the rule in
+   * `flight-deck.css` says why (filling it would put a surface under the cards'
+   * own), and the arm has no reason of its own to overturn it, so the two are
+   * separate rules here and the box keeps its `fill: none`. */
   section.graph svg .graph-node-box {
     fill: Canvas;
     stroke: CanvasText;
   }
 
+  section.graph svg .graph-release-box {
+    fill: none;
+    stroke: CanvasText;
+  }
+
   section.graph svg .graph-edge-path {
+    stroke: CanvasText;
+  }
+
+  /* The critical path's own tone is on a rule **more specific** than the one
+   * above (`… .graph-edge[data-critical='true'] .graph-edge-path`), so the arm
+   * restates it and not only shortens it: without this the path keeps the
+   * author's `--live` -- a tone, in the mode that exists to take tones away --
+   * and the widths below are what is meant to tell one edge from another. It is
+   * written **above** the selection's rule on purpose: an edge that is both
+   * critical and selected is the selection's, and the two selectors weigh the
+   * same. */
+  section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
     stroke: CanvasText;
   }
 
@@ -2278,6 +2307,31 @@ span.coordinator-unread-retry {
   section.graph svg .graph-edge[data-selected='true'] .graph-edge-path {
     stroke: Highlight;
     stroke-width: 4;
+  }
+
+  /* The tones a card's boundary carries by state are on rules **more specific**
+   * than the card's own above (`… .graph-node[data-state='implementing']
+   * .graph-node-box`), so they are restated here as well as shortened: a rule
+   * that loses leaves a running card `--live` and a halted one `--warn` in the
+   * mode that exists to take those away. What the state keeps in this mode is
+   * what the system does not force -- its word on the card, the 2 px width and
+   * the blocked card's dashes -- which is design section 3.5, read in this
+   * screen's idiom. */
+  section.graph svg .graph-node[data-state='implementing'] .graph-node-box,
+  section.graph svg .graph-node[data-state='in review'] .graph-node-box,
+  section.graph svg .graph-node[data-state='fixing'] .graph-node-box,
+  section.graph svg .graph-node[data-state='queued'] .graph-node-box,
+  section.graph svg .graph-node[data-state='halted'] .graph-node-box,
+  section.graph svg .graph-node[data-state='blocked'] .graph-node-box {
+    stroke: CanvasText;
+  }
+
+  /* A done card's title is muted in the base theme, on a rule more specific
+   * again, and the mute is a tone: the card's own word is what says it is done
+   * here, and the same restatement is what keeps the arm's text rule from losing
+   * to this one. */
+  section.graph svg .graph-node[data-state='done'] .graph-node-title {
+    fill: CanvasText;
   }
 
   /* The selected card is left the 3 px its own rule gives it, against a running

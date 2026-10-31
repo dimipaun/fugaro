@@ -380,6 +380,13 @@ function moved(section: RouteSection, dx: number, dy: number): RouteSection {
  * that changed is what makes it necessary**: the two ends are no longer placed
  * by one engine run, so the day an edge can cross a plan boundary, no engine
  * would have routed it and the picture would simply lose the arrow.
+ *
+ * The two cards are always in **different rows**, and that is the caller's
+ * guarantee rather than a check here: `stackStreams` marks every edge a run
+ * answered as routed and hands this function only what is left, and an edge one
+ * run answered has both its ends in that run -- so the pair handed in is a pair
+ * from two rows, whose ground (`GRAPH_ROW_GAP`, and the two runs' own margins)
+ * is between them in either direction.
  */
 export function crossStreamRoute(from: PlacedNode, to: PlacedNode): readonly RouteSection[] {
   const down = to.y >= from.y + from.height

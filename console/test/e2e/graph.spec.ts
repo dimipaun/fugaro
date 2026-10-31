@@ -703,6 +703,30 @@ test.describe('the graph view in a window', () => {
       // distinguishable from the state it also carries.
       expect(widths.selected).toBe('3px')
       expect(widths.running).toBe('2px')
+
+      // A band and a card are the **same fill** in this mode (`Canvas`), so the
+      // boundary is all that is left to tell the row's ground from a card on it,
+      // and the two are read against the reading tone rather than against a
+      // literal: the card's boundary is what a title is filled in (`CanvasText`
+      // in this mode, and never a name this test has to know), and the band's is
+      // not it.
+      const inks = await page.evaluate(() => {
+        const ink = (selector: string, property: 'stroke' | 'fill'): string | null => {
+          const element = document.querySelector(selector)
+          return element === null ? null : getComputedStyle(element)[property]
+        }
+        return {
+          band: ink('g.graph-band .graph-band-box', 'stroke'),
+          // A card with no selection on it: the selected card's boundary is
+          // `Highlight` by this arm's own rule, which is a mark of its own and
+          // not the reading tone read beside it here.
+          card: ink('g.graph-node:not([data-selected="true"]) .graph-node-box', 'stroke'),
+          reading: ink('g.graph-node .graph-node-title', 'fill'),
+        }
+      })
+      expect(inks.reading).not.toBeNull()
+      expect(inks.card).toBe(inks.reading)
+      expect(inks.band).not.toBe(inks.reading)
     } finally {
       await page.emulateMedia({ forcedColors: 'none' })
     }

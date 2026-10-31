@@ -982,7 +982,10 @@ tasks are outside it — padded by `GRAPH_PAD` and grown upward by `GRAPH_BAND_H
 band's own label, which is the stream's `Sanitized` name ("no stream" for the plans that
 name none). Bands are drawn **first**, so every card and every release box sits on its own
 stream's ground, and the picture's `viewBox` covers them. Because the rows are stacked, a
-band **is** a row: it cannot reach into another stream's. An edge whose two ends land in
+band **is** a row: it cannot reach into another stream's. Under `forced-colors: active` the
+band's boundary is the one graph stroke drawn `GrayText`: both fills are `Canvas` there, and
+a boundary in the reading tone would leave the row's ground drawn as a card the size of a
+row (§4.4). An edge whose two ends land in
 different rows is the one thing no run has routed, and `crossStreamRoute` draws it as an
 orthogonal line through the gutter between the two rows — no document this console builds
 has one today (a plan's `needs` name tasks of that plan, and a plan belongs to one stream:

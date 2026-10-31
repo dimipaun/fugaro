@@ -718,6 +718,18 @@ describe('the graph layout cache', () => {
     if (up === undefined) throw new Error('no route upward')
     expect(up.startPoint).toEqual({ x: 400 + GRAPH_NODE_WIDTH / 2, y: 212 })
     expect(up.endPoint).toEqual({ x: GRAPH_NODE_WIDTH / 2, y: GRAPH_NODE_HEIGHT })
+    expect(up.bendPoints).toEqual([
+      { x: 400 + GRAPH_NODE_WIDTH / 2, y: middle },
+      { x: GRAPH_NODE_WIDTH / 2, y: middle },
+    ])
+    // The same gutter, read the other way. The midpoint is the gutter in both
+    // directions and not only when the second card is the lower one: two rows
+    // never overlap -- `GRAPH_ROW_GAP` is ground between them -- so both ends of
+    // the pair always leave that ground to route through, and a bend above the
+    // upper card's bottom could only be reached by a pair the stacking cannot
+    // produce.
+    expect(middle).toBeLessThan(up.startPoint.y)
+    expect(middle).toBeGreaterThan(up.endPoint.y)
     orthogonal([up.startPoint, ...(up.bendPoints ?? []), up.endPoint])
   })
 })
