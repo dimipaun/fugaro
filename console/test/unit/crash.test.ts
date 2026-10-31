@@ -12,7 +12,10 @@
 //      the unread case is off rather than assumed on. The red step of the task is
 //      the stub below, a console that asks the question at launch with a DSN in
 //      hand -- a reporter built on that answer sends nothing, because the answer
-//      is `off` until something has read the setting.
+//      is `off` until something has read the setting. The gate is strict as well
+//      as ordered: one value opens it, and a document that spells the switch any
+//      other way -- `"true"`, `1`, `"yes"`, an object -- is an answer this
+//      console cannot read as permission.
 //   2. **A report is a type and frames, and nothing else** (D734's payload
 //      rule, F33's finding). F33 is why this is an allow-list rather than a
 //      deny-list: a Go panic value, an Electron error message and a JS exception
@@ -21,6 +24,16 @@
 //      message goes, and the frames are rebuilt from the four safe fields, which
 //      is also why the headline case below is a **mutation** proof: the one edit
 //      that keeps `value` has to turn it red.
+//   3. **What cannot be placed is refused** (fix round 2). The scrubber is the
+//      last thing between a frame and the wire, and every input it cannot read is
+//      a case for the fixed word: a path that is relative rather than rooted, that
+//      walks back out of the app, that carries a host where the path belongs, a
+//      percent-escape or a separator left over from another platform, and a value
+//      that is not the shape it is claimed to be. Where it keeps something it
+//      keeps the least it can -- a type and a function name only when they read
+//      as names -- and the path case below is this round's **mutation** proof: the
+//      refusal of a traversing path is one edit away from a directory name on the
+//      wire.
 //
 // The module under test is pure: it reads no environment, opens no file, calls
 // nothing, and holds no DSN, host or endpoint. The scan in `holds no
@@ -81,6 +94,17 @@ function tokenPlaceholder(): string {
   return inert('gh', 'p_', 'a'.repeat(36))
 }
 
+/** PROSE_A is a name-shaped string that is really a sentence: an exception's
+ * `type` and a frame's `function` are strings a library filled in, and a library
+ * can be handed a task title. */
+const PROSE_A = 'acme secret task text'
+
+/** poisonType is an exception type that is a path and a credential rather than a
+ * name -- what a library that was handed a message puts in `type`. */
+function poisonType(): string {
+  return `${HOME_PATH}/acme-secret: ${inert('tok', 'en-xyz')}`
+}
+
 /** HostileEvent is an event as a reporter builds one: the fields the scrubber
  * names, and the ones it does not -- which is why this type is wider than
  * `CrashEvent`. `CrashEvent` is deliberately narrow (what the module reads), and
@@ -91,10 +115,12 @@ type HostileEvent = CrashEvent & Record<string, unknown>
 /** startupStub stands in for the console that starts reporting at launch: it
  * asks the gate once, at startup, holding the DSN the build was given, and would
  * initialise the client if the answer were `enabled`. The switch has not been
- * read at that moment, which is the plan's red step -- so what the stub gets back
- * is `off`, and nothing is ever sent. */
+ * read at that moment -- which is the plan's red step, and why the field is not
+ * in the call at all: `undefined` is the absence of an answer, while `null` is an
+ * answer that is not `true`. So what the stub gets back is `off`, and nothing is
+ * ever sent. */
 function startupStub(dsn: string | null): { readonly started: boolean } {
-  return { started: crashReportingDecision({ dsn, optedIn: null }).enabled }
+  return { started: crashReportingDecision({ dsn }).enabled }
 }
 
 /** scrubbedFrame is one frame through the whole scrubber, which is the only
@@ -117,7 +143,14 @@ describe('crash', () => {
   it('nothing is enabled before the switch is read', () => {
     expect(startupStub(dsnPlaceholder())).toEqual({ started: false })
     expect(startupStub(null)).toEqual({ started: false })
-    expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: null })).toEqual({
+    // The unread switch is the field's absence, and it reports itself as unread
+    // rather than as an operator who said no: D734's third state is worth a word
+    // of its own precisely so that a log line can tell the two apart.
+    expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: undefined })).toEqual({
+      enabled: false,
+      reason: 'opt-in-not-read',
+    })
+    expect(crashReportingDecision({ dsn: dsnPlaceholder() })).toEqual({
       enabled: false,
       reason: 'opt-in-not-read',
     })
@@ -125,6 +158,30 @@ describe('crash', () => {
 
   it('nothing is enabled with the switch off', () => {
     expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: false })).toEqual({
+      enabled: false,
+      reason: 'opt-in-off',
+    })
+  })
+
+  it('only `true` opens the gate, whatever a document spells the switch with', () => {
+    // The value comes from a settings node this console did not write, and a
+    // truthy value is not consent: `"true"` is a string, `1` is a number, `{}` is
+    // an object, and none of them is the operator saying yes. `null` is an answer
+    // that is not permission -- an installation that stores the node and leaves it
+    // empty -- while `undefined` is no answer at all, which the case above reports
+    // as unread.
+    const dsn = dsnPlaceholder()
+    for (const optedIn of ['true', 'false', 'yes', 1, 0, {}, []]) {
+      expect(crashReportingDecision({ dsn, optedIn }), JSON.stringify(optedIn)).toEqual({
+        enabled: false,
+        reason: 'opt-in-off',
+      })
+    }
+    expect(crashReportingDecision({ dsn, optedIn: null })).toEqual({ enabled: false, reason: 'opt-in-off' })
+    expect(crashReportingDecision({ dsn, optedIn: true })).toEqual({ enabled: true, reason: 'enabled' })
+    // ...and no DSN in the build is still the last word, so a document cannot
+    // smuggle its way past the two lines above either.
+    expect(crashReportingDecision({ dsn: undefined, optedIn: 'true' })).toEqual({
       enabled: false,
       reason: 'opt-in-off',
     })
@@ -334,9 +391,10 @@ describe('crash', () => {
     // Anything outside the app is the fixed word, and never the path.
     expect(scrubbedFrame('/opt/vendor/node_modules/dep-a/index.js').filename).toBe('<external>')
     expect(scrubbedFrame(`${HOME_PATH}/dev/elsewhere/main.js`).filename).toBe('<external>')
-    // A filename the SDK already made relative is kept as it is, and a frame
-    // with no path at all is kept and not placed.
-    expect(scrubbedFrame('', 'dist/main/index.js').filename).toBe('dist/main/index.js')
+    // A filename the SDK already made relative goes with the other relative
+    // paths -- a relative path names a file next to something this module never
+    // learned -- and a frame with no path at all is kept and not placed.
+    expect(scrubbedFrame('', 'dist/main/index.js').filename).toBe('<external>')
     expect(scrubbedFrame('', undefined)).toEqual({ filename: '<external>' })
   })
 
@@ -386,6 +444,92 @@ describe('crash', () => {
     )
   })
 
+  it('a file URL that names a host is refused, and only the empty-authority form is a path', () => {
+    // `file:///opt/x.js` is a path with an empty authority. One slash more or
+    // less is the whole difference: `file://host/opt/x.js` puts a machine's name
+    // exactly where the path begins, and everything after it is relative to that
+    // name rather than to anything this module can cut at -- so it is refused,
+    // which is also what makes the host unsendable.
+    for (const source of [
+      `file://${HOST_A}/opt/${DIRECTORY_A}/x.js`,
+      `file://${HOST_A}${APP_ROOT}/dist/main/index.js`,
+      `file://${HOST_A}/Users/person-1/notes.txt`,
+    ]) {
+      const kept = scrubbedFrame(source).filename
+      expect(kept, source).toBe('<external>')
+      expect(kept, source).not.toContain(HOST_A)
+    }
+    // The single-slash spelling carries the path and no host, and it is refused
+    // too: this module reads the one form a build actually writes, and guessing
+    // at the others is how a `file:/` prefix becomes a way to say something the
+    // rule above would not have allowed.
+    expect(scrubbedFrame(`file:${APP_ROOT}/dist/main/index.js`).filename).toBe('<external>')
+    // The form every reporter writes is still a path, host or no host.
+    expect(scrubbedFrame(`file://${APP_ROOT}/dist/main/index.js`).filename).toBe('dist/main/index.js')
+  })
+
+  it.each([
+    // A relative path is a file next to something this module never learned:
+    // the part that would say *where* is exactly the part that is missing, so
+    // there is nothing to cut it at and nothing to keep of it.
+    '~/x',
+    `../../${DIRECTORY_A}/x.js`,
+    'Users/person-1/x',
+    `person-1@${HOST_A}:/srv/x.js`,
+    '..\\..\\x.js',
+    // A drive letter with no separator behind it is a path relative to whatever
+    // directory that drive was last left in, and a one-letter scheme is the same
+    // shape: neither is rooted anywhere.
+    'C:acme\\x',
+    'x:acme/x',
+    // A percent-encoded scheme is a scheme in another spelling, and a decoder
+    // somewhere down the line reads it as one.
+    `file%3A///opt/${DIRECTORY_A}/x.js`,
+    `file%3A%2F%2F%2Fopt%2F${DIRECTORY_A}%2Fx.js`,
+  ])('the scrubber refuses the path that is not rooted anywhere: %s', (source) => {
+    const kept = scrubbedFrame(source).filename
+    expect(kept).toBe('<external>')
+    expect(kept).not.toContain(DIRECTORY_A)
+  })
+
+  it.each([
+    // The four shapes a traversal arrives in. Each one is a path that reaches
+    // *under* the app root and then walks back out of it, so the root cut -- which
+    // is a prefix removal rather than a check -- leaves a relative path that
+    // points at a directory outside the app. The first one is this round's
+    // mutation proof: with the refusal dropped, it is `../../<directory>/x.js`.
+    ['/opt/console/../../acme/x.js', '/opt/console'],
+    [`/x/app.asar/../../${DIRECTORY_A}/x.js`, APP_ROOT],
+    [`C:\\work\\app\\..\\..\\users\\person-1\\x.js`, APP_ROOT],
+    ['..\\..\\Documents and Settings\\person-1\\x.js', APP_ROOT],
+    // A separator left over from another platform's syntax inside a name, and an
+    // escape that stands for one: both are a segment the module did not read.
+    [`${APP_ROOT}/dist/%2e%2e/${DIRECTORY_A}/x.js`, APP_ROOT],
+    [`${APP_ROOT}/dist/a:b/x.js`, APP_ROOT],
+    [`${APP_ROOT}/~/x.js`, APP_ROOT],
+  ])('the scrubber refuses the path that walks out of the app: %s', (source, appRoot) => {
+    const kept = scrubbedFrame(source, undefined, appRoot).filename
+    expect(kept).toBe('<external>')
+    expect(kept).not.toContain('..')
+    expect(kept).not.toContain(DIRECTORY_A)
+  })
+
+  it('the home-directory check knows the other spellings of a home directory', () => {
+    // The check is on what is *left* after the root comes off, so a home
+    // directory that survives the cut is the case it exists for -- and it has to
+    // know the spellings a real disk uses: a case-insensitive volume writes
+    // `USERS` or `HOME`, Windows' older home directory has no user-name segment
+    // to recognise, and a path that starts *inside* the archive with `Users/` is
+    // a home directory too.
+    expect(scrubbedFrame(`${APP_ROOT}/vendor/USERS/person-1/x.js`).filename).toBe('<external>')
+    expect(scrubbedFrame(`${APP_ROOT}/vendor/HOME/person-1/x.js`).filename).toBe('<external>')
+    expect(scrubbedFrame(`${APP_ROOT}/vendor/root/x.js`).filename).toBe('<external>')
+    expect(scrubbedFrame(`${APP_ROOT}/vendor/Documents and Settings/person-1/x.js`).filename).toBe('<external>')
+    expect(
+      scrubbedFrame(`${PACKAGED_ROOT}/app.asar/Users/person-1/notes.txt`, undefined, PACKAGED_ROOT).filename,
+    ).toBe('<external>')
+  })
+
   it('the scrubber reads the app root and the packaged path', () => {
     const packaged = (abs_path: string): string | undefined =>
       scrubCrashEvent(
@@ -401,6 +545,94 @@ describe('crash', () => {
     // and a path under neither is not.
     expect(packaged(`${PACKAGED_ROOT}/other/index.js`)).toBe('other/index.js')
     expect(packaged('/opt/vendor/node_modules/dep-a/index.js')).toBe('<external>')
+  })
+
+  it('the scrubber keeps a type and a name only when they read as one', () => {
+    // `type` and `function` are strings a library filled in, and a library can be
+    // handed a sentence: an exception whose type is its message, a frame whose
+    // function is a task title. That is F33's finding under two more field names,
+    // so both are held to a name's shape, and a string that fails is a fixed word
+    // rather than a trim -- what to cut out of a sentence is not something this
+    // module can know.
+    const scrubbed = scrubCrashEvent(
+      {
+        exception: {
+          values: [
+            {
+              type: poisonType(),
+              stacktrace: { frames: [{ abs_path: `${APP_ROOT}/dist/main/index.js`, function: PROSE_A }] },
+            },
+          ],
+        },
+      },
+      APP_ROOT,
+    )
+    const serialised = JSON.stringify(scrubbed)
+    expect(serialised).not.toContain(HOME_PATH)
+    expect(serialised).not.toContain(PROSE_A)
+    expect(scrubbed.exception?.values?.[0]?.type).toBe('<unknown>')
+    expect(scrubbed.exception?.values?.[0]?.stacktrace?.frames?.[0]?.function).toBe('<anonymous>')
+
+    // ...and a name that is one is kept, punctuation included: a stack really
+    // carries dots for a method and angle brackets for a synthetic frame.
+    const named = scrubCrashEvent(
+      {
+        exception: {
+          values: [
+            {
+              type: 'TypeError',
+              stacktrace: { frames: [{ abs_path: `${APP_ROOT}/dist/main/index.js`, function: 'Object.<anonymous>' }] },
+            },
+          ],
+        },
+      },
+      APP_ROOT,
+    )
+    expect(named.exception?.values?.[0]?.type).toBe('TypeError')
+    expect(named.exception?.values?.[0]?.stacktrace?.frames?.[0]?.function).toBe('Object.<anonymous>')
+  })
+
+  it('an event that is not an event comes back as an empty one, rather than throwing', () => {
+    // `beforeSend` is called with whatever the SDK could build, and a scrubber
+    // that throws in there is a crash inside the crash reporter -- so every shape
+    // below is a value that reaches this module from outside and none of them may
+    // be read as one.
+    expect(scrubCrashEvent(null, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent(undefined, APP_ROOT)).toEqual({})
+  })
+
+  it('an exception that is not one is dropped, and an empty values list is not read', () => {
+    expect(scrubCrashEvent({ exception: null }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ exception: undefined }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ exception: { values: null } }, APP_ROOT)).toEqual({})
+    // The rest of the event is still reported: a bad exception does not take the
+    // type, the level and the release down with it.
+    expect(scrubCrashEvent({ level: 'error', exception: null }, APP_ROOT)).toEqual({ level: 'error' })
+  })
+
+  it('a value entry that is not a value is dropped rather than read', () => {
+    expect(
+      scrubCrashEvent({ exception: { values: [null, undefined, { type: 'Error' }] } }, APP_ROOT),
+    ).toEqual({ exception: { values: [{ type: 'Error' }] } })
+  })
+
+  it('a stacktrace that is not one leaves the type and no frames', () => {
+    expect(
+      scrubCrashEvent({ exception: { values: [{ type: 'Error', stacktrace: null }] } }, APP_ROOT),
+    ).toEqual({ exception: { values: [{ type: 'Error' }] } })
+  })
+
+  it('a frame that is not a frame is dropped from the stack rather than read', () => {
+    // A frame that is not an object is not a frame this module declined to place
+    // -- it is not a frame at all -- and inventing one for it would be a stack the
+    // reporter never built. What is kept of the value is the type, and the stack
+    // it does have is the frames it really had.
+    expect(
+      scrubCrashEvent(
+        { exception: { values: [{ type: 'Error', stacktrace: { frames: [null, undefined] } }] } },
+        APP_ROOT,
+      ),
+    ).toEqual({ exception: { values: [{ type: 'Error', stacktrace: { frames: [] } }] } })
   })
 
   it('no minidump, no session and no client report', () => {

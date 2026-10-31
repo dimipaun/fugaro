@@ -25,21 +25,33 @@
 // `beforeSend` receives, and sends back what it returns, with no cast between.
 
 /** CrashOptIn is the operator's switch as this module can see it: `true` when
- * the installation's setting allows reports, `false` when it forbids them, and
- * `null` while nothing has read it -- not asked yet, unreadable, or answered by
- * a CLI too old to carry the field. The third value is D734's rule made
- * expressible: a console that folded `null` into `false` could not tell "off"
- * from "not known yet", and the two have the same answer here for exactly as
- * long as it takes something to read the setting. */
-export type CrashOptIn = boolean | null
+ * the installation's setting allows reports, and an answer that is not `true`
+ * otherwise -- `false`, or a `null` the document holds in the node's place,
+ * which are both off. The absence of a value is the third case: nothing has read
+ * it yet, not asked, unreadable, or answered by a CLI too old to carry the
+ * field. That absence is D734's rule made expressible -- a console that folded it
+ * into `false` could not tell "off" from "not known yet", and the two have the
+ * same answer here for exactly as long as it takes something to read the setting,
+ * but they are different words in a log line, which is the whole of what
+ * `CrashReportingReason` is for. JSON has no `undefined`, so the absence is what
+ * a settings document with no switch node in it decodes to; a node that is
+ * present and empty decodes to `null`, which is an answer. */
+export type CrashOptIn = boolean | null | undefined
 
 /** CrashReportingInput is everything the gate is allowed to look at: the DSN the
  * build was given, and the switch. There is deliberately nothing else -- no
  * environment, no clock, no state -- so the decision cannot depend on anything
- * the SDK slice has to remember to pass. */
+ * the SDK slice has to remember to pass.
+ *
+ * The switch is typed `unknown` rather than `CrashOptIn` because of where it
+ * comes from: a settings node in a document this console did not write, decoded
+ * from JSON. `CrashOptIn` is the answer when the document is the one the CLI
+ * promises; anything else is a value the gate has to refuse, and a type that
+ * admitted only the three good values would move that refusal into a cast at the
+ * call site. */
 export interface CrashReportingInput {
   readonly dsn?: string | null
-  readonly optedIn: CrashOptIn
+  readonly optedIn?: unknown
 }
 
 /** CrashReportingReason is the word a log line gets, and it is a word rather
@@ -60,12 +72,19 @@ export interface CrashReportingDecision {
  * console that has not read the setting says so rather than blaming the build
  * for the DSN it was never asked about.
  *
+ * The gate is strict: `true` and nothing else opens it. The value arrives from a
+ * document this console did not write, so `"true"`, `1`, `"yes"` and an object
+ * are all things a settings node can hold, and a truthy check would read every
+ * one of them as an operator's consent -- which is the one answer this gate may
+ * not guess at. Everything that is not `true` is an answer that is off, except
+ * the absence of an answer, which is the unread case and says so.
+ *
  * A DSN that is only whitespace is no DSN: the value comes from a build the
  * owner configures, and an empty one is what an unset variable looks like.
  */
 export function crashReportingDecision(input: CrashReportingInput): CrashReportingDecision {
-  if (input.optedIn === null) return { enabled: false, reason: 'opt-in-not-read' }
-  if (!input.optedIn) return { enabled: false, reason: 'opt-in-off' }
+  if (input.optedIn === undefined) return { enabled: false, reason: 'opt-in-not-read' }
+  if (input.optedIn !== true) return { enabled: false, reason: 'opt-in-off' }
   const dsn = input.dsn
   if (typeof dsn !== 'string' || dsn.trim() === '') return { enabled: false, reason: 'no-dsn' }
   return { enabled: true, reason: 'enabled' }
@@ -127,7 +146,9 @@ export interface CrashExceptionValue {
   readonly value?: string
   readonly mechanism?: unknown
   readonly module?: string
-  readonly stacktrace?: { readonly frames?: readonly CrashFrame[] }
+  /** `null` and holes among the frames are allowed for the reason the event's
+   * exception is: this is a library's object, handed over as it was built. */
+  readonly stacktrace?: { readonly frames?: readonly (CrashFrame | null | undefined)[] } | null
 }
 
 /** CrashEvent is the part of an error event this module reads. The fields it
@@ -143,7 +164,11 @@ export interface CrashEvent {
   readonly platform?: unknown
   readonly level?: unknown
   readonly release?: unknown
-  readonly exception?: { readonly values?: readonly CrashExceptionValue[] }
+  /** The exception is `null`-able and its values may hold holes because the
+   * reporter builds this: a library's event is not the shape its own types say
+   * it is, and the scrubber reads every level of it through a guard rather than
+   * trusting a level it was handed. */
+  readonly exception?: { readonly values?: readonly (CrashExceptionValue | null | undefined)[] | null } | null
 }
 
 /** CrashLevel is the set of levels the processor understands. A level outside it
@@ -182,10 +207,26 @@ export interface ScrubbedCrashEvent {
  * part no rule can reliably find. */
 const EXTERNAL = '<external>'
 
-/** ANONYMOUS is what a function name that is really a path becomes: some builds
- * put the frame's file in `function`, which is a path with a home directory in it
- * as often as it is a name. */
+/** ANONYMOUS is what a frame's function becomes when the name it carries is not
+ * a name: some builds put the frame's file in `function`, which is a path with a
+ * home directory in it as often as it is a name, and a library can be handed a
+ * sentence instead. */
 const ANONYMOUS = '<anonymous>'
+
+/** UNKNOWN is the same fixed word for an exception's `type`, whose place in a
+ * report is "what kind of thing threw" -- a question a message, a path or a
+ * sentence does not answer, whatever else it says. */
+const UNKNOWN = '<unknown>'
+
+/** IDENTIFIER_RE is what a name has to look like to be kept, and it is the shape
+ * of a function or an exception type in a stack: a leading letter, `_` or `$`,
+ * then the letters, digits, dots, angle brackets and indexing a compiled name
+ * really carries (`Object.<anonymous>`, `Array.prototype.map`). A space is out on
+ * purpose: `"acme secret task text"` is name-shaped too, and it is task text.
+ * What fails the pattern becomes a fixed word rather than a trim, because which
+ * part of a sentence is the sensitive part is not something this module can
+ * know. */
+const IDENTIFIER_RE = /^[A-Za-z_$][\w$.<>[\]]{0,128}$/
 
 /** PACKED_ROOT is the archive the code lives in once the console is packaged,
  * and it is the second root a frame's path can be cut at: the app root a build
@@ -193,13 +234,19 @@ const ANONYMOUS = '<anonymous>'
  * somebody's disk. */
 const PACKED_ROOT = 'app.asar/'
 
-/** HOME_PATH_RE is a path under a home directory, on either platform. It is
- * checked on what is *left* after the app root comes off, because the root itself
- * is a path on the operator's disk -- `/Users/<x>/dev/...` in a checkout -- and a
- * frame that matches the root but still carries a user name (a traversal, a
- * vendored copy, an archive built on another machine) is a frame that has not
- * been made safe by the cut. */
-const HOME_PATH_RE = /\/Users\/[^/]+\/|\/home\/[^/]+\//
+/** HOME_PATH_RE is a path that names a home directory, on any platform this
+ * console runs on and in any case it is spelled in. It is checked on what is
+ * *left* after the app root comes off, because the root itself is a path on the
+ * operator's disk -- `/Users/<x>/dev/...` in a checkout -- and a frame that
+ * matches the root but still carries a user name (a traversal, a vendored copy,
+ * an archive built on another machine) is a frame that has not been made safe by
+ * the cut. `root` is here beside `users` and `home` because it is a home
+ * directory with no user-name segment to recognise, and `Documents and Settings`
+ * is Windows' older spelling of the same thing. A segment counts at the start of
+ * what is left as well as behind a separator: `Users/<x>/...` is what an archive
+ * built on another machine leaves after its `app.asar/`, and reading it as a
+ * directory of the app is the mistake this pattern is for. */
+const HOME_PATH_RE = /(?:^|\/)(?:users|home)\/[^/]+\/|(?:^|\/)root\/|(?:^|\/)documents and settings\//i
 
 /** WINDOWS_DRIVE_RE is a path rooted at a drive letter, which is absolute even
  * though it does not begin with a separator. */
@@ -218,12 +265,21 @@ const FILE_SCHEMES: readonly string[] = ['file', 'app']
 /** withoutScheme takes the URL off a path, and answers null when the URL is not
  * a path at all: for anything but `FILE_SCHEMES` the remainder is a host, a
  * query or a body rather than a file, and a path smuggled inside one of those is
- * a directory name this module would never look at. */
+ * a directory name this module would never look at.
+ *
+ * A file URL is a path only in its empty-authority form, `file:///...`. Two
+ * slashes spell a host where the path belongs -- `file://host/opt/x.js` names a
+ * machine, and a machine's name is exactly what a report may not carry -- and one
+ * slash has no authority at all, which this module will not guess a meaning for.
+ * Both are refused rather than read. */
 function withoutScheme(source: string): string | null {
   const scheme = SCHEME_RE.exec(source)
   if (scheme === null) return source
   const name = (scheme[1] ?? '').toLowerCase()
-  if (FILE_SCHEMES.includes(name)) return source.slice(scheme[0].length)
+  if (FILE_SCHEMES.includes(name)) {
+    const rest = source.slice(scheme[0].length)
+    return scheme[2] === '//' && rest.startsWith('/') ? rest : null
+  }
   // A drive letter is one character with no authority behind it, and every
   // Windows path starts with one -- reading it as a scheme would refuse the
   // frames this console does have and does want.
@@ -231,19 +287,36 @@ function withoutScheme(source: string): string | null {
   return null
 }
 
+/** unplaceable is the last gate a cut path passes, and it is the one the app root
+ * cannot stand in for: cutting a prefix off is not a check, so a path that
+ * reached under the root and then walked back out of it -- `/opt/console/../../x`
+ * -- leaves a relative path pointing outside the app. What is refused here is
+ * every way such a path is still *about* somewhere: a `..` segment, a leading
+ * `~`, a colon or a percent-escape that another reader would decode into a
+ * separator, and the empty string, which is a path with no name in it at all. */
+function unplaceable(rest: string): boolean {
+  if (rest === '' || rest.startsWith('~')) return true
+  if (rest.includes(':') || rest.includes('%')) return true
+  return rest.split('/').includes('..')
+}
+
 /** appRelative is the one thing a kept frame says about where it came from: the
- * part of the path inside the app, POSIX-separated, or `EXTERNAL`. */
+ * part of the path inside the app, POSIX-separated, or `EXTERNAL`.
+ *
+ * Only a rooted path is read. A relative one names a file next to something this
+ * module never learned, and the part of a path that says *where* an operator
+ * keeps their work is the part a relative path by definition does not have -- so
+ * there is nothing to cut it at, and it is refused whole rather than reported as
+ * the bare name a build happened to write. */
 function appRelative(source: string, appRoot: string): string {
   const bare = withoutScheme(source)
   if (bare === null) return EXTERNAL
   const path = bare.replace(/\\/g, '/')
+  if (!path.startsWith('/') && !WINDOWS_DRIVE_RE.test(path)) return EXTERNAL
   const root = appRoot.replace(/\\/g, '/').replace(/\/+$/, '')
   let rest: string | null
   if (root !== '' && path.startsWith(`${root}/`)) rest = path.slice(root.length + 1)
-  // A path that is not absolute came from the reporter already relative to the
-  // app, and there is nothing to cut it at.
-  else if (path.startsWith('/') || WINDOWS_DRIVE_RE.test(path)) rest = null
-  else rest = path
+  else rest = null
   if (rest === null) {
     const packed = path.lastIndexOf(PACKED_ROOT)
     if (packed === -1) return EXTERNAL
@@ -253,7 +326,7 @@ function appRelative(source: string, appRoot: string): string {
     // before it -- the resources directory -- is a path on somebody's disk.
     rest = rest.slice(PACKED_ROOT.length)
   }
-  if (rest === '' || HOME_PATH_RE.test(rest)) return EXTERNAL
+  if (unplaceable(rest) || HOME_PATH_RE.test(rest)) return EXTERNAL
   return rest
 }
 
@@ -265,20 +338,25 @@ function frameSource(frame: CrashFrame): string | null {
   return null
 }
 
-/** scrubFunction keeps a function name and refuses a path wearing one. */
-function scrubFunction(name: string | undefined): string | undefined {
+/** scrubName keeps a string that reads as a name, and answers the fixed word for
+ * the field when it does not: a path, a sentence or anything else is what a
+ * library was handed rather than what it knows, and a value that is not a string
+ * at all is not a name either. */
+function scrubName(name: unknown, fallback: string): string | undefined {
   if (typeof name !== 'string') return undefined
-  return name.includes('/') || name.includes('\\') ? ANONYMOUS : name
+  return IDENTIFIER_RE.test(name) ? name : fallback
 }
 
 /** scrubFrame is the frame allow-list: the name, the app-relative path and the
- * position in the file. Every frame in is a frame out, because the shape of the
+ * position in the file. A *frame* in is a frame out, because the shape of the
  * stack is what the processor groups by -- a frame with no path to place is
  * `EXTERNAL`, the same word a frame outside the app gets, rather than a frame
- * dropped from the middle and a stack that no longer reads as itself. */
+ * dropped from the middle and a stack that no longer reads as itself. A value
+ * that is not a frame is not one this module declined to place: it is not a
+ * frame at all, and it is dropped by `scrubValue` before it reaches here. */
 function scrubFrame(frame: CrashFrame, appRoot: string): ScrubbedFrame {
   const source = frameSource(frame)
-  const name = scrubFunction(frame.function)
+  const name = scrubName(frame.function, ANONYMOUS)
   return {
     filename: source === null ? EXTERNAL : appRelative(source, appRoot),
     ...(name === undefined ? {} : { function: name }),
@@ -291,31 +369,60 @@ function scrubFrame(frame: CrashFrame, appRoot: string): ScrubbedFrame {
 /** scrubValue is the exception allow-list: the type, and the frames the reporter
  * placed. The message is not here at all, which is this module's whole answer to
  * F33 -- so an exception the reporter could not walk is one word and no frames,
- * rather than a sentence somebody typed. */
-function scrubValue(value: CrashExceptionValue, appRoot: string): ScrubbedExceptionValue {
+ * rather than a sentence somebody typed. A value that is not an object is null
+ * rather than an exception, and the caller drops it: reading it would be the
+ * throw this module exists to prevent, and reporting it would be a value it never
+ * checked. */
+function scrubValue(
+  value: CrashExceptionValue | null | undefined,
+  appRoot: string,
+): ScrubbedExceptionValue | null {
+  if (value === null || value === undefined || typeof value !== 'object') return null
   const frames = value.stacktrace?.frames
-  const type = typeof value.type === 'string' ? value.type : undefined
-  if (!Array.isArray(frames)) return { ...(type === undefined ? {} : { type }) }
-  return {
-    ...(type === undefined ? {} : { type }),
-    stacktrace: { frames: frames.map((frame) => scrubFrame(frame, appRoot)) },
+  const type = scrubName(value.type, UNKNOWN)
+  const kept: ScrubbedExceptionValue = { ...(type === undefined ? {} : { type }) }
+  if (!Array.isArray(frames)) return kept
+  const placed: ScrubbedFrame[] = []
+  for (const frame of frames) {
+    if (frame === null || frame === undefined || typeof frame !== 'object') continue
+    placed.push(scrubFrame(frame, appRoot))
   }
+  return { ...kept, stacktrace: { frames: placed } }
 }
 
 /** scrubCrashEvent is `beforeSend`, with the event the reporter built and the
  * app root as its only inputs. It returns a **new** event built from the kept
  * fields and never edits the one it was handed: the caller's object is the
- * SDK's, and emptying it in place would break the reporter this runs inside. */
-export function scrubCrashEvent(event: CrashEvent, appRoot: string): ScrubbedCrashEvent {
+ * SDK's, and emptying it in place would break the reporter this runs inside.
+ *
+ * It also never throws, whatever it is handed: this runs inside the reporter, so
+ * a throw here is a crash in the crash reporter, and a value that is not the
+ * shape its type claims is one of the things a library hands over. An event that
+ * is not an object is an empty event, and a bad value inside one is dropped at
+ * the level it is bad at -- so a report missing its exception is still a report,
+ * and nothing that was not read is passed on. */
+export function scrubCrashEvent(event: CrashEvent | null | undefined, appRoot: string): ScrubbedCrashEvent {
+  if (event === null || event === undefined || typeof event !== 'object') return {}
   const values = event.exception?.values
+  if (!Array.isArray(values)) return scrubFields(event)
+  const kept: ScrubbedExceptionValue[] = []
+  for (const value of values) {
+    const scrubbed = scrubValue(value, appRoot)
+    if (scrubbed !== null) kept.push(scrubbed)
+  }
+  return { ...scrubFields(event), exception: { values: kept } }
+}
+
+/** scrubFields is the event-level allow-list, apart from the exception: what
+ * every field above reads is a string or a number the reporter wrote, and a field
+ * that is anything else is dropped by the same rule as one this type never
+ * named. */
+function scrubFields(event: CrashEvent): ScrubbedCrashEvent {
   return {
     ...(typeof event.event_id === 'string' ? { event_id: event.event_id } : {}),
     ...(typeof event.timestamp === 'number' ? { timestamp: event.timestamp } : {}),
     ...(typeof event.platform === 'string' ? { platform: event.platform } : {}),
     ...(LEVELS.includes(event.level as CrashLevel) ? { level: event.level as CrashLevel } : {}),
     ...(typeof event.release === 'string' ? { release: event.release } : {}),
-    ...(Array.isArray(values)
-      ? { exception: { values: values.map((value) => scrubValue(value, appRoot)) } }
-      : {}),
   }
 }
