@@ -281,14 +281,14 @@ func doctorClassOf(c doctorCheck) string {
 }
 
 // doctorIsMeasurement reports whether a check is one of the measurements
-// doctorClassOf's allow-list names: an exact ID, or one of the per-instance
-// prefixes (plugin-settings-<n>).
+// doctorClassOf's allow-list names: an exact ID, or — for a list that is not
+// empty — one of the per-instance prefixes beside it.
 func doctorIsMeasurement(id string) bool {
 	return doctorMeasureIDs[id] || doctorHasPrefix(id, doctorMeasurePrefixes)
 }
 
-// hasAnyPrefix reports whether id is one of prefixes or carries one as its own
-// prefix (the per-instance IDs: image-config-web, token-signers-3).
+// doctorHasPrefix reports whether id is one of prefixes or carries one as its
+// own prefix (the per-instance IDs: image-config-web, token-signers-3).
 func doctorHasPrefix(id string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if id == p || strings.HasPrefix(id, p) {
