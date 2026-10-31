@@ -150,6 +150,32 @@ func TestSetScalarKeepsAnExistingQuotingStyle(t *testing.T) {
 	}
 }
 
+// TestSetScalarReplacesAQuotedValueWhole pins where a quoted value ends: a
+// single-quoted scalar holds a quote by doubling it, a double-quoted one by
+// escaping it, and a span that stopped at the first quote inside would leave the
+// tail of the old value in the file beside the new one.
+func TestSetScalarReplacesAQuotedValueWhole(t *testing.T) {
+	for _, tc := range []struct{ name, doc, value, want string }{
+		{"a single-quoted value holding a quote", "a: 'it''s here'\nb: 1\n", "z", "a: 'z'\nb: 1\n"},
+		{"a single-quoted value ending in a quote", "a: 'a '''\n", "z", "a: 'z'\n"},
+		{"a double-quoted value holding an escaped quote", "a: \"x \\\" y\"\nb: 1\n", "z", "a: \"z\"\nb: 1\n"},
+		{"a double-quoted value holding a backslash", "a: \"x \\\\ y\"\nb: 1\n", "z", "a: \"z\"\nb: 1\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.SetScalar([]byte(tc.doc), []string{"a"}, tc.value)
+			if err != nil {
+				t.Fatalf("SetScalar: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			if v := at(t, got, "a"); v != tc.value {
+				t.Fatalf("the result reads back %#v, want %q", v, tc.value)
+			}
+		})
+	}
+}
+
 func TestSetScalarCreatesMissingMappingsAtTheParentsIndentation(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -231,21 +257,31 @@ func TestSetScalarFillsAKeyWrittenWithNoValue(t *testing.T) {
 	}
 }
 
-func TestSetScalarReplacesAWholeBlockValue(t *testing.T) {
-	for _, tc := range []struct{ name, doc, value, want string }{
-		{"a mapping", "a:\n  b: 1\nc: 2\n", "x", "a: x\nc: 2\n"},
-		{"a sequence", "a:\n  - x\nb: 2\n", "y", "a: y\nb: 2\n"},
-		{"a nested mapping", "a:\n  b:\n    c: 1\nd: 2\n", "x", "a: x\nd: 2\n"},
+// TestSetScalarRefusesToReplaceACollection pins the guard against losing a
+// whole block: a mapping or a sequence holds bytes, and comments, of its own, so
+// a scalar is not spliced over it. Removing the key, or writing a key inside it,
+// are the edits that work instead.
+func TestSetScalarRefusesToReplaceACollection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		doc    string
+		path   []string
+		reason yamledit.Reason
+	}{
+		{"a mapping with a comment inside it", "a:\n  # keep me\n  x: 1\nb: 1\n", []string{"a"}, yamledit.ReasonReplacesCollection},
+		{"a sequence", "list:\n  - x\n", []string{"list"}, yamledit.ReasonReplacesCollection},
+		{"a mapping with a comment on the key's line", "a: # note\n  x: 1\n", []string{"a"}, yamledit.ReasonReplacesCollection},
+		{"a nested mapping", "a:\n  b:\n    c: 1\nd: 2\n", []string{"a"}, yamledit.ReasonReplacesCollection},
+		{"a flow mapping", "a: {b: 1}\n", []string{"a"}, yamledit.ReasonFlowCollection},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := yamledit.SetScalar([]byte(tc.doc), []string{"a"}, tc.value)
-			if err != nil {
-				t.Fatalf("SetScalar: %v", err)
+			got, err := yamledit.SetScalar([]byte(tc.doc), tc.path, "z")
+			if r := yamledit.ReasonOf(err); r != tc.reason {
+				t.Fatalf("reason = %q, want %q (got %q, %v)", r, tc.reason, got, err)
 			}
-			if string(got) != tc.want {
-				t.Fatalf("got %q, want %q", got, tc.want)
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("a refusal returned changed bytes: %q", got)
 			}
-			reparses(t, got)
 		})
 	}
 }
@@ -432,6 +468,49 @@ func TestRemoveKeyFromTheFixtureKeepsEveryOtherLine(t *testing.T) {
 	}
 }
 
+// TestRemoveKeyOfAnEmptyFlowCollection pins that a removal only has to measure
+// what it removes: `{}` and `[]` carry no entries, so the line they sit on goes
+// like any other.
+func TestRemoveKeyOfAnEmptyFlowCollection(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc, want string
+		path            []string
+	}{
+		{"an empty flow mapping", "a: {}\nb: 1\n", "b: 1\n", []string{"a"}},
+		{"an empty flow sequence", "a: []\n", "", []string{"a"}},
+		{"an empty flow sequence inside a block", "a:\n  x: []\nb: 1\n", "a:\nb: 1\n", []string{"a", "x"}},
+		{"an empty flow mapping with a comment", "a: {}  # nothing yet\nb: 1\n", "b: 1\n", []string{"a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.RemoveKey([]byte(tc.doc), tc.path)
+			if err != nil {
+				t.Fatalf("RemoveKey: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			reparses(t, got)
+			if has(t, got, tc.path...) {
+				t.Fatalf("%v is still in %q", tc.path, got)
+			}
+		})
+	}
+}
+
+// TestRemoveKeyKeepsALessIndentedComment pins where the comment block an entry
+// owns ends: a comment above it that is indented less than the entry belongs to
+// the level above and stays, or a removal would take the file's notes with it.
+func TestRemoveKeyKeepsALessIndentedComment(t *testing.T) {
+	const doc = "outer:\n  # about y\n  y: 1\n# kept\n  x: 2\n"
+	got, err := yamledit.RemoveKey([]byte(doc), []string{"outer", "x"})
+	if err != nil {
+		t.Fatalf("RemoveKey: %v", err)
+	}
+	if want := "outer:\n  # about y\n  y: 1\n# kept\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func TestAddListItemAppendsAndCreatesTheSequence(t *testing.T) {
 	const doc = "allow_data_to:\n  - owner/repo-a\n\n# next\nother: 1\n"
 	got, err := yamledit.AddListItem([]byte(doc), []string{"allow_data_to"}, "owner/repo-b")
@@ -466,6 +545,19 @@ func TestAddListItemAppendsAndCreatesTheSequence(t *testing.T) {
 		t.Fatalf("AddListItem: %v", err)
 	}
 	if want := "allow_data_to:  # the repositories\n  - owner/repo-a\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestAddListItemAppendsToAListOfMappings pins that a sequence of mappings is a
+// sequence: a scalar is appended after the last item, whatever the items hold.
+func TestAddListItemAppendsToAListOfMappings(t *testing.T) {
+	const doc = "k:\n  - name: one\n    mode: two\n"
+	got, err := yamledit.AddListItem([]byte(doc), []string{"k"}, "z")
+	if err != nil {
+		t.Fatalf("AddListItem: %v", err)
+	}
+	if want := "k:\n  - name: one\n    mode: two\n  - z\n"; string(got) != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
@@ -510,6 +602,36 @@ other: 1
 		t.Fatalf("RemoveListItemWithOptions: %v", err)
 	}
 	if want := "other: 1\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestRemoveListItemTakesOneOfADuplicateValue pins the promise the doc makes:
+// the first item equal to value goes, and only that one. A sequence that holds
+// the value twice keeps the other item, and the edit is not a refusal.
+func TestRemoveListItemTakesOneOfADuplicateValue(t *testing.T) {
+	const doc = "k:\n  - a\n  - a\n  - b\n"
+	got, err := yamledit.RemoveListItem([]byte(doc), []string{"k"}, "a")
+	if err != nil {
+		t.Fatalf("RemoveListItem: %v", err)
+	}
+	if want := "k:\n  - a\n  - b\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if items := listAt(t, got, "k"); len(items) != 2 || items[0] != "a" || items[1] != "b" {
+		t.Fatalf("the list reads back %v, want [a b]", items)
+	}
+}
+
+// TestRemoveSeqItemByKeyTakesOneOfADuplicateKey is the same promise for the
+// keyed removal: two items carrying the same key value lose the first of them.
+func TestRemoveSeqItemByKeyTakesOneOfADuplicateKey(t *testing.T) {
+	const doc = "k:\n  - name: one\n    mode: a\n  - name: one\n    mode: b\n"
+	got, err := yamledit.RemoveSeqItemByKey([]byte(doc), []string{"k"}, "name", "one")
+	if err != nil {
+		t.Fatalf("RemoveSeqItemByKey: %v", err)
+	}
+	if want := "k:\n  - name: one\n    mode: b\n"; string(got) != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
@@ -579,6 +701,21 @@ func TestUpsertSeqItemByKeyIsANoOpWhenNothingChanges(t *testing.T) {
 	}
 	if !bytes.Equal(got, doc) {
 		t.Fatalf("a repeat of the same upsert rewrote the document:\n%s", got)
+	}
+}
+
+// TestUpsertSeqItemByKeyRefusesToRewriteTheKeyField pins that an upsert cannot
+// be asked to rename the item it looks up: the key field among the fields would
+// leave the item the edit wrote unfindable by the key it was given.
+func TestUpsertSeqItemByKeyRefusesToRewriteTheKeyField(t *testing.T) {
+	const doc = "k:\n  - name: one\n    mode: a\n"
+	got, err := yamledit.UpsertSeqItemByKey([]byte(doc), []string{"k"}, "name", "one",
+		map[string]string{"mode": "b", "name": "two"})
+	if r := yamledit.ReasonOf(err); r != yamledit.ReasonFieldIsKeyField {
+		t.Fatalf("reason = %q, want %q (got %q, %v)", r, yamledit.ReasonFieldIsKeyField, got, err)
+	}
+	if !bytes.Equal(got, []byte(doc)) {
+		t.Fatalf("a refusal returned changed bytes: %q", got)
 	}
 }
 

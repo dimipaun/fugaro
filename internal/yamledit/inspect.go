@@ -311,14 +311,7 @@ func (d *doc) emptyValue(v *yaml.Node) (bool, error) {
 		return false, err
 	}
 	end := d.lines.contentEnd(d.lines.lineOf(off))
-	rest := d.src[off:end]
-	if len(rest) > 0 && (rest[0] == '!' || rest[0] == '&') {
-		// A tag or an anchor sits where the value goes, so these are not the
-		// spaces of a key written with nothing after it, and filling the value
-		// in here would drop what is written on it.
-		return false, nil
-	}
-	return strings.TrimSpace(string(plainComment(rest))) == "", nil
+	return strings.TrimSpace(string(plainComment(d.src[off:end]))) == "", nil
 }
 
 // plainComment cuts a line's text where a comment starts.
@@ -428,11 +421,11 @@ func (d *doc) nodeEnd(op string, n *yaml.Node) (int, error) {
 		_, end, err := d.valueSpan(op, n)
 		return end, err
 	case yaml.MappingNode, yaml.SequenceNode:
-		if len(n.Content) == 0 {
-			return 0, refuse(op, "", ReasonUnlocatable)
-		}
 		if n.Style&yaml.FlowStyle != 0 {
 			return d.flowEnd(op, n)
+		}
+		if len(n.Content) == 0 {
+			return 0, refuse(op, "", ReasonUnlocatable)
 		}
 		return d.nodeEnd(op, n.Content[len(n.Content)-1])
 	}
@@ -455,33 +448,6 @@ func (d *doc) flowEnd(op string, n *yaml.Node) (int, error) {
 		return 0, withOp(err, op)
 	}
 	return d.lines.contentEnd(d.lines.lineOf(start)), nil
-}
-
-// sepOffset returns the offset just past the `:` that separates an entry's key
-// from its value. A plain key runs to the first `:` that is followed by a space
-// or the end of the line; a quoted key ends at its closing quote.
-func (d *doc) sepOffset(e *entry) (int, error) {
-	start, err := d.offset(e.key)
-	if err != nil {
-		return 0, err
-	}
-	end := d.lines.contentEnd(d.lines.lineOf(start))
-	i := start
-	switch {
-	case e.key.Style&yaml.DoubleQuotedStyle != 0:
-		i = start + quotedEnd(d.src[start:end], '"', '\\')
-	case e.key.Style&yaml.SingleQuotedStyle != 0:
-		i = start + quotedEnd(d.src[start:end], '\'', '\'')
-	}
-	for ; i < end; i++ {
-		if d.src[i] != ':' {
-			continue
-		}
-		if i+1 == len(d.src) || d.src[i+1] == ' ' || d.src[i+1] == '\t' || breakWidth(d.src, i+1) > 0 {
-			return i + 1, nil
-		}
-	}
-	return 0, refuse("", "", ReasonUnlocatable)
 }
 
 // entryIndent is the column a block mapping writes its keys at, which is where
@@ -637,28 +603,44 @@ func scalarIs(n *yaml.Node, value string) bool {
 	return n != nil && n.Kind == yaml.ScalarNode && n.Value == value
 }
 
-func listHas(n *yaml.Node, value string) bool {
+func listHas(n *yaml.Node, value string) bool { return countItems(n, value) > 0 }
+
+// countItems returns how many items of a sequence are the scalar value. A
+// removal takes exactly one of them, which is what its result is held to.
+func countItems(n *yaml.Node, value string) int {
 	if n == nil || n.Kind != yaml.SequenceNode {
-		return false
+		return 0
 	}
+	count := 0
 	for _, item := range n.Content {
 		if scalarIs(item, value) {
-			return true
+			count++
 		}
 	}
-	return false
+	return count
 }
 
 // keyedItem returns the first mapping item of a sequence whose keyField holds
 // keyValue.
 func keyedItem(seq *yaml.Node, keyField, keyValue string) *yaml.Node {
+	if items := keyedItems(seq, keyField, keyValue); len(items) > 0 {
+		return items[0]
+	}
+	return nil
+}
+
+// keyedItems returns the mapping items of a sequence whose keyField holds
+// keyValue, in the order they are written. A removal takes the first of them,
+// which is what its result is held to.
+func keyedItems(seq *yaml.Node, keyField, keyValue string) []*yaml.Node {
 	if seq == nil || seq.Kind != yaml.SequenceNode {
 		return nil
 	}
+	var out []*yaml.Node
 	for _, item := range seq.Content {
 		if v := mapValue(item, keyField); v != nil && v.Value == keyValue {
-			return item
+			out = append(out, item)
 		}
 	}
-	return nil
+	return out
 }

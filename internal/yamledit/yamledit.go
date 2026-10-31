@@ -50,7 +50,13 @@
 //     a flow collection. Flow maps and sequences are refused rather than
 //     re-formatted: `settings: {}` is not rewritten into block style. A flow
 //     collection an edit only removes along with the line that holds it is
-//     fine, as long as it stays on one line.
+//     fine, as long as it stays on one line. A flow collection where a value
+//     would be replaced is this class; a block mapping or sequence there is
+//     ReasonReplacesCollection.
+//   - ReasonReplacesCollection: the value at the path is a mapping or a
+//     sequence, which holds bytes and comments of its own. Replacing it with a
+//     scalar would drop all of them, so the edit is refused; removing the key,
+//     or writing a key inside it, are the edits that work instead.
 //   - ReasonDuplicateKey: a key on the path is written twice, so which of the
 //     two the edit changed would not be visible in the result.
 //   - ReasonAnchorOrAlias: the node to change carries an anchor, is an alias,
@@ -63,10 +69,15 @@
 //     in the document is left alone.
 //   - ReasonMultilineScalar: the value to rewrite runs across several lines,
 //     for the same reason.
-//   - ReasonEmptyPath, ReasonUnlocatable, ReasonMalformed, ReasonVerification:
-//     an empty path, a node that does not map back onto the text, a document
-//     yaml.v3 cannot parse, and — the last guard — an edit whose result does
-//     not re-parse to the change that was asked for.
+//   - ReasonEmptyPath, ReasonEmptyField, ReasonFieldIsKeyField: an empty path,
+//     an empty key field, and an upsert given the key field among the fields to
+//     write, which would rename the item it was told to look up.
+//   - ReasonUnlocatable, ReasonMalformed, ReasonVerification: a node that does
+//     not map back onto the text, a document yaml.v3 cannot parse, and — the
+//     last guard — an edit whose result does not re-parse to the change that was
+//     asked for. A `%YAML 1.2` directive is one of the unparsable ones, since
+//     yaml.v3 reads that version as an incompatible document, and a `---` with
+//     nothing under it is not a mapping: its document holds a null.
 package yamledit
 
 import (
@@ -82,21 +93,23 @@ import (
 type Reason string
 
 const (
-	ReasonMultiDocument   Reason = "more than one YAML document"
-	ReasonMergeKey        Reason = "a mapping on the path carries a merge key"
-	ReasonTabIndentation  Reason = "a tab used for indentation"
-	ReasonFlowCollection  Reason = "a flow collection the edit cannot splice into"
-	ReasonDuplicateKey    Reason = "a key on the path is written twice"
-	ReasonAnchorOrAlias   Reason = "an anchor, alias or tag on the node to change"
-	ReasonNotAMapping     Reason = "the path crosses a node that is not a mapping"
-	ReasonNotASequence    Reason = "the path crosses a node that is not a sequence of scalars"
-	ReasonBlockScalar     Reason = "a block scalar to rewrite"
-	ReasonMultilineScalar Reason = "a scalar written across several lines"
-	ReasonEmptyPath       Reason = "an empty path"
-	ReasonEmptyField      Reason = "an empty key field"
-	ReasonUnlocatable     Reason = "a node that does not map back onto the text"
-	ReasonMalformed       Reason = "a document that is not valid YAML"
-	ReasonVerification    Reason = "an edit that did not re-parse to itself"
+	ReasonMultiDocument      Reason = "more than one YAML document"
+	ReasonMergeKey           Reason = "a mapping on the path carries a merge key"
+	ReasonTabIndentation     Reason = "a tab used for indentation"
+	ReasonFlowCollection     Reason = "a flow collection the edit cannot splice into"
+	ReasonReplacesCollection Reason = "a mapping or sequence the value would replace"
+	ReasonDuplicateKey       Reason = "a key on the path is written twice"
+	ReasonAnchorOrAlias      Reason = "an anchor, alias or tag on the node to change"
+	ReasonNotAMapping        Reason = "the path crosses a node that is not a mapping"
+	ReasonNotASequence       Reason = "the path crosses a node that is not a sequence"
+	ReasonBlockScalar        Reason = "a block scalar to rewrite"
+	ReasonMultilineScalar    Reason = "a scalar written across several lines"
+	ReasonEmptyPath          Reason = "an empty path"
+	ReasonEmptyField         Reason = "an empty key field"
+	ReasonFieldIsKeyField    Reason = "a field name that is the key field"
+	ReasonUnlocatable        Reason = "a node that does not map back onto the text"
+	ReasonMalformed          Reason = "a document that is not valid YAML"
+	ReasonVerification       Reason = "an edit that did not re-parse to itself"
 )
 
 // Error is a refusal: the operation named nothing that could be changed safely.
@@ -147,6 +160,8 @@ func Changed(before, after []byte) bool { return !bytes.Equal(before, after) }
 // a value YAML would read as something else (a comment, a nested mapping, a
 // sequence, a trimmed string) is quoted. An existing value keeps its quoting
 // style, and an edit that would write the bytes already there changes nothing.
+// A value written as a mapping or a sequence is refused rather than replaced:
+// those bytes, and the comments among them, are not this operation's to drop.
 func SetScalar(src []byte, path []string, value string) ([]byte, error) {
 	const op = "SetScalar"
 	if err := checkPath(op, path); err != nil {
@@ -222,7 +237,8 @@ func AddListItem(src []byte, path []string, value string) ([]byte, error) {
 	return out, nil
 }
 
-// RemoveListItem removes the first scalar item equal to value. A value the
+// RemoveListItem removes the first scalar item equal to value, and only that
+// one: a value written twice loses one of its items, not both. A value the
 // sequence does not hold is left alone.
 func RemoveListItem(src []byte, path []string, value string) ([]byte, error) {
 	return RemoveListItemWithOptions(src, path, value, RemoveOptions{})
@@ -243,8 +259,10 @@ func RemoveListItemWithOptions(src []byte, path []string, value string, opts Rem
 	if err != nil {
 		return src, err
 	}
+	before := countItems(resolve(d.root, path), value)
 	if err := verified(op, path, out, func(root *yaml.Node) bool {
-		return !listHas(resolve(root, path), value)
+		after := countItems(resolve(root, path), value)
+		return after == before || after == before-1
 	}); err != nil {
 		return src, err
 	}
@@ -262,6 +280,9 @@ func UpsertSeqItemByKey(src []byte, path []string, keyField, keyValue string, fi
 	}
 	if keyField == "" {
 		return src, refuse(op, pathString(path), ReasonEmptyField)
+	}
+	if _, ok := fields[keyField]; ok {
+		return src, refuse(op, pathString(path), ReasonFieldIsKeyField)
 	}
 	if len(fields) == 0 {
 		return src, nil
@@ -292,7 +313,8 @@ func UpsertSeqItemByKey(src []byte, path []string, keyField, keyValue string, fi
 }
 
 // RemoveSeqItemByKey removes the item of a sequence of mappings whose keyField
-// holds keyValue. A sequence that does not hold it is left alone.
+// holds keyValue, and only that one: a key value written twice loses one of its
+// items, not both. A sequence that does not hold it is left alone.
 func RemoveSeqItemByKey(src []byte, path []string, keyField, keyValue string) ([]byte, error) {
 	return RemoveSeqItemByKeyWithOptions(src, path, keyField, keyValue, RemoveOptions{})
 }
@@ -315,8 +337,10 @@ func RemoveSeqItemByKeyWithOptions(src []byte, path []string, keyField, keyValue
 	if err != nil {
 		return src, err
 	}
+	before := len(keyedItems(resolve(d.root, path), keyField, keyValue))
 	if err := verified(op, path, out, func(root *yaml.Node) bool {
-		return keyedItem(resolve(root, path), keyField, keyValue) == nil
+		after := len(keyedItems(resolve(root, path), keyField, keyValue))
+		return after == before || after == before-1
 	}); err != nil {
 		return src, err
 	}
@@ -395,8 +419,10 @@ func (d *doc) setKey(op string, m *yaml.Node, key, value, path string) ([]byte, 
 	return d.setEntryValue(op, e, value, path)
 }
 
-// setEntryValue replaces — or, for a key written with no value, fills in — the
-// value of an entry that is already in the document.
+// setEntryValue replaces a scalar — or, for a key written with no value, fills
+// one in — and refuses an entry whose value is a collection: a mapping or a
+// sequence is written with bytes and comments of its own, and splicing a scalar
+// over it would drop them.
 func (d *doc) setEntryValue(op string, e *entry, value, path string) ([]byte, error) {
 	if err := d.anchorFree(op, e, path); err != nil {
 		return nil, err
@@ -427,15 +453,7 @@ func (d *doc) setEntryValue(op string, e *entry, value, path string) ([]byte, er
 	if v.Style&yaml.FlowStyle != 0 {
 		return nil, refuse(op, path, ReasonFlowCollection)
 	}
-	start, err := d.sepOffset(e)
-	if err != nil {
-		return nil, withOp(err, op)
-	}
-	end, err := d.nodeEnd(op, v)
-	if err != nil {
-		return nil, err
-	}
-	return splice(d.src, start, end, []byte(" "+renderValue(value, 0))), nil
+	return nil, refuse(op, path, ReasonReplacesCollection)
 }
 
 // removeKey removes the entry at path, and with it whatever RemoveOptions asks

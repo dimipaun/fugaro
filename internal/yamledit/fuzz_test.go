@@ -37,6 +37,9 @@ func FuzzSetScalar(f *testing.F) {
 		{"a: 1\n---\nb: 2\n", "a", "2"},
 		{"a: 1\r\nb: 2\r\n", "b", "3"},
 		{"# budget:\n#   max_runs: 20\nproject: workspace-a\n", "budget", "5"},
+		{"a:\n  # keep me\n  x: 1\nb: 1\n", "a", "z"},
+		{"list:\n  - x\n", "list", "y"},
+		{"a: # note\n  x: 1\n", "a", "z"},
 		{"a: pro # a value that looks like a number\n", "a", "true"},
 	} {
 		f.Add(seed.doc, seed.key, seed.value)
