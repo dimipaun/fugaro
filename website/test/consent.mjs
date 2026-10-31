@@ -110,14 +110,12 @@ const CAMPAIGN_ORIGINS = [CAMPAIGN.metaOrigin, CAMPAIGN.linkedinOrigin, CAMPAIGN
 // `/save/` — which is also the spelling the gate's path check has to read.
 const CAMPAIGN_PAGE = 'save/index.html'
 const CAMPAIGN_PATH = '/save/'
-// The two vendor ids the cases below plant into a built page's banner, so those cases read the
-// same whatever `site.yaml` holds. The pixel id is the one the owner has not supplied — the
-// loader is switched off while it is empty — and the partner id is the owner's own, which
-// `site.yaml` carries since the ruling of 2026-10-31. The two cases that read the SHIPPED
-// configuration rather than a planted one are the shipped-state case and the withdrawal case
-// beside it, which watch the insight tag load because the id is really there.
+// The pixel id the cases below plant into a built page's banner, because it is the one value
+// the owner has not supplied: `site.yaml` carries it empty, which is the loader switched off,
+// so a case that watches the pixel load has to put a value there itself. The partner id needs
+// no planting — the owner supplied it (2026-10-31) and the built page carries it — and the
+// cases that read it are the shipped-state and withdrawal cases, on the page as served.
 const META_ID = 'TESTMETA0001'
-const LINKEDIN_ID = 'TESTPARTNER'
 // The consent banner's early decision (the owner's ruling of 2026-10-23, the redesign's Step 3:
 // JavaScript allowed, same-origin only; the banner must not cover the first screen's content).
 // A page that renders the banner loads it after the site's one script; it is a first-party file
@@ -1341,21 +1339,22 @@ function campaignRequests(page) {
 }
 
 /**
- * A built campaign page with the two vendor ids planted in its banner, because `site.yaml`
- * ships them empty and an empty id is the loader switched off. Nothing else about the page
- * changes: the origins, the booking link and the path are the ones the build wrote.
+ * A built campaign page with the pixel's id planted in its banner, because `site.yaml` ships
+ * that one empty and an empty id is the loader switched off. The partner id is not planted:
+ * the owner supplied it (2026-10-31), the built banner already carries it, and planting a
+ * second value would be a case watching a configuration the site does not have. Nothing else
+ * about the page changes: the origins, the booking link and the path are the ones the build
+ * wrote.
  */
-function withVendorIds(html) {
-  const planted = html
-    .replace('data-meta-pixel-id ', `data-meta-pixel-id="${META_ID}" `)
-    .replace('data-linkedin-partner-id ', `data-linkedin-partner-id="${LINKEDIN_ID}" `)
+function withPixelId(html) {
+  const planted = html.replace('data-meta-pixel-id ', `data-meta-pixel-id="${META_ID}" `)
   assert.ok(planted.includes(`data-meta-pixel-id="${META_ID}"`), 'the fixture did not plant the pixel id in the banner, so no case below could watch the pixel load')
-  assert.ok(planted.includes(`data-linkedin-partner-id="${LINKEDIN_ID}"`), 'the fixture did not plant the partner id in the banner, so no case below could watch the insight tag load')
+  assert.ok(/data-linkedin-partner-id="[^"]+"/.test(planted), 'the built campaign page carries no partner id, so no case below could watch the insight tag load')
   return planted
 }
 
-/** The campaign page the cases below run, with both vendor ids in place. */
-const CAMPAIGN_HTML = withVendorIds(pageOf(SHIPPED, CAMPAIGN_PAGE))
+/** The campaign page the cases below run, with the pixel's id in place beside the owner's. */
+const CAMPAIGN_HTML = withPixelId(pageOf(SHIPPED, CAMPAIGN_PAGE))
 
 /**
  * The cookies the campaign withdrawal deletes, read out of the script the site ships rather
