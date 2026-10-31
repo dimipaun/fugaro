@@ -200,12 +200,16 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	})
 
 	t.Run("a policy older than the binary", func(t *testing.T) {
+		const olderHead = "warning policy-older-than-binary: "
 		// Decode refuses a version mismatch in either direction, and the two
 		// directions have opposite remedies: a newer node needs a newer Fugaro,
-		// and an older one needs the remedy the publisher itself words — remove
-		// it, then publish. Meeting the older direction with "upgrade Fugaro"
-		// sends the operator to install a release for a node this one is
-		// already newer than.
+		// and an older one is the node the policy stage of the next `fugaro
+		// update` migrates in place (init_policy_migrate.go). Meeting the older
+		// direction with "upgrade Fugaro" sends the operator to install a
+		// release for a node this one is already newer than; sending them to the
+		// publisher's delete-then-publish (what the line named before the policy
+		// stage existed) costs the node what a publish rebuilds from the
+		// operator's own config.
 		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = projectpolicy.Version - 1 }), "")
 		c, ok := doctorChecksByID(t)["policy-older-than-binary"]
 		if !ok || c.Severity != "warning" {
@@ -214,11 +218,41 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if strings.Contains(c.Problem, "upgrade Fugaro") || strings.Contains(c.Fix, "upgrade Fugaro") {
 			t.Errorf("the older direction is met with the newer direction's remedy: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro project policy publish --delete") {
-			t.Errorf("the check does not name the remedy that works on an older node: %+v", c)
+		if !strings.Contains(c.Fix, "fugaro update") || !strings.Contains(c.Fix, "in place") {
+			t.Errorf("the check does not name the migration that repairs an older node: %+v", c)
+		}
+		human, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+		if item := doctorHumanItem(t, human, olderHead); !strings.HasSuffix(item, "run `fugaro update`") {
+			t.Errorf("the node the migration reaches is not met with the update's own command: %q", item)
 		}
 		if _, ok := doctorChecksByID(t)["policy-newer-than-binary"]; ok {
 			t.Error("policy-newer-than-binary fired for a node older than this binary")
+		}
+
+		// And the older state the chain does NOT reach: versions 1 and 2 predate
+		// the model the migrators read, so `fugaro update` stops on them (the
+		// stage refuses with the same sentence a publish does) and the
+		// delete-then-publish is the move that works. The line says so in the
+		// state's own words, not the class's command: a reader sent to `fugaro
+		// update` for this node comes back to the warning still standing.
+		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = 1 }), "")
+		c, ok = doctorChecksByID(t)["policy-older-than-binary"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-older-than-binary = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Fix, "fugaro project policy publish --delete") || !strings.Contains(c.Fix, "no migration step reaches version 1") {
+			t.Errorf("the check does not name the only move that reaches a version-1 node: %+v", c)
+		}
+		// The line, not only the check's own text: the default view prints this
+		// state's command rather than the class's, because the update does not
+		// repair it (the class is the ID's, and the state is the exception).
+		human, _, _ = execute(t, "doctor", "--dir", t.TempDir())
+		item := doctorHumanItem(t, human, olderHead)
+		if !strings.Contains(item, "fugaro project policy publish --delete") {
+			t.Errorf("the default view does not name the move the update cannot make: %q", item)
+		}
+		if strings.Contains(item, "run `fugaro update`") {
+			t.Errorf("the default view sends the reader to the update for a node no migration step reaches: %q", item)
 		}
 	})
 

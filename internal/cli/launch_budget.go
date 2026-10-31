@@ -240,10 +240,30 @@ func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projec
 }
 
 // exists is read in the CLI's wording, for the callers that only ask whether
-// the project has published a policy (Readiness's D11 gate).
+// the project has published a policy (Readiness's D11 gate). A node written in
+// an older version is one of those: it is there, and the policy stage of the
+// same `fugaro update` migrates it in place before any run is admitted by it.
+// Refusing it here stopped the run at the stage *before* that one — the
+// repository stage's readiness read, which no door orders after the policy
+// stage — and told the operator to delete the node and publish again, for a
+// document the run it stopped was about to rewrite. What this read may not
+// swallow is a node it cannot go on with at all: one written by a *newer*
+// Fugaro (the reader is the older side there, and no stage of this run can
+// read or migrate it) and one no version words (malformed, oversized,
+// unreadable) are the same refusal planRepo made before, at the same point.
 func (p *policyReadOnce) exists(ctx context.Context, lc *localcfg.Config) (bool, error) {
 	_, found, err := p.read(ctx, lc)
+	if olderPolicyNode(err) {
+		return true, nil
+	}
 	return found, policyReadErr(err)
+}
+
+// olderPolicyNode is whether err is the refusal of a published node older than
+// this Fugaro, the one direction a later stage of the same run repairs.
+func olderPolicyNode(err error) bool {
+	var ve *projectpolicy.VersionError
+	return errors.As(err, &ve) && ve.Found < ve.Understood
 }
 
 // budgetPrecheck refuses a launch the budget would refuse anyway (see
