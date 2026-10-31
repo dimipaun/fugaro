@@ -27,6 +27,9 @@
 //   - a reader that reads a name it has not `fstat`ed fails "reads a short
 //     symlink to a FIFO as on, and does not block on it" (U4c): the FIFO is
 //     shorter than the cap and is not a file, and a read of it never returns;
+//   - a reader that lets an error out of the open instead of answering with the
+//     default fails "reads a name the open itself is refused as on" (U4c) --
+//     one line and the file untouched, whatever the open raised;
 //   - a reader that says its line on every read fails "says its one line once,
 //     however many times the gate reads the file" (U4b).
 
@@ -217,11 +220,13 @@ describe('the update switch’s file', () => {
     }
   })
 
-  it('reads a file it cannot open as on, and leaves it where it is', () => {
-    // A directory where the file should be is the refusal a permission would
-    // give without a mode this test cannot set as root: what matters is that an
-    // unreadable file is the default rather than a throw, and that nothing
-    // removes or replaces it.
+  it('reads a directory where the file should be as on, and leaves it where it is', () => {
+    // The name opens -- a directory opens read-only -- and the descriptor's
+    // regular-file rule is what refuses it, exactly as it refuses a FIFO. What
+    // matters is that a name that is not this console's file is the default
+    // rather than a throw, and that nothing removes or replaces it. (A
+    // permission, which the OS refuses at the open instead, is the case below
+    // this one.)
     const directory = freshDirectory()
     const path = join(directory, UPDATES_FILE_NAME)
     mkdirSync(path)
@@ -234,6 +239,38 @@ describe('the update switch’s file', () => {
       logged.mockRestore()
     }
     expect(statSync(path).isDirectory()).toBe(true)
+  })
+
+  it('reads a name the open itself is refused as on, and writes nothing (U4c)', () => {
+    // A permission is refused by the OS at the open, which is now the first and
+    // only call this module makes for the switch -- and the descriptor it never
+    // got is the whole of what is missing: nothing is read, nothing is closed
+    // and nothing is repaired. The refusal is a fake's rather than a mode bit,
+    // because a suite that runs as root reads a file the file's own mode denies
+    // everybody else.
+    const directory = freshDirectory()
+    const path = join(directory, UPDATES_FILE_NAME)
+    writeFileSync(path, 'false')
+    const fs: UpdatesFs = {
+      ...nodeUpdatesFs,
+      open: () => {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+      },
+    }
+
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      expect(readUpdateSwitch(directory, fs)).toBe(true)
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls[0]?.[0]).toBe(UPDATES_FILE_UNREADABLE)
+    } finally {
+      logged.mockRestore()
+    }
+
+    // ...and the file the real filesystem holds is exactly where it was, still
+    // saying `false`: the refusal above is the fake's, not the file's.
+    expect(readFileSync(path, 'utf8')).toBe('false')
+    expect(readUpdateSwitch(directory)).toBe(false)
   })
 
   it('reads a symlink as on, and follows it nowhere (U4b, U4c)', () => {
