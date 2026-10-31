@@ -170,7 +170,11 @@ func initStages(e *initEngine) []initflow.Stage {
 	if e.r.o.provisionCredentials {
 		stages = append(stages, newCredentialsStage(e))
 	}
-	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
+	// The policy stage last: it rewrites the published node every run of the
+	// project is admitted by, and the stages before it are what those runs
+	// are launched against (see the stage's own file for why it is a
+	// migration and never a delete and a republish).
+	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo, newPolicyMigrateStage(e))
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
 	// `backend: cloud-batch` stays refused by config validation until the

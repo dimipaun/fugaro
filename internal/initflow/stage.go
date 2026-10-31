@@ -74,6 +74,13 @@ const (
 	// service — an apply that ran first would plan that grant against a
 	// resource that is not there yet.
 	Credentials = "credentials"
+	// Policy is the published policy node's migration in place
+	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
+	// fugaro update is the whole upgrade). It comes after the repository
+	// stage because the node it reads and rewrites is what those jobs'
+	// runs are admitted by, and it is the one stage whose change is a
+	// document rather than an installation.
+	Policy = "policy"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
@@ -114,6 +121,10 @@ var order = []slot{
 	// output and grant each job's account an invoker on it.
 	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
+	// The policy node is what every run of the project is admitted by, and
+	// the repository stage is the last writer of the installation those runs
+	// read it against.
+	{name: Policy, needs: []string{Repository}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.

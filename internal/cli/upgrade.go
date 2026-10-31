@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // fugaro upgrade (docs/design/upgrade.md): each checkout brought up to this
@@ -64,7 +65,7 @@ type upgradeStep struct {
 }
 
 // upgradeSteps run in this order for each checkout.
-var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}}
+var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"policy", policyStep}, {"cloud", cloudStep}}
 
 type checkoutResult struct {
 	path  string // as given
@@ -463,6 +464,62 @@ func pinStep(_ context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	return stepResult{state: stepDone, reason: "pinned to " + ch.Tag + " in " + shown + ": review it with git diff and commit it like any change"}
+}
+
+// policyStep is the same migration `fugaro update`'s policy stage makes for
+// the checkout's project (init_policy_migrate.go), with the same diff, the
+// same typed confirmation and the same refusals — the two front doors of one
+// upgrade, so neither can carry a node the other would refuse. It runs before
+// the cloud step because it is the cheap half of the same question: a node an
+// older Fugaro wrote is what the runs the cloud step refreshes are admitted by.
+//
+// The step is skipped, not failed, where there is nothing here to migrate from:
+// a teammate's checkout has no local project config, and a repository that is
+// not onboarded has no node of this project's to read (resolveCloudRepo's
+// cloudNotHere, the same verdict the cloud step uses).
+func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
+	if u.o.local {
+		return stepResult{state: stepSkipped, reason: "--local"}
+	}
+	if u.agent != "" {
+		reason := fmt.Sprintf("a coding agent's session (%s is set) never writes the published policy, by design; in your own terminal window, not through the agent, run %s", u.agent, u.o.cloudLine(u.loc.Root, false))
+		if h := initflow.IDEHint(u.agent); h != "" {
+			reason += " (" + h + ")"
+		}
+		return stepResult{state: stepSkipped, reason: reason}
+	}
+	_, lc, _, _, _, v := resolveCloudRepo(ctx, u.loc.Root, u.o.refresh.cloud)
+	if v != nil {
+		if v.state == cloudNotHere {
+			return stepResult{state: stepSkipped, reason: v.reason}
+		}
+		return stepResult{state: stepFailed, code: ExitUserError, reason: v.reason}
+	}
+	m, err := policyMigrationFor(ctx, lc)
+	if err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	if m == nil {
+		return stepResult{state: stepCurrent, reason: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}
+	}
+	if u.o.check {
+		return stepResult{state: stepStale, reason: fmt.Sprintf("the published policy is version %d and this fugaro writes version %d: fugaro upgrade migrates it in place, after the diff and a typed confirmation", m.from, projectpolicy.Version)}
+	}
+	m.print(u.w)
+	inflight, err := runsInFlight(ctx, m.db, m.lc)
+	if err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	if inflight > 0 && !u.o.yes {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: fmt.Sprintf("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)}
+	}
+	if err := confirmRemoval(u.cmd, m.lc, u.o.yes, policyMigrationWhat+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	if err := m.write(ctx); err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	return stepResult{state: stepDone, reason: fmt.Sprintf("the published policy was migrated from version %d to %d in place", m.from, projectpolicy.Version)}
 }
 
 // warnUpgradeFork is update-skills' warning, said whenever the checkout's

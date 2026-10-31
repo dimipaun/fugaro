@@ -1,0 +1,476 @@
+package cli
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+)
+
+// init_policy_migrate_test.go is the policy node's migration in place
+// (init_policy_migrate.go): the stage `fugaro update` runs and the step
+// `fugaro upgrade` runs, driven here directly — the two front doors' own
+// tests are update_test.go's and upgrade_test.go's, and what this file is
+// about is what either of them does to the node.
+//
+// Every test is hermetic: the gcpfake RTDB of the fixture, the fixture's own
+// local config, and no cloud.
+
+// migrationRig is the stage, its engine and the command a run's options were
+// taken from.
+type migrationRig struct {
+	f   *projectFixture
+	s   *policyMigrateStage
+	cmd *cobra.Command
+	out *syncBuf
+}
+
+func newMigrationRig(t *testing.T, f *projectFixture, o *initOptions) *migrationRig {
+	t.Helper()
+	if o.door == "" {
+		o.door = updateDoor.name
+	}
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(&syncBuf{})
+	cmd.SetIn(strings.NewReader(""))
+	run := &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
+	run.setProject(lc)
+	return &migrationRig{f: f, s: newPolicyMigrateStage(&initEngine{r: run, lc: lc, path: f.path}), cmd: cmd, out: out}
+}
+
+func (h *migrationRig) check() error {
+	_, err := h.s.Check(context.Background())
+	return err
+}
+
+func (h *migrationRig) apply(t *testing.T, yes bool) (string, error) {
+	t.Helper()
+	_, err := h.s.Apply(context.Background(), initflow.Env{Yes: yes, Interactive: !yes})
+	return h.out.String(), err
+}
+
+// nodeVersionOnTheFake is the version the node at the shared path carries, read
+// as the fake stores it: the assertion every refusal in this file makes is that
+// the node did not move.
+func nodeVersionOnTheFake(t *testing.T, f *projectFixture) int {
+	t.Helper()
+	v := f.db.Value(projectpolicy.PathShared())
+	n, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("the node at %s is %T, not an object: %v", projectpolicy.PathShared(), v, v)
+	}
+	switch ver := n["version"].(type) {
+	case float64:
+		return int(ver)
+	case int:
+		return ver
+	case json.Number:
+		i, err := ver.Int64()
+		if err != nil {
+			t.Fatalf("the node's version is not an integer: %v", err)
+		}
+		return int(i)
+	default:
+		t.Fatalf("the node's version is %T (%v)", n["version"], n["version"])
+		return 0
+	}
+}
+
+// v3Node is a node a release before the version-4 bump wrote: the model, with
+// an allow-list the owner has edited (P4's un-enrolment is a removal) and a
+// block no release of this CLI writes.
+func v3Node(extra map[string]any) map[string]any {
+	n := map[string]any{
+		"version":     3,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app", "github/acme/hand-added"},
+	}
+	for k, v := range extra {
+		n[k] = v
+	}
+	return n
+}
+
+// v3NodeMountingTheBitbucketToken is a version-3 node whose only profile
+// mounts the project's Bitbucket credential: the node whose migration cannot
+// state the block that credential is bounded by, and so the node that needs
+// the local config (Migrate's own note says so).
+func v3NodeMountingTheBitbucketToken() map[string]any {
+	return map[string]any{
+		"profiles": map[string]any{
+			"standard": map[string]any{
+				"provider": "bitbucket", "cpu": 1, "memory": "2Gi", "timeout_class": "6h",
+				"allow_repos": []string{"bitbucket/workspace-a/repo-a"},
+				"secrets":     []string{"bitbucket-token"},
+			},
+		},
+	}
+}
+
+func TestUpdateMigratesAV3PolicyNodeAfterConfirmation(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the migration was refused: %v\n%s", err, out)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+	if !strings.Contains(out, "published (version 3) and rewritten in place as version 4") {
+		t.Errorf("the confirmation diff does not say what it rewrote and as what:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("the write was not confirmed:\n%s", out)
+	}
+	if p := publishedPolicy(t, f); !slices.Contains(p.AllowRepos, "github/acme/hand-added") {
+		t.Errorf("the migration dropped the owner's own allow-list entry: %v", p.AllowRepos)
+	}
+}
+
+// TestUpdateMigrationDoesNotWriteWithoutTheTypedName: the write is behind the
+// same confirmation `publish --delete` puts it behind, and --yes is the flag
+// of the same path (the in-flight refusal below is the one it does not cover).
+func TestUpdateMigrationDoesNotWriteWithoutTheTypedName(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("not-the-project\n"))
+
+	out, err := h.apply(t, false)
+	if err == nil || !strings.Contains(err.Error(), "not confirmed") {
+		t.Fatalf("typing something else was accepted: %v\n%s", err, out)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 3 {
+		t.Errorf("the node moved to version %d on a refusal", got)
+	}
+}
+
+func TestUpdatePolicyMigrationPreservesHandEditedAllowList(t *testing.T) {
+	f := newProjectFixture(t, "")
+	node := v3Node(nil)
+	node["clone_urls"] = map[string]any{"github%2Facme%2Fapp": "https://github.com/acme/app.git"}
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+	p := publishedPolicy(t, f)
+	if !slices.Contains(p.AllowRepos, "github/acme/hand-added") {
+		t.Errorf("the owner's allow-list entry is gone: %v", p.AllowRepos)
+	}
+	if p.CloneURLs["github/acme/app"] != "https://github.com/acme/app.git" {
+		t.Errorf("the clone_urls block no release writes is not carried over: %v", p.CloneURLs)
+	}
+}
+
+func TestUpdatePolicyMigrationRefusesANewerNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version + 1, "budget": map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	h := newMigrationRig(t, f, &initOptions{})
+
+	err := h.check()
+	if err == nil {
+		t.Fatal("a node written by a newer Fugaro was accepted")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(projectpolicy.Version+1)) {
+		t.Errorf("the refusal does not name the version it read: %v", err)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version+1 {
+		t.Errorf("the node moved to version %d", got)
+	}
+	out, err2 := h.apply(t, true)
+	if err2 == nil {
+		t.Errorf("the write went ahead over a newer node:\n%s", out)
+	}
+}
+
+func TestUpdatePolicyMigrationLeavesAMalformedNodeUntouched(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": 0})
+	h := newMigrationRig(t, f, &initOptions{})
+
+	err := h.check()
+	if err == nil {
+		t.Fatal("a node with no version a release ever wrote was accepted")
+	}
+	if !strings.Contains(err.Error(), "its version is 0") {
+		t.Errorf("the refusal does not say which version it read: %v", err)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 0 {
+		t.Errorf("the node moved to version %d", got)
+	}
+	out, err2 := h.apply(t, true)
+	if err2 == nil {
+		t.Errorf("a malformed node was written over:\n%s", out)
+	}
+}
+
+func TestUpdatePolicyMigrationSurfacesRunsInFlight(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+	h := newMigrationRig(t, f, &initOptions{})
+
+	// --yes is the flag the in-flight refusal tells the operator to pass
+	// once they have read what the migration does, exactly as --delete
+	// does with it: without it, a run that read the node stops the write.
+	out, err := h.apply(t, false)
+	if err == nil {
+		t.Fatalf("a run in flight did not stop the migration:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "run(s) are in flight") || !strings.Contains(err.Error(), "fugaro runs ls") {
+		t.Errorf("the refusal is not the in-flight one: %v", err)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 3 {
+		t.Errorf("the node moved to version %d while a run was in flight", got)
+	}
+}
+
+func TestUpdatePolicyMigrationRefusedInAgentSession(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+	t.Setenv("CLAUDECODE", "1")
+
+	out, err := h.apply(t, true)
+	var ae *initflow.AgentError
+	if !errors.As(err, &ae) {
+		t.Fatalf("a coding agent's session was allowed to write the policy: %v\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "coding agent") {
+		t.Errorf("the refusal does not say why: %v", err)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 3 {
+		t.Errorf("the node moved to version %d in an agent session", got)
+	}
+}
+
+func TestUpdatePolicyMigrationETagConflictWritesNothing(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	// Another publish lands between the read the diff was made against and
+	// the write: the node the operator read is not the node that is there,
+	// so the write refuses rather than replacing it.
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": 3, "budget": map[string]any{"mode": "enforce", "per_run_usd": 9},
+		"allow_repos": []string{"github/acme/app"},
+	})
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("the migration overwrote a node that changed under it:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "changed while this migration was being confirmed") {
+		t.Errorf("the refusal is not the ETag one: %v", err)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 3 {
+		t.Errorf("the node moved to version %d", got)
+	}
+	raw, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "9") {
+		t.Errorf("the write landed anyway, and the other writer's node is gone: %s", raw)
+	}
+}
+
+func TestUpdateMigrationDerivesTheBitbucketBlockFromLocalConfig(t *testing.T) {
+	f := newProjectFixture(t, bitbucketTokenConfig)
+	f.db.Set(projectpolicy.PathShared(), v3Node(v3NodeMountingTheBitbucketToken()))
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("a version-3 node mounting the Bitbucket credential was not migrated: %v\n%s", err, out)
+	}
+	bt := publishedPolicy(t, f).BitbucketToken
+	if bt == nil {
+		t.Fatalf("the migrated node carries no bitbucket_token block, so nothing states what the token reaches:\n%s", out)
+	}
+	if want := []string{"bitbucket/workspace-a/repo-a"}; !slices.Equal(bt.AllowRepos, want) {
+		t.Errorf("bitbucket_token.allow_repos = %v, want %v", bt.AllowRepos, want)
+	}
+	if !strings.Contains(out, "derived from the project's local config, as a publish derives them: bitbucket_token") {
+		t.Errorf("the diff does not say what the local config supplied:\n%s", out)
+	}
+	// The republish Migrate asks for is answered here rather than passed on:
+	// the block is in the node now, so a diff telling the operator to
+	// republish would be a move that undoes the migration.
+	if strings.Contains(out, "republish to derive the Bitbucket block") {
+		t.Errorf("the diff asks for a republish the derivation just made unnecessary:\n%s", out)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+func TestUpdateMigrationKeepsHandEditedAllowListWhileDeriving(t *testing.T) {
+	f := newProjectFixture(t, bitbucketTokenConfig)
+	node := v3Node(v3NodeMountingTheBitbucketToken())
+	node["allow_repos"] = []string{"github/acme/app", "github/acme/un-enrolled-on-purpose"}
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.BitbucketToken == nil {
+		t.Fatal("the derived block is not in the migrated node")
+	}
+	if !slices.Contains(p.AllowRepos, "github/acme/un-enrolled-on-purpose") {
+		t.Errorf("deriving the block rewrote the owner's allow-list: %v", p.AllowRepos)
+	}
+}
+
+func TestUpdateMigrationWithoutBitbucketProfileDerivesNothing(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "derived from the project's local config") {
+		t.Errorf("the diff claims a derivation this config has nothing to derive from:\n%s", out)
+	}
+	raw, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{bitbucketTokenKey, bitbucketAPIRootsKey} {
+		if _, found, _ := jsonMember(raw, key); found {
+			t.Errorf("the migrated node carries %s, and this project's local config states none", key)
+		}
+	}
+}
+
+func TestUpdatePolicyMigrationRefusesOverUnknownFields(t *testing.T) {
+	f := newProjectFixture(t, "")
+	node := v3Node(nil)
+	node["future_key"] = true
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("a node carrying a key this Fugaro does not know was written over:\n%s", out)
+	}
+	for _, want := range []string{"1 key(s) this Fugaro does not know", "fugaro upgrade", "update again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "true") {
+		t.Errorf("the refusal prints a value out of the node: %v", err)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 3 {
+		t.Errorf("the node moved to version %d", got)
+	}
+}
+
+func TestPolicyPublishRefusesOverUnknownFields(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version, "budget": map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"}, "future_key": true,
+	})
+	_, _, err := execute(t, "project", "policy", "publish", "--yes")
+	if err == nil {
+		t.Fatal("the publish went ahead over a node carrying a key it does not know")
+	}
+	for _, want := range []string{"1 key(s) this Fugaro does not know", "publishing would drop them", "fugaro upgrade", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal lacks %q: %v", want, err)
+		}
+	}
+}
+
+// TestUpgradeRunsThePolicyMigration: the upgrade step is the same migration,
+// in the same place in the sequence (the owner's rule of 2026-10-30: the
+// whole upgrade is one command, whichever door the user is in).
+func TestUpgradeRunsThePolicyMigration(t *testing.T) {
+	names := make([]string, len(upgradeSteps))
+	for i, s := range upgradeSteps {
+		names[i] = s.name
+	}
+	if want := []string{"pin", "plugin", "policy", "cloud"}; !slices.Equal(names, want) {
+		t.Fatalf("the steps are %v, want %v", names, want)
+	}
+	if got := reflect.ValueOf(upgradeSteps[2].run).Pointer(); got != reflect.ValueOf(policyStep).Pointer() {
+		t.Error("the policy step is registered under some other function")
+	}
+}
+
+// TestUpgradePolicyStepSkipsWhereItCannotWrite: the step is skipped, not
+// failed, in the two runs that never write the cloud here — and both say
+// where the write happens instead.
+func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name, marker string
+		local        bool
+		want         string
+	}{
+		{"--local", "", true, "--local"},
+		{"an agent session", "CLAUDECODE", false, "coding agent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+			out := &syncBuf{}
+			cmd := NewRootCmd()
+			cmd.SetOut(out)
+			u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: f.dir},
+				agent: agentMarker(func(string) string { return tc.marker })}
+			u.o.local = tc.local
+			r := policyStep(context.Background(), u)
+			if r.state != stepSkipped {
+				t.Fatalf("the step is %s, want skipped: %s", r.state, r.reason)
+			}
+			if !strings.Contains(r.reason, tc.want) {
+				t.Errorf("the skip does not say why (%q): %s", tc.want, r.reason)
+			}
+			if got := nodeVersionOnTheFake(t, f); got != 3 {
+				t.Errorf("the node moved to version %d", got)
+			}
+		})
+	}
+}
+
