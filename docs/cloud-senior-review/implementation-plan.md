@@ -6,7 +6,8 @@ own gate: a task starts only when the decisions it names are answered.
 
 **Written to:** [spec.md](spec.md) and [reconciliation.md](reconciliation.md). **Where they
 disagree, the reconciliation wins.** The findings (**F1–F27**), the dependencies (**E1–E6**) and the
-decisions (**D880–D891**, D891 open) are that document's, and each task below names the ones it needs.
+decisions (**D880–D891**, every one of them answered — D891 by the owner, option (a)) are that
+document's, and each task below names the ones it needs.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -44,8 +45,9 @@ E3 (publish stages)          ─┴─▶ R1 (read-only token) ─▶ R7 (the jo
 **R1 before R7 before R2**, because a command that launches a job must be able to say what that job
 may do, and the job it launches must exist: R1 names the scope, R7 builds the container that can hold
 it without the App key, R2 starts it. **R3 before R5**, because the fix brief reads the artifact R3
-defines. **R4 is independent of R5** and can ship after R3 in either order, **and it is blocked on
-D891** (the owner's answer to whether the reviewer runs repository code at all). **R6 carries the
+defines. **R4 is independent of R5** and can ship after R3 in either order; **D891 is answered —
+option (a) — so R4 is unblocked** and carries the machinery the answer names (a token-scrubbed
+subprocess with egress denied, and Bash denied for the rest of the stage). **R6 carries the
 gates and cannot be split**: a field that lands without its gate is a field an older image silently
 ignores.
 
@@ -82,20 +84,25 @@ nothing here needs it), `internal/cli/root.go`, `internal/cli/api.go`, `website/
 
 ## 3. Tasks
 
-### R1. A third installation-token set: `ReviewTokenPermissions`
+### R1. A fourth installation-token set: `ReviewTokenPermissions`
 
-**Decision:** D883. **Findings:** F2, F3, F16. **Verification:** `internal/gitprov`, `internal/cli`.
+**Decision:** D883. **Findings:** F2, F3, **F16**. **Verification:** `internal/gitprov`.
 
-- **Files:** `internal/gitprov/github/apptoken.go`, `internal/gitprov/github/apptoken_test.go`,
-  `internal/cli/gitcred.go`, `internal/cli/gitcred_test.go`. **4 files.**
+- **Files:** `internal/gitprov/github/apptoken.go`, `internal/gitprov/github/apptoken_test.go`.
+  **2 files.**
 - **Interfaces:** produces `reviewTokenPermissions` = `{contents: read, pull_requests: read, metadata:
-  read}` and its exported spelling beside `RunTokenPermissions` and `BuildTokenPermissions`; and a
-  caller that mints it and hands it in — the `mintBuildToken` precedent
-  (`internal/cli/gitcred.go`) — so the review job can be given a token instead of a key.
+  read}` and its exported spelling beside `RunTokenPermissions` and `BuildTokenPermissions` — the
+  **fourth** set, as spec §2 and D883 say. **It builds no mint caller, and F16 is why:** every mint in
+  this tree happens where the App key is mounted — `mintBuildToken` (`internal/cli/gitcred.go:92`)
+  reads the key from its own environment inside the build that calls it, and `jobGitEnv`
+  (`internal/cli/imagecheck.go:530`) does the same inside a check job — so **neither is a precedent
+  for a launcher, which holds no key**. The review job is **given** a token, not able to mint one; the
+  mint site (the credentials service or the coordinator) and the hand-in are **UNVERIFIED-2**, settled
+  by **R7**, which is the task that owns them.
 - **Tests:** `TestReviewTokenPermissionsAreReadOnly` (every value is `read`, the three keys are
-  exactly those, and the map is a clone a caller cannot mutate), `TestMintReviewToken` (the minted
-  token is the set, never the write set), and `TestRunTokenPermissionsUnchanged` (F2's set is
-  untouched: this task adds a set, it does not narrow one).
+  exactly those, and the map is a clone a caller cannot mutate) and `TestRunTokenPermissionsUnchanged`
+  (F2's set is untouched: this task adds a set, it does not narrow one). **No mint test:** there is
+  nothing here that mints.
 - **Red step:** `TestReviewTokenPermissionsAreReadOnly` fails on an undefined identifier: no
   read-only set beside the run's and the build's exists. **SEC flag:** it is a permission set, and the
   test that matters most is the one asserting the **run's** set did not change.
@@ -115,7 +122,8 @@ nothing here needs it), `internal/cli/root.go`, `internal/cli/api.go`, `website/
   **At most 7 files.**
 - **Interfaces:** consumes E1's stored account and the job set (`gcp.ProjectJobName`), **R7's
   review-only job variant** (this task launches *that* entry, never the shared project job), R1's
-  token mint, and `claudeAccountFor`/`claudeAccountAllowed`. Produces **both verbs of the command
+  read-only set (the token **handed in**, F16 — the launcher mints nothing), and
+  `claudeAccountFor`/`claudeAccountAllowed`. Produces **both verbs of the command
   family, in this task**: `fugaro review --pr N [--token NAME] [--json] [--mutate <file:test>]`, which
   writes a task (`mode: review`, the review PRs, the resolved account) and launches it on the
   account's review-only job — `--json` prints the **launch's** result, not the artifact, which does
@@ -176,24 +184,37 @@ cap that is already deployed — R3 consumes it, it does not address it. **Depen
 
 ### R4. The mutation check
 
-**Decision:** D885, and **D891's answer decides whether this task exists at all**. **Findings:** F13,
-F19, **F24**. **Depends on:** R3. **Blocked on D891**: if the owner answers (b) or (c), this task is
-dropped or reduced, and it is not started before the answer.
+**Decision:** D885, and **D891 — answered by the owner with option (a), which this task is the
+machinery for**. **Findings:** F13, F19, **F24**. **Depends on:** R3. **Unblocked:** the answer is
+(a), so the task is neither dropped nor reduced, and it carries the posture in its own files.
 
 - **Files:** `internal/runner/mutation.go` (new), `internal/runner/mutation_test.go` (new),
   `internal/runner/reviewartifact.go` (the `mutation_checks` field it fills),
-  `internal/runner/prompts.go`, `schemas/review.schema.json`. **5 files.**
+  `internal/runner/prompts.go`, **`internal/agent/settings.go`** + `settings_test.go` (D891(a): the
+  review stage's `DenyRules` gains **Bash** for the rest of the stage), `schemas/review.schema.json`.
+  **7 files.**
 - **Interfaces:** produces the bounded, opt-in check of [spec.md](spec.md) §2 — one mutant, one
   named test, a worktree that is reverted before the stage ends, and **no push ever**
   (`gitops`'s push functions are not reachable from the path). The artefact records what was applied,
-  what was observed and that it was reverted.
+  what was observed and that it was reverted. **The mutant is applied, run and reverted by the
+  runner, not by the agent's Bash** — a subprocess of the runner's own with **`CLAUDE_CODE_OAUTH_TOKEN`
+  and the account's secret scrubbed from its environment and egress denied** — and the agent's shell
+  is denied for the rest of the stage, so the reviewer reads and reasons with no shell to exfiltrate
+  through (D891(a), F24). **How egress is denied inside a Cloud Run container is U7**
+  ([reconciliation.md](reconciliation.md) §6): a network namespace or `unshare` in gen2 has not been
+  checked, and this task's first step is to find out; if it cannot be done, that amends D891's answer
+  rather than being papered over.
 - **Tests:** `TestMutationAppliesRunsRevertsAndPushesNothing` (the git fake records no push),
   `TestMutationRefusesMoreThanOneMutant`, `TestMutationRevertsOnFailure` (a test that errors still
-  leaves the worktree clean), `TestMutationAbsentUnlessAskedFor`.
-- **Red step:** `TestMutationAppliesRunsRevertsAndPushesNothing` fails on an unknown task field.
+  leaves the worktree clean), `TestMutationAbsentUnlessAskedFor`,
+  `TestMutationSubprocessCarriesNoTokenInItsEnvironment`, and
+  `TestReviewStageDeniesBashForTheRestOfTheStage` (D891(a)'s own red test).
+- **Red step:** `TestMutationAppliesRunsRevertsAndPushesNothing` fails on an unknown task field, and
+  `TestReviewStageDeniesBashForTheRestOfTheStage` fails because `DenyRules` denies tools only.
   **SEC flag:** the task that runs repository code inside the reviewer, which is the one thing here
   that could look like "the reviewer edits the code" — the revert and the no-push assertions are what
-  make §2's "never pushes" a fact.
+  make §2's "never pushes" a fact, and the scrub, the egress rule and the Bash denial are what make
+  D891(a) a fact rather than a sentence.
 - **Commit:** `runner: the review job's mutation check, in its own worktree and never pushed`.
 
 ### R5. The findings reach the fix round's brief, by run id
@@ -242,7 +263,9 @@ dropped or reduced, and it is not started before the answer.
 
 ### R7. The review-only job variant and its service account — no App key (SEC)
 
-**Decisions:** D883, D888, **D891** (its stage posture), **UNVERIFIED-2** (the hand-in). **Findings:**
+**Decisions:** D883, D888, **UNVERIFIED-2** (the hand-in; **D891**'s stage posture is **R4**'s, not
+this task's, and this task only needs the variant to mount the account's Claude token and no key).
+**Findings:**
 **F3**, **F14**, **F16**. **Depends on:** E1, R1. **Precedes R2** (see §1). **SEC flag: yes — this is
 the task that makes the read-only scope a boundary instead of a comment on the launcher's intent.**
 
@@ -299,9 +322,11 @@ the task that makes the read-only scope a boundary instead of a comment on the l
   bucket-layout change with an IAM migration, and the owner's 2026-10-17 ruling accepted the reach;
   if the owner ever wants the boundary, it is its own design and it belongs to the project-job work,
   not to this one.
-- **A network egress rule for the review job (F24).** Denying egress, or scrubbing the token from a
-  mutation subprocess, is **D891**'s question; R4 is blocked until it is answered, and nothing here
-  builds a posture the owner has not chosen.
+- **An egress rule for the review job as a whole, or a signature, or a token scoped to one run.** What
+  D891(a) chose is narrower than any of those and is **R4**'s: denial for the **mutation subprocess**
+  and a **Bash denial for the rest of the stage**, not a firewall around the job. A whole-job egress
+  rule is a bigger change (it is the job's VPC/egress posture, shared with every other tenant of the
+  same image), and it is not what the owner answered.
 - **A cap on the fix ↔ review loop (F27).** The counting lives with the coordinator, which is the
   only party that can see rounds across runs; a counter inside one job could not see the loop.
 

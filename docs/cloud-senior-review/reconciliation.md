@@ -19,20 +19,22 @@ The **independent review** is run today on the owner's own machine, by hand, and
 that actually decides whether a pull request is good ([docs/dogfooding.md](../dogfooding.md): *"keep
 the real review outside the loop … a run's own `ship` never replaces it"*). Moving it into the cloud
 needs two things that do not exist: **a named Claude account usable end to end** (the
-[docs/accounts-add/](../accounts-add/README.md) design, PR #1470) and **a job that is not the coder's
-job**, because the whole reason the in-job reviewer is not the independent review is that it shares
-the loop's context, its family and its container. This design is the second half.
+[docs/accounts-add/](../accounts-add/README.md) design, merged as PR #1470 — designed, not built) and
+**a job that is not the coder's job**, because the whole reason the in-job reviewer is not the
+independent review is that it shares the loop's context, its family and its container. This design is
+the second half.
 
 ## 2. What was reconciled against
 
 `origin/main` at `48754c01`. The open pull requests read for this section, with the ones that matter
-to this design:
+to this design. **#1470 has since merged** (`d558dace`), and the rows stay because the reading was
+taken while it was open; what changed about it is only that it is on `main` now:
 
 | PR | What it holds | Relevance here |
 | --- | --- | --- |
-| **#1470** | `docs/accounts-add/`: `fugaro accounts add`/`rm`, D860–D879 | **E1, the dependency.** The named account end to end |
+| **#1470** (**merged as `d558dace`**) | `docs/accounts-add/`: `fugaro accounts add`/`rm`, D860–D879 (D860–D872 written) | **E1, the dependency.** The named account end to end |
 | **#1467** | `internal/yamledit`: a comment-preserving YAML editor | **E2.** What `accounts add` edits the local config with |
-| **#1464** (merged as `48754c01`) | `docs/settings-commands/`: `fugaro settings`, the update publish stages, D840–D859 | **E3.** The publish path `accounts add` reuses; also the highest D number on `main` |
+| **#1464** (merged as `48754c01`) | `docs/settings-commands/`: `fugaro settings`, the update publish stages, D840–D859 | **E3.** The publish path `accounts add` reuses |
 | **#1463** | `docs/rigor-command/`: `fugaro rigor show/set/unset`, D830–D839 | The owner-side story of the review level a reviewer runs at |
 | **#1424** | `task: the review_levels field (review levels L1.1)`, D724 | **E5/E6.** The effort key and the version-gate precedent |
 | **#1407** | `recipe: the adversarial step (review level 3)` | The security-sensitive level this design's checklist overlaps |
@@ -40,10 +42,11 @@ to this design:
 | **#1418, #1416, #1415, #1411, #1407, #1405, #1425, #1420, #1449, #1377, #907, #715, #620** | other work in flight | Read for number collisions and for paths this design would otherwise claim |
 
 **Number reading, recorded because the README's block is a claim about it:** the highest decision
-number **written** on `main` is **D859** (the `settings` design's D840–D859, merged as #1464); the
-highest in any open pull request is **D879** (reserved by #1470's D860–D879, of which D860–D870 are
-written). **D880 is therefore the next free number**, and this work's block is **D880–D899**, of
-which **D880–D891 are written** (D891 as a question for the owner, marked OPEN) and D892–D899 are
+number **written** on `main` is now **D872**, the tail of the `accounts add` design's **D860–D872**
+(merged as #1470), which reserved **D873–D879** and left them unused; below it sit the `settings`
+design's D840–D859 (merged as #1464). No open pull request reserves a decision above D872. **D880 is
+therefore still the next free number**, and this work's block is **D880–D899**, of
+which **D880–D891 are written** (D891 **answered by the owner, option (a)**) and D892–D899 are
 reserved. `D800` in `docs/` is the false positive the
 `docs/models-commands/` README records (`U+D800` inside a quoted value), not a decision. The check
 register reads **124 as the next free number above 123** and the Cloud Batch backend took it, so this
@@ -110,7 +113,8 @@ with tests rather than inventing a second one.
 **F5. `Gap` — `fugaro accounts add` and `fugaro accounts rm` do not exist.** `internal/cli/accounts.go`
 has exactly two subcommands, `ls` (names, state and the reason for it) and `clear NAME` (ends a
 broken mark after a token is replaced). The one command that stores a named token, declares the
-account, adds it to a profile and converges the policy and the job set is **E1**, in PR #1470.
+account, adds it to a profile and converges the policy and the job set is **E1**, designed in PR #1470
+(merged) and not yet built.
 **Consequence:** the first slice of this design cannot be the review job alone; it is **E1 plus the
 review job**, which is what [implementation-plan.md](implementation-plan.md) says.
 
@@ -273,7 +277,8 @@ only an artifact has no verdict at all.** `internal/runner/reviewmode.go:444` pa
 `VerdictSchema`'s `verdict` enum is `ship|changes` and its `required` is `["verdict","findings"]`
 (`internal/runner/verdict.go:18`), and `ParseVerdict` answers a result it cannot read with a finding of
 its own — `severity: "blocker"`, `summary: "review produced no parseable verdict: " + why`, the last
-`why` being *"nothing in the result was a verdict"* (`:53`, `:46`). **Consequence:** `spec.md` §3's
+`why` being *"nothing in the result was a verdict"* (`:58` is the `blocker` literal, `:93` the `why`
+text; an earlier draft cited `:53`/`:46`, the two function headers). **Consequence:** `spec.md` §3's
 review job writes `review.json`, and if its stage result carried the findings only in the file, the
 stage's reader would find no verdict and the run's outcome would be decided by a sentence about the
 parser — a *blocker* finding nobody wrote, stored beside real ones, for a review that may have been
@@ -285,12 +290,14 @@ unreadable artifact must end the run **invalid** (`endReviewInvalidVerdict`,
 **F24. `Rule` — the review job runs the repository's code while it holds the token, so §2's and §7's
 "never runs repository code" / "nothing to steal" were false.** `internal/agent/settings.go:63`'s
 `DenyRules` denies exactly `WebSearch`, `WebFetch` (`:31`) and the review stage's binary reads
-(`:53`) — Claude Code's **tools**, not the shell: the reviewer drives the stage with Bash, and D885's
+(`:53`) — Claude Code's **tools**, not the shell: the reviewer drove the stage with Bash, and D885's
 mutation check runs a test from the head **by design**. And `denyWeb` does not stop `curl` from Bash
 against a job's default egress, so a token in the stage's environment (`CLAUDE_CODE_OAUTH_TOKEN`, a
 mounted secret env var) is reachable from the reviewed diff three ways: the environment, `/proc`, and
 the network. **Consequence:** the design states the residual instead of claiming a mitigation it has
-not built, and **D891** asks the owner which of three postures to take.
+not built, and **D891 is answered — option (a)**: the mutant runs in a subprocess with the token
+scrubbed and egress denied, and Bash is denied for the rest of the review stage, which leaves the
+`/proc` read as the residual.
 
 **F25. `Rule` — the artifact is the one thing a review job produces that leaves the run, and the
 redaction rule covers the transcript, not it.** `internal/agent/redact.go` redacts what is published
@@ -326,26 +333,31 @@ usage windows are shared with the owner's own interactive work.
 ## 4. Owner decisions
 
 Recommendation first in each, with the cost of the alternative. **D880–D891 are this work's block;
-D892–D899 are reserved and unused.** **D891 is OPEN**: it is a question for the owner, written here
-because the review of head `0f5f9a55` raised it and this fix round may not answer it.**
+D892–D899 are reserved and unused.** **Every decision below is answered; D891 was the last one open**,
+and the owner answered it with the recommendation, so **R4 is unblocked** and the plan carries its
+machinery.
 
-- **D891 (OPEN). May the review job's reviewer run repository code — Bash, and D885's mutation test —
-  in the container that holds the person's token?** *Recommended:* **(a) run the mutation test in a
-  subprocess with the token scrubbed from its environment and egress denied, and deny Bash for the
-  rest of the stage** — the reviewer keeps the one capability it needs for a security-sensitive
-  pull request (`cargo test`-style, one named test, one mutant), the stage loses the shell as a
-  general exfiltration path, and the two things F24 names (the environment and the network) are the
-  two things this closes; the residual it leaves is the `/proc` read, which is what
-  `mixed-credentials.md` §6 already lives with and which the separate job is the only mitigation for.
-  *Cost of the alternative* — **(b) deny Bash and drop D885's cloud mutation check**: cheaper and
-  simpler, everything stays read-only, and the independent review of a security-sensitive pull request
-  loses the check that tells "the test exists" from "the test would have caught this" — the review
-  goes back to reading the test rather than running it, which is what the owner does by hand today;
+- **D891 (ANSWERED by the owner, option (a)). May the review job's reviewer run repository code —
+  Bash, and D885's mutation test — in the container that holds the person's token?** *The owner's
+  answer:* **(a) the mutation test runs in a subprocess with the token scrubbed from its environment
+  and egress denied, and Bash is denied for the rest of the stage.** The reviewer keeps the one
+  capability it needs for a security-sensitive pull request (`cargo test`-style, one named test, one
+  mutant), the stage loses the shell as a general exfiltration path, and the two things F24 names (the
+  environment and the network) are the two things this closes; the residual it leaves is the `/proc`
+  read, which is what `mixed-credentials.md` §6 already lives with and which the separate job is the
+  only mitigation for. **The machinery is R4's** (a SEC task): the mutant is applied, run and reverted
+  by the **runner** rather than by the agent's Bash, and `internal/agent/settings.go`'s `DenyRules`
+  gains Bash for the rest of the review stage. **How egress is denied for a subprocess inside a Cloud
+  Run container is UNVERIFIED** — a network namespace or `unshare` in gen2 has not been checked; that
+  is **U7** in §6. *The alternatives the owner did not take, kept for the record* — **(b) deny Bash
+  and drop D885's cloud mutation check**: cheaper and simpler, everything stays read-only, and the
+  independent review of a security-sensitive pull request loses the check that tells "the test
+  exists" from "the test would have caught this" — the review goes back to reading the test rather
+  than running it, which is what the owner does by hand today;
   **(c) accept the residual and record it**: no machinery at all, and the design then has to say, in
   `SECURITY.md`'s own posture, that a review job is a container that holds a person's subscription
   token and runs an untrusted diff's code — which is the same exposure the coder's job already has on
-  that account, so the separate job's value would be *context* and *scope*, not containment. **This
-  design does not choose; R5 is blocked until the owner does**, and the coordinator asks after.
+  that account, so the separate job's value would be *context* and *scope*, not containment.
 
 - **D880. The trigger is a new command, `fugaro review --pr N`.** *Recommended:* a command, because
   the review job is a different job with a different account and a different token scope, and only a
@@ -355,17 +367,18 @@ because the review of head `0f5f9a55` raised it and this fix round may not answe
   coder's credential (**F1**, **F3**), which is the configuration this design exists to leave; a
   recipe stage cannot change a job's credential at all.
 - **D881. D9's hold on the OAuth reviewer stage stays. This design does not lift it.** *Recommended:*
-  do not lift. **D9 in its own words**, `docs/design/project-centric.md` §7's table and §8's
-  "Phase 5" list: *"#363 OAuth reviewer stage | Multiplies per-repository variant jobs; widens token
+  do not lift. **D9 in its own words**, `docs/design/project-centric.md` **§10**'s "Effect on work in
+  flight" table (the row) and **§11**'s phase 5 list: *"#363 OAuth reviewer stage | Multiplies
+  per-repository variant jobs; widens token
   blast radius under sharing. | **Hold** until phase 5 (owner, D9)"*, with phase 5 being *"OAuth
   pool: person-owned secrets, references, `accounts share`, CLI failover; #363 rebased"*. **The two
   costs D9 names are job multiplication and a token shared by a shared job — not the `/proc` read**,
   which an earlier draft of this design asserted and which is wrong: every `oauth` workflow already
   lives with that read (§1). Of the two, the **job-per-repository** cost is the one this design
   answers (its jobs are per `(profile, account)`, F14), and the **pool** half of phase 5 is **not**
-  met: person-owned secrets, `accounts share` and the launcher's failover are E1, still open in
-  PR #1470. D9's subject is `agent.stage_auth` (the held plan's P1–P17), which this design needs no
-  part of. *Cost of the alternative:* lifting the hold ships P1–P17 as well — a second `EnvSpec`, a
+  met: person-owned secrets, `accounts share` and the launcher's failover are E1, **merged as PR #1470
+  as a design** and not built. D9's subject is `agent.stage_auth` (the held plan's P1–P17), which this
+  design needs no part of. *Cost of the alternative:* lifting the hold ships P1–P17 as well — a second `EnvSpec`, a
   per-stage managed settings write, per-stage cost fields, the infra variant jobs and a `SECURITY.md`
   line — and buys a reviewer whose token is in the coder's container, which is the exposure this
   design exists to avoid; and it would do so **before** phase 5's pool exists, i.e. while the shared
@@ -421,8 +434,9 @@ because the review of head `0f5f9a55` raised it and this fix round may not answe
   happens today by hand, and it is the step this design exists to remove.
 - **D888. The first slice is E1 plus the review job, and the release slot is 0.15.0.** *Recommended:*
   the smallest thing that lets a cloud run use a named account end to end is `fugaro accounts add`
-  (**E1**, PR #1470) *plus* the review job — the permission set (R1), **the review-only job variant
-  and service account that make the set a boundary (R7)**, and the command that launches it (R2) —
+  (**E1**, designed in PR #1470, merged, not built) *plus* the review job — the permission set (R1),
+  **the review-only job variant and service account that make the set a boundary (R7)**, and the
+  command that launches it (R2) —
   because E1 alone makes a named account usable by
   `fugaro run --token`, and the review job is the first thing in this design that needs it; 0.15.0,
   with the version gates (`internal/cli/recipes_skew.go`'s `…Since` precedent) in the same release.
@@ -452,7 +466,7 @@ because the review of head `0f5f9a55` raised it and this fix round may not answe
 
 | # | What | Needs this design to… | Order |
 | --- | --- | --- | --- |
-| **E1** | **`fugaro accounts add`/`rm`** (PR #1470, `docs/accounts-add/`, D860–D879) | nothing at all: it is the prerequisite. It must be merged — or its remaining tasks carried by this design's own first slice (**D888**) — **before** any review job can mount a named token | **first** |
+| **E1** | **`fugaro accounts add`/`rm`** (`docs/accounts-add/`, **merged as PR #1470**; D860–D872 written, D873–D879 reserved) | nothing at all: it is the prerequisite. Its **design** is on `main`; its remaining tasks — the command itself — must land, or be carried by this design's own first slice (**D888**), **before** any review job can mount a named token | **first** |
 | **E2** | `internal/yamledit` (PR #1467) | nothing; it is E1's editor for the local config | with E1 |
 | **E3** | the `settings` design's publish stages (PR #1464, merged) and `upgrade`'s rules step (PR #1468) | nothing; E1 reuses them to converge the policy and the job set | with E1 |
 | **E4** | `website/content/cli-reference.md` (generated by `ee/clidoc`) and `website/**` | it must **not** hand-edit it: the task that adds `fugaro review` regenerates the page, and if the page is outside its scope it records that in its own pull request (F22) | with R2 |
@@ -464,11 +478,12 @@ because the review of head `0f5f9a55` raised it and this fix round may not answe
 | # | Question | How it is settled |
 | --- | --- | --- |
 | **U1** | Does a *read-only* installation token suffice to fetch a pull request's head and its `author_association` (F1's gate) from GitHub, or does the gate need a permission this set lacks? | the coordinator's `{pull_requests: read, metadata: read}` set is minted today but its two callers only clone; **Check 125's step 4** is the observation, and the implementation task's first step is to read the gate's API calls against the set |
-| **U2** | Does `claude setup-token`'s flow and the seven-step page ever make the **D-U2** claim true (the login's output parsed without a person copying it)? | it is **E1**'s own live check, not this design's; this design only consumes the account E1 creates |
+| **U2** | **Moot — there is nothing left to verify.** It asked whether `claude setup-token`'s flow and the seven-step page ever make the **D-U2** claim true (the login's output parsed without a person copying it). The owner's ruling on the accounts design's **D862** answered the design's **alternative (a)**: `--claude` is two acts — the login in **the owner's own terminal**, then **one paste** — with **no pty and no output parsing**, so nothing in the command reads the login's output and this question has no subject. `spec.md` §8's step 1 says so |
 | **U3** | Is `CLAUDE_CODE_EFFORT_LEVEL` honoured on the **review job's** direct stage the same way it was measured locally? | measured offline against the pinned binary (F8); the live observation is Check 125's step 3's recorded `effort`, and a mismatch is **recorded, not corrected** |
 | **U4** | Does a truncated verdict output announce itself (a Claude Code `result` event, a non-zero exit) or does it look like a short answer? | **D886**'s "truncated is a failed review" needs an observation to hang on; the implementation task's test is a fake agent returning a clipped result, and Check 125's step 3 is the live one |
 | **U5** | Does the review job's transcript carry the token if the reviewer echoes its environment? | `redact.go` and `r.addSecret` say it should not; the observation is Check 125's step 2 ("its log must name no token value") plus a hermetic test in the implementing task |
 | **U6** | Can a launched review job be told the head SHA the coordinator observed, so a head that moved between the coordinator's read and the job's fetch is refused rather than silently reviewed? | `FetchPRHead` resolves the head at bootstrap today and records it (`ReviewedPR.SHA`); whether to pass the expected SHA in is **not decided here** and is left to the implementing task with the owner's D880 answer in hand |
+| **U7** | **How is egress denied for a subprocess inside a Cloud Run container?** D891(a) answers that the mutation test runs with the token scrubbed and **egress denied**, and no network namespace or `unshare` in gen2 has been checked — Cloud Run's second-generation execution environment may not permit the one, and the job's own egress is the job's, not a child process's | **R4**'s first step: measure it in a hermetic harness where it can be measured, and observe it in **Check 125's step 6** (the mutation check, with the container's egress watched). If it turns out a child cannot be fenced, that is an amendment to D891's answer and the owner is asked again — the design does not quietly fall back to `denyWeb` |
 | **UNVERIFIED-2** | How does the minted read-only installation token **reach** the review job, and is the channel acceptable? The launch path passes per-run variables as a Cloud Run execution override (`internal/backend/gcp/run.go:169`), whose value is a **plain value in the execution object**, readable by anyone who can read that execution; a mounted short-lived secret would not be. | **F16**'s open question. Settled by R7's implementing task, which has to choose between the override (simple, and the token is visible to anyone with execution-read) and a per-launch secret (a Secret Manager write per review, an accessor grant, and a cleanup the design does not have) — and which records the answer in that task's pull request before R2 launches anything |
 
 Nothing above is approved by being written down. Answering a decision is not approving a task.

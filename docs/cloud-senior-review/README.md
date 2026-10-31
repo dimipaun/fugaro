@@ -10,8 +10,8 @@ releases: the **independent review** run today on the owner's own machine — a 
 owner's eyes on the diff plus the pull request's CI — should run **in the cloud, as the senior
 reviewer**, on a **named Claude OAuth account**, so the strongest available model reviews a pushed
 head without the owner's laptop in the loop. The head of that chain is `fugaro accounts add`
-([docs/accounts-add/](../accounts-add/README.md) in the open pull request #1470), which is what makes
-a named account usable end to end; this design is the second link.
+([docs/accounts-add/](../accounts-add/README.md), merged as #1470), which is what makes a named
+account usable end to end; this design is the second link.
 
 **What it is:** a **separate Cloud Run job execution**, launched after a coding run's pull request
 exists, that clones the pushed head, reviews it fresh with the reviewer's own model on a **named
@@ -46,7 +46,7 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
 
 | Block | State |
 | --- | --- |
-| **D880–D899** | **this work's block: D880–D891 written (D891 written OPEN, as a question for the owner), D892–D899 reserved and unused.** Taken above every number on `main` (the highest is **D859**, the tail of the `settings` design's D840–D859, which merged as #1464) and above every open pull request's numbers (the highest is **D879**, reserved by the `accounts add` design, PR #1470, whose written range is D860–D870). The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and the open pull requests listed in [reconciliation.md](reconciliation.md) §2; it is re-checked at launch, and the block recorded again if it moved |
+| **D880–D899** | **this work's block: D880–D891 written (D891 answered by the owner, option (a)), D892–D899 reserved and unused.** Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
 | **Check 125** | **claimed here, and not written in the register.** `docs/gcp-live-checklist.md` reads **124 as the next free number above 123** and the Cloud Batch backend took it, so the number free above it is **125**; this work claims it for the owner-run live check in [spec.md](spec.md) §8. The register's own file is another work stream's (`docs/gcp-live-checklist.md` is not this task's to touch), so the row and the `## Check 125` section are written by the task that implements the check, under the number free at **that** merge — the register's rule that whichever of two open claims merges second renumbers itself. A reserved number is never reused and never renumbered |
 
 ## What this design does not do
@@ -63,10 +63,12 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
   today.
 - It writes no pull request and no comment of its own on any path: the review job's verdict is an
   artifact, and the coordinator decides what to say.
-- **It does not claim the review job is contained.** The reviewer runs the diff's code (Bash, and
-  D885's mutation test) in the container that holds the person's token, and the token is reachable
-  there through the environment, `/proc` and the job's default egress; §7 states that residual and
-  **D891** asks the owner which of three postures to take, so **R4 is blocked until they answer**.
+- **It does not claim the review job is contained.** The reviewer's mutation check runs repository
+  code in the container that holds the person's token. **D891 is answered — option (a):** the mutation
+  test runs in a subprocess with **the token scrubbed from its environment and egress denied**, and
+  **Bash is denied for the rest of the review stage**, the mutant being run by the runner rather than
+  by the agent's shell. What is left is the `/proc` read, which §7 states as the residual and which
+  only the separate container reduces. **R4 is unblocked** and carries that machinery.
 - **It does not launch on a job that already exists.** The shared project job of
   `(profile, provider, account)` mounts the GitHub App key, so a read-only scope on it would be a
   comment on the launcher's intent rather than a boundary; the design adds a **review-only job variant
@@ -75,8 +77,9 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
 
 ## Related
 
-- [docs/accounts-add/](../accounts-add/README.md) (open PR #1470): the one command that makes a
-  named account usable end to end. It is the **dependency** this design waits on.
+- [docs/accounts-add/](../accounts-add/README.md) (**merged** as #1470, design only): the one command
+  that makes a named account usable end to end. It is the **dependency** this design waits on, and its
+  remaining tasks — the command itself — are still unbuilt.
 - [docs/project-claude-accounts.md](../project-claude-accounts.md): where the account, its secret,
   its job and its `allow_data_to` are described today.
 - [docs/design/mixed-credentials.md](../design/mixed-credentials.md) §6: the four mitigations, of

@@ -96,18 +96,20 @@ the metadata server (`mixed-credentials.md` §6; the plan's Review Focus 1 and 2
 accepted today for an `oauth` workflow.
 
 **It is not why `stage_auth` is held, and this design had that wrong.** D9 states the hold itself,
-in `docs/design/project-centric.md` §7: *"#363 OAuth reviewer stage — Multiplies per-repository
-variant jobs; widens token blast radius under sharing — **Hold** until phase 5."* The two costs D9
+in `docs/design/project-centric.md` **§10** ("Effect on work in flight", where the row sits): *"#363
+OAuth reviewer stage — Multiplies per-repository variant jobs; widens token blast radius under
+sharing — **Hold** until phase 5."* The two costs D9
 names are a **job per repository** and a token **shared wider by a shared job** — not the `/proc`
 read, which the in-job spec already lives with in every `oauth` workflow.
 
 **Is phase 5's precondition met now? Half of it, and the half that is missing is the one that
 matters.** Phase 5 is *"OAuth pool: person-owned secrets, references, `accounts share`, CLI
-failover; #363 rebased"* (`project-centric.md` §7). The **per-(profile, account) job** half exists
-today: `gcp.ProjectJobName` and `config.ProjectJobAccounts` build exactly that axis, so a token no
-longer has to widen a job beyond one account (F14). The **pool** half does not: person-owned secrets,
-the share operation and the launcher's own failover are the `accounts add` design, E1 in PR #1470 —
-open, not merged. So D9's worst cost (a job per repository) is answerable by this design, and D9 is
+failover; #363 rebased"* (`project-centric.md` **§11**'s phase 5 list). The **per-(profile, account)
+job** half exists today: `gcp.ProjectJobName` and `config.ProjectJobAccounts` build exactly that
+axis, so a token no longer has to widen a job beyond one account (F14). The **pool** half does not:
+person-owned secrets, the share operation and the launcher's own failover are the `accounts add`
+design, E1, **merged as PR #1470 as a design** — the decisions and the plan are on `main`, the command
+itself is not built. So D9's worst cost (a job per repository) is answerable by this design, and D9 is
 still not lifted: its subject is `agent.stage_auth`, which this design does not need. **D881** states
 that in [reconciliation.md](reconciliation.md) §4 with the cost of each way.
 
@@ -125,13 +127,16 @@ execution for the reviewer, with its own container and service account, is the o
 closes the gap"* — the `/proc` read and the metadata server. The token is then held in a container
 that the pull request's coder never ran in, that holds no write credential, and that is gone when the
 review is over. **It is not a container that never runs repository code, and this design will not
-claim that it is:** the reviewer drives Claude Code with Bash (the review stage's deny list is
-`WebSearch`, `WebFetch` and the binary reads — `internal/agent/settings.go`'s `DenyRules`), and
-D885's mutation check runs a test from the head under review by design. §7 states that residual as a
-residual, and D891 asks the owner what to do about it. What the separate container does remove is a
-configuration the owner has to reason about: in the coder's job there are two credentials and a
-per-stage environment to get right (the held plan's P10, P11, P14); in a separate job there is one
-credential and one stage.
+claim that it is:** D885's mutation check runs a test from the head under review by design, and the
+review stage's own deny list covers Claude Code's tools — `WebSearch`, `WebFetch` and the binary
+reads (`internal/agent/settings.go`'s `DenyRules`) — rather than a shell. **D891 is answered, option
+(a):** the mutation test runs in a **subprocess with the token scrubbed from its environment and
+egress denied**, and **Bash is denied for the rest of the review stage**, with the mutant applied and
+reverted by the runner instead of by the agent's shell — so the stage's general exfiltration path
+(the environment and the network) is closed, and the residual is the `/proc` read §7 states. What the
+separate container does remove is a configuration the owner has to reason about: in the coder's job
+there are two credentials and a per-stage environment to get right (the held plan's P10, P11, P14);
+in a separate job there is one credential and one stage.
 
 **The forge token is read-only — and that needs a job that does not exist yet.** A run's installation
 token today asks for `{contents: write, pull_requests: write, issues: read, metadata: read}`
@@ -293,8 +298,8 @@ its `--json-schema` and reads the result with `runner.ParseVerdict`
 `:2752`). Two words and `required: ["verdict", "findings"]`. **A review job that emitted its findings
 only into the file would hand that reader a result with no verdict in it**, and `ParseVerdict` would
 answer with a finding of its own — *"review produced no parseable verdict: nothing in the result was a
-verdict"*, severity `blocker` (`internal/runner/verdict.go:53`) — so a complete, careful review would be
-recorded as an unreadable one, and in review mode the run's outcome would be decided by a sentence
+verdict"*, severity `blocker` (`internal/runner/verdict.go:58` is the literal, `:93` the `why` text) —
+so a complete, careful review would be recorded as an unreadable one, and in review mode the run's outcome would be decided by a sentence
 about the parser rather than by anything the reviewer found. **So the review job passes
 `schemas/review.schema.json` as its `--json-schema` and decodes with the artifact's own reader**; the
 artifact's three words and the in-run pair share no reader *and no producer*. Nothing about the two
@@ -478,17 +483,26 @@ it was false twice over:
 
 - a **coding run on a named account already mounts that account's token**, so the container that runs
   the pull request's code *does* hold it, exactly as `mixed-credentials.md` §6 describes;
-- the **review job itself runs repository code** (§2): the reviewer has Bash, and the mutation check
-  runs a test from the head under review. The token is reachable from that stage — through its own
-  environment (`CLAUDE_CODE_OAUTH_TOKEN` is a mounted secret env var), through `/proc`, and through
-  **network egress**, which a job has by default and which no deny rule closes: `denyWeb` denies
-  Claude Code's `WebSearch`/`WebFetch` **tools**, and does not stop `curl` from Bash.
+- the **review job itself runs repository code** (§2): the mutation check runs a test from the head
+  under review. Left alone, the token would be reachable from that stage through its own environment
+  (`CLAUDE_CODE_OAUTH_TOKEN` is a mounted secret env var), through `/proc`, and through **network
+  egress**, which a job has by default and which no deny rule closes — `denyWeb` denies Claude Code's
+  `WebSearch`/`WebFetch` **tools**, and does not stop `curl` from Bash.
+
+**D891 is answered, option (a), and the answer closes two of those three.** The mutation test is run
+by the **runner** as its own subprocess with the token scrubbed from that subprocess's environment and
+**egress denied**, and **Bash is denied for the rest of the review stage** (`DenyRules` gains it), so
+the agent's own shell stops being a general exfiltration path and the reviewer's environment and the
+network are no longer routes out. **How egress is denied for a subprocess inside a Cloud Run container
+is UNVERIFIED** — a network namespace or `unshare` in gen2 has not been checked, and
+[reconciliation.md](reconciliation.md) §6's **U7** is where that is settled. What is left either way
+is the **`/proc` read**, which `mixed-credentials.md` §6 already lives with and which only the
+separate container reduces.
 
 What the design still buys, and it is worth having: a container that **did not run the coder**, a
 read-only forge scope, no App key in that container, and a run whose whole purpose is the review. What
-it does **not** buy is a container the token cannot leave. **D891 asks the owner which of three
-postures to take** (reconciliation.md §4), and until it is answered this design claims no mitigation
-it has not built.
+it does **not** buy is a container the token cannot leave: no scrub and no egress rule reaches a
+process that can read `/proc`.
 
 **The read-only forge scope is one scope among several, so the job holds no minting key — in the
 variant R7 adds.** The review job receives `{contents: read, pull_requests: read, metadata: read}`
@@ -517,8 +531,9 @@ reviewer must read it — that is its job — so the injection surface is not re
 - **the job writes nothing outward it was given a way to write.** No comment, no push, no artifact
   outside the run's own prefix, and no web **tool** (`denyWeb: true`, which the held plan's P10 already
   calls for). **`denyWeb` is a tool rule, not a network rule**: it does not stop `curl` or anything
-  else the reviewer's Bash can run against a job's default egress. Closing that is D891(a)'s
-  "egress denied", and this design does not already have it;
+  else a shell can run against a job's default egress. **D891(a) is what closes that** — a
+  token-scrubbed subprocess with egress denied, and Bash denied for the rest of the stage — and
+  nothing in this paragraph rests on `denyWeb` alone;
 - **everything the reviewer says is treated as data downstream.** The artifact is read and rendered,
   never executed; the findings that become a fix round's brief are quoted and bounded (§6);
 - **what this does not close, stated plainly:** an injected reviewer can put anything it likes into
@@ -585,9 +600,13 @@ merge. **The owner types nothing secret into chat, and no agent ever sees a toke
 run by the owner in their own terminal.
 
 1. **Add the named account.** In a normal terminal — not a coding agent's session — the owner runs
-   the `fugaro accounts add <name>` of [docs/accounts-add/](../accounts-add/README.md) (or the
-   `--claude` login), which stores the token, declares the account and its repositories, and
-   converges the policy and the deployed job set. Read back: `fugaro accounts ls` names the account
+   the `fugaro accounts add <name>` of [docs/accounts-add/](../accounts-add/README.md) (**merged** as
+   #1470 as a design; the command is still unbuilt) or its `--claude` login — which, per the owner's
+   ruling on that design's **D862**, is **two acts**: the login runs in **the owner's own terminal**
+   and the owner **pastes once** afterwards, with **no pty and nothing parsed from the login's
+   output**, so this check reads nothing back from it either ([reconciliation.md](reconciliation.md)
+   §6's **U2** is moot for that reason). The command stores the token, declares the account and its
+   repositories, and converges the policy and the deployed job set. Read back: `fugaro accounts ls` names the account
    and its state; `fugaro doctor` raises nothing about it. **Stop here if it does not converge** —
    the review job mounts a job that must already exist.
 2. **Launch a cloud review of a known pull request.** On a sandbox repository with a pull request
@@ -607,10 +626,13 @@ run by the owner in their own terminal.
    cost; the installation's caps are unchanged by it, and `fugaro budget show` shows no counted
    spend for it. This is the subscription-versus-gateway property from §1, observed rather than
    assumed.
-6. **Run the mutation check once.** On a security-sensitive pull request, `fugaro review --pr N
-   --mutate <file:test>` and read `mutation_checks` in the artifact: the test ran, the mutant was
-   applied, the observed result is recorded, and the worktree was reverted. Confirm again that
-   nothing was pushed.
+6. **Run the mutation check once, and watch D891's answer hold.** On a security-sensitive pull
+   request, `fugaro review --pr N --mutate <file:test>` and read `mutation_checks` in the artifact:
+   the test ran, the mutant was applied, the observed result is recorded, and the worktree was
+   reverted. Confirm again that nothing was pushed, that the mutant's subprocess carried no token in
+   its environment and could not reach the network, and that the stage ran no other shell — this is
+   **U7**'s live observation, and it is the one step whose result can amend D891's answer
+   ([reconciliation.md](reconciliation.md) §6).
 7. **Drive the fix path once.** Take a `fix first` verdict, launch the fix round the coordinator
    would launch, and read the fix run's brief: it must name the review run and carry the findings,
    with no human having copied them. Then confirm the head moved and that a second review of the new
