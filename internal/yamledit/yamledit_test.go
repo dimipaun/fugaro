@@ -309,6 +309,32 @@ func TestSetScalarIsANoOpWhenTheValueIsAlreadyThere(t *testing.T) {
 	}
 }
 
+// TestARootWrittenIntoTheInputDoesNotAliasIt pins the promise the package makes:
+// an edit returns new bytes. A document that holds nothing but comments is the
+// one input an edit extends instead of splicing, and that append must not land
+// in the caller's own array — a caller that goes on writing into its buffer, or
+// hands it to someone who does, would otherwise find the result changing under
+// it.
+func TestARootWrittenIntoTheInputDoesNotAliasIt(t *testing.T) {
+	const doc = "# a note about the file\n"
+	const want = doc + "budget:\n  max_runs: 5\n"
+
+	in := make([]byte, 0, 256)
+	in = append(in, doc...)
+	got, err := yamledit.SetScalar(in, []string{"budget", "max_runs"}, "5")
+	if err != nil {
+		t.Fatalf("SetScalar: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	in = append(in, 'X')
+	if string(got) != want {
+		t.Fatalf("writing past the input's length changed the result: %q, want %q", got, want)
+	}
+}
+
 func TestSetScalarOnAnEmptyOrCommentOnlyDocument(t *testing.T) {
 	for _, tc := range []struct{ name, doc, want string }{
 		{"empty", "", "budget:\n  max_runs: 5\n"},

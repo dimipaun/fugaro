@@ -831,15 +831,16 @@ func (d *doc) openChild(op string, e *entry, lines []string) ([]byte, error) {
 }
 
 // openRoot writes a whole document where there is none yet: an empty file, or
-// one that holds nothing but comments, which are kept above the new block.
+// one that holds nothing but comments, which are kept above the new block. The
+// new text goes onto a copy of the document, as every other edit's does: an
+// append to the caller's own slice would reach into the array behind it, past
+// the length the caller lent this package, and hand back bytes that change
+// under a caller that goes on writing into its buffer.
 func (d *doc) openRoot(lines []string) []byte {
 	text := strings.Join(lines, d.eol) + d.eol
-	if len(d.src) == 0 {
-		return []byte(text)
-	}
-	out := d.src
-	if !d.lines.endsWithBreak() {
-		out = append(append([]byte{}, out...), []byte(d.eol)...)
+	out := append([]byte{}, d.src...)
+	if len(out) > 0 && !d.lines.endsWithBreak() {
+		out = append(out, []byte(d.eol)...)
 	}
 	return append(out, []byte(text)...)
 }
