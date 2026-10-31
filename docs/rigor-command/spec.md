@@ -80,6 +80,24 @@ The output is four sections.
 "areas": [...], "repositories": [...], "floors": {...}}`, whose members are only ever added to
 within a version (D835). It has a JSON Schema in `schemas/` like the other wire formats.
 
+`project` is the project's name, and `default`, `areas`, `repositories` and `floors` are §2.1–§2.4
+in that order, with the members those sections name. **`layer` is the one member with no text
+section of its own**, and it is not decoration: it says *which* layers were read and how they stand
+relative to each other, which is the input the four sections are resolved from and what §2.1 reports
+in prose as its `drift` line. It carries four members:
+
+| Member | What it is |
+| --- | --- |
+| `published` | the project layer this document was resolved against: `{"generation": N, "sha256": "..."}` — the same two values §2.1 prints in text. **Absent**, not `null`, when the project has never published one, the rule §2.3 already sets for `mode` and `from` |
+| `local` | §1's local layer file: `{"path": "...", "sha256": "..."}`. **Absent**, not `null`, when the file does not exist |
+| `source` | where `published` was read from: `"bucket"` or `"cache"` — the two the paragraph above names, the distinction §2.1 carries in text as the cache note |
+| `drift` | `true` only when both `published` and `local` are present **and** their `sha256`s differ; `false` otherwise, because with either absent there is nothing to compare. §2.1's `drift` line prints exactly when this is `true`, so the two never disagree |
+
+The member is provenance and nothing else: `show` neither writes nor fetches (D839), so `layer`
+describes the bytes it read, and a consumer can tell a stale local file from a stale published
+object without a second command. `local` being absent is the state `set` refuses on (§3 step 4) and
+`update` seeds (D831), so the two readings are the same fact told by two commands.
+
 ## 3. `fugaro rigor set <mode>`
 
 Edits **the one local layer file** and nothing else (D830, answered): `defaults.rigor.default`
