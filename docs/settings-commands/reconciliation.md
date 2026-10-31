@@ -90,9 +90,14 @@ places nothing ties together (audit §4C): the literals inside `applyDefaults`
 `DefaultJobProfile`, `ABDefaultMaxPairsPerDay`, `rigor.Default`, `budget.DefaultGrace`, the
 `projectpolicy.Default*` set, governance's `WithDefaults`), the local loader's own literals
 (`max_parallel`, `build.machine_type`), and `internal/config/example.yaml`'s comments. The schemas
-carry **no** JSON-Schema `default` keyword: the only `"default"` strings in `schemas/*.json` are the
-property name `rigor.default` (`fugaro.schema.json`, `project-layer.schema.json`) and a
-`not: {const: "default"}`. *Consequence:* SD16 builds the registry (spec §3); the DEFAULT column and
+carry **no** JSON-Schema `default` keyword: every `"default"` in `schemas/*.json` is the word as a
+*name*, not as a default, which is why none of them is a setting here — the property
+`rigor.default` (`fugaro.schema.json`, `project-layer.schema.json`), the `not: {const: "default"}`
+guard on it (`fugaro.schema.json`, and `schemas/task.schema.json` for the task format's own mode),
+and `schemas/result.schema.json`'s `from` enum, which lists the deciding layer and has `default` as
+one of its values. The task and result formats are not settings — nothing in this design gives them
+a `default` keyword, and S0's registry has no row for them. *Consequence:* SD16 builds the registry
+(spec §3); the DEFAULT column and
 `--changed` have no other source, and a fourth copy of a default is what the audit's recommendation
 exists to prevent.
 
@@ -119,12 +124,27 @@ highest-risk gap (G3): the block is untyped and unvalidated until the next read,
 `credentials.fallback: auto` decides whether a run spends the paid credential tiers.
 *Consequence:* SD5 — two new local blocks and an import on the first `update` (spec §6.4).
 
-**F16: Conflicts. Two cloud-writing doors are not refused in a coding agent's session.**
-`fugaro project policy publish` (`internal/cli/project_cmd.go`) and `fugaro project repos add`
-(`internal/cli/project_enroll.go`) carry no `agentMarker` call, while `config publish`,
-`recipes publish`, `user add|rm`, `managed flag` and `allow-delete` all do; only
-`project repos add --github-app-key` is refused. *Consequence:* SD8 adds the refusal to both, for
-parity (spec §6.1). The deliberate exceptions — `budget set|kill` and `accounts clear` — stay.
+**F16: Conflicts. The doors that write the policy node and its allow-list are not refused in a
+coding agent's session.** Four commands write what a run is admitted by, and none of them carries an
+`agentMarker` call, while `config publish`, `recipes publish`, `user add|rm`, `managed flag` and
+`allow-delete` all do:
+
+| Door | What it writes | The refusal it carries today |
+| --- | --- | --- |
+| `fugaro project policy publish` (`internal/cli/project_cmd.go`) | the whole node: the ceilings, the caps, the credential cascade | none |
+| `fugaro project repos add` (`internal/cli/project_enroll.go`) | `allow_repos`, through the ETag-guarded write | none |
+| `fugaro project repos rm` (`internal/cli/project_enroll.go`) | `allow_repos`, removing an entry (the typed project name guards the human, not the agent) | none |
+| `fugaro project sync` (`internal/cli/project_enroll.go`) | `allow_repos`, adding the App's installed repositories — the same write as `repos add`, which its own doc comment names | `--github-app-key` only, and that one is `refuseKeyReadInAgent` on the *key* (`syncAppKey`), not a refusal to write |
+
+The audit read the refusal as living on `project repos add --github-app-key`; it lives on
+`project sync`, on the flag that hands the App's private key to the process. *Consequence:* SD8's
+parity names **all four** doors, in `project_cmd.go` and in `project_enroll.go`, and none is left
+out. Refusing `repos add` while `sync` stays open would close nothing — an agent that cannot call
+one calls the other and widens the same list — and `repos rm` is in the parity set for the reason
+`user rm` and `allow-delete` are: a door that can un-enroll every repository (`rm *`) is the same
+class as one that can enroll it, and the typed project name that guards it today is the human
+confirmation `--yes` may not stand in for (SD9, D846), a different guard from this one (spec §6.1).
+The deliberate exceptions — `budget set|kill` and `accounts clear` — stay.
 
 **F17: Conflicts. `config show` reports a clamped value as if it were in force.** A repository's
 `budget.per_run_usd: 50` under a ceiling of 10 is printed with source `repo`; only `validate` says
@@ -168,7 +188,7 @@ were answered as recommended. The recommendation and the cost of the alternative
 | **SD5** | `credentials.*` and `clone_urls`: where is the source of truth? | **Move them to local-config blocks that `update` publishes**; the first update imports the node's values | Commands that write the node directly: a second door to the cloud outside `update` (the model D780 refused) | **Answered: local-config blocks, published by `fugaro update`, with the first update importing the node's values** |
 | **SD6** | The policy `budget.mode` and the Realtime Database `config/mode` | **Keep both, name them distinctly** (`budget.mode`, `caps.mode`), and have `update --help` say which it writes | Merge into one: changes what a field means, which is forbidden | **Answered 2026-10-31: the recommendation** |
 | **SD7** | Do `budget set\|kill` stay immediate writes outside `update`? | **Yes**: runtime controls, not upgrade state | Route them through `update`: a kill switch delayed is useless | **Answered: the recommendation** |
-| **SD8** | An agent refusal for `project policy publish` and `project repos add` | **Add it**, for parity with `config publish`, `recipes publish` and `user add` | Leave as is: an agent can widen the allow-list or publish a policy | **Answered: the recommendation** |
+| **SD8** | An agent refusal for `project policy publish` and `project repos add` | **Add it**, for parity with `config publish`, `recipes publish` and `user add` — and, as F16 corrects, to **all four** doors that write the node or its `allow_repos`: those two plus `project repos rm` and `project sync` | Leave as is: an agent can widen the allow-list or publish a policy | **Answered: the recommendation, read as the parity set F16 names (four doors)** |
 | **SD9** | Agent-session behaviour for a local or layer write | **Print the diff and the command, write nothing, `--yes` included** (the `models` D789); repository writes allowed | Allow with `--yes`: contradicts D789 | **Answered: the recommendation** |
 | **SD10** | Where the review floor command lives | **`fugaro rigor floor show\|set\|unset`**, with lowering behind the typed project name | `project floor`: splits rigor across two nouns | **Answered: the recommendation** |
 | **SD11** | Provider drift re-converge in `update` | Already answered (D787); listed so the dependency is visible | – | **Answered (D787, 2026-10-31): `update` re-converges each recorded repository whose job's provider copy drifted** |
@@ -183,13 +203,14 @@ were answered as recommended. The recommendation and the cost of the alternative
 ## 4. This design's decisions D840–D854
 
 Everything the audit left open that is **not** one of its SDs. The recommendation comes first; the
-alternative and its cost are the second column. **All fifteen were answered by the owner on
-2026-10-31, every one as recommended — nothing here is open.** The last row, D854, is the one that
-was still being asked about: the stale local copy, answered with the refusal.
+alternative and its cost are the second column. **Fourteen of the fifteen — D840 to D853 — were
+answered by the owner on 2026-10-31, every one as recommended.** **D854, the stale local copy, has
+no recorded owner ruling and is stated OPEN**, with both of its outcomes written down below the
+table so that either can land without the rest of the design moving.
 
 | D | Question | Recommendation | The alternative, and its cost | Answer |
 | --- | --- | --- | --- | --- |
-| **D840** | Where does the key and defaults registry live? | **A new `internal/settings` package**, whose `fugaro.yaml` rows are read from `config.Scopes` and pinned against it by a test. `internal/config` learns nothing of `localcfg` or `projectpolicy` | **Extend `config.Scopes` with default, merge and store columns:** puts local-config and node knowledge into the package the runner and the task format import, and every consumer of a `fugaro.yaml` key would carry it | **Answered 2026-10-31: the recommendation** |
+| **D840** | Where does the key and defaults registry live? | **A new `internal/settings` package**, whose `fugaro.yaml` rows are read from `config.Scopes` and pinned against it by a test. `internal/config` learns nothing of `localcfg` or `projectpolicy`, and the defaults move the other way: the constants live in `config` and the registry reads them, because a registry that imports `config.Scopes` cannot be imported back by `applyDefaults` | **Extend `config.Scopes` with default, merge and store columns:** puts local-config and node knowledge into the package the runner and the task format import, and every consumer of a `fugaro.yaml` key would carry it | **Answered 2026-10-31: the recommendation** |
 | **D841** | Are the schema `default` keywords and the docs table generated from the registry, or pinned to it? | **Pinned by a test**, the shape `TestScopeTableMatchesDocs` already gives the scope table | **Generated** (`go generate`): a step a release must remember to run, and a generated file whose diff is noise nobody reads | **Answered 2026-10-31: the recommendation** |
 | **D842** | Where is the local source of truth for `credentials.*` and `clone_urls`? | **Two new blocks in the local project config**, decoded strictly like every other block, beside `budget`, `providers` and `routing` | **A separate `<project>-policy.yaml`:** a second file for the owner to know about, while the local config is already the home of every policy-section key (audit §1.3) | **Answered 2026-10-31: the recommendation** |
 | **D843** | What does `update` do when neither the local file nor the node carries the two blocks? | **Nothing: no block is created and no default is seeded** | **Seed the defaults into the local file:** writes values nobody chose, and makes a file look authoritative where the node's own defaults already decide | **Answered 2026-10-31: the recommendation** |
@@ -203,9 +224,45 @@ was still being asked about: the stale local copy, answered with the refusal.
 | **D851** | Is the `STATE` vocabulary closed? | **Closed** (spec §2.5); a new state is a new member of the set and an addition to `--json` | **Free text:** a consumer cannot branch on the column, which is the only reason the column exists | **Answered 2026-10-31: the recommendation** |
 | **D852** | `settings get` on a key set nowhere, and on an unknown key | **Set nowhere prints the default row and exits 0; unknown exits non-zero with the nearest registry names** | **Non-zero for set nowhere:** an idempotent script fails on a state that is already the answer — the argument `rigor unset` makes for its no-op | **Answered 2026-10-31: the recommendation** |
 | **D853** | Which keys does the generic path own? | **Every scalar and string-list key; a map key, and any key whose `Owner` is a family, is refused with that family's command** | **Let the generic path write maps:** typing a provider map or an area rule on a command line loses the cross-key checks (route overlap, `Area.Validate`, the cascade's silence rules) the families exist for | **Answered 2026-10-31: the recommendation** |
-| **D854** | A stale local copy overwriting a newer publish: what does `update` do when the object has moved since this machine's file was written? | **Record the generation the local file was seeded from or last published at. When the published generation has moved since, `update` refuses to publish, shows the three-way state (this machine's file, the generation it was written from, the object published now), and offers to re-seed the local file from the published one under confirmation, with a backup** | **Publish on difference anyway** (what the design would have shipped without the answer): on a second machine, one operator's newer layer or policy node is silently replaced by this machine's older file. Nothing reports it — every later `update` on the losing machine rewrites the same stale content — so the change is noticed only when a run behaves in a way nobody chose, and the newer publish is unrecoverable unless someone kept a copy | **Answered 2026-10-31: the recommendation** — `update` records the generation the local file was seeded from or last published at; when the published generation has moved since, it refuses to publish, prints the three-way state (this machine's file, the generation it was written from, the object published now), and offers to re-seed the local file from the published one under confirmation, with a backup |
+| **D854** | A stale local copy overwriting a newer publish: does `update` remember the generation this machine's file was written from, and refuse when the published object has moved since? | **Record it.** `update` records the generation the local file was seeded from or last published at; when the published generation has moved since, it refuses to publish, shows the three-way state (this machine's file, the generation it was written from, the object published now), and offers to re-seed the local file from the published one under confirmation, with a backup | **Publish on difference anyway** (today's behaviour): on a second machine, one operator's newer layer or policy node is silently replaced by this machine's older file. Nothing reports it — every later `update` on the losing machine rewrites the same stale content — so the change is noticed only when a run behaves in a way nobody chose, and the newer publish is unrecoverable unless someone kept a copy | **OPEN. No owner ruling is recorded, and this design does not invent one.** Both outcomes stay live: **(a) record the generation and refuse** (the recommendation) and **(b) publish on difference anyway**. Where the recorded generation would live, what the first `update` does when nothing is recorded, and the test names for each outcome are under the table |
 
-**All fifteen are answered (2026-10-31) and none is open.** **D855–D859 are reserved and unused.**
+**D840–D853 are answered (2026-10-31) and closed.** **D854 is open**, and everything its two
+outcomes need is here:
+
+- **The two guards, which are not the same guard.** The **within one run** guard is not in question
+  and both designs carry it: the stage reads the published object, and the write it then makes
+  carries the generation that read returned, so a publish someone else slipped in between the read
+  and the write is a conflict and not an overwrite. That is R1's
+  `TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed` — **the name this design adopts
+  for the layer stage**, because R1 is that stage's task and one guard with two names in two
+  documents is how a reviewer ends up thinking there are two guards — and S3's
+  `TestUpdatePolicyStageRefusesWhenTheNodeMovedUnderIt` for the policy stage. The **across runs**
+  guard is D854: remembering the generation this machine's file was written from, which is what
+  catches a second machine that published a week ago, long after this run's read. Only the second
+  one is open, and it is the stronger of the two: the ETag guard cannot see a change that happened
+  before its own read.
+- **Where the recorded generation would live**, if (a) lands: in the project's local config,
+  `~/.config/fugaro/projects/<project>.yaml` — two new fields on `localcfg.Config`
+  (`internal/localcfg/localcfg.go`), `policy_generation` and `layer_generation`, written by the
+  stage that publishes and read by the next one. A local file, not the wire: the console and the
+  runner never see it, an installation that carries neither field decodes exactly as it does today,
+  and no existing field changes meaning.
+- **What the first `update` does when nothing is recorded**, which is every installation today and
+  any node published before this release by `fugaro project policy publish` with no local file
+  behind it: nothing is recorded, so nothing can have moved. Under **(a)** there are two spellings —
+  **adopt** (the first `update` publishes as it would, then records the generation it read, and says
+  it adopted it) or **refuse once** (it stops and asks whether to adopt). The recommendation is
+  adopt: refusing on the first run after an upgrade asks a question with no information in it, since
+  the machine has no baseline to compare against, and the HARD RULE wants `update` to be one
+  command that finishes. Under **(b)** there is nothing to compare, so the first `update` behaves
+  exactly as every later one does — it publishes on difference.
+- **The names, if (a) lands:** `TestUpdatePolicyStageRefusesWhenThePublishedGenerationIsNewer` and
+  `TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer` (one per stage), with
+  `TestUpdatePolicyStageAdoptsTheGenerationWhenNothingIsRecorded` and its layer twin for the first
+  run. `TestUpdateRefusesToPublishOverANewerGeneration` is **not** used: it is one word away from
+  R1's within-run test name and would read as the same guard twice.
+
+**D855–D859 are reserved and unused.**
 
 ## 5. Noticed while reconciling, and not this work's
 
@@ -236,7 +293,8 @@ was still being asked about: the stale local copy, answered with the refusal.
   decision for its consumers, not a fix this design may slip in.
 - **`fugaro config layer` requires a git checkout**, so an owner outside a repository cannot read
   the layer through that command (audit §7). This design's read does not inherit that: the layer has
-  a file of its own, `~/.config/fugaro/projects/<project>-layer.yaml` (`localcfg.LayerFile`), and a
+  a file of its own, `~/.config/fugaro/projects/<project>-layer.yaml` (`localcfg.LayerFile`, which the
+  `rigor` design's R0 adds and which is not on `main` today), and a
   published object, so `fugaro settings --layer project` answers outside a checkout. Whether the
   `rigor` design's R0 lifts the requirement for `config layer` itself is its decision; nothing here
   claims it for that command.

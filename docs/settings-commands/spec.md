@@ -1,10 +1,10 @@
 # `fugaro settings`: the spec
 
 The commands below are written to the owner's answers to SD1–SD18 and to this design's own decisions
-D840–D854, all answered on 2026-10-31 as recommended ([reconciliation.md](reconciliation.md) §3 and
-§4). A decision answered the other way would change the paragraph that names it; none was. D854 —
-a stale local copy overwriting a newer publish — is answered with the refusal, and §6 says what the
-publishing stages do with it. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`),
+D840–D853, all answered on 2026-10-31 as recommended ([reconciliation.md](reconciliation.md) §3 and
+§4). A decision answered the other way would change the paragraph that names it; none was. **D854 —
+a stale local copy overwriting a newer publish — is open**, and §6 says what the publishing stages do
+under either of its two outcomes. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`),
 projects are `workspace-a`, people are `person-1`.
 
 ## 1. The rule this serves
@@ -58,7 +58,7 @@ the one the code already implements, stated once in `--help` and once in the JSO
 | Key family | Order, loosest first | Rule |
 | --- | --- | --- |
 | Resolved `fugaro.yaml` keys | `default` < `project` (layer `defaults:`) < `profile <n>` (layer profile, `workflows.*` only) < `repo` < `flag` (the `InOverride` keys only) | `config.Resolve` and `Resolution.SourceOf` (`internal/config/resolve.go`); `config show` prints the same words |
-| Ceiling keys (`budget.{mode,per_run_usd,allowed_models,max_run_tokens}`, `governance.*`) | `default` → `local` (the job environment as of the last `update --repo`) → `policy` (the node) → `project` (layer governance) → `repo` → `branch` (the run's branch) | **Tighten only:** the smaller cap, the stricter mode and the intersection of the lists win (`policy.Merge`, `internal/policy/merge.go`) |
+| Ceiling keys (`budget.{mode,per_run_usd,allowed_models,max_run_tokens}`, `governance.*`) | `default` → `job` (the ceiling the deployed job carries, that is this machine's local config as of the last `update --repo`) → `policy` (the node) → `project` (layer governance) → `repo` → `branch` (the run's branch) | **Tighten only:** the smaller cap, the stricter mode and the intersection of the lists win (`policy.Merge`, `internal/policy/merge.go`). `job` is `policy.Effective.Sources`'s `ceiling` layer under the name the read prints (a level, never a store), and it is spelled apart from `local` on purpose: `local` is the local project config **file**, the store `--layer local` names, and it differs from `job` exactly when the file has moved since the last `update --repo` — the `unpublished` state. A value from the file is `local`; a value the deployed job is still held to is `job` |
 | `review_floor` | `policy` ∪ every lower layer | A union: a lower layer only adds a floor (`localcfg.Config.ReviewFloor`) |
 | `rigor.default` | `default` < `project` < `repo` | **`rigor.Resolve` (`internal/rigor/resolve.go`) is the single source of this row**: the read calls it rather than ordering the layers itself, so a run and the table cannot disagree. `rigor.areas` is a union of the two layers |
 | `caps.*`, `kill.*` | `caps.defaults` < `caps.repo` | The Realtime Database caps, independent of and enforced beside the ceiling |
@@ -125,8 +125,10 @@ whose cloud side was read; with `--offline` it is not claimed at all.
   first row, a run's own command-line override for the `InOverride` keys, and `settings` takes no such
   override itself, so `--layer flag` reads an empty layer rather than being refused — it is a level
   `WINS` can name, and leaving it out would make `--layer`'s vocabulary smaller than the precedence's.
-  The one level of §2.2 that is not a `--layer` name is `branch`: only a run has a branch, so it is
-  not a store a read selects. `--layer` with a name the registry does not know is refused.
+  Two levels of §2.2 are not `--layer` names: `branch`, because only a run has one, and `job`,
+  because it is the copy the deployed job carries rather than a store a read selects — `--layer
+  local` reads the file, and the `unpublished` state is what says the two differ. `--layer` with a
+  name the registry does not know is refused.
 - `--grep RE` filters rows by key or by rendered value. `RE` is a Go regexp, matched with
   `MatchString` against the key and then against each rendered text column: **unanchored**, so a
   pattern matches anywhere in either, and **case-sensitive** unless the pattern says otherwise
@@ -192,9 +194,14 @@ What the registry becomes the single source of (D841):
 - the JSON Schema `default` keywords, which exist nowhere today, **pinned by a test** rather than
   generated: a generator is a `go generate` step a release must remember, and its output is a diff
   nobody reads;
-- `applyDefaults` (`internal/config/defaults.go`) and the local loader's literals, which read their
-  values from it instead of restating them (this is where `"main"` beside `config.DefaultBaseBranch`
-  stops being two copies of one default);
+- the **one copy of every default constant**, which lives in `internal/config` — the package
+  `applyDefaults` (`internal/config/defaults.go`) and the local loader (`internal/localcfg`) already
+  import. They read the constants instead of restating them (this is where `"main"` beside
+  `config.DefaultBaseBranch` stops being two copies of one default), and the registry reads the same
+  constants, with `TestRegistryDefaultsMatchApplyDefaults` pinning each row's `Default` to what
+  `applyDefaults` actually produces. **The arrow does not point the other way**: `internal/settings`
+  imports `internal/config` for `config.Scopes`, so a `config` that imported `internal/settings`
+  would be an import cycle, and `applyDefaults` could never read the registry;
 - a completeness test in the shape of `TestExecutableKeyValuesCoversEveryExecutableKey`: **every**
   `fugaro.yaml`, project-layer and local-config field has a row, so a key added later without one
   fails the build rather than silently missing from the read.
@@ -278,7 +285,7 @@ rule. Each refuses in an agent session when it writes outside a repository, and 
 
 | Family | Forms | Writes | Covers |
 | --- | --- | --- | --- |
-| `fugaro rigor floor` | `show [--json]`; `set <mode> <l1,l2,…>`; `unset <mode>` | the local config's `review_floor` | SD10, G7. Lowering asks for the typed project name; an absent key and `{}` mean different things at publish, so `unset` writes `{}` only where the owner asks for a floor of nothing, and otherwise removes the mode's entry |
+| `fugaro rigor floor` | `show [--json]`; `set <mode> <l1,l2,…>`; `unset <mode>` | the local config's `review_floor` | SD10, G7. Lowering asks for the typed project name. **An absent key and `{}` mean different things at publish** — absent hands the decision to the layer below, `{}` states a floor of nothing — so `unset <mode>` removes that mode's entry and, when it was the **last** one, leaves the key standing as `review_floor: {}`: deleting the key is the other meaning, and `unset` did not ask for it. The spelling and the editor operation it needs are in the plan's S7 |
 | `fugaro accounts` | `add NAME --allow REPO…`; `allow NAME REPO`; `deny NAME REPO`; `rm NAME` | the local config's `claude_accounts` | G6. The token stays `secrets set` / `creds set`; this command writes only `allow_data_to` |
 | `fugaro secrets allow` | `allow NAME PATTERN…`; `deny NAME PATTERN`; `--proxy` | the local config's `project_secrets` | G6 and SD17. `update --repo` reads the allow-list from the published node instead of the operator copying the entry to every machine |
 | `fugaro project profile` | `ls\|show [--json]`; `add NAME --provider P --cpu N --memory M --timeout-class C`; `set NAME KEY VALUE`; `rm NAME` | the local config's job `profiles` | G6 |
@@ -302,10 +309,17 @@ refused in a coding-agent session as every cloud write of `update` already is (S
    the same stage the `models` design's E1 names (its F8, UC1 part b); **it is one stage and it is
    built once** — whichever work lands it first, the other deletes its copy. `project policy
    publish` stays for `--delete`, `--seed-repos` and scripted use, and gains the agent-session
-   refusal it lacks today — the other door SD8 names, `fugaro project repos add`, gains the same
-   one, and only its `--github-app-key` form has it today (F16).
+   refusal it lacks today. **SD8's parity covers all four doors that write the node or its
+   allow-list, not the two the audit named**: `project policy publish`, `project repos add`,
+   `project repos rm` and `project sync` all gain the refusal (F16). Only one of them is refused
+   today, and on the wrong thing: `project sync --github-app-key` refuses the *key read*
+   (`refuseKeyReadInAgent`), not the write, and the command writes `allow_repos` through the same
+   ETag-guarded write `project repos add` uses. None is left out: `repos add` is not refused while
+   `sync` widens the same list, and `repos rm` can un-enroll every repository with `rm *`, which is
+   the class `user rm` and `allow-delete` already refuse.
 2. **Layer publish.** The stage that publishes the project layer's local file —
-   `~/.config/fugaro/projects/<project>-layer.yaml`, the path `localcfg.LayerFile` resolves — through
+   `~/.config/fugaro/projects/<project>-layer.yaml`, the path `localcfg.LayerFile` resolves
+   (**`localcfg.LayerFile` is the `rigor` design's R0 and is not on `main` today**) — through
    `publishLayer`, and fans it out through `fanOutLayer`, with the executable-key gate unchanged.
    This is PR #1463's R1, and this design **does not build a second one**: §7 says exactly what is
    shared, and the settings-side task (S4) is only the read that the layer file has a path and is
@@ -327,15 +341,26 @@ And one migration, in the same command (SD5, D842, D844):
    node carries neither block gets neither block in its file: no default is seeded into a file
    nobody wrote (D843).
 
-**A stale local copy cannot overwrite a newer publish — D854, answered.** A stage that writes whenever
-the file differs from the object would, on a second machine, replace an operator's newer layer or
-policy node with this machine's older file, and say nothing. So each stage records the generation the
-local file was seeded from or last published at, and when the published generation has moved since,
-it **refuses to publish**, shows the three-way state (this machine's file, the generation it was
-written from, the object published now), and offers to re-seed the local file from the published one
-under confirmation, with a backup. The refusal is a question rather than a wall: a declined re-seed
-leaves both sides as they were, and the stage publishes again once the file is reconciled with the
-generation it was written from.
+**A stale local copy overwriting a newer publish — D854, open.** A stage that writes whenever the
+file differs from the object would, on a second machine, replace an operator's newer layer or policy
+node with this machine's older file, and say nothing about it. Two outcomes are live, and the stages
+are written so either can land (reconciliation §4 holds both, with where the recorded generation
+would live and what the first `update` does when nothing is recorded):
+
+- **(a) record the generation and refuse.** Each stage remembers the generation the local file was
+  seeded from or last published at, and when the published generation has moved since, it **refuses
+  to publish**, shows the three-way state (this machine's file, the generation it was written from,
+  the object published now), and offers to re-seed the local file from the published one under
+  confirmation, with a backup. The refusal is a question rather than a wall: a declined re-seed
+  leaves both sides as they were, and the stage publishes again once the file is reconciled with the
+  generation it was written from.
+- **(b) publish on difference anyway.** This is today's behaviour and the design's without an answer:
+  the file wins, the diff and the backup make the replacement visible after the fact, and the newer
+  publish is recoverable only if someone kept a copy.
+
+**What is not open, either way:** within one run, the write carries the generation the read
+returned. A publish another writer slips in between the two is a conflict and not an overwrite —
+both designs' stages hold that, and it is the half of the problem the ETag alone can see.
 
 The credentials cascade's `fallback: auto` is the reason the import asks rather than writes: the
 block decides whether paid credential tiers are spent, and a value the owner never saw must not
