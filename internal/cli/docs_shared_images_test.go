@@ -87,6 +87,14 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		"**every** range it lists, not only the first",
 		"An entry that states no hashes is keyed only when the lock says it came from PyPI's own index",
 		"That convention is the one place the key rests on a file it does not read",
+		// Round 3's follow-up: a `@registry:` key names a registry rather than a
+		// version and is a source like the other pnpm markers, and a lock older
+		// than the two sections — pnpm 5 and earlier — states its whole resolved
+		// set where the reducer does not look, so it is refused rather than read
+		// as one that holds nothing.
+		"`@patch:` or `@registry:`",
+		"a pnpm 5 or earlier lock writes each",
+		"is refused rather than read as one that holds nothing (§2.5)",
 		// §3.1's entries are the three quoted literals, quotes and all.
 		"a package entry is the fact's three quoted literals",
 		"\"\\\"left-pad\\\" \\\"1.3.0\\\" \\\"sha512-aaa\\\"\"",

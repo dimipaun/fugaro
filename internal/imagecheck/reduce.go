@@ -578,6 +578,10 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 	// the schema line would key the entry as one with no source and no
 	// integrity at all.
 	resolutionIndent := -1
+	// unreadDependencies is a top-level dependency section stating resolved
+	// versions in the shape the locks before the packages map use: pnpm 5 and
+	// earlier name each package against a bare version there.
+	unreadDependencies := false
 	eachLine(data, func(indent int, text string) bool {
 		if text == "" || strings.HasPrefix(text, "#") {
 			return true
@@ -589,6 +593,9 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 			return true
 		}
 		if section != "packages" && section != "snapshots" {
+			if indent == 2 && pnpmDependencySection(section) && pnpmStatesVersion(text) {
+				unreadDependencies = true
+			}
 			return true
 		}
 		if indent != 2 {
@@ -675,16 +682,51 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 	if sawSection && set.count == 0 && unplaced {
 		return nil, set.fail(UnkeyedUnreadable, "the packages section states no entry at the indent this reads")
 	}
+	// A lock that states its dependencies as bare versions under a top-level
+	// section of their own — pnpm 5 and earlier, which has no packages or
+	// snapshots map at all — keeps every one of them outside the two sections
+	// this reads, and the empty set would key this repository as one that
+	// depends on nothing.
+	if set.count == 0 && unreadDependencies {
+		return nil, set.fail(UnkeyedUnreadable, "the lock states its dependencies outside the packages and snapshots sections, as pnpm 5 and earlier writes them")
+	}
 	return set.pairs(), nil
 }
 
+// pnpmDependencySection reports whether a top-level section of a pnpm lock is
+// one that states resolved versions in the shape the locks before the packages
+// map use.
+func pnpmDependencySection(section string) bool {
+	switch section {
+	case "dependencies", "devDependencies", "optionalDependencies":
+		return true
+	}
+	return false
+}
+
+// pnpmStatesVersion reports whether an entry line under such a section states a
+// version — a scalar after its separator — rather than opening a mapping of its
+// own, which is the shape this reader reads and the shape an importer's own
+// dependency list is written in.
+func pnpmStatesVersion(text string) bool {
+	_, value, ok := strings.Cut(text, ": ")
+	if !ok {
+		return false
+	}
+	value = strings.Trim(strings.TrimSpace(value), `"'`)
+	return value != "" && value != "{}"
+}
+
 // pnpmEntryAt reads one packages or snapshots key. A key that names a source
-// rather than a registry version — pnpm writes a git, file, link, patch or
-// alias resolution into the key — carries that source and no name, and the
-// entry is refused: its "version" is the source, and a package from one is not
-// the registry's (D618).
+// rather than a registry version — pnpm writes a git, file, link, patch, alias
+// or named-registry resolution into the key — carries that source and no name,
+// and the entry is refused: its "version" is the source, and a package from one
+// is not the registry's (D618). Reading a `@registry:` key's version field as
+// the version of the package would key a fact — `"left-pad" "registry:1.3.0"
+// ""` — whose version is no version, and the lock states nothing that would
+// tell which artifact that registry name served.
 func pnpmEntryAt(raw string) (pnpmEntry, bool) {
-	for _, marker := range []string{"@npm:", "@git+", "@git:", "@file:", "@link:", "@workspace:", "@http:", "@https:", "@patch:"} {
+	for _, marker := range []string{"@npm:", "@git+", "@git:", "@file:", "@link:", "@workspace:", "@http:", "@https:", "@patch:", "@registry:"} {
 		if strings.Contains(raw, marker) {
 			return pnpmEntry{source: raw}, true
 		}
@@ -876,11 +918,7 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 		}
 		switch {
 		case strings.HasPrefix(text, "version"):
-			v := yarnValue(text, "version")
-			if i := strings.IndexByte(v, '#'); i >= 0 {
-				v = strings.TrimSpace(v[:i])
-			}
-			cur.version, cur.versioned = v, true
+			cur.version, cur.versioned = yarnValue(text, "version"), true
 		case strings.HasPrefix(text, "integrity"):
 			cur.integrity = yarnValue(text, "integrity")
 		case strings.HasPrefix(text, "checksum"):
@@ -901,11 +939,32 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 
 // yarnValue reads a field's value: the text after the field's name, past the
 // space Yarn 1 writes or the colon Berry writes, without the quotes either may
-// wrap it in.
+// wrap it in or the comment either may write after it.
 func yarnValue(text, field string) string {
 	v := strings.TrimSpace(strings.TrimPrefix(text, field))
 	v = strings.TrimSpace(strings.TrimPrefix(v, ":"))
-	return strings.Trim(v, `"'`)
+	return strings.Trim(yarnComment(v), `"'`)
+}
+
+// yarnComment drops the comment a line may write after a field's value. A value
+// may hold a `#` of its own — Yarn 1 writes the archive's hash after the
+// tarball's URL (`…#abcdef`) — so a quoted value ends at its closing quote, and
+// only what follows the quote is a comment, while an unquoted one ends where a
+// `#` begins after whitespace. Shortening a URL at that hash would key a source
+// no registry served, and keeping a comment would leave a space in the
+// integrity, which no fact holds: a lock that comments its own lines would lose
+// the repository its key either way.
+func yarnComment(v string) string {
+	if len(v) > 0 && (v[0] == '"' || v[0] == '\'') {
+		if i := strings.IndexByte(v[1:], v[0]); i >= 0 {
+			return v[:i+1]
+		}
+		return v
+	}
+	if i := strings.IndexAny(v, " \t"); i >= 0 && strings.HasPrefix(strings.TrimLeft(v[i:], " \t"), "#") {
+		return v[:i]
+	}
+	return v
 }
 
 // classifyYarnSource reads a resolved or resolution line, and answers what it

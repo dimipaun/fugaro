@@ -401,6 +401,32 @@ func TestReduceYarnLock(t *testing.T) {
 	if got := reduced(t, "yarn.lock", berry); !slices.Equal(got, []string{factOf("@app/a", "0.0.0-use.local", ""), factOf("left-pad", "1.3.0", "10c0/abcdef")}) {
 		t.Errorf("a Berry workspace member: %v", got)
 	}
+	// Yarn states version, integrity and checksum as bare values at the end of
+	// their own lines, and a lock may carry a comment after one — Yarn 1's
+	// header line has one to itself. The comment is not part of the value: read
+	// into the version it keys a version no file states, and read into an
+	// integrity or a checksum it leaves a space in the fact's third field,
+	// which no hash holds, so a lock that comments its own lines would lose the
+	// repository its key.
+	commented := "left-pad@^1.3.0: # the range\n  version \"1.3.0\" # the version\n" +
+		"  resolved \"https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#aaaa\" # where it came from\n" +
+		"  integrity sha512-aaa # the artifact\n"
+	if got := reduced(t, "yarn.lock", commented); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha512-aaa")}) {
+		t.Errorf("a Yarn 1 entry with a comment on every line: %v", got)
+	}
+	berryComment := "__metadata:\n  version: 8\n\n\"left-pad@npm:^1.3.0\":\n  version: 1.3.0\n" +
+		"  resolution: \"left-pad@npm:1.3.0\"\n  checksum: 10c0/abcdef # the archive\n"
+	if got := reduced(t, "yarn.lock", berryComment); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "10c0/abcdef")}) {
+		t.Errorf("a Berry entry with a comment on its checksum line: %v", got)
+	}
+	// The integrity line alone, commented, on an entry the default registry did
+	// not serve: read into the integrity, the fact's third field holds a space,
+	// which no hash does, and the entry is refused rather than keyed by.
+	commentedIntegrity := "left-pad@^1.3.0:\n  version \"1.3.0\"\n" +
+		"  resolved \"https://npm.example.invalid/left-pad/-/left-pad-1.3.0.tgz\"\n  integrity sha512-aaa # the artifact\n"
+	if got := reduced(t, "yarn.lock", commentedIntegrity); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha512-aaa")}) {
+		t.Errorf("a comment on the integrity line of another registry's entry: %v", got)
+	}
 	// An alias and a package resolved from a git repository (Berry's git:
 	// scheme, and the codeload URL Yarn 1 writes for a GitHub dependency) are
 	// not the registry's: the alias's header names two packages, and a git or
@@ -1063,6 +1089,21 @@ func TestReduceNonRegistrySourceIsUnkeyed(t *testing.T) {
 			"packages:\n  alias@npm:left-pad@1.3.0:\n    resolution: {integrity: sha512-aaa}\n",
 		},
 		{
+			// pnpm names the registry a package came from in the key when it
+			// is not the default one, and the version field then holds that
+			// registry's name: the fact would say the package's version is
+			// `registry:1.3.0`, and the lock states nothing that would tell
+			// which artifact such a key served.
+			"a pnpm package from a registry the key names",
+			"pnpm-lock.yaml",
+			"packages:\n  left-pad@registry:1.3.0:\n    resolution: {integrity: sha512-aaa}\n",
+		},
+		{
+			"a scoped pnpm package from a registry the key names",
+			"pnpm-lock.yaml",
+			"packages:\n  '@scope/pkg@registry:1.3.0':\n    resolution: {integrity: sha512-aaa}\n",
+		},
+		{
 			"a pnpm tarball resolution",
 			"pnpm-lock.yaml",
 			"packages:\n  left-pad@1.3.0:\n    resolution: {tarball: https://example.invalid/left-pad-1.3.0.tgz}\n",
@@ -1225,11 +1266,19 @@ func TestReduceUnknownFormatIsUnkeyed(t *testing.T) {
 // reduce to the empty set — which is not "no dependencies" but "read nothing",
 // and it is the set every other such repository would take. A named section
 // this reader reads no entry from is refused for the same reason a file over
-// the entry cap is: a set read in part is a different set.
+// the entry cap is: a set read in part is a different set. So is a lock whose
+// whole resolved set is written in a shape this reader does not read at all:
+// every pnpm lock before the packages and snapshots maps states each
+// dependency against a bare version under a top-level section of its own, and
+// reading one as empty would key a repository that depends on packages as one
+// that depends on none.
 func TestReduceSectionWithNoReadableEntryIsUnkeyed(t *testing.T) {
 	for _, c := range []struct{ path, data string }{
 		{"pnpm-lock.yaml", "lockfileVersion: '9.0'\npackages:\n    left-pad@1.3.0:\n        resolution: {integrity: sha512-aaa}\n"},
 		{"pnpm-lock.yaml", "lockfileVersion: '9.0'\nsnapshots:\n    react@18.3.1: {}\n"},
+		{"pnpm-lock.yaml", "lockfileVersion: 5.3\nspecifiers:\n  left-pad: ^1.3.0\ndependencies:\n  left-pad: 1.3.0\n"},
+		{"pnpm-lock.yaml", "lockfileVersion: 5.3\ndevDependencies:\n  left-pad: 1.3.0\n"},
+		{"pnpm-lock.yaml", "lockfileVersion: 5.4\noptionalDependencies:\n  left-pad: 1.3.0\n"},
 		{"Gemfile.lock", "GEM\n  remote: https://rubygems.org/\n  specs:\n  rake (13.0.6)\n"},
 		{"yarn.lock", "left-pad@^1.3.0:\n  resolved \"https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz\"\n"},
 		{"yarn.lock", "left-pad@^1.3.0:\n  version \"1.3.0\"\n\n@scope/pkg@^2.0.0:\n  resolved \"https://example.invalid/pkg.tgz\"\n"},
