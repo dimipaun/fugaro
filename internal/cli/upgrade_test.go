@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -157,12 +158,13 @@ func upgradeRigCheckout(t *testing.T, r *initRig) string {
 	return root
 }
 
-// runUpgradeRulesStep runs the rules step alone, against one checkout and with
+// runUpgradeStep runs one step function alone, against one checkout and with
 // its own confirmation taken (--yes), and returns the verdict and what the step
 // printed. It is the step, not the command: these cases are about the states a
 // checkout holds when the step is reached, and the steps before it are the
-// fixtures' own (TestUpgradeEveryStepIsImplemented drives the modes).
-func runUpgradeRulesStep(t *testing.T, root string) (stepResult, string) {
+// fixtures' own (TestUpgradeEveryStepIsImplemented drives the modes, and
+// TestUpgradeRunsTheRulesStepBeforeThePolicyItGates drives the loop).
+func runUpgradeStep(t *testing.T, root string, run func(context.Context, *upgradeCtx) stepResult) (stepResult, string) {
 	t.Helper()
 	out := &syncBuf{}
 	cmd := NewRootCmd()
@@ -170,7 +172,17 @@ func runUpgradeRulesStep(t *testing.T, root string) (stepResult, string) {
 	cmd.SetErr(&syncBuf{})
 	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: root}}
 	u.o.yes = true
-	return rulesStep(context.Background(), u), out.String()
+	return run(context.Background(), u), out.String()
+}
+
+func runUpgradeRulesStep(t *testing.T, root string) (stepResult, string) {
+	t.Helper()
+	return runUpgradeStep(t, root, rulesStep)
+}
+
+func runUpgradePolicyStep(t *testing.T, root string) (stepResult, string) {
+	t.Helper()
+	return runUpgradeStep(t, root, policyStep)
 }
 
 // TestUpgradeRunsTheRulesStep: fugaro upgrade runs the rules deploy the update
@@ -216,6 +228,84 @@ func TestUpgradeRunsTheRulesStep(t *testing.T) {
 	if !strings.Contains(out, "The security rules of the Firebase project "+initProject+":") {
 		t.Errorf("the plan was not shown before the confirmation:\n%s", out)
 	}
+}
+
+// TestUpgradeRunsTheRulesStepBeforeThePolicyItGates is the two steps the
+// owner's rule of 2026-10-30 is about, through the shared loop and in the order
+// the loop runs them: the project's database carries rules that predate the
+// policy model (no generation marker) and a published node an earlier Fugaro
+// wrote at version 3, so the policy migration's own gate — requirePolicyRules,
+// the publisher's — refuses it until this binary's rules are deployed. One run
+// has to do both: the rules step deploys the generation and records it, and the
+// migration passes the gate the step before it satisfied.
+//
+// The second arm is what makes the first one mean something: the SAME migration
+// on the same fixture, with the rules step left out, is refused by that gate and
+// leaves the node where it was. Without it the loop's second `done` would be
+// satisfied by a gate that never refuses.
+func TestUpgradeRunsTheRulesStepBeforeThePolicyItGates(t *testing.T) {
+	// The cloud rig, because the run is the whole loop and the cloud step has to
+	// settle before the two steps this case is about: the checkout, the local
+	// project config listing it, the fake terraform and the stub that answers
+	// the build records the refresh reads are upgradeRigWithGitHubAppID's, and
+	// on top of them the installation's shared budget backend — the fake
+	// database, marked as this installation's, with rules that carry no
+	// generation marker and a published node at version 3.
+	rig := func(t *testing.T) (*anchorModeRig, *gcpfake.RTDB) {
+		t.Helper()
+		r := upgradeRigWithGitHubAppID(t)
+		db := gcpfake.NewRTDB(t)
+		db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+		db.Set(budget.PathProject, initProjectName)
+		db.Set(budget.PathMode, budget.ModeEnforce)
+		db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+		r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+		db.SetRules([]byte(`{"rules":{".read":false}}`))
+		db.Set(projectpolicy.PathShared(), v3Node(nil))
+		stubCurrentRefresh(t, r)
+		fakeSteps(t, "", nil)
+		return r, db
+	}
+
+	t.Run("one run deploys the rules and then migrates the node", func(t *testing.T) {
+		_, db := rig(t)
+		out, errOut, err := executeStdin(t, "", "upgrade", "--yes")
+		if err != nil {
+			t.Fatalf("%v\n%s%s", err, out, errOut)
+		}
+		for _, want := range []string{
+			"rules: done: deployed the security rules (generation " + strconv.Itoa(projectpolicy.RulesVersion) + ") and recorded it",
+			"policy: done: the published policy was migrated from version 3 to " + strconv.Itoa(projectpolicy.Version) + " in place",
+			"The security rules of the Firebase project " + initProject + ":",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output lacks %q:\n%s", want, out)
+			}
+		}
+		if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+			t.Errorf("the rules generation marker is %q, want %q", got, want)
+		}
+		if got := nodeVersionOn(t, db); got != projectpolicy.Version {
+			t.Errorf("the published node is version %d, want %d: the migration never ran", got, projectpolicy.Version)
+		}
+	})
+
+	t.Run("without the rules step the same migration is refused", func(t *testing.T) {
+		r, db := rig(t)
+		got, out := runUpgradePolicyStep(t, r.root)
+		if got.state != stepFailed || got.code != ExitUserError {
+			t.Fatalf("the policy step alone is %s (exit %d): %s\n%s", got.state, got.code, got.reason, out)
+		}
+		if !strings.Contains(got.reason, "predate the policy model") {
+			t.Errorf("the refusal is %q, want the gate's own sentence about the deployed rules", got.reason)
+		}
+		if got := nodeVersionOn(t, db); got != 3 {
+			t.Errorf("the refused migration left the node at version %d, want 3", got)
+		}
+		if got := rulesMarkerOn(t, db); got != "" {
+			t.Errorf("the marker is %q after a run that deployed nothing", got)
+		}
+	})
 }
 
 // TestUpgradeRulesStepVerdicts: the states a checkout can reach the rules step
