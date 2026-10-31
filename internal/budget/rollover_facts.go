@@ -5,12 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
+
+// factsWorkers is how many runs' result.json are read at once. One read is a
+// round trip of tens of milliseconds and a day's pass covers hundreds of runs,
+// so this width is most of what the pass costs.
+const factsWorkers = 32
 
 // BucketFacts reads RunFacts from the runs bucket's result.json files (plan
 // H6): compute_usd counts only when compute_estimated, and hours are
@@ -34,7 +40,10 @@ func (b BucketFacts) warnf(format string, a ...any) {
 	}
 }
 
-// Facts lists, for each day of [from, to], the runs started on it.
+// Facts lists, for each day of [from, to], the runs started on it. The run
+// records are read factsWorkers at a time; the walk over them is still one
+// pass in the order the runs were listed, so a day's facts and the failures
+// that reach the caller are what reading them one at a time gave.
 func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]RunFact, map[string]string, error) {
 	out := map[int64][]RunFact{}
 	repos := map[string]string{}
@@ -57,6 +66,11 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 	}
 	// A run ID is minted a little before the run starts: look a day earlier.
 	since := time.UnixMilli((from - 1) * 86_400_000).UTC()
+	type ref struct {
+		slug, id string
+		minted   time.Time
+	}
+	var refs []ref
 	for _, slug := range slugs {
 		ids, err := runstore.ListRunIDs(ctx, b.Bucket, slug, since)
 		if err != nil {
@@ -67,36 +81,67 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 			if err != nil || Day(minted) > to {
 				continue
 			}
-			rec, err := runstore.Open(b.Bucket, slug, id).ReadRecord(ctx)
-			switch {
-			case errors.Is(err, runstore.ErrNotFound):
-				continue
-			case errors.Is(err, runstore.ErrTooLarge) || (err != nil && strings.HasPrefix(err.Error(), "decoding result.json")):
-				b.warnf("skipping %s/%s: its result.json cannot be used (%v)", slug, id, err)
-				continue
-			case err != nil:
-				return nil, nil, err
-			}
-			start := rec.StartedAt
-			if start.IsZero() {
-				start = minted
-			}
-			day := Day(start)
-			if day < from || day > to {
-				continue
-			}
-			f := RunFact{Slug: slug, Run: id, StartDay: day}
-			if c := rec.Cost; c != nil && c.ComputeEstimated {
-				f.ComputeUSD, f.ComputeEstimated = c.ComputeUSD, true
-			}
-			if rec.FinishedAt != nil && rec.FinishedAt.After(start) {
-				f.Hours = rec.FinishedAt.Sub(start).Hours()
-			}
-			out[day] = append(out[day], f)
-			if _, ok := repos[slug]; !ok && rec.Repo != "" {
-				repos[slug] = rec.Repo
-			}
+			refs = append(refs, ref{slug: slug, id: id, minted: minted})
+		}
+	}
+	// Every record is read before any of them is used, and each goroutine
+	// writes only its own index, so the pass below is the same walk whichever
+	// read finishes first.
+	recs := make([]*runstore.Record, len(refs))
+	errs := make([]error, len(refs))
+	readsAtOnce(len(refs), func(i int) {
+		recs[i], errs[i] = runstore.Open(b.Bucket, refs[i].slug, refs[i].id).ReadRecord(ctx)
+	})
+	for i, r := range refs {
+		rec, err := recs[i], errs[i]
+		switch {
+		case errors.Is(err, runstore.ErrNotFound):
+			continue
+		case errors.Is(err, runstore.ErrTooLarge) || (err != nil && strings.HasPrefix(err.Error(), "decoding result.json")):
+			b.warnf("skipping %s/%s: its result.json cannot be used (%v)", r.slug, r.id, err)
+			continue
+		case err != nil:
+			return nil, nil, err
+		}
+		start := rec.StartedAt
+		if start.IsZero() {
+			start = r.minted
+		}
+		day := Day(start)
+		if day < from || day > to {
+			continue
+		}
+		f := RunFact{Slug: r.slug, Run: r.id, StartDay: day}
+		if c := rec.Cost; c != nil && c.ComputeEstimated {
+			f.ComputeUSD, f.ComputeEstimated = c.ComputeUSD, true
+		}
+		if rec.FinishedAt != nil && rec.FinishedAt.After(start) {
+			f.Hours = rec.FinishedAt.Sub(start).Hours()
+		}
+		out[day] = append(out[day], f)
+		if _, ok := repos[r.slug]; !ok && rec.Repo != "" {
+			repos[r.slug] = rec.Repo
 		}
 	}
 	return out, repos, nil
+}
+
+// readsAtOnce runs fn(0) … fn(n-1) on at most factsWorkers goroutines.
+func readsAtOnce(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	next := make(chan int)
+	for range min(factsWorkers, n) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				fn(i)
+			}
+		}()
+	}
+	for i := range n {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
 }
