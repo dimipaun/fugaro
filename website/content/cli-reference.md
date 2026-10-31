@@ -4064,7 +4064,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for upgrade |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository (default ghcr.io/dimipaun) |
-| `--local` | bool | `false` | no | run the pin and plugin steps only (the only mode that does everything it can inside a coding agent's session) |
+| `--local` | bool | `false` | no | run the pin and plugin steps only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name of the repository; it must be the checkout's origin (one PATH only) |

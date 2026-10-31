@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -143,9 +144,33 @@ func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 func upgradeBudgetRig(t *testing.T) (*initRig, *gcpfake.RTDB, string) {
 	t.Helper()
 	r, db := updateBudgetRig(t)
+	return r, db, upgradeRigCheckout(t, r)
+}
+
+// upgradeRigCheckout is the git checkout a rig's door is read through
+// (resolveCloudRepo): the repository directory the rig configured, with the
+// origin remote the repository check accepts.
+func upgradeRigCheckout(t *testing.T, r *initRig) string {
+	t.Helper()
 	root := gitCheckout(t, filepath.Join(r.dir, "app"), checkoutYAML("bitbucket", "api-key", initProjectName, ""))
 	testutil.Git(t, root, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git")
-	return r, db, root
+	return root
+}
+
+// runUpgradeRulesStep runs the rules step alone, against one checkout and with
+// its own confirmation taken (--yes), and returns the verdict and what the step
+// printed. It is the step, not the command: these cases are about the states a
+// checkout holds when the step is reached, and the steps before it are the
+// fixtures' own (TestUpgradeEveryStepIsImplemented drives the modes).
+func runUpgradeRulesStep(t *testing.T, root string) (stepResult, string) {
+	t.Helper()
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(&syncBuf{})
+	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: root}}
+	u.o.yes = true
+	return rulesStep(context.Background(), u), out.String()
 }
 
 // TestUpgradeRunsTheRulesStep: fugaro upgrade runs the rules deploy the update
@@ -171,13 +196,7 @@ func TestUpgradeRunsTheRulesStep(t *testing.T) {
 	// carry no generation marker, so a project policy in it would be read
 	// under rules that predate the policy model.
 	db.SetRules([]byte(`{"rules":{".read":false}}`))
-	out := &syncBuf{}
-	cmd := NewRootCmd()
-	cmd.SetOut(out)
-	cmd.SetErr(&syncBuf{})
-	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: root}}
-	u.o.yes = true
-	got := rulesStep(context.Background(), u)
+	got, out := runUpgradeRulesStep(t, root)
 	if got.state != stepDone {
 		t.Fatalf("the rules step is %s: %s\n%s", got.state, got.reason, out)
 	}
@@ -194,9 +213,104 @@ func TestUpgradeRunsTheRulesStep(t *testing.T) {
 	if want := strconv.Itoa(projectpolicy.RulesVersion); rulesMarkerOn(t, db) != want {
 		t.Errorf("the rules generation marker is %q, want %q", rulesMarkerOn(t, db), want)
 	}
-	if !strings.Contains(out.String(), "The security rules of the Firebase project "+initProject+":") {
+	if !strings.Contains(out, "The security rules of the Firebase project "+initProject+":") {
 		t.Errorf("the plan was not shown before the confirmation:\n%s", out)
 	}
+}
+
+// TestUpgradeRulesStepVerdicts: the states a checkout can reach the rules step
+// in that are NOT the deploy, and what each one must leave behind. The step's
+// own early exits (--check, --local and a coding agent's session, and the
+// cloudNotHere checkout) are TestUpgradeEveryStepIsImplemented's, at the
+// command, where the modes live.
+//
+// The one state left out is Plan finding nothing to do: every state the
+// classification calls a deploy (rulesSkewTodo) carries a write of its own —
+// the deploy where the document differs, the generation marker where it is
+// absent or older — so the branch is a guard for a classification that changed,
+// not a state a fixture can hold. A test that forced it would be asserting the
+// step's sentence about a database it cannot build.
+func TestUpgradeRulesStepVerdicts(t *testing.T) {
+	t.Run("current", func(t *testing.T) {
+		_, db, root := upgradeBudgetRig(t)
+		gen, err := rules.Generate()
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.SetRules(gen)
+		db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+		got, out := runUpgradeRulesStep(t, root)
+		if got.state != stepCurrent {
+			t.Fatalf("the rules step is %s: %s\n%s", got.state, got.reason, out)
+		}
+		if db.RulePuts() != 0 {
+			t.Error("the step rewrote rules that are already this generation")
+		}
+		if !strings.Contains(got.reason, "this Fugaro's own") {
+			t.Errorf("the settled state's sentence is %q", got.reason)
+		}
+		if strings.Contains(out, "deploys the security rules listed") {
+			t.Errorf("the step asked to deploy rules that are already current:\n%s", out)
+		}
+	})
+	t.Run("unadopted", func(t *testing.T) {
+		// The database is in a Firebase project the config names and this
+		// installation never adopted (separateFirebaseRig: the pair agrees with
+		// itself and the database is empty, which infra.DB.Check passes): the
+		// ownership predicate is what refuses it, and the skip has to name the
+		// one move that adopts it — this binary's own project.
+		r, db := separateFirebaseRig(t)
+		got, out := runUpgradeRulesStep(t, upgradeRigCheckout(t, r))
+		if got.state != stepSkipped {
+			t.Fatalf("the rules step is %s: %s\n%s", got.state, got.reason, out)
+		}
+		for _, want := range []string{"budget.firebase_project", "other-project", selfCommand() + " update --firebase-project " + initProject} {
+			if !strings.Contains(got.reason, want) {
+				t.Errorf("the skip does not name %q: %q", want, got.reason)
+			}
+		}
+		if db.RulePuts() != 0 || db.Value(projectpolicy.PathRulesMarker()) != nil {
+			t.Error("the step deployed rules into a database in a project the installation never adopted")
+		}
+		if strings.Contains(out, "deploys the security rules listed") {
+			t.Errorf("the step offered to deploy into a database it may not write:\n%s", out)
+		}
+	})
+	t.Run("newer", func(t *testing.T) {
+		_, db, root := upgradeBudgetRig(t)
+		newer := projectpolicy.RulesVersion + 1
+		theirs := []byte(`{"rules":{".read":"auth != null"}}`)
+		db.Set(projectpolicy.PathRulesMarker(), newer)
+		db.SetRules(theirs)
+		got, out := runUpgradeRulesStep(t, root)
+		if got.state != stepSkipped {
+			t.Fatalf("the rules step is %s: %s\n%s", got.state, got.reason, out)
+		}
+		if !strings.Contains(got.reason, "a newer Fugaro deployed them") {
+			t.Errorf("the skip does not report why it deployed nothing: %q", got.reason)
+		}
+		if db.RulePuts() != 0 || !bytes.Equal(db.Rules(), theirs) {
+			t.Error("the step deployed this binary's document over a newer generation")
+		}
+		if want := strconv.Itoa(newer); rulesMarkerOn(t, db) != want {
+			t.Errorf("the marker is %q, want %q: it must never be rewritten down", rulesMarkerOn(t, db), want)
+		}
+	})
+	t.Run("refused write", func(t *testing.T) {
+		_, db, root := upgradeBudgetRig(t)
+		db.SetRules([]byte(`{"rules":{".read":false}}`))
+		db.DenyRules(1)
+		got, out := runUpgradeRulesStep(t, root)
+		if got.state != stepFailed || got.code != ExitUserError {
+			t.Fatalf("a refused rules deploy is %s (exit %d): %s\n%s", got.state, got.code, got.reason, out)
+		}
+		if db.RulePuts() != 0 {
+			t.Error("the fake recorded a rules deploy it refused")
+		}
+		if got := rulesMarkerOn(t, db); got != "" {
+			t.Errorf("the marker is %q after a refused deploy, want it absent: the step would claim rules this database does not run under", got)
+		}
+	})
 }
 
 func TestUpgradeCheckWritesNothing(t *testing.T) {

@@ -161,7 +161,7 @@ checkout's steps and, for one that stopped, the line to rerun.`,
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.check, "check", false, "write nothing, run no claude command, make no cloud call: print what each step would do and exit 1 when anything is stale")
-	f.BoolVar(&o.local, "local", false, "run the pin and plugin steps only (the only mode that does everything it can inside a coding agent's session)")
+	f.BoolVar(&o.local, "local", false, "run the pin and plugin steps only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), and the security rules and published policy deployments; never in a coding agent's session")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag, and add it to Claude Code")
 	f.StringVar(&o.refresh.repo, "repo", "", "owner/name of the repository; it must be the checkout's origin (one PATH only)")
@@ -619,6 +619,14 @@ func rulesStep(ctx context.Context, u *upgradeCtx) stepResult {
 	case initflow.Done:
 		return stepResult{state: stepCurrent, reason: oneLine(detail)}
 	}
+	// Plan asks the ownership predicate again (infra.DB.Plan's own Check), after
+	// rulesState asked it: the first answer is the verdict this step reports,
+	// the second is the one the write itself is gated on, and the step passes
+	// nothing down to it. Asking twice is deliberate — a database marked, or
+	// emptied, between the two reads is refused rather than written into, which
+	// is what the ruling's "one shared ownership check, asked by every writer
+	// into the database" means here — and the update door's rules stage asks it
+	// in the same two places.
 	acts, warnings, err := db.Plan(ctx)
 	if err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
