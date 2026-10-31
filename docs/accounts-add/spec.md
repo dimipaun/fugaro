@@ -341,8 +341,8 @@ of them can change the code, because the code no longer reads the login's output
 
 **Every platform the CLI runs on**, Windows included. There is no pseudo-terminal to allocate, no
 build tag and no ConPTY: the child inherits the owner's terminal, which is the one thing every
-platform already has. D863 (the Windows refusal) is **moot** with D862's answer, and so is the
-`go.mod` note that called the pty package test-only (E5) — nothing here touches it.
+platform already has. D863 (the Windows refusal) is **moot** with D862's answer, and so is E5; the
+`go.mod` note that called the pty package test-only stays true — nothing here touches it.
 
 The only requirement is a terminal, for the login and for the hidden paste (§3.1 step 2), and a
 missing one is a named refusal, not an error.

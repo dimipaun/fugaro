@@ -135,7 +135,7 @@ this test fails against),
 `TestAccountsAddClaudeWritesTheValueNowhere` (the fake child prints a token-shaped value on its stdout;
 nothing reaching Fugaro's own stdout, the config tree, a log line or an error message holds it — the
 value comes only from the paste),
-`TestAccountsAddClaudeFallsBackToTheHiddenPrompt` (a child that exits non-zero is not a failure — the
+`TestAccountsAddClaudeStillAsksForThePasteAfterAFailedLogin` (a child that exits non-zero is not a failure — the
 prompt still runs, and the command reports the exit status and says why),
 `TestAccountsAddClaudeRefusesAHostileClaude` (`exec.ErrDot`, a non-directory-safe path, a directory).
 *Red step:* `TestAccountsAddClaudeRunsTheLoginThenAsksForOnePaste` fails against a first cut that reads
@@ -223,7 +223,7 @@ reports it rather than editing a reserved file.
 | File | Who else holds it | What this work needs from it | The rule |
 | --- | --- | --- | --- |
 | `internal/yamledit/**` | **#1467** (E1) | `SetScalar`, `AddListItem`/`RemoveListItem`, `UpsertSeqItemByKey`, `Changed`, and refusals that never echo document bytes | Call it. A second splice is what the settings design's shared-files table forbids, and it is the one thing A1's red step would otherwise let through |
-| `internal/cli/settings_write.go` | **#1464's S5** (E3; the design merged, the file has not) | the diff, the typed confirmation, the agent refusal, `backupFile`, `writeFileAtomic` | Call it, do not copy it |
+| `internal/cli/settings_write.go` | **#1464's S5** (E3; the design merged, the file has not) | the diff, the confirmation, the agent refusal, `backupFile`, `writeFileAtomic` | Call it, do not copy it |
 | `internal/cli/init_policy_migrate.go` | **#1464's S3** (design merged, stage unchanged), **#1460** (E2, F14) | a `Policy` stage that publishes from the local config and reaches the node through `policyMigrationFor` | Do not edit it here, and do not write a second publisher |
 | `internal/cli/init_stages.go` | the update-door streams | the stage list A2 invokes | Read it. Registering a new stage here is not this work's edit |
 | `internal/cli/accounts.go` | nobody | the `accounts` parent, which already owns its `AddCommand` (F19) | This work's file; `internal/cli/root.go` stays closed |
@@ -278,8 +278,8 @@ slice is a feature, not a fix:
 4. **The doc half is shared.** A5 rewrites a page whose pins the settings design's own docs work may be
    touching in the same window; landing it as a patch against a released tag costs a second rewrite.
 
-The only thing that could be a 0.14.2 is D862's paste alternative with D860's alternative — a command
-that declares the account and stores the token and tells the owner to run `fugaro update` — and that is
-the design this whole document exists to argue against. If the owner wants a small release, the honest
+The only thing that could be a 0.14.2 is D860's alternative — a command that declares the account and
+stores the token and tells the owner to run `fugaro update` — and that is the design this whole
+document exists to argue against (D862's paste is the adopted design, not the thing argued against). If the owner wants a small release, the honest
 answer is that nothing in **this** work is one: the smallest slice with the HARD RULE intact still needs
 E1, E2 and E3, which is 0.15.0 work by whoever lands it.
