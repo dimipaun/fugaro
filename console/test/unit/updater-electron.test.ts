@@ -19,9 +19,13 @@
 // test asserts the hardened client sends nothing, and the one beside it asserts
 // the *same* client, unhardened, does send the identifier and does write the
 // file. Without the second, the first would go on passing if the library ever
-// stopped sending the header at all -- it would be a test of nothing.
+// stopped sending the header at all -- it would be a test of nothing. The two
+// suites after it hold the other two things the hardening rewrites to the same
+// standard, on the same real class: the download cache the bundle's missing
+// `app-update.yml` would have named, and the install-on-quit flag the owner's
+// ruling keeps off.
 
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -34,7 +38,7 @@ import { createLaunchRunner } from '../../src/main/launch'
 import type { ConfirmView, LaunchConfirmer, TargetLookup } from '../../src/main/launch'
 import { MAX_LISTING_BYTES, RELEASES_URL } from '../../src/main/updates'
 import type { IntervalTimers, UpdateController, UpdaterPort } from '../../src/main/updates'
-import { STAGING_USER_ID, hardenUpdater, startUpdates } from '../../src/main/updater-electron'
+import { STAGING_USER_ID, UPDATER_CACHE_DIR_NAME, hardenUpdater, startUpdates } from '../../src/main/updater-electron'
 import type { ListingBody, ListingFetcher, ListingReader, NoticeDialog } from '../../src/main/updater-electron'
 
 const STAGING_HEADER = 'x-user-staging-id'
@@ -100,6 +104,14 @@ function appAdapter(directory: string): ConstructorParameters<typeof MacUpdater>
     quit: () => undefined,
     onQuit: () => undefined,
   }
+}
+
+/** downloadHelper is the shortest path to the directory the client caches a
+ * download in: `getOrCreateDownloadHelper` is `private` in the package's
+ * `.d.ts` and an ordinary method of the class all the same. */
+function downloadHelper(updater: MacUpdater): Promise<{ readonly cacheDir: string }> {
+  const internals = updater as unknown as { getOrCreateDownloadHelper(): Promise<{ readonly cacheDir: string }> }
+  return internals.getOrCreateDownloadHelper()
 }
 
 /** recordingClient is the provider the updater is pointed at: it records the
@@ -187,21 +199,21 @@ describe('the identifier electron-updater sends and stores', () => {
  * library's own creator -- the one that mints the UUID and writes the file --
  * was ever reached. */
 class LazyLike {
-  private held: Promise<string> | null = null
-  private creator: (() => Promise<string>) | null
+  private held: Promise<unknown> | null = null
+  private creator: (() => Promise<unknown>) | null
 
-  constructor(creator: () => Promise<string>) {
+  constructor(creator: () => Promise<unknown>) {
     this.creator = creator
   }
 
-  get value(): Promise<string> {
-    if (this.creator === null) return this.held as Promise<string>
+  get value(): Promise<unknown> {
+    if (this.creator === null) return this.held as Promise<unknown>
     const made = this.creator()
     this.value = made
     return made
   }
 
-  set value(next: Promise<string>) {
+  set value(next: Promise<unknown>) {
     this.held = next
     this.creator = null
   }
@@ -243,6 +255,10 @@ function updaterFake(): UpdaterRecord {
       creatorCalls += 1
       return Promise.resolve('11111111-1111-1111-1111-111111111111')
     }),
+    // The second `Lazy` `hardenUpdater` rewrites, and a `Lazy` here for the
+    // reason the real one is: a fake without it is a client the hardening is
+    // supposed to refuse.
+    configOnDisk: new LazyLike(() => Promise.resolve({ updaterCacheDirName: 'from-the-bundle' })),
     computeFinalHeaders(headers: Record<string, string>): Record<string, string> {
       return Object.assign(headers, this.requestHeaders)
     },
@@ -325,12 +341,35 @@ describe('the hardening refuses a client it does not recognise', () => {
     expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
   })
 
+  it('refuses a client with no configOnDisk at all', () => {
+    // The member is where the download cache directory name would come from, and
+    // the file it would come from is one this bundle does not ship: a client
+    // without it is a client whose every download fails at the last step.
+    const { updater } = updaterFake()
+    delete (updater as unknown as Record<string, unknown>)['configOnDisk']
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+  })
+
+  it('refuses a configOnDisk that is not a Lazy', () => {
+    const { updater } = updaterFake()
+    ;(updater as unknown as Record<string, unknown>)['configOnDisk'] = Promise.resolve({})
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+  })
+
   it('never reaches the library’s own id creator, and leaves a constant behind', async () => {
     const { updater, creatorCalls } = updaterFake()
     hardenUpdater(updater)
-    const internals = updater as unknown as { stagingUserIdPromise: { value: Promise<string> }; computeFinalHeaders(h: Record<string, string>): Record<string, string> }
+    const internals = updater as unknown as {
+      stagingUserIdPromise: { value: Promise<unknown> }
+      configOnDisk: { value: Promise<unknown> }
+      computeFinalHeaders(h: Record<string, string>): Record<string, string>
+    }
     await expect(internals.stagingUserIdPromise.value).resolves.toBe(STAGING_USER_ID)
     expect(creatorCalls).toBe(0)
+    // The cache the client would have read out of an `app-update.yml` this
+    // bundle does not ship: the name is this app's, and the creator the library
+    // would have called never runs.
+    await expect(internals.configOnDisk.value).resolves.toEqual({ updaterCacheDirName: UPDATER_CACHE_DIR_NAME })
     // The merge is what the override has to survive: `requestHeaders` is
     // assigned on top of whatever the library was handed, so a header the
     // operator's own table carried would still come back -- and the staging id
@@ -593,7 +632,7 @@ describe('the platform gate comes before the client', () => {
     expect(updater.creatorCalls).toBe(0)
     expect(updater.feedUrls).toEqual(['https://github.com/dimipaun/fugaro/releases/download/console-v0.120.0/'])
     expect(updater.autoDownload).toBe(true)
-    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
     expect(updater.allowDowngrade).toBe(false)
     expect(updater.allowPrerelease).toBe(false)
     expect(updater.headers).toEqual({})
@@ -601,10 +640,26 @@ describe('the platform gate comes before the client', () => {
   })
 
   it('throws rather than starting a client it cannot harden', () => {
+    // The throw is `hardenUpdater`'s, and it is where "this is not the client I
+    // was written against" is decided. It does not reach the app: the test below
+    // is what the entry point does with it.
     const { updater } = updaterFake()
     delete (updater as unknown as Record<string, unknown>)['stagingUserIdPromise']
-    expect(() =>
-      startUpdates({
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+  })
+
+  it('turns updates off in one constant line rather than failing to start', () => {
+    // Owner ruling of 2026-10-30: a client that cannot be hardened is a feature
+    // that stays off, not an app that does not start. The line is written out
+    // here rather than imported, because what this asserts is the line's text:
+    // one constant sentence, and neither the library's error nor a path nor a
+    // version out of it.
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { updater } = updaterFake()
+    delete (updater as unknown as Record<string, unknown>)['stagingUserIdPromise']
+    let controller: UpdateController | null = null
+    expect(() => {
+      controller = startUpdates({
         isLaunchFlowIdle: () => true,
         platform: 'darwin',
         app: packageFacts(),
@@ -613,8 +668,82 @@ describe('the platform gate comes before the client', () => {
         dialog: noticeDialog(1).dialog,
         timers: neverFires(),
         updater,
-      }),
-    ).toThrow(/6\.8\.10/)
+      })
+    }).not.toThrow()
+    expect(controller).toBeNull()
+    expect(logged.mock.calls).toEqual([
+      ['fugaro console: the update client could not be hardened; automatic updates are off'],
+    ])
+  })
+})
+
+describe('the download cache, which the bundle has no config for', () => {
+  it('names it where the hardening puts it, on the real client', async () => {
+    // The bundle ships no `app-update.yml` (electron-builder's `publish` is
+    // null), so `configOnDisk` is the ENOENT the next test shows: without the
+    // name written into it, a download that the feed has already offered fails
+    // at the last step, and the cache directory is the one place it would have
+    // been written to.
+    const updater = new MacUpdater(NO_CONFIG, appAdapter(directory))
+    hardenUpdater(updater as unknown as UpdaterPort)
+
+    const helper = await downloadHelper(updater)
+
+    expect(helper.cacheDir).toBe(join(directory, 'cache', 'fugaro-console-updater'))
+    expect(existsSync(join(directory, 'app-update.yml'))).toBe(false)
+  })
+
+  it('cannot build a download helper at all without the hardening, on the same client', async () => {
+    // The red step, held as a test: it is what the assertion above is worth.
+    const updater = new MacUpdater(NO_CONFIG, appAdapter(directory))
+
+    await expect(downloadHelper(updater)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+describe('the install the client would do on the way out', () => {
+  /** configureThroughThePolicy runs the entry point over a real client and the
+   * listing that offers nothing: `configure()` is then the whole of what the
+   * policy wrote, and no check ever points the feed anywhere. */
+  async function configureThroughThePolicy(): Promise<MacUpdater> {
+    const updater = new MacUpdater(NO_CONFIG, appAdapter(directory))
+    const controller = startUpdates({
+      isLaunchFlowIdle: () => true,
+      platform: 'darwin',
+      app: packageFacts(),
+      env: {},
+      net: netFake({ ok: true, body: bodyOf('[]').body }).net,
+      dialog: noticeDialog(1).dialog,
+      timers: neverFires(),
+      updater: updater as unknown as UpdaterPort,
+    })
+    expect(controller).not.toBeNull()
+    await untilSettled()
+    return updater
+  }
+
+  it('leaves the flag off on the real client the policy hands over', async () => {
+    // Owner ruling of 2026-10-30: an update is installed only through the
+    // notice's "Restart to update". On macOS the flag is the whole of the
+    // difference: `MacUpdater.doDownloadUpdate` (~220-227) tells Squirrel to
+    // fetch and install the file only `if (this.autoInstallOnAppQuit)`, and
+    // Squirrel's own install happens when the app quits. `MacUpdater` extends
+    // `AppUpdater` directly -- `BaseUpdater`'s `addQuitHandler` is the Linux and
+    // Windows updaters' -- so there is no second hook to read, and the download
+    // path that would show the fetch is not driven here: an injected `AppAdapter`
+    // leaves the library without an HTTP executor (AppUpdater.js ~210), so the
+    // claim this test makes is the flag, on the real client, and no more.
+    const updater = await configureThroughThePolicy()
+
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+  })
+
+  it('starts true on the same client, which is the default the policy opposes', () => {
+    // The control, without which the assertion above would hold for a client
+    // that never had the flag on in the first place (AppUpdater.js ~114).
+    const updater = new MacUpdater(NO_CONFIG, appAdapter(directory))
+
+    expect(updater.autoInstallOnAppQuit).toBe(true)
   })
 })
 

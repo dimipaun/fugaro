@@ -10,7 +10,11 @@
 // it holds are the ones Task 4.4's own test list names -- the opt-out honoured
 // all three ways, a request that carries no identifier, a refused downgrade, a
 // check that never runs in CI -- and one this work adds: nothing prompts or
-// installs while a launch is in flight. It reaches none of that on its own: the
+// installs while a launch is in flight. The owner's ruling of 2026-10-30 is
+// that nothing installs on quit either: an update is installed only through the
+// notice's "Restart to update", so the client's own install-on-quit is off from
+// the first configuration and no path here turns it on. It reaches none of that
+// on its own: the
 // listing arrives through an injected `fetchReleases`, six hours pass on an
 // injected timer and the client is an injected `UpdaterPort` that the adapter
 // fills with electron-updater. What that buys is a policy testable with no
@@ -221,18 +225,6 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
   const expected = new Set<string>()
   let readyDeferred: string | null = null
   let restartDeferred = false
-  /** installable says whether the bytes on disk are a release this policy chose:
-   * set by a finished download whose version is the tag the feed was pointed at,
-   * and cleared by every download it refuses -- one whose version is not that
-   * tag, and one that finishes under a closed gate, whose bytes are the ones on
-   * disk whatever the earlier download was. It is what the switch's return trip
-   * reads: a download the policy has refused is not made installable by turning
-   * the feature back on. */
-  let installable = false
-  /** switchedOff says a closed gate turned `autoInstallOnAppQuit` off, so the
-   * next `start()` -- which only runs under an open gate -- knows to re-arm it
-   * rather than leaving the client configured for a feature that is on. */
-  let switchedOff = false
   /** live is whether a check has been asked for and not yet stopped. It is here
    * because the download event carries no generation: `stop()` abandons a check
    * in flight by moving `generation` on, but a download that began before the
@@ -282,32 +274,20 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
     // The app said stop: the bytes are on disk and stay there, but nothing about
     // a process on its way out prompts a user or replaces the app.
     if (!live) return
-    if (!allowed()) {
-      // A download that finishes under a closed gate is not installed on quit
-      // either, and this is the same rule `tick` holds from the other side: the
-      // gate can close between the check that pointed the feed and the download
-      // it started, and the tick that would notice is up to six hours away. The
-      // refusal is remembered twice over -- install-on-quit goes off, and this
-      // download stops counting as one the policy accepted, because these are
-      // the bytes now on disk.
-      switchedOff = true
-      installable = false
-      deps.updater.autoInstallOnAppQuit = false
-      return
-    }
+    // A download that finishes under a closed gate is refused where it lands:
+    // the gate can close between the check that pointed the feed and the
+    // download it started, and the tick that would notice is up to six hours
+    // away. Nothing is installed on quit in this app either way, so the refusal
+    // is the prompt's alone.
+    if (!allowed()) return
     const version = downloadedVersion(payload)
     if (version === null) {
       // A download the policy cannot tie to the tag it pointed the feed at: the
       // zip's SHA-512 comes from `latest-mac.yml` alone, so the version that
       // manifest names has to be the tag this controller resolved, and one that
-      // is not may be anything at all. It is not offered to the user, and it is
-      // not installed on quit either.
-      installable = false
-      deps.updater.autoInstallOnAppQuit = false
+      // is not may be anything at all. It is not offered to the user.
       return
     }
-    installable = true
-    deps.updater.autoInstallOnAppQuit = true
     expected.delete(version)
     if (!deps.isLaunchFlowIdle()) {
       readyDeferred = version
@@ -325,7 +305,14 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
     if (configured) return
     configured = true
     deps.updater.autoDownload = true
-    deps.updater.autoInstallOnAppQuit = true
+    // Off, and it is the policy's statement of the owner's ruling of 2026-10-30:
+    // an update is installed only through the notice's "Restart to update", so
+    // the client's own install-on-quit -- `true` by default in 6.8.10 -- is
+    // turned off before any check can run. Nothing here turns it on again, and
+    // the adapter turns it off on the client it hands over as well, because a
+    // policy that never configures (no check ever allowed) must still not leave
+    // a downloading client armed to install on the way out.
+    deps.updater.autoInstallOnAppQuit = false
     deps.updater.allowDowngrade = false
     deps.updater.allowPrerelease = false
     // Empty, and a plain object rather than a frozen one. Nothing in 6.8.10
@@ -381,11 +368,6 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
   const tick = (): void => {
     if (!allowed()) {
       clearTimer()
-      // The switch went off under a download that had already finished: the
-      // update is not installed on quit either, or a feature the operator has
-      // just turned off would replace the app the next time they close it.
-      switchedOff = true
-      deps.updater.autoInstallOnAppQuit = false
       return
     }
     void checkNow()
@@ -396,14 +378,6 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       if (!allowed()) return
       clearTimer()
       configure()
-      // The switch coming back on restores the install-on-quit the closed gate
-      // turned off -- for the download the policy accepted, and for no other:
-      // `installable` is the refusal in `onDownloaded`, which the switch does
-      // not undo.
-      if (switchedOff) {
-        switchedOff = false
-        deps.updater.autoInstallOnAppQuit = installable
-      }
       handle = deps.timer.setInterval(tick, UPDATE_INTERVAL_MS)
       await checkNow()
     },

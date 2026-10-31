@@ -15,9 +15,29 @@
 // (~332-338) merges `requestHeaders` *on top*, so the policy setting
 // `requestHeaders = {}` cannot take the header back off: the library adds it
 // after. `hardenUpdater` is the whole answer, and it is deliberately
-// fail-closed -- a client whose two members are not where 6.8.10 has them is a
+// fail-closed -- a client whose members are not where 6.8.10 has them is a
 // client this module refuses to start at all, because the failure it guards
 // against is silent and the thing it would leak is the operator's.
+//
+// **The config the bundle does not ship, and the install it must never do.**
+// The same constructor reads `configOnDisk` -- a `Lazy` over the
+// `app-update.yml` that electron-builder writes into a packaged app -- for the
+// name of the directory a download is cached in
+// (`getOrCreateDownloadHelper`, ~542-556, `path.join(this.app.baseCachePath,
+// dirName)`), and this bundle sets `publish: null`, so there is no such file:
+// unhardened, every download fails with ENOENT at the last step, after the feed
+// has been read and the release offered. That name is written here instead.
+// `autoInstallOnAppQuit` is 6.8.10's own install-on-quit, and on macOS it is
+// read in one place -- `MacUpdater.doDownloadUpdate` (~220-227) tells Squirrel
+// to fetch the file only `if (this.autoInstallOnAppQuit)`, and Squirrel installs
+// it when the app quits. The owner's ruling of 2026-10-30 is that an update is
+// installed only through the notice's "Restart to update", so this module turns
+// the flag off on the client it hands over and `./updates.ts` never turns it on.
+//
+// A client this module cannot harden does not stop the console: `startUpdates`
+// logs one constant line and answers null, which is the same answer it gives on
+// every other platform, so the app starts with updates off rather than not at
+// all.
 
 import { app as electronApp, dialog as electronDialog, net as electronNet } from 'electron'
 import { autoUpdater } from 'electron-updater'
@@ -33,43 +53,78 @@ import type { FetchReleases, IntervalTimers, UpdateController, UpdatePolicyDeps,
  * about this machine. */
 export const STAGING_USER_ID = '00000000-0000-0000-0000-000000000000'
 
+/** UPDATER_CACHE_DIR_NAME is the directory a downloaded update is cached in,
+ * under `app.baseCachePath` (`~/Library/Caches` on macOS). The name is this
+ * app's own because the file the library would read it from -- the
+ * `app-update.yml` electron-builder writes for a published app -- is one this
+ * bundle does not have, and a name is all `getOrCreateDownloadHelper` needs. */
+export const UPDATER_CACHE_DIR_NAME = 'fugaro-console-updater'
+
 /** HARDENING_FAILED is the refusal `hardenUpdater` throws. It names the version
  * it was written against, because the only reason to see it is that this
  * dependency moved. */
 const HARDENING_FAILED =
-  'fugaro console: electron-updater 6.8.10 no longer has the staging-id members this app removes; the update check is not started'
+  'fugaro console: electron-updater 6.8.10 no longer has the members this app rewrites; the update check is not started'
+
+/** UPDATES_OFF is the one line the console logs when it cannot harden the
+ * client, and it is the whole of the message: the failure names a member of a
+ * package, and neither an error's text nor a path nor a version out of the
+ * library belongs in a log the user may paste. */
+const UPDATES_OFF = 'fugaro console: the update client could not be hardened; automatic updates are off'
 
 const LISTING_UNREADABLE = 'the release listing could not be read'
 
-/** The two members `hardenUpdater` reaches for, as the shape it expects rather
- * than as a package's types: neither is public in electron-updater's own
- * `.d.ts` (`stagingUserIdPromise` and `computeFinalHeaders` are `protected` and
- * `private`), and the point of the hardening is to check they are where this
- * app believes they are instead of trusting a type that would let a rename
- * through. */
+/** The members `hardenUpdater` reaches for, as the shape it expects rather than
+ * as a package's types: none is public in electron-updater's own `.d.ts`
+ * (`stagingUserIdPromise`, `configOnDisk` and `computeFinalHeaders` are
+ * `protected` and `private`), and the point of the hardening is to check they
+ * are where this app believes they are instead of trusting a type that would
+ * let a rename through. */
 interface UpdaterInternals {
   stagingUserIdPromise?: { value: unknown }
+  configOnDisk?: { value: unknown }
   computeFinalHeaders?: (headers: Record<string, string>) => Record<string, string>
 }
 
-/** hardenUpdater removes the identifier from an electron-updater client, and
- * throws rather than returning when it cannot.
+/** writableLazy is the check that a member `hardenUpdater` rewrites is a `Lazy`
+ * at all: `lazy-val` keeps the `value` setter on the prototype, so a member
+ * that has one is a `Lazy` and a member that does not is something this app has
+ * no way to disarm. */
+function writableLazy(holder: { value: unknown } | undefined): { value: unknown } {
+  if (holder === undefined || holder === null) throw new Error(HARDENING_FAILED)
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(holder) as object, 'value')?.set
+  if (typeof setter !== 'function') throw new Error(HARDENING_FAILED)
+  return holder
+}
+
+/** setLazy writes a `Lazy`'s value and reads it back: a `Lazy` that answers
+ * something else is one this app did not write to. */
+function setLazy(holder: { value: unknown }, value: unknown): void {
+  holder.value = value
+  if (holder.value !== value) throw new Error(HARDENING_FAILED)
+}
+
+/** hardenUpdater rewrites an electron-updater client where 6.8.10 would
+ * otherwise leak, write or install something this app does not, and throws
+ * rather than returning when it cannot.
  *
- * Both halves are needed and neither is sufficient. The `Lazy`'s own `value`
- * setter is used rather than its replacement, so `getOrCreateStagingUserId` is
- * never called at all: no UUID is minted, nothing is written to `.updaterId`,
- * and `.value` answers the constant from then on. `computeFinalHeaders` is then
- * overridden on the **instance**, because the library's copy merges
- * `requestHeaders` over whatever it is handed -- an override that deleted the
- * header before that merge would be undone by it. */
+ * Every part is needed and none is sufficient. The `Lazy`s' own `value` setters
+ * are used rather than their creators replaced, so `getOrCreateStagingUserId`
+ * is never called at all: no UUID is minted, nothing is written to
+ * `.updaterId`, and `.value` answers the constant from then on -- and
+ * `getOrCreateDownloadHelper` reads a cache directory name out of a file this
+ * bundle does not ship, unless `configOnDisk` answers one first. The header is
+ * then removed by an override on the **instance**, because the library's copy
+ * merges `requestHeaders` over whatever it is handed -- an override that
+ * deleted the header before that merge would be undone by it.
+ *
+ * Everything is checked before anything is written: a client with one member
+ * missing must not be left half-rewritten, because the half that is left is the
+ * half the console would run on. */
 export function hardenUpdater(updater: UpdaterPort): void {
   const internals = updater as unknown as UpdaterInternals
-  const promise = internals.stagingUserIdPromise
-  const setter =
-    promise === undefined || promise === null
-      ? undefined
-      : Object.getOwnPropertyDescriptor(Object.getPrototypeOf(promise) as object, 'value')?.set
-  if (promise === undefined || promise === null || typeof setter !== 'function') throw new Error(HARDENING_FAILED)
+  const staging = writableLazy(internals.stagingUserIdPromise)
+  const config = writableLazy(internals.configOnDisk)
   if (typeof internals.computeFinalHeaders !== 'function') throw new Error(HARDENING_FAILED)
 
   const merged = internals.computeFinalHeaders.bind(updater)
@@ -78,13 +133,13 @@ export function hardenUpdater(updater: UpdaterPort): void {
     delete final['x-user-staging-id']
     return final
   }
-  promise.value = Promise.resolve(STAGING_USER_ID)
+  setLazy(staging, Promise.resolve(STAGING_USER_ID))
+  setLazy(config, Promise.resolve({ updaterCacheDirName: UPDATER_CACHE_DIR_NAME }))
 
-  // The check that both of the above took: an instance that is frozen, or a
-  // member that is an accessor rather than a field, would take the assignment
-  // and answer as though nothing had happened. This is the last thing that runs
-  // before a check could start, so it is where "the identifier is gone" is
-  // decided rather than assumed.
+  // The check that the override took: `setLazy` has already read each `Lazy`
+  // back, and this is the identifier's own post-condition -- it is the last
+  // thing that runs before a check could start, so it is where "the identifier
+  // is gone" is decided rather than assumed.
   const probe = internals.computeFinalHeaders({ 'x-user-staging-id': STAGING_USER_ID })
   if (probe['x-user-staging-id'] !== undefined) throw new Error(HARDENING_FAILED)
 }
@@ -225,6 +280,13 @@ export function createUpdateDeps(options: UpdateAdapterOptions & { readonly onRe
   // the only thing that ever writes it and it writes `{}`.
   const updater = options.updater ?? (autoUpdater as unknown as UpdaterPort)
   hardenUpdater(updater)
+  // 6.8.10 ships this on (AppUpdater.js ~114), and on macOS it is what lets a
+  // finished download reach Squirrel to be installed when the app quits
+  // (MacUpdater.doDownloadUpdate, ~220-227). The console installs only through
+  // the notice's "Restart to update", so the client is handed over with the flag
+  // already off -- before any check, and whether or not one ever runs -- and the
+  // policy keeps it off. Nothing else in this app writes it.
+  updater.autoInstallOnAppQuit = false
   return {
     platform: options.platform ?? process.platform,
     isPackaged: (options.app ?? electronApp).isPackaged,
@@ -248,7 +310,14 @@ export function createUpdateDeps(options: UpdateAdapterOptions & { readonly onRe
  * that constructs a platform's own updater class the moment it is read, and the
  * policy's own gate is read later and repeatedly -- so the platform and the
  * packaging are decided here, once, before anything in the package is touched.
- * A non-Mac or an unpackaged console therefore reaches no member of it. */
+ * A non-Mac or an unpackaged console therefore reaches no member of it.
+ *
+ * A client that cannot be hardened is the same answer, and it is an answer
+ * rather than a failure: an update check the app cannot make safely is a
+ * feature that stays off, and the console that does not start at all is a worse
+ * outcome than either. `hardenUpdater` still throws -- that is how it says
+ * "this is not the client I was written against" -- and the throw stops here,
+ * with one constant line to say so. */
 export function startUpdates(options: UpdateAdapterOptions): UpdateController | null {
   const platform = options.platform ?? process.platform
   const app = options.app ?? electronApp
@@ -261,8 +330,9 @@ export function startUpdates(options: UpdateAdapterOptions): UpdateController | 
     showMessageBox: (ask) => electronDialog.showMessageBox({ ...ask, buttons: [...ask.buttons] }),
   }
   const holder: { controller: UpdateController | null } = { controller: null }
-  holder.controller = createUpdateController(
-    createUpdateDeps({
+  let deps: UpdatePolicyDeps
+  try {
+    deps = createUpdateDeps({
       ...options,
       platform,
       app,
@@ -271,8 +341,12 @@ export function startUpdates(options: UpdateAdapterOptions): UpdateController | 
           holder.controller?.restartRequested()
         })
       },
-    }),
-  )
+    })
+  } catch {
+    console.error(UPDATES_OFF)
+    return null
+  }
+  holder.controller = createUpdateController(deps)
   void holder.controller.start()
   return holder.controller
 }

@@ -612,12 +612,12 @@ describe('the request carries no identifier', () => {
   })
 })
 
-describe('the install: configured on, and only the user restarts', () => {
+describe('the install: only the user restarts', () => {
   it('configures the updater as the rules require', async () => {
     const { controller, updater } = harness()
     await controller.start()
     expect(updater.autoDownload).toBe(true)
-    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
     expect(updater.allowDowngrade).toBe(false)
     expect(updater.allowPrerelease).toBe(false)
     expect(updater.requestHeaders).toEqual({})
@@ -664,15 +664,18 @@ describe('the install: configured on, and only the user restarts', () => {
     expect(updater.quits).toBe(0)
   })
 
-  it('refuses the bytes of a release it did not choose, and will not install them on quit', async () => {
+  it('refuses the bytes of a release it did not choose, and leaves the install-on-quit flag off', async () => {
     // The version is what ties the download to the tag the feed was pointed at,
     // and the zip's SHA-512 comes from the manifest beside it: a completion for
     // a version this policy never asked for is a completion for bytes nobody
-    // checked, so it is neither offered to the operator nor left where a quit
-    // would install it.
+    // checked, so it is not offered to the operator. The flag is read on both
+    // sides of the event because a refusal is the moment a write of `true` would
+    // be easiest to leave behind; it is the port's state this test is about, not
+    // what the library would do with it -- that is the real client's, in
+    // `updater-electron.test.ts`.
     const { controller, updater, ready } = harness()
     await controller.start()
-    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
     updater.emit('update-downloaded', { version: '9.9.9' })
     expect(ready).toEqual([])
     expect(updater.autoInstallOnAppQuit).toBe(false)
@@ -682,7 +685,7 @@ describe('the install: configured on, and only the user restarts', () => {
     const { controller, updater, ready } = harness()
     await controller.checkNow()
     expect(updater.autoDownload).toBe(true)
-    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
     expect(updater.allowDowngrade).toBe(false)
     expect(updater.allowPrerelease).toBe(false)
     expect(updater.requestHeaders).toEqual({})
@@ -790,12 +793,7 @@ describe('the off switch after a download began', () => {
     expect(updater.quits).toBe(0)
   })
 
-  it('does not install that download on quit either, and the switch coming back on does not make it installable', async () => {
-    // The two halves of the same refusal. A feature the operator has just
-    // turned off must not replace the app the next time they close it, so the
-    // install-on-quit is turned off with the switch; and turning the switch
-    // back on re-arms the install for a download this policy accepted, which
-    // this one is not.
+  it('leaves the flag off for a download that finished after the switch went off', async () => {
     const { controller, updater, setSwitch } = harness()
     await controller.start()
     setSwitch(false)
@@ -806,7 +804,7 @@ describe('the off switch after a download began', () => {
     expect(updater.autoInstallOnAppQuit).toBe(false)
   })
 
-  it('does not install on quit a download that finished while the gate was shut for another reason', async () => {
+  it('leaves the flag off for a download that finished while the gate was shut for another reason', async () => {
     // The switch is not the only thing that closes the gate, and the tick that
     // would notice a closed one is up to six hours away -- so a download that
     // lands in between is refused where it lands.
@@ -817,51 +815,55 @@ describe('the off switch after a download began', () => {
     updater.emit('update-downloaded', { version: '0.120.0' })
     expect(updater.autoInstallOnAppQuit).toBe(false)
   })
+})
 
-  it('does not install on quit again for a download refused after an accepted one', async () => {
-    // The bytes on disk are the last download's, so accepting one earlier does
-    // not make a later refused one installable: the switch coming back on
-    // re-arms the install for what is on disk, and what is on disk was refused.
-    const { controller, updater, setSwitch } = harness()
+describe('the install-on-quit flag, which no path turns on', () => {
+  it('leaves it off for a download the policy accepted, and installs nothing on its own', async () => {
+    // Owner ruling of 2026-10-30: an update is installed only through the
+    // notice's "Restart to update" action. The accepted download is the moment
+    // the write of `true` used to happen, so the flag and the client's own
+    // install call are both read here -- and the pair in
+    // `updater-electron.test.ts` is what the flag means to 6.8.10.
+    const { controller, updater, ready, timers } = harness()
     await controller.start()
     updater.emit('update-downloaded', { version: '0.120.0' })
-    expect(updater.autoInstallOnAppQuit).toBe(true)
-    setSwitch(false)
-    updater.emit('update-downloaded', { version: '0.121.0' })
+    expect(ready).toEqual(['0.120.0'])
     expect(updater.autoInstallOnAppQuit).toBe(false)
-    setSwitch(true)
-    await controller.start()
-    expect(updater.autoInstallOnAppQuit).toBe(false)
-  })
-
-  it('installs on quit again for a download the policy did accept', async () => {
-    const { controller, updater, setSwitch, timers } = harness()
-    await controller.start()
-    updater.emit('update-downloaded', { version: '0.120.0' })
-    expect(updater.autoInstallOnAppQuit).toBe(true)
-    setSwitch(false)
+    expect(updater.quits).toBe(0)
     timers.fire()
     await settle()
     expect(updater.autoInstallOnAppQuit).toBe(false)
+  })
+
+  it('leaves it off for a download the policy refused, and the switch coming back on does not turn it on', async () => {
+    // The bytes on disk are the last download's, so a refusal is a refusal for
+    // whatever is installed from them: the switch's return trip must not arm an
+    // install for bytes the policy did not choose.
+    const { controller, updater, ready, setSwitch } = harness()
+    await controller.start()
+    updater.emit('update-downloaded', { version: '9.9.9' })
+    expect(ready).toEqual([])
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+    setSwitch(false)
     setSwitch(true)
     await controller.start()
-    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
   })
 })
 
 describe('after stop(), nothing the client reports is acted on', () => {
   it('prompts nobody, and writes nothing to the client, for a download that lands while the app is quitting', async () => {
     // `stop()` is called from `before-quit`, and a download that began before it
-    // can finish after it: the notice would open over a quitting app, and the
-    // install-on-quit would be re-armed on the way out. The client is left
-    // exactly as `configure()` left it, because after `stop()` this policy has
-    // no business writing to it at all.
+    // can finish after it: the notice would open over a quitting app. The client
+    // is left exactly as `configure()` left it, because after `stop()` this
+    // policy has no business writing to it at all -- and `configure()` is where
+    // the install-on-quit flag is turned off for good.
     const { controller, updater, ready } = harness()
     await controller.start()
     controller.stop()
     updater.emit('update-downloaded', { version: '0.120.0' })
     expect(ready).toEqual([])
-    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
   })
 
   it('delivers no deferral when a launch goes idle while the app is quitting', async () => {
