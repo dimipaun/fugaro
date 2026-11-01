@@ -124,7 +124,10 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/app.js',
   // The placeholder and the busy mark the screen’s two sections are drawn with
   // (console 0.116.1): `renderSpendFrame` puts a busy slot in each section, so
-  // the screen requires the helper and the words it is drawn with.
+  // the screen requires the helper and the words it is drawn with. The skeleton
+  // is what each of them draws while its read is out (console 0.117.0), so both
+  // require it.
+  'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
   'renderer/screens/spend.js',
