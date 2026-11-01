@@ -92,6 +92,14 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		// and a Pipfile entry with no hashes is read through its own index.
 		"and the `packages` entry for the same x are one package and one fact",
 		"**every** range it lists, not only the first",
+		// The fix round's Yarn patch rule: the patch's name is read exactly and
+		// a registry scheme states a range, so a path holding `builtin<…>`, a
+		// chain of patches and a URL after `npm:` all leave the repository
+		// unkeyed rather than keying it on what they happen to hold.
+		"is cut at the `::version=…&hash=…` query a lock appends",
+		"**Anything else leaves the repository unkeyed**",
+		"whose `patch:` descriptor states no `npm%3A` inner range stays **unkeyed**",
+		"Only a patch that is **exactly** a built-in one is keyed.",
 		"An entry that states no hashes is keyed only when the lock says it came from PyPI's own index",
 		"That convention is the one place the key rests on a file it does not read",
 		// Round 3's follow-up: a `@registry:` key names a registry rather than a
