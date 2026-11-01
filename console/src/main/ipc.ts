@@ -606,7 +606,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'after',
         kind: 'runAfter',
         required: false,
-        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row's own run_id.',
+        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id.',
       },
     ],
   },
