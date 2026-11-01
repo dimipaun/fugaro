@@ -843,7 +843,8 @@ func TestSettingsSetTreatsEveryBooleanSpellingAsTurningAFollowupKeyOn(t *testing
 // TestSettingsSetComparesACeilingAgainstTheValueARunGets: D846 guards what a
 // run gets, not what one file says, so a write into a repository's file that
 // raises a ceiling a layer below already set is the typed form too — the file
-// it edits is not the only place the value comes from.
+// it edits is not the only place the value comes from. A run gets the tighter
+// of the two, so a write that raises either one is the typed form.
 func TestSettingsSetComparesACeilingAgainstTheValueARunGets(t *testing.T) {
 	settingsWriteHomeWith(t, "budget:\n  per_run_usd: 10\n")
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
@@ -869,6 +870,21 @@ func TestSettingsSetComparesACeilingAgainstTheValueARunGets(t *testing.T) {
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 5") {
 		t.Errorf("fugaro.yaml does not carry the tightened cap:\n%s", got)
+	}
+
+	// The other side of the same rule: the file is looser than the layer
+	// below, so a write between the two raises the file's own ceiling even
+	// though a run still gets the layer's.
+	loose := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 50\n"))
+	_, _, err = execute(t, "settings", "set", "budget.per_run_usd", "20", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("--yes confirmed a cap that raises the file's own ceiling")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if got := readFileString(t, loose); !strings.Contains(got, "per_run_usd: 50") {
+		t.Errorf("the refused write changed fugaro.yaml:\n%s", got)
 	}
 }
 

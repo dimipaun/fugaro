@@ -515,25 +515,49 @@ func settingsModeRank(mode string) int {
 }
 
 // settingsCeilingBase is the value a ceiling write is compared against (D846):
-// the value a run gets today, from the read's own resolver — the shared or
-// published node, the project layer's defaults and the local file, whichever
-// decides — and the file's own bytes only when no layer resolves one.
+// the tighter of what the file holds and what a run gets today, which the
+// read's own resolver answers — the shared or published node, the project
+// layer's defaults and the local file, whichever decides.
 //
 // The file's raw value alone is not enough. A first write of a ceiling a layer
 // below already set tighter raises what a run gets, and a comparison against
 // the raw value would read it as a first write and skip the typed name the
-// widening asks for. budget.go's clear compares the effective caps the same
-// way, for the same reason.
+// widening asks for. The effective value alone is not enough either, for the
+// mirror reason: a file already tighter than the layer below is loosened by a
+// write that does not move what a run gets today, and that file is what a
+// later layer inherits. A run gets the tighter of the two, so the tighter of
+// the two is what a loosening is measured against. budget.go's clear compares
+// the effective caps the same way, for the same reason.
 func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) string {
+	effective := settingsEffectiveCeiling(ctx, row)
+	switch {
+	case raw == "":
+		// The file holds no ceiling of its own: the layer below is the whole
+		// of what a run gets.
+		return effective
+	case effective == "":
+		return raw
+	case settingsLoosens(row.Key, effective, raw):
+		// raw is the looser of the two, so the effective value is the one a
+		// run gets.
+		return effective
+	default:
+		return raw
+	}
+}
+
+// settingsEffectiveCeiling is the value a run gets for row from the read's own
+// resolver, "" when no layer resolves one. The read is the offline one, so a
+// command that edits a file never waits on a bucket or a database for it.
+func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 	r, err := readSettings(ctx, settingsOptions{offline: true}, time.Now())
 	if err != nil {
-		return raw
+		return ""
 	}
-	s := r.projectRow(row)
-	if s.Wins == settings.LayerDefault {
-		return raw
+	if s := r.projectRow(row); s.Wins != settings.LayerDefault {
+		return s.Value
 	}
-	return s.Value
+	return ""
 }
 
 // settingsLoosens reports whether newValue is looser than oldValue for a
