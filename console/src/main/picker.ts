@@ -69,7 +69,11 @@ import {
   firstInstallationState,
   installCliState,
 } from './onboarding'
-import type { InstallationsListReply, InstallationsListRow } from './onboarding'
+import type {
+  InstallationsCheckoutChoice,
+  InstallationsListReply,
+  InstallationsListRow,
+} from './onboarding'
 import { SENDER_REFUSAL, isSenderOnDocument } from './ipc'
 import { SPAWN_COMMANDS } from './spawn'
 import type { ConsoleEventLike, IpcMainLike } from './ipc'
@@ -656,6 +660,53 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     return Object.freeze(identities)
   }
 
+  /**
+   * checkoutChoicesOf is one installation's menu for the dashboard's and the
+   * Graph's chooser: **one entry per repository**, in the order the CLI listed
+   * them, over the rows it re-validated and enrolled.
+   *
+   * Two rules, and both are the reason this is built here rather than in the
+   * renderer. The directory must be one the console may offer at all
+   * (`offeredCheckouts`, which drops the tool-owned and temporary paths -- the
+   * CLI remembers an agent's own worktrees, and a menu that offered one would
+   * offer a directory the write below then refuses), and a repository with
+   * several of them is **one** entry: the operator picks a repository, so the
+   * first surviving path stands for it and `more` says how many others the CLI
+   * remembers, rather than five rows of one repository pushing the rest off the
+   * menu. The count is read off the surviving list, so it never claims a
+   * directory that was dropped.
+   */
+  const checkoutChoicesOf = (installation: DiscoveredInstallation): readonly InstallationsCheckoutChoice[] => {
+    const usable = new Set(
+      offeredCheckouts(
+        undefined,
+        installation.checkoutChoices.map((one) => one.path),
+      ),
+    )
+    const order: string[] = []
+    const byRepository = new Map<string, string[]>()
+    for (const one of installation.checkoutChoices) {
+      if (!usable.has(one.path)) continue
+      const held = byRepository.get(one.repository)
+      if (held === undefined) {
+        byRepository.set(one.repository, [one.path])
+        order.push(one.repository)
+        continue
+      }
+      held.push(one.path)
+    }
+    return Object.freeze(
+      order.map((repository) => {
+        const paths = byRepository.get(repository) ?? []
+        return Object.freeze({
+          repository,
+          path: paths[0] ?? '',
+          more: Math.max(0, paths.length - 1),
+        })
+      }),
+    )
+  }
+
   const rowsOf = (
     discovered: readonly DiscoveredInstallation[],
     warnings: readonly string[],
@@ -693,6 +744,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         mode: held?.mode ?? 'unknown',
         ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
         checkouts: offeredCheckouts(held?.checkout, installation.checkouts),
+        checkoutChoices: checkoutChoicesOf(installation),
         repositories: repositoryIdentities(installation.repositories),
         state: classifyInstallation(rowFacts, facts),
         open: false,
@@ -712,6 +764,10 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         mode: row.mode,
         ...(row.checkout === undefined ? {} : { checkout: row.checkout }),
         checkouts: offeredCheckouts(row.checkout, []),
+        // A record the CLI did not list has no document behind it, so there is
+        // nothing this console may offer for it: `[]` is the honest list, and
+        // the chooser draws the sentence that stands in for the control.
+        checkoutChoices: Object.freeze([]),
         repositories: repositoryIdentities([]),
         state: classifyInstallation(rowFacts, facts),
         open: false,

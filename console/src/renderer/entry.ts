@@ -132,6 +132,8 @@ import { refusedState, renderUnavailable } from './screens/degraded'
 import { READING_STILL_MS, renderReading } from './screens/reading'
 import type { ReadingTab } from './screens/reading'
 import { NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
+import { renderCheckoutSelect } from './checkout'
+import type { CheckoutChoice } from './checkout'
 import {
   launchBytes,
   launchCheck,
@@ -1015,6 +1017,19 @@ export interface RailRow {
   readonly saved: boolean
   readonly checkout: string | null
   readonly checkouts: readonly string[]
+  /**
+   * `checkoutChoices` is the menu the dashboard's and the Graph's checkout
+   * chooser offers: one entry per repository, from the rows the CLI re-validated
+   * **and** enrolled (`InstallationsListRow.checkoutChoices`,
+   * `src/main/onboarding.ts`).
+   *
+   * Both strings are kept **raw**, for the reason `repositories` below is: the
+   * `path` is what the main process matches against the list it built, and a
+   * folded or redacted copy would be a directory it refuses. The screen that
+   * draws an entry redacts the label it draws and keeps the raw string beside it
+   * (`src/renderer/checkout.ts`'s `checkoutLabel`).
+   */
+  readonly checkoutChoices: readonly CheckoutChoice[]
   /** `repositories` is what the installation records as its own, in the CLI's
    * order and each one once: the `<provider>/<owner>/<name>` identity verbatim.
    * It is what the launch control offers (V2.5.1b) and it is **not** `checkouts`
@@ -1080,6 +1095,7 @@ export function railRows(reply: unknown): readonly RailRow[] | null {
         saved: row['saved'] === true,
         checkout: typeof row['checkout'] === 'string' && row['checkout'] !== '' ? row['checkout'] : null,
         checkouts: stringsOf(row['checkouts']),
+        checkoutChoices: checkoutChoicesOf(row['checkoutChoices']),
         // Read like `checkouts` except for the one thing this field is not: an
         // identity main matches against its own records, so it is kept **raw**.
         // A list this field cannot be read from is an installation whose launch
@@ -1121,6 +1137,43 @@ function stringsOf(raw: unknown): readonly string[] {
 function rawStringsOf(raw: unknown): readonly string[] {
   if (!Array.isArray(raw)) return Object.freeze([])
   return Object.freeze(raw.filter((one): one is string => typeof one === 'string'))
+}
+
+/**
+ * checkoutChoicesOf reads one row's `checkoutChoices` as this file draws it: the
+ * menu entries, each with its repository, its path and its count, or the empty
+ * list for anything this file cannot read a whole entry from.
+ *
+ * **Nothing is sanitized here and nothing is dropped for what it says.** The
+ * `path` is the value the main process matches against its own list, so it is
+ * kept exactly as it arrived, and an entry is dropped only when it is not an
+ * entry at all: a row that is not an object, or one whose `path` is not a
+ * non-empty string, names no directory to send back. The repository is the
+ * entry's label and a value the console only draws (`checkoutLabel`), so a
+ * missing one is drawn as this console's marker rather than dropping a
+ * directory the operator could otherwise pick. `more` is the main process's
+ * count; anything that is not a non-negative finite number is read as none,
+ * because a menu entry that said "+NaN more" would be a sentence about nothing.
+ */
+function checkoutChoicesOf(raw: unknown): readonly CheckoutChoice[] {
+  if (!Array.isArray(raw)) return Object.freeze([])
+  const choices: CheckoutChoice[] = []
+  for (const one of raw) {
+    if (typeof one !== 'object' || one === null || Array.isArray(one)) continue
+    const entry = one as Record<string, unknown>
+    const path = entry['path']
+    if (typeof path !== 'string' || path === '') continue
+    const repository = entry['repository']
+    const more = entry['more']
+    choices.push(
+      Object.freeze({
+        repository: typeof repository === 'string' ? repository : '',
+        path,
+        more: typeof more === 'number' && Number.isFinite(more) && more > 0 ? Math.floor(more) : 0,
+      }),
+    )
+  }
+  return Object.freeze(choices)
 }
 
 /**
@@ -1544,7 +1597,11 @@ export const ISSUE_CHOOSE_LABEL = 'Use this installation'
  * screen's own words wherever it had them. */
 export const ISSUE_REMOVE_LABEL = 'Remove from this console'
 export const ISSUE_CHECKOUT_LEAD = 'Choose a checkout'
-export const ISSUE_CHECKOUT_LABEL = 'Use this directory'
+/** The directory the menu has selected, sent by the button under it. It names
+ * the **checkout** and not the directory alone: the operator is choosing which
+ * of the installation's repositories this console is to read from, and the menu
+ * above it is what says which directory that is. */
+export const ISSUE_CHECKOUT_LABEL = 'Use this checkout'
 export const ISSUE_CHECKOUT_STOP_LABEL = 'Stop using this checkout'
 export const ISSUE_REVEAL_LABEL = 'Open the checkout folder'
 
@@ -1651,19 +1708,26 @@ export function drawIssue(
     wire(reveal, ISSUE_REVEAL_LABEL, () => actions.reveal(row.project))
   }
 
-  const offered = row.checkouts.filter((candidate) => candidate !== row.checkout)
+  // The menu offers one entry per repository this installation records a usable
+  // checkout of, and never the directory it is already used from: that one has
+  // its own control below ("Stop using this checkout"), and a menu whose first
+  // entry was the state the operator is already in would be a control that does
+  // nothing.
+  const offered = row.checkoutChoices.filter((choice) => choice.path !== row.checkout)
   if (offered.length > 0 || row.checkout !== null) {
     const lead = factory.create('p')
     lead.setAttribute('class', ISSUE_CHECKOUT_LEAD_CLASS)
     lead.textContent = ISSUE_CHECKOUT_LEAD
     controls.append(lead)
-    for (const checkout of offered) {
+    if (offered.length > 0) {
+      const select = renderCheckoutSelect(factory, offered)
+      controls.append(select)
       const element = factory.create('button')
       element.setAttribute('class', ISSUE_CHECKOUT_CLASS)
       element.setAttribute('type', 'button')
-      element.textContent = `${ISSUE_CHECKOUT_LABEL}: ${checkout}`
+      element.textContent = ISSUE_CHECKOUT_LABEL
       surface.nodeOf(element).addEventListener('click', () => {
-        actions.checkout(row.project, checkout)
+        actions.checkout(row.project, valueOf(surface, select))
       })
       controls.append(element)
     }
@@ -2441,10 +2505,11 @@ export function currentRailRows(installation: unknown): readonly RailRow[] {
       saved: true,
       checkout: null,
       checkouts: Object.freeze([]),
-      // `installation.current` carries no repository list -- the CLI's list is
-      // the only read that does -- so a console whose list read failed offers no
-      // repository to launch in, and its launch control says so rather than
-      // guessing at one.
+      // `installation.current` carries neither the CLI's checkout list nor its
+      // repository list -- `config list` is the only read that carries either --
+      // so a console whose list read failed offers no checkout to choose and no
+      // repository to launch in, and says so rather than guessing at one.
+      checkoutChoices: Object.freeze([]),
       repositories: Object.freeze([]),
     }),
   ])
@@ -3078,6 +3143,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   const graphViews = resultCache<GraphHeld>(CACHE_LIMIT)
 
+  /** autoChosen is the installations the Graph's card has already chosen the one
+   * checkout of. It is per installation and not per view, because the write it
+   * guards is: a card drawn again for the same installation -- a redraw, a
+   * cadence read, a visit after another tab -- must not send the same directory a
+   * second time, and an installation the operator comes back to is one whose
+   * list may have changed under it. */
+  const autoChosen = new Set<string>()
+
   /** graphRead is the Graph's section read lifecycle: the mark the operator's
    * own controls put up in the frame they were pressed in, the sequence token
    * that keeps the latest press's answer, and the fifteen-second line. */
@@ -3287,30 +3360,48 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /**
-   * drawNoCheckout draws the Graph's no-checkout card and wires its one action.
+   * drawNoCheckout draws the Graph's no-checkout card and wires its action.
    *
-   * The action is the installation picker's own door, and it is opened the way
-   * the rail's `+` opens it: `installation.open`, the picker's window, where the
-   * checkout chooser already is. There is no new channel, no new bridge method
-   * and no new argument -- a card in the panel is not a reason to widen the IPC
-   * allow-list, and the chooser this button needs is one the console already
-   * ships.
+   * The action is the chooser this console already ships -- the issue view's own
+   * menu, one entry per repository the CLI re-validated and enrolled -- and it
+   * sends the directory it has selected through `installation.checkout`, the
+   * operation the picker window's own control uses. There is no new channel, no
+   * new bridge method and no new argument: a card in the panel is not a reason
+   * to widen the IPC allow-list.
+   *
+   * The card is drawn for an installation the CLI listed a checkout for, says
+   * what records one when the CLI listed none, and keeps the picker's door for a
+   * console that never read the list at all -- because "no checkout is recorded"
+   * is not a claim it can make.
    */
   const drawNoCheckout = (sentence: string): void => {
-    // The card's action opens the picker, and the picker's only word about a
-    // checkout is one `Use <dir>` per checkout the CLI listed for the row. So
-    // the action is offered for an installation the CLI listed a checkout for,
-    // and the card says what to do instead when the CLI listed none -- while a
-    // console that never read the list at all keeps the action, because "no
-    // checkout is recorded" is not a claim it can make.
     const open = railNow.find((row) => row.open)
-    const choosable = !deps.railListed || open === undefined || open.checkouts.length > 0
-    const drawn = renderNoCheckout(factory, sentence, theme, { choosable })
+    const choices = open?.checkoutChoices ?? []
+    const listed = deps.railListed && open !== undefined
+    // A project this card has already chosen for is not chosen for again: the
+    // write is the answer to the card, and a plan that still refuses after it
+    // draws the menu rather than a sentence about a read that is not happening.
+    const auto = open !== undefined && !autoChosen.has(open.project)
+    const drawn = renderNoCheckout(factory, sentence, theme, { choices, listed, auto })
     replace(drawn.root)
-    if (drawn.choice === null) return
-    surface.nodeOf(drawn.choice).addEventListener('click', () => {
-      void railBridge.openInstallations({})
-    })
+    const action = drawn.action
+    if (action.kind === 'picker') {
+      surface.nodeOf(action.button).addEventListener('click', () => {
+        void railBridge.openInstallations({})
+      })
+      return
+    }
+    if (open === undefined) return
+    if (action.kind === 'auto') {
+      autoChosen.add(open.project)
+      useCheckout(open.project, action.choice.path)
+      return
+    }
+    if (action.kind === 'choose') {
+      surface.nodeOf(action.button).addEventListener('click', () => {
+        useCheckout(open.project, valueOf(surface, action.select))
+      })
+    }
   }
 
   /** maybeRefreshGraph is the one place the plan's cadence is applied, so
@@ -4879,8 +4970,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   /** answered draws one rail action's answer: the refusal in the CLI's or the
    * store's own words, or the fresh list -- and the issue of the row the action
-   * was about while it still has one. */
-  const answered = (operation: string, reply: unknown, project: string): void => {
+   * was about while it still has one.
+   *
+   * `stay` is the Graph card's own write: the chooser is drawn in the Graph, so
+   * its answer is the Graph and not the issue view the rail's own actions leave
+   * for. The rail is refreshed either way -- the row's checkout is what the card
+   * was drawn from -- and only the walk away from the view is skipped. */
+  const answered = (operation: string, reply: unknown, project: string, stay = false): void => {
     const answer = replyData(reply)
     if (!answer.ok) {
       refuse(operation, answer.sentence)
@@ -4893,12 +4989,26 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     onboardNow = railOnboarding(reply) ?? onboardNow
     rail.setRows(next)
     if (next.find((row) => row.open)?.project !== openBefore) forgetLive()
+    if (stay) return
     const still = next.find((row) => row.project === project)
     if (still !== undefined && still.issue !== 'none') {
       showIssue(still)
       return
     }
     leaveIssue()
+  }
+
+  /** useCheckout records a directory for an installation and reads the plan
+   * again. It is the Graph card's own write -- the one place a checkout is set
+   * from inside a view -- and the read after it is what turns the card back into
+   * the picture: the write is only recorded here, and the plan is what says
+   * whether the directory the CLI re-validated is one the Graph can read. */
+  const useCheckout = (project: string, checkout: string): void => {
+    void railBridge.setInstallationCheckout({ project, checkout }).then((reply) => {
+      const accepted = replyData(reply).ok
+      answered('installation.checkout', reply, project, true)
+      if (accepted) void readGraph(claim(), null)
+    })
   }
 
   /** choose switches the console to one installation. On success the main
