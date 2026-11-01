@@ -2081,7 +2081,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// the operator printed, and the two cannot drift.
 		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
 			Problem: "no run is bounded by the policy node: " + err.Error(),
-			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro) and run 'fugaro update' if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
+			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro, then fugaro update) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
 	}
 	if len(p.AllowRepos) == 0 {
 		// Empty inside a *published* policy is deny-all (design §5), which is a

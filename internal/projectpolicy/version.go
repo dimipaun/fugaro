@@ -316,8 +316,9 @@ const (
 //     manager installs, then the update behind it — `fugaro upgrade` moves a
 //     checkout onto the installed release and never replaces the binary it
 //     runs; for the image it is "refresh the runner image", which is not the
-//     CLI's binary. And neither of the other moves is one: `fugaro update --firebase-project` deploys this release's
-//     rules and marker, and the deploy's own plan refuses to put them over a
+//     CLI's binary. And neither of the other moves is one: `fugaro update
+//     --firebase-project` deploys this release's rules and marker, and the
+//     deploy's own plan refuses to put them over a
 //     newer Fugaro's (internal/infra's DB.Plan: a marker above this binary's
 //     RulesVersion stops the plan there — "the rules this database runs under
 //     came from a newer Fugaro, and 'fugaro update --firebase-project' would deploy this
