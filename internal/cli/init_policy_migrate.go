@@ -57,6 +57,31 @@ type policyMigration struct {
 	moved   []byte // the node as it will be written: Migrate's output, plus what was derived
 	changes []projectpolicy.Change
 	derived []string // the top-level members derived from the local config, sorted
+
+	// node is the node as it stands: the migrated document when there is a
+	// migration, the published one otherwise. It is what the publish and the
+	// re-seed read, so both work on the document the operator's diff showed.
+	node *projectpolicy.Policy
+	// drift is what the local config states and the node does not carry: the
+	// publish's reason to exist, and what the re-seed writes back.
+	drift []policyDrift
+	// generations is set when the published node has moved past the one this
+	// machine's config was written from (D854): the publish is refused, and the
+	// stage offers to re-seed instead of writing.
+	generations *policyGenerationState
+	// pub is the node the local config states, when the published one does not
+	// carry it. It is built on top of the migrated node when there is one, so
+	// the one write of this run carries both.
+	pub *policyPublish
+	// path is the local config file this machine's policy keys live in: where
+	// the published generation is recorded and where a re-seed writes. It is
+	// empty when the run holds no such file, and the publish half then writes
+	// nothing rather than recording a baseline in a file it was not built from.
+	path string
+	// reseeded is set when the run answered the generation refusal by re-seeding
+	// this machine's file and wrote no node at all: Verify then has nothing of
+	// its own to read back.
+	reseeded bool
 }
 
 // policyNodeUnreachable is whether this project has no published policy node to
@@ -111,6 +136,16 @@ func (e *policyMigrationNotOurs) Error() string { return e.reason }
 // to gcp_project, its own database and its own mark) asks a read it already had
 // to make anyway.
 func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigration, published bool, err error) {
+	return policyMigrationForIn(ctx, lc, policyConfigPath(lc))
+}
+
+// policyMigrationForIn is policyMigrationFor with the local config file named by
+// the caller that holds it: `fugaro update`'s stage knows the exact file the run
+// selected, and the path this package derives from the project alone could name
+// another file that holds the same project (the one a --config run did not
+// read). The publish records the generation it wrote in that file (D854) and the
+// re-seed writes it, so the file has to be the one the plan was built from.
+func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath string) (m *policyMigration, published bool, err error) {
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return nil, false, err
@@ -129,13 +164,15 @@ func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigr
 	moved, changes, err := projectpolicy.Migrate(node)
 	switch {
 	case err == nil && len(changes) == 0:
-		// A node already at this version: nothing is written, so nothing is
-		// derived either, and the derivation's refusal is not this stage's to
-		// make here. It is a config a publish would refuse (an allow_data_to
-		// entry the policy's own reader rejects), and the operator meets it on
-		// the publish that derives the block — not as a failure of the policy
-		// stage of every fugaro update of a node nobody is migrating.
-		return nil, true, nil
+		// A node already at this version: nothing is migrated, so nothing is
+		// derived for it either, and the derivation's refusal is not the
+		// MIGRATION's to make here. It is a config a publish refuses (an
+		// allow_data_to entry the policy's own reader rejects), and the
+		// publish half below is where it lands — there, it is the refusal the
+		// publish it was about to make deserves, and on a node the config does
+		// not ask to publish it is not a failure of the policy stage of every
+		// fugaro update at all.
+		moved, changes = nil, nil
 	case derr != nil:
 		// The derivation's own error is the refusal whether or not Migrate
 		// had one: a member the local config cannot state is a config a
@@ -148,23 +185,95 @@ func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigr
 	case err != nil:
 		return nil, true, policyMigrationRefusal(err)
 	}
+	base := raw
+	if moved != nil {
+		base = moved
+	}
+	// The version the operator's diff names is the node's own, read off the
+	// document rather than off the migration: a run that only publishes has no
+	// Change to read it from, and both doors word their outcome with it.
+	var head struct {
+		Version int `json:"version"`
+	}
+	_ = json.Unmarshal(raw, &head)
+	m = &policyMigration{lc: lc, db: db, etag: etag, moved: moved, changes: changes,
+		from: head.Version, path: configPath, derived: derivedMembers(base, raw)}
+	// The publish half reads the same node, through the same ownership gate and
+	// the same ETag: the stage is one writer, and a publish that opened a second
+	// read path would be the second writer — with its own, weaker gate — that
+	// #1460's review found between two stages worded alike. The decode is the
+	// tolerant one (projectpolicy.Decode and not publishedPolicyOf): a node
+	// carrying top-level keys this Fugaro does not model is read here and
+	// refused at the write, by the one sentence both halves share
+	// (refuseMigrationUnknownKeys), rather than by a sentence the migration half
+	// would then never reach.
+	old, _, derr := projectpolicy.Decode(base)
+	if derr != nil {
+		return nil, true, policyMigrationRefusal(derr)
+	}
+	m.node = old
+	m.drift = policyConfigDrift(lc, old)
+	if len(m.drift) > 0 {
+		if err := publishPlanFor(ctx, db, lc, m, base, old); err != nil {
+			return nil, true, err
+		}
+	}
 	// The write is the publisher's write, so it holds the publisher's gate
 	// (P3, requirePolicyRules): a policy node is read by the runs a deployed
 	// rules generation admits, and one written under rules that predate the
-	// policy model is a policy nothing reads. It is checked only when a
-	// migration is pending — a node already at this version is left alone
-	// whatever the deployed rules are — and it is checked here rather than at
-	// the write because the operator reads the diff before it: a refusal after
-	// the typed confirmation would be a document they confirmed and did not
-	// get.
-	if err := requirePolicyRules(ctx, db, lc); err != nil {
-		return nil, true, err
+	// policy model is a policy nothing reads. It is checked only when a node is
+	// about to be written — a node already at this version, carrying what the
+	// config states, is left alone whatever the deployed rules are, and D854's
+	// re-seed writes the local file and not the node — and it is checked here
+	// rather than at the write because the operator reads the diff before it: a
+	// refusal after the typed confirmation would be a document they confirmed
+	// and did not get.
+	writes := moved != nil || m.pub != nil
+	if writes {
+		if err := requirePolicyRules(ctx, db, lc); err != nil {
+			return nil, true, err
+		}
+		if err := refuseMigrationUnknownKeys(base); err != nil {
+			return nil, true, err
+		}
 	}
-	if err := refuseMigrationUnknownKeys(moved); err != nil {
-		return nil, true, err
+	if !writes && m.generations == nil {
+		return nil, true, nil
 	}
-	return &policyMigration{lc: lc, db: db, etag: etag, from: changes[0].From,
-		moved: moved, changes: changes, derived: derivedMembers(moved, raw)}, true, nil
+	return m, true, nil
+}
+
+// publishPlanFor works out what this run does about a node that does not carry
+// what the local config states: publish it, or — when this machine's file was
+// written from a generation the node has moved past — refuse the publish and
+// offer to re-seed the file instead (D854).
+//
+// The refusal is the answer to a drift that is not this run's own: the node was
+// moved by another machine (or by a hand edit) after this file was written from
+// it, so publishing would replace an operator's newer node with an older file.
+// It is a question and not a wall — the stage prints the three-way state and
+// asks for the re-seed, which writes the file and never the node — and it is
+// asked before the publish is built, so nothing of this run's own edit is
+// carried into a node it does not write.
+func publishPlanFor(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, m *policyMigration, base []byte, old *projectpolicy.Policy) error {
+	// A run that holds no local config file can neither record the generation it
+	// published nor answer the generation refusal by re-seeding one (D854), and a
+	// node written from it would be a node with no baseline anywhere: both are
+	// left to a run that holds a file.
+	if m.path == "" {
+		return nil
+	}
+	if lc.PolicyGeneration != "" && lc.PolicyGeneration != m.etag {
+		m.generations = &policyGenerationState{recorded: lc.PolicyGeneration, published: m.etag}
+		return nil
+	}
+	body, pol, sources, err := policyNodeForPublish(ctx, lc, old, base, true, false, false)
+	if err != nil {
+		return err
+	}
+	m.pub = &policyPublish{body: body, pol: pol, drift: m.drift, sources: sources,
+		adopted: lc.PolicyGeneration == ""}
+	return nil
 }
 
 // policyMigrationRefusal is Migrate's own refusal with the remedy that fits
@@ -196,6 +305,9 @@ func policyMigrationRefusal(err error) error {
 // What each door does around it is its own: the agent-session refusal and the
 // absent node's detail, and how a failure is worded where the door reports one.
 func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer) error {
+	if m.generations != nil {
+		return m.confirmReseed(ctx, cmd, yes, w)
+	}
 	inflight, err := runsInFlight(ctx, m.db, m.lc)
 	if err != nil {
 		return err
@@ -204,10 +316,110 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
 	}
 	m.print(w)
-	if err := confirmRemoval(cmd, m.lc, yes, policyMigrationWhat+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
+	if err := confirmRemoval(cmd, m.lc, yes, m.what()+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
 		return err
 	}
-	return m.write(ctx)
+	if err := m.write(ctx); err != nil {
+		return err
+	}
+	return m.recordGeneration(ctx, cmd)
+}
+
+// what names this run's write as the confirmation and the outcome read it: the
+// migration and the publish are one write and are worded as one, and either
+// alone is worded as itself.
+func (m *policyMigration) what() string {
+	switch {
+	case m.moved != nil && m.pub != nil:
+		return "this rewrites the published policy node in place, carrying the migration and what your local config states"
+	case m.pub != nil:
+		return policyPublishWhat
+	default:
+		return policyMigrationWhat
+	}
+}
+
+// payload is the document this stage writes: the publish's, when the local
+// config states something the node does not carry — built on the migrated node
+// when a migration is pending too, so the one write carries both — and the
+// migrated node otherwise.
+func (m *policyMigration) payload() []byte {
+	if m.pub != nil {
+		return m.pub.body
+	}
+	return m.moved
+}
+
+// doneDetail is the line both doors report the write with.
+func (m *policyMigration) doneDetail() string {
+	switch {
+	case m.moved != nil && m.pub != nil:
+		return fmt.Sprintf("migrated the published policy from version %d to %d in place, with what the local config states", m.from, projectpolicy.Version)
+	case m.pub != nil:
+		return "published the node the local config states"
+	case m.generations != nil:
+		return fmt.Sprintf("re-seeded %s from the published policy node", m.path)
+	default:
+		return fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)
+	}
+}
+
+// recordGeneration writes the generation the local config's policy keys are now
+// written from, after the node write landed and never before: the generation is
+// the one the node carries now (its ETag, read back here), which is what makes
+// the next run able to tell this machine's own edit from another machine's
+// publish (D854). It is a no-op for a run that published nothing.
+func (m *policyMigration) recordGeneration(ctx context.Context, cmd *cobra.Command) error {
+	if m.pub == nil {
+		return nil
+	}
+	etag, found, _, err := readPolicyNode(ctx, m.db, m.lc)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("the published policy is gone")
+	}
+	return policyGenerationRecord(cmd.OutOrStdout(), m.path, m.lc, etag)
+}
+
+// confirmReseed is D854's remedy: the operator reads the three-way state and, on
+// confirming it, gets this machine's local config re-seeded from the published
+// node — backed up first — instead of the node being overwritten with what the
+// older file says. A migration pending beside it is carried out afterwards,
+// because the re-seed has just made the file the node's own, so writing the
+// migrated node no longer replaces anything a newer publish decided.
+func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, yes bool, w io.Writer) error {
+	m.printGenerationState(w)
+	if err := confirmRemoval(cmd, m.lc, yes, policyReseedWhat); err != nil {
+		return err
+	}
+	written, err := applyPolicyReseed(cmd, m.path, m.lc, m.node, m.drift)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "re-seeded %s from the published policy node: %s\n", m.path, strings.Join(written, ", "))
+	if m.moved == nil {
+		// Nothing was written to the node, so the generation recorded is the one
+		// the file's policy keys now come from: the node as this run read it, and
+		// nothing of this run's own may move it.
+		m.reseeded = true
+		return policyGenerationRecord(w, m.path, m.lc, m.generations.published)
+	}
+	if err := m.write(ctx); err != nil {
+		return err
+	}
+	return m.recordGeneration(ctx, cmd)
+}
+
+// printGenerationState is D854's three-way state: what this machine's config was
+// written from, what the published node is now, and the members the two differ
+// on — the ones a re-seed writes back.
+func (m *policyMigration) printGenerationState(w io.Writer) {
+	fmt.Fprintf(w, "%s has moved past the generation this machine's config was written from, so publishing from here would replace it with an older file: %s\n",
+		projectpolicy.PathShared(), m.generations.text())
+	printPolicyDrift(w, m.drift)
+	fmt.Fprintf(w, "  re-seeding writes the published node's values into %s instead (the file is backed up first); publishing stays yours to do afterwards\n", m.path)
 }
 
 // derivedMembers is the top-level members the node gained on the way from raw
@@ -233,6 +445,8 @@ const (
 	bitbucketTokenKey    = "bitbucket_token"
 	bitbucketAPIRootsKey = "bitbucket_api_roots"
 	policyMigrationWhat  = "this rewrites the published policy node in place"
+	policyPublishWhat    = "this rewrites the published policy node in place, from your local config"
+	policyReseedWhat     = "this re-seeds your local config from the published policy node"
 	policyNoDBReason     = "the project's config names no Firebase budget backend, so there is no published policy node to read"
 )
 
@@ -308,14 +522,23 @@ func refuseMigrationUnknownKeys(moved []byte) error {
 // a diff of the node this write replaces, and a write that suppressed a change
 // nobody read would be exactly the unasked rewrite `--delete` exists to avoid.
 func (m *policyMigration) write(ctx context.Context) error {
-	if err := m.db.PutIfMatch(ctx, projectpolicy.PathShared(), m.etag, json.RawMessage(m.moved)); err != nil {
+	if err := m.db.PutIfMatch(ctx, projectpolicy.PathShared(), m.etag, json.RawMessage(m.payload())); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
-			return userErr("the policy node at %s changed while this migration was being confirmed (another publish landed meanwhile), so nothing was written: read what the node now holds with 'fugaro project policy show', then run %s again",
-				projectpolicy.PathShared(), selfCommand()+" update")
+			return userErr("the policy node at %s changed while this %s was being confirmed (another publish landed meanwhile), so nothing was written: read what the node now holds with 'fugaro project policy show', then run %s again",
+				projectpolicy.PathShared(), m.writeName(), selfCommand()+" update")
 		}
 		return dbErr(m.lc, err, true)
 	}
 	return nil
+}
+
+// writeName is what the ETag refusal calls the write that lost the race: the
+// migration's own name when it is a migration, and the publish's otherwise.
+func (m *policyMigration) writeName() string {
+	if m.moved != nil {
+		return "migration"
+	}
+	return "publish"
 }
 
 // print is the one confirmation diff: what each step changes, what stays as it
@@ -324,25 +547,30 @@ func (m *policyMigration) write(ctx context.Context) error {
 // that is still the operator's move (Migrate's own note, passed through rather
 // than worded a second time here).
 func (m *policyMigration) print(w io.Writer) {
-	fmt.Fprintf(w, "%s: published (version %d) and rewritten in place as version %d; nothing is removed\n",
-		projectpolicy.PathShared(), m.from, projectpolicy.Version)
-	for _, ch := range m.changes {
-		fmt.Fprintf(w, "  %d to %d: %s\n", ch.From, ch.To, ch.Changed)
-		kept := make([]string, 0, len(ch.Kept))
-		for _, name := range ch.Kept {
-			if !slices.Contains(m.derived, name) {
-				kept = append(kept, name)
+	if m.moved != nil {
+		fmt.Fprintf(w, "%s: published (version %d) and rewritten in place as version %d; nothing is removed\n",
+			projectpolicy.PathShared(), m.from, projectpolicy.Version)
+		for _, ch := range m.changes {
+			fmt.Fprintf(w, "  %d to %d: %s\n", ch.From, ch.To, ch.Changed)
+			kept := make([]string, 0, len(ch.Kept))
+			for _, name := range ch.Kept {
+				if !slices.Contains(m.derived, name) {
+					kept = append(kept, name)
+				}
+			}
+			if len(kept) > 0 {
+				fmt.Fprintf(w, "    kept as it is: %s\n", strings.Join(kept, ", "))
+			}
+			if ch.Note != "" && !slices.Contains(m.derived, bitbucketTokenKey) {
+				fmt.Fprintf(w, "    %s\n", ch.Note)
 			}
 		}
-		if len(kept) > 0 {
-			fmt.Fprintf(w, "    kept as it is: %s\n", strings.Join(kept, ", "))
-		}
-		if ch.Note != "" && !slices.Contains(m.derived, bitbucketTokenKey) {
-			fmt.Fprintf(w, "    %s\n", ch.Note)
+		if len(m.derived) > 0 {
+			fmt.Fprintf(w, "  derived from the project's local config, as a publish derives them: %s\n", strings.Join(m.derived, ", "))
 		}
 	}
-	if len(m.derived) > 0 {
-		fmt.Fprintf(w, "  derived from the project's local config, as a publish derives them: %s\n", strings.Join(m.derived, ", "))
+	if m.pub != nil {
+		printPolicyPublishDiff(w, m.pub.drift, m.pub.sources)
 	}
 }
 
@@ -381,7 +609,7 @@ func (policyMigrateStage) Left() initflow.Left {
 func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, error) {
 	if !s.planned {
 		s.planned = true
-		s.m, s.published, s.err = policyMigrationFor(ctx, s.e.lc)
+		s.m, s.published, s.err = policyMigrationForIn(ctx, s.e.lc, s.e.path)
 	}
 	return s.m, s.published, s.err
 }
@@ -420,8 +648,21 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{State: initflow.Done, Detail: policyNoneDetail()}, nil
 	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
+	case m.generations != nil:
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy at %s has moved past the generation this machine's config was written from (%s)", projectpolicy.PathShared(), m.generations.text())}, nil
+	case m.moved == nil:
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local config states what the published policy does not carry: %s", memberListText(m.drift))}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy is version %d and this Fugaro writes version %d", m.from, projectpolicy.Version)}, nil
+}
+
+// memberListText names the members a plan would write, for a check line.
+func memberListText(drift []policyDrift) string {
+	names := make([]string, 0, len(drift))
+	for _, d := range drift {
+		names = append(names, d.Member)
+	}
+	return strings.Join(names, ", ")
 }
 
 func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, error) {
@@ -445,7 +686,23 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 	if env.Interactive || env.Yes {
 		m.print(s.e.r.cmd.OutOrStdout())
 	}
-	return initflow.Plan{Detail: fmt.Sprintf("migrate the published policy from version %d to %d in place, after your confirmation", m.from, projectpolicy.Version)}, nil
+	return initflow.Plan{Detail: m.planDetail()}, nil
+}
+
+// planDetail is what the stage says it is about to do, in the wording that fits
+// this run's plan: the migration, the publish, or D854's re-seed of the local
+// file.
+func (m *policyMigration) planDetail() string {
+	switch {
+	case m.generations != nil:
+		return fmt.Sprintf("re-seed %s from the published policy node, after your confirmation", m.path)
+	case m.moved == nil:
+		return "publish the node the local config states, after your confirmation"
+	case m.pub == nil:
+		return fmt.Sprintf("migrate the published policy from version %d to %d in place, after your confirmation", m.from, projectpolicy.Version)
+	default:
+		return fmt.Sprintf("migrate the published policy from version %d to %d in place and publish what the local config states, in one write, after your confirmation", m.from, projectpolicy.Version)
+	}
 }
 
 // Apply is the write. The refusals are the ones the delete path has, in the
@@ -477,7 +734,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout()); err != nil {
 		return initflow.Outcome{}, err
 	}
-	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)}, nil
+	return initflow.Outcome{Changed: true, Detail: m.doneDetail()}, nil
 }
 
 // Verify reads the node back: a write that claims a version it did not land is
@@ -491,7 +748,10 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 // reader refuses is a write that landed a policy no run of the project can
 // admit itself by.
 func (s *policyMigrateStage) Verify(ctx context.Context) error {
-	if s.m == nil {
+	if s.m == nil || s.m.reseeded {
+		// D854's re-seed wrote this machine's file and left the node exactly as
+		// it was: there is nothing of this run's to read back, and the node it
+		// read is another machine's to change.
 		return nil
 	}
 	_, found, raw, err := readPolicyNode(ctx, s.m.db, s.m.lc)
@@ -508,8 +768,17 @@ func (s *policyMigrateStage) Verify(ctx context.Context) error {
 	if len(changes) > 0 {
 		return fmt.Errorf("the published policy is still version %d", changes[0].From)
 	}
-	if _, _, err := projectpolicy.Decode(raw); err != nil {
+	p, _, err := projectpolicy.Decode(raw)
+	if err != nil {
 		return fmt.Errorf("the published policy was written but cannot be read back: %w", err)
+	}
+	if s.m.pub != nil {
+		// A publish that landed is a node the config states what it says: the
+		// write is the whole of the fix, and a node that still differs is a
+		// publish this Fugaro would make again on every run.
+		if drift := policyConfigDrift(s.m.lc, p); len(drift) > 0 {
+			return fmt.Errorf("the published policy was written but still does not carry what the local config states (%s)", memberListText(drift))
+		}
 	}
 	return nil
 }
