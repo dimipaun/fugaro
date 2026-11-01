@@ -1558,6 +1558,50 @@ type priceCatalog struct {
 	TierOutputMaxPerM float64 `json:"tier_output_max_per_m"`
 }
 
+// priceRowOf is the one price-row builder: the row `budget prices` prints and
+// the row `fugaro models ls` reads are the same row for the same table entry,
+// so the two surfaces cannot come to show a different price, source or catalog
+// provenance for one model (D794, F3). local marks a row the owner's
+// model_prices replaced.
+func priceRowOf(id string, m pricing.Model, local bool) priceRow {
+	r := m.Rates
+	row := priceRow{ID: id, Aliases: m.Aliases, InputPerM: r.InputPerM, OutputPerM: r.OutputPerM,
+		CacheReadPerM: r.InputPerM * r.CacheRead, CacheWrite5mPerM: r.InputPerM * r.CacheWrite5m,
+		CacheWrite1hPerM: r.InputPerM * r.CacheWrite1h, WebSearchPer1k: r.WebSearchPer1k, Local: local,
+		Unverified: m.Unverified, Source: m.PriceSource, CheckedAt: m.PriceCheckedAt}
+	if c := m.Catalog; c != nil {
+		row.Catalog = &priceCatalog{Tier: c.Tier, Bound: c.Bound, Endpoints: c.Endpoints, ZdrEndpoints: c.ZdrEndpoints,
+			Source: c.Source, CheckedAt: c.CheckedAt, Stale: c.Stale,
+			TierInputMaxPerM: c.TierInputMax, TierOutputMaxPerM: c.TierOutputMax}
+	}
+	if r.LongContext != nil {
+		row.LongContext = fmt.Sprintf("above %d input tokens: $%g in / $%g out", r.LongContext.AboveInputTokens, r.LongContext.InputPerM, r.LongContext.OutputPerM)
+	}
+	return row
+}
+
+// priceRowsFor is every priced model of the table through priceRowOf, in ID
+// order — the rows `budget prices` prints and the models section of `fugaro
+// models ls` reads.
+func priceRowsFor(table *pricing.Table, ov pricing.Overrides) []priceRow {
+	local := map[string]bool{}
+	for k := range ov {
+		if m, ok := table.Lookup(k); ok {
+			local[m.ID] = true
+		}
+	}
+	ids := make([]string, 0, len(table.Models))
+	for id := range table.Models {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	rows := make([]priceRow, 0, len(ids))
+	for _, id := range ids {
+		rows = append(rows, priceRowOf(id, table.Models[id], local[id]))
+	}
+	return rows
+}
+
 type pricesDoc struct {
 	Source    string     `json:"source"`
 	CheckedAt string     `json:"checked_at"`
@@ -1600,46 +1644,24 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
-	local := map[string]bool{}
-	for k := range ov {
-		if m, ok := table.Lookup(k); ok {
-			local[m.ID] = true
-		}
-	}
-
-	doc := pricesDoc{Source: table.Source, CheckedAt: table.CheckedAt, Models: []priceRow{}}
+	doc := pricesDoc{Source: table.Source, CheckedAt: table.CheckedAt, Models: priceRowsFor(table, ov)}
 	if t, err := time.Parse("2006-01-02", table.CheckedAt); err == nil {
 		age := budgetNow().Sub(t)
 		doc.AgeDays = int(age.Hours() / 24)
 		doc.Stale = age > priceStaleAfter
 	}
-	ids := make([]string, 0, len(table.Models))
-	for id := range table.Models {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		m := table.Models[id]
-		r := m.Rates
-		row := priceRow{ID: id, Aliases: m.Aliases, InputPerM: r.InputPerM, OutputPerM: r.OutputPerM,
-			CacheReadPerM: r.InputPerM * r.CacheRead, CacheWrite5mPerM: r.InputPerM * r.CacheWrite5m,
-			CacheWrite1hPerM: r.InputPerM * r.CacheWrite1h, WebSearchPer1k: r.WebSearchPer1k, Local: local[id],
-			Unverified: m.Unverified, Source: m.PriceSource, CheckedAt: m.PriceCheckedAt}
-		if c := m.Catalog; c != nil {
-			row.Catalog = &priceCatalog{Tier: c.Tier, Bound: c.Bound, Endpoints: c.Endpoints, ZdrEndpoints: c.ZdrEndpoints,
-				Source: c.Source, CheckedAt: c.CheckedAt, Stale: c.Stale,
-				TierInputMaxPerM: c.TierInputMax, TierOutputMaxPerM: c.TierOutputMax}
-			if doc.CatalogSource == "" {
-				doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogStale = c.Source, c.CheckedAt, c.Stale
-				if t, err := time.Parse("2006-01-02", c.CheckedAt); err == nil {
-					doc.CatalogAgeDays = int(budgetNow().Sub(t).Hours() / 24)
-				}
-			}
+	// The catalog's own provenance is the first catalog-priced row's, which is
+	// the row the header line below is about.
+	for _, r := range doc.Models {
+		c := r.Catalog
+		if c == nil {
+			continue
 		}
-		if r.LongContext != nil {
-			row.LongContext = fmt.Sprintf("above %d input tokens: $%g in / $%g out", r.LongContext.AboveInputTokens, r.LongContext.InputPerM, r.LongContext.OutputPerM)
+		doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogStale = c.Source, c.CheckedAt, c.Stale
+		if t, err := time.Parse("2006-01-02", c.CheckedAt); err == nil {
+			doc.CatalogAgeDays = int(budgetNow().Sub(t).Hours() / 24)
 		}
-		doc.Models = append(doc.Models, row)
+		break
 	}
 	// A model a route claims that the catalog cannot price has no row: the
 	// owner is told which and why, rather than left with a model missing
