@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/url"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1039,6 +1040,15 @@ func yarnHeaderDescriptor(d string) (name, patch string, ok bool) {
 	if strings.Contains(yarnName(d), ":") {
 		return "", "", false
 	}
+	// The registry's own scheme is followed by a version or a range, and by
+	// nothing else: `typescript@npm:https://evil.example/x.tgz` states a source
+	// where a range belongs, and the entry resolved from that host rather than
+	// from the registry the key would name.
+	if i := strings.LastIndexByte(d, '@'); i > 0 && strings.HasPrefix(d[i+1:], "npm:") {
+		if _, _, ok := yarnRegistryVersion(d); !ok {
+			return "", "", false
+		}
+	}
 	// The descriptor states the specifier the entry resolved as well as the
 	// name, and a git, file, link or URL specifier is a source no registry
 	// served, whatever the line beside it says (D618). Yarn 1 writes that
@@ -1098,30 +1108,50 @@ func yarnRegistryVersion(locator string) (name, version string, ok bool) {
 		return "", "", false
 	}
 	version, found := strings.CutPrefix(locator[i+1:], "npm:")
-	if !found || version == "" {
+	if !found || !yarnRegistryRange(version) {
 		return "", "", false
 	}
 	return locator[:i], version, true
 }
 
+// yarnRegistryRange reports whether what a descriptor states after the
+// registry's own `npm:` scheme is a version or a range rather than a source.
+// A range holds no slash and no colon — `^1.2.3`, `1.2.3`, `*`, a dist-tag —
+// while a URL, a path or another scheme's locator holds one of them, and the
+// scheme is written for a range: `typescript@npm:https://evil.example/x.tgz`
+// states a source in that place, and reading it as the default registry's keys
+// the repository by an artifact the file only claims the registry served.
+func yarnRegistryRange(v string) bool {
+	return v != "" && !strings.ContainsAny(v, "/:")
+}
+
 // yarnBuiltinPatch is the name of the built-in compatibility patch a patch
-// descriptor names, and empty for one naming a patch the repository holds the
-// bytes of. A built-in one is written `builtin<compat/typescript>` — Yarn may
-// write a marker before it, `optional!`, which says the patch is applied only
-// where it applies and is not part of the patch's name — while a patch of the
-// repository's is written as a path or as a hash, whose bytes are not in the
-// fact and so cannot key anything.
+// descriptor names, and empty for anything else — a patch of the repository's,
+// whose bytes are not in the fact and so cannot key anything.
+//
+// The name is matched and not searched for: `builtin<compat/typescript>` is
+// what a built-in patch is written as, with at most the marker Yarn puts before
+// it (`optional!`, or the `~` older locks write), so a path that merely holds
+// those characters — `./patches/builtin<compat/typescript>.patch` — names the
+// repository's bytes, and keying it would serve them the built-in patch's
+// image. A chain is the same hole with a second patch beside the first: Berry
+// joins the patches of one resolution with `&`, so a built-in patch chained to
+// `./patches/evil.patch` installs both and cannot be keyed by the one name it
+// holds. The `::version=…&hash=…` a lock appends is the locator's query and not
+// the patch's, so it is cut before the name is read.
 func yarnBuiltinPatch(fragment string) string {
-	i := strings.Index(fragment, "builtin<")
-	if i < 0 {
+	fragment, _, _ = strings.Cut(fragment, "::")
+	m := yarnBuiltinPatchName.FindStringSubmatch(fragment)
+	if m == nil {
 		return ""
 	}
-	name := fragment[i:]
-	if j := strings.IndexByte(name, '>'); j >= 0 {
-		return name[:j+1]
-	}
-	return ""
+	return m[1]
 }
+
+// yarnBuiltinPatchName is what a built-in patch is written as: the marker Yarn
+// may put before it, then the name — `builtin<compat/typescript>`, whose
+// characters are the ones the paths Yarn ships its patches under hold.
+var yarnBuiltinPatchName = regexp.MustCompile(`^(?:optional!|~)?(builtin<[a-z0-9/._-]+>)$`)
 
 // classifyYarnSource reads a resolved or resolution line, and answers what it
 // named and how that is served. Berry writes the resolved package as
@@ -1152,7 +1182,15 @@ func classifyYarnSource(value string) (yarnSourceKind, string) {
 	switch {
 	case strings.HasPrefix(source, "workspace:"):
 		return yarnSourceOwnTree, source
-	case strings.HasPrefix(source, "npm:"), strings.HasPrefix(source, "patch:"), strings.HasPrefix(source, "virtual:"):
+	case strings.HasPrefix(source, "npm:"):
+		// The scheme is written for a version or a range, and a URL after it is
+		// a source: `typescript@npm:https://evil.example/x.tgz` is not the
+		// registry's package, whatever host the key would then be read as.
+		if !yarnRegistryRange(strings.TrimPrefix(source, "npm:")) {
+			return yarnSourceOther, source
+		}
+		return yarnSourceDefaultRegistry, source
+	case strings.HasPrefix(source, "patch:"), strings.HasPrefix(source, "virtual:"):
 		return yarnSourceDefaultRegistry, source
 	case defaultRegistryURL(source, npmRegistries...):
 		return yarnSourceDefaultRegistry, source
