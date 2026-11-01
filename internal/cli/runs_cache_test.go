@@ -188,6 +188,14 @@ func (d *genDriver) forget() {
 func genRuns(t *testing.T, n int) (*genDriver, []string) {
 	t.Helper()
 	b, ids := lsBucketRuns(t, n)
+	return genObjects(t, b.Bucket), ids
+}
+
+// genObjects is a counting generation bucket holding b's objects byte for
+// byte, so what a test's command reads is runstore's own objects and never a
+// second fixture's copy of them.
+func genObjects(t *testing.T, b *blob.Bucket) *genDriver {
+	t.Helper()
 	d := &genDriver{objects: map[string][]byte{}, gens: map[string]int64{}}
 	ctx := context.Background()
 	for it := b.List(nil); ; {
@@ -204,7 +212,41 @@ func genRuns(t *testing.T, n int) (*genDriver, []string) {
 		}
 		d.set(obj.Key, body)
 	}
-	return d, ids
+	return d
+}
+
+// installGenBucket serves d from the genbucket:// URL and points the
+// fixture's config at it, so the real command drives the bucket whose reads
+// the test counts.
+func installGenBucket(t *testing.T, f *cloudFixture, d *genDriver) {
+	t.Helper()
+	genBucket = d
+	t.Cleanup(func() { genBucket = nil })
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(f.bucket)) {
+		t.Fatalf("%s does not name the fixture's runs bucket %q", path, f.bucket)
+	}
+	if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte(f.bucket), []byte(genBucketScheme+"://runs")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// genObjectsOf is genObjects over the runs the fixture already holds, however
+// they were seeded: the same reader then reads a bucket whose listings carry
+// generations, which is what lets a warmed cache answer it if anything
+// consults it.
+func genObjectsOf(t *testing.T, f *cloudFixture) *genDriver {
+	t.Helper()
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close() })
+	return genObjects(t, b)
 }
 
 // resultKey is the object name of one run's result.json.
@@ -320,19 +362,7 @@ func genFixture(t *testing.T, f *cloudFixture, n int) (*genDriver, []string) {
 		t.Fatal(err)
 	}
 	d.set(infra.ProjectMarkerObject, marker)
-	genBucket = d
-	t.Cleanup(func() { genBucket = nil })
-	path := os.Getenv("FUGARO_CONFIG")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(data, []byte(f.bucket)) {
-		t.Fatalf("%s does not name the fixture's runs bucket %q", path, f.bucket)
-	}
-	if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte(f.bucket), []byte(genBucketScheme+"://runs")), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	installGenBucket(t, f, d)
 	return d, ids
 }
 
@@ -375,6 +405,48 @@ func TestRunsLsCommandSecondCallReadsOnlyChangedGenerations(t *testing.T) {
 	}
 	if got := d.runReads(); len(got) == 0 {
 		t.Error("ls --no-cache read no run object: the flag has to read the bucket, cache or no cache")
+	}
+}
+
+// TestResolvePRReadsTheBucketNotTheCache: whether a pull request may be followed
+// up is a launch and not a number to draw, so the window resolvePR reads comes
+// from the bucket even when a listing has just warmed the cache with the very
+// same objects -- the noCache the follow-up passes. The bucket here reports
+// generations, so a warmed cache would answer that read if anything consulted
+// it, and launch.json is the object that measures it: it is one of the three a
+// listing reads and the one nothing on the follow-up path reads for itself
+// (checkRoot reads the root's result.json, readTask its task.json), so a
+// follow-up answered from the cache leaves it unread.
+func TestResolvePRReadsTheBucketNotTheCache(t *testing.T) {
+	ctx := context.Background()
+	f := newCloudFixture(t)
+	exec := seedSpec(t, f, firstRunSpec(rootID), true)
+	rec := prRecord(rootID, exec, 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+	d := genObjectsOf(t, f)
+	env := envOn(t, f, blobx.Wrap(blob.NewBucket(d)))
+	window := lsFilter{slugs: []string{appSlug}, since: time.Now().Add(-followUpLookback)}
+
+	// A listing of the same window first: the cache now holds every object of
+	// the PR's run at the generation the bucket reported.
+	if rows, err := loadRows(ctx, env, window, time.Now()); err != nil || len(rows) != 1 {
+		t.Fatalf("the listing before the follow-up = %d rows, %v; want the PR's one run", len(rows), err)
+	}
+	if got := d.runReads(); len(got) == 0 {
+		t.Fatal("the listing read no run object: the fixture is not the bucket the read reaches")
+	}
+	d.forget()
+
+	if _, err := resolvePR(ctx, env, "acme/app", appSlug, 7, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	read := d.runReads()
+	for _, name := range []string{"task.json", "launch.json", "result.json"} {
+		key := runstore.Open(nil, appSlug, rootID).Prefix() + name
+		if !slices.Contains(read, key) {
+			t.Errorf("resolvePR read %v, want %s from the bucket: a warm cache is not what decides whether a pull request allows a follow-up", read, key)
+		}
 	}
 }
 
