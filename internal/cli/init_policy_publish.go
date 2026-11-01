@@ -276,7 +276,13 @@ func reseedPolicyKeys(path string, lc *localcfg.Config, p *projectpolicy.Policy,
 	if err != nil {
 		return nil, nil, nil, userErr("re-seeding the local config from the published policy node: %v", err)
 	}
-	set := func(member string, keyPath []string, value string) {
+	// apply is what the caller's own config learns from a splice that landed:
+	// the members this re-seed writes are the published node's now, and a config
+	// left stating the values the file no longer holds is one a stage re-planned
+	// inside the same run — the rules stage's forget and re-plan is exactly that
+	// — would read as drift and publish over the newer node the re-seed exists
+	// to protect.
+	set := func(member string, keyPath []string, value string, apply func()) {
 		if value == "" {
 			// A member the node leaves out is a key the file must drop, which
 			// one splice cannot state without the value it would have to know.
@@ -289,9 +295,10 @@ func reseedPolicyKeys(path string, lc *localcfg.Config, p *projectpolicy.Policy,
 			return
 		}
 		out = next
+		apply()
 		written = append(written, member)
 	}
-	setList := func(member string, keyPath []string, want, have []string) {
+	setList := func(member string, keyPath []string, want, have []string, apply func()) {
 		for _, item := range have {
 			if slices.Contains(want, item) {
 				continue
@@ -314,20 +321,23 @@ func reseedPolicyKeys(path string, lc *localcfg.Config, p *projectpolicy.Policy,
 			}
 			out = next
 		}
+		apply()
 		written = append(written, member)
 	}
 	for _, member := range members {
 		switch member {
 		case "budget.mode":
-			set(member, []string{"budget", "mode"}, p.Budget.Mode)
+			set(member, []string{"budget", "mode"}, p.Budget.Mode, func() { lc.Budget.Mode = p.Budget.Mode })
 		case "budget.per_run_usd":
-			set(member, []string{"budget", "per_run_usd"}, formatFloat(p.Budget.PerRunUSD))
+			set(member, []string{"budget", "per_run_usd"}, formatFloat(p.Budget.PerRunUSD), func() { lc.Budget.PerRunUSD = p.Budget.PerRunUSD })
 		case "budget.max_run_tokens":
-			set(member, []string{"budget", "max_run_tokens"}, fmt.Sprintf("%d", p.Budget.MaxRunTokens))
+			set(member, []string{"budget", "max_run_tokens"}, fmt.Sprintf("%d", p.Budget.MaxRunTokens), func() { lc.Budget.MaxRunTokens = p.Budget.MaxRunTokens })
 		case "budget.allowed_models":
-			setList(member, []string{"budget", "allowed_models"}, p.Budget.AllowedModels, lc.Budget.AllowedModels)
+			setList(member, []string{"budget", "allowed_models"}, p.Budget.AllowedModels, lc.Budget.AllowedModels, func() {
+				lc.Budget.AllowedModels = slices.Clone(p.Budget.AllowedModels)
+			})
 		case "base_branch":
-			set(member, []string{"base_branch"}, p.BaseBranch)
+			set(member, []string{"base_branch"}, p.BaseBranch, func() { lc.BaseBranch = p.BaseBranch })
 		default:
 			hand = append(hand, member)
 		}
@@ -389,4 +399,3 @@ func writeFileAtomicGuarded(cmd *cobra.Command, path string, old, out []byte) er
 func formatFloat(f float64) string {
 	return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.6f", f), "0"), ".")
 }
-
