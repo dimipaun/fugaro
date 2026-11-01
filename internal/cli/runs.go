@@ -287,9 +287,8 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 // loadRows reads the runs f selects -- the newest f.limit of them when it is
 // set, which bounds the reads and not only the rows -- joins each with its
 // execution, and returns the rows newest first. A run whose launch.json or
-// result.json is
-// corrupt, or names an execution that isn't the run's, is an error row
-// with a warning. Any other failed read but absence fails the whole
+// result.json is corrupt, or names an execution that isn't the run's, is an
+// error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
 //
 // It reads every run's objects first, keeps the runs f.pr selects, and
