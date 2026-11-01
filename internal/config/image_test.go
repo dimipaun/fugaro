@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -259,13 +260,37 @@ func TestValidateCheckoutSharedAllowsDependencyKeys(t *testing.T) {
 	}
 }
 
-// TestValidateRefusesCheckoutSharedUntil0150: nothing in 0.14.0 builds or
-// refreshes a shared dependency-layer image, so a repository that declares
-// checkout: shared would get a job that cannot run. Validation refuses the
-// key where the repository typed it, names the release that lifts the
-// refusal, and names the two kinds that work today — including for a
-// workflow that also declares the dependency-layer keys, which are the ones
-// only this kind accepts and so the ones a reader reaches for first.
+// sharedReleaseRE finds a release number in a message, in the shape the
+// *Since constants are written in, so the test below sees one spliced back
+// into the refusal.
+var sharedReleaseRE = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
+
+// TestSharedCheckoutRefusalNamesNoReleaseAsAFutureArrival: the refusal said
+// shared images arrive in 0.15.0, and 0.15.0 shipped without one — no
+// released fugaro builds or refreshes a shared dependency-layer image
+// (C8b1b/C8b1c are unreleased). Every number it could carry is wrong the
+// same way: the release it names is either out and without the images, or a
+// promise about a slot nobody has scheduled. The gate the refusal stands
+// for is sharedCheckoutShipped, a flag the release that builds these images
+// flips, and what the reader is owed is the state of the world today and
+// the two kinds that work in it, in one sentence.
+func TestSharedCheckoutRefusalNamesNoReleaseAsAFutureArrival(t *testing.T) {
+	if v := sharedReleaseRE.FindString(SharedCheckoutRefusal); v != "" {
+		t.Errorf("the refusal names %q as the release shared images arrive in: no released fugaro builds or refreshes one yet, so it can name no release at all", v)
+	}
+	if strings.Contains(SharedCheckoutRefusal, ". ") || strings.HasSuffix(SharedCheckoutRefusal, ".") {
+		t.Errorf("the refusal reads as more than one sentence: %q", SharedCheckoutRefusal)
+	}
+}
+
+// TestValidateRefusesCheckoutSharedUntilTheImagesShip: no released fugaro
+// builds or refreshes a shared dependency-layer image, so a repository that
+// declares checkout: shared would get a job that cannot run. Validation
+// refuses the key where the repository typed it, names the two kinds that
+// work today, and names no release as the one that lifts the refusal —
+// including for a workflow that also declares the dependency-layer keys,
+// which are the ones only this kind accepts and so the ones a reader
+// reaches for first.
 func TestValidateRefusesCheckoutSharedUntil0150(t *testing.T) {
 	for _, tc := range []struct{ name, yaml string }{
 		{"bare", webYAML + "    checkout: shared\n"},
