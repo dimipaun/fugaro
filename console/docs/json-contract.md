@@ -717,7 +717,7 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
+`--limit`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
 allow-list excludes `--watch` (it is `watch` under another name).
 
 ## 6. The other documents
