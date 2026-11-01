@@ -87,10 +87,11 @@ off, where the chain is **UNENFORCED**.
 
 ## L1. Reading a chain's ledger nodes, and with whose credential (D1046, D1049, D1051). **SEC**
 
-**Pre-work, before any code (U4):** settle whether a run's token may read a **sibling** run's ledger node.
-As the rules stand it may not — `runs/$slug/$run` is readable on `RUN` alone
+**Pre-work, before any code, and it is the one blocking item of this plan (U4):** settle whether a run's
+token may read a **sibling** run's ledger node, and write the answer down before touching the code. As the
+rules stand it may not — `runs/$slug/$run` is readable on `RUN` alone
 (`internal/budget/rules/rules.json.tmpl:56-57`), and `RUN` requires `auth.token.fs == $slug &&
-auth.token.fr == $run` (`internal/budget/rules/rules.go:581-582`), so a token speaks for one run; the `USER`
+auth.token.fr == $run` (`internal/budget/rules/rules.go:580`), so a token speaks for one run; the `USER`
 claim reaches `spend/<day>/runs/$slug/$run` and nothing under `runs/`. The plan therefore reads the chain
 with the identity that may: the **launcher**, which already holds the budget-admin read that `fugaro budget
 set` uses, reading each id **by name**. The runner holds its **own** run's token, so it re-reads its own

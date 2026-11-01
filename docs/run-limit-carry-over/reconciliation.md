@@ -7,10 +7,11 @@ operator raise.
 
 ## 1. The findings
 
-**F1: Exists. `fugaro run`'s flag set.** `newRunCmd` registers `--total-timeout`, `--tier`, `--mode`,
+**F1: Exists. `fugaro run`'s flag set.** `newRunCmd` registers `--total-timeout` (`:276`), `--tier`, `--mode`,
 `--no-budget-check`, `--pr`, `--attempts`, `--retry`, `--recipe`, `--token`, `--plan-task` and the task
-flags (`internal/cli/run.go:271-289`). There is **no flag for a USD cap, a token cap or a review-round
-cap**, and `taskFlags` (`:292`) is the list a `--pr` follow-up excludes. *Consequence:* the four flags of
+flags, from `f := cmd.Flags()` at `internal/cli/run.go:266` through `addCloudFlags` at `:288`. There is **no
+flag for a USD cap, a token cap or a review-round cap**, and `taskFlags` (`:292`) is the list a `--pr`
+follow-up excludes. *Consequence:* the four flags of
 spec §2 are new; `--total-timeout` is the only one that exists and it keeps its meaning.
 
 **F2: Conflicts. Two existing `overrides` members look like two of the four, and mean something else.**
@@ -26,7 +27,9 @@ the rule that a field whose meaning must change gets a new name. The plan alread
 existing members keep their meaning and their readers untouched.
 
 **F3: Conflicts. The per-run dollar cap is the job's environment, not a launch argument.**
-`MaxRunUSDEnv` is `FUGARO_MAX_RUN_USD` (`internal/runner/spend.go:23`), read by `spendFromEnv` (`:93`), and
+`MaxRunUSDEnv` is `FUGARO_MAX_RUN_USD`, the const's own line in the block at `internal/runner/spend.go:21-27`
+(`:23`; `BudgetModeEnv` is the line above it, `:22`), read by `spendFromEnv` (`:93`, its declaration line),
+and
 handed to the gateway as `Options.Cap` (`internal/runner/gateway.go:138`). The value is written into the
 job when `fugaro setup` creates it and re-converged by `fugaro update`. *Consequence:* a per-launch cap cannot ride the job
 environment; it must ride `task.json`, which is the one per-launch carrier the runner reads (spec §2).
@@ -132,7 +135,8 @@ the caches. *Consequence:* a halted run's usage is normally readable, and the wr
 charged (spec §5).
 
 **F18: Exists. `--total-timeout` may raise the run's clock.** `parseTotalTimeout`
-(`internal/cli/run.go:2354`) accepts up to `OverrideCap` (`:2344`) and writes `overrides.total_timeout`
+(`internal/cli/run.go:2354`, its declaration) accepts up to `OverrideCap` (`:2350`, the const; its comment
+starts at `:2344`) and writes `overrides.total_timeout`
 (`:1306`, `:1557`). *Consequence:* `--total-timeout` cannot be the tighten-only wall-time limit; `--max-time`
 is new, and the two compose as `min` (spec §2).
 
@@ -152,7 +156,7 @@ a block above everything in use (`docs/models-commands/README.md`, `docs/rigor-c
 rules at all, because the sweeper writes it with database admin rights. Two further ties bind the leaves:
 `released + spent <= reserved` and `spent + released <= reserved`, so a release may take at most the
 unsettled amount, and `reserved` must move with the day counter by the same delta (`COUNTERS_FOLLOW`). The
-rules' own identity test (`RUN`, `internal/budget/rules/rules.go:581-582`) requires
+rules' own identity test (`RUN`, `internal/budget/rules/rules.go:580`) requires
 `auth.token.fs == $slug && auth.token.fr == $run`, so a token speaks only for the one run it was minted
 for. *Consequence, and it is the load-bearing one:* `max(Spent, Reserved − Released)` **cannot be pushed
 below `Spent` by any writer holding a run's identity**, because every leaf is increase-only and a release is
@@ -265,4 +269,4 @@ question this design does not answer. The spec states the mode and its limit pla
 | U1 | That Cloud Run's `jobs.run` override cannot carry environment variables | Read off the Go client's API surface and the backend seam, not against the live API; the answer does not depend on it (D1041 carries the limits in the task either way) |
 | U2 | ~~That a launcher's write grant on the runs bucket is its own run's prefix only~~ | **Withdrawn.** The grant's own condition (`deploy/terraform/gcp/modules/installation/iam.tf:172-187`) names `runs/` and `tokens/`, not one run's prefix, so a launcher can write and delete any repository record under `runs/`. F21 records the fact and D1046 is what it costs the design |
 | U3 | The exact cost of the `runs show` read over a long chain | `docs/console-coordinator-v2/spec.md:131` measures `runs ls --json --since 24h` at about 5.8 s; a chain read is one resolution plus the chain's ledgers, unmeasured |
-| U4 | That a chain's ledger reads stay inside the rules' read path | The rules' run read is `RUN` (`internal/budget/rules/rules.go:581-582`), which is the run's own identity; whether one run's token may read a **sibling's** ledger node is a rules question this design assumes is denied (each `fr` speaks only for itself) and does not prove here. If it is not denied, the chain read of D1046 needs the platform's admin read instead of a run token |
+| U4 | Whether a chain's ledger read may cross runs | **Open, and the one blocking item for implementation** (plan L1). The rules' run read is `RUN` (`internal/budget/rules/rules.go:580`), which is the run's own identity (`auth.token.fr == $run`), and `USER` reaches only `spend/<day>/runs/$slug/$run` — so **as the rules are written** a run's token cannot read a **sibling** run's ledger node, and the chain read of D1046 must be the platform's **admin read**, the identity class that owns `fugaro budget set`. That a run token in fact reads a sibling is a claim about the deployed rules rather than the checked-in template, and this design does not prove it: L1's first step settles it against the live rules, and the answer changes **who performs the read, not one figure or test** |

@@ -47,7 +47,7 @@ tells the caller their limit took effect when it did not. So the launcher resolv
 layer that set the lower one (D1043).
 
 `--total-timeout` **keeps its present meaning** (D1043): it is a timeout, it may raise the run's own clock
-up to `OverrideCap` (`internal/cli/run.go:2344`), and it is not one of the four. `--max-time` is the new,
+up to `OverrideCap` (`internal/cli/run.go:2350`), and it is not one of the four. `--max-time` is the new,
 tighten-only one. A launch that gives both is accepted; the run's clock is `min(--total-timeout,
 --max-time remaining)`, and the report says which one bound it.
 
@@ -184,7 +184,8 @@ caches (F17). The writeback does not touch the ledger. Three cases, and the desi
 3. **The halt was the cap itself, mid-call.** This is where the "$5 held, $0.25 needed" message comes from —
    and that message is **not about spend**. It is the per-run cap compared against the lease's **outstanding**
    amount: `run cap %s reached (%s held, %s needed)`, where "held" is `Reserved − Released`
-   (`internal/budget/lease.go:209-215`, mirroring `internal/budget/evaluate.go:192`). So what a restart
+   (`internal/budget/lease.go:211`, the guard that builds it at `:210-216`, mirroring
+   `internal/budget/evaluate.go:192`). So what a restart
    charges for that run is `Spent` if the ledger closed, and the **held** amount (`Reserved − Released`) if
    it did not — the money the day counters are still counting either way. It is not a special rule: it is
    case 1 or case 2, and the `max` of §4 already says which.
@@ -286,7 +287,8 @@ boundary in exactly one place — it lets a launcher ask for limits — so the t
 | --- | --- | --- |
 | T1 | **A caller understates what was used** so the restart gets a fresh budget | `used` is read by the engine from the ledger (§4). A caller's `--used-*` is accepted only when it *raises* the charge (D1048). A caller that states a smaller figure is refused, naming both |
 | T2 | **The launcher forges a run record** with a smaller cost, or deletes one | It **can** write and delete records under `runs/` — its grant is `objectUser` on the `runs/` and `tokens/` prefixes, not on one run's (`deploy/terraform/gcp/modules/installation/iam.tf:172-187`, F21). That is exactly why the records are **not** the ledger (D1046): with the budget on, "used" is the database's, and a forged record changes no figure the engine reads |
-| T3 | **A launcher writes its own chain's ledger down**, with a token it minted for one of its runs | It cannot. Every leaf is increase-only and `released + spent <= reserved` (`rules.json.tmpl:56-91`), so `max(Spent, Reserved − Released) >= Spent` in every reachable state: the floor is the **settled** spend and no write moves it down (F20). A launcher holds `signJwt` and can mint a token for any `(slug, run)` (`docs/design/v1.md` §6.1, M9b known limits (2)) — and the most that buys it is to *raise* its own chain's charge |
+| T3 | **A launcher writes its own chain's ledger down**, with a token it minted for one of its runs | It cannot. Every leaf is increase-only and `released + spent <= reserved`
+(`internal/budget/rules/rules.json.tmpl:56-91`), so `max(Spent, Reserved − Released) >= Spent` in every reachable state: the floor is the **settled** spend and no write moves it down (F20). A launcher holds `signJwt` and can mint a token for any `(slug, run)` (`docs/design/v1.md` §6.1, M9b known limits (2)) — and the most that buys it is to *raise* its own chain's charge |
 | T4 | **A chain split** dodges the limit — a task restarted as a "new" chain that shares no link | The chain is derived from the link, and the link is what the launcher must name: a `--continues` the records cannot confirm (no such run, or a run not in this repository) is refused. A launcher that names *no* link gets a fresh chain, which is the honest case the per-run cap already bounds — and the **daily and project caps still bind**, because the database's counters are per (repository, day) and per (project, day) regardless of any chain (`internal/budget/model.go:249-266`) |
 | T5 | **The agent** (which shares the container) understates the chain it is in | It holds no launcher credential and no budget admin: the ledger is written only through the run's own token, whose rules are increase-only (T3), and the raise of an exhausted chain is operator-only (D1061). Its reach is the residual `docs/design/v1.md` §6.1 already documents for a compromised container, not something this design adds |
 | T6 | **A ledger is never closed**, or its run crashed, so the chain reads less than it spent | `used` takes `max(Spent, Reserved − Released)` while the ledger is unclosed or `Crashed` (§4), so an unreleased lease charges the chain the held amount. The sweeper's own direction — it "never releases anything… errs high, never low" (`internal/budget/sweep.go:28-29`) — is the read side's too |
