@@ -90,7 +90,7 @@ func settingsCheckout(t *testing.T, dir, repo, fugaroYAML string) string {
 	if err := os.WriteFile(filepath.Join(path, "fugaro.yaml"), []byte(fugaroYAML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := localcfg.RecordCheckout(os.Getenv, "aurora", localcfg.CheckoutIdentity{Provider: "github", Repo: repo}, path, time.Now()); err != nil {
+	if err := localcfg.RecordCheckout(os.Getenv, "aurora", localcfg.CheckoutIdentity{Provider: "github", Repo: repo}, path, time.Now(), checkoutTempRoots()); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -248,6 +248,98 @@ func TestSettingsChangedShowsOnlyNonDefaults(t *testing.T) {
 	}
 	if row := rowOf(t, doc, "region", "project"); row.Value == nil || *row.Value != "us-east5" {
 		t.Errorf("region = %v, want the local config's us-east5", row.Value)
+	}
+}
+
+// TestSettingsLocalConfigDecidesOnlyTheKeysItWrites: the local file decides a
+// key where its text writes it, and no other key. The decoded config is not
+// evidence — the loader fills some of it and leaves the rest at the zero value
+// — so a read that asked the struct instead of the file printed WINS local for
+// the 57 keys of a five-line config, and --changed listed every one of them as
+// a change nobody made.
+func TestSettingsLocalConfigDecidesOnlyTheKeysItWrites(t *testing.T) {
+	settingsFixture(t, "")
+	doc := readSettingsJSON(t, "--changed")
+	var got []string
+	for _, r := range doc.Settings {
+		if r.Scope != "project" {
+			continue
+		}
+		got = append(got, r.Key)
+		if r.Wins != settings.LayerLocal {
+			t.Errorf("%s: wins = %q, and the file writes the key", r.Key, r.Wins)
+		}
+	}
+	// The five keys settingsFixture's own file writes, which is every key of
+	// the fixture: the read has nothing else to list.
+	want := []string{"gcp_project", "name", "region", "runs_bucket", "version"}
+	if !slices.Equal(got, want) {
+		t.Errorf("--changed lists %v, and the file writes %v", got, want)
+	}
+}
+
+// TestSettingsUnsetLocalKeyShowsTheDefault: a local key the file leaves out is
+// the default's, and prints what the default says rather than a blank or a
+// `null` — a blank would read as "off". The keys here are the shapes the
+// decoded struct cannot tell from a written key: an empty string, a zero
+// number, a nil map and a nil pointer.
+func TestSettingsUnsetLocalKeyShowsTheDefault(t *testing.T) {
+	settingsFixture(t, "")
+	for _, key := range []string{
+		"build.service_account", "terraform.state_bucket", "secret_rotation_days",
+		"base_images", "budget.max_run_tokens", "update_check",
+	} {
+		row := rowOf(t, readSettingsJSON(t, key), key, "project")
+		if row.Wins != settings.LayerDefault {
+			t.Errorf("%s: wins = %q, want default: the file writes no such key", key, row.Wins)
+		}
+		want := row.Default.Value
+		if want == "" {
+			want = row.Default.Unset
+		}
+		if row.Value == nil || *row.Value != want {
+			t.Errorf("%s: value = %q, default = %q: a key no layer sets prints the default", key, deref(row.Value), want)
+		}
+	}
+}
+
+// TestSettingsLocalZeroIsAValueTheFileWrote: the other half of the same rule —
+// a key the file writes as the zero value is the file's, so `secret_rotation_days:
+// 0` is a setting and not an absent key. The read asks the text for exactly
+// this reason: a rule that called every zero field unset would get it wrong.
+func TestSettingsLocalZeroIsAValueTheFileWrote(t *testing.T) {
+	settingsFixture(t, "secret_rotation_days: 0\n")
+	row := rowOf(t, readSettingsJSON(t, "secret_rotation_days"), "secret_rotation_days", "project")
+	if row.Wins != settings.LayerLocal {
+		t.Errorf("wins = %q, want local: the file writes the key", row.Wins)
+	}
+	if deref(row.Value) != "0" {
+		t.Errorf("value = %q, want the 0 the file wrote", deref(row.Value))
+	}
+}
+
+// TestSettingsLoaderFilledValuesShowAsDefaults: max_parallel and
+// build.machine_type are the two keys the local loader fills for a file that
+// sets them nowhere, so a run gets them whatever the file says. Their rows
+// print the value a run gets, as the default, with the constant that holds it
+// (spec §2.4) — the read called them local, which is a layer that never wrote
+// them, and --changed listed them as changes nobody made.
+func TestSettingsLoaderFilledValuesShowAsDefaults(t *testing.T) {
+	settingsFixture(t, "")
+	for _, tc := range []struct{ key, value, constant string }{
+		{"max_parallel", "20", "localcfg.DefaultMaxParallel"},
+		{"build.machine_type", "E2_HIGHCPU_8", "localcfg.DefaultBuildMachineType"},
+	} {
+		row := rowOf(t, readSettingsJSON(t, tc.key), tc.key, "project")
+		if row.Wins != settings.LayerDefault {
+			t.Errorf("%s: wins = %q, want default: the file writes no such key", tc.key, row.Wins)
+		}
+		if deref(row.Value) != tc.value {
+			t.Errorf("%s: value = %q, want the value a run gets, %q", tc.key, deref(row.Value), tc.value)
+		}
+		if row.Default.Value != tc.value || row.Default.Source != tc.constant {
+			t.Errorf("%s: default = %q from %q, want %q from %q", tc.key, row.Default.Value, row.Default.Source, tc.value, tc.constant)
+		}
 	}
 }
 
@@ -557,7 +649,7 @@ func TestSettingsTwoProvidersOfOneRepositoryReadOneCheckout(t *testing.T) {
 	github := write(filepath.Join(home, "github"), settingsRepoYAML("agent:\n  review_rounds: 7\n"))
 	for _, c := range []struct{ provider, dir string }{{"bitbucket", bitbucket}, {"github", github}} {
 		if err := localcfg.RecordCheckout(os.Getenv, "aurora",
-			localcfg.CheckoutIdentity{Provider: c.provider, Repo: "owner/repo-a"}, c.dir, time.Now()); err != nil {
+			localcfg.CheckoutIdentity{Provider: c.provider, Repo: "owner/repo-a"}, c.dir, time.Now(), checkoutTempRoots()); err != nil {
 			t.Fatal(err)
 		}
 	}

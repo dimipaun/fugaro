@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/settings"
@@ -98,6 +100,7 @@ type settingsRead struct {
 
 	local     *localcfg.Config
 	localPath string
+	localTree map[string]any
 	localMS   int64
 
 	layer    *config.ProjectLayer
@@ -149,6 +152,7 @@ func readSettings(ctx context.Context, o settingsOptions, now time.Time) (*setti
 		return nil, userErr("%w", err)
 	}
 	r.local, r.localPath = lc, sel.Path
+	r.localTree = localWritten(sel.Path)
 	r.project = sel.Name
 	if lc != nil && lc.Name != "" {
 		r.project = lc.Name
@@ -168,6 +172,27 @@ func readSettings(ctx context.Context, o settingsOptions, now time.Time) (*setti
 		}
 	}
 	return r, nil
+}
+
+// localWritten is the local config file's own text, decoded into the tree the
+// read asks whether a key is written in. The decoded Config cannot answer it:
+// the loader fills a key the file leaves out with the value the installation
+// runs with (localcfg.Parse sets max_parallel and build.machine_type), so a
+// field holding a value is not evidence the file set the key — and a field
+// left at its zero value is not evidence either, because the read cannot tell
+// `review_rounds: 0` from a key the file never wrote. A file that cannot be
+// read is an empty tree, which answers "written nowhere": a row then prints
+// its default rather than claiming a layer that was never read.
+func localWritten(path string) map[string]any {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var tree map[string]any
+	if err := yaml.Unmarshal(data, &tree); err != nil {
+		return nil
+	}
+	return tree
 }
 
 // readLayerCache reads the project layer the last cloud read cached. A cache
@@ -355,8 +380,15 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 		// check off.
 		s.Value, s.Wins = "false", settings.LayerEnv
 	case slices.Contains(row.Layers, settings.LayerLocal) && r.local != nil:
-		if v, ok := valueAt(r.local, row.Key); ok {
-			s.Value, s.Wins = v, settings.LayerLocal
+		// The file's text says whether the local config writes the key, and
+		// the decoded config says what it writes: the struct is filled by
+		// the loader, so it holds a value for keys the file never wrote
+		// (localWritten). A key the file leaves out is the default's, not
+		// local's, and `--changed` then lists only the keys a layer decided.
+		if _, ok := valueAt(r.localTree, row.Key); ok {
+			if v, ok := valueAt(r.local, row.Key); ok {
+				s.Value, s.Wins = v, settings.LayerLocal
+			}
 		}
 	case isYAMLKey(row) && r.layer != nil && r.layer.SetsDefault(row.Key):
 		// The layer's defaults: are the project level of a fugaro.yaml key

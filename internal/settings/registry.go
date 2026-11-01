@@ -466,7 +466,7 @@ var localRows = []Row{
 	loc("registry", "none: the legacy shared registry", "setup", docSetup),
 	loc("registry_host", "none: no image has been pinned yet", "setup", docSetup),
 	loc("setup_pending", "none: setup ran to the end", "setup", docSetup),
-	loc("policy_generation", "none: no generation is recorded; the next update adopts the published one", "setup", docSetup),
+	loc("policy_generation", "none: no generation is recorded; the next update adopts the published one", "update", docSetup),
 	loc("base_images", "the installation's own base image per kind", "setup", docSetup),
 	loc("image_source", "none: no base pin has been recorded", "setup", docSetup),
 	loc("backend", "cloud-run", "setup", "docs/backends.md"),
@@ -475,7 +475,12 @@ var localRows = []Row{
 	loc("user", "none", "setup", docSetup),
 	loc("commit_name", "Fugaro", "setup", docSetup),
 	loc("commit_email", "Fugaro's own address", "setup", docSetup),
-	loc("max_parallel", "Fugaro's own cap", "config", docSetup),
+	// max_parallel and build.machine_type are the local loader's own values:
+	// Parse fills both for a file that sets them nowhere, so a run gets them
+	// whatever the file says, and their rows carry a value rather than an
+	// "unset means" sentence (from defaultValues below, as update_check's
+	// does).
+	{Key: "max_parallel", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "config", Doc: docSetup},
 	loc("base_branch", "none: each repository's own branch", "config", docSetup),
 	// update_check is the one key a process environment sets as well as a
 	// file (spec §2.2: env overrides local), so its row carries the env level
@@ -497,7 +502,7 @@ var localRows = []Row{
 	loc("batch.task_timeout", "Fugaro's own task timeout", "setup", "docs/backends.md"),
 
 	loc("build.service_account", "the project's default service account", "setup", docSetup),
-	loc("build.machine_type", "the build design's own machine", "setup", docSetup),
+	{Key: "build.machine_type", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "setup", Doc: docSetup},
 	loc("build.region", "the installation's region", "setup", docSetup),
 
 	loc("terraform.state_bucket", "the installation's state bucket", "setup", docSetup),
@@ -596,7 +601,9 @@ var localRows = []Row{
 // TestRegistryDefaultsMatchApplyDefaults reads each one back out of a resolved
 // config.
 var defaultValues = map[string]Default{
-	"update_check": value("true", "config.DefaultUpdateCheck"),
+	"update_check":       value("true", "config.DefaultUpdateCheck"),
+	"max_parallel":       value("20", "localcfg.DefaultMaxParallel"),
+	"build.machine_type": value("E2_HIGHCPU_8", "localcfg.DefaultBuildMachineType"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

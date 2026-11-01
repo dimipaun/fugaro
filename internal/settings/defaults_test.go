@@ -30,6 +30,15 @@ workflows:
 `
 )
 
+// minimalLocal is the smallest local config localcfg.Parse accepts, which is
+// what the local loader's own defaults are read back out of.
+const minimalLocal = `version: 1
+name: workspace-a
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+`
+
 // TestRegistryDefaultsMatchApplyDefaults is what keeps the DEFAULT column from
 // parting company with a real run: every row that claims a concrete default
 // must name the value applyDefaults actually leaves in place. A row whose
@@ -46,6 +55,12 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		t.Fatalf("the minimal repository with a workflow is refused: %v", ps)
 	}
 	web := withWorkflow.Workflows["web"]
+	// local is the local config the loader leaves in place for a file that
+	// sets no key the loader fills (localcfg.Parse).
+	local, err := localcfg.Parse([]byte(minimalLocal))
+	if err != nil {
+		t.Fatalf("the minimal local config is refused: %v", err)
+	}
 
 	readers := map[string]func() string{
 		"git.base_branch":     func() string { return plain.Git.BaseBranch },
@@ -64,6 +79,8 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		"update_check": func() string {
 			return strconv.FormatBool((&localcfg.Config{}).UpdateCheckEnabled())
 		},
+		"max_parallel":       func() string { return strconv.Itoa(local.MaxParallel) },
+		"build.machine_type": func() string { return local.Build.MachineType },
 	}
 	for _, r := range Rows() {
 		if r.Default.Value == "" {

@@ -344,7 +344,8 @@
           "default": "unset = Fugaro's own grace period"
         },
         "build.machine_type": {
-          "default": "unset = the build design's own machine"
+          "$comment": "localcfg.DefaultBuildMachineType",
+          "default": "E2_HIGHCPU_8"
         },
         "build.region": {
           "default": "unset = the installation's region"
@@ -783,7 +784,8 @@
           "default": "unset = the keychain item the subscription design names"
         },
         "max_parallel": {
-          "default": "unset = Fugaro's own cap"
+          "$comment": "localcfg.DefaultMaxParallel",
+          "default": "20"
         },
         "model_prices.*.cache_read": {
           "default": "unset = the built-in price"

@@ -1175,6 +1175,15 @@ func oldMailboxKeychainItem(mailbox *yaml.Node) string {
 	return ""
 }
 
+// The local loader's own values, which Parse leaves in place for a file that
+// sets the key nowhere. They are named because the settings registry cites
+// them in the DEFAULT column (spec §2.4): the row for one of these keys is the
+// value a run gets, not an "unset means" sentence.
+const (
+	DefaultMaxParallel      = 20
+	DefaultBuildMachineType = "E2_HIGHCPU_8"
+)
+
 // Parse decodes the config strictly, applies defaults and validates it.
 func Parse(data []byte) (*Config, error) {
 	var top map[string]yaml.Node
@@ -1201,10 +1210,10 @@ func Parse(data []byte) (*Config, error) {
 		c.Version = 1
 	}
 	if c.MaxParallel == 0 {
-		c.MaxParallel = 20
+		c.MaxParallel = DefaultMaxParallel
 	}
 	if c.Build.MachineType == "" {
-		c.Build.MachineType = "E2_HIGHCPU_8"
+		c.Build.MachineType = DefaultBuildMachineType
 	}
 	if err := c.validate(); err != nil {
 		return &c, err
