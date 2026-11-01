@@ -123,7 +123,8 @@ its own environment. *Consequence:* nothing in this slice changes the launch pat
 assumption it rests on, and the review variant's environment stays CSR7's to write.
 
 **What the review of 2026-11-01 corrected.** Four claims this folder made were wrong against the code, and
-each is fixed where it was made rather than only here:
+each is fixed where it was made rather than only here. Two `:line` citations had also drifted by then, and
+they are the fifth bullet:
 
 - **The audit line never names pull requests.** `AuditEvent` (`internal/credsvc/audit.go:159`) is the closed
   set — Run, Repository, Job, Caller, Credential, Tier, Purpose, Status — and carries **no** pull-request
@@ -149,6 +150,10 @@ each is fixed where it was made rather than only here:
   `TestCredentialsServeRefusesWithoutItsEnvironment` is `credentials_serve_test.go:100`, and
   `credentialsServiceLaunchEnv` is `run.go:2958`. Each is fixed at its own site; the symbol, not the number,
   is what a reader searches for.
+- **Two more had drifted by the time the base commit moved to `a38cfeec`**, which is what this folder is now
+  read against: `RequestFromHTTP` is `wire.go:842` (not `:152`, which is `ErrorUnverifiedRunIdentity`, the
+  constant it was confused with) and `AuditEvent` is `audit.go:159`. The code that mattered had not changed;
+  the two lines here had.
 
 ## 2. What this design rests on that already exists
 
