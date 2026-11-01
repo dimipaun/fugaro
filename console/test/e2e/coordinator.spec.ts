@@ -561,7 +561,7 @@ test.describe('the Coordinator view in the dashboard', () => {
           skeleton: body?.querySelector('.console-skeleton') !== null,
           records: view?.querySelectorAll('li.coordinator-record').length ?? -1,
           // K1: the queue is a section of its own, and it wears its own mark in
-          // this same frame -- the four reads behind it were started in this
+          // this same frame -- the three reads behind it were started in this
           // turn, and none of them is waiting on another.
           queue: view?.querySelector('section.coordinator-queue')?.getAttribute('aria-busy') ?? null,
           queueLabel: view?.querySelector('section.coordinator-queue .console-busy-label')?.textContent ?? null,
