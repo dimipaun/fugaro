@@ -485,11 +485,30 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 	// bundle container's prevent_destroy refuses the plan, and no later update
 	// moves the installation again without --provision-credentials. Putting the
 	// document the carry is about to use back closes the window this resolve
-	// opened, and costs one write of a file prepare rewrites in a moment.
+	// opened, and costs one write of a file prepare rewrites a few steps later.
+	//
+	// A run that fails before that rewrite leaves the file on disk, and that is
+	// the point rather than a leak to clean up: nothing removes a workdir on
+	// the error path (the next run's PrepareWorkdir is what replaces the tree),
+	// and every reader of this file reads it AS the earlier run's document —
+	// prepare and --print-vars carry forward from it the keys this run's spec
+	// never holds, and installationFenceRecorded reads the managed deployer's
+	// fence out of it. What is written is those same bytes, the ones
+	// recordedCredentialsImage just read (Workdir.PrevVars in an ordinary
+	// update), so the file and the snapshot agree; deleting it here would put
+	// the opt-in back out of reach and repeat the failure above.
 	if err := e.wd.WriteVars(doc); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
-	if !newer(ver, infra.CredentialsServiceImageRelease(image)) {
+	// A reference that names NO release is replaced rather than compared: it
+	// is an operator's hand-written digest, and there is no release in it to
+	// say the installation is ahead of this binary. The check is written out
+	// because the comparison alone answers the wrong way for it — newer splits
+	// both sides on "." and atoi's each part, so an empty operand reads as one
+	// zero part and compares equal to a release whose major is 0, which is
+	// every release this program has cut so far.
+	recorded := infra.CredentialsServiceImageRelease(image)
+	if recorded != "" && !newer(ver, recorded) {
 		return nil
 	}
 	pinned, err := resolveCredentialsImage(ctx, e)

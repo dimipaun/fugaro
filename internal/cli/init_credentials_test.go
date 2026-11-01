@@ -1315,6 +1315,10 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	seeded, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
 	r.resolveErr = errors.New("the signature of dimipaun/fugaro-credentials:1.2.3-pinned did not verify")
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
@@ -1324,6 +1328,22 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "did not verify") {
 		t.Errorf("the run failed with %v, want the resolve's own refusal — an update that cannot reach the registry cannot report the service as moved either\n%s", err, s)
+	}
+	// The write-back is not a half-built document an aborted run left behind:
+	// nothing removes a workdir on the error path (the next run's PrepareWorkdir
+	// is what replaces the tree), so these bytes are what the installation is
+	// left holding, and what every reader of this file reads next — prepare and
+	// --print-vars carry the keys this run's spec never holds forward FROM them,
+	// and installationFenceRecorded reads the managed deployer's fence out of
+	// them. They are the earlier run's document entire, so the file and the
+	// snapshot the next run takes agree, and no clean-up step is owed here: a
+	// deletion would be the finding this test exists for.
+	after, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
+	if err != nil {
+		t.Fatalf("the failed update left no tfvars to read back: %v\n%s", err, s)
+	}
+	if string(after) != string(seeded) {
+		t.Errorf("the failed update left tfvars that are not the document it started from: %s, want %s\n%s", after, seeded, s)
 	}
 	// The opt-in is where it was, image and all: the run wrote the document
 	// the carry is about to use back before it resolved, so the file the next
@@ -1378,6 +1398,41 @@ func TestUpdateKeepsANewerRecordedCredentialsImage(t *testing.T) {
 	}
 	if r.resolveCalls != 0 || r.arCalls != 0 {
 		t.Errorf("the update resolved %d image(s) and read %d back, want none: there is nothing to move when the recorded release is ahead of this binary's", r.resolveCalls, r.arCalls)
+	}
+}
+
+// An image that names NO release is replaced by this release's (the review of
+// the fix round): the "never move it down" rule compares two releases, and a
+// reference that names none — an operator's hand-written digest, pinned by
+// digest so the module's validation admits it, and naming no version at all —
+// has nothing to compare. It is the case the operators line describes ("an
+// operator's hand-written image digest is replaced by the release image"), and
+// the re-pin must reach it rather than read it as "a release newer than mine".
+//
+// The release in the rig is 0.15.0, which is what makes this test the one that
+// catches the trap: newer(a, b) splits both sides on "." and atoi's every part,
+// so an empty operand reads as one zero part and compares EQUAL to a release
+// whose major is 0 — every release this program has cut so far. At 1.2.3 the
+// comparison happens to answer "newer" for the wrong reason, which is why the
+// rig at what will be the current release is the one that pins this.
+func TestUpdateReplacesACredentialsImageThatNamesNoRelease(t *testing.T) {
+	r := credentialsStageRigAt(t, "0.15.0")
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seeded := "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry +
+		"/dimipaun/fugaro-credentials@sha256:" + strings.Repeat("ab", 32)
+	seedCredentialsService(t, r, seeded)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an update of an installation whose image names no release failed: %v\n%s", err, s)
+	}
+	if got, want := credentialsServiceEntry(t, r)["image"], r.credentialsRefAt("0.15.0"); got != want {
+		t.Errorf("credentials_service.image = %v, want %s: a reference that names no release is the release this installation runs nobody knows, and leaving it there is an installation stuck on an operator's hand-written digest\n%s", got, want, s)
+	}
+	if r.resolveCalls != 1 || r.arCalls != 1 {
+		t.Errorf("resolve calls %d, read-backs %d, want one of each: the replacement image is the release's, and it is written only through the step that verified it", r.resolveCalls, r.arCalls)
 	}
 }
 
