@@ -189,13 +189,19 @@ type SharedAnchor struct {
 // may send the project's Bitbucket token to (D474), so a writer of the runs
 // bucket publishing one would be choosing where a credential goes.
 //
+// secret_rotation_days and secret_expires are operator-only for update_check's
+// reason (plan B1.9): they are one person's record of when the credentials only
+// they can rotate are meant to be rotated and when they expire, and a writer of
+// the runs bucket publishing either would be choosing when every other machine
+// is told its installation is overdue.
+//
 // review_floor is the sharpest case of the rule, and localcfg.Config.Shared
 // nils it for it: the owner's floor is what stops a launcher turning review
 // off (D722, G1), and it is published through the policy node — which the
 // runner reads and fails closed on — precisely because the shared file is
 // writable by any launcher. A floor in this file would be the launcher the
 // floor is meant to bind, setting it.
-var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "bitbucket_api_roots", "update_check", "review_floor"}
+var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "bitbucket_api_roots", "update_check", "secret_rotation_days", "secret_expires", "review_floor"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -262,7 +268,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("gcp_project", "%q is not %s", c.GCPProject, a.GCPProject)
 	case c.RunsBucket != a.Bucket || c.RunsBucketName() != a.Bucket:
 		return bad("runs_bucket", "%q is not the bucket it was read from, %s", c.RunsBucket, a.Bucket)
-	case c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.ReviewFloor != nil:
+	case c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil:
 		return refuse("carries a section that is never published (%s)", strings.Join(sharedForbidden, ", "))
 	case c.RegistryHost != c.Region+"-docker.pkg.dev/"+a.GCPProject:
 		return bad("registry_host", "%q is not this project's registry, %s-docker.pkg.dev/%s", c.RegistryHost, c.Region, a.GCPProject)

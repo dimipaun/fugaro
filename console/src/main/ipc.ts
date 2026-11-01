@@ -1371,6 +1371,12 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
   },
   {
     shape: 'flag',
+    value: '--check-bitbucket-token',
+    why: 'it reads the credentials service’s bundle — a Bitbucket token — with the operator’s own credentials and asks Bitbucket to accept it: the same reason as `--check-github-app`, a secret value this process would be the one to fetch',
+    where: 'internal/cli/doctor.go:301',
+  },
+  {
+    shape: 'flag',
     value: '--strict',
     why: 'its failure mode is the checkout’s plugin wiring, which is not what the environment view draws',
     where: 'internal/cli/doctor.go:199; design section 3.4 rule 5',
