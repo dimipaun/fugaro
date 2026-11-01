@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -368,6 +369,102 @@ func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 	}
 }
 
+// TestUpdatePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile: the
+// in-flight refusal is about the node a run rewrites, and D854's re-seed carries
+// a pending migration with it — so the refusal is asked before the re-seed of
+// this machine's file, not after it. A run that re-seeded first would have moved
+// the file under a write this refusal exists to stop, and would have taken the
+// operator's typed confirmation for a write that then does not happen.
+func TestUpdatePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	f.db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
+		"budget": map[string]any{"mode": "enforce", "per_run_usd": 9},
+	}))
+	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+	h := newMigrationRig(t, f, &initOptions{})
+	// The fixture's budget block is the flow style projectConfigText writes, and
+	// a member inside a flow collection is one yamledit refuses to splice: the
+	// re-seed this test is about is the one that would land.
+	blockBudgetConfig(t, f)
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	before, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.apply(t, false)
+	if err == nil {
+		t.Fatalf("a run in flight did not stop the re-seed:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "run(s) are in flight") {
+		t.Errorf("the refusal is not the in-flight one: %v", err)
+	}
+	after, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("the file was re-seeded while a run was in flight:\nbefore %s\nafter  %s", before, after)
+	}
+	if got := nodeVersionOn(t, f.db); got != 3 {
+		t.Errorf("the node moved to version %d while a run was in flight", got)
+	}
+}
+
+// TestUpdatePolicyStageDoesNotAdoptAWriterThatLandsBeforeTheRecord: the write is
+// conditional on the ETag the run read, and the generation the file is left
+// recording is checked against the node before it is recorded — by reading it
+// back, because the write's own answer carries no ETag. A writer that lands in
+// between holds the node now, and adopting THAT generation is the one state D854
+// cannot catch afterwards: this machine's file would claim a node it never wrote,
+// so the next edit would look like this machine's own publish and would overwrite
+// the newer node.
+func TestUpdatePolicyStageDoesNotAdoptAWriterThatLandsBeforeTheRecord(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	published := nodeETag(t, f)
+
+	// The plan is read once per run (policyMigrateStage.plan), so the two
+	// requests the write makes are the write itself and the read the record is
+	// made from: holding them is what puts another writer between them.
+	stampedWrite, releaseWrite := f.db.HoldNext(projectpolicy.PathShared())
+	stampedRead, releaseRead := f.db.HoldNext(projectpolicy.PathShared())
+	done := make(chan struct{})
+	var out string
+	var err error
+	go func() {
+		defer close(done)
+		out, err = h.apply(t, true)
+	}()
+	<-stampedWrite
+	releaseWrite()
+	<-stampedRead
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNodeAt(7))
+	releaseRead()
+	<-done
+
+	if err == nil {
+		t.Fatalf("the run recorded the generation of a node another writer had moved:\n%s", out)
+	}
+	for _, want := range []string{"was written and then changed again", "fugaro project policy show"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if gen := recordedGeneration(t, f); gen == nodeETag(t, f) || gen == published {
+		t.Errorf("policy_generation = %q: a generation was recorded for a node this run does not hold", gen)
+	}
+	if got := nodeCeiling(t, f); got != 7 {
+		t.Errorf("the node's ceiling is %v, want the other writer's 7: this run's write overwrote it", got)
+	}
+}
+
 // TestUpdatePolicyMigrationVerifiesTheNodeItWrote: Verify is the read-back the
 // write ends with, and the version is what it watches: a write that did not
 // land, or a node another writer moved back under it, is a policy this Fugaro
@@ -419,6 +516,40 @@ func TestUpdatePolicyMigrationVerifyReadsTheNodeBack(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal lacks %q: %v", want, err)
 		}
+	}
+}
+
+// TestUpdatePolicyReseedVerifyReadsTheNodeBack: the re-seed D854 offers writes
+// no node of its own, and Verify skipping that one is right. A re-seed that
+// carries a migration beside it does write the node, and that write is read
+// back like any other: the question is asked of the plan (writesNode), so a
+// migration that did not land is caught here rather than by the next run
+// rewriting it.
+func TestUpdatePolicyReseedVerifyReadsTheNodeBack(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	f.db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
+		"budget": map[string]any{"mode": "enforce", "per_run_usd": 9},
+	}))
+	h := newMigrationRig(t, f, &initOptions{})
+	blockBudgetConfig(t, f)
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the re-seed and the migration did not finish: %v\n%s", err, out)
+	}
+	if err := h.s.Verify(context.Background()); err != nil {
+		t.Fatalf("the node the re-seed's migration has just written does not verify: %v", err)
+	}
+	// The node put back where the run found it: a migration this run did not
+	// leave behind is one it would make again on every run.
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	err = h.s.Verify(context.Background())
+	if err == nil {
+		t.Fatal("a re-seed's migration that left the node at version 3 verified")
+	}
+	if !strings.Contains(err.Error(), "still version 3") {
+		t.Errorf("the refusal is not the version one: %v", err)
 	}
 }
 

@@ -557,7 +557,12 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if err := policyMigrationConfirm(ctx, u.cmd, m, u.o.yes, u.w); err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
-	return stepResult{state: stepDone, reason: fmt.Sprintf("the published policy was migrated from version %d to %d in place", m.from, projectpolicy.Version)}
+	// The line is the write's own (doneDetail): this step migrates an older node,
+	// publishes what the local config states, or records the generation of a node
+	// that already carries it — and a sentence that said "migrated from version X
+	// to Y" over a publish-only or record-only run would report a migration that
+	// did not happen between two versions that are the same number.
+	return stepResult{state: stepDone, reason: oneLine(m.doneDetail())}
 }
 
 // checkRulesCaveat is what --check says for the rules step, for the same reason

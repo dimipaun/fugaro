@@ -158,8 +158,9 @@ func (e *initEngine) options() initflow.Options {
 // behind --provision-batch, which update refuses). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
 // secrets, plugin, the repository of the checkout it is run in (W5.1), the
-// deployed security rules generation, the published policy node's migration
-// and the checkout's own steps: fugaro
+// deployed security rules generation, the published policy node itself
+// (migrated and published from the local config) and the checkout's own
+// steps: fugaro
 // upgrade's pin, plugin and cloud steps for that checkout
 // (init_checkout_upgrade.go, the owner's rule of 2026-10-30). There is no
 // services stage in either
@@ -175,10 +176,12 @@ func initStages(e *initEngine) []initflow.Stage {
 	if e.r.o.provisionCredentials {
 		stages = append(stages, newCredentialsStage(e))
 	}
-	// The policy stage last: it rewrites the published node every run of the
-	// project is admitted by, and the stages before it are what those runs
-	// are launched against (see the stage's own file for why it is a
-	// migration and never a delete and a republish).
+	// The policy stage last: it writes the node every run of the project is
+	// admitted by — migrated in place when it is an older node, built from the
+	// local config when it does not carry what the config states — and the
+	// stages before it are what those runs are launched against (see the
+	// stage's own file for why it is a migration and never a delete and a
+	// republish).
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
 	// The rules stage before the policy stage: the deployed security rules
 	// generation is what a published policy node is read under, and the policy
