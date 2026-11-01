@@ -248,10 +248,15 @@ The canonical form is text, one line per fact, with a version line first:
 ```
 key v2
 base:"<base_ref>@<base_digest>"
-pkg:"<name>" "<version>" "<integrity>"
+pkg:"\"<name>\" \"<version>\" \"<integrity>\""
 tool:"<tool>@<version>"
 ```
 
+- Every line after the version line is a prefix and then its whole fact written as **one quoted Go
+  string literal** (`strconv.Quote`), so the `pkg:` line's own inner quotes come out escaped in the
+  block above. The block is the bytes and not a sketch of them: unquoting a line's text after its
+  prefix gives back the three literals §3.1 stores. `base:` and `tool:` write one field each, so
+  their quoting is the plain one.
 - A `pkg:` fact is the name, the version and the integrity or checksum the file states for that
   version's artifact (D618). **Each of the three is its own quoted literal, one space between
   them**, and the third is written even when the file states no integrity for that package, so a
@@ -274,12 +279,12 @@ tool:"<tool>@<version>"
   module path as written, which is case-sensitive). A control character in a name, a version or an
   integrity, a NUL in a name, or an `@` in a version is not a shape any ecosystem writes: the file
   is refused (`UnkeyedUnreadable`) rather than keyed by it.
-- Each literal is a **quoted Go string literal** (`strconv.Quote`), which is the quotes in the block
-  above. A name, a version or an integrity is text a key file supplied, and a fact holding a newline
-  would otherwise end its line and have the rest of it read as further facts: a package named
-  `left-pad\npkg:"react"` would hash as a further fact and take its key — and so be served its image.
-  Quoting escapes that newline, and every other control character, quote and backslash, so one fact
-  is one line whatever it holds.
+- Each literal is a **quoted Go string literal** (`strconv.Quote`), which is the block's inner quotes,
+  the ones a field wears; the fact is quoted a second time onto its line. A name, a version or an
+  integrity is text a key file supplied, and a fact holding a newline would otherwise end its line
+  and have the rest of it read as further facts: a package named `left-pad\npkg:"react"` would hash as
+  a further fact and take its key — and so be served its image. Quoting escapes that newline, and
+  every other control character, quote and backslash, so one fact is one line whatever it holds.
 - Every line is **deduplicated** and the lines after the version line are sorted bytewise, so the
   order of files, of entries in a file and of JSON or YAML keys cannot matter.
 - The bytes end with a single newline. The hash is the lower-case hex **SHA-256** of those bytes,

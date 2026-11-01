@@ -60,6 +60,13 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		"Each of the three is its own quoted literal, one space between",
 		"The three fields are encoded apart because a fact must be injective",
 		"which the spelling without per-field quoting could not say",
+		// The form's bytes, as the block writes them: each line is a prefix
+		// and then its whole fact as one quoted literal, so the `pkg:` line's
+		// inner quotes are escaped. A block that showed the three literals
+		// bare would be a sketch of the form, and a reader taking it as the
+		// bytes would hash a line the reduction never writes.
+		"pkg:\"\\\"<name>\\\" \\\"<version>\\\" \\\"<integrity>\\\"\"",
+		"a prefix and then its whole fact written as **one quoted Go",
 		// §2.3's empty-integrity rule and the table that names each ecosystem's
 		// default registry, which is what "this source is the default registry's"
 		// means per format.

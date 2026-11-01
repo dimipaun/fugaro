@@ -1869,6 +1869,12 @@ func reduceRequirements(rel string, data []byte) ([]string, error) {
 // requirementPin reads name==version, the one form of a requirement that
 // states a version. Extras are part of the name a requirement writes and not
 // part of the package's name, so they are dropped.
+//
+// The version half refuses the comparison operators a specifier writes in
+// place of a version, and `!` is not one of them: PEP 440 puts it inside the
+// version as an epoch separator (`1!3.9.2`), so a pin that names an epoch is
+// a pin like any other. Only the name half refuses it, and no package name
+// carries one.
 func requirementPin(spec string) (name, version string, ok bool) {
 	i := strings.Index(spec, "==")
 	if i <= 0 {
@@ -1878,7 +1884,7 @@ func requirementPin(spec string) (name, version string, ok bool) {
 	if j := strings.IndexByte(name, '['); j >= 0 {
 		name = name[:j]
 	}
-	if strings.ContainsAny(name, "<>=!~, ") || strings.ContainsAny(version, "<>=!~*, ") {
+	if strings.ContainsAny(name, "<>=!~, ") || strings.ContainsAny(version, "<>=~*, ") {
 		return "", "", false
 	}
 	return name, version, true

@@ -569,6 +569,13 @@ func TestReduceRequirements(t *testing.T) {
 	if got := reduced(t, "requirements.txt", "requests[security]==2.31.0\n"); !slices.Equal(got, []string{factOf("requests", "2.31.0", "")}) {
 		t.Errorf("a pin with extras: %v", got)
 	}
+	// A PEP 440 epoch belongs to the version (`5.4.0` of epoch `1`), so the
+	// `!` sits in the version half of the pin and is not one of the operators
+	// this reader refuses: the pin is keyed rather than read as a line the file
+	// left unpinned.
+	if got := reduced(t, "requirements.txt", "zope.interface==1!5.4.0\n"); !slices.Equal(got, []string{factOf("zope-interface", "1!5.4.0", "")}) {
+		t.Errorf("a pin with an epoch: %v", got)
+	}
 	// pip-compile writes a requirement's hashes as continuation lines: they
 	// are the pin's integrity (D618), and the order a file writes them in is
 	// not a fact.

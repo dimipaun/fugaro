@@ -67,7 +67,15 @@ func TestKeyIdenticalForIdenticalDependencySets(t *testing.T) {
 func TestKeyChangesWithAnyLockfile(t *testing.T) {
 	base := resolvedWeb()
 	keys := map[string]string{"the set itself": Key(base)}
-	for _, p := range []string{"lodash@4.17.21", "golang.org/x/text@0.14.0", "certifi@2024.8.30", "serde@1.0.210"} {
+	// Each entry is a fact as §2.4 writes one, never the bare `name@version` the
+	// reduction does not write, and the four come from ecosystems whose names
+	// differ in shape: an npm name, a Go module path, a PyPI name, a crate.
+	for _, p := range []string{
+		factOf("lodash", "4.17.21", ""),
+		factOf("golang.org/x/text", "0.14.0", ""),
+		factOf("certifi", "2024.8.30", ""),
+		factOf("serde", "1.0.210", ""),
+	} {
 		got := base
 		got.Packages = append([]string{p}, base.Packages...)
 		keys[p] = Key(got)

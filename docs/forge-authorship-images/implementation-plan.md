@@ -468,7 +468,9 @@ behaviour (C8). C8 may start once the owner gives the go; T6 is no longer a gate
 - **Interfaces:** `imagecheck.Key(resolved) string` (the normalised hash: package names, versions and
   their integrities, toolchain, base image only), `imagecheck.Lock` (hash to digest, a JSON object
   in the runs bucket under `builds/`, decoded strictly, schema in `schemas/`; the one source),
-  `imagecheck.Superset(lock, resolved)` (an existing image holding the whole set at the same versions),
+  `imagecheck.Superset(lock, resolved) (key string, ok bool)` (the key of an existing image holding
+  the whole set at the same versions **and integrities**, and whether there is one: the bool is what
+  tells a caller there is nothing to reuse, so an empty key is never read as an image),
   `imagecheck.Record`
   gains `Key`; the job update takes the lock's digest for a repository's hash; a proposal type with
   the choices fork, adopt `<repository>` and stay-pinned; `fugaro image ls` (images, their hashes,
