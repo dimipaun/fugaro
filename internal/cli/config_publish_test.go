@@ -748,6 +748,9 @@ func localLayerPath(t *testing.T) string {
 // update stage make, so both doors must say the same thing about them.
 func unreadableLayerFile(t *testing.T, path, kind string) string {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}

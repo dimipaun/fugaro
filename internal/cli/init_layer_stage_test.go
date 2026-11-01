@@ -442,41 +442,18 @@ func TestInstallationAtThePreviousVersionConverges(t *testing.T) {
 // whatever it points at, and one that read past the cap would publish a file no
 // other door accepts.
 func TestUpdateLayerStageRefusesAFileTheDoorsDoNotRead(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		want  string
-		write func(t *testing.T, path string)
-	}{
-		{"symlink", "is a symbolic link", func(t *testing.T, path string) {
-			target := filepath.Join(t.TempDir(), "real-layer.yaml")
-			if err := os.WriteFile(target, []byte(localEdit), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(target, path); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{"oversize", "is larger than", func(t *testing.T, path string) {
-			big := append([]byte(localEdit), bytes.Repeat([]byte("# padding\n"), int(config.LayerMaxBytes)/len("# padding\n")+1)...)
-			if err := os.WriteFile(path, big, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, kind := range unreadableLayerKinds {
+		t.Run(kind, func(t *testing.T) {
 			r := newLayerRig(t, testProjectLayer)
 			path := localLayerPath(t)
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			tc.write(t, path)
+			reason := unreadableLayerFile(t, path, kind)
 
 			out, errOut, err := executeStdin(t, "", "update", "--yes")
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("fugaro update accepted a file the doors do not read: %v\n%s%s", err, out, errOut)
 			}
 			all := out + errOut + err.Error()
-			if !strings.Contains(all, path) || !strings.Contains(all, tc.want) {
+			if !strings.Contains(all, path) || !strings.Contains(all, reason) {
 				t.Errorf("the refusal does not name the file and its problem:\n%s", all)
 			}
 			if got, ok := layerObject(t, r); !ok || got != testProjectLayer {
