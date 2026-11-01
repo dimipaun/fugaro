@@ -52,10 +52,16 @@ are written against that summary. A reader who holds the original should treat i
 and fix §0 to match it, exactly as `docs/central-orchestrator/README.md` says of its own spec copy.
 
 **The original's worked example named a real organisation.** It is a placeholder here —
-`workspace-a` — and its projects are `owner/repo-a` and `owner/repo-b`, as they are throughout this
-folder. No real organisation, person or address appears anywhere in it, no currency figure is stated
-(the design carries the shape of a cap and no number), and no file contains a credential, a key, a
-token or anything shaped like one.
+`workspace-alpha` — and its projects are `owner/repo-a` and `owner/repo-b`, as they are throughout
+this folder. **The workspace is deliberately not `workspace-a`:** that string already means two
+other things in this repository — it is a Bitbucket workspace name in the policy examples
+(`internal/projectpolicy/bitbucket.go`:33, `:75-76`, `:194` all write `bitbucket/workspace-a/…`, and
+the tests in `internal/cli/project_cmd_bitbucket_test.go` carry the same string) and it is a
+*project* placeholder in `docs/settings-commands/spec.md`:7 — and a folder about Fugaro workspaces
+that reused it would be read as being about either of those.
+No real organisation, person or address appears anywhere in it, no currency figure is stated (the
+design carries the shape of a cap and no number), and no file contains a credential, a key, a token
+or anything shaped like one.
 
 This is core documentation, and no file in it carries a licence notice.
 

@@ -8,9 +8,10 @@ this design proposes. Implementation is **not** approved: the owner decides, tas
 [implementation-plan.md](implementation-plan.md) has been reviewed.
 
 Every repository, person and workspace this folder's own text names is a placeholder: `owner/repo-a`,
-`owner/repo-b`, `person-1`, `workspace-a`. No file here contains a credential, a key, a token, a
-price or anything shaped like one. [README.md](README.md) says what in §0 is the owner's own words
-and what was not recovered.
+`owner/repo-b`, `person-1`, `workspace-alpha` (and not `workspace-a`, which is already a Bitbucket
+workspace name in this repository's own examples — [README.md](README.md) says why). No file here
+contains a credential, a key, a token, a price or anything shaped like one.
+[README.md](README.md) says what in §0 is the owner's own words and what was not recovered.
 
 Two rules bind everything below and are not up for a decision:
 
@@ -36,7 +37,7 @@ for this work on 2026-10-31.
 - **Shared credentials** across the workspace's projects.
 - **A workspace-wide cap** (spend).
 
-The original's worked example named a real organisation. It is `workspace-a` everywhere in this
+The original's worked example named a real organisation. It is `workspace-alpha` everywhere in this
 folder, and the projects in it are `owner/repo-a` and `owner/repo-b`. This design states no currency
 figure of any kind: a cap is a number the owner writes into a config, and §5 says why the design
 carries the *shape* of the number and not a number.

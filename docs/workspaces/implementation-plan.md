@@ -6,7 +6,7 @@ that task by name. This plan is written to the **recommended** answer of each de
 answered the other way changes the task that names it.
 
 Repository names in this file are placeholders (`owner/repo-a`, `owner/repo-b`), a person is
-`person-1`, and a workspace is `workspace-a`. No test named here uses a real credential, a real
+`person-1`, and a workspace is `workspace-alpha`. No test named here uses a real credential, a real
 address or a string shaped like a secret: the fixtures use marker values, and §6 states the rule.
 
 ## 1. What the owner must answer first
@@ -70,11 +70,23 @@ type Record struct {
 }
 type Member struct{ Project string; Repos []string }
 type IdentityProvider struct{ FirebaseProject string; Issuer string }
-type Cap struct{ MonthlyUSD float64; Set bool }
+type Cap struct{ Monthly pricing.Micros; Set bool }
 
 func Parse(raw []byte) (*Record, error) // strict: an unknown field is an error
 func (r *Record) Validate() error
 ```
+
+**Money is `pricing.Micros`, never a float.** The record holds the cap as integer micro-dollars
+(`internal/pricing/pricing.go:18`), not as the `float64` the config layer's own caps use
+(`internal/config/config.go:166`): the YAML writes a dollar amount, `Parse` converts it once with
+`pricing.FromUSD` (`internal/pricing/pricing.go:26-28`), and below that point nothing does money
+arithmetic in a float. That conversion is also what gives the cap a project's bounds — `FromUSD`
+refuses a negative amount and anything above `pricing.MaxUSD`, the same refusal
+`internal/config/validate.go:796,801` makes for a project's caps — and micro-dollars are the unit the
+budget database stores (`internal/budget/model.go:5-8`), so the published node needs no second
+conversion. `schemas/workspace.schema.json` carries the dollar amount as a number, as every other
+schema here does: the schema is what a person writes, and the struct is the exact side of the
+boundary.
 
 **Files (5):** `internal/workspace/workspace.go`, `internal/workspace/workspace_test.go`,
 `internal/workspace/export_test.go`, `internal/workspace/testdata/record-a.yaml`,
@@ -89,8 +101,10 @@ accepted a field nobody decided would be a shape two writers could disagree abou
 `TestRecordRefusesAMemberListThatIsNotSortedUnique`,
 `TestRecordNameUsesTheProjectNameGrammar` (F21: it reuses `config.ProjectNameRE`, not a second
 grammar), `TestRecordRefusesASecondIdentityProvider`,
-`TestRecordRefusesACapThatIsNotPositiveWhenSet`, `TestRecordRoundTripsThroughTheSchema` (the
-`schemas/` file and the struct agree).
+`TestRecordRefusesACapThatIsNotPositiveWhenSet`,
+`TestCapIsExactMicrosAndNotAFloat` (a cap of `0.1` is exactly `100_000` µ$: the parsed field is
+integer micro-dollars, and a `float64` field is the mistake this test exists to make impossible),
+`TestRecordRoundTripsThroughTheSchema` (the `schemas/` file and the struct agree).
 
 **SEC:** no. It is a document shape with no cloud and no credential.
 
@@ -367,7 +381,7 @@ spec names the sign-in as one of the four things a workspace is.
   token or anything shaped like one. The fixtures use marker strings (`"marker-workspace-token"`,
   `"marker-job-email"`), and a test fails a fixture that looks like a real one.
 - **No real names.** Repository names are `owner/repo-a`; a person is `person-1`; a workspace is
-  `workspace-a`; an address is at `example.com`.
+  `workspace-alpha`; an address is at `example.com`.
 - **The red step is the only mutation proof.** Each task's red step is run and seen to fail for the
   reason the task exists, and that is stated in the pull request. No further mutation testing.
 - **Targeted tests.** `GOFLAGS=-p=2`; a named `-run` filter; never the whole `internal/cli` or
