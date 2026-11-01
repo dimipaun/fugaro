@@ -895,6 +895,12 @@ func TestSettingsSetRefusesASymlinkedFugaroYAML(t *testing.T) {
 	if !strings.Contains(err.Error(), "symbolic link") {
 		t.Errorf("the refusal does not say the file is a symlink: %v", err)
 	}
+	// The read refuses it, and not only the compare-and-swap the write does
+	// just before it: a command that had to read a symlink first would be
+	// reading somebody else's file to build the diff it shows.
+	if strings.Contains(err.Error(), "re-reading") {
+		t.Errorf("the symlink was read and refused only at the write: %v", err)
+	}
 	if readFileString(t, target) != before {
 		t.Error("the refused write reached through the symlink")
 	}
