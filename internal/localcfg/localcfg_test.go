@@ -1694,7 +1694,9 @@ func TestAProjectNamedLayerIsNotTheLayerFile(t *testing.T) {
 // switch decode by name, and the block is held to the same strict decode as
 // every other one — an unknown field inside it is an error, and so is a value
 // the file's own reference rule refuses, because a key that names an account
-// names a name a profile may carry.
+// names a name a profile may carry. A name this file does not define is refused
+// on the same terms, and the valid case below therefore defines the account it
+// names.
 func TestLocalcfgDecodesTheAccountChoiceBlockStrictly(t *testing.T) {
 	defined := "claude_accounts:\n  team-b:\n    allow_data_to: [acme/web]\n"
 	c, err := Parse([]byte(sample + defined + "default_claude_account: team-b\nclaude_account_auto: true\nstages:\n  review:\n    claude_account: team-b\n"))
