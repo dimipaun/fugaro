@@ -2722,9 +2722,18 @@ const noVerdictRetries = 1
 // The retry is a stage of its own, in a session of its own, exactly as another
 // round would be: the reviewer is asked the same question again rather than
 // reminded of the answer that did not parse, because what the run needs is a
-// verdict, not a repair of the one it got.
+// verdict, not a repair of the one it got. Being a stage, it is not run once
+// the run has crossed its token cap (capReached): a round that costs more than
+// the cap allows is where the review stops.
 func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (Verdict, bool, bool) {
 	for attempt := 1; attempt <= noVerdictRetries+1; attempt++ {
+		// The retry is a stage the run pays for, and the cap that stops it is
+		// the runner's own: the gateway enforces the dollar cap, and nothing
+		// else in this loop reads the token one between two attempts of the
+		// same round.
+		if attempt > 1 && r.capReached() {
+			return Verdict{}, false, false
+		}
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 		// The review's own session is saved like a work stage's (C1.17,

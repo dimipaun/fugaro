@@ -65,8 +65,35 @@ func TestNoVerdictReviewLeavesADraftNotReady(t *testing.T) {
 	if !pr.Draft {
 		t.Errorf("the pull request is ready: %+v", pr)
 	}
-	if !strings.Contains(pr.Body, want) {
-		t.Errorf("the status section does not name the round with no verdict:\n%s", pr.Body)
+	// Twice, and the count is the point: once as the run's own reason in the
+	// status line, once as the review line reviewsPart writes. A senior round
+	// rendered as the skipped first-line one would leave a single mention of the
+	// reason, and the status section would no longer say why the pull request is
+	// a draft.
+	if n := strings.Count(pr.Body, want); n != 2 {
+		t.Errorf("the status section names the round with no verdict %d times, want 2 (the run's reason and the review line):\n%s", n, pr.Body)
+	}
+}
+
+// TestReviewRetryIsSkippedOnceTheTokenCapIsHit: the retry is a second stage of
+// the same round, and it is not bought once the run has crossed its token cap.
+// The dollar cap is the gateway's and this one is the runner's own, so without
+// the check the retry ran anyway: one more paid review stage on a run the
+// runner had already decided to halt (seniorRound, capReached).
+func TestReviewRetryIsSkippedOnceTheTokenCapIsHit(t *testing.T) {
+	h := newHarness(t, tokenCfg(t, "100"), nil)
+	impl := withUsage(implement("feature"), agent.Usage{Input: 40}, nil)
+	// The round's own answer crosses the cap: 40 + 90 of 100.
+	rev := withUsage(proseReview, agent.Usage{Input: 90}, nil)
+	rec, err := h.run(t, impl, rev) // a retry would be a third, unscripted call
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := countStage(rec, "review"); got != 1 {
+		t.Fatalf("review stages = %d, want 1: a retry after the token cap is crossed is a stage the run does not buy", got)
+	}
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltTokenCap {
+		t.Fatalf("record = %+v; want the token cap's halt", rec)
 	}
 }
 

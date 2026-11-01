@@ -37,12 +37,14 @@ type strayArtifact struct {
 // leaves out is text that happens to be executable, which is a file a reviewer
 // can read and judge.
 //
-// Only untracked files are read, and only the ones git itself would add
-// (gitops.Untracked): a file the run's base commit already holds is the run's
-// own — a binary it edited, an icon it replaced — and an ignored file can never
-// reach a commit, whatever it holds.
+// Only the files a commit would carry that no commit has are read
+// (gitops.NewPaths): the untracked ones and the ones the agent staged itself,
+// because a file `git add`-ed and never committed is a build's artifact just
+// the same and `git add -A` puts it in the commit. A file the run's base commit
+// already holds is the run's own — a binary it edited, an icon it replaced —
+// and an ignored file can never reach a commit, whatever it holds.
 func (r *run) strayArtifacts(ctx context.Context) ([]strayArtifact, error) {
-	paths, err := r.repo.Untracked(ctx)
+	paths, err := r.repo.NewPaths(ctx)
 	if err != nil {
 		return nil, err
 	}

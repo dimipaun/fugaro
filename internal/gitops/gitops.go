@@ -625,24 +625,42 @@ func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 	return err == nil, err
 }
 
-// Untracked lists the paths the working tree holds that no commit has and
-// that git would add, ignored ones aside (`git ls-files --others
-// --exclude-standard`, NUL-separated so a path with a newline in it survives).
-// That is exactly the set CommitAll would put in a commit: `git add -A`
-// skips an ignored file the same way, so a path this call does not list
-// cannot reach the commit either.
-func (r *Repo) Untracked(ctx context.Context) ([]string, error) {
-	out, err := r.gitRaw(ctx, "ls-files", "--others", "--exclude-standard", "-z")
+// NewPaths lists the paths the checkout holds that no commit has and that a
+// commit would carry: the untracked ones git would add (`git ls-files --others
+// --exclude-standard`, ignored ones aside) and the ones already staged as added
+// against HEAD (`git diff --cached --diff-filter=A HEAD`). Both read
+// NUL-separated, so a path with a newline in it survives.
+//
+// The second listing is not an afterthought: a file the agent `git add`-ed and
+// never committed is new all the same, is absent from `--others` because it is
+// in the index, and is exactly what a commit would carry first. A path in
+// neither listing is one the base commit already holds — the run's own, however
+// much it changed — or one git ignores, which `git add -A` skips the same way,
+// so a path this call does not return cannot reach the commit either.
+func (r *Repo) NewPaths(ctx context.Context) ([]string, error) {
+	untracked, err := r.gitRaw(ctx, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return nil, err
 	}
+	// Read with replacement refs ignored, as IsClean and CommitAllExcept are:
+	// what is staged is the index this checkout has, not the one a ref the
+	// agent planted makes HEAD's tree claim.
+	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--cached", "--name-only", "--diff-filter=A", "-z", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return append(nulPaths(untracked), nulPaths(staged)...), nil
+}
+
+// nulPaths splits one NUL-separated git listing into paths.
+func nulPaths(out []byte) []string {
 	var paths []string
 	for _, p := range strings.Split(string(out), "\x00") {
 		if p != "" {
 			paths = append(paths, p)
 		}
 	}
-	return paths, nil
+	return paths
 }
 
 // CommitAllExcept is CommitAll with the named paths held back: everything is
@@ -654,7 +672,7 @@ func (r *Repo) Untracked(ctx context.Context) ([]string, error) {
 // The paths are literals (--literal-pathspecs): a file's own name is data, and
 // one beginning with a colon or holding a wildcard would otherwise be read as
 // a pathspec's magic (the review diff passes its paths the same way,
-// reviewinput.go). They must be relative to the repository root, as Untracked
+// reviewinput.go). They must be relative to the repository root, as NewPaths
 // returns them, and the commit is stamped like CommitAll's.
 func (r *Repo) CommitAllExcept(ctx context.Context, msg string, except []string) (bool, error) {
 	if len(except) == 0 {

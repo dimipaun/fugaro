@@ -561,11 +561,12 @@ func TestCommitAllAheadAndClean(t *testing.T) {
 	}
 }
 
-// TestUntrackedListsWhatGitWouldAdd: the listing is exactly the set a commit
-// would take. An ignored file is not in it (and so cannot reach a commit
-// either), a tracked file is not untracked however much it changed, and a path
-// with a newline in it survives the NUL-separated read.
-func TestUntrackedListsWhatGitWouldAdd(t *testing.T) {
+// TestNewPathsListsWhatACommitWouldCarry: the listing is exactly the set of new
+// files a commit would take. A file the agent staged itself is new all the same
+// and is in it, an ignored file is not (and so cannot reach a commit either), a
+// tracked file is not new however much it changed, and a path with a newline in
+// it survives the NUL-separated read.
+func TestNewPathsListsWhatACommitWouldCarry(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
 		t.Fatal(err)
@@ -573,17 +574,19 @@ func TestUntrackedListsWhatGitWouldAdd(t *testing.T) {
 	testutil.WriteFiles(t, repo.Dir, map[string]string{
 		"a.txt":           "a\n",
 		"line\nbreak.txt": "b\n",
+		"staged.bin":      "\x7fELF\x00\x00",
 		"build/out.bin":   "ignored\n",
 		"README.md":       "edited\n",
 	})
-	got, err := repo.Untracked(ctx)
+	testutil.Git(t, repo.Dir, "add", "staged.bin")
+	got, err := repo.NewPaths(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	slices.Sort(got)
-	want := []string{"a.txt", "line\nbreak.txt"}
+	want := []string{"a.txt", "line\nbreak.txt", "staged.bin"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("Untracked = %q; want %q", got, want)
+		t.Fatalf("NewPaths = %q; want %q", got, want)
 	}
 }
 

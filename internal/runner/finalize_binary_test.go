@@ -47,6 +47,15 @@ func compiledBinary(t *testing.T, req agent.Request, name string) {
 	}
 }
 
+// stagedBinary is the same artifact one step further along: the coder wrote it
+// and ran `git add`, so git no longer calls it untracked — it sits in the
+// index, where `git add -A` at finalize would commit it exactly the same.
+func stagedBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add "+name)
+}
+
 // executableScript is text the run marked executable: a file finalize commits
 // like any other, because a mode is not a build's signature.
 func executableScript(t *testing.T, req agent.Request, name string) {
@@ -91,6 +100,34 @@ func TestFinalizeRefusesAnUntrackedBinary(t *testing.T) {
 	if len(files) == 1 && files[0] == "test_dup_case2" {
 		t.Fatalf("the branch carries only the artifact: %v", files)
 	}
+	for _, f := range files {
+		if f == "test_dup_case2" {
+			t.Errorf("the branch carries the artifact finalize refused: %v", files)
+		}
+	}
+	if !slices.Contains(files, "feature.txt") {
+		t.Errorf("the branch does not carry the run's own work: %v", files)
+	}
+}
+
+// TestFinalizeRefusesAStagedBinary: staging is not committing, and it is not a
+// way past the rule either. A coder that wrote an artifact and staged it has
+// left a file the run's own leftover commit would carry, so the refusal reads
+// the index beside the untracked listing, names the file, and the branch does
+// not carry it.
+func TestFinalizeRefusesAStagedBinary(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implementLeaving("test_dup_case2", stagedBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeDraft || rec.Status != runstore.StatusFailed {
+		t.Fatalf("record = %+v; want a draft: the run staged a file finalize must not commit", rec)
+	}
+	if !strings.Contains(rec.Reason, "test_dup_case2") {
+		t.Errorf("reason = %q; want it to name the file that was refused", rec.Reason)
+	}
+	files := branchFiles(t, h, rec.Branch)
 	for _, f := range files {
 		if f == "test_dup_case2" {
 			t.Errorf("the branch carries the artifact finalize refused: %v", files)
