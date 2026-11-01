@@ -40,14 +40,7 @@ type planStep struct {
 // (rigor.DefaultRounds) — a default the four layers above it set another
 // number against, up or down, within the recipe's bounds (the owner's ruling
 // of 2026-10-31, which answers O3).
-//
-// The last parameter is the mode resolution's rigor.Config.Configured, and it
-// is deliberately unread: it gated the ceiling this replaced, whose rows only
-// lowered the precedence, and a repository that says nothing about rigor now
-// simply takes the mode it resolves — Pro (D19) — the way its threshold table
-// does. The caller still passes it (runner.go is another task's file), so the
-// parameter stays.
-func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[string]config.ModelProvider, reviewOverride *int, mode rigor.Mode, _ bool) []planStep {
+func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[string]config.ModelProvider, reviewOverride *int, mode rigor.Mode) []planStep {
 	defaults := rigor.DefaultRounds(mode)
 	var out []planStep
 	var firstRounds int

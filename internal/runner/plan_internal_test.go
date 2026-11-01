@@ -40,7 +40,7 @@ func TestPlanRoundsFollowTheMode(t *testing.T) {
 			// derived is false: the first_line step runs whatever
 			// agent.first_line_review says, which is the case this test is
 			// about.
-			got := planOf(knobs, false, config.Agent{}, nil, nil, tc.mode, true)
+			got := planOf(knobs, false, config.Agent{}, nil, nil, tc.mode)
 			want := []planStep{
 				{Kind: recipe.StepFirstLine, Rounds: tc.in, Precedence: 0},
 				{Kind: recipe.StepReview, Rounds: tc.senior, Precedence: 0, FirstRounds: tc.in},
@@ -77,7 +77,7 @@ func TestPlanRoundsPrecedence(t *testing.T) {
 		{name: "the override leaves the first line to the mode", rcp: knobs, override: intp(2), mode: rigor.Startup, wantIn: 2, wantSen: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := planOf(tc.rcp, false, tc.a, nil, tc.override, tc.mode, true)
+			got := planOf(tc.rcp, false, tc.a, nil, tc.override, tc.mode)
 			if len(got) != 2 {
 				t.Fatalf("plan = %+v; want both steps", got)
 			}
@@ -102,7 +102,7 @@ func TestPlanRoundsPrecedence(t *testing.T) {
 func TestPlanRoundsClampToTheRecipeBounds(t *testing.T) {
 	knobs := parseRecipe(t, "version: 1\nname: knobs\nsteps:\n  - first_line: {}\n  - review: {}\n")
 	a := config.Agent{FirstLineRounds: recipe.MaxFirstLineRounds + 4, ReviewRounds: recipe.MaxReviewRounds + 3}
-	got := planOf(knobs, false, a, nil, intp(recipe.MaxReviewRounds+5), rigor.Critical, true)
+	got := planOf(knobs, false, a, nil, intp(recipe.MaxReviewRounds+5), rigor.Critical)
 	if got[0].Rounds != recipe.MaxFirstLineRounds {
 		t.Errorf("first-line rounds = %d; want the recipe's bound %d", got[0].Rounds, recipe.MaxFirstLineRounds)
 	}
@@ -143,7 +143,7 @@ func TestPlanReviewRoundsFollowTheReachedMode(t *testing.T) {
 // refuses.
 func TestPlanUnconfiguredRepositoryTakesTheModesRounds(t *testing.T) {
 	knobs := parseRecipe(t, "version: 1\nname: knobs\nsteps:\n  - first_line: {}\n  - review: {}\n")
-	got := planOf(knobs, false, config.Agent{}, nil, nil, rigor.Default, false)
+	got := planOf(knobs, false, config.Agent{}, nil, nil, rigor.Default)
 	want := []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 3, Precedence: 0},
 		{Kind: recipe.StepReview, Rounds: 3, Precedence: 0, FirstRounds: 3},
@@ -181,11 +181,11 @@ func TestPlanDefaultFollowsAgent(t *testing.T) {
 	// precedence, so the mode's ceiling must not bite (T3.2).
 	def := catalogRecipe(t, recipe.DefaultName)
 	a := config.Agent{ReviewRounds: 4, FirstLineReview: config.FirstLineOff, FirstLineRounds: 2}
-	if got := planOf(def, true, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 4, Precedence: 4}}) {
+	if got := planOf(def, true, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 4, Precedence: 4}}) {
 		t.Fatalf("off: %v", got)
 	}
 	a.FirstLineReview = config.FirstLineOn
-	if got := planOf(def, true, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{
+	if got := planOf(def, true, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
 	}) {
@@ -194,7 +194,7 @@ func TestPlanDefaultFollowsAgent(t *testing.T) {
 	// Not derived (a project or repository recipe named default): its
 	// first_line step always runs.
 	a.FirstLineReview = config.FirstLineOff
-	if got := planOf(def, false, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{
+	if got := planOf(def, false, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
 	}) {
@@ -210,7 +210,7 @@ func TestPlanPrecedence(t *testing.T) {
 	a := config.Agent{ReviewRounds: 5, FirstLineReview: config.FirstLineOff, FirstLineRounds: 3}
 	// The recipe's own values win over agent.*, and first_line_review: off
 	// does not switch off a recipe's first_line step.
-	if got := planOf(cheap, false, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{
+	if got := planOf(cheap, false, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 1, Precedence: 1, FirstRounds: 2},
 	}) {
@@ -218,14 +218,14 @@ func TestPlanPrecedence(t *testing.T) {
 	}
 	// The task's override wins over both.
 	seven := 7
-	if got := planOf(cheap, false, a, nil, &seven, rigor.Critical, true); !slices.Equal(got, []planStep{
+	if got := planOf(cheap, false, a, nil, &seven, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 7, Precedence: 7, FirstRounds: 2},
 	}) {
 		t.Fatalf("override: %v", got)
 	}
 	solo := parseRecipe(t, "version: 1\nname: claude-solo\nroles:\n  reviewer: coder\nsteps:\n  - review: { max_rounds: 1 }\n")
-	if got := planOf(solo, false, a, nil, nil, rigor.Critical, true); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 1, Precedence: 1}}) {
+	if got := planOf(solo, false, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 1, Precedence: 1}}) {
 		t.Fatalf("solo: %v", got)
 	}
 }
@@ -236,7 +236,7 @@ func TestPlanPrecedence(t *testing.T) {
 func TestPlanBounceCarriesFirstRounds(t *testing.T) {
 	bouncy := parseRecipe(t, "version: 1\nname: bouncy\nsteps:\n  - first_line: { max_rounds: 2 }\n  - review: { bounce: first_line, max_rounds: 3 }\n")
 	a := config.Agent{ReviewRounds: 5, FirstLineRounds: 1}
-	got := planOf(bouncy, false, a, nil, nil, rigor.Critical, true)
+	got := planOf(bouncy, false, a, nil, nil, rigor.Critical)
 	want := []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 3, Precedence: 3, Bounce: true, FirstRounds: 2},

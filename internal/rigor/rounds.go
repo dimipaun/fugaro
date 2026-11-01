@@ -67,10 +67,13 @@ func DefaultRounds(m Mode) Rounds {
 // It is the mode's own senior row: the ruling gives the modes' loop counts two
 // cells, and the adversarial pass is a review pass on the same axis, run after
 // the senior one on the same budget, so the number a mode starts from is the
-// one it already spends on the review it follows. A step's own max_rounds, the
-// repository's agent.adversarial_rounds and the project layer still set another
-// number, up or down, as they do for the senior loop: this is a default and
-// not a ceiling, and the recipe's bounds are what holds it.
+// one it already spends on the review it follows. The step's own max_rounds and
+// the layer key the senior loop reads (agent.review_rounds, and the project
+// layer's default for it) still set another number, up or down, as they do
+// there: this is a default and not a ceiling, and the recipe's bounds are what
+// holds it. An agent.adversarial_rounds key does not exist yet — L1.3 of
+// docs/review-levels-ab-jobmax/implementation-plan.md is where it would land —
+// so no key of the step's own is read here.
 //
 // A mode the table cannot place takes DefaultRounds' answer for it, which is
 // the strictest row — an unplaced mode raises nothing and drops nothing.
