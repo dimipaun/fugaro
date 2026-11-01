@@ -128,14 +128,18 @@ func Validate(c *Config) []Problem {
 	if !KnownAgentAuth(c.Agent.Auth) {
 		add("agent.auth", "must be one of %s", strings.Join(AgentAuths, ", "))
 	}
-	if c.Agent.ReviewRounds < 1 || c.Agent.ReviewRounds > 10 {
-		add("agent.review_rounds", "must be between 1 and 10")
+	// 0 is unset, and an unset knob takes the rigor mode's own default
+	// (internal/rigor's DefaultRounds): the value is resolved where the mode
+	// is, which this package does not read. Every layer treats a written 0 as
+	// unset already (layer.go), so this is the same reading one layer down.
+	if c.Agent.ReviewRounds < 0 || c.Agent.ReviewRounds > 10 {
+		add("agent.review_rounds", "must be between 1 and 10, or 0 (unset: the mode's default supplies it)")
 	}
 	if !slices.Contains([]string{FirstLineAuto, FirstLineOn, FirstLineOff}, c.Agent.FirstLineReview) {
 		add("agent.first_line_review", "must be one of auto, on, off")
 	}
-	if c.Agent.FirstLineRounds < 1 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
-		add("agent.first_line_rounds", "must be between 1 and %d", MaxFirstLineRounds)
+	if c.Agent.FirstLineRounds < 0 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
+		add("agent.first_line_rounds", "must be between 1 and %d, or 0 (unset: the mode's default supplies it)", MaxFirstLineRounds)
 	}
 	if c.Agent.Recipe != "" && !recipe.NameRE.MatchString(c.Agent.Recipe) {
 		add("agent.recipe", "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")

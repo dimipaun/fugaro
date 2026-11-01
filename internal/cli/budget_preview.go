@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -133,19 +134,42 @@ func newBudgetPreviewCmd() *cobra.Command {
 
 // previewKnobs are a run's numbers that come from the repository: its two
 // round knobs and Claude Code's per-stage cap. maxStageUSD is 0 (unknown)
-// when there was no checkout to read one from, and from is "checkout" then.
+// when there was no checkout to read one from, and from is "defaults" then.
+//
+// The rounds are the knobs where the repository set them and the rigor mode's
+// own row where it set neither (rigor.DefaultRounds, the owner's ruling of
+// 2026-10-31): an unset knob is no longer filled in with one flat default at
+// config load, because the default depends on the mode. mode is what supplied
+// them, and the printed figures name it.
 type previewKnobs struct {
 	first, rounds int
 	maxStageUSD   float64
 	from          string
+	mode          rigor.Mode
 }
 
+// previewKnobsOf reads a checkout's numbers, if there is a checkout at all.
+// The mode is the one the repository resolves with nothing narrower — the
+// repository's own rigor default, else the project layer's, else rigor.Default
+// (pro) — which is what rigor.Resolve answers for a run that declares no path.
+// It is the same resolution internal/runner's plan uses, so the preview and
+// the run agree on the number; what the preview cannot know is an area rule
+// (the paths a run turns out to touch) or a task's own override, so a run of a
+// repository whose areas are stricter spends more than this said.
 func previewKnobsOf(cfg *config.Config) previewKnobs {
-	if cfg == nil {
-		return previewKnobs{first: config.DefaultFirstLineRounds, rounds: config.DefaultReviewRounds, from: "defaults"}
+	k := previewKnobs{from: "defaults", mode: rigor.Default}
+	if cfg != nil {
+		k = previewKnobs{from: "checkout", mode: rigor.Resolve(cfg.RigorConfig(), rigor.Request{}).Mode,
+			first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds, maxStageUSD: cfg.Agent.MaxBudgetUSD}
 	}
-	return previewKnobs{first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds,
-		maxStageUSD: cfg.Agent.MaxBudgetUSD, from: "checkout"}
+	defaults := rigor.DefaultRounds(k.mode)
+	if k.first == 0 {
+		k.first = defaults.Inner
+	}
+	if k.rounds == 0 {
+		k.rounds = defaults.Senior
+	}
+	return k
 }
 
 // previewCompute is one workflow's compute ceiling: what a run of it can bill
@@ -296,6 +320,11 @@ type previewDoc struct {
 		FirstLineRounds int `json:"first_line_rounds"`
 		ReviewRounds    int `json:"review_rounds"`
 	} `json:"knobs"`
+	// RigorMode is the mode whose row supplied either round the checkout left
+	// unset. It is not on the wire: knobs_from and knobs are the contract the
+	// console already reads, and a field it does not know is a field a strict
+	// reader refuses. The text output names it instead.
+	RigorMode rigor.Mode `json:"-"`
 	// PerStageCapUSD is agent.max_budget_usd; null when no checkout here
 	// named one.
 	PerStageCapUSD *float64 `json:"per_stage_cap_usd"`
@@ -400,6 +429,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		Recipe: rr.Name, Source: string(rr.Source), Runs: o.runs, Stages: stages,
 		KnobsFrom: knobs.from, PerRunCapSource: []string{}, Notes: []string{}}
 	doc.Knobs.FirstLineRounds, doc.Knobs.ReviewRounds = knobs.first, knobs.rounds
+	doc.RigorMode = knobs.mode
 	// resolveRecipe's note says where the stages come from when the recipe
 	// was not simply found: a stale cached project recipe standing in for an
 	// unreachable bucket, or the project layer skipped. run prints it for the
@@ -416,7 +446,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		v := knobs.maxStageUSD
 		doc.PerStageCapUSD = &v
 	} else {
-		doc.Notes = append(doc.Notes, fmt.Sprintf("no checkout of %s here: agent.max_budget_usd is unknown and the recipe's rounds are the defaults (agent.first_line_rounds %d, agent.review_rounds %d)", repo, knobs.first, knobs.rounds))
+		doc.Notes = append(doc.Notes, fmt.Sprintf("no checkout of %s here: agent.max_budget_usd is unknown and the recipe's rounds are mode %s's defaults (agent.first_line_rounds %d, agent.review_rounds %d)", repo, knobs.mode, knobs.first, knobs.rounds))
 	}
 
 	// Today's caps and counters, read as budget show reads them.
@@ -808,8 +838,8 @@ func printPreview(cmd *cobra.Command, d *previewDoc) {
 	for _, n := range d.Notes {
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", oneLine(n))
 	}
-	fmt.Fprintf(w, "recipe %s (%s): at most %d stages (agent.first_line_rounds %d, agent.review_rounds %d)\n",
-		oneLine(d.Recipe), d.Source, d.Stages, d.Knobs.FirstLineRounds, d.Knobs.ReviewRounds)
+	fmt.Fprintf(w, "recipe %s (%s): at most %d stages (mode %s, agent.first_line_rounds %d, agent.review_rounds %d)\n",
+		oneLine(d.Recipe), d.Source, d.Stages, d.RigorMode, d.Knobs.FirstLineRounds, d.Knobs.ReviewRounds)
 	if !d.Bounded {
 		fmt.Fprintln(w, "rough worst case: unbounded: set budget.per_run_usd (or agent.max_budget_usd in the repository's fugaro.yaml)")
 	} else {

@@ -12,15 +12,16 @@ import (
 // decided.
 type planStep struct {
 	Kind recipe.StepKind
-	// Rounds is the step's rounds after the mode's ceiling (T3.2): F6's
-	// precedence under rigor.RoundCeiling of the mode the run had reached when
-	// the plan was derived.
+	// Rounds is the step's rounds: F6's precedence where one of the layers
+	// above the mode set a number, the mode's own row (rigor.DefaultRounds)
+	// where none did. The recipe's bounds are what holds it.
 	Rounds int
-	// Precedence is F6's value before the mode's ceiling. The review step
-	// keeps it because the ceiling is read again on every round
-	// (reviewRounds): a mode a run raises between rounds raises the ceiling
-	// for the rounds that remain, and those rounds are spent under this value
-	// under the new ceiling, never under the rounds already gone (D22).
+	// Precedence is the number F6's precedence agreed on, and 0 when nothing
+	// set one — the layers above the mode, the recipe's max_rounds and the
+	// task's override all having said nothing. The review step keeps it
+	// because the mode's row is read again on every round (reviewRounds): a
+	// mode a run raises between rounds supplies the rounds from then on, and
+	// never reaches back to the ones already spent (D22).
 	Precedence int
 	// Bounce is review: {bounce: first_line} (recipe.Step.Bounce), copied
 	// from the recipe's review step.
@@ -35,10 +36,19 @@ type planStep struct {
 // planOf turns a recipe into the run's plan (docs/design/recipes.md §6).
 // derived marks the catalog default, whose first_line step runs only when
 // agent.first_line_review turns it on. Rounds come from the task's override,
-// else the step's max_rounds, else agent.*, spent under the mode's ceiling
-// (T3.2).
-func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[string]config.ModelProvider, reviewOverride *int, mode rigor.Mode, configured bool) []planStep {
-	ceil := reviewRoundCeiling(mode, configured)
+// else the step's max_rounds, else agent.*, else the mode's own row
+// (rigor.DefaultRounds) — a default the four layers above it set another
+// number against, up or down, within the recipe's bounds (the owner's ruling
+// of 2026-10-31, which answers O3).
+//
+// The last parameter is the mode resolution's rigor.Config.Configured, and it
+// is deliberately unread: it gated the ceiling this replaced, whose rows only
+// lowered the precedence, and a repository that says nothing about rigor now
+// simply takes the mode it resolves — Pro (D19) — the way its threshold table
+// does. The caller still passes it (runner.go is another task's file), so the
+// parameter stays.
+func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[string]config.ModelProvider, reviewOverride *int, mode rigor.Mode, _ bool) []planStep {
+	defaults := rigor.DefaultRounds(mode)
 	var out []planStep
 	var firstRounds int
 	for _, s := range rcp.Steps {
@@ -53,52 +63,48 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 			if derived && !a.FirstLineOn(providers) {
 				continue
 			}
-			n := a.FirstLineRounds
+			set := a.FirstLineRounds
 			if s.MaxRounds > 0 {
-				n = s.MaxRounds
+				set = s.MaxRounds
 			}
+			n := setRounds(set, defaults.Inner, recipe.MaxFirstLineRounds)
 			firstRounds = n
-			out = append(out, planStep{Kind: s.Kind, Rounds: n, Precedence: n})
+			out = append(out, planStep{Kind: s.Kind, Rounds: n, Precedence: set})
 		case recipe.StepReview:
-			n := a.ReviewRounds
+			set := a.ReviewRounds
 			if s.MaxRounds > 0 {
-				n = s.MaxRounds
+				set = s.MaxRounds
 			}
 			if reviewOverride != nil {
-				n = *reviewOverride
+				set = *reviewOverride
 			}
-			out = append(out, planStep{Kind: s.Kind, Rounds: min(n, ceil), Precedence: n, Bounce: s.Bounce, FirstRounds: firstRounds})
+			out = append(out, planStep{Kind: s.Kind, Rounds: setRounds(set, defaults.Senior, recipe.MaxReviewRounds), Precedence: set, Bounce: s.Bounce, FirstRounds: firstRounds})
 		}
 	}
 	return out
 }
 
-// reviewRoundCeiling is the ceiling the mode puts on a review step's rounds
-// (T3.2, D7b): rigor.RoundCeiling of the mode, under the recipe's own bound —
-// a mode lowers the rounds F6 agrees on and never reaches above MaxReviewRounds.
-//
-// The repository's own rigor: block is the gate, the same
-// rigor.Config.Configured the findings policy reads (outcome.go): a repository
-// that says nothing about rigor is reviewed in exactly the rounds it was, which
-// T3.2 asks for and which keeps the ceiling out of a repository that never
-// opted into a mode. It is a gate this task carries, not one this folder's
-// decisions name — D19 resolves Pro for an unconfigured repository, whose row
-// would lower such a repository's rounds.
-func reviewRoundCeiling(mode rigor.Mode, configured bool) int {
-	if !configured {
-		return recipe.MaxReviewRounds
+// setRounds is one step's rounds: the number a layer above the mode set, or
+// the mode's own row where none did, held inside the recipe's bound. 0 is the
+// layers' "unset" — config.Validate refuses 0 nowhere but reads it as "the mode
+// supplies this", and recipe.Step.MaxRounds uses 0 the same way — so a step
+// whose set is 0 takes the mode's number and never runs no rounds at all, which
+// checkPlan would refuse.
+func setRounds(set, modeDefault, bound int) int {
+	if set == 0 {
+		set = modeDefault
 	}
-	return min(rigor.RoundCeiling(mode), recipe.MaxReviewRounds)
+	return min(set, bound)
 }
 
-// reviewRounds is the bound the next round is spent under (T3.2): F6's
-// precedence under the ceiling of the mode the run has reached *now*. It is
-// read on every round rather than fixed with the plan, because D22 resolves the
-// mode again after each round that changed the tree: a mode a run raises
-// between rounds buys the rounds that remain and never reaches back to the ones
-// already spent.
+// reviewRounds is the rounds the next senior round is spent under: the number a
+// layer, the recipe or the task set, or — where none of them did — the senior
+// row of the mode the run has reached *now*. It is read on every round rather
+// than fixed with the plan, because D22 resolves the mode again after each
+// round that changed the tree: a mode a run raises between rounds supplies the
+// rounds that remain and never reaches back to the ones already spent.
 func (r *run) reviewRounds(st planStep) int {
-	return min(st.Precedence, reviewRoundCeiling(r.reachedRigor(), r.rigorCfg.Configured()))
+	return setRounds(st.Precedence, rigor.DefaultRounds(r.reachedRigor()).Senior, recipe.MaxReviewRounds)
 }
 
 // checkPlan refuses a plan that does not end with a review step: a run
