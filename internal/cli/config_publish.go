@@ -84,21 +84,9 @@ func newConfigPublishCmd() *cobra.Command {
 			if fakeEndpointsOnGS(env.lc, env.lc.BucketURL()) {
 				return userErr("nothing was published: the project's storage endpoint is a fake")
 			}
-			l, ps := config.ParseProjectLayer(data, config.LayerAnchor{Project: env.lc.Name, GCPProject: env.lc.GCPProject})
+			l, ps := projectLayerProblems(data, env.lc)
 			if len(ps) > 0 {
 				return userErr("nothing was published: %s is invalid: %s", file, pluginwire.Printable(layerProblemsText(ps)))
-			}
-			// The claims are judged against the installation config, the
-			// whole route table — this is the one moment they can be: a run
-			// routes by its own repository's FUGARO_MODEL_PROVIDERS, so it
-			// cannot tell a provider this installation does not define from
-			// one this repository may not send code to (config.ClaimsOnRoutes
-			// drops both, deliberately). Publishing a claim nothing defines,
-			// or one colliding with another route's pattern (which would
-			// leave the gateway refusing to start), is refused here, before
-			// it reaches every repository of the project.
-			if _, cps := config.ApplyClaudeClaims(env.lc.Providers, l.ClaudeModels); len(cps) > 0 {
-				return userErr("nothing was published: %s is invalid: %s", file, pluginwire.Printable(layerProblemsText(cps)))
 			}
 			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, nil, rec)
 			if err != nil {
@@ -118,6 +106,29 @@ func newConfigPublishCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&executable, "executable-changes", false, "allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile)")
 	addCloudFlags(cmd, &o)
 	return cmd
+}
+
+// projectLayerProblems parses a layer's bytes and judges its model claims
+// against the installation config, the whole route table — this is the one
+// moment they can be judged: a run routes by its own repository's
+// FUGARO_MODEL_PROVIDERS, so it cannot tell a provider this installation does
+// not define from one this repository may not send code to
+// (config.ClaimsOnRoutes drops both, deliberately). Publishing a claim nothing
+// defines, or one colliding with another route's pattern (which would leave the
+// gateway refusing to start), is refused before it reaches every repository of
+// the project.
+//
+// The door that publishes a FILE and the update stage that publishes the one
+// local layer file both answer "is this layer publishable" from here: a file
+// refused by one and accepted by the other would be published by whichever the
+// owner happened to run.
+func projectLayerProblems(data []byte, lc *localcfg.Config) (*config.ProjectLayer, []config.Problem) {
+	l, ps := config.ParseProjectLayer(data, config.LayerAnchor{Project: lc.Name, GCPProject: lc.GCPProject})
+	if len(ps) > 0 {
+		return l, ps
+	}
+	_, cps := config.ApplyClaudeClaims(lc.Providers, l.ClaudeModels)
+	return l, cps
 }
 
 // layerPublishRace is a test seam between publish's read of the existing
