@@ -172,7 +172,8 @@ otherwise reserved.
 - **Files:** `internal/gitprov/github/apptoken.go`, `internal/gitprov/github/apptoken_test.go`.
   **2 files.**
 - **Interfaces:** produces `reviewTokenPermissions` = `{contents: read, pull_requests: read, metadata:
-  read}` and its exported spelling beside `RunTokenPermissions` and `BuildTokenPermissions` — the
+  read}` and its exported spelling `ReviewTokenPermissions` beside `RunTokenPermissions` and
+  `BuildTokenPermissions` — the
   **fifth** set, as spec §2 and D883 say. **It builds no mint caller, and F16 is why:** every mint in
   this tree happens where the App key is mounted — `mintBuildToken` (`internal/cli/gitcred.go:92`)
   reads the key from its own environment inside the build that calls it, and `jobGitEnv`
@@ -287,12 +288,13 @@ is an ordering on a file and not a dependency on the launch.
   **HMAC-SHA-256 over O3's framed message** it gets back (lowercase hex, the algorithm and the frame
   fixed by the design, [spec.md](spec.md) §6) into the **sidecar object**
   `runs/<slug>/<review-run>/artifacts/review.json.sig`,
-  one line of hex, so the bytes that were signed are the bytes that are stored. **The frame is this
-  task's constant (O3):** what the service signs is the digest **together with the two identities it
-  verified on the call** — the run's Firebase identity (`fr`) and the repository claim (`fs`) —
-  concatenated in a fixed order with fixed separators, so a signature cannot be lifted from one
-  review run to another, and the verify call re-frames from its own copy of the two claims rather than
-  from anything the artifact carries. It also carries the
+  one line of hex, so the bytes that were signed are the bytes that are stored. **This task sends only
+  the digest; the frame is not its constant but the service's** — built in `internal/credsvc` (C3.9e,
+  D1073) from the two identities the service verified on the call — the run's Firebase identity (`fr`)
+  and the repository claim (`fs`) — concatenated in a fixed order with fixed separators, so a signature
+  cannot be lifted from one review run to another, and a sign request that names a run or a repository
+  is refused. The verify call re-frames from its own copy of the two claims rather than from anything
+  the artifact carries. It also carries the
   **verifier's four checks**, which the coordinator calls rather than re-implementing: `review_run`
   equals the run the coordinator launched (the nonce), `repository` and `pr` are that pull request's,
   and `head_sha` equals the pull request's current head — **a replayed verdict from an earlier review

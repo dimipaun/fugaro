@@ -734,18 +734,20 @@ that read. The flow is one call:
    pull requests it may write (`fpr`);
 3. the service answers with the **HMAC-SHA-256 over a framed message under the account's
    review-signing key**, lowercase hex. **The algorithm is fixed by this design, not left to the
-   implementation:** the signer is the service's code and the verifier is a second call into it, but
-   the message's spelling is the artifact writer's, and a design that named no algorithm would let the
-   two ends disagree — or let one of them accept a weaker construction — with no error on either side.
+   implementation:** the signer is the service's code and the verifier is a second call into it, and a
+   design that named no algorithm would let the two ends disagree — or let one of them accept a weaker
+   construction — with no error on either side.
    **O3 is answered: the message is framed, and it is not the bare digest.** What is signed is the
    digest **together with the two identities the service verified on the call** — the run's Firebase
    identity (`fr`, the review run) and the repository claim (`fs`) — concatenated in a fixed order
    with fixed separators, so a signature cannot be lifted from one review run to another even where two
    artifacts happen to hash alike, and so what the signer attests to is *who asked* as well as *what
-   was asked about*. The framing is a constant the artifact writer holds (CSR3's), the service signs
-   the bytes it is given, and **the verifier re-frames from its own copy of the two identities** rather
-   than from anything the artifact or the caller asserts — the verify call presents the digest, the
-   signature and the same two claims, and the service answers yes or no;
+   was asked about*. **The artifact writer sends only the digest** (CSR3's call); **the frame lives in
+   the service** — built in `internal/credsvc` from the `fs` and `fr` it verified (C3.9e, D1073), and a
+   sign request that names a run or a repository is refused — and **the verifier re-frames from its own
+   copy of the two identities** rather than from anything the artifact or the caller asserts — the
+   verify call presents the digest, the signature and the same two claims, and the service answers yes
+   or no;
 4. the job writes the answer into the **sidecar object beside the artifact** (§3) —
    `runs/<slug>/<review-run>/artifacts/review.json.sig`, one line of lowercase hex — and not into
    `review.json`, so the bytes that were signed are the bytes that are stored.
