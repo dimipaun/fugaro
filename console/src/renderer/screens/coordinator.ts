@@ -1300,6 +1300,7 @@ export function coordinatorJobsControl(factory: ScreenFactory, expanded: boolean
   literal(button, COORDINATOR_QUEUE_JOBS_WORD)
   return button
 }
+
 /**
  * fillCoordinatorBlind draws the line under the queue: what this page cannot
  * reach, with **no button** (D813). The sweep is a scheduled job and the
