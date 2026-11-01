@@ -881,6 +881,22 @@ span.run-model-name {
   color: var(--text-muted);
 }
 
+/* A run's two columns while the reads that fill them are out. The frame is drawn
+ * in the click's own turn (`run.ts`'s `renderRunFrame`), and the aside holds
+ * nothing until the run's record lands: `flex: 1 1 340px` would keep a column of
+ * empty page beside the main column for as long as that read takes, which is the
+ * one thing the frame exists to avoid -- the operator would see the screen they
+ * asked for, laid out wrong, instead of a column holding the shape of what is
+ * coming. An aside with nothing in it is therefore not laid out at all, for the
+ * same reason `console-busy-slot:empty` is `display: none` (`flight-deck.css`).
+ *
+ * The rule names the aside by its class and its tag together, as the layout's
+ * own rules above do: `aside.run-aside` is one element of one screen, and a
+ * bare `:empty` selector would reach every empty element in the theme. */
+aside.run-aside:empty {
+  display: none;
+}
+
 /* ---- Degraded and unavailable --------------------------------------------
  *
  * The design's section 6.3 rule made visible: caps read `n/a`, the kill

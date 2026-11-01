@@ -116,7 +116,18 @@ import {
 import type { CoordinatorModel, DrawnCoordinatorFrame } from './screens/coordinator'
 import { PROJECTS_BUSY, buildProjectsModel, fillProjects, renderProjectsFrame } from './screens/projects'
 import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
-import { buildRunModel, renderRun } from './screens/run'
+import {
+  RUN_LOGS_BUSY,
+  RUN_LOGS_SHAPE,
+  RUN_RECORD_BUSY,
+  RUN_RECORD_SHAPE,
+  buildRunModel,
+  fillRunLogs,
+  fillRunRecord,
+  renderRunFrame,
+  runBusyLabel,
+  runMainChildren,
+} from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
 import { READING_STILL_MS, renderReading } from './screens/reading'
 import type { ReadingTab } from './screens/reading'
@@ -4401,66 +4412,162 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   // ---- Run detail -------------------------------------------------------
 
+  /** runRecordRead and runLogsRead are the Run screen's two section reads: each
+   * has its own busy mark, its own sequence token and its own refusal, so a slow
+   * log window cannot take the record's mark down and one refused read cannot
+   * hide the other section's answer. */
+  const runRecordRead = sectionRead({ factory, theme })
+  const runLogsRead = sectionRead({ factory, theme })
+
   /**
-   * showRun reads one run's diagnosis, its log window and its Cloud console
-   * link.
+   * showRun opens one run: its own record (`diagnose RUN --json`, which draws
+   * the header's figures, the timeline, the ledger and the diagnosis) and the
+   * capped log window (`logs RUN --json`, with `logs RUN --url` beside it).
    *
-   * **The two document reads decide whether there is a screen at all.** Both are
-   * the run's own record -- `diagnose` is what the run did, `logs` is what it
-   * said -- and a refused read of either is a run this console cannot draw:
-   * handing `null` to the screen instead would draw an empty log window and a
-   * ledger of `n/a`, which reads as "this run logged nothing and spent nothing"
-   * when what happened is that the console could not ask (Global Constraint 5).
-   * So the refusal is drawn, with the CLI's own sentence and the operation it
-   * came from, and the first one that refused is the one named.
+   * **The frame is drawn in the click's own turn** (the owner's complaint of
+   * 2026-11-01: "when I click on a job id, I see no feedback, it's as if the
+   * click didn't register, only seconds later do I see the job details"). Every
+   * one of the three reads used to be awaited before anything was drawn, so the
+   * click answered with the previous screen until the last of them landed; now
+   * the id, the way back to Live and the two sections' skeletons are drawn
+   * before the first `await`, and each section is filled when *its* read
+   * answers.
    *
-   * The **link is not one of them**: `logs RUN --url` refuses for a run whose
-   * transcript is not linked, which is a fact about the link and not a reason to
-   * hide a run that read perfectly well -- `buildRunModel` draws its own
-   * sentence for a link that did not arrive.
+   * **The two reads are independent and are made in parallel.** Neither section
+   * waits for the other: the record's answer fills the header, the timeline, the
+   * ledger and the diagnosis, the log window's fills the log section and the
+   * arrivals under it, and a refusal names the operation it came from and is
+   * drawn in its own section -- `run.diagnose` over the main column, `run.logs`
+   * in the log section -- rather than taking the whole screen down. Handing the
+   * screen `null` instead would draw an empty log window and a ledger of `n/a`,
+   * which reads as "this run logged nothing and spent nothing" when what
+   * happened is that the console could not ask (Global Constraint 5).
+   *
+   * The **link is the log section's own second read**: `logs RUN --url` refuses
+   * for a run whose transcript is not linked, which is a fact about the link and
+   * not a reason to hide a run that read perfectly well -- `buildRunModel` draws
+   * its own sentence for a link that did not arrive. It is made beside the other
+   * two and never before them, and a link that lands after the window does
+   * repaints that one section, because the sentence for a link that did not
+   * arrive must not stand once it has.
    */
-  const showRun = async (run: string): Promise<void> => {
+  const showRun = (run: string): void => {
     // A run is a view like any other: the navigation marks none of its buttons
     // while it is up, and the Live poll stops -- a poll that kept running under
     // it would replace the run the operator opened a second later.
     markCurrent('run')
     const mine = claim()
-    const sentences: Record<string, string> = {}
-    const read = async (operation: string, go: () => Promise<unknown>): Promise<unknown> => {
-      const answer = documentOf(await go())
-      if (!answer.ok) sentences[operation] = answer.sentence
-      return answer.ok ? answer.data : null
-    }
-    const diagnosis = await read('run.diagnose', () => bridge.diagnoseRun({ run }))
-    const logs = await read('run.logs', () => bridge.readRunLogs({ run }))
-    if (stale(mine)) return
-    const refused = (['run.diagnose', 'run.logs'] as const)
-      .map((operation) => ({ operation, sentence: sentences[operation] }))
-      .find((each) => each.sentence !== undefined)
-    if (refused !== undefined) {
-      refuse(refused.operation, refused.sentence ?? READ_UNREADABLE)
-      return
-    }
-
-    let logLink: string | null = null
-    const link = replyData(await bridge.runLogLink({ run }))
-    if (stale(mine)) return
-    if (link.ok && typeof link.data === 'string') logLink = link.data
-    else if (!link.ok) sentences['run.logLink'] = link.sentence
-
-    const drawn = renderRun(factory, buildRunModel({ diagnosis, logs, logLink, sentences }), theme)
-    replace(drawn)
+    const drawn = renderRunFrame(factory, theme, run)
+    replace(drawn.root)
     // The breadcrumb's `Live` crumb is the way back from a run the operator
     // opened, and it is the whole of what this screen wires: the same
     // `show('live')` the nav's own Live button calls, and the run id beside it
     // is selectable text rather than a control. Nothing else on Run binds
-    // anything -- the retry is `writes.ts`'s refused button.
-    const crumb = classed(drawn, 'run-crumb-live')[0]
+    // anything -- the retry is `writes.ts`'s refused button. It is bound here
+    // and not when a read lands, because the frame the click drew carries it.
+    const crumb = classed(drawn.root, 'run-crumb-live')[0]
     if (crumb !== undefined) {
       surface.nodeOf(crumb).addEventListener('click', () => {
         show('live')
       })
     }
+
+    /** what the two reads have drawn so far, held here so `placeMain` can write
+     * the column from whatever has landed, in whatever order it landed in. */
+    let before: readonly Drawn[] = []
+    let diagnosisDrawn = false
+    let arrivals: readonly Drawn[] = []
+    let window_: Readonly<Record<string, unknown>> | null = null
+    let logLink: string | null = null
+
+    /**
+     * placeMain writes the main column's children in the screen's own order.
+     *
+     * **It replaces the column rather than appending to it**, because the two
+     * reads answer in an order nobody chooses: the log window's read can land
+     * first, and the record's panels belong *above* the diagnosis. A column
+     * built by appends would have put the timeline under the log window for
+     * every operator whose log read answered first, and the two answers arrive
+     * from the same CLI within a second of each other.
+     *
+     * The frame draws the column empty and `showRun` calls this once as soon as
+     * the two marks are up: the sections and the slot the marks go into are the
+     * frame's, and this is what writes them into the page in their order.
+     */
+    const placeMain = (): void => {
+      const children = runMainChildren(drawn, { before, diagnosis: diagnosisDrawn, arrivals })
+      surface.nodeOf(drawn.main).replaceChildren(...children.map((each) => surface.nodeOf(each)))
+    }
+
+    const recordToken = runRecordRead.start()
+    const logsToken = runLogsRead.start()
+    runRecordRead.mark(recordToken, drawn.main, drawn.mainSlot, runBusyLabel(run, RUN_RECORD_BUSY), RUN_RECORD_SHAPE)
+    runLogsRead.mark(logsToken, drawn.logs, drawn.logsSlot, runBusyLabel(run, RUN_LOGS_BUSY), RUN_LOGS_SHAPE)
+    placeMain()
+
+    /** paintLogs fills the log section from what has landed. It is called by
+     * both of that section's reads: the window's own, and the link's when it
+     * arrives after it. */
+    const paintLogs = (): void => {
+      if (window_ === null) return
+      clearSection(drawn.logs, drawn.logsSlot)
+      arrivals = fillRunLogs(factory, buildRunModel({ diagnosis: null, logs: window_, logLink }), drawn)
+      placeMain()
+    }
+
+    const loadRecord = async (): Promise<void> => {
+      const answer = documentOf(await bridge.diagnoseRun({ run }))
+      // The token goes first: the mark this column wears may belong to a later
+      // visit, and `settle` would take that one down with it.
+      if (!runRecordRead.settle(recordToken)) return
+      if (stale(mine)) return
+      // The mark the read wore comes out of the column's slot, and the refusal,
+      // when there is one, is drawn in its place: the column has no section of
+      // its own until the record answers, and a refusal is not a section.
+      surface.nodeOf(drawn.mainSlot).replaceChildren()
+      if (!answer.ok) {
+        before = []
+        diagnosisDrawn = false
+        appendTo(drawn.mainSlot, refusedScreen(factory, 'run.diagnose', answer.sentence, theme))
+        placeMain()
+        return
+      }
+      before = fillRunRecord(factory, buildRunModel({ diagnosis: answer.data, logs: null, logLink: null }), drawn).before
+      diagnosisDrawn = true
+      placeMain()
+    }
+
+    const loadLogs = async (): Promise<void> => {
+      const answer = documentOf(await bridge.readRunLogs({ run }))
+      if (!runLogsRead.settle(logsToken)) return
+      if (stale(mine)) return
+      if (!answer.ok) {
+        window_ = null
+        arrivals = []
+        clearSection(drawn.logs, drawn.logsSlot)
+        appendTo(drawn.logsSlot, refusedScreen(factory, 'run.logs', answer.sentence, theme))
+        placeMain()
+        return
+      }
+      window_ = answer.data
+      paintLogs()
+    }
+
+    const loadLink = async (): Promise<void> => {
+      const answer = replyData(await bridge.runLogLink({ run }))
+      if (stale(mine)) return
+      if (answer.ok && typeof answer.data === 'string') logLink = answer.data
+      // A link that arrived after the window did redraws that section: the note
+      // saying no link arrived is the *window's* sentence, and it is not true
+      // any more.
+      paintLogs()
+    }
+
+    // All three in the click's own turn, so they are in flight together and the
+    // sections fill as their own answers land.
+    void loadRecord()
+    void loadLogs()
+    void loadLink()
   }
 
   // ---- The installation rail's issue view --------------------------------

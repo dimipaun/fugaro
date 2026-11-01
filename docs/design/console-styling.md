@@ -583,8 +583,10 @@ Formatting: money is `usd` (2 decimals, grouping, sign before `$`), shares are `
 compute under its `est.` mark, and the totals line says in words that the first two are
 different kinds of money and are never added together** (the "Today is partial." half is
 drawn only when the document says the range includes a partial day). Exported:
-`SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
-by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
+`SPEND_DEFAULT_CONTROLS = {since:'7d', until:null,
+by:'day', persons:false}` — the screen opens on the recent week by day (the owner's choice,
+console 0.118.0), while `report`'s own `--since` default stays 30 days —
+`SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
 `SPEND_DIMENSIONS` (eight), `SPEND_ACCOUNTS = ['model','notional','compute']`,
 `PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'no readable record'`. The table's gap
 row carries the module's own `TABLE_GAP_SENTENCE` — the gap row's own sentence — which is not

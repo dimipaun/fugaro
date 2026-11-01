@@ -742,7 +742,14 @@ describe('renderRun: the two columns', () => {
     expect(classesOf(layout)).toEqual(['run-main', 'run-aside'])
 
     const main = one(tree, 'run-main')
+    // The column's own busy slot is its first child. It is empty in a one-shot
+    // drawing -- `entry.ts`'s `showRun` draws the record read's mark into it
+    // while that read is out -- and an empty slot is not laid out at all
+    // (`flight-deck.css`). It is drawn for the reason the Spend sections' slots
+    // are: the frame goes up before either read answers, so the mark has
+    // somewhere to go.
     expect(classesOf(main)).toEqual([
+      'console-busy-slot',
       'run-stages',
       'run-tolerated-absent',
       'run-diagnosis',
