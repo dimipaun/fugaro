@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -1254,6 +1255,50 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 	}
 	if _, ok := plain.tfvars(t)["credentials_service"]; ok {
 		t.Errorf("an ordinary update wrote credentials_service into an installation that never opted in: %v", plain.tfvars(t)["credentials_service"])
+	}
+}
+
+// update --firebase-project re-pins too. The flag moves the installation's
+// first apply into the Firebase stage (the installation stage skips: "applied
+// as the first step of the firebase backend"), so newFirebaseStage is where an
+// opted-in owner's only re-pin happens on this path — and the hard rule's one
+// command has to converge them here as it does without the flag, or the
+// installation with the Firebase backend stays on the previous release's
+// credentials image and the h2c port this release's module names is never what
+// the service runs.
+func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
+	r := credentialsStageRig(t)
+	// The mark the door wrote when the installation was set up: the Firebase
+	// stage refuses a database that holds data and is not this installation's,
+	// and an installation that can be updated is one it already wrote.
+	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	// The Firestore database the installation was set up with: the rig starts
+	// without one (a fresh Firebase project has none), and the stage asks the
+	// owner for a location and creates it when it finds none — which is a setup
+	// question, not the update this test is about.
+	r.fs.SetDatabase("us-east5")
+	// The installation root's outputs as this path reads them: what
+	// credentialsOutputs answers with, AND the history account the Firebase
+	// stage reads back. credentialsOutputs replaces the rig's script rather
+	// than adding to it, and this is the one test that needs both objects from
+	// the same run, so the two are composed here.
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"history_service_account": historyAccount,
+		"history_job":             nil,
+	})}
+	r.save(t)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("update --firebase-project of an opted-in installation failed: %v\n%s", err, s)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("credentials_service.image = %v, want %s: update --firebase-project skipped the re-pin, so an installation whose first apply is the Firebase stage never reaches this release's image\n%s", got, r.credentialsRef(), s)
+	}
+	if r.resolveCalls != 1 || r.arCalls != 1 {
+		t.Errorf("resolve calls %d, read-backs %d, want one of each: the image is pinned only through the step that verifies the signature of the digest it names, once for the run", r.resolveCalls, r.arCalls)
 	}
 }
 
