@@ -411,13 +411,18 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		// flags, refused by name here).
 		never = "creating a project, linking a billing account, or a secret value"
 	}
-	// The agent clause is about what leaves this machine, not about the door
-	// applying nothing: the writes on this machine's own files run in that
-	// session too — the plugin wiring and the checkout's pin (the checkout
-	// stage, init_checkout_upgrade.go, which runs under a marker for exactly
-	// those two) — and the cloud half of the checkout is a left-for-you step
-	// there, not a stage that quietly skipped it.
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the writes on this machine's own files (the .claude/settings.json wiring and pin, and the plugin in Claude Code); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
+	// The agent clause is about what leaves this machine, and about how far
+	// such a session actually gets: the writes on this machine's own files are
+	// the only ones an apply there may make (the checkout's pin and plugin
+	// wiring; the checkout stage is LocalUnderAgent for exactly those two),
+	// and they are reached only when every stage before the checkout is done —
+	// the loop stops at the first stage that needs the user and blocks the
+	// rest. The plugin stage runs before the checkout on the same pin and is
+	// not LocalUnderAgent, so a stale plugin stops the run at the plugin
+	// (`fugaro update-skills`) with the checkout's local steps never reached
+	// (TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout). The help has
+	// to say that rather than promise a session a write it may not get to.
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired from this run on: the service's address is recorded in the project's config and put on every per-repository launch, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there rather than in the job. A repository job in another agent.auth mode has no model credential to use and nothing yet to replace it (that half is not in this release), so a project that opts in runs its workflows with agent.auth: cascade; and the bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of the installation can mint. It needs the installation's Firebase rules (fugaro "+d.name+" --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
@@ -3233,10 +3238,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// It is the same read planRepo makes for Readiness's D11 gate, and it is
 	// memoized, so this moves that read earlier rather than adding one. A
 	// read that FAILS is left to planRepo, which stops the run on the same
-	// error: this side passes nothing then, and passing nothing is the one
-	// answer that judges no entry — never an empty node, which would read a
-	// node the operator cannot reach as "nothing is proxied" and refuse their
-	// entry over it.
+	// error — except for a node written by an older release, which planRepo
+	// counts as present so the policy stage can migrate it: this side passes
+	// nothing then too, until that stage has migrated the node. Passing
+	// nothing is the one answer that judges no entry — never an empty node,
+	// which would read a node the operator cannot reach as "nothing is
+	// proxied" and refuse their entry over it.
 	//
 	// None of it is conditioned on --plan-only: a disagreement is a
 	// contradiction in the configuration, not a change to make, and a plan

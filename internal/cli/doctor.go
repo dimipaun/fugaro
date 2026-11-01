@@ -70,6 +70,16 @@ type doctorCheck struct {
 	// and every ID keeps its meaning), only the one question a check answers
 	// about itself that the ID alone cannot.
 	unread bool
+	// ownFix marks a check in an update class whose own state `fugaro update`
+	// does NOT put right, so the default view prints the check's own fix (its
+	// first sentence, worded as the command that does the work) instead of the
+	// class's one command. The class is per ID and policy-rules-skew is one ID
+	// with ten states, most of them the update's own work, so the ID alone
+	// cannot answer this either — and a reader sent to `fugaro update` for a
+	// state it does not repair comes back to the warning still standing.
+	// Unexported and absent from --json for the reason unread is: it is not a
+	// second class, only the one question a check answers about itself.
+	ownFix bool
 }
 
 func fromPreflight(c preflight.Check) doctorCheck {
@@ -1874,7 +1884,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// job environment, exactly as they did before this model (P3).
 		checks := []doctorCheck{{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("project %s has no Firebase budget backend, so it cannot publish a project policy: runs take their ceiling from the job environment", lc.Name),
-			Fix:     "fugaro update --firebase-project " + lc.GCPProject + " --name " + lc.Name + " adds the backend the policy is published to"}}
+			Fix:     "fugaro update --firebase-project " + firebaseProjectIDWord(lc.GCPProject) + " --name " + lc.Name + " adds the backend the policy is published to." + adoptOwnFirebaseProject(lc)}}
 		return append(checks, doctorRoutingChecks(lc, nil,
 			fmt.Sprintf("project %s has no Firebase budget backend, so there is no policy node to read a switch from", lc.Name), layer)...)
 	}
@@ -1898,7 +1908,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}},
 			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer))...)
 	}
-	checks := doctorRulesSkew(ctx, db)
+	checks := doctorRulesSkew(ctx, db, lc)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
 	// The node is read through projectpolicy.Read, the reader a run uses
 	// (design §5(3)), not with a plain Get: with no marker, or one below
@@ -1917,19 +1927,29 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			fmt.Sprintf("%s does not record the rules generation a policy is read under, so no run reads the node and no switch can be resolved from it", projectpolicy.PathRulesMarker()), layer))...)
 	case errors.As(err, &ve):
 		// P8's release skew, both directions: Decode refuses a node of any other
-		// version, and the two remedies are opposite. A newer node needs a newer
-		// Fugaro. An older one — a hand-written node, or one a release before
-		// this shape wrote — is the version *this* binary writes, so "upgrade
-		// Fugaro" is backwards there and the remedy is the one the publisher
-		// itself words (publishedPolicyOf): remove it, then publish.
+		// version, and the remedies are opposite. A newer node needs a newer
+		// Fugaro. An older one has two states, and the migration chain decides
+		// between them (projectpolicy.Migratable): a version the chain carries
+		// forward (3, which 0.9.0 wrote) is what the policy stage of the converge
+		// migrates in place (init_policy_migrate.go), so this line is the
+		// update's own (doctorUpdatePrefixes). A version below the chain's first
+		// step (1 or 2, which 0.8.0 and 0.8.5 wrote) is one no step reaches —
+		// the stage and a publish both refuse it with the delete-then-publish —
+		// and there the check keeps its own command (ownFix: the class is the
+		// ID's, and the state's move is not the class's).
 		if ve.Found > ve.Understood {
 			checks = append(checks, policyNewerThanBinaryCheck(ve, shared))
 			return append(checks, unreadRouting(doctorRoutingChecks(lc, nil,
 				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer))...)
 		}
-		checks = append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
-			Problem: fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood),
-			Fix:     fmt.Sprintf("fugaro project policy publish --delete removes it, then 'fugaro project policy publish' writes this Fugaro's version %d", ve.Understood)})
+		migrates := projectpolicy.Migratable(ve.Found)
+		problem := fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood)
+		fix := fmt.Sprintf("run `fugaro update`: its policy stage rewrites the node in place at this Fugaro's version %d, keeping the members the node carries, so nothing has to be deleted and published again", ve.Understood)
+		if !migrates {
+			fix = fmt.Sprintf("fugaro project policy publish --delete removes it, then 'fugaro project policy publish' writes this Fugaro's version %d: no migration step reaches version %d, and a publish rebuilds the node from this machine's config, so read the list out with `fugaro project policy show` first", ve.Understood, ve.Found)
+		}
+		checks = append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning", ownFix: !migrates,
+			Problem: problem, Fix: fix})
 		return append(checks, doctorRoutingChecks(lc, nil,
 			fmt.Sprintf("the node at %s is a policy of version %d, which no run applies, so no switch is in force", shared, ve.Found), layer)...)
 	case err != nil:
@@ -1987,7 +2007,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
-	checks = append(checks, doctorCredsRules(ctx, db, p)...)
+	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
 	}
@@ -2408,6 +2428,21 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro update --repo . in your own terminal, which is the only path that writes a job's environment)"}
 }
 
+// adoptOwnFirebaseProject is what every doctor fix whose command is `fugaro
+// update --firebase-project` has to say beside it, and it is the migration
+// `fugaro update` itself names in the same words: a config that records another
+// Firebase project is refused by that command (initFirebase's checkFirebaseProject,
+// one Fugaro project has one Firebase project, design D3) before it reads or
+// writes anything, so a line that stopped at the command would send exactly the
+// installation these checks were written for — the legacy one whose mark and
+// rules are the states reported here — to a refusal and no repair. The two
+// values to drop are the config's own (budget.firebase_project and the
+// budget.rtdb_url beside it, which is that project's database), and with them
+// gone the same command adopts the installation's own project.
+func adoptOwnFirebaseProject(lc *localcfg.Config) string {
+	return fmt.Sprintf(" If the config records another project in budget.firebase_project, that command is refused while it does: drop it and budget.rtdb_url beside it first, and `fugaro update --firebase-project %s` then adopts this installation's own project (which is the case the sentence above is about).", firebaseProjectIDWord(lc.GCPProject))
+}
+
 // doctorRulesSkew is the fifth check: the deployed rules are older than the
 // marker config/limits/policyRules. It is the state an older CLI's
 // `fugaro update --firebase-project` leaves behind by redeploying the pre-policy
@@ -2425,7 +2460,13 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // A warning, not an error: the fix is the owner's `fugaro update` — whose rules
 // stage deploys this binary's generation, in the same run, for every state here
 // but the hand-edited marker the stage reports instead — and doctor cannot
-// perform it.
+// perform it. The two states that command does not repair carry their own line
+// in the default view (ownFix): the hand-edited marker, whose repair is a
+// deploy from a Fugaro that reads generations at all, and a marker above this
+// binary's generation, whose repair is the newer binary. lc is what the other
+// states' own fixes need too: the one value `--firebase-project` accepts is the
+// installation's own project (checkFirebaseProject), so the command a line
+// names has to carry it.
 //
 // The same check reports the marker's other wrong values: a value that is not a
 // generation this Fugaro may read at all (not an integer, or the negative one no
@@ -2435,7 +2476,7 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // binary's). An absent marker is not one of them — it is generation 0 without a
 // claim, and there is nothing for the rules to be older than; what an absent
 // marker does to a node is doctorPolicyChecks's line to draw.
-func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
+func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) []doctorCheck {
 	skew := rulesSkewOf(ctx, db)
 	marker, gen := projectpolicy.PathRulesMarker(), skew.gen
 	switch skew.kind {
@@ -2459,9 +2500,24 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// this binary, and not of a hand edit, which would send the operator to
 		// redeploy rules that are not what is wrong (the review finding on this
 		// change).
-		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+		if skew.notInteger {
+			// The remedy the other half of this state has is not this one's: a
+			// value that is not a number stops `fugaro update --firebase-project`
+			// at the READ, before anything is written (infra.DB.Plan reads the
+			// marker into an int), so a reader sent there meets "cannot
+			// unmarshal string into Go value of type int" and no repair. The
+			// node is a person's, so the line is what a person does to it, and
+			// both moves end at the command that writes the marker this Fugaro
+			// reads.
+			return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
+				Problem: rulesMarkerBadText(skew.raw),
+				Fix: fmt.Sprintf("set %s to the integer generation of the deployed rules by hand, or delete the node: a value that is not a number is a generation no Fugaro wrote, and `fugaro update --firebase-project %s` reads that node before it writes, so it stops on this one and nothing is repaired. With the node deleted the deployed rules read as generation 0, and `fugaro update --firebase-project %s` then deploys this Fugaro's rules and records generation %d (upgrade Fugaro first if the rules deployed here came from a newer release — this template would replace them).",
+					marker, firebaseProjectIDWord(lc.GCPProject), firebaseProjectIDWord(lc.GCPProject), projectpolicy.RulesVersion) + adoptOwnFirebaseProject(lc)}}
+		}
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
 			Problem: rulesMarkerBadText(skew.raw),
-			Fix:     "re-run 'fugaro update --firebase-project' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
+			Fix: fmt.Sprintf("re-run `fugaro update --firebase-project %s` with fugaro >= %s in your own terminal. It writes the marker this Fugaro reads, over a document it deploys itself.",
+				firebaseProjectIDWord(lc.GCPProject), policySince) + adoptOwnFirebaseProject(lc)}}
 	case rulesSkewNewer:
 		// A marker above this binary's RulesVersion, and the review of PR
 		// #402's point: a newer Fugaro wrote it, so the deployed rules are a
@@ -2475,10 +2531,10 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// verify and must not redeploy over, which is why update --firebase-project
 		// refuses the state — and the operator who was told the policy is
 		// unreadable would look for the wrong thing.
-		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning", ownFix: true,
 			Problem: rulesMarkerNewerText(marker, gen),
-			Fix: fmt.Sprintf("upgrade Fugaro first: 'fugaro update --firebase-project' with this binary refuses this state rather than redeploying generation %d over the deployed rules, so the newer binary is the one that deploys here ('fugaro upgrade')",
-				projectpolicy.RulesVersion)}}
+			Fix: fmt.Sprintf("upgrade Fugaro (`brew upgrade fugaro`), then `fugaro update` with the newer binary. The deployed rules are a generation this binary does not know, and `fugaro update --firebase-project %s` refuses this state rather than redeploying generation %d over them, so the newer binary is the one that deploys here.",
+				firebaseProjectIDWord(lc.GCPProject), projectpolicy.RulesVersion)}}
 	case rulesSkewPrePolicy:
 		// Present and below the generation that carries the policy nodes is a
 		// state of its own, not an absent marker: it records rules that predate
@@ -2640,7 +2696,16 @@ type rulesSkew struct {
 	kind rulesSkewKind
 	gen  int
 	raw  string
-	err  error
+	// notInteger is rulesSkewBadMarker's other half: the node is not a number
+	// at all, where the rest of that kind is the negative integer no deploy
+	// writes. The two are one state to projectpolicy.Read (both are its
+	// MarkerError, and the report of the wrong value is one text), and two to
+	// the operator, because the remedy differs: a negative generation is
+	// repaired by the deploy that writes the marker over it, and a value that
+	// is not a number stops that deploy at the read (infra.DB.Plan reads the
+	// node before it writes), so it has to be put right by hand first.
+	notInteger bool
+	err        error
 }
 
 // rulesSkewOf reads the generation marker and — only where the marker records
@@ -2660,7 +2725,10 @@ func rulesSkewOf(ctx context.Context, db *rtdb.Client) rulesSkew {
 		return rulesSkew{kind: rulesSkewAbsentMarker}
 	}
 	var gen int
-	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+	if err := json.Unmarshal(raw, &gen); err != nil {
+		return rulesSkew{kind: rulesSkewBadMarker, raw: oneLine(string(raw)), notInteger: true}
+	}
+	if projectpolicy.MarkerHandEdited(gen) {
 		return rulesSkew{kind: rulesSkewBadMarker, raw: oneLine(string(raw))}
 	}
 	switch {
@@ -2825,7 +2893,7 @@ func doctorCredsUnknownState(marks map[string]creds.Mark) []doctorCheck {
 // published policy's routing.claude.via, which is the switch a run reads
 // (projectpolicy.RouteCascade, D150): C1.18's Terraform variable is not a fact
 // this command can read, and the policy is the one the runs themselves obey.
-func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Policy) []doctorCheck {
+func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Policy, lc *localcfg.Config) []doctorCheck {
 	if !cascadeSwitchOn(p) {
 		return nil
 	}
@@ -2842,13 +2910,13 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if !found {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the cascade is switched on (%s) and %s is not written: the deployed rules predate the credentials family, so the first credential a cascade run records is refused and the run halts instead of running (fugaro accounts and fugaro watch show no state on such an installation)", via, marker),
-			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on"}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on", firebaseProjectIDWord(lc.GCPProject)) + adoptOwnFirebaseProject(lc)}}
 	}
 	var gen int
 	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s cannot be told apart: %s", marker, oneLine(string(raw))),
-			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself"}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself", firebaseProjectIDWord(lc.GCPProject)) + adoptOwnFirebaseProject(lc)}}
 	}
 	if gen > rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
@@ -2858,7 +2926,7 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if gen < rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, below the generation %d this Fugaro's credentials rules carry: the deployed document predates the credentials family, so a cascade run's first recorded credential is refused and the run halts", marker, gen, rules.CredsRulesVersion),
-			Fix:     "re-run 'fugaro update --firebase-project' in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation"}}
+			Fix:     fmt.Sprintf("re-run `fugaro update --firebase-project %s` in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation", firebaseProjectIDWord(lc.GCPProject)) + adoptOwnFirebaseProject(lc)}}
 	}
 	return nil
 }

@@ -209,8 +209,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'barText(release)':
       '`barText` composes "n of m done" from two `formatReading` readings -- the console\'s only formatter, whose unavailable mark is what a release the document gave no counters reads -- and the words around them are this file\'s',
     'barText(box.release)': '`barText`, the same "n of m done" run the chip and the list heading draw, so one rule reads all three',
-    'cutForCard(node.title)':
-      '`cutForCard` answers the model\'s own `Sanitized` title cut to the room a card has, or the console\'s unavailable mark: the value has been through `sanitizeText` in `graph/model.ts`, and the cut is `[...text]` so a surrogate pair is never split',
+    line: {
+      within: 'nodeCard',
+      reason:
+        'one line of `titleLines(node.title)`, the model\'s own `Sanitized` title wrapped to the lines a card has and cut only past them: the value has been through `sanitizeText` in `graph/model.ts`, a refusal is the console\'s `UNAVAILABLE_MARK`, and every cut is `[...text]` so a surrogate pair is never split',
+    },
     '`#${String(node.prNumber)}`':
       'a pull request number the model read as a positive integer (`prNumberAt`), drawn as **text**: design section 5.1 rule 2 and its gap 7 leave the console no URL to build, so the number is the whole of it and its `title` carries `GRAPH_PR_NO_LINK_REASON` -- the treatment `live.ts` and `run.ts` give the same field',
     '`run …${node.run.text}`':
@@ -508,11 +511,22 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       within: 'chips',
       reason: 'a stream name, which the model holds as a **key**: `graph/model.ts` never spells one, the heading beside it is the `Sanitized` label, and a plan\'s `stream` is the same kind of value',
     },
+    'one.stream': {
+      within: 'band',
+      reason: 'the same stream key the chip group carries, on the band drawn behind that stream\'s row: `graph/model.ts` never spells a stream name, and the label drawn at the band\'s head is the `Sanitized` one',
+    },
     'box.key': { within: 'releaseBox', reason: '`releaseKey(plan, version)`, this file\'s own join of two ids the model holds as keys -- written as `data-release` and never drawn' },
     key: 'the layout key of a card, a row or a chip -- `nodeKey(plan.id, node.id)` or `releaseKey(plan.id, version)`, ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key`/`data-chip` and never drawn; the drawn text is the `Sanitized` title beside it',
     "node.words[0] ?? ''": 'the node\'s first `StateWord`, the model\'s own vocabulary, as the `data-state` hook a rule colours; the empty string is a node the model gave no word, which is a state no colour applies to',
     'door.run': 'the run id this console\'s own run list resolved the node\'s suffix to (`doorFor`), which is what `data-run-id` carries and what the entry opens -- a node whose suffix no run ends with, or one two runs end with, carries no attribute at all',
     'door.because': { within: 'listRow', reason: '`doorFor`\'s own sentence for a gesture that opens nothing, in the `title` an HTML element keeps a tooltip in' },
+    "door.run !== null ? 'button' : 'group'":
+      'a card\'s role as one of two literals: where a run resolved the card is the `button` Enter and Space open, and where none did it is the `group` no key touches -- the same shape as `live.ts`\'s `repo.kill === null ? \'false\' : \'true\'`',
+    'cardLabel(node)': {
+      within: 'nodeCard',
+      reason:
+        '`cardLabel`: a card\'s accessible name -- the same `Sanitized` title the card draws, **whole** rather than cut at three lines, and the `StateWord` list the model answered beside it. It is a name and not a drawing: it is never painted, and what a reader is told is therefore the title the card could not hold',
+    },
     'viewBoxOf(bounds, picture.state.zoom)': {
       within: 'canvas',
       reason: '`viewBoxOf`: four numbers off the picture\'s own bounds and the state\'s zoom, so what the canvas looks at is geometry rather than a style',
@@ -585,7 +599,7 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "scope.known ? scope.source : 'unknown'": "a known scope's word is on the console's `SCOPES` table; an unknown one is drawn as `unknown`",
     'people.view': '`PeopleView`, the closed three words `peopleViewOf` resolves (`all`, `own`, and `unknown` for a word this build does not know)',
     'drawnKey(currency)': 'read back from a cell `putText` wrote, so it is the sanitized text',
-    theme: { within: 'renderSpend', reason: 'a `SpendTheme`, the closed theme tuple' },
+    theme: { within: 'renderSpendFrame', reason: 'a `SpendTheme`, the closed theme tuple' },
     'chartUnits(SPEND_CHART_SIZE - (share / 100) * SPEND_CHART_SIZE)': {
       within: 'gridline',
       reason:
@@ -1380,6 +1394,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/reading.ts',
       'screens/run.ts',
       'screens/spend.ts',
+      'section.ts',
       'writes.ts',
     ])
   })

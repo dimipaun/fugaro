@@ -515,7 +515,7 @@ func (s *Session) Admit(ctx context.Context, o AdmitOptions) (*Halt, error) {
 	// every auth, oauth included.
 	if _, ok := sn.Caps.MaxReserve(); !ok {
 		return &Halt{Reason: ReasonNoCap, Scope: ScopeGlobal,
-			Detail: "limits.maxReserveMicros is not set in the budget database, so nothing can be leased or reported (an operator runs fugaro update --firebase-project again)"}, nil
+			Detail: "limits.maxReserveMicros is not set in the budget database, so nothing can be leased or reported (an operator runs fugaro update --firebase-project <gcp-project-id> again)"}, nil
 	}
 	if !o.Gateway {
 		return nil, nil

@@ -60,6 +60,29 @@ var tooOld = map[int]bool{
 	2: true,
 }
 
+// Migratable reports whether a node written in version v is one the chain can
+// carry forward, as opposed to one below its first step (tooOld), whose only
+// move is the publisher's delete-then-publish.
+//
+// It is asked where the node itself is not read: `fugaro doctor` meets an older
+// node through Decode alone, and the line it prints — `fugaro update`, which
+// migrates, or the delete and a publish — turns on this and nothing else. It
+// lives beside the chain so the answer is the chain's own and not a second
+// table in the caller that a bump of Version can leave behind. A version above
+// this Fugaro's is not migratable either: Migrate refuses it before the walk,
+// and the move there is a newer binary.
+func Migratable(v int) bool {
+	if v > Version {
+		return false
+	}
+	for from := v; from < Version; from++ {
+		if _, ok := migrators[from]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // Migrate moves a published policy node forward to the version this Fugaro
 // understands, one step at a time, and reports what each step did.
 //

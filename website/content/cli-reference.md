@@ -160,7 +160,7 @@ otherwise select for a cloud command, and never calls Secret Manager, never
 reads or prints a token value, only names.
 
 The state column is not local. When the selected project has a Firebase budget
-backend (budget.rtdb_url, which fugaro update --firebase-project writes), each account's
+backend (budget.rtdb_url, which fugaro update --firebase-project <gcp-project-id> writes), each account's
 credential state is read from that database as you, with your Application
 Default Credentials — the creds/marks subtree the credentials service writes,
 which an admin's rules grant the read of — and printed beside the name as
@@ -3746,7 +3746,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the writes on this machine's own files (the .claude/settings.json wiring and pin, and the plugin in Claude Code); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 
@@ -3926,7 +3926,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the writes on this machine's own files (the .claude/settings.json wiring and pin, and the plugin in Claude Code); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, or a secret value: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 
@@ -3974,7 +3974,7 @@ This command has no subcommands.
 Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
 
 upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in four
+processed one after the other, each on its own) up to this fugaro, in five
 steps, stopping that checkout at the first step that fails:
 
   pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
@@ -4003,6 +4003,20 @@ steps, stopping that checkout at the first step that fails:
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
           named-account jobs are updated by the same fugaro update --repo .
+  rules   the security rules generation a project policy is read under,
+          deployed into the project's Firebase database, the same deploy
+          fugaro update's rules stage makes: the plan is printed and the
+          project's name typed (--yes confirms it, and is the way past the
+          typed confirmation without a terminal). Deployed when the deployed
+          rules are absent, older, pre-policy or a different document.
+          Skipped where there is no shared budget backend, where the database
+          is one this installation may not write (the ownership check every
+          writer into it asks), where the deployed marker is newer or hand
+          edited, and where the rules or their marker could not be read.
+          --check makes no cloud call here either and says it cannot tell.
+          It is what fugaro update's rules stage does; both doors run it, and
+          this one runs it before the policy step because the policy writer
+          refuses a migration the deployed rules would not admit.
   policy  the project's published policy node, if an earlier Fugaro wrote it
           in an older version: migrated in place (never deleted and
           published again), after a diff of what changes, what is kept and
@@ -4019,15 +4033,16 @@ It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
 --local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud and policy steps are skipped
-before they read anything, never attempted, with the command to run in your
-own terminal, so the exit code is 0 when the local steps succeeded. --check
-writes nothing, runs no claude command and makes no cloud call: it reads the
-settings file, Claude Code's record of installed plugins and the local project
-config, prints what each step would do and exits 1 when anything is stale
-(build records are not read, and the published policy node is not either: the
-policy step says it cannot tell). Without --yes, --local or --check it needs a
-real terminal. There is no --json.
+session (CLAUDECODE and the like) the cloud, rules and policy steps are
+skipped before they read anything, never attempted, with the command to run in
+your own terminal, so the exit code is 0 when the local steps succeeded.
+--check writes nothing, runs no claude command and makes no cloud call: it
+reads the settings file, Claude Code's record of installed plugins and the
+local project config, prints what each step would do and exits 1 when anything
+is stale (build records are not read, and neither the deployed security rules
+nor the published policy node is: the rules and policy steps say they cannot
+tell). Without --yes, --local or --check it needs a real terminal. There is no
+--json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files
@@ -4049,12 +4064,12 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for upgrade |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository (default ghcr.io/dimipaun) |
-| `--local` | bool | `false` | no | run the pin and plugin steps only (the only mode that does everything it can inside a coding agent's session) |
+| `--local` | bool | `false` | no | run the pin and plugin steps only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name of the repository; it must be the checkout's origin (one PATH only) |
 | `--workflow` | stringArray | `[]` | no | a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only) |
-| `--yes` | bool | `false` | no | confirm every step of the cloud step without asking (the base copy, the check-job update and each billable build, with no cap), and without a terminal; never in a coding agent's session |
+| `--yes` | bool | `false` | no | confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), and the security rules and published policy deployments; never in a coding agent's session |
 
 Subcommands:
 

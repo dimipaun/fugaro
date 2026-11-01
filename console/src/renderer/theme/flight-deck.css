@@ -2652,3 +2652,318 @@ span.projects-secret-bound-word {
   text-transform: uppercase;
   color: var(--text-3);
 }
+
+/* ---- A section's read: the busy mark (console 0.116.1) ------------------- */
+
+/* The owner's rule of 2026-10-31 -- a screen renders each part the moment its
+ * data arrives -- has a second half: the operator has to be told that a part is
+ * being read *now*, in the frame their click happened in. The mark below is that
+ * half, drawn by `renderer/section.ts` into a section's own empty first child,
+ * and it is one block for every screen that adopts it.
+ *
+ * **The spinning element and the still word are both drawn, and this stylesheet
+ * picks one.** A renderer that chose would have to ask the machine for the
+ * motion preference, and the console answers that preference in exactly one
+ * place (`base.css`, design section 3.9); the reduced-motion arm below is that
+ * one place's own exception, the way the graph's arm is. The global freeze in
+ * `base.css` alone would leave the ring wherever its last frame put it, which is
+ * a mark that says "half a circle" rather than "reading", so the element is not
+ * drawn at all.
+ *
+ * **A section being re-read keeps its content and dims it.** `data-busy` is on
+ * the section and the rule below fades every child but the busy slot: the
+ * operator's figures stay on screen while the next read runs, which is what
+ * makes the change answer in the same frame without blanking the view. */
+
+div.console-busy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+span.console-busy-spinner {
+  align-self: center;
+  inline-size: 0.75em;
+  block-size: 0.75em;
+  border: 2px solid var(--line);
+  border-top-color: var(--live);
+  border-radius: 50%;
+  animation: console-busy-turn 900ms linear infinite;
+}
+
+@keyframes console-busy-turn {
+  from {
+    transform: rotate(0turn);
+  }
+
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+span.console-busy-still-mark {
+  display: none;
+}
+
+p.console-busy-still {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-label);
+  color: var(--text-3);
+}
+
+section[data-busy='true'] > *:not(.console-busy-slot),
+div[data-busy='true'] > *:not(.console-busy-slot) {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  span.console-busy-spinner {
+    display: none;
+    /* `display` alone would leave the animation running on an element nobody
+     * sees; the design's rule is that the arm stops it on the selector that
+     * started it, so a later rule that put the ring back would still draw it
+     * still. */
+    animation: none;
+  }
+
+  span.console-busy-still-mark {
+    display: inline;
+  }
+}
+
+@media (forced-colors: active) {
+  span.console-busy-spinner {
+    animation: none;
+  }
+}
+
+/* ---- A cached view's stamp (console 0.116.1) ----------------------------- */
+
+/* The other half of the session cache: a view that came out of memory is drawn
+ * with the clock it was read at and the one control that reads it again, so a
+ * figure that arrived without a read is never silently old
+ * (`renderer/section.ts`'s `renderStamp`). It is drawn into the section's busy
+ * slot -- the same first child a mark goes into -- and it is a wrapping row of
+ * two things: when, and the door out.
+ *
+ * **The words are `span.console-stamp-at` and this rule does not select it.** A
+ * DOM node's `textContent` is its whole subtree's, so the line that holds the
+ * control answers `as of 09:05Refresh` to whatever reads it; the element that
+ * says *when* is the span, and the test that pins the stamp reads that element
+ * rather than the line around it. */
+
+p.console-stamp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-2xs);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+button.console-stamp-refresh {
+  padding: var(--space-3xs) var(--space-sm);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  transition: color var(--duration-fast) ease;
+}
+
+button.console-stamp-refresh:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* ---- Graph (console redesign, step 6a) ------------------------------------
+ *
+ * The picture and its cards (`console/src/renderer/screens/graph.ts`). The
+ * layout is read **left to right** -- a task sits to the left of the tasks that
+ * need it -- so a stream is the band its row of tasks occupies, and a card is
+ * 260 x 88 with its title wrapped over three lines.
+ *
+ * **What this section took over from `screens.css`, and what stayed there.** The
+ * canvas's own ground, the release box's frame, the edges and the cards'
+ * boundaries were that file's rules for the old markup: they are rewritten here
+ * in the redesign's tokens and deleted from there. `screens.css` keeps the
+ * header, the tabs, the chips, the finished-release panel, the list and the
+ * graph's three motions -- whose keyframes and both arms stay in one block, in
+ * one file, because the motion is design section 3.9's amendment and
+ * `graph-motion.test.ts` reads it there.
+ *
+ * **The grid is the canvas's ground and nothing else.** A dot grid on the `svg`
+ * says "a picture is drawn on this plane"; nothing is read from it and no state
+ * is carried by it. That is why it is a **background** rather than an element: a
+ * decorative element would have to be drawn, sized and hidden from a reader, and
+ * a background is none of those three.
+ *
+ * **Every state here is a word first** (design section 3.5): the boundary says
+ * the same thing the card's own `graph-node-word` spells, so a reader with no
+ * colour -- or a screenshot read in greyscale -- still reads every task, and one
+ * in forced colors still has the widths and the one dash.
+ * ------------------------------------------------------------------------- */
+
+/* The canvas takes the panel's width and the picture's ratio decides its height,
+ * which is what `viewBox` is for: the element has no width or height attribute
+ * of its own. The ground is the page's own `--bg` rather than a surface, so the
+ * cards and the bands are the only raised things in the picture. */
+section.graph svg.graph-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--line) 1px, transparent 1px);
+  background-size: 22px 22px;
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+/* A stream's band: the ground its row of tasks sits on, and the stream's own
+ * name at the band's head. The band is a background -- a stage says the picture
+ * is *grouped*, not that anything is wrong -- so it is a wash and a hairline at
+ * the lowest contrast the theme has, and every card in it keeps its own surface
+ * on top. */
+section.graph svg .graph-band-box {
+  fill: var(--surface-sunken);
+  stroke: var(--line-subtle);
+  stroke-width: 1;
+}
+
+section.graph svg .graph-band-label {
+  fill: var(--text-3);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.08em;
+}
+
+/* A release's box is a frame drawn *around* its tasks, so it is an outline and
+ * never a fill: filling it would put a surface under the cards' own surfaces,
+ * and the band behind it is already the row's ground. */
+section.graph svg .graph-release-box {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+section.graph svg .graph-release-heading,
+section.graph svg .graph-release-bar,
+section.graph svg .graph-release-stream,
+section.graph svg .graph-release-version {
+  fill: var(--text-3);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The release's own name is the one part of the frame a reader looks for, so it
+ * is the one part drawn above the footnotes' tone. */
+section.graph svg .graph-release-name {
+  fill: var(--text-2);
+}
+
+/* The edges. **Two tones and three widths**: a dependency is `--decor` -- the
+ * line a drawing is made of, never a state -- and the critical path is `--live`,
+ * the tone a task being worked on carries. The widths are the channel a forced
+ * colors reader keeps: a cross-release edge is 1 px, a plain one 2 px, the
+ * critical path 3 px, and the edges of a selected task are 3 px of the reading
+ * tone, because the selection is a question and those edges are its answer. The
+ * one mode where that answer has no tone to be told apart by is forced colors,
+ * and its arm (`screens.css`) draws those edges 4 px instead -- a pixel wider
+ * than the critical path, so the scale is a scale there too. */
+section.graph svg .graph-edge-path {
+  fill: none;
+  stroke: var(--decor);
+  stroke-width: 2;
+}
+
+section.graph svg .graph-edge[data-cross='true'] .graph-edge-path {
+  stroke-width: 1;
+}
+
+section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
+  stroke: var(--live);
+  stroke-width: 3;
+}
+
+section.graph svg .graph-edge[data-selected='true'] .graph-edge-path {
+  stroke: var(--text);
+  stroke-width: 3;
+}
+
+/* The cards. A card is a raised surface with a boundary, and the boundary
+ * carries the state: `data-state` is the node's first word, so a rule keyed on
+ * it draws the same state the word beside it spells. */
+section.graph svg .graph-node-box {
+  fill: var(--surface-2);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+/* A task being worked on: the boundary in `--live` at 2 px, the tone the comet
+ * travels and the same one the critical path is drawn in. The four words are the
+ * model's "a run is in a stage" set -- the same four `graph.ts` draws the comet
+ * for -- so the streak's state and the boundary's state cannot drift apart. */
+section.graph svg .graph-node[data-state='implementing'] .graph-node-box,
+section.graph svg .graph-node[data-state='in review'] .graph-node-box,
+section.graph svg .graph-node[data-state='fixing'] .graph-node-box,
+section.graph svg .graph-node[data-state='queued'] .graph-node-box {
+  stroke: var(--live);
+  stroke-width: 2;
+}
+
+/* A halted task is `--warn`: something stopped, and a person has to look. The
+ * card keeps its word, which is what says *what* stopped. */
+section.graph svg .graph-node[data-state='halted'] .graph-node-box {
+  stroke: var(--warn);
+  stroke-width: 2;
+}
+
+/* A blocked task is dashed as well as toned, because "this one is not going to
+ * move" is the one state a reader needs at a glance and the dash is the channel
+ * that survives forced colors. */
+section.graph svg .graph-node[data-state='blocked'] .graph-node-box {
+  stroke: var(--decor);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+/* A done card goes quiet in its **text** as well as its boundary, and a ready one
+ * keeps the neutral boundary: neither is a reading anyone acts on, so neither
+ * shouts, and the muted title is the second channel a reader with no colour
+ * keeps. */
+section.graph svg .graph-node[data-state='done'] .graph-node-title {
+  fill: var(--text-3);
+}
+
+/* The selected card's boundary thickens and does not change tone: the tone is the
+ * state's, and a selection that recoloured it would hide the state. 3 px, because
+ * a running card's state is already 2. */
+section.graph svg .graph-node[data-selected='true'] .graph-node-box {
+  stroke-width: 3;
+}
+
+section.graph svg .graph-node-title {
+  fill: var(--text);
+  font-size: var(--text-sm);
+}
+
+/* The foot of a card: the state's words, the pull request, the run and the
+ * reading's mark. One tone, because they are one line of footnotes, and the run
+ * is monospaced like every other id in this console. */
+section.graph svg .graph-node-word,
+section.graph svg .graph-node-pr,
+section.graph svg .graph-node-run,
+section.graph svg .graph-node-mark {
+  fill: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+section.graph svg .graph-node-run {
+  font-family: var(--font-mono);
+}

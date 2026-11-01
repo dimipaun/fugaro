@@ -18,9 +18,9 @@ import (
 )
 
 // fugaro upgrade (docs/design/upgrade.md): each checkout brought up to this
-// binary in four steps, pin, plugin, cloud and policy, stopping that checkout
-// at the first step that fails; every checkout is tried, one summary ends the
-// run, and the exit code is the worst.
+// binary in five steps, pin, plugin, cloud, rules and policy, stopping that
+// checkout at the first step that fails; every checkout is tried, one summary
+// ends the run, and the exit code is the worst.
 
 type upgradeOptions struct {
 	check, local, yes, allowFork bool
@@ -65,7 +65,7 @@ type upgradeStep struct {
 }
 
 // upgradeSteps run in this order for each checkout.
-var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}, {"policy", policyStep}}
+var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}, {"rules", rulesStep}, {"policy", policyStep}}
 
 type checkoutResult struct {
 	path  string // as given
@@ -80,7 +80,7 @@ func newUpgradeCmd() *cobra.Command {
 		Use:   "upgrade [PATH...]",
 		Short: "Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images",
 		Long: `upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in four
+processed one after the other, each on its own) up to this fugaro, in five
 steps, stopping that checkout at the first step that fails:
 
   pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
@@ -109,6 +109,20 @@ steps, stopping that checkout at the first step that fails:
           yours). --check makes no cloud call, so it cannot tell and says
           so instead. It checks each workflow's default-account job;
           named-account jobs are updated by the same fugaro update --repo .
+  rules   the security rules generation a project policy is read under,
+          deployed into the project's Firebase database, the same deploy
+          fugaro update's rules stage makes: the plan is printed and the
+          project's name typed (--yes confirms it, and is the way past the
+          typed confirmation without a terminal). Deployed when the deployed
+          rules are absent, older, pre-policy or a different document.
+          Skipped where there is no shared budget backend, where the database
+          is one this installation may not write (the ownership check every
+          writer into it asks), where the deployed marker is newer or hand
+          edited, and where the rules or their marker could not be read.
+          --check makes no cloud call here either and says it cannot tell.
+          It is what fugaro update's rules stage does; both doors run it, and
+          this one runs it before the policy step because the policy writer
+          refuses a migration the deployed rules would not admit.
   policy  the project's published policy node, if an earlier Fugaro wrote it
           in an older version: migrated in place (never deleted and
           published again), after a diff of what changes, what is kept and
@@ -125,15 +139,16 @@ It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
 --local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud and policy steps are skipped
-before they read anything, never attempted, with the command to run in your
-own terminal, so the exit code is 0 when the local steps succeeded. --check
-writes nothing, runs no claude command and makes no cloud call: it reads the
-settings file, Claude Code's record of installed plugins and the local project
-config, prints what each step would do and exits 1 when anything is stale
-(build records are not read, and the published policy node is not either: the
-policy step says it cannot tell). Without --yes, --local or --check it needs a
-real terminal. There is no --json.
+session (CLAUDECODE and the like) the cloud, rules and policy steps are
+skipped before they read anything, never attempted, with the command to run in
+your own terminal, so the exit code is 0 when the local steps succeeded.
+--check writes nothing, runs no claude command and makes no cloud call: it
+reads the settings file, Claude Code's record of installed plugins and the
+local project config, prints what each step would do and exits 1 when anything
+is stale (build records are not read, and neither the deployed security rules
+nor the published policy node is: the rules and policy steps say they cannot
+tell). Without --yes, --local or --check it needs a real terminal. There is no
+--json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files
@@ -146,8 +161,8 @@ checkout's steps and, for one that stopped, the line to rerun.`,
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.check, "check", false, "write nothing, run no claude command, make no cloud call: print what each step would do and exit 1 when anything is stale")
-	f.BoolVar(&o.local, "local", false, "run the pin and plugin steps only (the only mode that does everything it can inside a coding agent's session)")
-	f.BoolVar(&o.yes, "yes", false, "confirm every step of the cloud step without asking (the base copy, the check-job update and each billable build, with no cap), and without a terminal; never in a coding agent's session")
+	f.BoolVar(&o.local, "local", false, "run the pin and plugin steps only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session)")
+	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), and the security rules and published policy deployments; never in a coding agent's session")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag, and add it to Claude Code")
 	f.StringVar(&o.refresh.repo, "repo", "", "owner/name of the repository; it must be the checkout's origin (one PATH only)")
 	f.StringArrayVar(&o.refresh.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only)")
@@ -200,7 +215,7 @@ func (o upgradeOptions) validate(npaths int) error {
 	case o.check && o.yes:
 		return userErr("--check writes nothing, so --yes has nothing to confirm: pass one or the other")
 	case o.local && o.yes:
-		return userErr("--yes confirms the cloud step, which --local skips: pass one or the other")
+		return userErr("--yes confirms the cloud, rules and policy steps, which --local skips: pass one or the other")
 	case o.local && (r.repo != "" || len(r.workflows) > 0 || r.imageSource != "" || len(r.expectDigests) > 0):
 		return userErr("--repo, --workflow, --image-source and --expect-digest are the cloud step's, which --local skips")
 	case npaths > 1 && (r.repo != "" || len(r.workflows) > 0 || len(r.expectDigests) > 0):
@@ -526,6 +541,10 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepSkipped, reason: policyNoDBReason}
 	}
 	m, published, err := policyMigrationFor(ctx, lc)
+	var notOurs *policyMigrationNotOurs
+	if errors.As(err, &notOurs) {
+		return stepResult{state: stepSkipped, reason: oneLine(notOurs.reason)}
+	}
 	if err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
@@ -539,6 +558,95 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	return stepResult{state: stepDone, reason: fmt.Sprintf("the published policy was migrated from version %d to %d in place", m.from, projectpolicy.Version)}
+}
+
+// checkRulesCaveat is what --check says for the rules step, for the same reason
+// the policy step has one: which generation of the security rules a project's
+// database has deployed is a fact of that database and of nothing in the
+// checkout, and reading it there is the cloud call the flag promises not to
+// make.
+const checkRulesCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell which generation of the security rules the project's database has deployed; run fugaro upgrade (or fugaro update) without --check to deploy the generation this Fugaro reads a project policy under, after the plan and the typed confirmation"
+
+// rulesStep deploys the security rules generation this binary carries, the
+// deploy `fugaro update`'s rules stage makes and with its classification, its
+// ownership gate and its document, so one installation converges through either
+// front door. It stands in front of the policy step on purpose: the policy
+// writer's gate (requirePolicyRules) refuses a migration the deployed rules
+// would not admit, so without this step an installation whose rules predate the
+// policy model met the gate and refused, leaving one `fugaro upgrade` unfinished
+// and the owner with a second command — the rule of 2026-10-30 that the whole
+// upgrade is one command.
+//
+// The step is a cloud write, so it is skipped before anything is read wherever
+// the policy step is: --check, --local, and a coding agent's session, which
+// hands it to the user's own terminal. It is skipped rather than failed where
+// there is nothing here to deploy from (resolveCloudRepo's cloudNotHere), and
+// where the deployed rules are not this binary's to replace: a newer or
+// hand-edited marker, rules or a marker that could not be read, and the
+// database the ownership predicate refuses, all say why and let the run go on.
+func rulesStep(ctx context.Context, u *upgradeCtx) stepResult {
+	if u.o.check {
+		fmt.Fprintf(u.w, "note: %s\n", checkRulesCaveat)
+		return stepResult{state: stepSkipped, reason: "--check makes no cloud call, so the deployed security rules are not read: run fugaro upgrade without --check to deploy this Fugaro's generation"}
+	}
+	if u.o.local {
+		return stepResult{state: stepSkipped, reason: "--local"}
+	}
+	if u.agent != "" {
+		reason := fmt.Sprintf("a coding agent's session (%s is set) never deploys the security rules, by design; in your own terminal window, not through the agent, run %s", u.agent, u.o.cloudLine(u.loc.Root, false))
+		if h := initflow.IDEHint(u.agent); h != "" {
+			reason += " (" + h + ")"
+		}
+		return stepResult{state: stepSkipped, reason: reason}
+	}
+	_, lc, _, _, _, v := resolveCloudRepo(ctx, u.loc.Root, u.o.refresh.cloud)
+	if v != nil {
+		if v.state == cloudNotHere {
+			return stepResult{state: stepSkipped, reason: v.reason}
+		}
+		return stepResult{state: stepFailed, code: ExitUserError, reason: v.reason}
+	}
+	if detail := rulesUnavailable(lc); detail != "" {
+		return stepResult{state: stepSkipped, reason: oneLine(detail)}
+	}
+	db, st, detail, err := rulesState(ctx, lc, "this step neither marks nor writes there", selfCommand()+" update")
+	if err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	switch st {
+	case initflow.Skipped:
+		return stepResult{state: stepSkipped, reason: oneLine(detail)}
+	case initflow.Done:
+		return stepResult{state: stepCurrent, reason: oneLine(detail)}
+	}
+	// Plan asks the ownership predicate again (infra.DB.Plan's own Check), after
+	// rulesState asked it: the first answer is the verdict this step reports,
+	// the second is the one the write itself is gated on, and the step passes
+	// nothing down to it. Asking twice is deliberate — a database marked, or
+	// emptied, between the two reads is refused rather than written into, which
+	// is what the ruling's "one shared ownership check, asked by every writer
+	// into the database" means here — and the update door's rules stage asks it
+	// in the same two places.
+	acts, warnings, err := db.Plan(ctx)
+	if err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	for _, warning := range warnings {
+		fmt.Fprintf(u.w, "note: %s\n", oneLine(warning))
+	}
+	if len(acts) == 0 {
+		// Nothing would be written, so nothing is claimed: the sentence is the
+		// classification's own, which is doctor's answer to the same question.
+		return stepResult{state: stepCurrent, reason: oneLine(detail)}
+	}
+	rulesShow(u.w, lc.Budget.FirebaseProject, acts)
+	if err := confirmRemoval(u.cmd, lc, u.o.yes, "this deploys the security rules listed, as you (project owner, editor or budget admin), and records which generation is deployed: they are what every project policy is read under, and a project policy written under rules that predate it is a policy nothing reads"); err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	if err := db.Apply(ctx); err != nil {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	return stepResult{state: stepDone, reason: fmt.Sprintf("deployed the security rules (generation %d) and recorded it", projectpolicy.RulesVersion)}
 }
 
 // warnUpgradeFork is update-skills' warning, said whenever the checkout's

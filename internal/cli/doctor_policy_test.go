@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -199,12 +200,16 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	})
 
 	t.Run("a policy older than the binary", func(t *testing.T) {
+		const olderHead = "warning policy-older-than-binary: "
 		// Decode refuses a version mismatch in either direction, and the two
 		// directions have opposite remedies: a newer node needs a newer Fugaro,
-		// and an older one needs the remedy the publisher itself words — remove
-		// it, then publish. Meeting the older direction with "upgrade Fugaro"
-		// sends the operator to install a release for a node this one is
-		// already newer than.
+		// and an older one is the node the policy stage of the next `fugaro
+		// update` migrates in place (init_policy_migrate.go). Meeting the older
+		// direction with "upgrade Fugaro" sends the operator to install a
+		// release for a node this one is already newer than; sending them to the
+		// publisher's delete-then-publish (what the line named before the policy
+		// stage existed) costs the node what a publish rebuilds from the
+		// operator's own config.
 		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = projectpolicy.Version - 1 }), "")
 		c, ok := doctorChecksByID(t)["policy-older-than-binary"]
 		if !ok || c.Severity != "warning" {
@@ -213,11 +218,41 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if strings.Contains(c.Problem, "upgrade Fugaro") || strings.Contains(c.Fix, "upgrade Fugaro") {
 			t.Errorf("the older direction is met with the newer direction's remedy: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro project policy publish --delete") {
-			t.Errorf("the check does not name the remedy that works on an older node: %+v", c)
+		if !strings.Contains(c.Fix, "fugaro update") || !strings.Contains(c.Fix, "in place") {
+			t.Errorf("the check does not name the migration that repairs an older node: %+v", c)
+		}
+		human, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+		if item := doctorHumanItem(t, human, olderHead); !strings.HasSuffix(item, "run `fugaro update`") {
+			t.Errorf("the node the migration reaches is not met with the update's own command: %q", item)
 		}
 		if _, ok := doctorChecksByID(t)["policy-newer-than-binary"]; ok {
 			t.Error("policy-newer-than-binary fired for a node older than this binary")
+		}
+
+		// And the older state the chain does NOT reach: versions 1 and 2 predate
+		// the model the migrators read, so `fugaro update` stops on them (the
+		// stage refuses with the same sentence a publish does) and the
+		// delete-then-publish is the move that works. The line says so in the
+		// state's own words, not the class's command: a reader sent to `fugaro
+		// update` for this node comes back to the warning still standing.
+		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = 1 }), "")
+		c, ok = doctorChecksByID(t)["policy-older-than-binary"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-older-than-binary = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Fix, "fugaro project policy publish --delete") || !strings.Contains(c.Fix, "no migration step reaches version 1") {
+			t.Errorf("the check does not name the only move that reaches a version-1 node: %+v", c)
+		}
+		// The line, not only the check's own text: the default view prints this
+		// state's command rather than the class's, because the update does not
+		// repair it (the class is the ID's, and the state is the exception).
+		human, _, _ = execute(t, "doctor", "--dir", t.TempDir())
+		item := doctorHumanItem(t, human, olderHead)
+		if !strings.Contains(item, "fugaro project policy publish --delete") {
+			t.Errorf("the default view does not name the move the update cannot make: %q", item)
+		}
+		if strings.Contains(item, "run `fugaro update`") {
+			t.Errorf("the default view sends the reader to the update for a node no migration step reaches: %q", item)
 		}
 	})
 
@@ -497,6 +532,16 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "refuses this state rather than redeploying generation") {
 			t.Errorf("the fix does not say that update --firebase-project refuses this state: %+v", c)
 		}
+		// And the default view prints that fix, not the class's plain `fugaro
+		// update`: this state's update is the newer binary, so a line naming
+		// the update alone would send the reader to a command whose rules
+		// stage reports this state rather than deploying over it. The human
+		// view is the surface (ownFix is unexported and a check read back from
+		// --json cannot carry it: the class is on the wire, the line is not).
+		out, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+		if !strings.Contains(out, "upgrade Fugaro (`brew upgrade fugaro`), then `fugaro update` with the newer binary.") {
+			t.Errorf("the default view does not print this state's own fix:\n%s", out)
+		}
 	})
 
 	t.Run("a marker below the generation a policy is read under", func(t *testing.T) {
@@ -662,6 +707,57 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// table (projectpolicy.VersionSince), which answers a different question.
 		if !strings.Contains(c.Fix, "fugaro >= "+policySince+" ") {
 			t.Errorf("the fix does not quote the release the policy model ships in (%s): %+v", policySince, c)
+		}
+		// The default view prints it, with the project the deploy goes to: this
+		// binary's rules stage reports a hand-edited marker rather than
+		// deploying over it, so the class's plain `fugaro update` is the one
+		// line that would leave the warning standing — and `--firebase-project`
+		// takes a value, so a line that stopped at the flag would fail on the
+		// missing one. The human view is the surface (ownFix is unexported and
+		// a check read back from --json cannot carry it).
+		out, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+		want := "re-run `fugaro update --firebase-project " + initProject + "` with fugaro >= " + policySince + " in your own terminal."
+		if !strings.Contains(out, want) {
+			t.Errorf("the default view does not print this state's own fix (%q):\n%s", want, out)
+		}
+	})
+
+	t.Run("a marker that is not a number at all", func(t *testing.T) {
+		// The other half of the cannot-be-told-apart state, and the half whose
+		// remedy is NOT the negative generation's: `fugaro update
+		// --firebase-project` repairs a negative marker by deploying over it
+		// (infra.DB.Plan reads the node into an int, and -1 is one), while a
+		// value that is not a number stops that same read — "cannot unmarshal
+		// string into Go value of type int" — and nothing is written. The fix
+		// printed for the negative arm sends the operator to a command that
+		// fails on this node and leaves it exactly as it was.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), "four")
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		// The body is the shared one: what the node holds is one state to
+		// projectpolicy.Read, and doctor's report of it is the refusal's text.
+		if c.Problem != rulesMarkerBadText(`"four"`) {
+			t.Errorf("the body is not rulesMarkerBadText:\n got %q\nwant %q", c.Problem, rulesMarkerBadText(`"four"`))
+		}
+		// The fix is the hand edit's, and it is not the negative arm's.
+		for _, want := range []string{"by hand", projectpolicy.PathRulesMarker(), "before it writes"} {
+			if !strings.Contains(c.Fix, want) {
+				t.Errorf("the fix does not name %q: %+v", want, c)
+			}
+		}
+		if strings.Contains(c.Fix, "re-run `fugaro update --firebase-project") || strings.Contains(c.Fix, "with fugaro >= "+policySince) {
+			t.Errorf("the fix for a value that is not a number is the negative marker's, which sends the reader to a command that stops at this node: %+v", c)
+		}
+		// The default view prints it (ownFix): the class's plain `fugaro update`
+		// is the line that would leave the warning standing, and a line that
+		// stopped at the flag would fail on the missing value.
+		out, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+		if !strings.Contains(out, "set "+projectpolicy.PathRulesMarker()+" to the integer generation of the deployed rules by hand, or delete the node:") {
+			t.Errorf("the default view does not print this state's own fix:\n%s", out)
 		}
 	})
 }
@@ -1536,5 +1632,71 @@ func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
 	doctorPolicyRig(t, doctorPolicy(nil), "")
 	if c, ok := doctorChecksByID(t)["creds-rules"]; ok {
 		t.Fatalf("doctor reported creds-rules with the cascade off: %+v", c)
+	}
+}
+
+// TestDoctorFixesSayHowToGetPastAForeignFirebaseProject: the doctor lines whose
+// remedy is `fugaro update --firebase-project <the installation's own GCP
+// project>` are printed for every installation in the state they report,
+// including the legacy one whose config records *another* Firebase project in
+// budget.firebase_project. That is exactly the config the command refuses
+// (checkFirebaseProject: one Fugaro project has one Firebase project), before
+// it reads or writes anything — so a line that stopped at the command would
+// name a remedy that cannot run for the installation it is about, and the
+// person is left with a refusal and the node still wrong. Each of those lines
+// carries the move that comes first: the two config values to drop.
+func TestDoctorFixesSayHowToGetPastAForeignFirebaseProject(t *testing.T) {
+	cascadeOn := func(p *projectpolicy.Policy) {
+		p.Routing = &projectpolicy.Routing{Claude: &projectpolicy.ClaudeRoute{Via: projectpolicy.RouteCascade}}
+	}
+	arms := []struct {
+		name  string
+		build func(t *testing.T) map[string]doctorCheck
+	}{
+		{"no budget backend", func(t *testing.T) map[string]doctorCheck {
+			newDoctorRig(t)
+			return doctorChecksByID(t)
+		}},
+		{"a rules marker that is not a number", func(t *testing.T) map[string]doctorCheck {
+			_, db := doctorPolicyRig(t, doctorPolicy(cascadeOn), "")
+			db.Set(projectpolicy.PathRulesMarker(), "four")
+			return doctorChecksByID(t)
+		}},
+		{"a rules marker no deploy writes", func(t *testing.T) map[string]doctorCheck {
+			_, db := doctorPolicyRig(t, doctorPolicy(cascadeOn), "")
+			db.Set(projectpolicy.PathRulesMarker(), -1)
+			return doctorChecksByID(t)
+		}},
+	}
+	for _, arm := range arms {
+		t.Run(arm.name, func(t *testing.T) {
+			named := 0
+			for _, c := range arm.build(t) {
+				if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
+					continue
+				}
+				named++
+				for _, want := range []string{"budget.firebase_project", "budget.rtdb_url"} {
+					if !strings.Contains(c.Fix, want) {
+						t.Errorf("the fix of %s names the command a config recording another Firebase project is refused by, and not the way past it (%s missing): %+v", c.ID, want, c)
+					}
+				}
+			}
+			if named == 0 {
+				t.Fatal("no check in this state names `fugaro update --firebase-project`: the arm exercises nothing")
+			}
+		})
+	}
+	// The tail itself, in the two shapes a config puts the project in: the id,
+	// and nothing recorded at all — a fix must never print the flag with no
+	// value after it, whatever it is handed.
+	for _, tc := range []struct{ gcp, want string }{
+		{"proj-1234", "fugaro update --firebase-project proj-1234"},
+		{"", "fugaro update --firebase-project <gcp-project-id>"},
+	} {
+		tail := adoptOwnFirebaseProject(&localcfg.Config{GCPProject: tc.gcp})
+		if !strings.Contains(tail, tc.want) {
+			t.Errorf("adoptOwnFirebaseProject(%q) does not print %q: %q", tc.gcp, tc.want, tail)
+		}
 	}
 }

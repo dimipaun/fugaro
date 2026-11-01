@@ -538,7 +538,26 @@ read was resolved for, drawing the document's totals and **no row at all**); run
 never started (a count in no row and no total, drawn after the totals as
 `span.spend-people-unlaunched` beside the word `never started` in
 `span.spend-people-unlaunched-word`).
-**There is no loading state, no stale state and no halted state on this screen.** The one
+**A section that is being read says so, and keeps what it had.** The owner's rule of
+2026-10-31 — "we need to render parts of screen as soon as we get that data, not wait for
+it all before we show anything" — gives this screen two sections, each with a read of its
+own (`budget show` for the caps, the report for everything else), and a read that has not
+answered draws a **busy mark** at the top of its own section instead of blanking it: the
+section carries `data-busy="true"` and `aria-busy="true"` and fades every child but its
+slot, and the mark itself is `div.console-busy` — `span.console-busy-spinner`, the static
+word `span.console-busy-still-mark` a reader with the reduced-motion preference sees
+**instead of** the spinning element, and the label `span.console-busy-label` naming what is
+being read. The section's own first child is `div.console-busy-slot`, which is where the
+mark goes and where a cached view's stamp is drawn, and a read that outlives fifteen
+seconds adds `p.console-busy-still` to it. A view that came out of the session cache is
+drawn at once, stamped `p.console-stamp` — `span.console-stamp-at` carrying the words
+`as of HH:MM` on the console's own clock, and the `button.console-stamp-refresh` that reads
+it again beside them, in the line but not inside the element that says *when*, because a
+node's `textContent` is its whole subtree's and a hook on the line would answer
+`as of 09:05Refresh`. The mark and the stamp are drawn by
+`console/src/renderer/section.ts`, the helper every tab adopts as it is rebuilt around
+sections, so the hooks above are the console's rather than this screen's.
+**There is no halted state on this screen.** The one
 cap-reached marker it draws is the caps panel's own word `at cap` (above), beside the
 figures it was measured from; nothing else on the screen carries one, and a rule may not
 read the tone alone as the state.
@@ -956,6 +975,49 @@ worker's answer, written as SVG attributes because `style-src 'self'` admits no 
 style, §5.5) and a **list** that is the same model with every title whole. Regions in tree
 order: header → tabs → chips → canvas, or the list, never both.
 
+**The picture is read left to right** (console redesign, step 6a). The layout engine is
+asked for `elk.direction: 'RIGHT'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a task sits to
+the **left** of the tasks that need it, the layers it computes are the columns a reader
+reads across, and a dependency is a line that leaves one card's side and arrives at
+another's. A card is **260 × 88** (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), which is the
+two constants the engine is told and the two **one stream's** layout cache is keyed by: the
+key is a serialization of that stream's **structure**, so the box sizes are in it and a
+card that changes size changes the key with it.
+
+**One engine run per stream, and the runs are stacked as rows** (the owner's ruling of
+2026-10-31). The engine's packing is two-dimensional: handed every stream at once, it
+places one stream's plans among another's wherever they fit, and the band drawn around a
+stream's cards then swallows another stream's cards. So each stream is laid out on its own
+run, and the runs are placed below one another **in the model's order**, `GRAPH_ROW_GAP`
+between two rows — the room two bands need to stay apart. A read that changes one stream's
+structure lays that stream out again and reuses every other stream's positions, because
+the key above is a stream's.
+
+**A stream is a band, and the band is geometry the screen computes rather than a
+container the engine is given** — a run is handed one stream's nodes and edges and no
+containers. Each stream's band
+is the rectangle around the cards that stream has **on the picture** — a shut chip's hidden
+tasks are outside it — padded by `GRAPH_PAD` and grown upward by `GRAPH_BAND_HEAD` for the
+band's own label, which is the stream's `Sanitized` name ("no stream" for the plans that
+name none). Bands are drawn **first**, so every card and every release box sits on its own
+stream's ground, and the picture's `viewBox` covers them. Because the rows are stacked, a
+band **is** a row: it cannot reach into another stream's. Under `forced-colors: active` the
+band's boundary is the one graph stroke drawn `GrayText`: both fills are `Canvas` there, and
+a boundary in the reading tone would leave the row's ground drawn as a card the size of a
+row (§4.4). An edge whose two ends land in
+different rows is the one thing no run has routed, and `crossStreamRoute` draws it as an
+orthogonal line through the gutter between the two rows — no document this console builds
+has one today (a plan's `needs` name tasks of that plan, and a plan belongs to one stream:
+the reconciliation's F4, and GV4.1 is the slice that would add them).
+
+**The canvas's ground is a dotted grid, and it is decoration.** It is a CSS background on
+`svg.graph-canvas` and not an element: nothing is read from it, no state is carried by it,
+and a background needs no element to be drawn, sized or hidden from a reader.
+
+**The toolbar's stream filter, the inspector and the legend are not drawn yet: they are
+console redesign step 6b**, a later change, and this section will name their hooks when it
+lands. What step 6a restyles is the canvas and the cards, below.
+
 | Hook | Drawn as | Note |
 |---|---|---|
 | `section.graph` | the screen's root | carries `data-theme` like every other screen's |
@@ -968,13 +1030,16 @@ order: header → tabs → chips → canvas, or the list, never both.
 | `graph-chip-name`, `graph-chip-mark`, `graph-chip-version` | `span`s inside the chip | the name, the `✓` mark and the version |
 | `graph-chip-body`, `graph-chip-tasks`, `graph-chip-task`, `graph-chip-task-title` | the open chip's own panel | drawn **only** while `aria-expanded` is `true` |
 | `graph-release-bar` | `p` (chip body) and `span` (list heading) | the "n of m done" bar, both places |
-| `graph-canvas` | `svg` | `viewBox` carries the zoom; the element has no width or height of its own |
+| `graph-canvas` | `svg` | `viewBox` carries the zoom; the element has no width or height of its own, and its dotted-grid ground is a CSS background on this element rather than an element of its own |
+| `graph-band`, `graph-band-box` | `g` + `rect` | one band per stream that has a task on the picture, drawn **first** so it is the ground of its own row: the `g` carries `data-stream`, and the box is the row's wash |
+| `graph-band-label` | `text` at the band's head | the stream's own `Sanitized` name ("no stream" for the plans that name none) |
 | `graph-release`, `graph-release-box` | `g` + `rect` | one frame per release with a task on the picture |
 | `graph-release-heading`, `graph-release-bar` | `text` inside the box | the heading line and the bar under it |
 | `graph-release-stream`, `graph-release-name`, `graph-release-version` | `tspan`s inside that heading | the same three parts the chip draws |
 | `graph-edge`, `graph-edge-path` | `g` + `path` | one edge per dependency; the `g` carries the three facts below |
-| `graph-node`, `graph-node-box` | `g` + `rect` | one card per task; the `g` carries `data-state`, `data-selected` and `data-critical` |
-| `graph-node-title`, `graph-node-word`, `graph-node-pr`, `graph-node-run`, `graph-node-mark` | `text` inside the card | the title, one element per state word, the pull request number, the run and the reading's mark |
+| `graph-node`, `graph-node-box` | `g` + `rect` | one card per task; the `g` carries `data-state`, `data-selected` and `data-critical`, a `role` (`button` where Enter or Space opens the card's run, `group` where no key does anything) and an `aria-label` of the whole title and every word the card draws — the card's lines cut a title at three, and the name is where it is whole |
+| `graph-node-title`, `graph-node-title-line` | `text` inside the card, and one `tspan` per line it was wrapped to | SVG has no wrap, so the lines are the screen's: a title is wrapped at `GRAPH_NODE_TITLE_LINE_CODE_POINTS` over at most `GRAPH_NODE_TITLE_LINES` lines, and only a title that still does not fit is cut (with an ellipsis, on a code-point boundary) — the whole title is still in the list |
+| `graph-node-word`, `graph-node-pr`, `graph-node-run`, `graph-node-mark` | `text` inside the card | one element per state word, the pull request number, the run and the reading's mark |
 | `graph-node-comet` | `rect` on the card's own border, `aria-hidden` | the light streak that travels a **running** card's border: GV2.4's motion, drawn only while the first word is one of the four a running task draws (`implementing`, `in review`, `fixing`, `queued`) |
 | `graph-node-pulse` | `rect` behind the card, `aria-hidden` | the glow a **critical** card draws: a filled, blurred wash of the same `--accent` the critical path is drawn in, a few pixels larger than the card so what a reader sees is the spill around it and never the card's own boundary, which keeps the state's tone |
 | `graph-list`, `graph-list-plan`, `graph-list-title` | the list's `div`, one `section` and `h2` per plan | `role="list"` on the `div` |
@@ -997,13 +1062,13 @@ order: header → tabs → chips → canvas, or the list, never both.
 **The attributes no rule needs**, and §2's rule read the other way: the graph also emits
 eight. `data-key` (a card's and a row's layout key), `data-run-id` (the run a gesture would
 open), `data-tab` (the tablist's own value), `data-chip` (a chip's release key),
-`data-view` (the view switch's own value), `data-stream` (the stream a chip group is drawn
-for), `data-release` (a box's key) and `data-word` (the word an element draws, beside the
-text it draws). They are the screen's own bookkeeping — the entry reads `data-key`,
-`data-run-id`, `data-tab` and `data-chip` back off the drawn tree to route a click, and the
-other four name only what the screen itself knows (which drawing is showing, which stream a
-group belongs to, which release a box is, which word an element draws) — and no stylesheet
-rule may select one without adding it above first. Six of the eight are refused by name in
+`data-view` (the view switch's own value), `data-stream` (the stream a chip group **and a
+band** are drawn for), `data-release` (a box's key) and `data-word` (the word an element
+draws, beside the text it draws). They are the screen's own bookkeeping — the entry reads
+`data-key`, `data-run-id`, `data-tab` and `data-chip` back off the drawn tree to route a
+click, and the other four name only what the screen itself knows (which drawing is showing,
+which stream a group or a band belongs to, which release a box is, which word an element
+draws) — and no stylesheet rule may select one without adding it above first. Six of the eight are refused by name in
 the inventory test with `data-hidden` and `data-skew`; the other two, `data-key` and
 `data-view`, are §2's hooks on other screens and stay licensed (§2's licence paragraph).
 
@@ -1011,20 +1076,25 @@ the inventory test with `data-hidden` and `data-skew`; the other two, `data-key`
 
 | State | The word | The second channel |
 |---|---|---|
-| implementing / in review / fixing | on the card, and in the list | the card's boundary in `--accent` — structure, which is what a task being worked on is |
-| queued / waiting | on the card, and in the list | the card's own `--border-strong` boundary: nothing is happening, and nothing shouts |
-| blocked | on the card, and in the list | the boundary in `--warn` **and dashed** — the one state a reader needs at a glance |
-| halted | on the card, and in the list | the boundary in `--halted`, the deliberate stop |
-| ready | on the card, and in the list | the boundary in `--border-strong`, as queued |
-| done | on the card, and in the list | the boundary and the title in `--text-muted`: no longer a reading anyone acts on |
-| critical | a **second** word beside the first | the edges of the critical path, 3 px of `--accent` against a plain edge's 2 px, and the card's own glow behind it in the same `--accent` |
+| implementing / in review / fixing / queued | on the card, and in the list | the card's boundary in `--live` at 2 px — the tone a task being worked on is, and the tone the comet travels and the critical path is drawn in |
+| waiting | on the card, and in the list | the card's own neutral boundary (`--line-strong`, 1 px): nothing is happening, and nothing shouts |
+| blocked | on the card, and in the list | the boundary in `--decor` **and dashed** — the one state a reader needs at a glance |
+| halted | on the card, and in the list | the boundary in `--warn`: something stopped and a person has to look |
+| ready | on the card, and in the list | the neutral boundary, as waiting |
+| done | on the card, and in the list | the neutral boundary and the title in `--text-3`: no longer a reading anyone acts on |
+| critical | a **second** word beside the first | the edges of the critical path, 3 px of `--live` against a plain edge's 2 px of `--decor`, and the card's own glow behind it in the same `--live` |
 
-**The edge widths are the second channel and the only one a forced-colors reader keeps**:
-a cross-release edge is 1 px, a plain one 2 px, the critical path 3 px, and the edges of a
-selected task 3 px of the reading tone — so the whole distinction survives
-`forced-colors: active`, where the dashes of a blocked card survive with it (§4.4). No rule
-paints `--ok` on this screen: §3.2 licenses that token to two readings, and a finished task
-is neither.
+**A dependency is a line and not a state**: an edge is `--decor` (the tone a drawing is
+made of) unless it is on the critical path, which is `--live`. **The edge widths are the
+second channel and the only one a forced-colors reader keeps**: a cross-release edge is
+1 px, a plain one 2 px, the critical path 3 px, and the edges of a selected task 3 px of
+the reading tone — and the selection's tone is the one thing that mode takes away, so its
+arm draws those edges **4 px of `Highlight`**, a pixel wider than the critical path: the
+whole distinction survives `forced-colors: active`, where the dashes of a blocked card
+survive with it (§4.4). The selected **card** is a width too, 3 px
+against a running card's 2, and it keeps its state's tone: a selection that recoloured the
+boundary would hide the state it is selecting. No rule paints `--ok` on this screen: §3.2
+licenses that token to two readings, and a finished task is neither.
 
 **This section's motion is §3.9's amendment, and GV2.4 landed it, in the spec's own three
 shapes.** A light streak travels a running card's border, a glow pulses behind a critical
@@ -1693,10 +1763,12 @@ animated would be a figure whose last frame is a lie about when the value was re
 
 **Amendment, 2026-10-24: one screen animates, and this section carries its states and their static styles.** The owner's console dependency graph spec of 2026-10-22 asks for a moving graph — a light streak circling a running node, a glow behind the critical ones, a flow along the critical path's edges — and the owner's answer GD4 of that day, confirmed by the reconciliation's ruling (b) ([reconciliation](../console-dependency-graph/reconciliation.md)), amends this section **for that screen alone**: the graph screen (GV2.3, GV2.4 in [the plan](../console-dependency-graph/implementation-plan.md)) may animate, and everything above stands unchanged for every other screen. The exception is bounded by four rules, and a reader should be able to check a build against them:
 
-- **The animation belongs to the graph and to nothing else.** Three keyframes, no more: a **comet** on a node that is running, a **pulse** on a critical node, and a **flow** along an edge of the critical path. No other screen gains one, and **no figure animates anywhere** — which is the paragraph above, kept: a number whose last frame is stale is a number that lies. The test that matters here is a negative one: no animation outside the graph screen.
+- **The animation belongs to the graph and to nothing else.** Three keyframes, no more — the one exception the later amendment below adds is the busy mark's single turn: a **comet** on a node that is running, a **pulse** on a critical node, and a **flow** along an edge of the critical path. No other screen gains one, and **no figure animates anywhere** — which is the paragraph above, kept: a number whose last frame is stale is a number that lies. The test that matters here is a negative one: no animation outside the graph screen.
 - **Every animated state carries its word.** §3.5's rule, unchanged and load-bearing on this screen: the states are `implementing`, `in review`, `fixing`, `queued`, `waiting`, `halted`, `stuck`, `blocked`, `ready`, `done` and `critical`, each drawn as text on the node with its colour second. A reader who cannot tell two colours apart reads the same graph, and a screenshot read in greyscale is still a graph.
 - **Reduced motion gets a static style per state, not the global freeze.** The rule above *freezes* an animation rather than restyling it: `animation-duration: 0.01ms` with one iteration leaves a comet wherever it stopped, which is a picture of something that is not happening, and the same freeze is the whole of what `base.css` does (F36 in the reconciliation is where that gap was found). So the graph screen writes **one explicit static style per animated state** under its own `@media (prefers-reduced-motion: reduce)` block in `console/src/renderer/theme/screens.css`, each keeping its word above it, and the global freeze stays exactly where it is.
 - **Forced colours draw no animation at all** (§4.4): under `forced-colors: active` every state is its mark and its border, the same drawing the reduced-motion arm leaves behind.
+
+**Amendment, 2026-10-31: the busy mark's one turn, and nothing else moves.** The owner's rule of 2026-10-31 — "we need to render parts of screen as soon as we get that data, not wait for it all before we show anything" — needs the other half of the same complaint: a control change used to look like nothing had happened, and a section whose read has not answered has to say so **in the frame the click happened in**. A mark that says "reading" without moving is a mark a reader takes for a stopped console, so the busy mark (`console/src/renderer/section.ts`, drawn into a section's own slot) may draw **one** spinning element, `span.console-busy-spinner` in `flight-deck.css`, turned by **one** keyframe, `console-busy-turn`, whose only property is `transform`. The count above therefore becomes four. It is not a figure and not a state of a screen: it carries no number and no word about the data, it is drawn only while a read is in flight, and it is the only motion the console has outside the graph screen. Its two arms follow the rules above rather than restating them: under `prefers-reduced-motion: reduce` the element is **not drawn at all** (`display: none`, with the animation stopped on that same selector) and the static word `span.console-busy-still-mark` is shown in its place, because the global freeze would leave a ring wherever its last frame put it — a picture of half a circle rather than of reading; under `forced-colors: active` it declares no animation at all.
 
 **What this amendment does not change.** The 120 ms `--duration-fast` hover and focus transitions are still the only motion on every other screen, the reduce rule is still written once in `base.css` and still applies to everything this screen does not restate, and the graph screen still takes its colours and its spacing from the shared token layer — which is why this is an amendment to the motion rule and to nothing else in this design.
 

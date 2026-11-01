@@ -220,13 +220,21 @@ export const GRAPH_CANVAS_LABEL = 'the dependency graph, drawn as boxes and edge
 /** GRAPH_LIST_LABEL is the list's own name, for the same reason. */
 export const GRAPH_LIST_LABEL = 'the dependency graph, drawn as a list'
 
-/** GRAPH_NODE_TITLE_CODE_POINTS is how much of a node's title the **card** holds.
- * GV2.3a already cut the sentence at 200 code points for the model; a node box is
- * `GRAPH_NODE_WIDTH` wide and holds far less than that, and SVG text neither
- * wraps nor clips, so a longer title would draw outside its box. The cut is
- * marked, and the whole title is drawn in the list view -- a card is a card, and
- * the list is where a reader goes for the whole sentence. */
-export const GRAPH_NODE_TITLE_CODE_POINTS = 26
+/**
+ * GRAPH_NODE_TITLE_LINE_CODE_POINTS is how much of a node's title one **line of a
+ * card** holds, and GRAPH_NODE_TITLE_LINES is how many lines a card draws.
+ *
+ * GV2.3a already cut the sentence at 200 code points for the model; a card is
+ * `GRAPH_NODE_WIDTH` wide and its title is drawn as lines rather than as one run,
+ * because SVG text neither wraps nor clips and a longer title would draw outside
+ * its box. The lines are filled by whole words (a word too long for one line is
+ * broken at the bound, which is the only place a line is cut mid-word), and the
+ * card cuts -- with the cut marked -- **only when the title does not fit the
+ * lines it has**. The whole title is drawn in the list view: a card is a card,
+ * and the list is where a reader goes for the whole sentence.
+ */
+export const GRAPH_NODE_TITLE_LINE_CODE_POINTS = 30
+export const GRAPH_NODE_TITLE_LINES = 3
 
 /** GRAPH_ZOOM_STEP is what one scroll step multiplies the zoom by, and
  * GRAPH_PINCH_STEP the finer one a trackpad's pinch arrives as -- a pinch is a
@@ -266,18 +274,35 @@ export const GRAPH_PAD = 18
  * for its head rather than drawn over the first row of cards. */
 export const GRAPH_RELEASE_HEAD = 30
 
-/** GRAPH_LAYER_GAP is the room this screen asks the layout engine to leave
- * between two rows of tasks: the head room a box draws above its tasks
- * (GRAPH_RELEASE_HEAD) and the padding a box keeps around them (GRAPH_PAD
- * twice). The engine's own room is 20 px, which is less than one heading needs:
- * a box grown upward for its heading then reaches into the row above, whose
- * cards are drawn after every box and paint over it. */
-export const GRAPH_LAYER_GAP = GRAPH_PAD * 2 + GRAPH_RELEASE_HEAD
+/** GRAPH_BAND_LABEL_LINE is the room a stream band's own label takes above the
+ * release box under it, and GRAPH_BAND_HEAD is the whole head a band draws above
+ * its topmost card: the line, and the room the label needs over the release
+ * heading (GRAPH_RELEASE_HEAD), because both are drawn at the left of the same
+ * region and the label is the outer of the two. */
+export const GRAPH_BAND_LABEL_LINE = 22
+export const GRAPH_BAND_HEAD = GRAPH_RELEASE_HEAD + GRAPH_BAND_LABEL_LINE
 
-/** GRAPH_LAYER_OPTION is the ELK setting GRAPH_LAYER_GAP is passed as. It is
- * named here rather than written inline because it is a string ELK parses, so
- * the layout test reads the same spelling the screen sends. */
+/** GRAPH_LAYER_GAP is the room this screen asks the layout engine to leave
+ * between two cards: the head room a band and a release box draw above their
+ * tasks (GRAPH_BAND_HEAD) and the padding they keep around them (GRAPH_PAD
+ * twice). The engine's own room is 20 px, which is less than one heading needs:
+ * a box grown upward for its heading -- and the band above it grown for its
+ * label -- then reaches over the card drawn above it, and a card is drawn after
+ * every box and paints over it. */
+export const GRAPH_LAYER_GAP = GRAPH_PAD * 2 + GRAPH_BAND_HEAD
+
+/** GRAPH_LAYER_OPTION, GRAPH_NODE_OPTION and GRAPH_COMPONENT_OPTION are the three
+ * ELK settings GRAPH_LAYER_GAP is passed as: the room between two layers, the
+ * room between two cards **of one layer**, and the room between two components.
+ *
+ * **The middle one is this direction's own.** With the picture's depth running
+ * left to right, two tasks of one layer sit one above the other and the room
+ * between them is the vertical one an engine calls `elk.spacing.nodeNode` --
+ * which is where a release box's heading and a stream band's label are drawn.
+ * They are named here rather than written inline because they are strings ELK
+ * parses, so the layout test reads the same spellings the screen sends. */
 export const GRAPH_LAYER_OPTION = 'elk.layered.spacing.nodeNodeBetweenLayers'
+export const GRAPH_NODE_OPTION = 'elk.spacing.nodeNode'
 
 /** GRAPH_COMPONENT_OPTION is the ELK setting GRAPH_LAYER_GAP is passed as for
  * the room between two components -- tasks no edge joins. It carries the same
@@ -287,16 +312,26 @@ export const GRAPH_LAYER_OPTION = 'elk.layered.spacing.nodeNodeBetweenLayers'
  * would cover the next release's heading exactly as a row above it would. */
 export const GRAPH_COMPONENT_OPTION = 'elk.spacing.componentComponent'
 
-/** GRAPH_TITLE_SLOT, GRAPH_PR_SLOT, GRAPH_RUN_SLOT and GRAPH_MARK_SLOT are the
- * x offsets of the cells along a card of `GRAPH_NODE_WIDTH`, and
- * GRAPH_WORD_SLOT/GRAPH_CRITICAL_SLOT are the two word slots. They are fixed
- * slots rather than measured ones: SVG text has no width a screen can read, and
- * a slot is a place a reader's eye learns. */
+/** GRAPH_WORD_SLOT, GRAPH_CRITICAL_SLOT, GRAPH_PR_SLOT, GRAPH_RUN_SLOT and
+ * GRAPH_MARK_SLOT are the x offsets of the cells along a card of
+ * `GRAPH_NODE_WIDTH`. They are fixed slots rather than measured ones: SVG text
+ * has no width a screen can read, and a slot is a place a reader's eye learns. */
 const GRAPH_WORD_SLOT = 12
 const GRAPH_CRITICAL_SLOT = 104
 const GRAPH_PR_SLOT = 12
 const GRAPH_RUN_SLOT = 46
 const GRAPH_MARK_SLOT = 112
+
+/** GRAPH_TITLE_LINE_Y and GRAPH_TITLE_LINE_HEIGHT are where a card's title
+ * starts and how far apart its lines sit, and GRAPH_WORD_LINE_Y and
+ * GRAPH_META_LINE_Y are the two lines under them: the state's own word, then the
+ * pull request, the run and the reading's mark. They are the card's own
+ * geometry -- `GRAPH_NODE_HEIGHT` is what they add up to -- and they are the
+ * baseline of each line, which is what SVG writes. */
+const GRAPH_TITLE_LINE_Y = 18
+const GRAPH_TITLE_LINE_HEIGHT = 15
+const GRAPH_WORD_LINE_Y = 64
+const GRAPH_META_LINE_Y = 78
 
 /** GRAPH_RUNNING_WORDS are the four words a task being worked on draws first, and
  * they are the four the comet's own rule selects. Three are the stages a person
@@ -645,7 +680,7 @@ function wordsNS(parent: ScreenElement, factory: GraphFactory, node: GraphNode):
   for (const [index, word] of node.words.entries()) {
     const element = cellNS(parent, factory, 'text', 'graph-node-word')
     geometry(element, 'x', index === 0 ? GRAPH_WORD_SLOT : GRAPH_CRITICAL_SLOT)
-    geometry(element, 'y', 38)
+    geometry(element, 'y', GRAPH_WORD_LINE_Y)
     markWord(element, word)
   }
 }
@@ -680,15 +715,52 @@ function shift(element: ScreenElement, x: number, y: number): ScreenElement {
   return element
 }
 
-/** cutForCard is the title as the card holds it: the model's cut, cut again to
- * the points a card has room for, with the cut marked. `[...text]` iterates code
- * points, so a surrogate pair is never split into the two lone halves a font
- * draws as a box. */
-function cutForCard(value: Sanitized): string {
-  if (!value.ok) return UNAVAILABLE_MARK
-  const points = [...value.text]
-  if (points.length <= GRAPH_NODE_TITLE_CODE_POINTS) return value.text
-  return `${points.slice(0, GRAPH_NODE_TITLE_CODE_POINTS).join('')}…`
+/**
+ * titleLines is the title as the lines a card holds: the model's cut, wrapped
+ * over the card's own lines, and cut again -- with the cut marked -- only when
+ * the wrap does not fit them.
+ *
+ * **The wrap breaks between words**, because a line broken inside a word is a
+ * word a reader has to reassemble, which is the thing an ellipsis was already
+ * accused of. A single word longer than a whole line is the one case a line is
+ * cut mid-word, and it is broken rather than dropped.
+ *
+ * `[...text]` iterates code points, so a surrogate pair is never split into the
+ * two lone halves a font draws as a box -- neither by the wrap nor by the cut.
+ */
+function titleLines(value: Sanitized): readonly string[] {
+  if (!value.ok) return [UNAVAILABLE_MARK]
+  const lines: string[] = []
+  for (const word of wrapWords(value.text)) {
+    const at = lines.length - 1
+    const line = lines[at] ?? ''
+    if (line !== '' && [...line].length + 1 + [...word].length <= GRAPH_NODE_TITLE_LINE_CODE_POINTS) {
+      lines[at] = `${line} ${word}`
+      continue
+    }
+    if ([...word].length <= GRAPH_NODE_TITLE_LINE_CODE_POINTS) {
+      lines.push(word)
+      continue
+    }
+    // One word longer than a line: it fills as many lines as it needs, so the
+    // rest of the title is not lost behind it.
+    const points = [...word]
+    for (let at = 0; at < points.length; at += GRAPH_NODE_TITLE_LINE_CODE_POINTS) {
+      lines.push(points.slice(at, at + GRAPH_NODE_TITLE_LINE_CODE_POINTS).join(''))
+    }
+  }
+  if (lines.length <= GRAPH_NODE_TITLE_LINES) return lines
+  const held = lines.slice(0, GRAPH_NODE_TITLE_LINES)
+  const last = [...(held[GRAPH_NODE_TITLE_LINES - 1] ?? '')]
+  held[GRAPH_NODE_TITLE_LINES - 1] = `${last.slice(0, GRAPH_NODE_TITLE_LINE_CODE_POINTS - 1).join('')}…`
+  return held
+}
+
+/** wrapWords is a title's words, with every run of whitespace between two of them
+ * read as the one space a line break takes: the wrap puts the words back with a
+ * space of its own, so a tab or a run of spaces in a title is drawn as one. */
+function wrapWords(text: string): readonly string[] {
+  return text.split(/\s+/).filter((word) => word !== '')
 }
 
 /** barText is a release's "n of m done" as one text run. The two figures go
@@ -753,9 +825,13 @@ function pathOf(sections: readonly RouteSection[]): string {
 }
 
 /** contentBounds is the whole picture's rectangle, or null when nothing was
- * placed -- the layout the worker did not answer, or a graph with no node. */
-function contentBounds(model: GraphModel, placed: ReadonlyMap<string, Rect>): Rect | null {
-  const rects: Rect[] = []
+ * placed -- the layout the worker did not answer, or a graph with no node.
+ *
+ * `extra` is what the picture draws that no node's rectangle holds: the stream
+ * bands, whose heads stand above the tasks in them. A picture framed on the
+ * nodes alone would crop every band's label. */
+function contentBounds(model: GraphModel, placed: ReadonlyMap<string, Rect>, extra: readonly Rect[] = []): Rect | null {
+  const rects: Rect[] = [...extra]
   for (const column of model.columns) {
     for (const plan of column.plans) {
       for (const node of plan.nodes) {
@@ -765,6 +841,78 @@ function contentBounds(model: GraphModel, placed: ReadonlyMap<string, Rect>): Re
     }
   }
   return boxOf(rects)
+}
+
+/** StreamBand is one stream's band: the stream it is drawn for, what the model
+ * calls it, and the rectangle it covers. */
+interface StreamBand {
+  readonly stream: string
+  readonly label: Sanitized
+  readonly rect: Rect
+}
+
+/** bandOf is the rectangle a band covers: the stream's own tasks, padded, with
+ * the head its label needs above them. A stream with no task on the picture has
+ * no band, because there is nothing to draw one around. */
+function bandOf(rects: readonly Rect[]): Rect | null {
+  if (rects.length === 0) return null
+  const left = Math.min(...rects.map((rect) => rect.x))
+  const top = Math.min(...rects.map((rect) => rect.y))
+  const right = Math.max(...rects.map((rect) => rect.x + rect.width))
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
+  return {
+    x: left - GRAPH_PAD,
+    y: top - GRAPH_PAD - GRAPH_BAND_HEAD,
+    width: right - left + GRAPH_PAD * 2,
+    height: bottom - top + GRAPH_PAD * 2 + GRAPH_BAND_HEAD,
+  }
+}
+
+/**
+ * streamBands is the bands the canvas draws: one per stream of the model, in the
+ * model's own order, over the tasks **the canvas draws** -- a band around the
+ * tasks a shut chip hides would be a band around empty space.
+ *
+ * The band is the model's stream grouping made geometry: each stream is laid out
+ * on a run of its own and the runs are stacked as rows (`layout.ts`), so the row
+ * a stream's tasks occupy is that run's own rectangle around them, drawn behind
+ * everything else -- and a band is therefore exactly a row, which is what keeps
+ * one stream's band off another stream's cards.
+ */
+function streamBands(picture: GraphPicture, placed: ReadonlyMap<string, Rect>): readonly StreamBand[] {
+  const bands: StreamBand[] = []
+  for (const column of picture.model.columns) {
+    const rects: Rect[] = []
+    for (const plan of column.plans) {
+      const shown = visibleNodes(picture, plan)
+      for (const node of plan.nodes) {
+        const key = nodeKey(plan.id, node.id)
+        if (!shown.has(key)) continue
+        const rect = placed.get(key)
+        if (rect !== undefined) rects.push(rect)
+      }
+    }
+    const rect = bandOf(rects)
+    if (rect === null) continue
+    bands.push({ stream: column.stream, label: column.label, rect })
+  }
+  return bands
+}
+
+/** band is one stream's band: the ground its tasks sit on, and the stream's own
+ * name at the band's head. The name is the model's sanitized label like every
+ * other document string, and the console's own words for the plans that name no
+ * stream ("no stream"). */
+function band(factory: GraphFactory, one: StreamBand): ScreenElement {
+  const group = makeNS(factory, 'g', 'graph-band')
+  group.setAttribute('data-stream', one.stream)
+  const outline = makeNS(factory, 'rect', 'graph-band-box')
+  place(outline, one.rect)
+  group.append(outline)
+  const label = drawnNS(group, factory, 'text', one.label, 'graph-band-label')
+  geometry(label, 'x', one.rect.x + 8)
+  geometry(label, 'y', one.rect.y + 15)
+  return group
 }
 
 /**
@@ -942,8 +1090,9 @@ function planOf(model: GraphModel, id: string): GraphPlan | null {
 }
 
 /**
- * canvas is the picture: the release boxes, the edges and the nodes, in that
- * order, so a box is behind the tasks in it and an edge is behind every card.
+ * canvas is the picture: the stream bands, the release boxes, the edges and the
+ * nodes, in that order, so a band is behind the row it names, a box is behind
+ * the tasks in it and an edge is behind every card.
  *
  * `null` is the honest answer for a graph with nothing placed -- a layout the
  * worker did not answer, or a model with no node. It is not an empty canvas: the
@@ -956,13 +1105,20 @@ function canvas(factory: GraphFactory, picture: GraphPicture): ScreenElement | n
   for (const node of picture.positions.nodes) {
     placed.set(node.id, { x: node.x, y: node.y, width: node.width, height: node.height })
   }
-  const bounds = contentBounds(picture.model, placed)
+  const bands = streamBands(picture, placed)
+  const bounds = contentBounds(
+    picture.model,
+    placed,
+    bands.map((one) => one.rect),
+  )
   if (bounds === null) return null
 
   const svg = makeNS(factory, 'svg', 'graph-canvas')
   svg.setAttribute('role', 'group')
   svg.setAttribute('aria-label', GRAPH_CANVAS_LABEL)
   svg.setAttribute('viewBox', viewBoxOf(bounds, picture.state.zoom))
+
+  for (const one of bands) svg.append(band(factory, one))
 
   const stop = doorStop(picture, drawnKeys(picture, 'canvas'))
   for (const column of picture.model.columns) {
@@ -1167,6 +1323,37 @@ function releaseBox(factory: GraphFactory, box: ReleaseBox): ScreenElement {
 }
 
 /**
+ * cardLabel is what a reader who cannot see the card is told it is: the title
+ * **whole** and every word the card draws.
+ *
+ * The drawing cuts the title at three lines and the model cuts it again at
+ * `GRAPH_MAX_TITLE_CODE_POINTS`, so the card is not a name -- it is a picture of
+ * one, and a screen reader handed the `tspan`s would read a sentence that stops
+ * mid-word. `critical` is here for the same reason its close cousin
+ * `data-critical` exists: its mark is the glow, which is `aria-hidden`, and a
+ * word in a name is the only place that fact can survive with no colour and no
+ * motion.
+ */
+function cardLabel(node: GraphNode): string {
+  const title = cardTitle(node)
+  return node.words.length === 0 ? title : [title, ...node.words].join(', ')
+}
+
+/**
+ * cardTitle is the text a card is named by: the model's own title, or -- where
+ * that title holds no word a reader could read -- the task's id.
+ *
+ * A title of whitespace alone is `ok` to the model and wraps to no word at all,
+ * so naming a card by it names it by a blank, which is a card a reader is told
+ * nothing about -- it is a stop in the tab order that announces no name at all.
+ * The task's id is what such a card can still be told apart by.
+ */
+function cardTitle(node: GraphNode): string {
+  if (!node.title.ok) return UNAVAILABLE_MARK
+  return wrapWords(node.title.text).length === 0 ? node.id : node.title.text
+}
+
+/**
  * nodeCard is one task's box: its title, its words, its pull request number and
  * its run, and -- when the gesture would do nothing -- the sentence saying why.
  *
@@ -1176,6 +1363,11 @@ function releaseBox(factory: GraphFactory, box: ReleaseBox): ScreenElement {
  * console's own list resolved the suffix to). It carries **no destination**: the
  * design's §5.1 rule 2 and gap 7 leave the console no URL to build, so the pull
  * request is a number and its reason.
+ *
+ * Its `role` is what the keyboard does with it, and nothing else: where there is
+ * a run to open, Enter and Space open it and the card is a `button`; where there
+ * is not, the arrow keys move over it and no key does anything, and a `button`
+ * there would promise a reader a control that is not one.
  */
 function nodeCard(
   factory: GraphFactory,
@@ -1200,6 +1392,8 @@ function nodeCard(
   // else to select (design section 2.11's attribute table).
   group.setAttribute('data-critical', node.critical ? 'true' : 'false')
   group.setAttribute('tabindex', stopHere ? '0' : '-1')
+  group.setAttribute('role', door.run !== null ? 'button' : 'group')
+  group.setAttribute('aria-label', cardLabel(node))
   shift(group, rect.x, rect.y)
   if (door.run !== null) group.setAttribute('data-run-id', door.run)
   else group.append(tooltip(factory, door.because))
@@ -1245,10 +1439,18 @@ function nodeCard(
     group.append(comet)
   }
 
+  // The title is one `text` with a `tspan` per line, each carrying its own x and
+  // y: SVG has no wrap, so the lines are the screen's, and a `tspan` is the one
+  // element that draws a second line of the same run.
   const title = makeNS(factory, 'text', 'graph-node-title')
   geometry(title, 'x', GRAPH_WORD_SLOT)
-  geometry(title, 'y', 20)
-  literal(title, cutForCard(node.title))
+  geometry(title, 'y', GRAPH_TITLE_LINE_Y)
+  titleLines(node.title).forEach((line, at) => {
+    const element = cellNS(title, factory, 'tspan', 'graph-node-title-line')
+    geometry(element, 'x', GRAPH_WORD_SLOT)
+    geometry(element, 'y', GRAPH_TITLE_LINE_Y + at * GRAPH_TITLE_LINE_HEIGHT)
+    literal(element, line)
+  })
   group.append(title)
 
   wordsNS(group, factory, node)
@@ -1256,7 +1458,7 @@ function nodeCard(
   if (node.prNumber !== null) {
     const number = makeNS(factory, 'text', 'graph-node-pr')
     geometry(number, 'x', GRAPH_PR_SLOT)
-    geometry(number, 'y', 56)
+    geometry(number, 'y', GRAPH_META_LINE_Y)
     literal(number, `#${String(node.prNumber)}`)
     number.append(tooltip(factory, GRAPH_PR_NO_LINK_REASON))
     group.append(number)
@@ -1264,14 +1466,14 @@ function nodeCard(
   if (node.run.ok && node.run.text !== '') {
     const run = makeNS(factory, 'text', 'graph-node-run')
     geometry(run, 'x', GRAPH_RUN_SLOT)
-    geometry(run, 'y', 56)
+    geometry(run, 'y', GRAPH_META_LINE_Y)
     literal(run, `run …${node.run.text}`)
     group.append(run)
   }
   if (node.mark.ok && node.mark.text !== '') {
     const mark = makeNS(factory, 'text', 'graph-node-mark')
     geometry(mark, 'x', GRAPH_MARK_SLOT)
-    geometry(mark, 'y', 56)
+    geometry(mark, 'y', GRAPH_META_LINE_Y)
     drawInto(mark, node.mark)
     group.append(mark)
   }
@@ -1565,15 +1767,23 @@ export class GraphScreen {
  * GraphLayoutClient is the layout client this screen asks for a drawing: the
  * plain client, with one option added to every request.
  *
- * The engine's own room between two rows of tasks is 20 px
+ * The engine's own room between two layers of tasks is 20 px
  * (`elk.layered.spacing.nodeNodeBetweenLayers`' default), which is less than a
  * release box draws above its topmost task: `boxOf` grows the box upward by
  * GRAPH_PAD + GRAPH_RELEASE_HEAD, and `drawPlan` appends every box before every
- * card, so with the default room the heading is painted into the row above and
- * that row's cards -- drawn later -- cover it. Asking for GRAPH_LAYER_GAP is
- * what keeps the heading in the gap, so it is the request that carries the fix
- * rather than the drawing code: a shorter head would leave the heading under
- * the cards at the same 20 px.
+ * card, so with the default room the heading is painted into the layer to the
+ * left of it and that layer's cards -- drawn later -- cover it. Asking for
+ * GRAPH_LAYER_GAP is what keeps the heading in the gap, so it is the request
+ * that carries the fix rather than the drawing code: a shorter head would leave
+ * the heading under the cards at the same 20 px.
+ *
+ * The same gap is asked for as the room **within** a layer
+ * (`elk.spacing.nodeNode`) as well, and that is the redesign's own need: the
+ * direction is left to right, so a layer is a column of stacked cards, and both
+ * the heading above a release's topmost task and the band's label above a
+ * stream's topmost task are drawn upward into the room between two stacked
+ * cards. A heading drawn over the card above it is what the engine's 20 px
+ * would give.
  *
  * The room between two components is asked for at the same gap, and for the same
  * reason: the engine's own room there is that same 20 px, and a task no edge
@@ -1588,6 +1798,7 @@ export class GraphLayoutClient extends LayoutClient {
       layoutOptions: {
         ...request.layoutOptions,
         [GRAPH_LAYER_OPTION]: String(GRAPH_LAYER_GAP),
+        [GRAPH_NODE_OPTION]: String(GRAPH_LAYER_GAP),
         [GRAPH_COMPONENT_OPTION]: String(GRAPH_LAYER_GAP),
       },
     })
