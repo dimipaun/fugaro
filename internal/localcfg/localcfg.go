@@ -153,7 +153,7 @@ type Config struct {
 	// able to widen where a credential is sent.
 	//
 	// It is a copy and not a derivation, and it is held to the node's rule
-	// alone (projectpolicy.validBitbucketAPIRoots): an https root that reaches
+	// alone (projectpolicy.ValidBitbucketAPIRoots): an https root that reaches
 	// one host, without a query, a fragment or userinfo. There is no second
 	// copy of that rule here on purpose — a root that the node would refuse is
 	// refused by the publish that builds the node, before anything is written,
