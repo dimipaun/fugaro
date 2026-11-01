@@ -54,13 +54,12 @@ const cloudRunMintSkew = 30 * time.Minute
 // batchMintSkew is the same bound on Cloud Batch, and there it is a queue wait
 // rather than a clock skew: Launch returns as soon as Batch accepts the job and
 // the job sits QUEUED until the region has capacity (internal/backend/batch),
-// which is what the reaper's queue deadline bounds -- max(the longest
-// workflow timeout, MaxRunTime) plus TaskTimeoutSlack
-// (internal/backend/batch/reap.go). Naming the backend is all a caller here
-// has: the installation's own longest workflow timeout is a platform read. So
-// this is that deadline's floor, which every Batch installation's is at least
-// as long as, and it is the look-back the pass had before it followed the
-// backend at all.
+// which is what the reaper's queue deadline bounds -- max(the longest workflow
+// timeout, MaxRunTime) plus TaskTimeoutSlack (internal/backend/batch/reap.go).
+// The name of the backend is all a caller here has, and the installation's own
+// longest workflow timeout is a platform read, so this is that deadline's floor:
+// the shortest a Batch installation's queue deadline can be, and the look-back
+// the pass had before it followed the backend at all.
 const batchMintSkew = MaxRunTime + TaskTimeoutSlack
 
 // MintSkewMargin is how far before the first day of a facts window a pass has
