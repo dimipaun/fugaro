@@ -862,6 +862,12 @@
         "layer_generation": {
           "default": "unset = none: no generation is recorded; the next update adopts the published one"
         },
+        "local.gcp_project": {
+          "default": "unset = the file is refused (gcp_project: is required)"
+        },
+        "local.version": {
+          "default": "1"
+        },
         "log_view": {
           "default": "unset = the project's default logs"
         },

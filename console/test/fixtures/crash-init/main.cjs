@@ -48,6 +48,13 @@ const consoleRoot = join(__dirname, '..', '..', '..')
 const reportPath = process.env.FUGARO_CRASH_FIXTURE_REPORT ?? ''
 const dsn = process.env.FUGARO_CRASH_FIXTURE_DSN ?? ''
 
+/** Opted in unless the spec says otherwise. The gate is the per-user switch's
+ * answer, which the entry point reads out of `userData` before its first await
+ * and hands the wiring as a value; the spec launches this fixture both ways --
+ * once to ask what the SDK does with a running client, and once to ask what the
+ * wiring installs when the answer is no. */
+const optedIn = process.env.FUGARO_CRASH_FIXTURE_OPTED_IN !== '0'
+
 /** A credential's shape and the machine's own identifiers, assembled here and
  * used only as values the *report must not carry*: the scrubber may not pass on
  * an exception's message, and the SDK may not pass on the host name it knows. */
@@ -121,10 +128,12 @@ app
     const appRoot = app.getAppPath()
     const before = listing(userData)
 
-    // Opted in, and handed the spec's DSN: the gate the wiring would otherwise
-    // leave shut is deliberately open here, which is the whole point -- what is
-    // being tested is what the SDK does once it is running, not whether it runs.
-    const handle = startCrashReporting({ optedIn: true, appRoot, dsn })
+    // Opted in, and handed the spec's DSN: the switch the wiring would otherwise
+    // find off is deliberately on here, which is the whole point -- what is being
+    // tested is what the SDK does once it is running, not whether it runs. The
+    // spec launches this fixture once with `FUGARO_CRASH_FIXTURE_OPTED_IN=0` as
+    // well, where the same wiring is handed `false` and starts nothing at all.
+    const handle = startCrashReporting({ optedIn, appRoot, dsn })
     // The wiring puts `utilityProcess.fork` back the moment `init` returns:
     // the SDK's `configureUtilityProcessIPC` patches it on every start, and the
     // spec's header carries what that patch costs and why the console takes it

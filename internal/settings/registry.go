@@ -511,10 +511,25 @@ var layerRows = []Row{
 	layerRow("ab.exchange_rate", "the A/B design's own rate", "models", docModels),
 }
 
+// LocalPrefix marks a local row whose bare name a fugaro.yaml key already
+// uses: the local config's version is its own file format's where a
+// repository's fugaro.yaml version is the schema's, and the local gcp_project
+// is the project the installation lives in where the fugaro.yaml one anchors a
+// repository to it. One key may not mean two things (SD6), so the local one is
+// named for its store, as the project layer's keys are (layer., SD14), and the
+// read strips the prefix (localPath).
+const LocalPrefix = "local."
+
 // localRows are the local config's keys. The installation's own plumbing is in
 // here too: the read prints one row per key, and a key an operator cannot see
 // is a key nobody can explain.
 var localRows = []Row{
+	// The local file's own header, the two keys it shares a name with.
+	// local.version's default is the value the loader leaves in place
+	// (defaultValues below); the file's gcp_project is required.
+	{Key: LocalPrefix + "version", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "setup", Doc: docSetup},
+	loc(LocalPrefix+"gcp_project", "the file is refused (gcp_project: is required)", "setup", docSetup),
+
 	loc("name", "the file is refused (name: is required)", "setup", docSetup),
 	loc("region", "the file is refused (region: is required)", "setup", docSetup),
 	loc("runs_bucket", "the file is refused (runs_bucket: is required)", "setup", docSetup),
@@ -669,14 +684,19 @@ var localRows = []Row{
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in
-// place, named by the constant that holds it. They are held apart from the
-// tables above because the constant, not the row, is where the value lives:
+// place, named by the constant that holds it — or by no constant where the
+// loader is the only place the value lives. They are held apart from the tables
+// above because the constant, not the row, is where the value lives:
 // TestRegistryDefaultsMatchApplyDefaults reads each one back out of a resolved
 // config.
 var defaultValues = map[string]Default{
 	"update_check":       value("true", "config.DefaultUpdateCheck"),
 	"max_parallel":       value("20", "localcfg.DefaultMaxParallel"),
 	"build.machine_type": value("E2_HIGHCPU_8", "localcfg.DefaultBuildMachineType"),
+	// The local file's own format version: the loader fills 1 for a file that
+	// sets it nowhere (localcfg.Parse) and no constant holds it, so the value
+	// is written here and read back out of a parsed config like the two above.
+	"local.version": value("1", ""),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the
@@ -691,14 +711,13 @@ var sensitiveKeys = map[string]bool{
 // sharedWithLocal are the keys a run gets from the local config as well as
 // from fugaro.yaml, so `--layer local` reads them (spec §2.2). The ceiling
 // keys are there because the local file holds the ceiling the deployed job
-// carries; version and gcp_project are there because both documents declare
-// them — the local file's own format version and the GCP project the
-// installation lives in, which a repository's fugaro.yaml has to name to be
-// anchored to it — and one row per key (SD6) is the only row either fact would
-// have.
+// carries. version and gcp_project are not: both documents carry the word and
+// mean different things by it — the local file's version is its own format's,
+// where a repository's fugaro.yaml version is the schema's, and the local
+// gcp_project is the project the installation lives in, where the
+// fugaro.yaml one anchors a repository to it — so each fact has its own row
+// (SD6) rather than one row two stores would claim.
 var sharedWithLocal = map[string]bool{
-	"version":               true,
-	"gcp_project":           true,
 	"budget.mode":           true,
 	"budget.per_run_usd":    true,
 	"budget.allowed_models": true,
