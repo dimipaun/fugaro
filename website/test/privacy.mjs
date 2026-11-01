@@ -680,6 +680,91 @@ export const HOST_NAMING_TEST = 'internal/cli/docs_website_boundary_test.go'
 // this rule could be defeated from.
 export const HOST_NAMING_CONSOLE = Object.freeze(['console/src/main/onboarding.ts', 'console/src/main/window.ts'])
 
+/** The design the console's reporting sentence comes from. `website/test/console.mjs` holds the
+ * downloads page's property to the same section, so the two pages state one fact between them
+ * rather than two readings of it. */
+export const CONSOLE_DESIGN = 'docs/design/desktop-console.md'
+
+/** What the design's section 7.4 says about the console's crash reporting, and therefore what
+ * the privacy page says too. The design is the source and the page repeats it: the console is
+ * the second artifact that can send anything, and its flow is not the phone's — the report goes
+ * to Sentry rather than to a Firebase project the Fugaro project operates, and it leaves only
+ * after the person turns the switch on (the owner's ruling of 2026-10-31, design section 7.4).
+ *
+ * The scrubbing sentence is held here in the design's own words, because the page's promise to a
+ * reader is that sentence and not a summary of it: a page that rounds "no message, no path, no
+ * user name, no environment and no host name" to "scrubbed" is a page promising less than the
+ * code does. */
+export const CONSOLE_REPORTING = Object.freeze({
+  both: Object.freeze([
+    'Sentry, hosted in the European Union',
+    'no message, no path, no user name, no environment and no host name',
+    // A frame is the file and the line, and both statements say so; what a reader would
+    // otherwise be left to guess is that the function the code was in travels too.
+    'its function name',
+  ]),
+  /** The design's own wording for the rule, in a list of its own because the page states the rule
+   * and not this sentence: the page hands the reader the two facts that make reporting opt-in —
+   * the switch ships off, and it decides the next launch — and a page that had to carry
+   * "crash reporting only ever by the user's own opt-in" verbatim would be the design quoted
+   * rather than a statement written for the person reading it. */
+  design: Object.freeze(["crash reporting only ever by the user's own opt-in"]),
+  page: Object.freeze([
+    'Send Crash Reports',
+    'Sentry, hosted in the European Union',
+    'off until you tick it',
+    'the next launch',
+    'no message, no path, no user name, no environment and no host name',
+  ]),
+})
+
+/** Every way the privacy page and the design disagree about the console's reporting, or [].
+ *
+ * `page` is the page's text and `design` the design document's, both as strings. The negative
+ * half is the endpoint: the DSN is one public constant the app carries
+ * (`console/src/main/crash-dsn.ts`), and it belongs in that file and in no statement — a page
+ * that grew an ingest URL would be a page holding a value it has no reason to hold, and a
+ * reader has nothing to do with one. */
+export function consoleReportingFailures(page, design) {
+  const out = []
+  // A sentence the build wraps is still one sentence: both sides are read with their whitespace
+  // collapsed, so a reflowed paragraph cannot fail a phrase that is on the page.
+  page = page.replace(/\s+/g, ' ')
+  design = design.replace(/\s+/g, ' ')
+  for (const phrase of CONSOLE_REPORTING.both) {
+    if (!design.includes(phrase)) {
+      out.push(
+        `the design's section 7.4 no longer says ${JSON.stringify(phrase)}: the privacy page repeats that section's sentence about the console's crash reporting, so a fact that leaves the design leaves the page stating something nothing in this repository holds`,
+      )
+    }
+    if (!page.includes(phrase)) {
+      out.push(
+        `the privacy page does not say ${JSON.stringify(phrase)} about the console's crash reporting: the page states what the design's section 7.4 states, and a page that drops a fact of it discloses less than the console does`,
+      )
+    }
+  }
+  for (const phrase of CONSOLE_REPORTING.design) {
+    if (!design.includes(phrase)) {
+      out.push(
+        `the design's section 7.4 no longer says ${JSON.stringify(phrase)}: that sentence is the rule the console's switch is built to, and the page is held to the two facts that carry it`,
+      )
+    }
+  }
+  for (const phrase of CONSOLE_REPORTING.page) {
+    if (!page.includes(phrase)) {
+      out.push(
+        `the privacy page does not say ${JSON.stringify(phrase)} about the console's crash reporting: the switch is the menu item, it ships off, and it decides the next launch — a reader who is told the console can report crashes and not how to stop them is owed the sentence`,
+      )
+    }
+  }
+  if (/ingest[.-]/.test(page) || page.includes('sentry.io')) {
+    out.push(
+      'the privacy page carries an ingest endpoint: the DSN is one embedded public constant in console/src/main/crash-dsn.ts and the switch is the only gate, so the statement names the reporter and the region and never the endpoint the events are sent to',
+    )
+  }
+  return out
+}
+
 /** The roots of the production sources the reach scan reads, as the repository's own directories. */
 export const SOFTWARE_ROOTS = Object.freeze(['cmd', 'internal', 'console/src', 'mobile/src', 'shared'].map((dir) => path.join(REPO, dir)))
 
@@ -1614,4 +1699,47 @@ test('a look class nothing draws is refused, and a class the page draws itself i
   const nothing = shapeFailures(SHELL('<h1 class="display-xl">t</h1>'), '', '')
   assert.equal(nothing.length, 1, nothing.join('\n'))
   assert.match(nothing[0], /wears \.display-xl, which nothing draws/)
+})
+
+test("the console's crash reporting is the design's sentence, the switch and all", () => {
+  // The console is the second artifact in this page that can send anything, and the one that
+  // leaves it to the person: the switch ships off, it decides the next launch, and the report
+  // is scrubbed to the exception's type and the app's own frames. The design's section 7.4 is
+  // the sentence, and this holds the page to saying the same thing rather than a summary of it.
+  const design = readFileSync(path.join(REPO, CONSOLE_DESIGN), 'utf8')
+  assert.deepEqual(consoleReportingFailures(privacyPage().html, design), [])
+
+  // And the red direction, phrase by phrase: dropping the switch's own name, the region, the
+  // scrubbing or the fact that it is off until the person ticks it is refused, and refused for
+  // the page rather than for the design. Every occurrence goes, because the page states some of
+  // these facts twice — "the next launch" is in the sentence that turns reporting on and in the
+  // sentence that says unticking stops it — and a case that removed one of the two would be
+  // asking about a page that still carries the fact.
+  const page = privacyPage().html
+  for (const phrase of [...CONSOLE_REPORTING.page, ...CONSOLE_REPORTING.both]) {
+    const without = consoleReportingFailures(page.split(phrase).join(''), design)
+    assert.ok(
+      without.some((line) => line.includes(JSON.stringify(phrase)) && line.includes('privacy page')),
+      `a page that dropped ${JSON.stringify(phrase)} was not refused: the console's reporting sentence is only as good as every fact of it`,
+    )
+  }
+
+  // The other side of the split: the design's own wording for the rule is refused when it leaves
+  // the design, which is where it is decided — the page is not asked for that sentence.
+  for (const phrase of CONSOLE_REPORTING.design) {
+    const without = consoleReportingFailures(page, design.replace(phrase, ''))
+    assert.ok(
+      without.some((line) => line.includes(JSON.stringify(phrase)) && line.includes('design')),
+      `a design that dropped ${JSON.stringify(phrase)} was not refused: the switch's opt-in rule is the design's to state`,
+    )
+  }
+
+  // A page that grew the endpoint the events are sent to is refused as well: the DSN is one
+  // embedded public constant in `console/src/main/crash-dsn.ts`, and the statement names the
+  // reporter and the region and never the value.
+  const withEndpoint = consoleReportingFailures(`${page} <p>It posts each report to https://o000000.ingest.example.invalid/api/1/envelope/</p>`, design)
+  assert.ok(
+    withEndpoint.some((line) => line.includes('ingest endpoint')),
+    'a privacy page carrying an ingest endpoint was not refused: the constant lives in one file of the console and the page states facts, not the value',
+  )
 })

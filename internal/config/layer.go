@@ -206,7 +206,16 @@ type LayerAgent struct {
 	MaxBudgetUSD    float64    `yaml:"max_budget_usd"`
 	FirstLineReview string     `yaml:"first_line_review"`
 	FirstLineRounds int        `yaml:"first_line_rounds"`
-	Recipe          string     `yaml:"recipe"`
+	// Levels is the project-wide per-level review block (L1.3, D722): the
+	// same config.ReviewLevels a repository's agent.levels and a task's
+	// review_levels carry. The merge is per key (resolve.go's overlay), so
+	// the project's l1 survives a repository that pins l2, and neither is
+	// replaced whole by the other.
+	Levels ReviewLevels `yaml:"levels"`
+	// AdversarialRounds is the project's review level 3 round count; a
+	// repository's own value replaces it.
+	AdversarialRounds int    `yaml:"adversarial_rounds"`
+	Recipe            string `yaml:"recipe"`
 }
 
 // Profile is a named workflow template (scope profile).
@@ -658,6 +667,10 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	if ag.FirstLineRounds != 0 && (ag.FirstLineRounds < 1 || ag.FirstLineRounds > MaxFirstLineRounds) {
 		add("defaults.agent.first_line_rounds", "must be between 1 and %d", MaxFirstLineRounds)
 	}
+	if ag.AdversarialRounds != 0 && (ag.AdversarialRounds < 1 || ag.AdversarialRounds > 10) {
+		add("defaults.agent.adversarial_rounds", "must be between 1 and 10")
+	}
+	ps = append(ps, levelProblems("defaults.agent.levels", &ag.Levels)...)
 	if ag.Recipe != "" && !recipe.NameRE.MatchString(ag.Recipe) {
 		add("defaults.agent.recipe", "must be a recipe name")
 	}

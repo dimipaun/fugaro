@@ -81,6 +81,17 @@
         "review_rounds": { "type": "integer", "minimum": 0, "maximum": 10, "description": "Senior review rounds. Unset or 0 takes the resolved rigor mode's own default (poc 1, startup 2, pro 3, critical 5, hotfix 1); a written number replaces it, up or down, within the recipe's bound of 10." },
         "first_line_review": { "enum": ["auto", "on", "off"], "description": "A review by the coder's own model, with a fix between, before the senior review. auto: on only when a provider serves the coder and not the reviewer." },
         "first_line_rounds": { "type": "integer", "minimum": 0, "maximum": 3, "description": "First-line review/fix cycles, counted apart from review_rounds. Unset or 0 takes the resolved rigor mode's own default (poc 1, startup 2, pro 3, critical 3, hotfix 1); a written number replaces it, up or down, within the recipe's bound of 3." },
+        "levels": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Each review level's own settings (L1.3, D722; config.ReviewLevels): l1 is the first line of review, l2 the senior round and l3 the adversarial one, and each holds the same one object (config.LevelSetting). A level left out says nothing about it and leaves it to the layers below; `none: true` is how a layer turns one off. A level's four keys are read one by one, so a repository that pins one of them keeps the project layer's value for the rest. The block is what a run reads when it exists and what the owner's floor is measured against (L1.4, L3.1); nothing in this schema reads the floor. Needs fugaro 0.16.0: a binary before that release refuses the key outright, its decoder being strict, and a launcher refuses to start a run whose job image is older than the task's own review_levels.",
+          "properties": {
+            "l1": { "$ref": "#/$defs/level" },
+            "l2": { "$ref": "#/$defs/level" },
+            "l3": { "$ref": "#/$defs/level" }
+          }
+        },
+        "adversarial_rounds": { "type": "integer", "minimum": 0, "maximum": 10, "description": "Review level 3's round count (L1.3, D726), the level's one round knob. Unset or 0 takes the resolved rigor mode's own senior row (poc and hotfix 1, startup 2, pro 3, critical 5; rigor.AdversarialDefault); a written number replaces it, up or down, within the recipe's bound of 10. Needs fugaro 0.16.0." },
         "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, solo, standard, premium, review-only, pick, test-and-fix, lint-fix, run-digest). Fugaro before 0.5.0 refuses this key." },
         "oauth_token": {
           "type": "string",
@@ -217,6 +228,30 @@
     }
   },
   "$defs": {
+    "level": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One review level's settings (config.LevelSetting). The keys are the Go field names except `none`, which is config.LevelSetting.Off: `none` is what an owner or a launcher writes to say a level does not run, where `off: true` would read as a value rather than as a level's absence. Three of the decoder's rules are not expressible here, and are refused by config.ReviewLevels.Validate instead: an effort outside `effort`'s five values (config.Efforts; Claude Code itself warns and sends the model's default for the flag, and drops the environment variable and the settings key in silence, so nothing downstream refuses one), a focus carrying a control character, a bidi or zero-width one, a line or paragraph separator, or invalid UTF-8 (the project layer's own rule for a value out of a file, internal/config's badRune, which is why the pattern here cannot carry it), and `none: true` beside any other key, which is refused rather than read — a level that is off has no settings. The bound is a byte count while maxLength counts characters, so this schema is the looser of the two for text outside ASCII: a focus of 500 ASCII characters is at both caps, and one of 500 characters outside ASCII is over the decoder's and under this one's.",
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "The exact model ID this level runs (config.LevelSetting.Model). Absent leaves the level on the model its own layer resolves — agent.models.reviewer for a senior level — and it is bounded by allowed_models as every other model setting is, which the runner checks rather than this schema."
+        },
+        "effort": {
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "The reasoning effort this level runs at (config.LevelSetting.Effort, config.Efforts): the five values the pinned Claude Code accepts, from the least to the most, as measured against Claude Code 2.1.283 (docs/multi-model.md). Absent asks for none, which is the model's own default — that is not the same as \"auto\" or \"unset\", which are not values here. The vocabulary is closed in both directions: a value outside it is refused by config.ReviewLevels.Validate, because Claude Code would take it without a word."
+        },
+        "none": {
+          "type": "boolean",
+          "description": "True turns this level off (config.LevelSetting.Off): the level's step is not run, and the three settings beside it are refused rather than read. False, and an absent key, both mean the level runs. A level that is off under the owner's floor is refused at launch (L3.1, L1.4), which is not this schema's rule: nothing here reads the floor."
+        },
+        "focus": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "What this level's reviewer is asked to look at, in the launcher's own words (config.LevelSetting.Focus). It is data and never a command: the runner puts it in the reviewer's prompt as quoted text, and it is never put through a shell or joined into a path. 500 is config.MaxLevelFocusBytes, which the decoder applies as a byte count as well."
+        }
+      }
+    },
     "rigorMode": {
       "type": "string",
       "enum": ["poc", "startup", "pro", "critical", "hotfix"],
@@ -307,7 +342,7 @@
         "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
         "job_profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project policy's job profile this workflow runs on: the Cloud Run job's shape (provider, cpu, memory, task timeout, secret mounts, admission list) selected by name from the published policy. Absent: standard, which every policy that carries profiles must define. It is job_profile and not profile, which names the project layer's workflow template." },
         "base": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
-        "checkout": { "enum": ["baked", "clone", "shared"], "description": "baked (default): a derived image is built per repository and the job runs it. clone: the job runs the installation's base_images.base directly, with no per-repository build or daily check; image.apt, image.setup, image.tools, image.skip_build_scripts, image.key_files and dockerfile are refused, since they would need a build. clone shipped in fugaro 0.9.0: it needs the runner's own blobless-clone support, which ships at fugaro 0.7.5, and a published fugaro-base. A launch is still refused on a job image older than that release. shared: the job runs a shared dependency-layer image — one image per resolved dependency set, holding no repository's source — and the run clones the repository's own source at launch; image.apt, image.tools, image.key_files and image.skip_build_scripts are accepted (they are the layer that image holds), and image.setup and dockerfile are refused, since both would put this repository's own content into an image every repository on the same dependency set runs. It is not shipped yet: nothing builds or refreshes a shared image before fugaro 0.15.0, so validation refuses checkout: shared until then — declare baked or clone in the meantime." },
+        "checkout": { "enum": ["baked", "clone", "shared"], "description": "baked (default): a derived image is built per repository and the job runs it. clone: the job runs the installation's base_images.base directly, with no per-repository build or daily check; image.apt, image.setup, image.tools, image.skip_build_scripts, image.key_files and dockerfile are refused, since they would need a build. clone shipped in fugaro 0.9.0: it needs the runner's own blobless-clone support, which ships at fugaro 0.7.5, and a published fugaro-base. A launch is still refused on a job image older than that release. shared: the job runs a shared dependency-layer image — one image per resolved dependency set, holding no repository's source — and the run clones the repository's own source at launch; image.apt, image.tools, image.key_files and image.skip_build_scripts are accepted (they are the layer that image holds), and image.setup and dockerfile are refused, since both would put this repository's own content into an image every repository on the same dependency set runs. It is not shipped yet: no released fugaro builds or refreshes a shared image yet, so validation refuses checkout: shared — declare baked or clone in the meantime." },
         "image": {
           "type": "object",
           "additionalProperties": false,
