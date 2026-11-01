@@ -490,4 +490,26 @@ func TestDoctorReportsALocalLayerFileThatIsUnpublished(t *testing.T) {
 	if c := layerCheck(doctorLayerChecks(ctx, lc, dir, none), "local-layer-file"); c == nil || !strings.Contains(c.Problem, path) {
 		t.Fatalf("the check vanished with the published layer: %+v", c)
 	}
+
+	// A file at the path that this CLI does not read — a symlink, an oversized
+	// one — is a state of its own, and the check reports the reason instead of
+	// "does not exist": the remedy that sentence carries (`fugaro update` seeds
+	// the file) is one update refuses for exactly this file.
+	for _, kind := range unreadableLayerKinds {
+		t.Run(kind, func(t *testing.T) {
+			path := localLayerPath(t)
+			reason := unreadableLayerFile(t, path, kind)
+			c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "local-layer-file")
+			if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, path) ||
+				!strings.Contains(c.Problem, "not read") || !strings.Contains(c.Problem, reason) {
+				t.Fatalf("a local layer file this CLI does not read: %+v", c)
+			}
+			if strings.Contains(c.Problem, "does not exist") {
+				t.Errorf("a file this CLI does not read is reported as absent: %q", c.Problem)
+			}
+			if c.Fix != "" {
+				t.Errorf("the check sends the owner to a command that refuses this file: %q", c.Fix)
+			}
+		})
+	}
 }

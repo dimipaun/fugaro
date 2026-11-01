@@ -63,11 +63,16 @@ func newConfigPublishCmd() *cobra.Command {
 			}
 			if len(args) == 1 {
 				file = args[0]
-			} else if _, serr := os.Stat(file); errors.Is(serr, os.ErrNotExist) {
+			} else if data, err = readLayerFile(file); errors.Is(err, os.ErrNotExist) {
 				// The defaulted path has no flag to correct: the remedy for a
-				// missing local layer file is the command that seeds one.
+				// missing local layer file is the command that seeds one. The
+				// read is readLayerFile's rather than a stat of its own, so a
+				// symlink that points nowhere meets the refusal the update stage
+				// gives that same file (a symlink is not a layer file this CLI
+				// reads) instead of this "nothing is there" sentence, which would
+				// send the owner to a command that refuses it too.
 				return userErr("nothing was published: there is no local layer file at %s: run fugaro update, which seeds it from the published project layer (or pass FILE to publish a layer kept somewhere else)", file)
-			} else if data, err = readLayerFile(file); err != nil {
+			} else if err != nil {
 				return userErr("nothing was published: %v", err)
 			}
 			// The generation is recorded only when the bytes published ARE the

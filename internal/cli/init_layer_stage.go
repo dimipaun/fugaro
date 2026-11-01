@@ -461,7 +461,7 @@ func (s *layerStage) Verify(ctx context.Context) error {
 		}
 		return nil
 	case p.publish:
-		data, gen, exists, err := layerPublishedRead(ctx, p.lc, p.url)
+		data, _, exists, err := layerPublishedRead(ctx, p.lc, p.url)
 		if err != nil {
 			return err
 		}
@@ -471,7 +471,6 @@ func (s *layerStage) Verify(ctx context.Context) error {
 		if !bytes.Equal(data, p.local) {
 			return fmt.Errorf("the project layer was published but the object at %s is not the local layer file", config.LayerKey)
 		}
-		_ = gen
 	}
 	return nil
 }

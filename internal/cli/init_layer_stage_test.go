@@ -512,6 +512,37 @@ func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
 	}
 }
 
+// TestUpdateLayerStageRefusesWhenTheObjectChangedSinceItsPlanRead: the stage
+// reads the object once, when it plans, and publishes against THAT read
+// (publishLayer's at). An object replaced between the two is refused rather than
+// silently overwritten: with no at, publishLayer reads the bucket again at the
+// write and would happily write over the publisher that landed in between.
+//
+// The stub is the read this run planned against — the object as it was before
+// the other publisher's write — while the bucket holds the other publisher's
+// bytes, which is the state the guard exists for and one a file:// bucket
+// (always generation 0) can only be handed through this seam.
+func TestUpdateLayerStageRefusesWhenTheObjectChangedSinceItsPlanRead(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer+"# another publisher's layer\n")
+	recordLayer(t, localEdit, "0")
+	read := layerPublishedRead
+	t.Cleanup(func() { layerPublishedRead = read })
+	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+		return []byte(testProjectLayer), 0, true, nil
+	}
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if got, _ := layerObject(t, r); got != testProjectLayer+"# another publisher's layer\n" {
+		t.Fatalf("the object another publisher wrote was overwritten: %q\n%s%s", got, out, errOut)
+	}
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("fugaro update accepted a publish against a read that is no longer the object: %v\n%s%s", err, out, errOut)
+	}
+	if all := out + errOut + err.Error(); !strings.Contains(all, "another publisher changed") {
+		t.Errorf("the refusal is not the one the conditional write gives:\n%s", all)
+	}
+}
+
 // layerStageRig is the layer stage over a rig's own project config, driven a
 // call at a time (the policy tests' own pattern): Verify has to be exercised
 // after the state it watches has moved, which the door cannot be.

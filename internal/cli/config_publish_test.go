@@ -741,6 +741,63 @@ func localLayerPath(t *testing.T) string {
 	return filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", "aurora.layer.yaml")
 }
 
+// unreadableLayerFile writes path as a file this CLI does not read — kind is
+// "symlink" (a symlink to a regular layer file) or "oversize" (past the layer
+// size limit) — and returns the phrase its refusal carries. Both are refused by
+// readLayerFile (config.ReadRegular), the one read every publish door and the
+// update stage make, so both doors must say the same thing about them.
+func unreadableLayerFile(t *testing.T, path, kind string) string {
+	t.Helper()
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	switch kind {
+	case "symlink":
+		target := filepath.Join(t.TempDir(), "layer-target.yaml")
+		if err := os.WriteFile(target, []byte(testProjectLayer), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		return "is a symbolic link"
+	default:
+		big := append([]byte(testProjectLayer), bytes.Repeat([]byte("# padding\n"), int(config.LayerMaxBytes)/len("# padding\n")+1)...)
+		if err := os.WriteFile(path, big, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return "is larger than"
+	}
+}
+
+// unreadableLayerKinds is the two kinds unreadableLayerFile writes, as the
+// table the doors' tests walk.
+var unreadableLayerKinds = []string{"symlink", "oversize"}
+
+// TestConfigPublishRefusesADanglingSymlink: the defaulted path is read with
+// readLayerFile, so a symlink that points nowhere gets the refusal the update
+// stage gives the same file — never "there is no local layer file ... run
+// fugaro update", which would send the owner to the command that refuses it.
+func TestConfigPublishRefusesADanglingSymlink(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	noAgentSession(t)
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone.yaml"), localLayerPath(t)); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := execute(t, "config", "publish")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is a symbolic link") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), selfCommand()+" update") {
+		t.Errorf("a dangling symlink is reported as a missing file: %v", err)
+	}
+	if bucketText(t, f, config.LayerKey) != testProjectLayer {
+		t.Fatal("the published layer moved")
+	}
+}
+
 // TestConfigPublishWithNoFilePublishesTheLocalLayer: the FILE argument
 // defaults to the one conventional local layer file (D830), so the explicit
 // door and the update stage publish the same bytes from the same path.
@@ -810,6 +867,37 @@ func TestConfigPublishRecordsTheGenerationItWroteAt(t *testing.T) {
 	if !st.Unpublished || st.Cause != layerLocalEdit {
 		t.Fatalf("after an edit the state is %+v, want a local edit", st)
 	}
+	// A FILE kept somewhere else is not what this machine will read back, so
+	// publishing it records nothing: a record that claimed it was would hide the
+	// difference D854's refusal exists to find. The record is first moved to a
+	// value this door would not write — a file:// bucket reports generation 0
+	// for every object, so a record this door WRITES by mistake would otherwise
+	// be the value already there.
+	cfgPath := os.Getenv("FUGARO_CONFIG")
+	cfgData, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, bytes.Replace(cfgData, []byte("layer_generation: 0"), []byte("layer_generation: 5"), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "elsewhere-layer.yaml")
+	if err := os.WriteFile(other, []byte(testProjectLayer+"governance: { review_ratio: 20 }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, err := execute(t, "config", "publish", other); err != nil {
+		t.Fatalf("publishing a FILE kept somewhere else: %v\n%s", err, out)
+	}
+	if bucketText(t, f, config.LayerKey) != testProjectLayer+"governance: { review_ratio: 20 }\n" {
+		t.Fatal("the FILE kept somewhere else was not what was published")
+	}
+	after, err := localcfg.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.LayerGeneration != "5" {
+		t.Errorf("publishing a FILE kept somewhere else recorded generation %q over 5", after.LayerGeneration)
+	}
 }
 
 // mustPublishedLayer reads the fixture's published object as the bucket holds
@@ -863,5 +951,21 @@ func TestConfigLayerPrintsTheLocalPathAndItsUnpublishedState(t *testing.T) {
 	if err != nil || !strings.Contains(out, "local layer file: "+path+" (does not exist") ||
 		!strings.Contains(out, selfCommand()+" update") {
 		t.Fatalf("missing local layer file: %v\n%s", err, out)
+	}
+	// The same two files through this door: it prints the reason it does not
+	// read them, never "does not exist" with the seed remedy update refuses.
+	for _, kind := range unreadableLayerKinds {
+		t.Run(kind, func(t *testing.T) {
+			path := localLayerPath(t)
+			reason := unreadableLayerFile(t, path, kind)
+			out, _, err := execute(t, "config", "layer")
+			if err != nil || !strings.Contains(out, "local layer file: "+path+" (not read: ") ||
+				!strings.Contains(out, reason) {
+				t.Fatalf("a local layer file this CLI does not read: %v\n%s", err, out)
+			}
+			if strings.Contains(out, "does not exist") {
+				t.Errorf("a file this CLI does not read is reported as absent:\n%s", out)
+			}
+		})
 	}
 }
