@@ -737,6 +737,9 @@ var propertyAgentSites = map[string]string{
 	// The policy stage refuses a marker itself rather than leaning on the
 	// loop's gate: it is SelfConfirming, so the loop would call it.
 	"init_policy_migrate.go Apply": "TestUpdatePolicyMigrationRefusedInAgentSession",
+	// The layer stage refuses a marker itself for the same reason: it is
+	// SelfConfirming, so the loop would call it.
+	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
 }
 
 // outsideAgentSites are the agent-marker sites the property does not cover,

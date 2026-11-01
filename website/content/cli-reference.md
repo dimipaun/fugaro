@@ -1242,7 +1242,9 @@ This command has no subcommands.
 
 Publish the project layer: defaults and profiles for every repository of the project (fugaro/project-layer.yaml in the runs bucket)
 
-Usage: `fugaro config publish FILE`
+Publish the project layer. FILE defaults to this project's one local layer file (<config home>/fugaro/projects/<project>.layer.yaml), which is the file the owner edits and the file fugaro update publishes: the argument is only for publishing a layer kept somewhere else.
+
+Usage: `fugaro config publish [FILE]`
 
 Flags:
 
