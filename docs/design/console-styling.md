@@ -1234,7 +1234,7 @@ only ever says what it was told.
 | `section.coordinator` | the screen's root | carries `data-theme` like every other screen's |
 | `coordinator-source` | `p` | the read's own command line, in the console's words |
 | `coordinator-age`, `coordinator-empty` | `p` | the console's two sentences: the age the stored view does not carry, and an installation that lists no repository |
-| `section.coordinator-repo` | the repository's panel | one per repository the config lists, on the frame the redesign gives a panel (§2.2's `section.live-fleet`, the same ground, hairline and radius) |
+| `section.coordinator-repo` | the repository's panel | one per repository the config lists, on the frame the redesign gives a panel (§2.3's `section.live-fleet`, the same ground, hairline and radius) |
 | `coordinator-repo-head` | `div` | the panel's first element: the name and the source line on one line, which folds rather than shrinking either |
 | `h2.coordinator-repo-name` | `h2` | the repository's own name, read out of the local config, and the head row's first element |
 | `coordinator-repo-state` | `p` | which view the node is: `the last stored view`, or the runs-only fallback |
