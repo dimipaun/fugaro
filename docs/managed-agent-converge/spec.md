@@ -1,6 +1,6 @@
 # The design: the agent manages a managed project, behind a deterministic gate
 
-**Status: a proposal. Every decision is a recommendation, and the owner has answered none of them.** The decisions are **D1011–D1026** in [reconciliation.md](reconciliation.md) §3; this document is written to the recommendation in each, so an answer of "as recommended" needs no rewrite. Where this document and [reconciliation.md](reconciliation.md) disagree, the reconciliation wins: it is the file that holds what the code actually does.
+**Status: a proposal, with the owner's answer to its two load-bearing questions in it.** The owner answered **D1011** (which commands) and **D1012** (what the gate is) on 2026-11-01 — every converge and publish command, behind a fixed deterministic gate over the plan, with no judgment calls by the agent — and [README.md](README.md) records the answers verbatim. **D1013–D1026 are unanswered recommendations**, and this document is written to the recommendation in each, so an answer of "as recommended" needs no rewrite. Where this document and [reconciliation.md](reconciliation.md) disagree, the reconciliation wins: it is the file that holds what the code actually does.
 
 **The one sentence.** In a **managed** project — both marks present, and each of them the owner's — a coding agent's session runs the owner-level cloud-changing commands itself, and what stands where the typed confirmation stood is a **deterministic gate over the plan of the command being run**, never a model's verdict, never a prompt, and never a flag the session can pass to reach past it.
 
@@ -34,6 +34,8 @@ This design generalises that one caller into **one gate used by a named set of c
 
 ### 3.1 The set the gate covers
 
+**This is the owner's answer of 2026-11-01, and it is the whole set: every converge and publish command a managed project needs, run by the agent itself with no prompt.** The seven commands below — the four that exist (`update`, `config publish`, `project policy publish`, `image refresh`) and the three the other designs land (`settings`, `rigor`, `accounts`), each with its `unset` / `rm` sibling — are in the gate's set **now**, the three because the owner named them and not because they exist yet; [implementation-plan.md](implementation-plan.md) §2 carries the row each of them owes. A command that is not in this table is not in the set, and the rule that decides a later one is §3.2's.
+
 | Command | What the gate reads as "the plan" | The gate's source of truth |
 | --- | --- | --- |
 | `fugaro update` (the installation's and a checkout's re-converge) | each stage's saved Terraform plan, and each non-Terraform stage's own dry-run document | `tf.Guard` + `tf.Cover` over the embedded roots; the per-stage rules of D1012 |
@@ -41,7 +43,7 @@ This design generalises that one caller into **one gate used by a named set of c
 | `fugaro project policy publish` (the policy node) | the parsed policy node | the policy model's own version and the rules generation it is read under |
 | `fugaro image refresh` (derived images) | the refresh's own per-build list | the release's base digests, the skew rules, the build bound of D1013 |
 | `fugaro settings set` / `settings unset` | the diff the command already prints | the registry, the scope rules of D1012, the floor/ceiling rule |
-| `fugaro rigor set` | the diff the command already prints | `internal/rigor`'s own validation, the rank rule, the hotfix refusal |
+| `fugaro rigor set` / `rigor unset` | the diff the command already prints | `internal/rigor`'s own validation, the rank rule, the hotfix refusal |
 | `fugaro accounts add` / `accounts rm` | the account definition and the coverage check | the reserved names, the reference check, the `allow_data_to` rule |
 
 **`fugaro managed apply` stays exactly as it is.** It is not in this table because it needs no change: it is the door the agent-authored root already has, with the gate of D76, the owner's delete list of D74, the deployer account of D75 and the inventory of D59. This design cites it as the parent and leaves every line of it alone.
@@ -62,6 +64,8 @@ These are refused in a coding agent's session in a managed project exactly as th
 The rule behind the list, so a later command is decided rather than argued: **a command is in §3.1 only when its whole effect is visible in a document the command produces before it writes** — a Terraform plan, a parsed layer, a policy node, a per-build list, a diff. A command whose effect is a secret, an identity, a billing relationship or a deletion is never in the set, because there is nothing for a deterministic gate to read.
 
 ## 4. The gate's rules, per command, from the plan (D1012)
+
+**The gate is fixed and deterministic, and the agent makes no judgment call — the owner's answer of 2026-11-01.** "Fixed" is three properties, and each of them is a test in [implementation-plan.md](implementation-plan.md): the rule list is a **constant in the build** derived from the tree (`TestManagedAllowedTypesIsDecided`, `TestAllowedTypesCoverTheModules`) rather than a per-command choice; the same plan gets the same verdict **whatever the identity, the ordering or the run** — nothing in the rules reads a clock, a session or a previous verdict; and a change is judged **on what it produces**, so a rule cannot be satisfied by how a change is spelled (rule 2 below). "No judgment call" is the other half: there is no path in which the program asks a model — the agent's or anyone's — whether a change is acceptable, and no path in which it proceeds on a plan it could not decide. What the parent design refused about the `review` stage (its finding 8) is refused here for the same reason, and §11 says so.
 
 ### 4.1 The nine rules every command shares
 
