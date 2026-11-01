@@ -31,7 +31,7 @@ import (
 
 // ResolvedLevel is one review level after resolution: whether it runs, the
 // model, effort and focus it runs with, and whether the recipe has no step
-// for it.
+// for it. Every field but On is zero on a level that does not run.
 type ResolvedLevel struct {
 	// On is whether the level runs.
 	On bool
@@ -105,10 +105,10 @@ type LevelInputs struct {
 	// of them claims is routed to it, so an effort set for that model is
 	// refused rather than sent (D725).
 	Providers map[string]ModelProvider
-	// AllowedModels is the effective allow-list (policy.Effective
-	// .AllowedModels): the models a level may name. nil is no list, which
-	// allows every model; an empty non-nil list allows none, exactly as
-	// policy.Effective.HasAllowList reads it.
+	// AllowedModels is the effective allow-list
+	// (policy.Effective.AllowedModels): the models a level may name. nil is
+	// no list, which allows every model; an empty non-nil list allows none,
+	// exactly as policy.Effective.HasAllowList reads it.
 	AllowedModels []string
 }
 
@@ -139,9 +139,8 @@ func ResolveLevels(in LevelInputs) (Levels, []Warning, error) {
 		loop:  in.Recipe != nil && in.Recipe.Mode == recipe.ModeImplement,
 		// A mode: review recipe (review-only, pick) allows exactly one
 		// review step and nothing else (recipe.Parse): it has level 2
-		// alone. There is no coder for a first-line pass to run and no
-		// senior loop for an adversarial one to follow, so neither the
-		// mode's row nor the owner's floor reaches the other two there.
+		// alone. See reviewOnlyLevel for what happens to a level 1 or level
+		// 3 something else asks for there.
 		reviewOnly: in.Recipe != nil && in.Recipe.Mode == recipe.ModeReview,
 	}
 	r.run()
@@ -201,9 +200,10 @@ func (r *resolver) run() {
 		{name: policy.LevelL2, cfg: cfg.L2, task: taskLevel(r.in.Task, policy.LevelL2), row: r.row.L2, def: r.agent.ModelFor(RoleReviewer)},
 		{name: policy.LevelL3, cfg: cfg.L3, task: taskLevel(r.in.Task, policy.LevelL3), row: r.row.L3, def: r.agent.ModelFor(RoleReviewer)},
 	} {
-		// Only level 1 has a fallback: the mode's row always places levels 2
-		// and 3 (rigor.defaultLevels), so `unset` there is impossible until a
-		// mode's row leaves one out, and firstLineReview is not its answer.
+		// Only level 1 has a fallback. A mode's row that leaves level 2 or
+		// level 3 unset means the level does not run — rigor.defaultLevels
+		// places level 2 in every mode and level 3 at critical alone — and
+		// agent.first_line_review is not their answer.
 		r.one(s, s.name == policy.LevelL1 && first)
 	}
 	r.guard()
@@ -212,6 +212,7 @@ func (r *resolver) run() {
 // one resolves a single level.
 func (r *resolver) one(s levelSpec, fallback bool) {
 	if r.reviewOnly && s.name != policy.LevelL2 {
+		r.reviewOnlyLevel(s)
 		r.set(s.name, ResolvedLevel{})
 		return
 	}
@@ -234,12 +235,39 @@ func (r *resolver) one(s levelSpec, fallback bool) {
 		// the mode's own row leaves off (POC's level 2, say).
 		on = true
 	}
-	lv.On = on
-	if on {
-		lv.Inserted = r.inserts(s)
-		r.check(s, lv)
+	if !on {
+		// A level that does not run carries no settings: nothing may read a
+		// model, an effort or a focus off it and act on the level anyway.
+		r.set(s.name, ResolvedLevel{})
+		return
 	}
+	lv.On = true
+	lv.Inserted = r.inserts(s)
+	r.check(s, lv)
 	r.set(s.name, lv)
+}
+
+// reviewOnlyLevel is levels 1 and 3 on a mode: review recipe: review-only and
+// pick allow exactly one review step and nothing else (recipe.Parse), so
+// neither level has a step to run in. Neither the mode's own row nor
+// first_line_review reaches them — a report run has no coder for a first-line
+// pass to be, and no senior loop for an adversarial one to follow — but a
+// layer that turns one on, and an owner's floor that requires one, cannot be
+// honoured either, so those are refused rather than dropped (G1).
+func (r *resolver) reviewOnlyLevel(s levelSpec) {
+	if slices.Contains(r.in.Floor, s.name) {
+		r.errf("%s is required by the owner's floor for mode %s, and recipe %s is mode: review, which allows exactly one review step and nothing else: level %s has no step to run in (D722)", s.name, r.in.Mode, r.in.Recipe.Name, s.name)
+		return
+	}
+	for _, l := range []*LevelSetting{s.task, s.cfg} {
+		if l == nil {
+			continue
+		}
+		if !l.Off {
+			r.errf("%s is on, and recipe %s is mode: review, which allows exactly one review step and nothing else: level %s has no step to run in", s.name, r.in.Recipe.Name, s.name)
+		}
+		return
+	}
 }
 
 // layerAnswer is the level's on/off as the layers below the floor give it:

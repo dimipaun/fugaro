@@ -501,6 +501,56 @@ func TestResolveLevelsRefusesFirstLineRecipeWithCoderEqualsReviewer(t *testing.T
 	}
 }
 
+// TestResolveLevelsReviewOnlyHasLevel2Alone: a mode: review recipe allows
+// exactly one review step and nothing else, so a report run has level 2 alone
+// at every rigor mode. A level something else asks for there cannot be
+// dropped — the mode's own row is about the loop, which a report run has
+// none of, but a layer's block and the owner's floor are read, and a level
+// that cannot run is refused rather than silently left out (G1).
+func TestResolveLevelsReviewOnlyHasLevel2Alone(t *testing.T) {
+	in := LevelInputs{
+		Config: &Config{Agent: levelAgent()}, Mode: rigor.Critical,
+		Recipe: levelRecipe(t, "review-only"),
+	}
+	got, _, err := ResolveLevels(in)
+	if err != nil {
+		t.Fatalf("ResolveLevels on review-only at critical: %v", err)
+	}
+	if !got.L2.On {
+		t.Errorf("l2 = %+v; want it on: the recipe's one review step is level 2", got.L2)
+	}
+	if got.L1.On || got.L3.On {
+		t.Errorf("l1 = %+v, l3 = %+v; want both off: the recipe allows one review step and nothing else", got.L1, got.L3)
+	}
+
+	// A layer that turns level 3 on is refused: the step cannot exist there.
+	in.Config = &Config{Agent: Agent{Models: levelAgent().Models, Levels: ReviewLevels{L3: &LevelSetting{Focus: "auth boundaries"}}}}
+	if _, _, err := ResolveLevels(in); err == nil {
+		t.Error("review-only ran with a layer's l3 on and ResolveLevels refused nothing")
+	}
+
+	// An owner's floor that requires level 1 is refused too, whether or not
+	// a layer says anything about it.
+	in.Config = &Config{Agent: levelAgent()}
+	in.Floor = []policy.Level{policy.LevelL1}
+	_, _, err = ResolveLevels(in)
+	if err == nil {
+		t.Fatal("review-only ran under a floor requiring l1 and ResolveLevels refused nothing")
+	}
+	for _, want := range []string{"l1", "floor", "review-only"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+
+	// A layer turning one of them off asks for nothing and is not refused.
+	in.Config = &Config{Agent: Agent{Models: levelAgent().Models, Levels: ReviewLevels{L3: &LevelSetting{Off: true}}}}
+	in.Floor = nil
+	if _, _, err := ResolveLevels(in); err != nil {
+		t.Errorf("review-only with l3 written none: %v; want no refusal", err)
+	}
+}
+
 // TestResolveLevelsWarnsEffortIgnoredModel: claude-haiku-4-5 sends no effort
 // by any mechanism, so an effort written for it is a warning and not a
 // refusal — the run goes on, and the level's setting does nothing.
