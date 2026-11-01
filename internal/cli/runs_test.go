@@ -2066,8 +2066,8 @@ func TestRunsLsAfterPagesTheListing(t *testing.T) {
 	if want := ids[3:]; !slices.Equal(runIDs(afterThird.Runs), want) {
 		t.Fatalf("--after the third row = %v, want the next two %v", runIDs(afterThird.Runs), want)
 	}
-	// The cursor names a row, not a time: the last row is an empty page, and
-	// the row before it is a page of one.
+	// The cursor names a row and not a time: a cursor on the last row is a
+	// page with nothing after it, which is an answer rather than a refusal.
 	last, _ := lsJSON(t, "--since", "0", "--after", ids[len(ids)-1])
 	if len(last.Runs) != 0 {
 		t.Errorf("--after the last row listed %v, want nothing after it", runIDs(last.Runs))
@@ -2120,6 +2120,8 @@ func TestRunsLsAfterAnIDTheWindowDoesNotHoldIsRefused(t *testing.T) {
 // TestRunsLsPagingFlagsAreRefusedWithWatch: --watch redraws the whole listing
 // until every run has settled, so a page of it is a contradiction rather than
 // a combination, and both paging flags are refused before anything is read.
+// --limit 0 is refused too: it is every row, but the flag is read as typed,
+// the way --pr 0 is a request for a pull request number rather than no flag.
 func TestRunsLsPagingFlagsAreRefusedWithWatch(t *testing.T) {
 	f := newCloudFixture(t)
 	lsPagedRuns(t, f, 3)
