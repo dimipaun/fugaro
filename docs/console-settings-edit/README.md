@@ -65,10 +65,14 @@ Three things this design settles that the ask does not:
 - It changes no code, no schema, no config, no console source, no fixture and no workflow. It writes
   nothing under `console/`, `internal/`, `schemas/`, `plugin/`, `mobile/`, `shared/` or `ee/`.
 - It adds no dependency and proposes none.
-- It **edits no existing document**. `docs/design/desktop-console.md` §5.1 (rules 5, 6 and the new
-  rule 12 for the second write), `console/docs/json-contract.md` §6.15 and
-  `docs/design/console-styling.md` §2.5 are **named in the plan** as the documents the implementing
-  tasks change, and not one of them is touched here.
+- It **edits no existing document**, with **one mechanical exception**: the census row in
+  `docs/rigor-modes/reconciliation.md` that counts the `internal/cli/docs_*_test.go` pin files moves
+  from 90 to 91, because this folder ships the ninety-first and the row's own guard re-runs the
+  command it prints. The figure is a count of the tree rather than a decision, and nothing else in
+  that document moves. `docs/design/desktop-console.md` §5.1 (rules 5, 6 and the new rule 12 for the
+  second write), `console/docs/json-contract.md` §6.15 and `docs/design/console-styling.md` §2.5 are
+  **named in the plan** as the documents the implementing tasks change, and not one of them is
+  touched here.
 - It does not implement **S5**. `fugaro settings get|set|unset` is pull request **#1525**, open in
   review; this design depends on it and names the changes it needs as prerequisites **P1–P4** rather
   than assuming them.
