@@ -55,8 +55,8 @@ than blocking it, and the plan says so rather than pretending the two are one ta
 **Why C5 is not first.** Three of the four documents C5 changes are the **fences themselves** —
 `docs/design/desktop-console.md` §5.1 rules 5 and 6 and the new rule 12. A fence document written
 before the code it fences is a description of an intention; the console rule requires the count, the
-table and the code to move in **the same commit**, so C5's changes to those three are made inside C1,
-C2 and C3 and C5 holds only what is left (§6 below says which).
+table and the code to move in **the same commit**, so C5's changes to those three are made inside
+C1, C2 and C3 and C5 holds only what is left (§6 below says which).
 
 ## 2. Shared files
 
@@ -83,8 +83,8 @@ task's named tests with `GOFLAGS=-p=2 go test ./internal/cli -run '<names>' -cou
 changed. **Never the whole `internal/cli` package.**
 
 **Console tasks (C1–C4):** `npm run typecheck`; `npm run test:unit -- --maxWorkers=2`; `npm run
-test:e2e`. Goldens are **skipped in CI** (`FUGARO_CONSOLE_GOLDENS: skip`) and are re-recorded only by
-the coordinator on the owner's machine — **no task here re-records one**.
+test:e2e`. Goldens are **skipped in CI** (`FUGARO_CONSOLE_GOLDENS: skip`) and are re-recorded only
+by the coordinator on the owner's machine — **no task here re-records one**.
 
 **The docs test:** `internal/cli/docs_console_settings_edit_test.go` pins this folder. It runs under
 the `Docs` filter, which is the last gate of the run that lands any of these tasks.
@@ -100,47 +100,50 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **Files:** `internal/cli/settings.go` (`--project` and `--config` on the group, spelled and
   documented exactly as §3.4 rule 3 spells them for every other command, and passed down to the two
   writes), `internal/cli/settings_read.go` (`readSettings` fills `Project`, `Config` and `Checkout`
-  in its `localcfg.SelectInput` from the flags), `internal/cli/settings_set.go`
-  (`settingsSelection` does the same for the write path), `internal/cli/settings_aim_test.go` (new),
-  and `internal/localcfg/select.go` **only if** the selector's step order has to change — which this
+  in its `localcfg.SelectInput` from the flags), `internal/cli/settings_set.go` (`settingsSelection`
+  does the same for the write path), `internal/cli/settings_aim_test.go` (new), and
+  `internal/localcfg/select.go` **only if** the selector's step order has to change — which this
   plan does not expect and which the task must not do without saying so, because that file is shared
   with every command that resolves a project.
-- **Interface:** `fugaro settings [KEY|GLOB ...] --project NAME [--config PATH]` and `fugaro settings
-  set|unset KEY … --project NAME [--config PATH]`; the same two flags, the same precedence, the same
-  `--config`-wins-over-`--project` rule `localcfg.Select` already implements at steps 1 and 2.
-- **Red step:** `TestSettingsAimedAtAnInstallationReadsThatInstallationsFile` fails on today's tree —
-  with two project configs in a `t.TempDir()` home and no `FUGARO_PROJECT`, the command refuses.
+- **Interface:** `fugaro settings [KEY|GLOB ...] --project NAME [--config PATH]` and `fugaro
+  settings set|unset KEY … --project NAME [--config PATH]`; the same two flags, the same precedence,
+  the same `--config`-wins-over-`--project` rule `localcfg.Select` already implements at steps 1 and
+  2.
+- **Red step:** `TestSettingsAimedAtAnInstallationReadsThatInstallationsFile` fails on today's tree
+  — with two project configs in a `t.TempDir()` home and no `FUGARO_PROJECT`, the command refuses.
 - **Tests:** `TestSettingsAimedAtAnInstallationReadsThatInstallationsFile`,
-  `TestSettingsSetAimedAtAnInstallationWritesThatFile`, `TestSettingsAimedAtAnUnknownInstallationIsRefused`,
+  `TestSettingsSetAimedAtAnInstallationWritesThatFile`,
+  `TestSettingsAimedAtAnUnknownInstallationIsRefused`,
   `TestSettingsAimedAtTwoInstallationsIsRefused` (the `--project` and `--config` that disagree),
   `TestSettingsAimDoesNotChangeTheUnaimedRead`.
 - **Why SEC:** the flag decides **which file a write lands in**. A selector that fell through to
   step 6 on a machine with one installation would write the wrong project's config with no error,
   which is the failure mode this whole plan is most exposed to.
-- **Hermetic:** `t.TempDir()` config home, two seeded project configs, `internal/testutil`. No cloud,
-  no network.
+- **Hermetic:** `t.TempDir()` config home, two seeded project configs, `internal/testutil`. No
+  cloud, no network.
 
 ### P2. The read carries which rows are writable, by whom, and in which layer (**D1102**). **size S**
 
 - **Files:** `internal/cli/settings_render.go` (`settingsJSON` gains three members — `writable`, a
-  boolean; `owner`, the command family that writes the key; and `target_layer`, the layer
-  `settings set` would write with no `--layer`), `internal/cli/settings_read.go` (`projectRow` and
-  `repoRow` fill them), `schemas/settings.schema.json` (three members, added within version 1 —
-  **no version bump**, D848), `internal/cli/settings_render_test.go`, `schemas/schemas_test.go`.
-- **Where the facts come from, and why they cannot drift:** `writable` is `settingsGenericKey(row.Key)`
-  — the same function `settings set` refuses on — and `owner` is `settingsFamilyCommands[row.Owner]`.
-  Both are read from the S5 file rather than restated, so the read's answer and the write's refusal
-  are one expression. `target_layer` is `settingsDefaultLayer(row)`.
-- **The one case that needs a decision inside the task:** a key the generic path does not own **and**
-  whose `Owner` names no family (installation plumbing, the settings design's own case) gets
-  `writable: false` and an empty `owner`; the console then says the generic path does not write it and
-  names nothing (**D1111**). The task asserts that shape rather than inventing a name for it.
+  boolean; `owner`, the command family that writes the key; and `target_layer`, the layer `settings
+  set` would write with no `--layer`), `internal/cli/settings_read.go` (`projectRow` and `repoRow`
+  fill them), `schemas/settings.schema.json` (three members, added within version 1 — **no version
+  bump**, D848), `internal/cli/settings_render_test.go`, `schemas/schemas_test.go`.
+- **Where the facts come from, and why they cannot drift:** `writable` is
+  `settingsGenericKey(row.Key)` — the same function `settings set` refuses on — and `owner` is
+  `settingsFamilyCommands[row.Owner]`. Both are read from the S5 file rather than restated, so the
+  read's answer and the write's refusal are one expression. `target_layer` is
+  `settingsDefaultLayer(row)`.
+- **The one case that needs a decision inside the task:** a key the generic path does not own
+  **and** whose `Owner` names no family (installation plumbing, the settings design's own case) gets
+  `writable: false` and an empty `owner`; the console then says the generic path does not write it
+  and names nothing (**D1111**). The task asserts that shape rather than inventing a name for it.
 - **Tests:** `TestSettingsJSONMarksTheGenericPathsRowsWritable`,
   `TestSettingsJSONNamesTheFamilyThatOwnsTheOthers`,
   `TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints` (the row's `owner` is the command
   `settings set` names when it refuses that key — the anti-drift pin),
-  `TestSettingsJSONTargetLayerMatchesWhatSetWrites` (a write with no `--layer` lands in the layer the
-  read named), `TestSettingsJSONIsStillVersionOne`.
+  `TestSettingsJSONTargetLayerMatchesWhatSetWrites` (a write with no `--layer` lands in the layer
+  the read named), `TestSettingsJSONIsStillVersionOne`.
 - **Why not SEC:** it adds members to a read's document and moves no fence. It is still reviewed, as
   everything in this pull request is.
 
@@ -151,21 +154,22 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   target, builds the edit, classifies it and **returns before the confirmation, before the backup
   and before the write**), `schemas/settings-write.schema.json` (new: the dry-run document),
   `schemas/schemas_test.go`, `internal/cli/settings_dryrun_test.go` (new).
-- **Interface:** `fugaro settings set KEY VALUE --layer L --dry-run --json` prints
-  `{version, key, layer, path, changed, widening, why, old, new, refusal}`, writes nothing and leaves
-  no backup. `--dry-run` without `--json` prints the same facts as the table the command already
-  prints. `--dry-run` with `--yes` is refused (the two answer different questions).
+- **Interface:** `fugaro settings set KEY VALUE --layer L --dry-run --json` prints `{version, key,
+  layer, path, changed, widening, why, old, new, refusal}`, writes nothing and leaves no backup.
+  `--dry-run` without `--json` prints the same facts as the table the command already prints.
+  `--dry-run` with `--yes` is refused (the two answer different questions).
 - **The classification is S5's, not a second copy:** `widening` is the value of the existing
   `settingsTypedWrite` decision — the same call that decides whether the typed name is demanded — so
   a key added to `settingsCeilingKey` or a list rule changed in `settingsListSubset` changes the
   console's dialog with no console edit.
-- **Red step:** `TestSettingsSetDryRunWritesNothing` fails on S5's tree (the flag does not exist) and
-  `TestSettingsSetDryRunClassifiesAWideningAsAWidening` fails while the classification is only
+- **Red step:** `TestSettingsSetDryRunWritesNothing` fails on S5's tree (the flag does not exist)
+  and `TestSettingsSetDryRunClassifiesAWideningAsAWidening` fails while the classification is only
   reachable through a prompt.
 - **Tests:** `TestSettingsSetDryRunWritesNothing` (the file's bytes and mtime are unchanged, and no
   backup file appears), `TestSettingsSetDryRunClassifiesAWideningAsAWidening`,
   `TestSettingsSetDryRunClassifiesANarrowingAsANarrowing`,
-  `TestSettingsSetDryRunRefusesASensitiveKey`, `TestSettingsSetDryRunRefusesAKeyTheGenericPathDoesNotOwn`,
+  `TestSettingsSetDryRunRefusesASensitiveKey`,
+  `TestSettingsSetDryRunRefusesAKeyTheGenericPathDoesNotOwn`,
   `TestSettingsSetDryRunJSONMatchesSchema`, `TestSettingsUnsetDryRunWritesNothing`,
   `TestSettingsSetDryRunNeedsNoTerminal` (**the property the console depends on**: the dry run is
   answerable with stdin closed, because the console's child has no terminal).
@@ -184,10 +188,9 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   `internal/cli/settings_set.go` (the flag on `set` and `unset`), `console/src/main/spawn.ts`
   (`CHILD_ENV_KEYS` gains the one marker key — **this is the change to §5.1 rule 8's "nothing
   added"**, and it is why the task is SEC and why the console side of it is one line in C3),
-  `internal/cli/settings_console_confirm_test.go` (new),
-  `console/test/unit/spawn.test.ts` (the key list, whose count is pinned),
-  `docs/settings-commands/reconciliation.md` (**the D846 entry gains the sentence that one path is
-  no longer covered by it**).
+  `internal/cli/settings_console_confirm_test.go` (new), `console/test/unit/spawn.test.ts` (the key
+  list, whose count is pinned), `docs/settings-commands/reconciliation.md` (**the D846 entry gains
+  the sentence that one path is no longer covered by it**).
 - **The refusal set, which is what makes it narrow:** the flag is refused when the marker is absent;
   refused when `agentenv.Marker(os.Getenv)` reports a coding agent's session — the fence D846 exists
   for, unchanged; refused when the key is not one the typed path would have demanded it for (so the
@@ -196,14 +199,14 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   gate, not a security boundary**. A local user who can run `fugaro` can set the marker variable
   themselves, and can edit the same file with an editor. What the hook preserves is the fence that
   matters — an agent's session cannot raise its own ceiling — and what it buys is that a widening
-  from the console is one argv, built by the allow-list, behind a window whose yes comes from its own
-  top frame. **The task writes that sentence; it does not imply otherwise anywhere.**
+  from the console is one argv, built by the allow-list, behind a window whose yes comes from its
+  own top frame. **The task writes that sentence; it does not imply otherwise anywhere.**
 - **Tests:** `TestSettingsSetRefusesConsoleConfirmedWithoutTheMarker`,
   `TestSettingsSetRefusesConsoleConfirmedInAnAgentSession` (each of `agentenv.Markers`, one case
   each), `TestSettingsSetAcceptsConsoleConfirmedWithTheMarker`,
   `TestSettingsSetRefusesConsoleConfirmedOnANonWideningEdit`,
-  `TestSettingsSetConsoleConfirmedStillWritesTheSameBytes` (the hook changes who confirms, never what
-  is written), `TestSettingsSetStillDemandsTheTypedNameAtATerminal` (no marker, no flag: S5's
+  `TestSettingsSetConsoleConfirmedStillWritesTheSameBytes` (the hook changes who confirms, never
+  what is written), `TestSettingsSetStillDemandsTheTypedNameAtATerminal` (no marker, no flag: S5's
   behaviour is untouched), and — on the console side, in the same task —
   `console/test/unit/spawn.test.ts`'s child-environment vector, which carries the one new key and no
   other.
@@ -226,15 +229,15 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   `docs/design/desktop-console.md` §5.1 **rule 5 and rule 6, in this commit**,
   `console/docs/json-contract.md` §6.15 (the settings document, with the three fields P2 adds).
 - **The argv, word by word:** `settings --json --project <name> [--config <path>]` — the group's own
-  read, with the project flags §3.4 rule 3 gives every cloud command. **No `--offline`**: the console
-  reads `state: unread: …` for the layers that could not be read and draws the row as unread, which
-  is the honest answer and the one the operator can act on.
-- **What the screen does with the document:** one row per setting, drawn in the panels the ask names;
-  a row with `writable: true` and a non-empty `target_layer` gets a pencil; a row with
+  read, with the project flags §3.4 rule 3 gives every cloud command. **No `--offline`**: the
+  console reads `state: unread: …` for the layers that could not be read and draws the row as
+  unread, which is the honest answer and the one the operator can act on.
+- **What the screen does with the document:** one row per setting, drawn in the panels the ask
+  names; a row with `writable: true` and a non-empty `target_layer` gets a pencil; a row with
   `writable: false` gets the family name from `owner` in S5's own words and no pencil; a row with
   `sensitive: true` is drawn **with no value at all** (the CLI omits it) and no pencil (**D1111**).
-- **Red step:** `projects.test.ts` fails while the section does not exist, and
-  `spawn.test.ts`'s settings-read vector fails while the argv has no `--project`.
+- **Red step:** `projects.test.ts` fails while the section does not exist, and `spawn.test.ts`'s
+  settings-read vector fails while the argv has no `--project`.
 - **Tests:** the two allow-list tests (`ipc.test.ts`'s count and its never-entry test;
   `spawn.test.ts`'s exact vector), `preload-surface.test.ts` (the method is in both lists),
   `projects.test.ts` (the row set: a writable row has a pencil, an owned row names its family, a
@@ -248,26 +251,26 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 
 - **Files:** `console/src/renderer/screens/projects.ts` (the pencil: a real `<button>` with an
   accessible name naming the key), `console/src/renderer/entry.ts` (focus returns to the pencil when
-  the window closes), `console/src/renderer/theme/screens.css` (the pencil's states — never by colour
-  alone), `console/src/main/settingsview.ts` (new: the view the window draws, built from a dry-run
-  document and the read's row, with no Electron in it, so it is unit-testable the way
+  the window closes), `console/src/renderer/theme/screens.css` (the pencil's states — never by
+  colour alone), `console/src/main/settingsview.ts` (new: the view the window draws, built from a
+  dry-run document and the read's row, with no Electron in it, so it is unit-testable the way
   `confirmView` is), `console/test/unit/settingsview.test.ts` (new),
   `console/test/unit/projects.test.ts`.
 - **The view carries, and nothing else:** the key; the old value; the new value; the layer written
-  (`target_layer`); the layer that wins (`wins`); and, **only when they differ**, one sentence saying
-  the edit will not change what runs (**D1113**) — which is a comparison of two fields the CLI
-  printed, and which the task replaces with the dry run's own field if P3 grows one. Plus, for a
+  (`target_layer`); the layer that wins (`wins`); and, **only when they differ**, one sentence
+  saying the edit will not change what runs (**D1113**) — which is a comparison of two fields the
+  CLI printed, and which the task replaces with the dry run's own field if P3 grows one. Plus, for a
   widening, the CLI's `why` sentence; and, for every edit, the exact argv, field by field.
 - **The two shapes (D1109):** a narrowing or a non-widening edit is one click with Confirm as the
   default button. A widening has **Cancel as the default button** and Confirm **disabled until the
-  tick** labelled "I understand this raises a limit". The shape is chosen by the dry run's `widening`
-  field, never by the console.
+  tick** labelled "I understand this raises a limit". The shape is chosen by the dry run's
+  `widening` field, never by the console.
 - **Red step:** `settingsview.test.ts` fails while the view does not exist; its widening cases fail
   while the Confirm button is enabled without the tick.
 - **Tests:** `settingsview.test.ts` — the six fields, the "will not change what runs" sentence
   present exactly when the layers differ and absent when they do not, a sensitive row **never**
-  reaching a view, the widening shape (Cancel default, Confirm disabled, enabled after the tick), the
-  narrowing shape (one click), and the argv shown matching the argv the builder produces.
+  reaching a view, the widening shape (Cancel default, Confirm disabled, enabled after the tick),
+  the narrowing shape (one click), and the argv shown matching the argv the builder produces.
   `projects.test.ts` — the pencil's accessible name names its key, it is reachable in the tab order,
   and focus returns to it.
 - **SEC because** the dialog is the confirmation rule 11's pattern is copied for; the review is what
@@ -275,54 +278,55 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 
 ### C3. The write: `settings.edit`, the dry run, and the widening hook (D1103, D1104, D1105, D1112, D1114, D1115). **SEC** — **size L**
 
-- **Files:** `console/src/main/ipc.ts` (`settings.edit`, its exact-argv row, **rule 5's count 25 → 26
-  in the same commit**, and the never table re-read rather than edited),
-  `console/src/main/spawn.ts` (the row; `CHILD_ENV_KEYS` gains P4's marker key **only if P4 landed**),
-  `console/src/main/confirm.ts` (**generalized from one view to a union**, D1115, with
+- **Files:** `console/src/main/ipc.ts` (`settings.edit`, its exact-argv row, **rule 5's count 25 →
+  26 in the same commit**, and the never table re-read rather than edited),
+  `console/src/main/spawn.ts` (the row; `CHILD_ENV_KEYS` gains P4's marker key **only if P4
+  landed**), `console/src/main/confirm.ts` (**generalized from one view to a union**, D1115, with
   `LaunchConfirmer`'s seam widened to take either view and its `close()` kept as the tab-leave and
   installation-change cancel), `console/src/main/launch.ts` (the launch's own view moves behind the
-  union, unchanged in behaviour), `console/src/preload/index.ts` and `console/src/preload/confirm.ts`,
-  `console/src/renderer/entry.ts`, `console/test/unit/confirm.test.ts`,
-  `console/test/unit/confirm-view.test.ts`, `console/test/unit/ipc.test.ts`,
-  `console/test/unit/spawn.test.ts`, `docs/design/desktop-console.md` §5.1 **rule 5, rule 6 and the
-  new rule 12, in this commit**.
-- **The two spawns per confirmed edit, in this order:** first
-  `settings set KEY --layer <L> --dry-run --json --project <name> [--config <path>]` (or the `unset`
-  form) — nothing is written, and its document is what the window draws; then, on a yes from the
-  window's own top frame,
-  `settings set KEY --layer <L> --yes [--console-confirmed] -- <VALUE> --project <name> [--config <path>]`.
+  union, unchanged in behaviour), `console/src/preload/index.ts` and
+  `console/src/preload/confirm.ts`, `console/src/renderer/entry.ts`,
+  `console/test/unit/confirm.test.ts`, `console/test/unit/confirm-view.test.ts`,
+  `console/test/unit/ipc.test.ts`, `console/test/unit/spawn.test.ts`,
+  `docs/design/desktop-console.md` §5.1 **rule 5, rule 6 and the new rule 12, in this commit**.
+- **The two spawns per confirmed edit, in this order:** first `settings set KEY --layer <L>
+  --dry-run --json --project <name> [--config <path>]` (or the `unset` form) — nothing is written,
+  and its document is what the window draws; then, on a yes from the window's own top frame,
+  `settings set KEY --layer <L> --yes [--console-confirmed] -- <VALUE> --project <name> [--config
+  <path>]`.
 - **Why `--` and why the layer is explicit (D1104, D1105):** the value is a **positional** argument,
-  so the terminator is the only thing that keeps a value spelled `-draft` or `--layer` from being read
-  as a flag; and the layer is passed because **what the window showed is what is spawned** — the
-  console never lets the child choose a layer the operator did not see. List edits use the `=` form
-  (`--add=V`, `--remove=V`), where the value is part of the flag's own word.
+  so the terminator is the only thing that keeps a value spelled `-draft` or `--layer` from being
+  read as a flag; and the layer is passed because **what the window showed is what is spawned** —
+  the console never lets the child choose a layer the operator did not see. List edits use the `=`
+  form (`--add=V`, `--remove=V`), where the value is part of the flag's own word.
 - **The value is never a shell word:** it is one element of the argv array, spawned with `shell:
   false`, exactly as `argvFor` already does for every row. On the WSL route the wrapper's own
   metacharacter check refuses such a value, and the window shows the command to copy instead.
 - **The refusal path (D1112):** a non-zero exit shows the CLI's sentence verbatim, bounded by
   `MAX_REPLY_REASON_LENGTH`, beside a **Read again** control. **No silent retry, ever** — the
   compare-and-swap exists because another writer moved the file.
-- **Red step:** `spawn.test.ts`'s settings-edit vector fails while the row builds the value
-  as a bare positional, and `ipc.test.ts`'s count test fails while the operation is absent.
+- **Red step:** `spawn.test.ts`'s settings-edit vector fails while the row builds the value as a
+  bare positional, and `ipc.test.ts`'s count test fails while the operation is absent.
 - **Tests:** the exact vector for a narrowing, a widening, an unset and a list edit;
   `TestSettingsEditIsRefusedWithoutAConfirmedWindow` (the spawn does not happen when the window
   answered no, when it closed, or when the answer came from another frame — the property
   `confirm.test.ts` already pins for the launch, asserted for the second view);
   `TestSettingsEditDoesNotRetryOnARefusal`; `TestSettingsWindowClosesAsACancelOnTabLeave`; the count
-  and the never-entry tests; and, under P4, `TestSettingsEditPassesConsoleConfirmedOnlyForAWidening`.
+  and the never-entry tests; and, under P4,
+  `TestSettingsEditPassesConsoleConfirmedOnlyForAWidening`.
 - **SEC because** it moves rule 5 and rule 6 and it is the second write the console makes; rule 12
   and the count move in the same commit.
 
 ### C4. The hermetic end to end, and the fixture (D1118). **size M**
 
 - **Files:** `console/test/fixtures/bin/fugaro` (two arms: `settings --json` answering a fixture
-  document, and `settings set|unset` answering P3's dry-run document for the first call and a success
-  sentence for the second, **appending its argv to the same `reads.log` the stub already writes**
-  through its own `log` helper),
-  `console/test/e2e/projects.spec.ts` (the pencil, the dialog, the widening's tick, the refusal),
-  `console/test/fixtures/settings.json` (new, with its `.license`), `console/test/unit/fixture.test.ts`
-  and `console/test/unit/stub.test.ts` (the stub's own pins), `console/test/unit/goldens.test.ts`
-  (the golden list, which gains the panels' new content).
+  document, and `settings set|unset` answering P3's dry-run document for the first call and a
+  success sentence for the second, **appending its argv to the same `reads.log` the stub already
+  writes** through its own `log` helper), `console/test/e2e/projects.spec.ts` (the pencil, the
+  dialog, the widening's tick, the refusal), `console/test/fixtures/settings.json` (new, with its
+  `.license`), `console/test/unit/fixture.test.ts` and `console/test/unit/stub.test.ts` (the stub's
+  own pins), `console/test/unit/goldens.test.ts` (the golden list, which gains the panels' new
+  content).
 - **The property the spec exists for:** the argv the stub **recorded** equals the argv the window
   **showed** — the console's own version of rule 11's "what the window shows is what is spawned",
   asserted from outside the process rather than from a unit test's expectation.
@@ -345,10 +349,10 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   that the console's work writes the console's document), and
   `docs/settings-commands/reconciliation.md`'s D846 entry **only if P4 landed**.
 - **Why it is a task of its own and still SEC:** three of these documents are pinned by docs tests
-  (`go test ./internal/cli -run Docs` and the console's own document tests), so a wording change here
-  turns a test red somewhere else, and the task is where that is noticed. It is not a fence commit —
-  the fences moved with their code — but it may not be skipped, because a rule 12 that names a
-  behaviour the code does not have is worse than no rule 12.
+  (`go test ./internal/cli -run Docs` and the console's own document tests), so a wording change
+  here turns a test red somewhere else, and the task is where that is noticed. It is not a fence
+  commit — the fences moved with their code — but it may not be skipped, because a rule 12 that
+  names a behaviour the code does not have is worse than no rule 12.
 
 ### C6. The release notes, console 0.119.0 (D1120). **size S**
 
@@ -360,10 +364,10 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   write, and that an edit does not change a run until `fugaro update` publishes it — the CLI's own
   sentence, unchanged.
 - **`### For operators`: none, and this task says so in the notes' own body.** Nothing here is a
-  post-deploy step: the console edits files a person could edit with an editor, the CLI prerequisites
-  add flags and members rather than changing a meaning, and the policy node's shape is untouched. A
-  release whose `### For operators` is empty is a release that asks nothing of the operator, which is
-  the outcome the hard rule wants.
+  post-deploy step: the console edits files a person could edit with an editor, the CLI
+  prerequisites add flags and members rather than changing a meaning, and the policy node's shape is
+  untouched. A release whose `### For operators` is empty is a release that asks nothing of the
+  operator, which is the outcome the hard rule wants.
 - **Verification:** `website/`'s own check (`npm run check`) if the summaries file's shape is pinned
   there, and the console release tag `console-v0.119.0` at release time, not here.
 
@@ -374,12 +378,12 @@ runs beside them and is needed by C3; **P4 runs beside them and is needed only b
 path**, which is why its refusal degrades the feature rather than stopping the plan. The longest
 chain is five tasks and two of them are L.
 
-**Two things a reader should weigh before approving this.** First, **the plan is larger than the
-ask looks**: eleven tasks, seven of them SEC, for a pencil — and the reason is that the console
-cannot be told which rows are writable, whether an edit widens, or which installation it is looking
-at, and each of those is a CLI change rather than a console one. Second, **the cheapest version of
-this feature is not this one**: D1107's option **B** (narrowings only, widenings shown as a command
-to copy) drops P4 and the widening half of C3 and C4, and it is the version to approve if the owner
+**Two things a reader should weigh before approving this.** First, **the plan is larger than the ask
+looks**: eleven tasks, seven of them SEC, for a pencil — and the reason is that the console cannot
+be told which rows are writable, whether an edit widens, or which installation it is looking at, and
+each of those is a CLI change rather than a console one. Second, **the cheapest version of this
+feature is not this one**: D1107's option **B** (narrowings only, widenings shown as a command to
+copy) drops P4 and the widening half of C3 and C4, and it is the version to approve if the owner
 would rather have the pencil in console 0.119.0 without a rule weakened for it. The owner's D1100
 answer says widenings are in scope on day one, so this plan is built for that; the fallback is
 written down because it is a real option and not a consolation.
