@@ -158,6 +158,8 @@ route (`sharedAccounts`, `auth.go:469`, which is the gate a shared caller meets 
 - **Tests:** `TestReviewAccountIsAdmittedOnTheModelPathForItsOwnAccount`,
   `TestReviewAccountIsRefusedTheModelPathForAnotherAccount` (the pairing is the class's, and a review account
   is admitted for its own account only),
+  `TestReviewCallerIsOfferedNoTierBOrCAndNoOtherAccount` (the offering rule: tier A for the pairing's one
+  account, never tier B/C and never another account),
   `TestReviewAccountsAreTheNamesProjectJobsDeploys`, `TestSharedAndReviewSetsAreDisjoint`,
   `TestSharedJobCallerIsStillRefusedOnEveryRoute` (F2 — today's behaviour, unchanged),
   `TestReviewCallerOnAnUnpublishedRepositoryIsRefused` (F13, fail closed),

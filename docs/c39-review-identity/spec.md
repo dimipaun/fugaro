@@ -480,6 +480,16 @@ walk that list (`TestCredsRunCannotReadAnything`, `TestCredsRunCannotWriteAnythi
 The result is that a review run can neither read its own mark nor clear it to sign again — the write is the
 service's, over IAM, and the only reader of the node is the service.
 
+**Both identity tokens are registered with the service's redaction, and that registration is the call's**
+(D1074): the run's Firebase ID token and the job's Google ID token are the caller's own values, and the
+service holds them for **the length of one call** as `call.scrubs` (`internal/credsvc/forward.go:99`), the
+list `readCall(r, []string{req.RunIDToken, req.JobIDToken})` (`server.go:530`) builds — the same registration
+the model path makes, and the list the upstream request's body and headers and the answer's own stream are
+scrubbed with (`cascade.go:517`). **It is not the auditor's own scrub**: `WithAuditScrub` is armed **once**,
+by the bundle loader, with its own scrub of the document it read (`probe.go:702`), and it is
+installation-wide — a route that leaned on it would be leaning on a scrub that never knew this call's
+tokens. This is the §7 asset sentence's mechanism, and the plan's C3.9e carries it as code.
+
 A second sign for the same run is **refused** and audited like every other refusal — one line, the sign's
 purpose, the wire's existing `request_refused` status, because the status set is closed and this design does
 not grow it — and the service writes a warning to its own log beside it, so what an operator's alerting
