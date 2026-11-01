@@ -12,6 +12,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -134,6 +135,21 @@ func TestModelsLsListsRoutesModelsAllowListsAndUsage(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the MODELS section does not show %q:\n%s", want, out)
 		}
+	}
+	// An embedded Claude row is on the direct route: it is the one row that
+	// shows what a model no provider claims resolves to, and without it the
+	// direct route is a table row nothing in the read is ever sent down.
+	models := modelsSection(t, out, "MODELS")
+	line := ""
+	for _, l := range strings.Split(models, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "claude-sonnet-5-5 ") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Errorf("the MODELS section has no row for claude-sonnet-5-5:\n%s", models)
+	} else if !strings.Contains(line, config.RouteDirect) {
+		t.Errorf("claude-sonnet-5-5's row is %q, and a Claude ID no route claims goes direct", strings.TrimSpace(line))
 	}
 	// Allow-lists: the model budget.allowed_models leaves out is refused for
 	// every repository, which is the one thing that column exists for.
