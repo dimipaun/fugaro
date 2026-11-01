@@ -156,6 +156,16 @@ type baseInstruction struct {
 	Text string
 }
 
+// maxBaseInstructionBytes caps what the base branch's own instructions add to
+// a review-mode prompt. Nothing upstream bounds them: a base branch can carry
+// a CLAUDE.md or a rule file of any size, read out of the base ref whole
+// (reviewmode.go, baseInstructions), and a prompt is the model's input rather
+// than a file it can page through. The files are taken in the order
+// baseInstructions put them in — the repository's CLAUDE.md first, its rules
+// after — so a base over the cap keeps what says what the repository is, and
+// the block names what it left out instead of dropping it silently.
+const maxBaseInstructionBytes = 32 << 10
+
 // baseInstructionsBlock is what a review-mode prompt carries where a coding
 // run's prompt carries the repository's instructions (O6, D894(a)): the line
 // that says which tree the reviewer is reading — the reviewed pull request's
@@ -163,7 +173,8 @@ type baseInstruction struct {
 // never instructions — and the base branch's own CLAUDE.md and .claude/rules,
 // read from the base ref (reviewmode.go, baseInstructions). A base that has
 // none says so, rather than leaving the reviewer to wonder whether the head's
-// were meant.
+// were meant; one whose instructions are over maxBaseInstructionBytes says
+// which files that left out, and where to read them.
 //
 // pick says the reviewer is reading several checkouts, each a pull request's
 // own head (PickPrompt), rather than one.
@@ -179,10 +190,32 @@ func baseInstructionsBlock(rev string, pick bool, files []baseInstruction) strin
 		b.WriteString("\nThe base branch has none.\n")
 		return b.String()
 	}
-	for _, f := range files {
+	kept, dropped, total := clipBaseInstructions(files, maxBaseInstructionBytes)
+	for _, f := range kept {
 		fmt.Fprintf(&b, "\n--- %s ---\n%s\n", f.Path, strings.TrimRight(f.Text, "\n"))
 	}
+	if len(dropped) > 0 {
+		fmt.Fprintf(&b, "\nThe base branch's instructions are %s in all, over the %s this prompt carries, so these are left out: %s. Read any of them from the base ref itself (`git show %s:<path>`).\n",
+			fmtBytes(int64(total)), fmtBytes(int64(maxBaseInstructionBytes)), strings.Join(dropped, ", "), rev)
+	}
 	return b.String()
+}
+
+// clipBaseInstructions keeps as many of files as fit in max bytes, in the
+// order they are given, and names the rest. A file is kept whole or not at
+// all: half a CLAUDE.md is instructions with their end cut off, which is worse
+// than none of it and a line naming the file that was left out. total is the
+// size of every file, the kept and the dropped together.
+func clipBaseInstructions(files []baseInstruction, max int) (kept []baseInstruction, dropped []string, total int) {
+	for _, f := range files {
+		total += len(f.Text)
+		if len(dropped) == 0 && total <= max {
+			kept = append(kept, f)
+			continue
+		}
+		dropped = append(dropped, f.Path)
+	}
+	return kept, dropped, total
 }
 
 // ReviewPrompt builds the review stage prompt. review is the configured

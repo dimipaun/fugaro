@@ -289,19 +289,25 @@ func stripClaudeConfig(dir string) error {
 	})
 }
 
-// baseInstructions reads the base branch's CLAUDE.md and .claude/rules — at
-// any depth, the same files stripClaudeConfig removes from the checkout —
-// out of rev's tree: what the reviewer is given in place of the reviewed
-// head's own instructions (O6, D894(a)). readBaseFile reads each one from
-// the base ref, never from the head and never out of the head's .git, and a
-// base that has none gives the reviewer none: the head's copy is not a
-// fallback.
+// baseInstructions reads the base branch's CLAUDE.md and .claude/rules out of
+// rev's tree: what the reviewer is given in place of the reviewed head's own
+// instructions (O6, D894(a)). The rules are the repository root's
+// .claude/rules/ alone — that directory is where a repository's path-scoped
+// rules live, and a nested pkg/.claude/rules/ is not one of them — while a
+// CLAUDE.md is read wherever it sits, since Claude Code loads a nested one for
+// the directory it is working in, so the base's own nesting is part of what it
+// tells the reviewer. readBaseFile reads each one from the base ref, never
+// from the head and never out of the head's .git, and a base that has none
+// gives the reviewer none: the head's copy is not a fallback.
 //
 // A tree that cannot be listed, or a file that cannot be read, is a warning
 // and no instructions, the same way reviewInputBlock treats an input it
 // cannot build. The reviewer is then given no repository instructions at
 // all, which is the safe half of the two: the head's own are the ones it
 // must never be given.
+//
+// How much of all this reaches the prompt is prompts.go's business: the files
+// are read whole here and clipped there (maxBaseInstructionBytes).
 func (r *run) baseInstructions(ctx context.Context, rev string) []baseInstruction {
 	if r.repo == nil || rev == "" {
 		return nil
