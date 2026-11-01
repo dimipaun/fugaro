@@ -9228,8 +9228,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is twenty-four operations**") {
-		t.Errorf("%s no longer says the surface is twenty-four operations: rule 5's count moved with the code when V2.5.1a landed, and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is twenty-five operations**") {
+		t.Errorf("%s no longer says the surface is twenty-five operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string
