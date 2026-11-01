@@ -86,8 +86,8 @@ them and renames none of them.
 `go build ./... && gofmt -l . && go vet ./...` (gofmt prints nothing); the task's named tests with
 `GOFLAGS=-p=2 go test ./internal/<pkg>/ -run '<names>' -count=1`; `GOFLAGS=-p=2 go test ./internal/cli/ -run
 Docs -count=1 -timeout 40m` when a doc changed; `go test ./internal/eeboundary/... -count=1`; and
-`go test -tags terraform ./internal/infra/...` in C3.9g, which is the task that wires the variable. Never the whole
-`internal/cli` or `internal/runner` package. No task adds a dependency, so `go.mod` is unchanged by all
+`go test -tags terraform ./internal/infra/...` in C3.9g, which is the task that wires the variable. Never the
+whole `internal/cli` or `internal/runner` package. No task adds a dependency, so `go.mod` is unchanged by all
 seven.
 
 ## C3.9a. The review class, the repository table and the pairing (D1062, D1063, D1064, D1066, F1, F2, F4, F13). **SEC**
@@ -128,10 +128,11 @@ route (`sharedAccounts`, `auth.go:469`, which is the gate a shared caller meets 
   repository. Reading `PolicyReader.Admissions` by itself is the narrower spelling and keeps admitting a
   repository the owner withdrew with `fugaro project repos rm` — the command removes the repository's place
   in the project's allow-list and does not touch its child — so the review pairing takes the whole
-  intersection and no second implementation of O4 exists. **The class must not widen the offering**: a
-  review caller is served tier A for the one account the pairing resolved and **no other tier and no other
-  account's credential** — `candidates` already refuses a tier-A credential the admission does not name and
-  `Selector` still falls to B/C for a caller the policy allows, which a review caller must not do — and
+  intersection and no second implementation of O4 exists. **The class must not widen the offering**:
+  `candidates` (`cascade.go:33`) is the one place that decides which credentials a call may be served, and
+  for a review caller it returns the pairing's **one** account and **tier A** — never another tier-A
+  account's entry, and never a tier B/C one, so a review call has nothing for the ladder to fall to even
+  where the policy's `fallback` would allow one ([spec.md](spec.md) §10's cascade bullet).
   `TestReviewCallerIsOfferedNoTierBOrCAndNoOtherAccount` is the test that holds it, beside the existing
   cascade tests over the same function.
 - **One derivation, one input, one test.** `ReviewJobAccountsFor` reads the **published policy** — so an
