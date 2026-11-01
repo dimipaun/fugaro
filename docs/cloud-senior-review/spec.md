@@ -124,19 +124,24 @@ recipe. Its whole input is the pull request number and the head commit it resolv
 
 **Why a separate job.** `mixed-credentials.md` §6 mitigation 4 says it plainly: *"a separate job
 execution for the reviewer, with its own container and service account, is the only mitigation that
-closes the gap"* — the `/proc` read and the metadata server. The token is then held in a container
-that the pull request's coder never ran in, that holds no write credential, and that is gone when the
-review is over. **It is not a container that never runs repository code, and this design will not
-claim that it is:** D885's mutation check runs a test from the head under review by design, and the
-review stage's own deny list covers Claude Code's tools — `WebSearch`, `WebFetch` and the binary
-reads (`internal/agent/settings.go`'s `DenyRules`) — rather than a shell. **D891 is answered, option
+closes the gap"* — the `/proc` read and the metadata server. **O1 makes that gap smaller than it was:
+the review job's model calls route through the credentials service's tier A on `/v1/messages`,
+admitted for the named account alone, so the container holds no OAuth token to read** — not in its
+environment, not in `/proc`, not on the variant's `secret_env`. What the container does hold is the
+one-hour, read-only installation token the service minted for this run, in the runner's own memory,
+which writes nothing and expires with the run. **It is not a container that never runs repository
+code, and this design will not claim that it is:** D885's mutation check runs a test from the head
+under review by design, and the review stage's own deny list covers Claude Code's tools — `WebSearch`,
+`WebFetch` and the binary reads (`internal/agent/settings.go`'s `DenyRules`) — rather than a shell.
+**D891 is answered, option
 (a):** the mutation test runs in a **subprocess with the token scrubbed from its environment and
-egress denied**, and **Bash is denied for the rest of the review stage**, with the mutant applied and
-reverted by the runner instead of by the agent's shell — so the stage's general exfiltration path
-(the environment and the network) is closed, and the residual is the `/proc` read §7 states. What the
+egress denied**, and **Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` are denied for the rest of
+the review stage**, with the mutant applied and reverted by the runner instead of by the agent's shell
+— so the stage's general exfiltration path (the environment and the network) is closed, and the
+residual is the `/proc` read §7 states. What the
 separate container does remove is a configuration the owner has to reason about: in the coder's job
 there are two credentials and a per-stage environment to get right (the held plan's P10, P11, P14);
-in a separate job there is one credential and one stage.
+in a separate job there is one stage, and under O1 no model credential in it at all.
 
 **The forge token is read-only — and that needs a job that does not exist yet.** A run's installation
 token today asks for `{contents: write, pull_requests: write, issues: read, metadata: read}`
@@ -165,12 +170,14 @@ review job launched on it would inherit **both** the account's OAuth token **and
 
 **The review job must therefore be its own job variant, with its own service account, per account.**
 Same `(profile, provider, account)` axis and the same `gcp.ProjectJobName` shape (a suffix or a
-parallel entry in the installation root's `project_jobs`), and one difference that is the whole
-point: its `secret_env` (the Terraform module's env→secret map, `internal/infra/projectjobs.go`'s
-`ProjectJob.SecretEnv`) carries **the account's Claude OAuth token and no `github-app-key`**, and its
-service account holds **no `secretAccessor`** on that key. It is deployed by `fugaro update` with the
-rest of the job set, and the implementation plan carries it as its own task (R7) because a launcher
-cannot launch a job that does not exist.
+parallel entry in the installation root's `project_jobs`), and the differences are the whole point:
+its `secret_env` (the Terraform module's env→secret map, `internal/infra/projectjobs.go`'s
+`ProjectJob.SecretEnv`) carries **no `github-app-key`** and, under **O1**, **no OAuth token either** —
+the reviewer's calls reach the model through the credentials service, and the account is named by the
+run's own task and by the service's admission of the review class rather than by a mounted secret —
+and its service account holds **no `secretAccessor`** on that key. It is deployed by `fugaro update`
+with the rest of the job set, and the implementation plan carries it as its own task (CSR7) because a
+launcher cannot launch a job that does not exist.
 
 **Who mints the read-only installation token, since the launcher holds no key — and how it reaches the
 job.** The two mints in this tree both happen *inside* something that mounts the App key —
@@ -222,16 +229,23 @@ enabled for the installation**:
   **project-scoped** job, and the service refuses a caller whose account belongs to a shared project
   job (Global Constraint 6 of
   [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md));
-  **C3.9**, in that plan's Slice 3, *unscheduled*, is the task that lifts it. The same work must
-  teach the service three more things a review caller needs: R1's **read-only** set, which it does
+  **C3.9**, in that plan's Slice 3, *unscheduled*, is the task that lifts it — and the
+  credentials-service routing design **#1514** splits it into **C3.9a–C3.9g**, which is the form this
+  design names because that pull request is where the split is written. The same work must
+  teach the service four more things a review caller needs: the **review class on `/v1/messages`** that
+  **O1** routes the reviewer's calls through, admitted for the account the review run names and for no
+  other (this **amends #1514's D1063**, and it is why a review job needs no
+  `routing.claude: {via: cascade}` to be admitted — that switch is the operator's consent for a coding
+  run's *cascade*, while a review job's credential is decided by its own class); CSR1's
+  **read-only** set, which it does
   not serve today (`internal/credsvc/github.go:263` mints the run's own), the repository resolved
   from the run identity rather than from a one-repository job account (above), and **D892(a)'s sign
   and verify endpoints** with their authentication (§6);
 - **no `fugaro update` can do that second half.** This design's HARD RULE — the whole upgrade is one
   command — is exactly what it cannot satisfy here, and the honest statement is that the reviewer is
-  **blocked on another work stream's task** until C3.9 lands. **R7, R2 and the coordinator's
+  **blocked on another work stream's task** until C3.9 lands. **CSR7, CSR2 and the coordinator's
   `ship` → merge path are therefore blocked on it**, and the check that tells an operator so
-  (`fugaro doctor`, `fugaro validate`) is R6's. **E7** in [reconciliation.md](reconciliation.md) §5
+  (`fugaro doctor`, `fugaro validate`) is CSR6's. **E7** in [reconciliation.md](reconciliation.md) §5
   records the dependency.
 
 **The review job writes nothing to the pull request**: not a comment, not a review, not a label. Its
@@ -240,20 +254,83 @@ verdict is an artifact, and the coordinator decides what, if anything, to post o
 **Worktree isolation, and mutation checks in the cloud.** The review job checks out the pull
 request's head at the SHA the provider reports (`FetchPRHead`, already what review mode does) into
 its **own** filesystem, never the launcher's checkout and never the coding run's worktree, which no
-longer exists. On a security-sensitive pull request the reviewer may do what an independent reviewer
+longer exists. **The checkout is bounded, and the bounds are part of the contract rather than
+hygiene** — the head is a tree this job did not write:
+
+- **no path is followed out of the worktree.** Every path the checkout and the configuration strip
+  touch is resolved with `Lstat` and confined to the worktree root, and a **symlink** is refused or
+  removed rather than followed — a head that ships `CLAUDE.md -> /proc/self/environ`, or a
+  `.claude/settings.json` that links outside the tree, is exactly the shape that turns a strip into a
+  read of the runner's own process;
+- **the reviewer's input is size-bounded.** The diff and the tree handed to the reviewer are bounded
+  the way D886 bounds the artifact: a diff past the bound is truncated **with the truncation recorded
+  in the artifact**, never silently dropped, and a head whose size cannot fit the session's context is
+  a **failed review**, not a short one — the same rule, applied to the input side as well as the
+  output side;
+- **submodules and LFS are not fetched.** The read-only installation token holds `contents: read` on
+  this repository and nothing else, so a `.gitmodules` entry naming another repository is not
+  initialized and an LFS pointer is left a pointer: recursing would send the run's token to a
+  repository the account's `allow_data_to` never admitted, and an LFS smudge would run a filter
+  process inside the container that reads the untrusted head. **The review prompt says the tree was
+  shallow and unrecursed**, so the reviewer does not report a submodule it never received as a finding
+  about the head.
+
+**What the reviewer's session is allowed to load, and where it comes from — D894(a) and O6.**
+`review` mode today strips the head's `.claude/` and `.mcp.json` before the stage runs
+(`stripClaudeConfig`, `internal/runner/reviewmode.go:253`) and **leaves the head's `CLAUDE.md` in
+place** (`:238`). **D894 is answered with option (a): the configuration posture is tightened rather
+than the existing strip widened**, and it is tightened **on the `review` stage itself** — the stage
+`fugaro run --pr N` already runs — so a review that exists today gets the same posture and the design
+does not leave the older path behind it. Three things change:
+
+- **the head's `CLAUDE.md` and `.claude/rules/` are not loaded at all.** They are the head's own
+  instructions to a model, written by the change under review, so a reviewer that reads them is being
+  told what to think by the thing it is judging. **O6 is answered: the reviewer is given the BASE
+  branch's copies instead**, read from the base ref — not from the head, and not out of the head's
+  `.git` — and where the base has none the reviewer is given none rather than falling back to the
+  head's;
+- **the session runs under managed-only settings.** The deny rules live in the review container's
+  managed settings file (`agent.ManagedSettingsPath`, `internal/agent/settings.go:16`), and project
+  settings, project hooks and project MCP servers are **refused outright** rather than only deleted
+  from the checkout: the strip is a deletion from a tree the head wrote, so a posture that names what
+  may be loaded does not depend on that deletion having caught every spelling of every file;
+- **and the stage's `HOME` is a fresh directory the job creates**, so no user-level settings file
+  baked into the image contributes a rule either. **CSR4a pins both and says which is load-bearing:**
+  the deny rules are the managed file's, and the fresh home is what keeps the image's own file out of
+  the session. If a fresh home turns out not to work with the agent's own state directory, the
+  fallback is a home seeded from the managed file alone — what CSR4a may not do is run with the
+  image's home as it stands.
+
+**Account selection in the head is not read either.** A head whose settings name a model or an account
+chooses nothing: the account is the launcher's (§1's `--token` over `agent.oauth_token` over
+`default`) and the model is the reviewer's pin, so the head's own configuration is not an input to this
+run at all.
+
+On a security-sensitive pull request the reviewer may do what an independent reviewer
 does by hand: **apply a mutant** to a file in its worktree, **run the named test**, see it fail (or
-not), and **revert** — with `git checkout --` on its own working tree, or by discarding the
-worktree, and never with a push. That is a scratch edit inside a container that is thrown away. It
+not), and **revert**. **The revert restores the bytes the runner read before it applied the mutant,
+held in the runner's own memory** — not `git checkout --`, which would consult the head's
+`.gitattributes` filters, a configured `core.fsmonitor`, a running fsmonitor daemon and any hook the
+repository configures, so the untrusted tree would be choosing what the revert runs. Where a git read
+is unavoidable it runs with hooks and fsmonitor off, filters ignored and `.git` read-only, and the
+mutation path reaches **`gitops`'s push functions not at all** — which is what makes this section's
+"never pushes" a fact rather than a convention. That is a scratch edit inside a container that is
+thrown away. It
 is off unless asked for, it is bounded (one mutant, one named test, a time limit, and a revert
 before the stage ends), and the artifact says which test was run and what it did.
 
-**The job never holds a credential it does not need — which is why R7's variant is not optional.** It
-mounts exactly one secret — the named account's Claude OAuth token — and is **handed no credential at
-all**: the read-only installation token is minted by the credentials service and fetched by the job
-itself, by name (D893(c), above). It does not mount the App private key (**the difference from the
-shared project job it would otherwise reuse**), **the review-signing key** — D892(a) is answered with
-the **service** signing, so no key is mounted and none is readable from the job (§6) — the Bitbucket
-token, the credentials bundle, the budget token or the git signing material. The billing identity this design chooses is the thing to check against the tree: the
+**The job never holds a credential it does not need — which is why CSR7's variant is not optional.**
+**Under O1 it mounts no secret at all**: not the account's Claude OAuth token (the model calls go
+through the credentials service, above), not the App private key (**the difference from the
+shared project job it would otherwise reuse**), not **the review-signing key** — D892(a) is answered
+with the **service** signing, so no key is mounted and none is readable from the job (§6) — not the
+Bitbucket token, not the credentials bundle, not the budget token and not the git signing material.
+It is **handed no credential either**: the read-only installation token is minted by the credentials
+service and fetched by the job itself, by name (D893(c), above), and the service's URL is the only
+thing in its environment that names the service. **The fallback, if C3.9 slips past the point where
+the command must ship**, is the token mount this design first proposed — the variant's `secret_env`
+carrying the account's Claude token — which is strictly worse and is recorded as a fallback rather
+than as the plan (§7). The billing identity this design chooses is the thing to check against the tree: the
 variant it inherits its shape from is the **shared project job** of `(profile, account)`, whose bucket
 condition is the whole of `runs/` (`gcp.ProjectBucketCondition`, `docs/design/bucket-iam.md` §2.1) —
 the accepted, installation-wide reach the owner ruled on 2026-10-17. A review job needs to write one
@@ -308,8 +385,12 @@ bucket layout, the name sanitisation and the record's own artifact list are the 
 
 **`review.md` — the same thing for a person.** Generated from the JSON, section for section:
 overview, strengths, issues to flag, security, performance, test coverage, verdict. It exists so a
-reader never has to read JSON to understand a review, and so a comment or a PR description can be
-the markdown verbatim.
+reader never has to read JSON to understand a review — **and it is never published verbatim.** **O5
+is answered:** what a coordinator may post is a **bounded, re-redacted summary** it derives itself,
+never the artifact's own bytes, and **never on a public repository**, where a review of an untrusted
+head would publish that head's prose under the installation's name. The artifact is a document for
+the run's own bucket; the comment is the coordinator's, and the coordinator owns every word of it
+(§6).
 
 **Nothing of it leaves the run unredacted — and the redaction happens before the signature, not at
 publish time.** Both artifacts are reviewer prose generated from an untrusted diff: `review.md` is
@@ -320,7 +401,7 @@ is taken.** The order is a rule rather than a preference: D892(a)'s signature co
 exact bytes (§6), and a redaction applied later, at publish time, would change those bytes and break
 every signature over them — the redacted bytes are the signed bytes. Both pass through
 `internal/agent/redact.go`, exactly as the transcript does (§7). Today that pass covers what is
-published *from agent output*; this design names the artifact as one of those things, and R3 is the
+published *from agent output*; this design names the artifact as one of those things, and CSR3 is the
 task that has to make it true rather than assume it. **Redaction is a literal-value match, and §7
 states what it does not reach.**
 
@@ -340,7 +421,7 @@ coordinator can route on them without parsing English.
 **RFC 3339 in UTC**, written by the artifact's writer at the moment it writes the object, so a reader
 holding only `review.json` can still say when the review was performed. **Why it is a field and not
 "read the run record":** the record and the artifact are two objects, and the artifact is the one that
-travels — it is copied into a fix round's brief (R5), may be pasted into a comment or a chat, and may
+travels — it is copied into a fix round's brief (CSR5), may be pasted into a comment or a chat, and may
 outlive the run's own listing in a later audit — while the record does not travel with it. §6's
 ordering argument is about *when the review happened*, and that is a claim the artifact should be able
 to make about itself. `created_at` is the **writer's** claim and is not trusted on its own: the
@@ -373,10 +454,10 @@ did not run to a verdict; `timeout` means the bounded run expired. **A fifth wor
 the same reason §3's verdict refuses a fourth: a reader that compares against the four would take
 anything else for one of them. `reverted` is the runner's own statement that the worktree was put
 back, and `applied` is the mutation's description — neither is a claim by the reviewer's prose.
-**R4's `TestMutationObservedVocabularyIsClosed` pins this vocabulary** — every `observed` value the
+**CSR4b's `TestMutationObservedVocabularyIsClosed` pins this vocabulary** — every `observed` value the
 task can write is one of the four, and a fifth is refused — and it asserts the `error` and `timeout`
 arms rather than leaving them to the writer's discretion. `TestMutationAppliesRunsRevertsAndPushesNothing`
-is R4's too, and what it pins is the revert and the absence of a push, not these four words.
+is CSR4b's too, and what it pins is the revert and the absence of a push, not these four words.
 
 **The verdict vocabulary is this artifact's own: `ship`, `fix first`, `reject`.** It is **not** the
 in-run verdict's vocabulary. `internal/runner/verdict.go` decodes exactly two words, `ship` and
@@ -437,6 +518,27 @@ fix ↔ review loop). A review job that wrote its verdict nowhere the chain can 
 iteration the cap never sees. The artifact is the review's substance; the record is its provenance
 **and its place in the chain**.
 
+**The record's `tier` gains a value, and its `verdict` does not gain a word.** **O4 is answered:** the
+record's `reviews[].verdict` keeps the two words it has today (`ship`|`changes`; the field is a free
+string, `schemas/result.schema.json:45`, and the same pair is the closed enum on `reviewed_pr`'s own
+entry, `:291`), because a field never changes meaning and every reader of a record compares it against
+those two. What changes is `tier` (`:44`, today `first`|`senior`|`adversarial`): it gains
+**`independent`**, the value a review job's single entry carries, and that value is **display-only** —
+it tells a reader which reviewer wrote the entry and **carries no authority**. The **signed artifact
+is the only authority** on the independent review's outcome, and the record's `changes` is what the
+chain's cap counts, not what a coordinator ships on (§6). So **CSR3 lists `schemas/result.schema.json`
+among its files**: `tier` is a published wire shape the console and the history read, and adding a
+value to it is a schema change with a version to check, not a field a writer may invent.
+
+**And a signature that cannot be produced ends the run failed.** D892(a) puts the signing call on the
+job's critical path: the artifact is written, its digest is taken and the service is asked to sign it.
+**O4 is explicit about that failure arm** — a sign call that fails, whether the service refuses, the
+network drops or the account is not admitted, ends the run **`StatusFailed`** with the reason the
+service gave, and **never** a run that reports `ship` with an unsigned artifact. There is no
+"unsigned but otherwise fine" state to fall into: §6's verifier refuses an artifact with no sidecar,
+so a run that shipped one would have produced a verdict no coordinator may act on while looking, in
+the record, like it had produced one.
+
 ---
 
 ## 4. How it differs from the in-job reviewer
@@ -453,7 +555,7 @@ prompt inside it.
 | **When** | during the run, between `implement` and `fix`, changing what the run does next | **after** the run, on a head that is already pushed and already has a pull request |
 | **What it reads** | the working tree and the run's own session history | a **fresh clone of the pushed head**, with no memory of the coder's reasoning and no diff against an earlier round |
 | **Model** | `agent.models.reviewer` — often a cheap provider model on the same family as the coder | the strongest Claude model available, on a **named OAuth account** the owner controls |
-| **Credential** | the coder's job credential, in a container that also runs repository code | its own job **variant** and service account (§2), the account's own token, a **read-only** forge token, and no App key |
+| **Credential** | the coder's job credential, in a container that also runs repository code | its own job **variant** and service account (§2), **no token at all** (O1: the model calls go through the credentials service), a **read-only** forge token fetched by name, and no App key |
 | **Context** | shares the run's context budget, its pins and its settings file | a session of its own, with its own output limit and effort |
 | **Checklist** | the review prompt's rules | the same rules plus the **security-sensitive checklist** and, on request, a **mutation check** |
 | **Effect** | a `changes` verdict drives a `fix` stage inside the same job | a **verdict artifact** the coordinator acts on; the review job itself changes nothing |
@@ -483,13 +585,13 @@ owner's step, at a real terminal), or the service is on but this installation's 
 project-scoped caller (the C3.9 half, which no `fugaro update` can supply). A launch that started
 anyway would end as an infra fault inside the job, where the operator sees a refusal from the service
 rather than the sentence that says what to do. **`fugaro doctor` reports the same two facts** for an
-installation that has named a review account, and both are R6's to build with the rest of the gates.
+installation that has named a review account, and both are CSR6's to build with the rest of the gates.
 
 **Reading the artifact back is the same command family's second verb, and it ships with the first.**
 `fugaro review show <review-run>` prints `review.json` and `review.md`; `fugaro review show <review-run>
 --json` prints the artifact's JSON alone. **An earlier draft of this document had the launch itself
 printing the artifact** — which cannot be true of a launch, because the verdict does not exist until
-the job has finished — and `show` appeared only in the plan's later task. **Both verbs are R2's**,
+the job has finished — and `show` appeared only in the plan's later task. **Both verbs are CSR2's**,
 and §8's live check uses both.
 
 **Why a command and not one of the two existing spellings.** `fugaro run --pr N --recipe
@@ -507,6 +609,16 @@ for a review of a pull request that needs no separate credential.
 | `fugaro run --pr N --recipe review-only` in the coder's job | no new command — and no separate credential either, so the reviewer stays in a container that ran repository code, which is the gap `mixed-credentials.md` §6 mitigation 4 names |
 | A recipe stage inside the run (the held plan's `stage_auth`) | the per-stage machinery the held plan already wrote (P1–P17), D9's hold lifted, and the token in the coder's job: the very exposure the separate job removes |
 | A `/review` skill that drives the CLI | it can be *added* later and changes nothing here: a skill is a caller of the command, and the command is what has to exist first |
+
+**This command supersedes an earlier answer, and the reason is the credential.** **O2 is answered:**
+the in-job-review design's reconciliation, **Q16**, answered *"extend `review-only` rather than add a
+second entry point"* (`docs/in-job-review/reconciliation.md:370`, answered there as option 1) — and
+that answer is superseded here, not because it was wrong about the recipes but because **a recipe
+cannot change a job's credential**. No extension of `review-only` can put the reviewer on a named
+account in a container the coder never ran in, which is what §2 and §4 exist for, so the second entry
+point is the one this design adds and the older question's answer no longer decides the spelling. The
+supersession is recorded here, in [reconciliation.md](reconciliation.md)'s D880 and in
+[README.md](README.md); that document is another work stream's and this round does not edit it.
 
 **The trigger is the coordinator's, not the run's.** A run never launches its own review: a run that
 could would be the loop judging itself again with extra steps. What launches the review job is
@@ -554,6 +666,14 @@ the artifact, by run id, without a person in the middle:
 for a person, and the artifact says why. This is the outcome the in-run `ship|changes` vocabulary
 cannot express (§3), and it is the reason the two vocabularies stay apart.
 
+**What the coordinator may publish is its own words, never the artifact's.** **O5 is answered:**
+`review.md` is **never posted verbatim** — not as a comment, not in a pull request description, not in
+a chat — and **not on a public repository at all**, where reviewer prose derived from an untrusted head
+would be published under the installation's name and outside the run's own bucket. A coordinator that
+has something to say derives a **bounded, re-redacted summary** of its own and posts that. §3 states
+the rule at the artifact; this is the same rule at the reader, and it is the second reason the review
+job writes **no comment and no pull request of its own on any path** (§2).
+
 **A verdict that cannot be read is not a `ship`.** A missing, unparseable or truncated artifact, a
 review run that failed, or a review that ended without writing its artifact is an **infra fault the
 coordinator reports**, never a silent approval — the same posture `runner.ParseVerdict` takes when a
@@ -600,7 +720,7 @@ token and be reachable by exactly the read §7 records as what the separate job 
 owner's ruling is that a key whose compromise forges **every** verdict of that account is not worth
 that read. The flow is one call:
 
-1. the artifact writer (R3) computes **SHA-256 over `review.json`'s exact bytes** — the digest, and
+1. the artifact writer (CSR3) computes **SHA-256 over `review.json`'s exact bytes** — the digest, and
    not the object, because the object is reviewer prose derived from an untrusted diff and there is
    no reason for it to travel to the service at all;
 2. the job **posts the digest** to the credentials service's sign endpoint, authenticated by the two
@@ -608,21 +728,31 @@ that read. The flow is one call:
    token, whose `email` claim the service checks against the installation's job accounts, and the
    **run's own Firebase identity**, whose claims name the repository (`fs`), the run (`fr`) and the
    pull requests it may write (`fpr`);
-3. the service answers with the **HMAC-SHA-256 of that digest under the account's review-signing
-   key**, lowercase hex. **The algorithm is fixed by this design, not left to the implementation:**
-   the signer is the service's code and the verifier is a second call into it, but the digest's
-   spelling and the digest itself are the artifact writer's, and a design that named no algorithm
-   would let the two ends disagree — or let one of them accept a weaker construction — with no error
-   on either side;
+3. the service answers with the **HMAC-SHA-256 over a framed message under the account's
+   review-signing key**, lowercase hex. **The algorithm is fixed by this design, not left to the
+   implementation:** the signer is the service's code and the verifier is a second call into it, but
+   the message's spelling is the artifact writer's, and a design that named no algorithm would let the
+   two ends disagree — or let one of them accept a weaker construction — with no error on either side.
+   **O3 is answered: the message is framed, and it is not the bare digest.** What is signed is the
+   digest **together with the two identities the service verified on the call** — the run's Firebase
+   identity (`fr`, the review run) and the repository claim (`fs`) — concatenated in a fixed order
+   with fixed separators, so a signature cannot be lifted from one review run to another even where two
+   artifacts happen to hash alike, and so what the signer attests to is *who asked* as well as *what
+   was asked about*. The framing is a constant the artifact writer holds (CSR3's), the service signs
+   the bytes it is given, and **the verifier re-frames from its own copy of the two identities** rather
+   than from anything the artifact or the caller asserts — the verify call presents the digest, the
+   signature and the same two claims, and the service answers yes or no;
 4. the job writes the answer into the **sidecar object beside the artifact** (§3) —
    `runs/<slug>/<review-run>/artifacts/review.json.sig`, one line of lowercase hex — and not into
    `review.json`, so the bytes that were signed are the bytes that are stored.
 
 **What the signature binds, and what the verifier refuses.** The digest covers the object's exact
 bytes, so every field of it is bound — `repository`, `pr`, `head_sha` and `review_run` (§3) among
-them — and a field cannot be altered without the signature failing. That alone would still let a
-**whole verdict be replayed**: an honest artifact of an *earlier* review of the same pull request is
-a valid signature over a valid object, and it is the wrong answer to the question being asked. So the
+them — and a field cannot be altered without the signature failing; O3's framing binds the run and the
+repository beside the digest, so a signature cannot be moved to another run's frame either. That alone
+would still let a **whole verdict be replayed**: an honest artifact of an *earlier* review of the same
+pull request is a valid signature over a valid object, and it is the wrong answer to the question
+being asked. So the
 verifier refuses unless all four agree with the present moment: **`review_run` equals the run the
 coordinator launched** (the nonce — the launcher mints that id after the coder's job has ended, and
 the coordinator asks about the run *it* launched), **`repository` and `pr` are that pull request's**,
@@ -678,46 +808,64 @@ launch; and, where the account is shared beyond one person, the policy's referen
 own `allowed profiles/repositories` and the **one job service account per (profile, account)** that
 mounts exactly that person's secret (`project-centric.md` §7, `project-named-oauth-tokens.md`).
 
-**What this design adds, stated at its true size.** The token is mounted on the **review job variant
-and on the account's other jobs**: `fugaro run --token team-a` puts the same token on the shared
-project job, because that is what `agent.oauth_token` means today, and the review job is a *second*
-job that holds it rather than the only one. **So the older claim in this document — "the coder's job
-does not have it, so the container a prompt-injection reaches has nothing to steal" — was false**, and
-it was false twice over:
+**What this design adds, stated at its true size.** **Under O1 the review job variant mounts no token
+at all** (§2): the reviewer's model calls go through the credentials service, so the container that
+runs a test from the head under review holds no OAuth token to read. That is the change O1 makes, and
+it is a change to this design rather than a claim about it. What stays true, and is why this paragraph
+exists, is that **the account's other jobs still hold the token**: `fugaro run --token team-a` puts the
+same token on the shared project job, because that is what `agent.oauth_token` means today. **So the
+older claim in this document — "the coder's job does not have it, so the container a
+prompt-injection reaches has nothing to steal" — was false**, and it was false twice over:
 
 - a **coding run on a named account already mounts that account's token**, so the container that runs
-  the pull request's code *does* hold it, exactly as `mixed-credentials.md` §6 describes;
+  the pull request's code *does* hold it, exactly as `mixed-credentials.md` §6 describes — and **O1
+  does not change that**: a coding run is not a review run, and its model calls are the ones the
+  gateway prices today;
 - the **review job itself runs repository code** (§2): the mutation check runs a test from the head
-  under review. Left alone, the token would be reachable from that stage through its own environment
-  (`CLAUDE_CODE_OAUTH_TOKEN` is a mounted secret env var), through `/proc`, and through **network
-  egress**, which a job has by default and which no deny rule closes — `denyWeb` denies Claude Code's
-  `WebSearch`/`WebFetch` **tools**, and does not stop `curl` from Bash.
+  under review. **Left alone, the token would be reachable from that stage** through its own
+  environment (`CLAUDE_CODE_OAUTH_TOKEN` is a mounted secret env var), through `/proc`, and through
+  **network egress**, which a job has by default and which no deny rule closes — `denyWeb` denies
+  Claude Code's `WebSearch`/`WebFetch` **tools**, and does not stop `curl` from Bash. **O1 is what
+  takes that token out of this container altogether**; the fallback puts it back, which is the whole
+  reason the fallback is recorded as strictly worse.
 
 **D891 is answered, option (a), and the answer closes two of those three.** The mutation test is run
 by the **runner** as its own subprocess with the token scrubbed from that subprocess's environment and
-**egress denied**, and **Bash is denied for the rest of the review stage** (`DenyRules` gains it), so
-the agent's own shell stops being a general exfiltration path and the reviewer's environment and the
-network are no longer routes out. **How egress is denied for a subprocess inside a Cloud Run container
+**egress denied**, and **Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` are denied for the rest
+of the review stage** (`DenyRules` gains them), so the agent's own shell stops being a general
+exfiltration path, the agent cannot rewrite the tree it is being checked against while the check runs,
+and the reviewer's environment and the network are no longer routes out. **Under O1 there is no token
+in that environment for the scrub to remove** — the environment route is closed by not mounting the
+token at all, and the scrub is what remains for the fallback — so what D891(a) still has to close is
+`/proc` and the network. **How egress is denied for a subprocess inside a Cloud Run container
 is UNVERIFIED** — a network namespace or `unshare` in gen2 has not been checked, and
-[reconciliation.md](reconciliation.md) §6's **U7** is where that is settled. **So the answer is
-conditional, and the design says so:** if a child process cannot be fenced, D891(a) cannot be
-implemented as written, the fallback is the owner's **(b)** or **(c)**, and the owner is asked again —
-which is why **U7 is an owner-run live observation taken before R4 launches**, rather than an
-assumption the task starts on. **It is a standalone probe, and §8's step 6 is where it is written**:
-the question is a property of the deployed gen2 execution environment — can a child process be denied
-the network at all — so it is asked directly, by a probe the owner runs on the sandbox installation,
-and **not** through `fugaro review --mutate`, which would need R2's command and R4's mutation code to
-exist before the answer that decides whether R4 should exist. What is left either way is the
-**`/proc` read**, which `mixed-credentials.md` §6 already lives with and which only the separate
-container reduces.
+[reconciliation.md](reconciliation.md) §6's **U7** is where that is settled. **U7 asks about `/proc`
+in the same breath, because the two residuals have the same shape of answer:** if the child can be
+given **its own PID namespace with its own `/proc` mount, or run under a different uid**, then neither
+the parent's `/proc` nor the parent's environment is readable from the stage that runs the head's test;
+if neither can be done, `/proc` stays open and the design says so rather than assuming a fence. **So
+the answer is conditional, and the design says so:** if a child process cannot be fenced, D891(a)
+cannot be implemented as written, the fallback is the owner's **(b)** or **(c)**, and the owner is
+asked again — which is why **U7 is an owner-run live observation taken before CSR4b launches**, rather
+than an assumption the task starts on. **It is a standalone probe, and §8's step 6 is where it is
+written**: the question is a property of the deployed gen2 execution environment — can a child process
+be denied the network and given a `/proc` of its own — so it is asked directly, by a probe the owner
+runs on the sandbox installation, and **not** through `fugaro review --mutate`, which would need CSR2's
+command and CSR4b's mutation code to exist before the answer that decides whether CSR4b should exist.
+**What is left either way is the `/proc` read, and O1 is what makes it small:** with the token gone
+from the container, the best case for a process that reads `/proc` is the **one-hour, read-only
+installation token** the runner holds in its own memory, not the person's subscription token. That is
+a real reduction and not a closure, and only U7's fence moves it further.
 
 What the design still buys, and it is worth having: a container that **did not run the coder**, a
-read-only forge scope, no App key in that container, and a run whose whole purpose is the review. What
-it does **not** buy is a container the token cannot leave: no scrub and no egress rule reaches a
-process that can read `/proc`.
+read-only forge scope, no App key in that container, a run whose whole purpose is the review — and,
+**under O1, no OAuth token in it at all**. What it does **not** buy is a container with nothing
+readable in it: no scrub and no egress rule reaches a process that can read `/proc`, and the honest
+statement of the residual is that what such a process can reach is the review job's own read-only,
+hour-long credential rather than the person's.
 
 **The read-only forge scope is one scope among several, so the job holds no minting key — in the
-variant R7 adds.** The review job holds `{contents: read, pull_requests: read, metadata: read}` —
+variant CSR7 adds.** The review job holds `{contents: read, pull_requests: read, metadata: read}` —
 minted by the credentials service for a review identity, never asked for by the job — and, **on the
 job variant of §2 and not on the shared project job**, no GitHub App private key: a key would let the
 job mint a write token whatever the launcher asked for, so the scope is the **service's** decision and
@@ -732,9 +880,10 @@ the *container* can do with the token it holds.
 reviewer must read it — that is its job — so the injection surface is not removable, only bounded:
 
 - **what the job can take is bounded, not absent.** It holds no write credential, no App key and no
-  other account's secret — and it *does* hold a person's subscription token in a container that runs
-  the diff's code. There is no version of this design in which that is not true, and §7's first
-  paragraph says so;
+  other account's secret — and, **under O1, no OAuth token either**, so the container that runs the
+  diff's code holds no model credential to steal. The *coding* run on a named account still does, and
+  this section's first paragraph says so; the fallback is what would put the token back in the review
+  container, and that is the whole reason it is the fallback;
 - **the token's revocation is the provider's, not ours.** `fugaro accounts rm` deletes the local
   record and the installation's secret; it does not revoke an OAuth token that has already left, and
   it cannot — only the person's own account settings can. What the accounts design offers instead is
@@ -746,8 +895,9 @@ reviewer must read it — that is its job — so the injection surface is not re
   outside the run's own prefix, and no web **tool** (`denyWeb: true`, which the held plan's P10 already
   calls for). **`denyWeb` is a tool rule, not a network rule**: it does not stop `curl` or anything
   else a shell can run against a job's default egress. **D891(a) is what closes that** — a
-  token-scrubbed subprocess with egress denied, and Bash denied for the rest of the stage — and
-  nothing in this paragraph rests on `denyWeb` alone;
+  token-scrubbed subprocess with egress denied, and Bash, Edit, Write, NotebookEdit and
+  `Read(/proc/**)` denied for the rest of the stage — and nothing in this paragraph rests on `denyWeb`
+  alone;
 - **everything the reviewer says is treated as data downstream.** The artifact is read and rendered,
   never executed; the findings that become a fix round's brief are quoted and bounded (§6);
 - **what this does not close, stated plainly:** an injected reviewer can put anything it likes into
@@ -774,8 +924,9 @@ reviewer must read it — that is its job — so the injection surface is not re
 ordering (the review run's id does not exist while the coder runs) remains a real property **for that
 coder**, and it is not one for a concurrent job on the same shared job, which can list `runs/` and
 write under the prefix it sees. **What closes that is the signature the owner chose:** the **credentials
-service** signs the artifact's digest with the account's key — a key that never enters a container
-that runs untrusted code — and **the coordinator verifies it before it acts on a verdict**; a forged,
+service** signs **O3's framed message — the artifact's digest together with the verified `fr` and
+`fs`** — with the account's key, a key that never enters a container that runs untrusted code, and
+**the coordinator verifies it before it acts on a verdict**; a forged,
 unsigned or replayed artifact is refused rather than merged (§6). The bucket-prefix narrowing (the
 owner's other option) is still not built, and §6's account of
 why it belongs to the project-job work stands. **What no signature closes** is the injected reviewer
@@ -868,11 +1019,15 @@ run by the owner in their own terminal.
    artifact's `head_sha` is the pull request's head; the verdict is one of the three words; the
    issues the owner already knew about appear, with a `file:line` that lands on the right line of
    that commit; the **markdown and JSON agree** section for section; and **the signature verifies** —
-   D892(a)'s own observation, and the one a reader can also test the other way round by flipping one
-   byte of the stored JSON and confirming the verifier refuses it. Two more, and they are the replay
+   D892(a)'s own observation, over **O3's frame** (the digest and the two claims §6 names), and the
+   one a reader can also test the other way round by flipping one byte of the stored JSON and
+   confirming the verifier refuses it. Two more, and they are the replay
    check: the artifact's `repository` is this repository and its `review_run` is the id this step
    recorded, and an artifact of an **earlier** review of the same pull request — one whose `head_sha`
-   is no longer the head — is refused rather than acted on (§6).
+   is no longer the head — is refused rather than acted on (§6). **And the record, not the artifact,
+   is where O4 is observed:** `fugaro review show <review-run> --json` prints the artifact, and the
+   run's own record shows one `reviews[]` entry whose `tier` is `independent` and whose `verdict` is
+   one of the record's two words — the artifact's three-word verdict never appears there (§3).
 4. **Check what the job could not do.** Confirm from the pull request that the review job posted
    **nothing** — no comment, no review, no label — and that `git ls-remote` shows no branch the
    review run pushed. This is the read-only scope's positive test: it is the absence that has to be
@@ -881,31 +1036,37 @@ run by the owner in their own terminal.
    cost; the installation's caps are unchanged by it, and `fugaro budget show` shows no counted
    spend for it. This is the subscription-versus-gateway property from §1, observed rather than
    assumed.
-6. **Probe the execution environment's egress fence — and this is the one step that runs *before* the
-   task it decides.** **U7** ([reconciliation.md](reconciliation.md) §6) asks whether a child process
-   inside this deployment's gen2 execution can be denied the network at all, because D891(a) assumes
-   it can. **The probe is standalone: it needs no `fugaro review`, no `--mutate` and no mutation code
-   from R4** — those are the things whose existence depends on its answer, so asking the question
+6. **Probe the execution environment's fence — the network and `/proc` both — and this is the one step
+   that runs *before* the task it decides.** **U7** ([reconciliation.md](reconciliation.md) §6) asks
+   whether a child process inside this deployment's gen2 execution can be denied the network at all
+   **and given a `/proc` of its own**, because D891(a) assumes the first and §7's residual is the
+   second. **The probe is standalone: it needs no `fugaro review`, no `--mutate` and no mutation code
+   from CSR4b** — those are the things whose existence depends on its answer, so asking the question
    through them would be circular. On the sandbox installation, the owner runs a one-off execution of
    the deployed job image whose entrypoint forks a child that (a) tries to reach a host on the
-   network, and (b) is fenced with a network namespace — `unshare -n` where the image has it, or the
-   equivalent the platform allows — and records what the child could do. **What is being observed is
-   one of three things:** the child cannot reach the network when fenced and the fence is available;
-   the fence is unavailable in this execution environment; or the fence is available and does not
-   hold. The second and third amend D891's answer and the owner is asked again between **(b)** and
+   network, (b) tries to read the parent's environment through `/proc`, and (c) is fenced — a network
+   namespace (`unshare -n` where the image has it, or the equivalent the platform allows), **and a PID
+   namespace with its own `/proc` mount, or a different uid, whichever the platform allows** — and
+   records what the child could do. **What is being observed is one of three things:** the child
+   cannot reach the network and cannot read the parent's `/proc` when fenced, and both fences are
+   available; a fence is unavailable in this execution environment; or a fence is available and does
+   not hold. The second and third amend D891's answer and the owner is asked again between **(b)** and
    **(c)**; the design does not quietly fall back to `denyWeb`. **Why it is the owner's and not a
    test:** whether a child process can be fenced is a property of the **deployed execution
    environment**, and this repository's tests are hermetic — no network, no cloud, `t.TempDir()`.
-   **R4 does not start until this step has returned**, and nothing in R4's file list is opened before
-   it does.
+   **CSR4b does not start until this step has returned**, and nothing in CSR4b's file list is opened
+   before it does.
 7. **Run the mutation check once, and watch D891's answer hold.** On a security-sensitive pull
    request, `fugaro review --pr N --mutate <file:test>` and read `mutation_checks` in the artifact:
    the test ran, the mutant was applied, the observed result is recorded, and the worktree was
    reverted. Confirm again that nothing was pushed, that the mutant's subprocess carried no token in
-   its environment and could not reach the network, and that the stage ran no other shell. **This is
-   the confirmation after R4, not the gate before it:** step 6 settled whether the fence exists at
-   all, and this step is the fence observed on the path that actually uses it — the one step whose
-   result can still amend D891's answer once the machinery is in place.
+   its environment and could not reach the network, and that the stage ran no other shell — **and that
+   the review container held no OAuth token at all, which is O1's own observation**: the job's
+   environment and the execution's own description name no token, and the model calls are the
+   credentials service's. **This is the confirmation after CSR4b, not the gate before it:** step 6
+   settled whether the fence exists at all, and this step is the fence observed on the path that
+   actually uses it — the one step whose result can still amend D891's answer once the machinery is in
+   place.
 8. **Drive the fix path once.** Take a `fix first` verdict, launch the fix round the coordinator
    would launch, and read the fix run's brief: it must name the review run and carry the findings,
    with no human having copied them. Then confirm the head moved and that a second review of the new

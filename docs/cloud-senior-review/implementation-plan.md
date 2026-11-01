@@ -6,11 +6,11 @@ the options named in the header below — **except D894, which is written and op
 a branch it must not trust, and the design has to say which configuration its Claude session loads;
 option (a) is recommended and the owner answers in the morning). An answered decision is not an
 approval to start: **every task still carries its own gate**, and two of them are hard. **E7** (the
-credentials service enabled and admitting a project-scoped job) blocks R7, R2 and the coordinator's
-merge path, and **U7** (an owner-run live observation) gates R4's launch. A task starts only when the
-decisions and the gates it names are satisfied. **R4 carries D894(a)'s machinery and therefore does
+credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's
+merge path, and **U7** (an owner-run live observation) gates CSR4's launch. A task starts only when the
+decisions and the gates it names are satisfied. **CSR4 carries D894(a)'s machinery and therefore does
 not start until D894 is answered** — the plan writes what option (a) would cost, and a different
-answer rewrites that part of R4 rather than this plan guessing.
+answer rewrites that part of CSR4 rather than this plan guessing.
 
 **Written to:** [spec.md](spec.md) and [reconciliation.md](reconciliation.md). **Where they
 disagree, the reconciliation wins.** The findings (**F1–F27**), the dependencies (**E1–E7**) and the
@@ -22,8 +22,8 @@ container that runs untrusted code) and **D893
 with option (c)** (the read-only token is fetched from the credentials service, by name)) are that
 document's, and each task below names the ones it needs. **E7 is a hard precondition, not a
 dependency to schedule around**: D893(c) means the credentials service must be **enabled** and must
-**admit the review job's own account**, and until it does, **R7, R2 and the coordinator's `ship` →
-merge path cannot run** (§1 and R7 say so).
+**admit the review job's own account**, and until it does, **CSR7, CSR2 and the coordinator's `ship` →
+merge path cannot run** (§1 and CSR7 say so).
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -43,7 +43,7 @@ merge path cannot run** (§1 and R7 say so).
 
 **The first slice is the smallest thing that lets a cloud run use a named OAuth account end to end:
 `fugaro accounts add` plus the reviewer job.** It is two dependencies that must land together — E1
-(the account) and R1/R7/R2 (a **job that mounts it read-only**, and the command that launches it) —
+(the account) and CSR1/CSR7/CSR2 (a **job that mounts it read-only**, and the command that launches it) —
 because either alone buys nothing the owner asked for: E1 alone makes `fugaro run --token` work (which
 is PR #1470's own subject), and a review job with no named account is a review on the installation's
 default token, which the coder's job already had.
@@ -51,29 +51,29 @@ default token, which the coder's job already had.
 ```
 E1 (accounts add, PR #1470)  ─┐
 E2 (yamledit, PR #1467)      ─┤
-E3 (publish stages)          ─┴─▶ R1 (read-only token) ─▶ R7 (the job variant, no App key) ─▶ R2 (the command)
+E3 (publish stages)          ─┴─▶ CSR1 (read-only token) ─▶ CSR7 (the job variant, no App key) ─▶ CSR2 (the command)
                                                                    ▲                              │
-                                          E7 (credentials service, │                              └─▶ R5 (findings→brief)
+                                          E7 (credentials service, │                              └─▶ CSR5 (findings→brief)
                                           enabled + admitting a    │
                                           project-scoped job) ─────┘
-                        R3 (the artifact, runner-side) ─▶ R4 (mutation + stage config)   R6 (gates, docs, release) last
+                        CSR3 (the artifact, runner-side) ─▶ CSR4 (mutation + stage config)   CSR6 (gates, docs, release) last
 ```
 
-**R1 before R7 before R2**, because a command that launches a job must be able to say what that job
-may do, and the job it launches must exist: R1 names the scope, R7 builds the container that can hold
-it without the App key, R2 starts it. **R3 sits outside that chain**: it is the artifact and its
+**CSR1 before CSR7 before CSR2**, because a command that launches a job must be able to say what that job
+may do, and the job it launches must exist: CSR1 names the scope, CSR7 builds the container that can hold
+it without the App key, CSR2 starts it. **CSR3 sits outside that chain**: it is the artifact and its
 signing, which is runner-side work needing no launch command, so E7 does not reach it (its block says
-so). **R3 before R5**, because the fix brief reads the artifact R3
-defines. **R4 is independent of R5** and can ship after R3 in either order; **D891 is answered —
-option (a) — so R4 is unblocked** and carries the machinery the answer names (a token-scrubbed
+so). **CSR3 before CSR5**, because the fix brief reads the artifact CSR3
+defines. **CSR4 is independent of CSR5** and can ship after CSR3 in either order; **D891 is answered —
+option (a) — so CSR4 is unblocked** and carries the machinery the answer names (a token-scrubbed
 subprocess with egress denied, and Bash denied for the rest of the stage), **on one condition: the
-answer assumes a fence nobody has measured, so U7 is an owner-run live observation taken before R4
+answer assumes a fence nobody has measured, so U7 is an owner-run live observation taken before CSR4
 launches — not the task's first step, because it cannot be measured hermetically and this plan's rule
-is hermetic tests only** — and **R4 does not start until that observation has returned**; if the fence
-is not there the owner is asked again and the fallbacks are D891's (b) or (c) (see R4). **R4 also
+is hermetic tests only** — and **CSR4 does not start until that observation has returned**; if the fence
+is not there the owner is asked again and the fallbacks are D891's (b) or (c) (see CSR4). **CSR4 also
 carries D894(a)'s configuration posture**, which is open: the reviewer's Claude session must load no
-configuration from the head it reviews, and if the owner answers (b) or (c) instead, that part of R4 is
-rewritten rather than built. **R6 carries
+configuration from the head it reviews, and if the owner answers (b) or (c) instead, that part of CSR4 is
+rewritten rather than built. **CSR6 carries
 the gates and cannot be split**: a field that lands without its gate is a field an older image
 silently ignores.
 
@@ -91,16 +91,16 @@ must both hold before the chain works, and only one of them is reachable from `f
    that lifts it) — **no `fugaro update` can supply this half**, because it is code in the service, not
    a deployment step.
 
-So **R7 cannot run, R2 cannot run, and the coordinator's `ship` → merge path cannot be built** until
-E7 is met. **R1, R3 and R4 are unaffected** — none of them launches or authenticates a job, and R3 in
+So **CSR7 cannot run, CSR2 cannot run, and the coordinator's `ship` → merge path cannot be built** until
+E7 is met. **CSR1, CSR3 and CSR4 are unaffected** — none of them launches or authenticates a job, and CSR3 in
 particular is **runner-side and needs no command** (it says so in its own block, and it does not
-depend on R2). **R5 and R6 are gated transitively, through R2**: R5 ships the fix brief R2's `show`
-reads the artifact for, and R6 carries the gates and the notes for the command, so neither can finish
-before R2 can. R6 carries the check that reports both halves (see R6), and
+depend on CSR2). **CSR5 and CSR6 are gated transitively, through CSR2**: CSR5 ships the fix brief CSR2's `show`
+reads the artifact for, and CSR6 carries the gates and the notes for the command, so neither can finish
+before CSR2 can. CSR6 carries the check that reports both halves (see CSR6), and
 [reconciliation.md](reconciliation.md) §5's
 **E7** is where the dependency is recorded.
 
-**R7 is numbered last and comes third, deliberately.** It was added by the fix round after the review
+**CSR7 is numbered last and comes third, deliberately.** It was added by the fix round after the review
 of head `0f5f9a55`, when the design learned the job it had proposed to launch on mounts the App key
 (**F3**, **F14**): the numbers here are stable identifiers, and renumbering six tasks and every
 reference to them would put a large, purely mechanical diff on top of a design correction. The order
@@ -113,28 +113,28 @@ writes. Every task that touches a shared file takes it **alone**, and the others
 
 | File | Tasks | Note |
 | --- | --- | --- |
-| `internal/cli/run.go` | R2, R5 | the launch path. R2 adds a sibling command that reuses `claudeAccountFor`/`claudeAccountAllowed` and the job placement; R5 adds the findings brief. One task holds it at a time |
-| `internal/runner/prompts.go` | R3, R4, R5 | the review prompt, its template sections, and the fix brief's findings posture |
-| `internal/runner/reviewmode.go` | R2, R3, R4 | the review bootstrap and the comment path R2 stops taking; R4's D894(a) half reads the base's `fugaro.yaml`, instructions and prompt here |
-| `internal/runner/runner.go` | R3, R4, **only if** the hook is there — otherwise no task here | **reserved**: one writer across work streams. Every task prefers `reviewmode.go`; a task that needs the stage machine or the finalize path takes this file alone and says so (see the paragraph below) |
-| `schemas/` (new files only) | R3, R4 | each schema's own new file; no shared edit |
-| `internal/cli/recipes_skew.go` | R2, R3, R6, R7 | one writer (R6) for the gate constants; R2/R3/R7 declare what they need |
-| `internal/infra/projectjobs.go` + `projectjobs_test.go` | R7 | the `ProjectJob` set the installation root deploys. R7 adds the review-only variant and its service account; nothing else here reads the set |
-| `internal/config/config.go` + `claude_accounts.go` | R7, E1 | `config.ProjectJobAccounts` is where a profile's job set is computed, and **E1's `accounts add` converges the same set**. R7 must not land a second spelling: it takes these after E1, alone |
-| `deploy/terraform/gcp/modules/project/{job,sa,iam,variables}.tf` | R7 | the module the variant is an instance of: an entry with `secret_env` carrying the account's token and no `github-app-key`, and a service account with no `secretAccessor` on that key |
-| `deploy/terraform/gcp/roots/installation/{main.tf,variables.tf}` | R7 | the root that deploys `project_jobs` — the variant's entry travels here |
-| `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl` | R7 | R7's positive test lives beside the retention it contradicts: the variant asserts **no** App key mount and **no** accessor, in the file that pins the opposite for the shared job |
-| `internal/cli/doctor.go` + `doctor_secret_readers.go` | R7 | the job census and the secret-readers report read `config.ProjectJobAccounts`; a variant the census does not know about is a converged installation `fugaro doctor` calls wrong |
+| `internal/cli/run.go` | CSR2, CSR5 | the launch path. CSR2 adds a sibling command that reuses `claudeAccountFor`/`claudeAccountAllowed` and the job placement; CSR5 adds the findings brief. One task holds it at a time |
+| `internal/runner/prompts.go` | CSR3, CSR4, CSR5 | the review prompt, its template sections, and the fix brief's findings posture |
+| `internal/runner/reviewmode.go` | CSR2, CSR3, CSR4 | the review bootstrap and the comment path CSR2 stops taking; CSR4's D894(a) half reads the base's `fugaro.yaml`, instructions and prompt here |
+| `internal/runner/runner.go` | CSR3, CSR4, **only if** the hook is there — otherwise no task here | **reserved**: one writer across work streams. Every task prefers `reviewmode.go`; a task that needs the stage machine or the finalize path takes this file alone and says so (see the paragraph below) |
+| `schemas/` (new files only) | CSR3, CSR4 | each schema's own new file; no shared edit |
+| `internal/cli/recipes_skew.go` | CSR2, CSR3, CSR6, CSR7 | one writer (CSR6) for the gate constants; CSR2/CSR3/CSR7 declare what they need |
+| `internal/infra/projectjobs.go` + `projectjobs_test.go` | CSR7 | the `ProjectJob` set the installation root deploys. CSR7 adds the review-only variant and its service account; nothing else here reads the set |
+| `internal/config/config.go` + `claude_accounts.go` | CSR7, E1 | `config.ProjectJobAccounts` is where a profile's job set is computed, and **E1's `accounts add` converges the same set**. CSR7 must not land a second spelling: it takes these after E1, alone |
+| `deploy/terraform/gcp/modules/project/{job,sa,iam,variables}.tf` | CSR7 | the module the variant is an instance of: an entry with `secret_env` carrying the account's token and no `github-app-key`, and a service account with no `secretAccessor` on that key |
+| `deploy/terraform/gcp/roots/installation/{main.tf,variables.tf}` | CSR7 | the root that deploys `project_jobs` — the variant's entry travels here |
+| `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl` | CSR7 | CSR7's positive test lives beside the retention it contradicts: the variant asserts **no** App key mount and **no** accessor, in the file that pins the opposite for the shared job |
+| `internal/cli/doctor.go` + `doctor_secret_readers.go` | CSR7 | the job census and the secret-readers report read `config.ProjectJobAccounts`; a variant the census does not know about is a converged installation `fugaro doctor` calls wrong |
 
-**`internal/runner/runner.go` is reserved, and R3/R4 may have to take it — the one rule that decides
+**`internal/runner/runner.go` is reserved, and CSR3/CSR4 may have to take it — the one rule that decides
 it.** The 0.15.0 rulings make that file one writer across work streams, and an earlier draft of this
 plan said nothing here needs it because neither task adds a stage to the run loop. **That is not safe
-to assert, and the review of this branch's fix round is right to say so:** the artifact upload that R3
+to assert, and the review of this branch's fix round is right to say so:** the artifact upload that CSR3
 wants to ride (`internal/runner/artifact.go`'s `uploadArtifacts`) is *triggered* from the `mode:
 artifact` flow (`collectArtifacts`, driven by a recipe's `outputs:` block) and a `mode: review` recipe
-has no such block, and R4's mutation subprocess is the runner's own child rather than a stage. So the
+has no such block, and CSR4's mutation subprocess is the runner's own child rather than a stage. So the
 rule each of those tasks follows: **prefer the file it already holds** — a review run's whole flow is
-`runReviewMode` in `internal/runner/reviewmode.go`, which R2/R3 already share — and **if the hook it
+`runReviewMode` in `internal/runner/reviewmode.go`, which CSR2/CSR3 already share — and **if the hook it
 needs turns out to be in `runner.go`, the task takes that file alone under the one-writer rule, adds
 it to its own Files list and says so in its pull request**; it never edits it silently.
 
@@ -144,7 +144,7 @@ it to its own Files list and says so in its pull request**; it never edits it si
 
 ## 3. Tasks
 
-### R1. A fourth installation-token set: `ReviewTokenPermissions`
+### CSR1. A fourth installation-token set: `ReviewTokenPermissions`
 
 **Decision:** D883, **D893 (c)**. **Findings:** F2, F3, **F16**. **Verification:** `internal/gitprov`.
 
@@ -162,7 +162,7 @@ it to its own Files list and says so in its pull request**; it never edits it si
   this design once weighed are on no path (F16's consequence, reconciliation §2). So this task's set is
   the set **the service's mint must serve for a review identity**; the service serves the *run's* set
   today (`internal/credsvc/github.go:263` hard-codes `RunTokenPermissions`), and growing it is the
-  service's own work — **C3.9**, which is not in this plan (§4). **R7** carries the variant that
+  service's own work — **C3.9**, which is not in this plan (§4). **CSR7** carries the variant that
   fetches the token; this task only names the permissions.
 - **Tests:** `TestReviewTokenPermissionsAreReadOnly` (every value is `read`, the three keys are
   exactly those, and the map is a clone a caller cannot mutate) and `TestRunTokenPermissionsUnchanged`
@@ -175,18 +175,18 @@ it to its own Files list and says so in its pull request**; it never edits it si
   the first, fails; narrow the run's set and the second, `TestRunTokenPermissionsUnchanged`, does.
 - **Commit:** `gitprov: a read-only installation-token set for the review job`.
 
-### R2. `fugaro review --pr N`: launch the review job
+### CSR2. `fugaro review --pr N`: launch the review job
 
 **Decisions:** D880, D881, D882, D888, **D893 (c)**. **Findings:** F1, F4, F5, F14, F17. **Depends on:**
-E1, R1, **R7**, and **E7** — see the blocking note below.
+E1, CSR1, **CSR7**, and **E7** — see the blocking note below.
 
 - **Files:** `internal/cli/review.go` (new), `internal/cli/review_test.go` (new),
   `internal/cli/run.go`, `internal/runner/reviewmode.go`, `internal/runner/reviewmode_test.go`,
   `internal/cli/recipes_skew.go`, `docs/gcp-live-checklist.md` (the Check 125 row **only if** the
   owner's D889 answer changes and the file is in scope — otherwise this task records it instead).
   **At most 7 files.**
-- **Interfaces:** consumes E1's stored account and the job set (`gcp.ProjectJobName`), **R7's
-  review-only job variant** (this task launches *that* entry, never the shared project job), R1's
+- **Interfaces:** consumes E1's stored account and the job set (`gcp.ProjectJobName`), **CSR7's
+  review-only job variant** (this task launches *that* entry, never the shared project job), CSR1's
   read-only set (the permissions the **credentials service** mints for a review identity — **nothing
   is handed in**, D893(c)), and `claudeAccountFor`/`claudeAccountAllowed`. Produces **both verbs of the
   command
@@ -194,7 +194,7 @@ E1, R1, **R7**, and **E7** — see the blocking note below.
   writes a task (`mode: review`, the review PRs, the resolved account) and launches it on the
   account's review-only job — `--json` prints the **launch's** result, not the artifact, which does
   not exist until the job has run; and `fugaro review show <run> [--json]`, the reader that prints
-  `review.json` and `review.md` (spec §5). R5 consumes `show`; it does not add it. Plus a
+  `review.json` and `review.md` (spec §5). CSR5 consumes `show`; it does not add it. Plus a
   `reviewJobSince` constant (E6). The review **job** posts no comment: `reviewmode.go`'s comment path
   is made conditional on a permission the caller states, so a job launched read-only **records** its
   verdict and does not call `Comment`.
@@ -217,20 +217,20 @@ E1, R1, **R7**, and **E7** — see the blocking note below.
   `TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit` (both hermetic — a fake service and a fake
   installation, no live call).
 - **Red step:** `TestReviewLaunchesOnTheNamedAccount` fails on an unknown subcommand: the command
-  does not exist. **SEC flag:** this is the task that decides what the job may do; R1's set, this
+  does not exist. **SEC flag:** this is the task that decides what the job may do; CSR1's set, this
   task's no-comment path and E7's refusal are reviewed together.
 - **Commit:** `review: launch the independent review as its own job on a named account`.
 
-### R3. The review artifact: `review.json`, `review.md` and its schema
+### CSR3. The review artifact: `review.json`, `review.md` and its schema
 
 **Decisions:** D884, D886, D890, **D892 (a)**. **Findings it acts on:** F11, F12, F13, **F23**. **Findings it is an
 answer to, not work it does:** **F7** (the reviewer's model and `agent.max_output_tokens.reviewer`
 exist today) is the observation D886 is sized against and the reason this task's schema has to fit a
-cap that is already deployed — R3 consumes it, it does not address it. **Depends on:** nothing that
+cap that is already deployed — CSR3 consumes it, it does not address it. **Depends on:** nothing that
 launches a job. This task is **runner-side**: it writes an artifact, a schema and a signature client,
 and it needs no command, no job variant and no credentials service **running** — the sign endpoint is
 called through a small interface a test satisfies with a fake, so E7 does not reach it. It **shares
-`internal/runner/reviewmode.go` with R2** (§2's shared-files rule: one task holds it at a time), which
+`internal/runner/reviewmode.go` with CSR2** (§2's shared-files rule: one task holds it at a time), which
 is an ordering on a file and not a dependency on the launch.
 
 - **Files:** `internal/runner/reviewartifact.go` (new), `internal/runner/reviewartifact_test.go`
@@ -258,7 +258,7 @@ is an ordering on a file and not a dependency on the launch.
   runs a test from the head under review (D885): a key mounted on that variant would share an OS user
   and the `/proc` residual with the account's OAuth token, and a key whose compromise forges every
   verdict of that account is not worth that read. So `reviewartifact.go` carries **no key at all**
-  and R7 mounts none. What it carries is a **signing client** behind a small interface: it computes
+  and CSR7 mounts none. What it carries is a **signing client** behind a small interface: it computes
   **SHA-256 over `review.json`'s exact bytes** — the digest, not the object, so the reviewer's prose
   never travels to the service — posts the digest to the service's sign endpoint, and writes the
   **HMAC-SHA-256** it gets back (lowercase hex, the algorithm fixed by the design,
@@ -296,32 +296,32 @@ is an ordering on a file and not a dependency on the launch.
   writer and no schema; `TestReviewJobStageIsNotParsedAsAnInRunVerdict` fails because the stage's
   request still carries `VerdictSchema`; `TestVerifyRefusesAnUnsignedArtifact` fails because nothing
   verifies. **SEC flag:** the artifact is the thing a coordinator merges on, so the refusal tests are
-  this task's security surface — and see R4, whose data this shape carries.
+  this task's security surface — and see CSR4, whose data this shape carries.
 - **Commit:** `runner: the independent review's versioned verdict artifact`.
 
-### R4. The mutation check and the stage's configuration posture
+### CSR4. The mutation check and the stage's configuration posture
 
 **Decision:** D885, **D891 — answered by the owner with option (a), which this task is the machinery
 for**, and **D894 — written and open, option (a) recommended**, whose machinery this task carries if
-the owner answers (a). **Findings:** F13, F19, **F24**. **Depends on:** R3. **Unblocked:** the answer is
+the owner answers (a). **Findings:** F13, F19, **F24**. **Depends on:** CSR3. **Unblocked:** the answer is
 (a), so the task is neither dropped nor reduced, and it carries the posture in its own files — **but
 it launches only after U7's owner-run live observation has returned** (below), **and its D894 half only
 if D894 is answered (a)**.
 
-- **The gate before this task launches — U7, a standalone owner-run probe, not a test R4 can write.**
+- **The gate before this task launches — U7, a standalone owner-run probe, not a test CSR4 can write.**
   D891(a) assumes egress can be denied for a child process inside the container, and **no network
   namespace or `unshare` in Cloud Run's gen2 has been checked**. That is a property of the **deployed
   execution environment**, so **it cannot be measured hermetically** — and this plan's rule is
   hermetic tests only, no live call and no real job (above), which means the observation is **not the
-  task's first step and not something the task does at all**. It is the owner's, taken **before R4
+  task's first step and not something the task does at all**. It is the owner's, taken **before CSR4
   launches**, and it is **Check 125's step 6** ([spec.md](spec.md) §8). **It is deliberately not asked
   through the mutation check, and the first draft of this bullet got that wrong:** running `fugaro
-  review --mutate` to answer U7 would need R2's command and this task's mutation code, and R4 may not
+  review --mutate` to answer U7 would need CSR2's command and this task's mutation code, and CSR4 may not
   start until U7 returns — a question asked by the thing whose existence it decides. So the probe is
   **standalone**: a one-off execution of the deployed job image whose entrypoint forks a child that
   tries to reach the network and is fenced with a network namespace (`unshare -n` where the image has
   it), recording whether the fence is available and whether it holds. **Check 125's step 7 is the
-  confirmation afterwards**, on the mutation path that actually uses the fence. **R4 does not start
+  confirmation afterwards**, on the mutation path that actually uses the fence. **CSR4 does not start
   until step 6 has returned**, and **the answer decides the task**: if a child can be fenced, the rest
   of this task proceeds as written; **if it cannot, the task stops and the owner is asked again** —
   the fallbacks are D891's **(b)** (no mutation check in the reviewer at all) or **(c)** (the check in
@@ -394,15 +394,15 @@ if D894 is answered (a)**.
   configuration is never configuration" one.
 - **Commit:** `runner: the review job's mutation check, in its own worktree and never pushed`.
 
-### R5. The findings reach the fix round's brief, by run id
+### CSR5. The findings reach the fix round's brief, by run id
 
-**Decision:** D887. **Findings:** F20. **Depends on:** R2 (which ships `fugaro review show`) and R3.
+**Decision:** D887. **Findings:** F20. **Depends on:** CSR2 (which ships `fugaro review show`) and CSR3.
 **Holds `internal/cli/run.go` alone.**
 
 - **Files:** `internal/cli/run.go`, `internal/cli/run_test.go`, `internal/runner/prompts.go`,
   `internal/runner/prompts_test.go`, `internal/cli/review.go` + `review_test.go` **only** for the
-  reader's findings-rendering helper, if R2's `show` does not already expose one. **At most 6 files.**
-- **Interfaces:** consumes R3's artifact by run id. Produces the brief's findings section: each issue
+  reader's findings-rendering helper, if CSR2's `show` does not already expose one. **At most 6 files.**
+- **Interfaces:** consumes CSR3's artifact by run id. Produces the brief's findings section: each issue
   as a bounded, quoted block (severity, class, `file:line`, summary, fix), the **review run named**,
   and a prompt sentence that they are findings to weigh and never instructions — the existing
   `internal/runner/prompts.go` posture, extended.
@@ -415,9 +415,9 @@ if D894 is answered (a)**.
   untrusted diff becomes a coder's prompt, which is the injection chain of [spec.md](spec.md) §7.
 - **Commit:** `run: a fix round's brief carries the independent review's findings by run id`.
 
-### R6. The gates, the docs and the release notes
+### CSR6. The gates, the docs and the release notes
 
-**Decisions:** D886, D888, D889, **D893 (c)**. **Findings:** F9, F22. **Depends on:** R2, R3, R5.
+**Decisions:** D886, D888, D889, **D893 (c)**. **Findings:** F9, F22. **Depends on:** CSR2, CSR3, CSR5.
 
 - **Files:** `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`,
   `internal/cli/validate.go` and `validate_test.go` (the notes: the artifact output cap D886, the
@@ -432,12 +432,12 @@ if D894 is answered (a)**.
 - **The credentials-service precondition, reported and not fixed (E7).** The design's chain of custody
   runs through a service that **ships dormant** and that refuses a project-scoped job today (§1), so
   the installation must be able to *see* that before it launches anything: a `fugaro validate` note
-  and, with R7's census, the two facts `fugaro doctor` reports — **is the credentials service enabled
+  and, with CSR7's census, the two facts `fugaro doctor` reports — **is the credentials service enabled
   for this installation** (the `credentials_service` block in localcfg, the opt-in
   `fugaro update --provision-credentials` writes) and **does it admit the review job's own account**
   (Global Constraint 6 / C3.9). The note names **which half** is missing, because only the first is
   reachable from `fugaro update`: it never tells the owner to run a second command for the second
-  half, and it never suggests the design will work without it. This is the check R2's launch refusal
+  half, and it never suggests the design will work without it. This is the check CSR2's launch refusal
   mirrors.
 - **Tests:** `TestRecipesSkewRefusesReviewJobOnAnOldImage`,
   `TestValidateNotesTheArtifactOutputCap`, `TestValidateNotesTheCredentialsServicePrecondition`
@@ -460,17 +460,17 @@ if D894 is answered (a)**.
   there is no step the owner can run for it.
 - **Commit:** `review: the version gates, the validation notes and the docs`.
 
-### R7. The review-only job variant and its service account — no App key (SEC)
+### CSR7. The review-only job variant and its service account — no App key (SEC)
 
 **Decisions:** D883, D888, **D893 (c)** — the owner's answer to how the read-only installation token
 reaches the job, which **this task implements and does not re-decide** (**UNVERIFIED-2** is closed by
 D893) — and **D892 (a)**, whose ruling of 2026-11-01 is that **no signing key goes on this variant**:
 the credentials service signs, so the variant's `secret_env` is the account's Claude token and
 nothing else.
-**D891**'s stage posture is **R4**'s, not this task's, and this task only needs the variant to
+**D891**'s stage posture is **CSR4**'s, not this task's, and this task only needs the variant to
 mount the account's Claude token and no key.
 **Findings:**
-**F3**, **F14**, **F16**. **Depends on:** E1, R1. **Precedes R2** (see §1). **SEC flag: yes — this is
+**F3**, **F14**, **F16**. **Depends on:** E1, CSR1. **Precedes CSR2** (see §1). **SEC flag: yes — this is
 the task that makes the read-only scope a boundary instead of a comment on the launcher's intent.**
 **Blocked on E7 (§1): this task cannot run until the credentials service is enabled for the
 installation *and* admits a project-scoped job.**
@@ -485,7 +485,7 @@ installation *and* admits a project-scoped job.**
   `project_jobs`), `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl` (the
   positive test), `internal/cli/doctor.go` + `doctor_secret_readers.go` (the census and the
   secret-readers report), `internal/cli/project_job.go` + its test (the launcher's entry lookup),
-  `internal/cli/recipes_skew.go` (its `…Since`, declared to R6). **At most 12 files.**
+  `internal/cli/recipes_skew.go` (its `…Since`, declared to CSR6). **At most 12 files.**
 - **Interfaces:** produces a **second job per `(profile, provider, account)`** — same axis, same
   `gcp.ProjectJobName` shape with a review suffix, its own service account, a `secret_env` carrying
   the account's `CLAUDE_CODE_OAUTH_TOKEN` **and nothing else** — no **`github-app-key`**, and **no
@@ -505,7 +505,7 @@ installation *and* admits a project-scoped job.**
   needed and refreshed by the `Token(ctx, minValid)` contract**. Nothing is handed in: no per-launch
   secret is created, and the execution environment carries no token value. The request carries the
   **App ID alone**; the repository and the permissions are the **service's** decision, from the
-  verified identity's claims (`internal/credsvc/github.go:245`, `:263`), which is why R1's read-only
+  verified identity's claims (`internal/credsvc/github.go:245`, `:263`), which is why CSR1's read-only
   set and the service's admission of a project-scoped job are both this task's blockers.
 - **Tests:** `TestReviewJobVariantMountsNoAppKey` (the variant's `SecretEnv` names no
   `github-app-key`), `TestReviewJobVariantServiceAccountHasNoAppKeyAccessor` (the account's grant list
@@ -536,8 +536,8 @@ installation *and* admits a project-scoped job.**
   the credentials service's and needs no change.
 - **The signature is now in this plan; the coordinator's use of it is not.** **D892 is answered with
   option (a)**: the **credentials service** signs `review.json`, and a verdict that does not verify is
-  never a `ship`. That answer moved the signature **into** the plan — **R3** writes the signing client,
-  the verifier and their refusal tests, and **R7** keeps the signing key **off** the review variant:
+  never a `ship`. That answer moved the signature **into** the plan — **CSR3** writes the signing client,
+  the verifier and their refusal tests, and **CSR7** keeps the signing key **off** the review variant:
   the job holds the Claude token and nothing else. What is still **not** here is the caller: **the
   coordinator** that reads an artifact, verifies it and merges on a verified `ship` is the
   coordinator's own work stream, and it **cannot be built until E7 is met** (§1), since the token the
@@ -546,14 +546,14 @@ installation *and* admits a project-scoped job.**
   service a precondition of the whole design, and half of that precondition — the service admitting a
   caller whose account belongs to a project-scoped job, **Global Constraint 6** — is code in
   `internal/credsvc`, scheduled as **C3.9** in the credentials service's own Slice 3 and
-  **unscheduled**. It is **not** in R1–R7 and cannot be: it is that work stream's task, and no
-  `fugaro update` can supply it. R1 names the read-only set the service must serve, R2 and R6 report
-  when the precondition is unmet, and R7 waits on it; none of them builds it.
-- **Posting the review as a pull request comment.** R2 removes the comment from the review job's
+  **unscheduled**. It is **not** in CSR1–CSR7 and cannot be: it is that work stream's task, and no
+  `fugaro update` can supply it. CSR1 names the read-only set the service must serve, CSR2 and CSR6 report
+  when the precondition is unmet, and CSR7 waits on it; none of them builds it.
+- **Posting the review as a pull request comment.** CSR2 removes the comment from the review job's
   path; a coordinator-side poster is the coordinator's work.
 - **A console or mobile surface for the artifact.** The console contract is another work stream's
   (`console/**`), and the artifact is readable through `fugaro review show --json` first.
-- **Re-reviewing automatically after the fix round.** R5 says the coordinator asks for a review of
+- **Re-reviewing automatically after the fix round.** CSR5 says the coordinator asks for a review of
   the new head; a loop that chains fix → review → fix lives in the coordinator, not here.
 - **`review_levels` / L3.** E5 is independent, and this design's security-sensitive checklist does
   not wait on it.
@@ -563,7 +563,7 @@ installation *and* admits a project-scoped job.**
   if the owner ever wants the boundary, it is its own design and it belongs to the project-job work,
   not to this one.
 - **An egress rule for the review job as a whole, or a token scoped to one run.** What
-  D891(a) chose is narrower than either and is **R4**'s: denial for the **mutation subprocess**
+  D891(a) chose is narrower than either and is **CSR4**'s: denial for the **mutation subprocess**
   and a **Bash denial for the rest of the stage**, not a firewall around the job. A whole-job egress
   rule is a bigger change (it is the job's VPC/egress posture, shared with every other tenant of the
   same image), and it is not what the owner answered.
@@ -572,19 +572,19 @@ installation *and* admits a project-scoped job.**
   PR link, and the chain's `--max-review-rounds` counts senior-review iterations (D1058,
   [docs/run-limit-carry-over/](../run-limit-carry-over/spec.md) §8, merged as #1485; the count is
   **advisory** there — read off the records, no rule behind it — which §7 of the spec states). What
-  this plan owes that cap is **R3's record** — the PR link and exactly one `reviews[]` entry, which is
+  this plan owes that cap is **CSR3's record** — the PR link and exactly one `reviews[]` entry, which is
   what the chain counts — and nothing else: a counter inside one job could not see the loop, and a
   design that added one would be a second copy of the chain's.
 
 ## 5. Release slot
 
-**Recommended: 0.15.0.** The first slice (E1 + R1 + R7 + R2) needs a new command, a new job shape, a
+**Recommended: 0.15.0.** The first slice (E1 + CSR1 + CSR7 + CSR2) needs a new command, a new job shape, a
 **new job variant and service account per account**, a fourth permission set and at least one version
-gate; R3–R5 add a new wire format and a new prompt path. A 0.14.2 that tried to carry any of it would
+gate; CSR3–CSR5 add a new wire format and a new prompt path. A 0.14.2 that tried to carry any of it would
 carry a gate-less field, which is the failure mode E6 exists to prevent — an older image that decodes
 a key it ignores and runs the opposite of what the owner asked.
 
-**R7 is what makes that release larger than the first draft claimed, and it is not optional.** The
+**CSR7 is what makes that release larger than the first draft claimed, and it is not optional.** The
 `### For operators` section therefore says two things in the release's own words and asks for nothing
 else: **run `fugaro update`**, which deploys the new job variants with the rest of the job set (the
 HARD RULE — no second command, no manual repair), and it will ask whether to **refresh the images**
@@ -596,6 +596,6 @@ reviewer's read-only token comes from the credentials service (**D893 (c)**), wh
 and does not yet admit a project-scoped job (**E7**, §1). So 0.15.0 delivers the command, the variant,
 the artifact and its signature, and the **launch refuses with the reason** until the service is enabled
 and its own admission change lands; the release notes name that as a sentence, not an operator step,
-because **there is no step the owner can run for the second half** (R6). This is the honest shape of a
+because **there is no step the owner can run for the second half** (CSR6). This is the honest shape of a
 design whose last link is another work stream's: nothing here pretends the reviewer runs on the day the
 release ships.
