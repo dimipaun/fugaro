@@ -165,6 +165,18 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	if strings.TrimSpace(lc.Budget.FirebaseAPIKey) == "" {
 		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key: the phone exchanges the pairing token with it, and a code without one scans into a phone that cannot sign in; restore it with 'fugaro update --firebase-project %s', which writes budget.rtdb_url and budget.firebase_api_key", lc.Name, lc.GCPProject))
 	}
+	// The probe comes before the ownership question rather than after it:
+	// both refuse the same pairing, and a credential that the database will
+	// not let read the device node at all has to keep the message and the
+	// code that say so (the console switches on them) instead of being told
+	// the database is somebody else's. The probe is a read, so nothing is
+	// written before the ownership question is answered.
+	if err := pairDatabaseAdminProbe(ctx, db, lc); err != nil {
+		if errors.Is(err, rtdb.ErrPermission) {
+			return pairRefuse(ev, o, pairRefusedDatabaseAdmin, err)
+		}
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
+	}
 	// The one ownership question every writer into the database asks, before
 	// the name check: a pairing writes the device node the rules admit a phone
 	// by, so it asks whether the database is this installation's at all.
@@ -173,12 +185,6 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedMismatch), err)
-	}
-	if err := pairDatabaseAdminProbe(ctx, db, lc); err != nil {
-		if errors.Is(err, rtdb.ErrPermission) {
-			return pairRefuse(ev, o, pairRefusedDatabaseAdmin, err)
-		}
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
 	}
 
 	me, err := pairMeLookup(ctx, lc)
@@ -956,6 +962,11 @@ func pairOpen(cmd *cobra.Command, o cloudOptions, ev *pairEventWriter, asJSON bo
 	if err != nil {
 		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedBudget), err)
 	}
+	// The probe first, as in the pairing itself: it is the credential's own
+	// refusal and keeps its message and code.
+	if err := pairDatabaseAdminProbe(ctx, db, lc); err != nil {
+		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, local), err)
+	}
 	// The same one ownership question the pairing itself asks: `ls` reads the
 	// device nodes and `revoke` deletes one, and neither is this installation's
 	// to do anywhere but in its own database.
@@ -964,9 +975,6 @@ func pairOpen(cmd *cobra.Command, o cloudOptions, ev *pairEventWriter, asJSON bo
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
 		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedMismatch), err)
-	}
-	if err := pairDatabaseAdminProbe(ctx, db, lc); err != nil {
-		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, local), err)
 	}
 	return lc, db, nil
 }

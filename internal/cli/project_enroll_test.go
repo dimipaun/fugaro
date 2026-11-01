@@ -557,6 +557,12 @@ func TestProjectReposRefusesAnotherProjectsSources(t *testing.T) {
 // empty seen list to read as "nothing has run here".
 func TestProjectReposListsWithoutASpendHistory(t *testing.T) {
 	f := newProjectFixture(t, "")
+	// A project with no budget backend is one whose config records neither
+	// half of the pair `fugaro update --firebase-project` writes, so the
+	// fixture's own Firebase project comes back out.
+	setConfig(t, f, func(s string) string {
+		return strings.Replace(s, "firebase_project: proj-1234, ", "", 1)
+	})
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version":     projectpolicy.Version,
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
