@@ -282,7 +282,8 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 
 // overlay merges src into dst at path: maps key by key, anything else
 // replaced whole; a null in src sets nothing. sources records the leaves
-// src set.
+// src set. A review level is the one block whose merge is not always key by
+// key, and mergeLevel says why.
 func overlay(dst, src map[string]any, path string, source string, sources map[string]string) {
 	for _, k := range sortedKeys(src) {
 		v := src[k]
@@ -301,11 +302,83 @@ func overlay(dst, src map[string]any, path string, source string, sources map[st
 				dm = map[string]any{}
 				dst[k] = dm
 			}
+			if isLevelPath(p) {
+				mergeLevel(dm, sm, p, source, sources)
+				continue
+			}
 			overlay(dm, sm, p, source, sources)
 			continue
 		}
 		dst[k] = v // a leaf is a node, which nothing changes
 		sources[p] = source
+	}
+}
+
+// isLevelPath reports whether path is one review level's own block
+// ("agent.levels.l1"), the only node overlay merges specially.
+func isLevelPath(path string) bool {
+	level, ok := strings.CutPrefix(path, "agent.levels.")
+	return ok && (level == "l1" || level == "l2" || level == "l3")
+}
+
+// mergeLevel merges the review-level block sm into dm, the level at path. It
+// is not the key-by-key merge of every other block, because a level that is
+// off has no other keys: LevelSetting.validate refuses `none: true` beside
+// one, in a single file. A layer writing none: true is therefore saying the
+// level does not run, and the model, effort and focus the layer below gives
+// it are dropped rather than merged into a level that would carry both and be
+// refused for it; a layer writing any other key is turning the level back on,
+// so an inherited none: true is cleared instead of merged into the level it
+// contradicts. Both directions are one rule — none is the level's own switch,
+// not one of its settings — and they are what lets a repository turn off a
+// level the project set, and turn one the project turned off back on.
+func mergeLevel(dm, sm map[string]any, path string, source string, sources map[string]string) {
+	off, wrote := levelNone(sm)
+	switch {
+	case off:
+		clear(dm)
+		dropSources(sources, path)
+	case wrote || writesAKey(sm):
+		delete(dm, "none")
+		delete(sources, path+".none")
+	}
+	overlay(dm, sm, path, source, sources)
+}
+
+// levelNone reads a level block's `none`: whether it is true, and whether the
+// block writes the key at all. The value is a *yaml.Node (nodeTree), never a
+// decoded Go value, and Decode is what reads it, so a node the merged config
+// itself would refuse to decode as a bool is not read as one here either; a
+// null is not written, and sets nothing, as it does everywhere in the merge.
+func levelNone(m map[string]any) (off, wrote bool) {
+	n, ok := m["none"].(*yaml.Node)
+	if !ok {
+		return false, false
+	}
+	var b bool
+	return n.Decode(&b) == nil && b, true
+}
+
+// writesAKey is whether a level block sets one of the level's own keys, which
+// is what turns an inherited none: true back on.
+func writesAKey(m map[string]any) bool {
+	for k, v := range m {
+		if k != "none" && v != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// dropSources forgets the keys under path, which a replaced level no longer
+// has: a source left behind would name a layer for a key the resolved config
+// does not carry.
+func dropSources(sources map[string]string, path string) {
+	prefix := path + "."
+	for p := range sources {
+		if strings.HasPrefix(p, prefix) {
+			delete(sources, p)
+		}
 	}
 }
 

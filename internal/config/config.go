@@ -420,6 +420,27 @@ type Agent struct {
 	// FirstLineRounds bounds the first-line review/fix cycles, apart from
 	// ReviewRounds.
 	FirstLineRounds int `yaml:"first_line_rounds"`
+	// Levels holds each review level's own settings (L1.3, D722): which
+	// model runs it, at which effort, whether it runs at all, and what it is
+	// asked to focus on. It is config.ReviewLevels — the block the task's
+	// review_levels carries and the project layer's defaults.agent.levels
+	// carries again — so a setting means one thing wherever it is written.
+	//
+	// A nil level says nothing about it and leaves it to the layer below,
+	// which is not the same as a level that is off (LevelSetting.Off, the
+	// `none` key). The resolver (L3.1) reads the block as: levels.l2.model
+	// wins over models.reviewer, levels.l1.model defaults to the coder's
+	// model, and an explicit l1 entry — none or not — wins over
+	// first_line_review.
+	Levels ReviewLevels `yaml:"levels"`
+	// AdversarialRounds is review level 3's round count: 1 to 10, unset (0)
+	// meaning the run's rigor mode supplies it (rigor.AdversarialDefault,
+	// the mode's own senior row). It is the level's one round knob — the
+	// review of #1522 asked for exactly one, so the count is not a key of
+	// each level — and a default rather than a ceiling, like ReviewRounds
+	// and FirstLineRounds: a written number replaces the mode's, up or down,
+	// inside the recipe's own bound of 10.
+	AdversarialRounds int `yaml:"adversarial_rounds"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
