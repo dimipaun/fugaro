@@ -429,6 +429,45 @@ func TestDoctorLauncherReachSaysWhatItsCountsLeaveOut(t *testing.T) {
 	}
 }
 
+// A partial withheld read is a read that did not happen too, and the review of
+// #1428 found the marker set only when every policy had been refused: doctor
+// then printed "1 grant(s) over 1 job(s)" for a listing where the second job's
+// policy was refused as well, filed as a measurement — a count over a partial
+// read, with the jobs it leaves out said beside it, on a screen that counts
+// findings and says nothing about this one. Any withheld policy sets the marker.
+func TestDoctorLauncherReachPartialWithheldIsCounted(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.AddJob("fugaro-acme-app-hid", "2", "2Gi")
+	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
+		Members: []string{"user:a@example.com"}})
+	// 403 is a refusal, not a failure: the check falls back to
+	// testIamPermissions for that job, which the fake answers with nothing held,
+	// so the job is counted as withheld and the listing is read in part.
+	r.run.FailPolicyOf = map[string]int{"fugaro-acme-app-hid": 403}
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
+	if !found {
+		t.Fatal("doctor reports no launcher reach")
+	}
+	if c.OK || c.Severity != "info" {
+		t.Fatalf("check = %+v, want an info line", c)
+	}
+	if !strings.Contains(c.Problem, "can start 1 of them: fugaro-acme-app-web") {
+		t.Errorf("the readable job is not reported: %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "1 of the location's 2 job(s) are not in that count: 1 whose policy your credentials may not read") {
+		t.Errorf("the count does not say which job it leaves out: %s", c.Problem)
+	}
+	// The class is the marker's visible half, and launcher-jobs is on the
+	// measurement list: only a check carrying the unread marker reaches the audit
+	// class, so this one line pins both — a partial read counted in the pointer.
+	if c.Class != doctorClassAudit {
+		t.Errorf("a partial read is classed %q, want %q: the pointer has to count it", c.Class, doctorClassAudit)
+	}
+}
+
 // The two informational checks doctor builds — the launcher reach over the
 // Cloud Run jobs, and the project's Claude account jobs with the repositories
 // each token may be used by — are OK checks with a Severity, and the printer
