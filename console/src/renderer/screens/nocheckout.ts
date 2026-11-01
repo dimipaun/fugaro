@@ -86,9 +86,16 @@ export const NO_CHECKOUT_USE_LABEL = 'Use this checkout'
  * **exactly one** usable checkout: the console chooses it by itself and says so
  * once, because a menu with one entry is a control that can only be pressed one
  * way. The entry appends the entry's own label, so the sentence names the
- * directory the Graph is reading rather than merely counting it. */
+ * directory the Graph will read rather than merely counting it.
+ *
+ * **It does not say the read is running.** The card is drawn before the write
+ * that records the checkout has been sent, let alone answered -- the pairing
+ * probe behind that write takes seconds -- so a sentence in the present tense
+ * would be a claim about a read the console has not asked for yet. It names the
+ * read the console is about to make, and a write that comes back refused takes
+ * the card down with it. */
 export const NO_CHECKOUT_AUTO_SENTENCE =
-  'This installation records one checkout, so the Graph is reading it:'
+  'This installation records one checkout, so the Graph will read it:'
 
 /** NO_CHECKOUT_DETAILS_LABEL is the disclosure's summary, and it is the issue
  * view's own word for the same disclosure (`ISSUE_DETAILS_LABEL`): what is
@@ -133,11 +140,12 @@ export interface NoCheckoutOptions {
    * `auto` is whether the console may choose the single checkout by itself.
    *
    * The entry clears it for a project it has already chosen for: the sentence
-   * this state draws says the Graph **is reading** the directory, and a console
-   * that said that a second time about a directory it had already sent and not
-   * been answered for would be repeating a claim that did not hold. With `auto`
-   * false the one checkout is drawn as the menu it is, and the operator presses
-   * the button -- which is the same control, offered deliberately.
+   * this state draws promises the read the console is about to make, and a
+   * console that promised it a second time about a directory it had already sent
+   * and not been answered for would be promising a read it is not making.
+   * With `auto` false the one checkout is drawn as the menu it is, and the
+   * operator presses the button -- which is the same control, offered
+   * deliberately.
    */
   readonly auto: boolean
 }
@@ -284,7 +292,7 @@ export function renderNoCheckout(
   } else if (only !== undefined) {
     // The one case the console decides for the operator, and the card is where
     // it says so: a menu of one entry is a control with nothing to choose, and
-    // the sentence names the directory the Graph is reading.
+    // the sentence names the directory the Graph will read.
     literal(
       cell(body, factory, 'p', NO_CHECKOUT_SENTENCE_CLASS),
       `${NO_CHECKOUT_AUTO_SENTENCE} ${checkoutLabel(only)}`,
