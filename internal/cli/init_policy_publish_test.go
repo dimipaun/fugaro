@@ -500,6 +500,117 @@ func TestProjectPolicyPublishRecordsTheGenerationOfItsOwnWrite(t *testing.T) {
 	}
 }
 
+// reposDoorThenEdit is the three allow-list doors' one test: the node is
+// published, the door edits the allow-list, one member of the config is edited,
+// and the stage is asked what it makes of that edit. The edit changes one member
+// of the config, so the answer must be the publish it asks for — not the
+// generation refusal with a re-seed of the file over it, which is what a record
+// left behind by the door leaves the operator with.
+//
+// The allow-list edit is a PutIfMatch of the whole node, so the node's
+// generation — the ETag of the document, which is what the record holds — moves
+// exactly as a publish's does.
+func reposDoorThenEdit(t *testing.T, door func(t *testing.T, f *projectFixture)) {
+	t.Helper()
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	door(t, f)
+	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
+		t.Fatalf("policy_generation = %q, want the generation the allow-list edit wrote (%q)", gen, want)
+	}
+
+	setConfig(t, f, func(s string) string { return strings.Replace(s, "per_run_usd: 5", "per_run_usd: 7", 1) })
+	h := newMigrationRig(t, f, &initOptions{})
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "the local config states what the published policy does not carry") {
+		t.Fatalf("the edit after the allow-list write is %s %q, want the publish it asks for", st.State, st.Detail)
+	}
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("the edit after the allow-list write was refused: %v\n%s", err, out)
+	}
+	if got := nodeCeiling(t, f); got != 7 {
+		t.Errorf("the node's ceiling is %v, want the edit's 7", got)
+	}
+}
+
+func TestReposAddThenEditThenUpdatePublishes(t *testing.T) {
+	reposDoorThenEdit(t, func(t *testing.T, f *projectFixture) {
+		if _, _, err := execute(t, "project", "repos", "add", "github/acme/new"); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestReposRmThenEditThenUpdatePublishes(t *testing.T) {
+	reposDoorThenEdit(t, func(t *testing.T, f *projectFixture) {
+		typed(t)
+		if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/app"); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestReposSyncThenEditThenUpdatePublishes(t *testing.T) {
+	reposDoorThenEdit(t, func(t *testing.T, f *projectFixture) {
+		typed(t)
+		newSyncRig(t, "acme/app", "Acme/New")
+		if _, _, err := executeStdin(t, "aurora\n", "project", "sync", "--github-app-id", "12345", "--github-app-key"); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// TestReposAddLeavesAStaleRecordStale is the other half of that rule: the door
+// records the generation it wrote only when this machine's file was written from
+// the one it wrote against. A file that already names another generation is one
+// whose keys are older than the node — another machine published in between —
+// and refreshing the record there would hide exactly what D854's refusal exists
+// to catch: the operator's next edit would publish an older file over a newer
+// node, with no question asked.
+func TestReposAddLeavesAStaleRecordStale(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// Another machine's publish: the node moves to a generation this file does
+	// not name.
+	stale := recordedGeneration(t, f)
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNodeAt(9))
+	if now := nodeETag(t, f); now == stale {
+		t.Fatalf("the other machine's node carries the generation this file records (%q): nothing is stale in this fixture", now)
+	}
+	out, _, err := execute(t, "project", "repos", "add", "github/acme/new")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if gen := recordedGeneration(t, f); gen != stale {
+		t.Errorf("policy_generation = %q, want the stale %q left as it is: a record written here would hide the other machine's publish from the next update", gen, stale)
+	}
+
+	// And the edit after it is the refusal D854 answers, not a publish over the
+	// newer node.
+	setConfig(t, f, func(s string) string { return strings.Replace(s, "per_run_usd: 5", "per_run_usd: 7", 1) })
+	h := newMigrationRig(t, f, &initOptions{})
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "moved past the generation") {
+		t.Fatalf("the edit after the stale record is %s %q, want the generation refusal", st.State, st.Detail)
+	}
+	if out, err := h.apply(t, true); err == nil {
+		t.Fatalf("the newer node was published over without the operator answering:\n%s", out)
+	}
+	if got := nodeCeiling(t, f); got != 9 {
+		t.Errorf("the node's ceiling is %v, want the other machine's 9: the file's edit was published over it", got)
+	}
+}
+
 // TestProjectPolicyPublishSaysTheWriteLandedWhenItCannotRecord: the record is
 // made after the write, so every way the record can fail is a way that leaves
 // the node moved. The door reports the failure — the operator has to put the two
