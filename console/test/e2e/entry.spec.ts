@@ -704,7 +704,7 @@ test.describe('the renderer entry, in the real window', () => {
             : [
                 ['version'],
                 ['watch', '--json', '--project', 'e2e'],
-                ['runs', 'ls', '--json', '--project', 'e2e'],
+                ['runs', 'ls', '--json', '--since', '24h', '--project', 'e2e'],
               ]
         // The watch is written by the entry's *first poll*, which is a message
         // round and a spawn behind the window's `domcontentloaded` -- so a mode
@@ -962,6 +962,8 @@ test.describe('the renderer entry, in the real window', () => {
           'runs',
           'ls',
           '--json',
+          '--since',
+          '24h',
           '--project',
           'e2e',
         ])
