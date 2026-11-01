@@ -119,7 +119,7 @@ func nodeETag(t *testing.T, f *projectFixture) string {
 // the stage's own read of the config is the file this helper wrote.
 func blockBudgetConfig(t *testing.T, f *projectFixture) {
 	t.Helper()
-	flow := "budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + f.db.URL + ", firebase_project: proj-1234 }"
+	flow := "budget: { mode: enforce, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + " }"
 	block := "budget:\n  mode: enforce\n  per_run_usd: 5\n  rtdb_url: " + f.db.URL + "\n  firebase_project: proj-1234"
 	setConfig(t, f, func(s string) string {
 		if !strings.Contains(s, flow) {
@@ -1047,7 +1047,7 @@ func TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
 	t.Run("no budget backend at all", func(t *testing.T) {
 		f := newProjectFixture(t, "")
 		setConfig(t, f, func(s string) string {
-			return strings.Replace(s, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+f.db.URL+" }\n", "", 1)
+			return strings.Replace(s, "budget: { mode: enforce, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+" }\n", "", 1)
 		})
 		h := newMigrationRig(t, f, &initOptions{})
 
