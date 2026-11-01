@@ -17,7 +17,7 @@ generation. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); 
 
 `fugaro update` is the whole upgrade (`CLAUDE.md`, HARD RULE). So:
 
-- **There is one local layer file**, `~/.config/fugaro/projects/<project>-layer.yaml`, and **no flag
+- **There is one local layer file**, `~/.config/fugaro/projects/<project>.layer.yaml`, and **no flag
   and no config key names it** (D830, answered): the path is the project's own name under the
   config home's `projects/` directory, which is where the project's config already lives. `fugaro
   rigor set` and `unset` edit that file and read; neither writes the runs bucket, a job, a secret or
@@ -172,7 +172,7 @@ becomes `<mode>`. In order:
    and writes nothing** — `--yes` included, since `--yes` answers a prompt and not this refusal.
    `show` runs anywhere, and §4's `--repo R` form writes a repository's own file and is allowed: an
    agent may edit the tree it was given.
-4. **Resolve the file.** It is §1's one path, `~/.config/fugaro/projects/<project>-layer.yaml`:
+4. **Resolve the file.** It is §1's one path, `~/.config/fugaro/projects/<project>.layer.yaml`:
    there is no `--layer` flag and no config key for it (D830, answered), so there is nothing to
    resolve and nothing to record **of the path** — D854's *generation* record is another question
    and a different one, answered by the owner on 2026-10-31 (the generation is recorded) and R1's to

@@ -34,7 +34,7 @@ edit one command, checked before it is written, and closes the `fugaro update` g
 after a second command is not delivered.
 
 **The shape the owner approved (SD4).** There is **one** local layer file,
-`~/.config/fugaro/projects/<project>-layer.yaml`, and no flag and no config key naming it. The first
+`~/.config/fugaro/projects/<project>.layer.yaml`, and no flag and no config key naming it. The first
 `fugaro update` **seeds** it from the published layer when it is absent, and every later `update`
 publishes it after showing the diff; `rigor set` and `unset` edit that one file. The owner's edit is
 therefore one command whose next step is the one documented command, which is the HARD RULE read

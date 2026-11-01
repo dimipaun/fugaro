@@ -738,7 +738,7 @@ func TestFanOutStopsWithoutClaimingARaceOnAReadError(t *testing.T) {
 // directory, beside its project config.
 func localLayerPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", "aurora-layer.yaml")
+	return filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", "aurora.layer.yaml")
 }
 
 // TestConfigPublishWithNoFilePublishesTheLocalLayer: the FILE argument

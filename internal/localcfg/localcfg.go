@@ -1025,6 +1025,15 @@ func ProjectPath(getenv func(string) string, name string) (string, error) {
 // config (D830). The path is a convention and nothing records it — there is no
 // --layer flag and no config key for it — so the file the owner edits and the
 // file `fugaro update` publishes are the same one by construction.
+//
+// The name is `<project>.layer.yaml`, and the dot is the whole of why: a
+// project name is a-z, 0-9 and '-' (config.ProjectNameRE), so a file this one
+// names can never be read back as a project config. `Projects()` lists every
+// projects/<name>.yaml whose <name> is a project name, and a `-layer.yaml` file
+// would be listed as a project of its own — a phantom second project for a
+// single-project installation, and a real collision for a project actually
+// named foo-layer, whose own layer file would then be project `foo`'s
+// (docs/rigor-command/reconciliation.md, D830 amendment of 2026-11-01).
 func LayerFile(getenv func(string) string, name string) (string, error) {
 	if !config.ProjectNameRE.MatchString(name) {
 		return "", fmt.Errorf("%q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", name)
@@ -1033,7 +1042,7 @@ func LayerFile(getenv func(string) string, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, name+"-layer.yaml"), nil
+	return filepath.Join(d, name+".layer.yaml"), nil
 }
 
 // legacyPath is where the local config lived before project configs; it

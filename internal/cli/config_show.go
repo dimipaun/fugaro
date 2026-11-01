@@ -265,6 +265,14 @@ func newConfigLayerCmd() *cobra.Command {
 			if st.Path == "" {
 				return nil
 			}
+			if st.Unreadable != "" {
+				// The file is there but not one this CLI reads (a symlink, an
+				// oversized one), so "does not exist" and its seed remedy would
+				// both be false — and `fugaro update` would refuse the file
+				// rather than replace it.
+				fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s (not read: %s)\n", pluginwire.Printable(st.Path), pluginwire.Printable(st.Unreadable))
+				return nil
+			}
 			if !st.Exists {
 				// A published layer with no local file is a state with a
 				// remedy, and this door is where the owner reads the state:

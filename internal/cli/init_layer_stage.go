@@ -137,10 +137,17 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 		return nil, userErr("the project layer: %v", err)
 	}
 	p.path, p.configPath, p.recorded = path, policyConfigPath(lc), lc.LayerGeneration
-	if data, err := os.ReadFile(path); err == nil {
+	// The same read the door makes (readLayerFile, config.ReadRegular): a
+	// symlink or an oversized file is refused here as it is there, so the file
+	// this stage publishes is the file `fugaro config publish` does, and a file
+	// only one of the two would read cannot make the two disagree.
+	data, rerr := readLayerFile(path)
+	switch {
+	case rerr == nil:
 		p.exists, p.local = true, data
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, userErr("reading the local layer file %s: %v", path, err)
+	case errors.Is(rerr, os.ErrNotExist):
+	default:
+		return nil, userErr("reading the local layer file %s: %v", path, oneLineCLI(rerr.Error()))
 	}
 	if p.exists {
 		l, ps := projectLayerProblems(p.local, lc)

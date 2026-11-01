@@ -118,6 +118,13 @@ type layerLocalState struct {
 	// Recorded is the local project config's layer_generation, "" when
 	// nothing is recorded.
 	Recorded string
+	// Unreadable is why a file that is there was not read (a symlink, a
+	// non-regular file, one over the layer size limit) — the states above are
+	// about bytes, and this is the one where there are none to compare because
+	// the file is not one this Fugaro reads. It is read the way the publish
+	// doors read it (readLayerFile, config.ReadRegular), so a file a publish
+	// refuses is not counted here as a layer the project has.
+	Unreadable string
 	// Unpublished is true only when both sides are present and their
 	// sha256s differ: with either absent there is nothing to compare.
 	Unpublished bool
@@ -143,8 +150,13 @@ func localLayerState(lc *localcfg.Config, project string, pub *config.ProjectLay
 		return st
 	}
 	st.Path = path
-	if data, err := os.ReadFile(path); err == nil {
+	data, err := readLayerFile(path)
+	switch {
+	case err == nil:
 		st.Exists, st.SHA256 = true, config.LayerSum(data)
+	case errors.Is(err, os.ErrNotExist):
+	default:
+		st.Unreadable = oneLineCLI(err.Error())
 	}
 	if lc != nil {
 		st.Recorded = lc.LayerGeneration
@@ -218,6 +230,11 @@ func localLayerFileCheck(lc *localcfg.Config, rf resolvedFile) []doctorCheck {
 	switch {
 	case st.Unpublished:
 		return []doctorCheck{{ID: "local-layer-file", Severity: "warning", Problem: st.unpublishedText(), Fix: fix}}
+	case st.Unreadable != "":
+		// No fix command: the file is the owner's, and the command that would
+		// write one (update) refuses this file as the publish doors do.
+		return []doctorCheck{{ID: "local-layer-file", Severity: "warning",
+			Problem: fmt.Sprintf("the local layer file %s is not read: %s", st.Path, st.Unreadable)}}
 	case !st.Exists && !st.Published:
 		// Neither side exists, which is an installation that publishes no
 		// layer and has never been seeded: there is nothing to edit, nothing

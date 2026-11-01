@@ -435,6 +435,83 @@ func TestInstallationAtThePreviousVersionConverges(t *testing.T) {
 	}
 }
 
+// TestUpdateLayerStageRefusesAFileTheDoorsDoNotRead: the stage reads the local
+// file exactly as `fugaro config publish` does (readLayerFile), so a symlink
+// and a file over the layer size limit are refused here as there, and nothing
+// is published from either — an update that read a symlink would publish
+// whatever it points at, and one that read past the cap would publish a file no
+// other door accepts.
+func TestUpdateLayerStageRefusesAFileTheDoorsDoNotRead(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		want  string
+		write func(t *testing.T, path string)
+	}{
+		{"symlink", "is a symbolic link", func(t *testing.T, path string) {
+			target := filepath.Join(t.TempDir(), "real-layer.yaml")
+			if err := os.WriteFile(target, []byte(localEdit), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"oversize", "is larger than", func(t *testing.T, path string) {
+			big := append([]byte(localEdit), bytes.Repeat([]byte("# padding\n"), int(config.LayerMaxBytes)/len("# padding\n")+1)...)
+			if err := os.WriteFile(path, big, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newLayerRig(t, testProjectLayer)
+			path := localLayerPath(t)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tc.write(t, path)
+
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("fugaro update accepted a file the doors do not read: %v\n%s%s", err, out, errOut)
+			}
+			all := out + errOut + err.Error()
+			if !strings.Contains(all, path) || !strings.Contains(all, tc.want) {
+				t.Errorf("the refusal does not name the file and its problem:\n%s", all)
+			}
+			if got, ok := layerObject(t, r); !ok || got != testProjectLayer {
+				t.Errorf("the object was written from a file the doors do not read: %q", got)
+			}
+		})
+	}
+}
+
+// TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints: the stage's read is the
+// bucket read every other command makes, so an installation whose endpoints say
+// the real bucket is a fake — a config carrying a storage or no_auth override —
+// skips rather than reaching past the fake, and the skip is the sentence the
+// unreachable bucket gets. skipGSOnFakeEndpoints is off for every other test in
+// this package (main_test.go), so it is turned back on here, as the tests of
+// the guard itself do.
+func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
+	updateRig(t)
+	old := skipGSOnFakeEndpoints
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
+	}
+	all := out + errOut
+	if !strings.Contains(all, "[skipped]    layer") || !strings.Contains(all, "could not be read") {
+		t.Errorf("the layer stage did not skip the fake-endpoint bucket:\n%s", all)
+	}
+	if _, rerr := os.Stat(localLayerPath(t)); !errors.Is(rerr, os.ErrNotExist) {
+		t.Errorf("a local layer file was written with no bucket read: %v", rerr)
+	}
+}
+
 // layerStageRig is the layer stage over a rig's own project config, driven a
 // call at a time (the policy tests' own pattern): Verify has to be exercised
 // after the state it watches has moved, which the door cannot be.
