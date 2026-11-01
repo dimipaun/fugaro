@@ -998,6 +998,41 @@ func TestSettingsSetRepoLayerChecksTheRepoFlag(t *testing.T) {
 	}
 }
 
+// TestSettingsSetRepoLayerPicksTheNamedCheckout: --repo names one repository,
+// and the checkout the write lands in has to be that one. A machine that
+// remembers several of the project's checkouts must refuse a --repo that is
+// none of them rather than take whichever comes first, so this remembers two
+// and names a third: the refusal names it and neither remembered file moves
+// (M14). The named one is then written, so the refusal is a comparison and not
+// "a remembered checkout is never used".
+func TestSettingsSetRepoLayerPicksTheNamedCheckout(t *testing.T) {
+	home, _ := settingsWriteHome(t)
+	aPath := filepath.Join(settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML("")), "fugaro.yaml")
+	bPath := filepath.Join(settingsCheckout(t, home, "owner/repo-b", settingsRepoYAML("")), "fugaro.yaml")
+	aBefore, bBefore := readFileString(t, aPath), readFileString(t, bPath)
+
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-c", "--yes")
+	if err == nil {
+		t.Fatal("settings set wrote a repository this machine does not remember")
+	}
+	if !strings.Contains(err.Error(), "owner/repo-c") {
+		t.Errorf("the refusal does not name the repository: %v", err)
+	}
+	if readFileString(t, aPath) != aBefore || readFileString(t, bPath) != bBefore {
+		t.Error("the refused write changed a remembered checkout's fugaro.yaml")
+	}
+
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-b", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, bPath); !strings.Contains(got, "base_branch: develop") {
+		t.Errorf("the named checkout's fugaro.yaml does not carry the write:\n%s", got)
+	}
+	if readFileString(t, aPath) != aBefore {
+		t.Error("the write landed in the checkout that was not named")
+	}
+}
+
 // TestSettingsSetReparsesTheRepoAndLayerDocuments: the edited bytes are held
 // against the document's own strict loader, so a value that loader refuses
 // never reaches a repository's fugaro.yaml or the local project layer file
@@ -1090,6 +1125,17 @@ func TestSettingsSetTurningAFollowupKeyOnAsksForTheTypedProjectName(t *testing.T
 // and no temporary is ever visible beside it (spec §4.2 step 5).
 func TestSettingsSetWritesMode0600AndLeavesNoTemporaryBehind(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
+	// The file the person left at 0644 is the one to watch: the write is a new
+	// file renamed over it, so the mode is the write path's 0600 whatever the
+	// old one was and the inode is the new file's, not the old one's truncated
+	// (M29: os.WriteFile in place keeps both).
+	if err := os.Chmod(localPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1099,6 +1145,9 @@ func TestSettingsSetWritesMode0600AndLeavesNoTemporaryBehind(t *testing.T) {
 	}
 	if perm := fi.Mode().Perm(); perm != 0o600 {
 		t.Errorf("the written file's mode is %o, want 600", perm)
+	}
+	if os.SameFile(before, fi) {
+		t.Error("the write truncated the file in place; the write path renames a new file over it")
 	}
 	left, err := filepath.Glob(filepath.Join(filepath.Dir(localPath), ".config-*"))
 	if err != nil {
