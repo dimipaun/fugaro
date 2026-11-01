@@ -1240,7 +1240,8 @@ export function fillCoordinatorHead(model: CoordinatorModel, frame: DrawnCoordin
   const empty = count !== null && (count.value ?? 0) <= 0
   if (count === null || empty) literal(frame.queueCount, '')
   else putReading(frame.queueCount, count, 'count')
-  literal(frame.queueEmpty, empty ? COORDINATOR_QUEUE_EMPTY_WORD : '')
+  if (empty) literal(frame.queueEmpty, COORDINATOR_QUEUE_EMPTY_WORD)
+  else literal(frame.queueEmpty, '')
 }
 /**
  * fillCoordinatorBlind draws the line under the queue: what this page cannot
