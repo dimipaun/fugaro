@@ -456,6 +456,10 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		return err
 	}
 
+	// A checkout's config already carries the project layer it resolved over
+	// (config.Resolve), so the layer is read here only when there is no such
+	// config: without one, nothing else on this path knows the project's rigor
+	// default, and the mode would silently be pro's.
 	var project rigor.Config
 	if cfg == nil {
 		project = previewProjectRigor(ctx, lc)
