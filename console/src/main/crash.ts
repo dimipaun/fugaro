@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's crash reporter: the gate and the scrubber, with nothing wired to
-// either yet (desktop-console plan Task 2.1, first slice; D733, D734; design
-// sections 7.3 and 7.4).
+// either yet (desktop-console plan Task 2.1, first slice; the owner's rulings
+// D733 and D734 of 2026-10-30). The design of record is those two rather than a
+// section: design section 7.4 still carries the promise they supersede -- "no
+// telemetry, no crash reporting to a third party" -- and Task 2.2 is the slice
+// that amends it to describe what this code does.
 //
 // The owner's ruling of 2026-10-30 is that the console gains a crash reporter
-// now and ships **dormant**: nothing is sent, because no DSN is configured, and
-// the switch is **opt-in** -- off unless the installation's setting says on. The
-// window before that setting has been read is a third state rather than a slow
-// "off" (D734): in it, nothing is sent either, which is the whole of the
-// promise that an opted-out operator never sends one report.
+// now and ships **dormant**: nothing is sent while nothing has read the switch,
+// and the switch is **opt-in** -- off unless it has been turned on. The owner's
+// later ruling makes it a **per-user switch, local to the console**: a setting
+// this console keeps for itself rather than a field read out of a document a CLI
+// prints, off by default, and applied at the next launch rather than
+// mid-session. The window before it has been read is a third state rather than a
+// slow "off" (D734): in it, nothing is sent either, which is the whole of the
+// promise that an opted-out operator never sends one report. The DSN is no
+// longer part of the dormancy -- since the owner's ruling of 2026-10-31 it is a
+// constant of every build (`./crash-dsn`) -- so the switch is the one thing that
+// decides, which is what D734 always said it should be.
 //
 // F33 is why the payload is an **allow-list**. A Go panic value, an Electron
 // error message and a JS exception string all carry repository names, branch
@@ -19,46 +28,55 @@
 //
 // The module is therefore pure and static, and it is deliberately importless:
 // it reads no environment, opens no file, makes no call, and holds no DSN, no
-// host and no endpoint. The DSN arrives with the SDK slice as a build-time value
-// the owner sets and nobody commits. The types below are structural for the same
+// host and no endpoint. The DSN lives beside it in `./crash-dsn`, which is the
+// one file under `src/` a DSN-shaped string is allowed in, and this file is not
+// told about it at all. The types below are structural for the same
 // reason -- the SDK slice hands `scrubCrashEvent` the very event its own
-// `beforeSend` receives, and sends back what it returns, with no cast between.
+// `beforeSend` receives -- and the event they describe is deliberately not the
+// SDK's own: they are `readonly` where it is mutable, so the hand-off back costs
+// the wiring the one documented assertion in `./crash-electron`'s `toSdkEvent`
+// rather than letting anything downstream write to a scrubbed event in place.
 
 /** CrashOptIn is the operator's switch as this module can see it: `true` when
- * the installation's setting allows reports, and an answer that is not `true`
- * otherwise -- `false`, or a `null` the document holds in the node's place,
- * which are both off. The absence of a value is the third case: nothing has read
- * it yet, not asked, unreadable, or answered by a CLI too old to carry the
- * field. That absence is D734's rule made expressible -- a console that folded it
- * into `false` could not tell "off" from "not known yet", and the two have the
- * same answer here for exactly as long as it takes something to read the setting,
- * but they are different words in a log line, which is the whole of what
- * `CrashReportingReason` is for. JSON has no `undefined`, so the absence is what
- * a settings document with no switch node in it decodes to; a node that is
- * present and empty decodes to `null`, which is an answer. */
+ * the per-user switch is on, and an answer that is not `true` otherwise --
+ * `false`, or a `null` a stored switch may hold in its place, which are both
+ * off. The absence of a value is the third case: nothing has read the switch
+ * yet, or it could not be read at all. That absence is D734's rule made
+ * expressible -- a console that folded it into `false` could not tell "off" from
+ * "not known yet", and the two have the same answer here for exactly as long as
+ * it takes something to read the switch, but they are different words in a log
+ * line, which is the whole of what `CrashReportingReason` is for. The switch is
+ * stored rather than decoded, so the absence is a key that is not there at all;
+ * a key that is present and empty is `null`, which is an answer. */
 export type CrashOptIn = boolean | null | undefined
 
-/** CrashReportingInput is everything the gate is allowed to look at: the DSN the
- * build was given, and the switch. There is deliberately nothing else -- no
- * environment, no clock, no state -- so the decision cannot depend on anything
- * the SDK slice has to remember to pass.
+/** CrashReportingInput is everything the gate is allowed to look at: the switch,
+ * and nothing else. There is deliberately no DSN here since the owner's ruling of
+ * 2026-10-31 -- the value is a constant of the build rather than an input that
+ * can be missing, so a gate that asked about it would be asking a question whose
+ * answer is always yes -- and nothing else either: no environment, no clock, no
+ * state, so the decision cannot depend on anything the SDK slice has to remember
+ * to pass.
  *
  * The switch is typed `unknown` rather than `CrashOptIn` because of where it
- * comes from: a settings node in a document this console did not write, decoded
- * from JSON. `CrashOptIn` is the answer when the document is the one the CLI
- * promises; anything else is a value the gate has to refuse, and a type that
- * admitted only the three good values would move that refusal into a cast at the
- * call site. */
+ * comes from: a value read back from storage, which a hand-edit or a corrupted
+ * file can have left as anything at all. `CrashOptIn` is the answer when the
+ * stored switch is the one this console wrote; anything else is a value the gate
+ * has to refuse, and a type that admitted only the three good values would move
+ * that refusal into a cast at the call site. */
 export interface CrashReportingInput {
-  readonly dsn?: string | null
   readonly optedIn?: unknown
 }
 
 /** CrashReportingReason is the word a log line gets, and it is a word rather
- * than the DSN: a reason ends up pasted into an issue, and a DSN is a URL with a
- * key in it. One word per way of being off, because "off" alone would leave the
- * dormant build indistinguishable from a build whose DSN the owner never set. */
-export type CrashReportingReason = 'enabled' | 'opt-in-not-read' | 'opt-in-off' | 'no-dsn'
+ * than a value: a reason ends up pasted into an issue. One word per way of being
+ * off, because "off" alone could not tell an operator who said no from a console
+ * that has not read the setting yet -- and those are different answers, one of
+ * them being D734's third state. There were four words while the DSN was a build
+ * input and a build without one was a third way of sending nothing; since the
+ * owner's ruling of 2026-10-31 the DSN is a constant of every build, so there is
+ * no such state left to name. */
+export type CrashReportingReason = 'enabled' | 'opt-in-not-read' | 'opt-in-off'
 
 export interface CrashReportingDecision {
   readonly enabled: boolean
@@ -68,25 +86,22 @@ export interface CrashReportingDecision {
 /**
  * crashReportingDecision is the gate, as a question asked afresh each time it
  * matters: the setting can change, and a reporter started under an open gate
- * must not keep sending under a closed one. The switch is read first, so a
- * console that has not read the setting says so rather than blaming the build
- * for the DSN it was never asked about.
+ * must not keep sending under a closed one. The switch is the whole of it -- the
+ * DSN is the build's own constant, so there is nothing beside the switch that
+ * could close this gate, and the gate is therefore exactly "did the operator
+ * turn it on".
  *
- * The gate is strict: `true` and nothing else opens it. The value arrives from a
- * document this console did not write, so `"true"`, `1`, `"yes"` and an object
- * are all things a settings node can hold, and a truthy check would read every
- * one of them as an operator's consent -- which is the one answer this gate may
- * not guess at. Everything that is not `true` is an answer that is off, except
- * the absence of an answer, which is the unread case and says so.
- *
- * A DSN that is only whitespace is no DSN: the value comes from a build the
- * owner configures, and an empty one is what an unset variable looks like.
+ * The gate is strict: `true` and nothing else opens it. The value arrives from
+ * storage rather than from this console's own memory, so `"true"`, `1`, `"yes"`
+ * and an object are all things a stored switch can hold, and a truthy check
+ * would read every one of them as an operator's consent -- which is the one
+ * answer this gate may not guess at. Everything that is not `true` is an answer
+ * that is off, except the absence of an answer, which is the unread case and
+ * says so.
  */
 export function crashReportingDecision(input: CrashReportingInput): CrashReportingDecision {
   if (input.optedIn === undefined) return { enabled: false, reason: 'opt-in-not-read' }
   if (input.optedIn !== true) return { enabled: false, reason: 'opt-in-off' }
-  const dsn = input.dsn
-  if (typeof dsn !== 'string' || dsn.trim() === '') return { enabled: false, reason: 'no-dsn' }
   return { enabled: true, reason: 'enabled' }
 }
 
@@ -94,15 +109,24 @@ export function crashReportingDecision(input: CrashReportingInput): CrashReporti
  * CRASH_CLIENT_OPTIONS is what the SDK slice passes to the client's `init`
  * beside the DSN, and each entry is a decision rather than a default:
  *
- *   - nothing is collected that is about the *person* -- no default PII, no
- *     breadcrumb trail, and no local variables off the stack, which is where a
- *     credential is most likely to be sitting when something throws;
+ *   - nothing is collected that is about the *person* -- no user information
+ *     filled in from the instrumentation, no breadcrumb trail, and no local
+ *     variables off the stack, which is where a credential is most likely to be
+ *     sitting when something throws;
  *   - nothing is collected that is about the *session* -- no session tracking
  *     and no client reports, so the service receives error events and no
  *     account of who was running the app or for how long;
  *   - nothing is added to the events -- no automatic stacktrace attached to a
  *     message that would then be sent, and no default integrations, because the
- *     integrations are the ones that collect what the three lines above refuse.
+ *     integrations are the ones that collect what the three lines above refuse;
+ *   - nothing is done to the *process* -- no runtime channel injection, which on
+ *     the Node the pinned Electron embeds is `Module.registerHooks`: a loader
+ *     hook over every module the process loads from then on, installed by the
+ *     client's own constructor whatever it is handed, and with no unregister
+ *     anywhere in Node to take it back off. It rewrites matching modules in
+ *     place, and what it rewrites is other people's code on its way into this
+ *     process, which is a surface no crash reporter needs and this console does
+ *     not accept.
  *
  * What is left out beyond this object is not an option of the client: **native
  * crash minidumps** (they are process memory, and D733's "stack frames only" is
@@ -112,16 +136,21 @@ export function crashReportingDecision(input: CrashReportingInput): CrashReporti
  *
  * The names are the SDK's own and are not checked here, since this module
  * imports nothing: the slice that adds the dependency confirms each one against
- * the pinned version before it initialises anything.
+ * the pinned version before it initialises anything, and two of them moved in
+ * the two major versions between here and 11.7.0 -- `sendDefaultPii` is
+ * `dataCollection.userInfo` there, and `autoSessionTracking` is gone, because
+ * v8's sessions arrive only through the `mainProcessSessionIntegration` that
+ * `defaultIntegrations: false` refuses to install. Both corrections are the SDK
+ * slice's, and the object below is what is handed to `init`.
  */
 export const CRASH_CLIENT_OPTIONS = Object.freeze({
-  sendDefaultPii: false,
-  autoSessionTracking: false,
+  dataCollection: Object.freeze({ userInfo: false }),
   sendClientReports: false,
   attachStacktrace: false,
   maxBreadcrumbs: 0,
   includeLocalVariables: false,
   defaultIntegrations: false,
+  enableRuntimeChannelInjection: false,
 })
 
 /** CrashFrame is one frame as the reporter hands it over: everything the
@@ -296,17 +325,32 @@ function withoutScheme(source: string): string | null {
 }
 
 /** CONTROL_RE is the characters a file name never carries and a reader always
- * obeys: a newline, a carriage return, a NUL, a tab, a delete, and the ones
- * Unicode spells outside ASCII -- the next-line character, the line and
- * paragraph separators, and the format characters, `\p{Cf}` (a bidi override, a
- * zero-width joiner, a byte-order mark). A control character is not a separator
- * any two readers agree on -- `x\nhome/<x>/secret.js` is one segment to
- * `HOME_PATH_RE` and two to a log line, a terminal or a decoder -- so one inside
- * a path is a way past the check below rather than part of a name. The three
- * Unicode line breaks are that same case spelled elsewhere, and a format
+ * obeys: the control characters, `\p{Cc}` -- ASCII's, and the C1 block above
+ * them, where the next-line character and the control-sequence introducer live
+ * -- the line and paragraph separators, and the format characters, `\p{Cf}` (a
+ * bidi override, a zero-width joiner, a byte-order mark). A control character is
+ * not a separator any two readers agree on -- `x\nhome/<x>/secret.js` is one
+ * segment to `HOME_PATH_RE` and two to a log line, a terminal or a decoder -- so
+ * one inside a path is a way past the check below rather than part of a name.
+ * The Unicode line breaks are that same case spelled elsewhere, and a format
  * character is that case made invisible: a reader that honours a bidi override
- * or a joiner reads a path this check never saw. */
-const CONTROL_RE = /[\x00-\x1f\x7f\x85\u2028\u2029\p{Cf}]/u
+ * or a joiner reads a path this check never saw.
+ *
+ * The family is written as the category rather than as the characters that were
+ * found: `\p{Cc}` is the whole control block, and the list it replaces was the
+ * ASCII half of it plus `\x85`, which is one C1 character among thirty-two. The
+ * line and paragraph separators are named on their own because neither is a
+ * control character -- `\p{Zl}` and `\p{Zp}` are separate categories -- and both
+ * are line breaks to a reader. */
+const CONTROL_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/u
+
+/** SURROGATE_RE is half a code point, which is not a character at all. A lone
+ * surrogate has no UTF-8 encoding, so every reader that has to write one --
+ * a JSON encoder, a terminal, the processor -- substitutes a replacement
+ * character, and two such readers disagree about what the path says without
+ * either of them being wrong. A *pair* is a character and is kept: the test is
+ * the category `\p{Cs}`, which matches a code unit that is not part of one. */
+const SURROGATE_RE = /\p{Cs}/u
 
 /** QUERY_MARKERS are where a URL's query and its fragment begin, and neither is
  * part of a file's name: `x.js?token=<x>` is a file name with a credential after
@@ -321,12 +365,12 @@ const QUERY_MARKERS: readonly string[] = ['?', '#']
  * -- leaves a relative path pointing outside the app. What is refused here is
  * every way such a path is still *about* somewhere: a `..` segment, a leading
  * `~`, a colon or a percent-escape that another reader would decode into a
- * separator, a query or a fragment marker, a control character, and the empty
- * string, which is a path with no name in it at all. */
+ * separator, a query or a fragment marker, a control character, half a code
+ * point, and the empty string, which is a path with no name in it at all. */
 function unplaceable(rest: string): boolean {
   if (rest === '' || rest.startsWith('~')) return true
   if (rest.includes(':') || rest.includes('%')) return true
-  if (CONTROL_RE.test(rest)) return true
+  if (CONTROL_RE.test(rest) || SURROGATE_RE.test(rest)) return true
   if (QUERY_MARKERS.some((marker) => rest.includes(marker))) return true
   return rest.split('/').includes('..')
 }

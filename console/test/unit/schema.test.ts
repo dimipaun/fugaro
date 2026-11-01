@@ -1640,6 +1640,7 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     repos: [
       {
         repo: 'owner/repo-a',
+        provider: 'github',
         stored: true,
         view: {
           repo: 'owner/repo-a',
@@ -1715,6 +1716,10 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     // the screen has one branch for each and not one branch for both.
     const stored = coordinatorDecoded(STORED_VIEW).repos[0]
     expect(stored?.repo).toBe('owner/repo-a')
+    // The host the repository is on, which is the one thing a pull request's
+    // link can be built from (D814): carried as the CLI's answer and never
+    // read off `pr.url`, which a job wrote.
+    expect(stored?.provider).toBe('github')
     expect(stored?.stored).toBe(true)
     expect(stored?.stale?.since).toBe('2026-10-27T02:00:00Z')
     expect(stored?.view.records[0]?.pr?.number).toBe(7)
@@ -1734,6 +1739,12 @@ describe('the coordinator’s stored project view (T1.2)', () => {
       repos: [{ repo: 'owner/repo-b', stored: false, view: { repo: 'owner/repo-b', records: [], collisions: [] } }],
     }).repos[0]
     expect(noNode?.stored).toBe(false)
+    // `provider` is additive (D814) and the CLI writes the key even when it is
+    // empty, so a document that has none — a CLI older than the field — reads
+    // as the empty provider rather than being refused whole. `''` is what a
+    // screen draws the number as text for, whether the CLI had no provider to
+    // give or predates the key.
+    expect(noNode?.provider).toBe('')
     // The sweep's three `omitempty` keys are absent from a view `status`
     // computes, and absent is the zero and the empty list -- "nothing was
     // dropped" -- never a gap a screen would have to draw as unknown.
@@ -1782,6 +1793,12 @@ describe('the coordinator’s stored project view (T1.2)', () => {
       unknown
     >).records = 'none'
     expect(coordinatorRefusal(wrongType)).toMatchObject({ name: 'not-an-array', field: 'repos[0].view.records' })
+    const providerRetyped = structuredClone(STORED_VIEW) as Record<string, unknown>
+    ;((providerRetyped.repos as Record<string, unknown>[])[0] as Record<string, unknown>).provider = 7
+    expect(coordinatorRefusal(providerRetyped)).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].provider',
+    })
 
     // An object that is not one at all is refused before anything is read from
     // it, and the live feed's document is refused by this door for the key it

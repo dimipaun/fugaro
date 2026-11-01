@@ -447,7 +447,11 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	// must be this project's. The path is the file the generation is recorded
 	// in: the edit rewrites the whole node, so it moves the generation its keys
 	// are read at exactly as a publish does, and the record has to follow it.
-	lc, db, configPath, err := openProjectBudget(ctx, o.cloud)
+	declined := "nothing was added to the allow-list"
+	if remove {
+		declined = "nothing was removed from the allow-list"
+	}
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, declined)
 	if err != nil {
 		return err
 	}
@@ -831,7 +835,7 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	if m := agentMarker(os.Getenv); m != "" {
 		return userErr("nothing was written: fugaro project sync adds to the published allow-list, which is what admits a repository to the project, and --github-app-key reads the App's private key with your own credentials to ask GitHub which repositories the App is installed on: %s", initflow.AgentRefusal(m))
 	}
-	lc, db, configPath, err := openProjectBudget(ctx, o.cloud)
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was added to the allow-list")
 	if err != nil {
 		return err
 	}

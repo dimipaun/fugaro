@@ -2425,6 +2425,19 @@ function planStatusReply(document: unknown = PLAN_STATUS): Record<string, unknow
   }
 }
 
+/** withFinishedRelease is the fixture with its first release finished: the two
+ * tasks of that release leave the canvas until their chip is opened, which is the
+ * one way a task the model holds has no card to select. */
+function withFinishedRelease(): unknown {
+  const document = JSON.parse(JSON.stringify(PLAN_STATUS)) as {
+    plans: { releases: { version: string; finished: boolean }[] }[]
+  }
+  const release = document.plans[0]?.releases.find((each) => each.version === '1.4.0')
+  if (release === undefined) throw new Error('the fixture no longer carries release 1.4.0')
+  release.finished = true
+  return document
+}
+
 /** runsReply is the console's run list, in the shape `runIdsIn` reads. */
 function runsReply(): Record<string, unknown> {
   return { ok: true, data: { document: { runs: GRAPH_RUNS.map((run) => ({ run })) } } }
@@ -2542,7 +2555,7 @@ describe('the graph view’s keyboard', () => {
     ).toEqual([next])
   })
 
-  it('drives the graph’s tablist with the arrows, and takes the focus to the tab it chose', async () => {
+  it('drives the graph’s stream filter with the arrows, and takes the focus to the segment it chose', async () => {
     const { bridge } = graphBridge()
     const document = await openGraph(bridge)
     const tabs = classed(panelOf(document), 'graph-tab')
@@ -2556,7 +2569,7 @@ describe('the graph view’s keyboard', () => {
     await flush()
     expect(right.defaultPrevented, 'the graph left its own arrow key to the window').toBe(true)
     const after = classed(panelOf(document), 'graph-tab')
-    expect(after.map((tab) => tab.attributes.get('aria-selected'))).toEqual(['true', 'false', 'false'])
+    expect(after.map((tab) => tab.attributes.get('aria-pressed'))).toEqual(['true', 'false', 'false'])
     expect(after.map((tab) => tab.attributes.get('tabindex'))).toEqual(['0', '-1', '-1'])
     expect(document.activeElement, 'the ring did not follow the tab the arrow chose').toBe(after[0])
 
@@ -2566,9 +2579,105 @@ describe('the graph view’s keyboard', () => {
     await flush()
     expect(end.defaultPrevented).toBe(true)
     const back = classed(panelOf(document), 'graph-tab')
-    expect(back.map((tab) => tab.attributes.get('aria-selected'))).toEqual(['false', 'false', 'true'])
+    expect(back.map((tab) => tab.attributes.get('aria-pressed'))).toEqual(['false', 'false', 'true'])
     expect(document.activeElement).toBe(back[2])
     expect((back[2] as FakeNode).press('ArrowDown').defaultPrevented).toBe(false)
+  })
+
+  it('opens the inspector on a click and closes it on Escape, with the keyboard back on the card', async () => {
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const key = firstKeyed(document)
+
+    // Nothing is selected when the graph opens, and the panel is a panel of a
+    // selection: there is nothing to draw beside a canvas nobody has chosen a
+    // task in.
+    expect(classed(panelOf(document), 'graph-inspector')).toEqual([])
+
+    const card = nodeNamed(document, key)
+    if (card === undefined) throw new Error('the graph drew no node to select')
+    card.click()
+    await flush()
+
+    const panel = classed(panelOf(document), 'graph-inspector')[0]
+    expect(panel, 'the click selected the task and drew no inspector').toBeDefined()
+    // Beside the canvas and not instead of it: the picture is still the picture.
+    expect(classed(panelOf(document), 'graph-canvas')).toHaveLength(1)
+    expect(
+      [...classed(panel as FakeNode, 'graph-inspector-need'), ...classed(panel as FakeNode, 'graph-inspector-unblock')].length,
+      'the panel listed neither what the task waits on nor what it unblocks',
+    ).toBeGreaterThan(0)
+
+    // Escape closes it, and the keyboard goes back to the card the panel was
+    // opened from rather than to `<body>` (design section 4.3).
+    const selected = nodeNamed(document, key)
+    if (selected === undefined) throw new Error('the redraw lost the card the click selected')
+    expect(selected.press('Escape').defaultPrevented, 'the graph left Escape to the window').toBe(true)
+    await flush()
+    expect(classed(panelOf(document), 'graph-inspector')).toEqual([])
+    const back = nodeNamed(document, key)
+    expect(document.activeElement, 'the panel closed and dropped the keyboard').toBe(back)
+  })
+
+  it('opens the inspector on Enter where the card has no run to open', async () => {
+    // Enter is the card's own key and it opens the card's run -- except where
+    // there is no run, and the card is exactly the one a keyboard reader needs
+    // the panel for: `task-three` is the fixture's ready task with no run, which
+    // is the only task a keyboard can reach the inspector through.
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const card = nodeForTask(document, 'task-three')
+    if (card === undefined) throw new Error('the graph drew no card for the fixture’s runless task')
+    expect(card.attributes.get('data-run-id'), 'the fixture’s runless task carries a run').toBeUndefined()
+    expect(card.press('Enter').defaultPrevented).toBe(true)
+    await flush()
+    const panel = classed(panelOf(document), 'graph-inspector')[0]
+    if (panel === undefined) throw new Error('Enter on a card with no run opened nothing')
+    expect(textOf(panel)).toContain('A task nothing depends on')
+  })
+
+  it('selects the task an inspector button names, and keeps the keyboard in the drawing either way', async () => {
+    // **The one press that can name a card the drawing does not have.** Release
+    // 1.4.0 is finished here, so the canvas leaves its two tasks out until the
+    // chip is open (`visibleNodes`) -- and `task-five`, which is in the open
+    // release, waits on one task of each kind: `task-three` is on the canvas and
+    // `task-two` is not. The press selects either of them, and the keyboard has
+    // to end up somewhere it can go on from in both cases.
+    const { bridge } = graphBridge({ planStatus: () => planStatusReply(withFinishedRelease()) })
+    const document = await openGraph(bridge)
+    const card = nodeForTask(document, 'task-five')
+    if (card === undefined) throw new Error('the graph drew no card for task-five')
+    card.click()
+    await flush()
+
+    const needs = classed(panelOf(document), 'graph-inspector-need')
+    expect(needs.map((need) => need.attributes.get('data-key')?.endsWith(':task-three'))).toEqual([true, false])
+
+    // `task-two` is not drawn: the keyboard goes to the panel, which is drawn and
+    // is now about the task the press chose.
+    const hidden = needs[1]
+    if (hidden === undefined) throw new Error('the panel listed nothing this task waits on')
+    hidden.click()
+    await flush()
+    const after = classed(panelOf(document), 'graph-inspector')[0]
+    if (after === undefined) throw new Error('the panel closed under the task it was selecting')
+    expect(textOf(after)).toContain('The second task of the example plan')
+    expect(
+      document.activeElement,
+      'the press named a card that is not drawn and dropped the keyboard',
+    ).toBe(after)
+
+    // And where the card **is** drawn, the keyboard lands on it: the panel is
+    // about `task-two` now, and what that task unblocks is `task-five`, which is
+    // in the open release and on the canvas.
+    const drawnTask = classed(panelOf(document), 'graph-inspector-unblock')[0]
+    if (drawnTask === undefined) throw new Error('the panel listed nothing this task unblocks')
+    drawnTask.click()
+    await flush()
+    const landed = nodeForTask(document, 'task-five')
+    if (landed === undefined) throw new Error('the redraw lost the card the press selected')
+    expect(landed.attributes.get('data-selected')).toBe('true')
+    expect(document.activeElement, 'the keyboard did not land on the card the press selected').toBe(landed)
   })
 
   it('keeps the keyboard on the control a key pressed, and leaves it alone when it is elsewhere', async () => {
@@ -2923,13 +3032,27 @@ describe('the placeholder a tab switch draws', () => {
   it('asks the operator to read the tab by the word the navigation gave it', () => {
     // The placeholder names the tab the operator just pressed, so the word is
     // the button's own and not a second name for the same view: "Reading Caps…"
-    // under a tab labelled Projects would be the console asking its reader to
+    // under a tab labelled Project would be the console asking its reader to
     // check a name it drew itself.
     const words: Readonly<Record<string, string>> = READING_WORDS
     expect(Object.keys(words)).toHaveLength(VIEWS.length)
     for (const entry of VIEWS) {
       expect(words[entry.id], `the ${entry.id} view has no placeholder word`).toBe(entry.label)
     }
+  })
+
+  it('names the projects tab Project, the settings of this one project', async () => {
+    // A Fugaro project is one installation -- many repositories and people, one
+    // GCP project, one Firebase -- and this screen is the settings of *this*
+    // one, so the tab and the word it reads by say Project (the owner's ruling
+    // of 2026-10-31). What is renamed is the visible word alone: the view's own
+    // id is `projects`, and so are the module, the classes and the `data-view`
+    // this test finds the button by.
+    const { bridge } = everyReadHeld()
+    const document = await boot(bridge, new FakeDocument())
+    expect(buttonFor(document, 'projects').textContent).toBe('Project')
+    expect(navButtons(document).map((button) => button.textContent)).not.toContain('Projects')
+    expect(READING_WORDS.projects).toBe('Project')
   })
 
   it('draws the placeholder for the Graph only when there is nothing to redraw', async () => {
@@ -4425,7 +4548,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     ;(tabs[1] as FakeNode).click()
     await flush()
     expect(
-      classed(panelOf(document), 'graph-tab').map((tab) => tab.attributes.get('aria-selected')),
+      classed(panelOf(document), 'graph-tab').map((tab) => tab.attributes.get('aria-pressed')),
       'the stream the operator pressed first is the one that is showing',
     ).toEqual(['false', 'true', 'false'])
   })

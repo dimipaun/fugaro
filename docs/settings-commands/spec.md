@@ -34,7 +34,7 @@ fugaro settings [KEY|GLOB ...] [--repo owner/name | --all-repos]
 One row per (key, scope), where a scope is `project` or `repo:<canonical>`. The text columns are:
 
 ```
-KEY  VALUE  WINS  DEFAULT  STATE
+KEY  SCOPE  VALUE  WINS  DEFAULT  STATE
 ```
 
 ### 2.1 KEY
@@ -318,7 +318,7 @@ refused in a coding-agent session as every cloud write of `update` already is (S
    `sync` widens the same list, and `repos rm` can un-enroll every repository with `rm *`, which is
    the class `user rm` and `allow-delete` already refuse.
 2. **Layer publish.** The stage that publishes the project layer's local file —
-   `~/.config/fugaro/projects/<project>-layer.yaml`, the path `localcfg.LayerFile` resolves
+   `~/.config/fugaro/projects/<project>.layer.yaml`, the path `localcfg.LayerFile` resolves
    (**`localcfg.LayerFile` is the `rigor` design's R0 and is not on `main` today**) — through
    `publishLayer`, and fans it out through `fanOutLayer`, with the executable-key gate unchanged.
    This is PR #1463's R1, and this design **does not build a second one**: §7 says exactly what is

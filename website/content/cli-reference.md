@@ -52,6 +52,7 @@ Subcommands:
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro secrets` -- Store and list a repository's secrets in Secret Manager
+- `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
@@ -1242,7 +1243,9 @@ This command has no subcommands.
 
 Publish the project layer: defaults and profiles for every repository of the project (fugaro/project-layer.yaml in the runs bucket)
 
-Usage: `fugaro config publish FILE`
+Publish the project layer. FILE defaults to this project's one local layer file (<config home>/fugaro/projects/<project>.layer.yaml), which is the file the owner edits and the file fugaro update publishes: the argument is only for publishing a layer kept somewhere else.
+
+Usage: `fugaro config publish [FILE]`
 
 Flags:
 
@@ -3139,6 +3142,16 @@ repository in the bucket when the config lists none). A run shows as succeeded
 only when its result.json says so; an execution that ended without finalizing
 is an infra_error.
 
+--limit N reads the objects of the newest N runs alone, so a run left out
+costs nothing to leave out; the N are the newest of every repository
+listed, and --mine, --batch, --state and --pr then narrow fewer rows than
+that, never more. 0, the default, reads every run of the window.
+
+--state STATE lists only runs in that state, matched against the status --json
+carries: the `halted (run_cap)` cell is --state halted, and --help lists the
+states the flag takes. A run's state is in its result.json, so this filter
+reads every run it filters -- it narrows the listing, never the reads.
+
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
@@ -3155,12 +3168,14 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--limit` | int | `0` | no | read and list only the newest N runs (0, the default, is every run of the window) |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+| `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
 
 Subcommands:
@@ -3431,6 +3446,50 @@ Flags:
 | `--project-wide` | bool | `false` | no | the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro settings`
+
+Show every setting, what decides it, and its default
+
+Show one row per setting: the key, the value a run gets, the layer that
+decided it, the built-in default, and the state of the read.
+
+A bare `fugaro settings` prints every key of the registry. Positional arguments
+are a key, a prefix or a glob; a name no key matches is refused with the nearest
+names. In a glob * is one dotted segment and ** is any number of them, so
+`budget.*_usd` names a key inside budget and `workflows.**` is every
+workflow key.
+
+The layers are read in this order, loosest first:
+
+  default < project (the project layer's defaults:) < profile < repo < flag
+  caps.defaults < caps.repo
+  the deployed ceiling < policy (the published node) < project < repo < branch
+
+The ceiling keys — budget.mode, budget.per_run_usd, budget.allowed_models,
+governance.* — tighten rather than replace: the smaller cap, the stricter mode
+and the intersection of the lists win whatever the layer order. review_floor
+and rigor.areas are unions: a lower layer only adds.
+
+Usage: `fugaro settings [KEY|GLOB ...]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all-repos` | bool | `false` | no | read every repository this machine remembers |
+| `--changed` | bool | `false` | no | show only the rows a layer decides |
+| `--grep` | string | "" | no | show only the rows whose key or a rendered column matches this regexp |
+| `-h`, `--help` | bool | `false` | no | help for settings |
+| `--json` | bool | `false` | no | print the versioned document |
+| `--layer` | stringSlice | `[]` | no | read only these layers (default, project, profile, repo, flag, local, shared, policy, caps, env) |
+| `--offline` | bool | `false` | no | read the offline layers only |
+| `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
+| `--why` | bool | `false` | no | show the winning level for each key |
 
 Subcommands:
 

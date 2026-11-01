@@ -256,6 +256,45 @@ func newConfigLayerCmd() *cobra.Command {
 				return enc.Encode(configLayerDoc{Where: fl.Where, Generation: fl.Generation, SHA256: l.SHA256, YAML: string(l.Raw)})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "# %s, generation %d, sha256 %s\n%s", pluginwire.Printable(fl.Where), fl.Generation, l.SHA256, printableLines(string(l.Raw)))
+			// The one local layer file beside it (D830), and whether it is the
+			// object just printed: the same comparison, and the same word, the
+			// owner's doctor and `fugaro rigor show` make. The record that tells
+			// the two causes of `unpublished` apart (D854) is read here too, so
+			// this door and those two never disagree about why.
+			st := localLayerState(selectedProjectConfig(cmd.Context()), l.Project, l, fl.Generation)
+			if st.Path == "" {
+				return nil
+			}
+			if st.Unreadable != "" {
+				// The file is there but not one this CLI reads (a symlink, an
+				// oversized one), so "does not exist" and its seed remedy would
+				// both be false — and `fugaro update` would refuse the file
+				// rather than replace it.
+				fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s (not read: %s)\n", pluginwire.Printable(st.Path), pluginwire.Printable(st.Unreadable))
+				return nil
+			}
+			if !st.Exists {
+				// A published layer with no local file is a state with a
+				// remedy, and this door is where the owner reads the state:
+				// without the sentence they would have to know that
+				// `fugaro update` is what writes one (D831). With nothing
+				// published there is nothing to seed it from, and the line
+				// stays the plain statement it was.
+				if st.Published {
+					fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s (does not exist; run %s, which seeds it from the published project layer)\n", pluginwire.Printable(st.Path), selfCommand()+" update")
+					return nil
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s (does not exist)\n", pluginwire.Printable(st.Path))
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s, sha256 %s\n", pluginwire.Printable(st.Path), st.SHA256)
+			if t := st.unpublishedText(); t != "" {
+				// The sentence is this CLI's own words plus a path and two
+				// short sha256s: the bound is wide enough for all of them,
+				// because a remedy cut off at 200 runes is no remedy, and it
+				// still bounds a path a hostile config home could stretch.
+				fmt.Fprintln(cmd.OutOrStdout(), pluginwire.PrintableN(t, 512))
+			}
 			return nil
 		},
 	}

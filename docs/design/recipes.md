@@ -50,6 +50,14 @@ steps:
 - Reserved and refused in 1.0, with a message saying so: `checks`, `goto`, `on_reject`, `extends`, any other role name, any model name, `on_pass`, `on_fail`.
 - Size limit 16 KiB. Strict parsing: unknown keys, duplicate keys, anchors, aliases, tags and extra documents are refused, as for the shared config.
 
+### Review level 3: the `adversarial` step (2026-10-30)
+
+`adversarial` is the third review level (D720): a second, harder review after the senior one, run in a fresh session. It may appear at most once, only after `review`, and last, so the loop's shape is `... first_line, review, adversarial`. Its knobs are `max_rounds` (1 to 10, the review step's own range; absent means the rigor mode's senior row, `rigor.AdversarialDefault(mode)` — 1 at poc and hotfix, 2 at startup, 3 at pro, 5 at critical) and `bounce: first_line`, the same single bounce target the review step has and under the same rule — it needs a `first_line` step before it, and a rejection runs the fix, then the cheap loop, then the next adversarial round.
+
+The step is level 3 of the review levels the owner answered on 2026-10-30 (`docs/review-levels-ab-jobmax/`), and it is the newest construct the format has: `recipe.UsesAdversarial` decides by the parsed steps, the way `UsesDigest` does, and `fugaro run` gates a launch holding one at `adversarialSince`, 0.15.0, the release whose runner acts on the step (L4.2). The gate names the release and `fugaro image refresh`; the runner's own parse refusal ("is not a step type") is the backstop for a recipe the launcher cannot read.
+
+`recipe.StageBound` adds `n₃·(2 + 2·f)` when the step bounces and `n₃·2` when it does not, so a bound never comes in under the run it prices. The default for `n₃` is not this package's to hold: `internal/rigor`'s own test imports `internal/recipe`, so the import cannot go the other way, and `StageBound` takes the number as an argument — a caller that resolved a mode passes `rigor.AdversarialDefault(mode)`, and a caller with no mode passes the strictest row, critical's five, because the direction a bound may err in is high. Today's `standard` with `agent.first_line_rounds: 1` and `agent.review_rounds: 2` stays 11 stages and 19 with level 3 at two rounds bouncing (D726).
+
 ### Catalog
 
 | Name | Behaviour |

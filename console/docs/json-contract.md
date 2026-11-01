@@ -429,7 +429,7 @@ repositories, then, for each repository shown, a listing of its runs minted
 since the previous day began and a record read for each of those — a run's
 start day is only known once its record is read, so the reader looks a day
 wider than the day it reports. That cost is why `--compute` is opt-in: the rail
-and the Projects screen call this same command and pay for no bucket read. The
+and the Project screen call this same command and pay for no bucket read. The
 figure reaches a person too: with the flag the text view prints `compute:` per
 repository, `n/a` where the JSON says `null`. **The console's own `budget.show`
 row may pass it too — opt-in, on the Spend screen's caps read alone and only to
@@ -437,7 +437,7 @@ a CLI at or above `BUDGET_COMPUTE_CLI_FLOOR` (`0.13.0`, the release that ships
 the flag; `budgetComputeSupported`, `console/src/shared/version.ts`), so an
 older CLI is read with the key absent and handed no argv it would refuse: the
 Spend caps panel draws no compute cell at all for a document that carries no
-`compute_usd`, rather than a column of `n/a` — while the rail and the Projects
+`compute_usd`, rather than a column of `n/a` — while the rail and the Project
 screen pass nothing.**
 
 `showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
@@ -717,7 +717,7 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
+`--limit`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
 allow-list excludes `--watch` (it is `watch` under another name).
 
 ## 6. The other documents
@@ -1081,19 +1081,24 @@ checkout again. A repository the project config does not enroll is
 `not_enrolled`; a path that had to be escaped or truncated for printing, or
 that is not absolute or does not carry a well-formed identity, is
 `not_representable` — **the printed string names a different directory than the
-stored one, so it must never be presented as a path that works**. A state file
-that cannot be read (not JSON, another version, over its size bound, not a
-regular file) is a warning naming it and `checkouts: []` for every
+stored one, so it must never be presented as a path that works** — and so is a
+path under the machine's temporary directory, which this machine does not
+record any more and does not read: a scratchpad a coding agent made is a live
+checkout, and the row is a working directory the console must not be sent to. A
+state file that cannot be read (not JSON, another version, over its size bound,
+not a regular file) is a warning naming it and `checkouts: []` for every
 installation — never a silent "there are none", and never a listing that fails.
 
 **One row carries one reason, and which one it is is fixed.** In order:
 
 1. `not_representable` — decided from the row's own strings, **before anything
    touches the disk**: the path as printed is not the path as stored, the path
-   is not absolute, or the identity is not a provider and an `owner/name`. A
-   row that fails here is never examined further, so a relative path that
-   happens to exist under the reader's working directory is still
-   `not_representable` and not a valid checkout.
+   is not absolute, the identity is not a provider and an `owner/name`, or the
+   path is under the machine's temporary directory. A row that fails here is
+   never examined further, so a relative path that happens to exist under the
+   reader's working directory is still `not_representable` and not a valid
+   checkout, and a path under the temporary directory is `not_representable`
+   whether it is there or not, and whatever it is a checkout of.
 2. `missing` — the path is not a directory that exists.
 3. `unreadable` — it is there, and its `fugaro.yaml` cannot be read.
 4. `not_a_checkout` — it is not a git checkout's own root.
@@ -1730,6 +1735,7 @@ one entry of `repos`:
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `repo` | string | never | never | the repository this node is about, `owner/name`. **Untrusted display text**: it comes from the local config, and a screen draws it as text and never as a link, a path or an attribute |
+| `provider` | string | never | never | the host the repository is on, `github` or `bitbucket`: the caller's own config for it, else its checkout's `fugaro.yaml`, which is the same resolution the node's slug is keyed by (D814). It is **not** read off `pr.url`, which is a field a job wrote and not a fact about the repository. **`""` is a real answer and not a gap** — a machine that records no provider for the repository and has no checkout of it has none to give, and a screen draws the number as text rather than as a link for it. The key is written even when it is empty, so `""` is told apart from a document older than this field — and the console's decoder reads a document that has no such key at all, as `""` rather than as skew, because the field is additive |
 | `stored` | bool | never | never | **the flag this whole read turns on.** `true` means the document's `view` is what the sweep last stored; `false` means the coordinator has never reconciled this repository and `view` is the runs half alone. It is a bool and not the presence of `view`, because both halves carry one |
 | `view` | object | never | never | the view itself, below |
 | `stale` | object | **yes** | **yes** | the sweep's marker for this repository, as stored, below. Absent on a view `status` computes and on a repository whose last sweep was clean. **Absent and null both mean "no marker"**, and a screen has one branch for the two |
@@ -1904,7 +1910,7 @@ does not move, and its row carries the closure in place, as gap 5's does.
 |---|---|---|---|
 | 1 | The degraded path prints a **plain sentence to stdout** on the same stream as the documents | `runWatchDegraded`, `internal/cli/watch.go` (`"%s\nrun records unavailable (retrying): %s\n"`) | Skip any line that is not a JSON object; show it as a header warning (§2, fact (iii)) |
 | 2 | `version` has **no `--json`** and no flags at all | `newVersionCmd`, `internal/cli/root.go` — `cobra.NoArgs`, no `Flags()` | Parse the human line, pinned by a test |
-| 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Projects screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
+| 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Project screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
 | 4 | **No schema version in the `watch --json` document** | `JSONDoc` (`internal/watch/json.go`) — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
 | 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory. **Closed 2026-10-18: `fugaro config list --json` exists (§6.8), so the typed name becomes a pick from the list of names the CLI prints — the field stays for an installation the operator adds before the CLI is updated** |
 | 6 | **No PR URL on a run that has not finished** | `JSONRun` carries `repo` and no `pr_url`/`pr` — `pr_url` exists only on `JSONFinished`, and `runview.Row` spells the pair `pr_url` + `pr` — and it does carry `pr_number` (§2), for a run that has recorded a draft PR | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row`. **Half closed 2026-10-27: `pr_number` landed** (GV2.5, §2) — the run's own `record_pr`, read from the registry entry the live row is already built from, so the graph screen shows a running node's number from the feed alone. The URL half is still open, so the row stays in this list and the link is still rebuilt from `diagnose` |

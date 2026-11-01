@@ -701,23 +701,31 @@ not change for anyone who has not configured a mode.
   OWNER APPROVAL GATE's third item exist for.
 - **Commit.** `runner: the mode decides which findings block, inside Decide`
 
-**T3.2 — the mode's round ceiling**
-- **Files.** `internal/runner/plan.go` (`planOf`, whose precedence the ceiling
-  drops into) and its call site in `internal/runner/runner.go`,
-  `internal/config/defaults.go` if the mode contributes a default.
-- **Tests.** The mode's ceiling lowers the rounds and never raises them above
-  what `Overrides.ReviewRounds`, `agent.review_rounds` and the recipe's
-  `max_rounds` already agree on (F6's precedence is asserted, not restated); a
-  mode cannot set a ceiling above `MaxReviewRounds`; `first_line_rounds`
-  keeps its own bound and is not touched by the mode unless D7's table says so;
-  and a mode raised between rounds by an area or a floor (T1.4, T3.5) bounds the
-  rounds that remain rather than the rounds already spent.
-- **Red step.** The precedence test fails: the mode is not an input to it.
-- **Verification.** `GOFLAGS=-p=2 go test ./internal/runner -run 'Round|Plan' -count=1 -timeout 30m`
-- **Depends on.** T3.1.
-- **Reviewer.** senior (in-loop). **Depends on O3** if the owner lets a mode go
-  below two rounds.
-- **Commit.** `runner: the mode bounds the fix rounds without changing the precedence`
+**T3.2 — the mode supplies the loop counts**
+- **Files.** `internal/rigor/rounds.go` (the table: `roundDefaults`, one
+  `{inner, senior}` pair per mode, `DefaultRounds` and `AdversarialDefault`),
+  `internal/runner/plan.go` (`planOf` with the `setRounds` and `reviewRounds`
+  helpers that fill an unset knob from the row and clamp it to the recipe's bound),
+  `internal/config/defaults.go` (which no longer fills the two knobs, so an unset 0
+  reaches the mode), and `internal/cli/budget_preview.go`, which counts its stages
+  at the project's own mode.
+- **Tests.** O3's answer is the table, asserted mode by mode with nothing set
+  (POC 1/1, Startup 2/2, Pro 3/3, Critical 3/5, Hotfix 1/1); each precedence step
+  — the task override, the recipe's `max_rounds`, the repository's
+  `agent.review_rounds` and `agent.first_line_rounds`, and the project layer —
+  replaces the row, up and down, within the recipe's bounds (inner 1–3, senior
+  1–10), which are the only ceiling; a mode raised between rounds by an area or a
+  floor (T1.4, T3.5) supplies the senior count where the rounds are decided, so it
+  bounds the rounds that remain rather than the rounds already spent; and a
+  repository with no `rigor:` block resolves Pro and runs Pro's row.
+- **Red step.** The per-mode test fails: the mode is not an input to the counts,
+  and the clamp to two holds a row below it.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor ./internal/config -count=1`,
+  `GOFLAGS=-p=2 go test ./internal/runner -run 'Round|Plan|FirstLine' -count=1 -timeout 40m`,
+  and `GOFLAGS=-p=2 go test ./internal/cli -run 'BudgetPreview' -count=1 -timeout 40m`
+- **Depends on.** T3.1. **O3 is answered** (2026-10-31), which unblocked this task.
+- **Reviewer.** senior (in-loop).
+- **Commit.** `rigor: each mode sets the default first-line and senior round counts`
 
 **T3.3 — the PR body says what was left open, and by which mode**
 - **Files.** `internal/runner/prflow.go` (`finalSection`, `reviewsPart`).

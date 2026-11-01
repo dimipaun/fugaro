@@ -61,6 +61,7 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import type { CrashReportingHandle } from './crash-electron'
 import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
@@ -877,10 +878,51 @@ const lifecycle = createConsoleLifecycle({
 let picker: InstallationPicker | null = null
 
 /**
+ * crashReporting is the handle `startCrashReporting` answered, and it is null
+ * until `main` runs -- and stays null when the gate is shut, which is every
+ * start today. The quit path below is the one thing that needs it.
+ */
+let crashReporting: CrashReportingHandle | null = null
+
+/**
  * main is what `whenReady` resolves into: serve the bundle once, then run the
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
+  // **The crash reporter comes up before anything it could report on, and the
+  // module that holds the SDK comes up with it and not before.** The gate is an
+  // allow test and not a list of the answers that shut it: `optedIn` is `null`
+  // -- nothing has read the switch yet, and reading it is the next slice's,
+  // which reads the per-user switch this console keeps for itself -- and only a
+  // `true` reaches the reporter, so the third state D734 makes off is off here
+  // because it is not a yes rather than because this file knows its name. What
+  // follows from it is the whole of this slice's cost: in a console whose switch
+  // is not a yes, `./crash-electron` and
+  // the fourteen packages `@sentry/electron/main` reaches are never loaded and no
+  // client exists to start -- so a start that reports nothing pays nothing for
+  // the wiring that would, and the DSN sitting one import away is never read.
+  //
+  // Everything after the yes is `startCrashReporting`'s: the DSN constant the
+  // build carries (`./crash-dsn`), and the one way a yes can still end without a
+  // client, which is a caller that passed a DSN of its own. That is why this
+  // file needs no opinion about either -- and why it imports nothing from
+  // `./crash` to ask a question `===` answers.
+  //
+  // The reporter is wired here rather than beside the window because a crash
+  // before the window opens is the one an operator most wants back, and because
+  // the handle has to be closed on the way out.
+  const optedIn: unknown = null
+  if (optedIn === true) {
+    // The `.js` is the CommonJS build's spelling rather than a file this source
+    // tree has: `dist/main/index.js` carries this `import()` as `tsc` emitted it
+    // (`module: Node16` keeps the real dynamic import in CommonJS output), and
+    // `dist/main/crash-electron.js` is the file it resolves to --
+    // `test/e2e/crash-init.spec.ts` resolves the emitted specifier and loads it
+    // for that reason. The type-checking config resolves either spelling, so it
+    // is the build that decides.
+    const { startCrashReporting } = await import('./crash-electron.js')
+    crashReporting = startCrashReporting({ optedIn, appRoot: app.getAppPath() })
+  }
   // The icon first, and before any window exists: an unpackaged console has no
   // bundle to carry `build/icon.png`, so until this runs the dock shows
   // Electron's own icon rather than the website's mark (the owner's brief of
@@ -1055,10 +1097,18 @@ app.on('before-quit', (event) => {
   // it running would leave a check that finishes -- and prompts -- into a
   // process on its way out.
   updates?.stop()
-  void boundSource
-    .close()
-    .catch(() => undefined)
-    .finally(() => app.quit())
+  // The reporter goes with the child, and the quit waits for both: `close`
+  // gives up on the request the transport has in flight after
+  // `CLOSE_TIMEOUT_MS` -- the console's own bound, because neither the client's
+  // `close` nor the electron-net transport carries one -- so a report that was on
+  // its way is not cut off by the process ending, and a stalled endpoint is not
+  // a quit that never happens. The two run together rather than one after the
+  // other, because neither has anything to do with the other -- one is a socket
+  // and one is a `SIGTERM`.
+  void Promise.all([
+    crashReporting?.close() ?? Promise.resolve(),
+    boundSource.close().catch(() => undefined),
+  ]).finally(() => app.quit())
 })
 
 // Note which of the two halves this calls. `serveBundle` here would re-register

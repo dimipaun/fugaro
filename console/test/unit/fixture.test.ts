@@ -528,6 +528,13 @@ describe('the committed synthetic fixture', () => {
       'synthetic.ndjson',
       'degraded.ndjson',
       'bin',
+      // `crash-init` is the other directory of things a spec reads from disk: the
+      // Electron app `test/e2e/crash-init.spec.ts` launches, whose main process
+      // drives the console's built crash wiring against the spec's loopback sink
+      // (Task 2.1b fix round B). Like the stub under `bin/`, it is not a
+      // recording and not a case: the `.ndjson` sweep above never looks inside
+      // it, and what it is asserted at is the spec that runs it.
+      'crash-init',
       // The `.license` siblings carry the two-line SPDX notice for the types
       // that have no comment syntax of their own (`.ndjson` and `.json`;
       // `internal/eeboundary`'s notice rule, counsel's text of 2026-10-27).

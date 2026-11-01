@@ -1731,7 +1731,7 @@ export function decodePlanStatus(raw: unknown, where = 'the plan status document
  * a failing test rather than an unread field. */
 export const COORDINATOR_STATUS_KEYS: readonly string[] = Object.freeze(['repos'])
 
-export const COORDINATOR_REPO_KEYS: readonly string[] = Object.freeze(['repo', 'stored', 'view', 'stale'])
+export const COORDINATOR_REPO_KEYS: readonly string[] = Object.freeze(['repo', 'provider', 'stored', 'view', 'stale'])
 
 export const COORDINATOR_VIEW_KEYS: readonly string[] = Object.freeze([
   'repo',
@@ -1869,10 +1869,14 @@ export interface CoordinatorView {
   readonly omittedCollisions: number
 }
 
-/** CoordinatorRepoView is one repository's node: whether the database held a
- * view at all, the view, and the marker beside it. */
+/** CoordinatorRepoView is one repository's node: the host it is on, whether the
+ * database held a view at all, the view, and the marker beside it. */
 export interface CoordinatorRepoView {
   readonly repo: string
+  /** The host the repository is on, `github` or `bitbucket`, or `''` for a CLI
+   * that had none to give — which is also what a CLI older than this field
+   * answers, and what a screen draws as text rather than as a link. */
+  readonly provider: string
   readonly stored: boolean
   readonly view: CoordinatorView
   readonly stale: CoordinatorStale | null
@@ -2042,6 +2046,14 @@ function coordinatorRepoAt(raw: unknown, index: number, where: string): Coordina
   const stale = repo['stale']
   return {
     repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
+    // `provider` is additive (D814), so a CLI older than it writes no key at
+    // all: absent is the empty provider rather than a refusal of the whole
+    // document, and it is the same answer a machine with no provider to give
+    // sends — a screen draws the number as text for either.
+    provider:
+      repo['provider'] === undefined || repo['provider'] === null
+        ? ''
+        : stringAt(repo['provider'], `${field}.provider`, where),
     stored: boolAt(required(repo, 'stored', field, where), `${field}.stored`, where),
     view: coordinatorViewAt(required(repo, 'view', field, where), `${field}.view`, where),
     stale: stale === undefined || stale === null ? null : coordinatorStaleAt(stale, `${field}.stale`, where),

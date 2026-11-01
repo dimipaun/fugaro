@@ -677,7 +677,7 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 // package's: the deployer and the runner (a project job's clone URL, plan task
 // 3.3 step 3) must give the same answer, so a URL one of them refuses cannot
 // be one the other accepts. A per-repository job's FUGARO_REMOTE is written
-// from here (cloneShapedJobEnv) and a project job's URL is computed there.
+// from here (jobCheckoutEnv) and a project job's URL is computed there.
 func repoURL(provider, repo, given string) (string, error) {
 	u, err := repourl.CloneURL(provider, repo, given)
 	if err != nil {
