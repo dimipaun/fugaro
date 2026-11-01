@@ -3140,6 +3140,16 @@ repository in the bucket when the config lists none). A run shows as succeeded
 only when its result.json says so; an execution that ended without finalizing
 is an infra_error.
 
+--limit N reads the objects of the newest N runs alone, so a run left out
+costs nothing to leave out; the N are the newest of every repository
+listed, and --mine, --batch, --state and --pr then narrow fewer rows than
+that, never more. 0, the default, reads every run of the window.
+
+--state STATE lists only runs in that state, matched against the status --json
+carries: the `halted (run_cap)` cell is --state halted, and --help lists the
+states the flag takes. A run's state is in its result.json, so this filter
+reads every run it filters -- it narrows the listing, never the reads.
+
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
@@ -3156,12 +3166,14 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--limit` | int | `0` | no | read and list only the newest N runs (0, the default, is every run of the window) |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+| `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
 
 Subcommands:

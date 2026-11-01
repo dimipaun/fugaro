@@ -1531,7 +1531,7 @@ truncated.
 
 **One key is drawn in a class other than the one `WIRE_TEXT_CLASSES` gives it,
 and it is deliberate.** `launched_by` — who started a run — is classified
-`person`, and the Live and Projects rows draw its **short form** (the CLI's own
+`person`, and the Live and Project rows draw its **short form** (the CLI's own
 cut, `runview.LauncherShort`: the part before an address's first `@`, the whole
 value for anything else — the cut `fugaro runs ls`'s own `BY` column makes)
 through the **`label`** class. `person` is a validating class: it draws a login
@@ -1548,7 +1548,7 @@ address is the console's marker there and **no address is drawn anywhere**.
 `docs/design/desktop-console.md` §6.2 records the decision. This is not a
 narrowing of **D15**: that decision is about `report --by person`'s cost
 breakdown on the Spend screen, and the console already names people on Live and
-Projects without a switch — a killed repository's row reads `KILLED by <who>`.
+Project without a switch — a killed repository's row reads `KILLED by <who>`.
 
 **The trade-off in the path, said out loud.** A path segment is not held to the
 high-entropy rule, because a commit link's 40-hex digest is a path segment and
@@ -2863,7 +2863,7 @@ under `test/e2e/__screenshots__/` (`playwright.config.ts`'s
 |---|---|---|
 | Live | `test/e2e/live.spec.ts` | `live-light-<platform>.png`, `live-dark-<platform>.png` |
 | Spend | `test/e2e/spend.spec.ts` | `spend/light-<platform>.png`, `spend/dark-<platform>.png` |
-| Projects | `test/e2e/projects.spec.ts` | `projects/light-<platform>.png`, `projects/dark-<platform>.png` |
+| Project | `test/e2e/projects.spec.ts` | `projects/light-<platform>.png`, `projects/dark-<platform>.png` |
 | Run detail | `test/e2e/run.spec.ts` | `run/light-<platform>.png`, `run/dark-<platform>.png` |
 | Graph | `test/e2e/graph.spec.ts` | `graph/light-<platform>.png`, `graph/dark-<platform>.png` |
 | Coordinator | `test/e2e/coordinator.spec.ts` | `coordinator/light-<platform>.png`, `coordinator/dark-<platform>.png` |
@@ -2920,7 +2920,7 @@ fails legibly rather than with a bare pixel diff:
   theme travels as a `data-theme` attribute the renderer stamps.)
 
 **What is committed today is darwin only, and it is superseded.** The eight
-`*-darwin.png` files — the Live, Spend, Projects and Run pairs; the Graph and the
+`*-darwin.png` files — the Live, Spend, Project and Run pairs; the Graph and the
 Coordinator have **no** baseline on either platform, their cases having landed
 after this recording — are the recording of **2026-10-18**: macOS 26.7 (Darwin
 25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
@@ -2932,7 +2932,7 @@ documents (`example-owner/...`, `acme/...`, `redacted@example.invalid`); none
 holds a real name. **They are pictures of the unstyled tree**: they were taken
 before `src/renderer/theme/` existed, so no frame carries a rule of CSS. Three of
 the four light/dark pairs say so in the plainest way — the two themes' frames of
-the Live, Spend and Projects screens are the **same file byte for byte**
+the Live, Spend and Project screens are the **same file byte for byte**
 (`live-light-darwin.png` and `live-dark-darwin.png` are both 38305 bytes of
 `f4b55fed…`, and so on) — while the Run screen's pair differs
 (`run/light-darwin.png` 129088 bytes, `run/dark-darwin.png` 129359) for a reason
@@ -3424,7 +3424,7 @@ and a read at mount would be a fourth. The two figures the row
 carries come from reads the console was already making:
 
 - the **state** from the Live feed (`rail.setState`), which is the same read the panel draws;
-- the **spend** from the console's own `budget.show` reads — the Spend and Projects paths —
+- the **spend** from the console's own `budget.show` reads — the Spend and Project paths —
   through `rail.setSpend`, so the rail shows `n/a` with the caps panel's own sentence
   (`no budget show document was read`) until one of those screens has been opened.
 
@@ -3529,7 +3529,7 @@ whole styling work makes** — the fifth number hook.
 
 ### The five number hooks, and the one that did not exist
 
-Design §2.10 is the licence for the only code change here: Live, Spend, Projects and Run each
+Design §2.10 is the licence for the only code change here: Live, Spend, Project and Run each
 have a `numberCell` that prepends `live-num`, `spend-num`, `projects-number` or `run-number`,
 and the degraded screen's prepended **nothing** — so its feed age, its counts and its money
 were the only figures in the console with no tabular-figures and no right-align hook. It
@@ -3624,7 +3624,7 @@ that mistake would have to get past.
 
 **That case held a third entry, and the follow-up to this task removed it.** The list of
 licensed selectors carried `section.projects-panel[data-state='read']` — the rule that painted
-a read Projects panel's left border `--ok` — so the case whose whole purpose is to keep `--ok`
+a read Project panel's left border `--ok` — so the case whose whole purpose is to keep `--ok`
 to the readings §3.5 rule 4 names accepted a reading the design licenses nowhere: a read panel
 is not "measured and inside the cap" and is not the rail's `running` row, and §6.1 rule 3
 forbids the tone decoratively. The list had been transcribed from the stylesheet rather than
