@@ -89,10 +89,15 @@ config records no generation adopts the one it reads: refusing once would ask a
 question with no information in it, since the machine has no baseline to compare
 against.
 
-A member a single file edit cannot re-seed (a value the node leaves out, which
-the file would have to drop) is refused by name rather than skipped: a re-seed
-that recorded the generation while leaving a member behind is exactly the
-overwrite this rule exists to prevent.
+A member a single file edit cannot re-seed is refused **by name** rather than
+skipped: a value the node leaves out, which the file would have to drop, and a
+value written inside a flow collection (`budget: { mode: enforce, per_run_usd: 2
+}`, the shape the setup docs themselves use), which one edit cannot splice into.
+The refusal writes neither the file nor the generation, and it says what to do:
+put the published values in by hand — a flow block rewritten as a block mapping
+is one the edit can reach — and run `fugaro update` again. A re-seed that
+recorded the generation while leaving a member behind is exactly the overwrite
+this rule exists to prevent.
 
 A project policy is read under a deployed security rules generation, so the
 migration's write is gated on it (`requirePolicyRules`): the same run deploys
