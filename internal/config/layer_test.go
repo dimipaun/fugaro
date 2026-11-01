@@ -849,3 +849,72 @@ workflows:
 		t.Errorf("defaults.agent.adversarial_rounds: 11: %s", problemsText(ps))
 	}
 }
+
+// TestLayerLevelsNoneReplacesTheLevel: `none` is the one key of a review level
+// that is not merged key by key, in either direction. A level that is off has
+// no other keys — LevelSetting.validate refuses `none: true` beside one in a
+// single file — so a layer writing none: true is saying the level does not
+// run, and the model, effort and focus the layer below gives it are refused
+// beside it rather than merged into it: the level replaces the inherited one
+// whole. Read the other way, a layer that writes any other key is turning the
+// level back on, so an inherited `none: true` is cleared. A repository can
+// therefore turn a level the project set off, and turn one the project turned
+// off back on, which is what docs/multi-model.md §4 tells it it can do.
+func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
+	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	const workflows = "workflows:\n  default:\n    commands: { build: make, test: make test }\n"
+	for _, tc := range []struct {
+		name       string
+		level      string
+		layerLevel string
+		repoLevel  string
+		off        bool
+		model      string
+		effort     string
+		repoSource string
+		goneSource string
+	}{
+		{
+			name:       "the repository turns the project's level off",
+			level:      "l1",
+			layerLevel: "      l1: { model: claude-haiku-4-5, effort: low }\n",
+			repoLevel:  "    l1: { none: true }\n",
+			off:        true,
+			repoSource: "agent.levels.l1.none",
+			goneSource: "agent.levels.l1.model",
+		},
+		{
+			name:       "the repository turns the project's none back on",
+			level:      "l3",
+			layerLevel: "      l3: { none: true }\n",
+			repoLevel:  "    l3: { model: claude-opus-5-5, effort: xhigh }\n",
+			model:      "claude-opus-5-5",
+			effort:     "xhigh",
+			repoSource: "agent.levels.l3.model",
+			goneSource: "agent.levels.l3.none",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			layer := mustLayer(t, head+"defaults:\n  git: { provider: github }\n  agent:\n    levels:\n"+tc.layerLevel)
+			repo := minimalRepo + "agent:\n  levels:\n" + tc.repoLevel + workflows
+			c, res, ps := Resolve([]byte(repo), layer)
+			if len(ps) > 0 {
+				t.Fatalf("resolve problems: %s", problemsText(ps))
+			}
+			set := map[string]*LevelSetting{"l1": c.Agent.Levels.L1, "l2": c.Agent.Levels.L2, "l3": c.Agent.Levels.L3}
+			got := set[tc.level]
+			if got == nil {
+				t.Fatalf("agent.levels.%s is nil: %+v", tc.level, c.Agent.Levels)
+			}
+			if got.Off != tc.off || got.Model != tc.model || got.Effort != tc.effort {
+				t.Errorf("agent.levels.%s = %+v, want none=%v model=%q effort=%q", tc.level, got, tc.off, tc.model, tc.effort)
+			}
+			if src := res.SourceOf(tc.repoSource); src != SourceRepo {
+				t.Errorf("SourceOf(%s) = %q, want %q", tc.repoSource, src, SourceRepo)
+			}
+			if src := res.SourceOf(tc.goneSource); src != "" {
+				t.Errorf("SourceOf(%s) = %q, want no source: the key did not survive the merge", tc.goneSource, src)
+			}
+		})
+	}
+}
