@@ -657,6 +657,143 @@ func TestCommitAllExceptReadsItsPathsAsLiterals(t *testing.T) {
 	}
 }
 
+// TestNewPathsSeesPastAReplaceRefThatMatchesTheIndex: the staged read is what
+// sees a file the agent `git add`-ed and never committed, and a replacement
+// whose tree equals the index makes a plain `git diff --cached` read that file
+// as no change at all -- which would hide a staged artifact from the listing
+// finalize refuses by. The replacement-blind read still sees it.
+func TestNewPathsSeesPastAReplaceRefThatMatchesTheIndex(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	head := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	// Staged, never committed, and so in the staged read alone: `--others` does
+	// not report a file that is in the index.
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"test_dup_case2": "\x7fELF\x00\x00"})
+	testutil.Git(t, repo.Dir, "add", "test_dup_case2")
+	tree := testutil.Git(t, repo.Dir, "write-tree")
+	alt := testutil.Git(t, repo.Dir, "commit-tree", tree, "-p", head, "-m", "the index as a commit")
+	testutil.Git(t, repo.Dir, "replace", head, alt)
+	// The plant does bite a plain read -- without this the test would pass on a
+	// git that ignored the ref for some other reason.
+	if out := testutil.Git(t, repo.Dir, "diff", "--cached", "--name-only", "--diff-filter=A", "HEAD"); out != "" {
+		t.Fatalf("the planted replacement did not hide the staged file from a plain read: %q", out)
+	}
+	got, err := repo.NewPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"test_dup_case2"}) {
+		t.Fatalf("NewPaths with a replacement matching the index = %q; want the staged file", got)
+	}
+}
+
+// TestNewPathsIgnoresReplaceRefs is the mirror: a replacement whose tree differs
+// from the index makes a plain `git diff --cached` call a committed file a newly
+// staged one, and the listing finalize acts on must name what this checkout has
+// staged rather than what a ref the agent planted says it has.
+func TestNewPathsIgnoresReplaceRefs(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	base := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"staged.bin": "\x7fELF\x00\x00"})
+	if changed, err := repo.CommitAll(ctx, "add it"); err != nil || !changed {
+		t.Fatalf("CommitAll = %v, %v", changed, err)
+	}
+	head := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.Git(t, repo.Dir, "replace", head, base)
+	// The plant does bite a plain read: base's tree has no staged.bin, so the
+	// committed file reads as an addition the index holds.
+	if out := testutil.Git(t, repo.Dir, "diff", "--cached", "--name-only", "--diff-filter=A", "HEAD"); out == "" {
+		t.Fatal("the planted replacement changed nothing about a plain read; the test is not exercising it")
+	}
+	got, err := repo.NewPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("NewPaths with a planted replacement ref = %q; want nothing", got)
+	}
+}
+
+// TestCommitAllExceptSeesPastAReplaceRefThatMatchesTheIndex: the call commits
+// the run's leftover work, and a replacement whose tree equals the index makes
+// a plain `git diff --cached` read that work as no change at all -- which would
+// have the call report there was nothing to commit and drop the work silently.
+func TestCommitAllExceptSeesPastAReplaceRefThatMatchesTheIndex(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	base := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"feature.txt":    "the run's work\n",
+		"test_dup_case2": "\x7fELF\x00\x00",
+	})
+	testutil.Git(t, repo.Dir, "add", "-A")
+	testutil.Git(t, repo.Dir, "reset", "-q", "--", "test_dup_case2")
+	tree := testutil.Git(t, repo.Dir, "write-tree")
+	alt := testutil.Git(t, repo.Dir, "commit-tree", tree, "-p", base, "-m", "the index as a commit")
+	testutil.Git(t, repo.Dir, "replace", base, alt)
+	// The plant does bite a plain read -- without this the test would pass on a
+	// git that ignored the ref for some other reason.
+	if out := testutil.Git(t, repo.Dir, "diff", "--cached", "--name-only"); out != "" {
+		t.Fatalf("the planted replacement did not hide the staged work from a plain read: %q", out)
+	}
+	changed, err := repo.CommitAllExcept(ctx, "leftover", []string{"test_dup_case2"})
+	if err != nil || !changed {
+		t.Fatalf("CommitAllExcept with a replacement matching the index = %v, %v; want the work committed", changed, err)
+	}
+	testutil.Git(t, repo.Dir, "replace", "-d", base)
+	if carried := testutil.Git(t, repo.Dir, "show", "--name-only", "--format=", "HEAD"); carried != "feature.txt" {
+		t.Fatalf("the commit carries %q; want only feature.txt", carried)
+	}
+	if got := testutil.Git(t, repo.Dir, "status", "--porcelain"); !strings.Contains(got, "?? test_dup_case2") {
+		t.Fatalf("status = %q; want the held-back path still untracked in the tree", got)
+	}
+}
+
+// TestCommitAllExceptDoesNotRestoreAHeldBackPathFromAReplaceRef: the call stages
+// everything and then takes the held-back paths out of the index, and what it
+// takes out comes from HEAD's tree. A replacement whose tree holds such a path
+// puts it back, and the commit made afterwards carries the very file the call
+// was told to leave alone.
+func TestCommitAllExceptDoesNotRestoreAHeldBackPathFromAReplaceRef(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	base := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"feature.txt":    "the run's work\n",
+		"test_dup_case2": "\x7fELF\x00\x00",
+	})
+	testutil.Git(t, repo.Dir, "add", "-A")
+	tree := testutil.Git(t, repo.Dir, "write-tree")
+	testutil.Git(t, repo.Dir, "reset", "-q", "--", "test_dup_case2")
+	alt := testutil.Git(t, repo.Dir, "commit-tree", tree, "-p", base, "-m", "the tree with the held-back file")
+	testutil.Git(t, repo.Dir, "replace", base, alt)
+	// The plant does bite a plain read: with replacements on, HEAD's tree is the
+	// one holding the path the call is about to hold back.
+	if out := testutil.Git(t, repo.Dir, "ls-tree", "--name-only", "HEAD"); !strings.Contains(out, "test_dup_case2") {
+		t.Fatalf("the planted replacement does not show the held-back file; the test is not exercising it: %q", out)
+	}
+	changed, err := repo.CommitAllExcept(ctx, "leftover", []string{"test_dup_case2"})
+	if err != nil || !changed {
+		t.Fatalf("CommitAllExcept = %v, %v", changed, err)
+	}
+	testutil.Git(t, repo.Dir, "replace", "-d", base)
+	if carried := testutil.Git(t, repo.Dir, "show", "--name-only", "--format=", "HEAD"); carried != "feature.txt" {
+		t.Fatalf("the commit carries %q; want only feature.txt", carried)
+	}
+	if got := testutil.Git(t, repo.Dir, "status", "--porcelain"); !strings.Contains(got, "?? test_dup_case2") {
+		t.Fatalf("status = %q; want the held-back path still untracked in the tree", got)
+	}
+}
+
 func TestCommitAllIgnoresFailingHook(t *testing.T) {
 	repo, _ := setup(t)
 	hook := filepath.Join(repo.Dir, ".git", "hooks", "pre-commit")

@@ -378,6 +378,12 @@ func (r *Repo) gitCommit(ctx context.Context, args ...string) (string, error) {
 		env = StampEnv(stamp, r.CommitHooks, env)
 	}
 	var stdout bytes.Buffer
+	// The commit is made against the branch's own HEAD, not against one a ref
+	// the agent planted under refs/replace substitutes: every read this package
+	// makes is replacement-blind for that reason, and the commit is a read too —
+	// git decides from it what the commit carries, and whether there is anything
+	// to commit at all.
+	args = append([]string{"--no-replace-objects"}, args...)
 	err := r.gitRun(ctx, env, prefix, nil, &stdout, args...)
 	return strings.TrimSpace(stdout.String()), err
 }
@@ -681,18 +687,23 @@ func (r *Repo) CommitAllExcept(ctx context.Context, msg string, except []string)
 	if _, err := r.git(ctx, "add", "-A"); err != nil {
 		return false, err
 	}
-	unstaged := append([]string{"--literal-pathspecs", "reset", "-q", "--"}, except...)
+	// The reset is replacement-blind too: `git reset -- <path>` takes the entry
+	// it writes back into the index from HEAD's tree, so with a planted ref in
+	// place it would put the very path being held back into the index again.
+	unstaged := append([]string{"--no-replace-objects", "--literal-pathspecs", "reset", "-q", "--"}, except...)
 	if _, err := r.git(ctx, unstaged...); err != nil {
 		return false, err
 	}
 	// Read with replacement refs ignored, as IsClean is: what is committed is
 	// the index this checkout has, not the one a ref the agent planted makes
-	// HEAD's tree claim.
-	staged, err := r.git(ctx, "--no-replace-objects", "diff", "--cached", "--name-only")
+	// HEAD's tree claim. The listing is NUL-separated like NewPaths': the
+	// question here is only whether it is empty, and a path with a newline in
+	// it must not decide that answer.
+	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--cached", "--name-only", "-z")
 	if err != nil {
 		return false, err
 	}
-	if staged == "" {
+	if len(nulPaths(staged)) == 0 {
 		return false, nil
 	}
 	_, err = r.gitCommit(ctx, "commit", "--quiet", "--no-verify", "-m", msg)
@@ -989,13 +1000,7 @@ func (r *Repo) TrackedPaths(ctx context.Context, dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var paths []string
-	for _, p := range strings.Split(string(out), "\x00") {
-		if p != "" {
-			paths = append(paths, p)
-		}
-	}
-	return paths, nil
+	return nulPaths(out), nil
 }
 
 // BlobSize returns the size in bytes of the file at path in revision rev
