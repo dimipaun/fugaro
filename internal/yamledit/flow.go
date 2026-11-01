@@ -6,13 +6,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// A flow mapping written on one line is editable, and only that: the project
-// config most installations have writes its budget block as
-// `budget: { mode: enforce, per_run_usd: 5 }`, and refusing every edit inside
-// `{...}` refused the shape setup itself writes. What is spliced here is the
-// bytes of one member's value, or one member with its separator — the braces,
-// the spacing, the comments on the line and the quoting of every member the
-// edit does not name stay as they were written.
+// A flow mapping written on one line is editable, and only that: a project
+// config writes its budget block as `budget: { mode: enforce, per_run_usd: 5 }`
+// — the shape the setup documents write and the CLI's own config fixtures carry
+// — and refusing every edit inside `{...}` refused the shape those settings are
+// written in. What is spliced here is the bytes of one member's value, or one
+// member with its separator; the braces, the spacing, the comments on the line
+// and the quoting of every member the edit does not name stay as they were
+// written.
 //
 // Everything a splice would have to guess at is refused: a collection written
 // across lines or holding a comment (no span to measure, and bytes a removal

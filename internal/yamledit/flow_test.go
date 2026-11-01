@@ -9,10 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestSetScalarInsideAFlowMapping holds the default project config's budget
-// block — `budget: { mode: enforce, per_run_usd: 5 }`, the shape setup writes —
-// to the promise every other edit gets: only the bytes of the value change, and
-// every other byte of the line stays as it was.
+// TestSetScalarInsideAFlowMapping holds a project config's budget block — the
+// shape the setup documents write, `budget: { mode: enforce, per_run_usd: 5 }`
+// — to the promise every other edit gets: only the bytes of the value change,
+// and every other byte of the line stays as it was.
 func TestSetScalarInsideAFlowMapping(t *testing.T) {
 	for _, tc := range []struct {
 		name, doc, want string
