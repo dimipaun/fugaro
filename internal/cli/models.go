@@ -58,10 +58,22 @@ func modelsRouteOf(lc *localcfg.Config, id string) string {
 			return route
 		}
 	}
-	if config.CheckClaudeClaim(id) == "" {
+	if isClaudeModel(id) {
 		return config.RouteDirect
 	}
 	return ""
+}
+
+// isClaudeModel reports whether id is a Claude model's ID, in either spelling a
+// pin may carry: the canonical one (claude-sonnet-5-5) and a route's own
+// (anthropic/claude-sonnet-5.5). It is the overlap test config.ClaudePatterns
+// states, asked of the ID rather than of a provider's pattern, so a model no
+// route claims is told apart from a model nothing serves at all — the second is
+// refused at launch and the first goes to Anthropic.
+func isClaudeModel(id string) bool {
+	return slices.ContainsFunc(config.ClaudePatterns, func(p string) bool {
+		return config.PatternsOverlap(id, p)
+	})
 }
 
 // sortedProviderNames are the owner's route names, sorted: the order every

@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/models-ls.schema.json",
+  "title": "Fugaro models ls",
+  "description": "The document `fugaro models ls --json` prints: the routes of the selected project (the owner's providers and the direct Anthropic route), every model a run can name today with the route that serves it and where its price comes from, and the pins of each repository the project records. The read is offline: what it says about the cloud is what the local files already say. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "routes",
+    "models",
+    "repositories"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "modelsLsDocVersion in internal/cli/models_ls.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The selected project's name. Absent when no project config was selected, which leaves routes holding the direct route alone and repositories empty."
+    },
+    "catalog": {
+      "$ref": "#/$defs/catalog",
+      "description": "The built-in provider price catalog's own provenance. Absent when no model in the document is priced from it."
+    },
+    "routes": {
+      "type": "array",
+      "description": "The routes of this project: the direct Anthropic route first, then the owner's providers in name order.",
+      "items": {
+        "$ref": "#/$defs/route"
+      }
+    },
+    "models": {
+      "type": "array",
+      "description": "Every model a run can name today, in ID order: an ID a route claims, a model_prices key, a budget.allowed_models entry and a model a repository pins.",
+      "items": {
+        "$ref": "#/$defs/model"
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "description": "One row per repository the project records, in name order. A repository this machine has no checkout for is `unknown (no checkout on this machine)`: its row is not guessed at (D793).",
+      "items": {
+        "$ref": "#/$defs/repository"
+      }
+    }
+  },
+  "$defs": {
+    "catalog": {
+      "type": "object",
+      "required": [
+        "source",
+        "checked_at",
+        "age_days",
+        "stale"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The catalog's own source URL, which is not the embedded Claude table's."
+        },
+        "checked_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "The day the catalog was generated, YYYY-MM-DD."
+        },
+        "age_days": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many whole days old checked_at is at the moment of the read."
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "checked_at is past catalog.StaleAfter (30 days): every model the catalog prices is then charged the dearest end of its tier's range (design D10)."
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "required": [
+        "name",
+        "models",
+        "allow_data_to",
+        "open_to_every_repo"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The provider entry's name in the project config, or `direct` for the Anthropic API itself (config.RouteDirect)."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The provider entry's kind, `anthropic-compat` today; `anthropic` on the direct route."
+        },
+        "base_url": {
+          "type": "string",
+          "description": "The provider entry's base_url, or the Anthropic API's own on the direct route."
+        },
+        "host": {
+          "type": "string",
+          "description": "The host of base_url: what a reader recognises the route by. The base_url itself when it names no host."
+        },
+        "models": {
+          "type": "array",
+          "description": "The models the route claims, as written: exact IDs or a prefix ending in *. The direct route's are the embedded Claude table's own IDs.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "route_fee_pct": {
+          "type": "number",
+          "minimum": 0,
+          "description": "route_fee_pct: what is added to every charge on this route. Absent when the route charges none."
+        },
+        "allow_data_to": {
+          "type": "array",
+          "description": "The repositories whose code may be sent here, as written, or [\"*\"] for a route open to every repository (the direct route included, which no allow_data_to governs).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "open_to_every_repo": {
+          "type": "boolean",
+          "description": "config.ModelProvider.OpenToEveryRepo: the entry has no allow_data_to at all, or the explicit [\"*\"] marker."
+        },
+        "note": {
+          "type": "string",
+          "description": "What the entry's own keys do not say: the routing.claude switch on the direct route, and a route's require_zdr on its own row."
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "id",
+        "route",
+        "source",
+        "allowed_to"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "route": {
+          "type": "string",
+          "description": "The route a run would send this model down: the provider whose models claim it, the route routing.claude sends it to, or `direct` for a Claude ID nothing routes. Empty is a model no route of this project serves, which a launch refuses (spec §2.2)."
+        },
+        "source": {
+          "enum": [
+            "embedded",
+            "catalog",
+            "local",
+            "none"
+          ],
+          "description": "Where the price comes from: this binary's Claude table, the built-in provider price catalog, the owner's model_prices, or nothing at all — the last has no price row, and refused says why."
+        },
+        "input_per_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "US dollars per million input tokens. Absent on a row whose price is zero or unknown: a consumer reads `source` before it reads a price."
+        },
+        "output_per_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "US dollars per million output tokens. Absent on a row whose price is zero or unknown."
+        },
+        "catalog": {
+          "$ref": "#/$defs/catalogPrice",
+          "description": "A catalog-priced row's own provenance: the tier, the end of its range charged and the endpoints behind it. Absent on every other row."
+        },
+        "allowed_to": {
+          "type": "array",
+          "description": "The repositories this model may be used by: [] when nothing serves it, [] when the project's budget.allowed_models leaves it out, [\"*\"] on the direct route, and otherwise the serving route's allow_data_to.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "refused": {
+          "type": "string",
+          "description": "Why the model has no price (pricing.Table.Refusal): the message that says what to do about it. Absent on a row that has one."
+        },
+        "note": {
+          "type": "string",
+          "description": "The spread a catalog-priced row is charged over — what the dearest endpoint of its tier prices, against the price charged (design D6, P11). Absent elsewhere."
+        }
+      }
+    },
+    "catalogPrice": {
+      "type": "object",
+      "required": [
+        "tier",
+        "bound",
+        "endpoints",
+        "zdr_endpoints",
+        "source",
+        "checked_at",
+        "stale",
+        "tier_input_max_per_m",
+        "tier_output_max_per_m"
+      ],
+      "properties": {
+        "tier": {
+          "enum": [
+            "zdr",
+            "all"
+          ],
+          "description": "Which endpoint set the price is over: the ZDR-eligible endpoints, or every endpoint the model is served by."
+        },
+        "bound": {
+          "enum": [
+            "min",
+            "max"
+          ],
+          "description": "Which end of the tier's range is charged: the cheapest, or the dearest (price_policy: highest, or a stale catalog)."
+        },
+        "endpoints": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many endpoints the model is served by."
+        },
+        "zdr_endpoints": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many of them are ZDR-eligible: the zdr tier's own count."
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checked_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "tier_input_max_per_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "The dearest input price per million tokens the charged tier prices."
+        },
+        "tier_output_max_per_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "The dearest output price per million tokens the charged tier prices."
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "required": [
+        "name",
+        "state"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The repository's owner/name, as the project config records it."
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "description": "`ok` when the checkout's fugaro.yaml at the base branch was read, `unknown (no checkout on this machine)` when there is none (D793), and `unread: <reason>` when there is one this read could not use."
+        },
+        "coder": {
+          "type": "string",
+          "description": "agent.models.coder, else agent.model. Absent unless the state is `ok`."
+        },
+        "reviewer": {
+          "type": "string",
+          "description": "agent.models.reviewer, else agent.model. Absent unless the state is `ok`."
+        },
+        "background": {
+          "type": "string",
+          "description": "The file's own agent.models.background. Absent when the file sets none."
+        },
+        "background_effective": {
+          "type": "string",
+          "description": "The model Claude Code's background requests actually reach when the file names none (config.EffectiveBackground). Absent when it is the same as background."
+        },
+        "problems": {
+          "type": "array",
+          "description": "The refusals a launch would give for this repository's pins (config.CheckProviderPolicy), each as the problem's own text.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

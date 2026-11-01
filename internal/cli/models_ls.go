@@ -48,6 +48,21 @@ func newModelsLsCmd() *cobra.Command {
 	return cmd
 }
 
+// modelsLsDocVersion is the document's first version, and the number a member
+// added later keeps: schemas/models-ls.schema.json pins it.
+const modelsLsDocVersion = 1
+
+// The price sources a model row may name, in the words the document prints:
+// this binary's own Claude table, the built-in provider price catalog, the
+// owner's model_prices, and nothing at all. The schema's enum is these four
+// and nothing else, which is why they are constants rather than literals.
+const (
+	modelsSourceEmbedded = "embedded"
+	modelsSourceCatalog  = "catalog"
+	modelsSourceLocal    = "local"
+	modelsSourceNone     = "none"
+)
+
 // modelsLsDoc is what `fugaro models ls --json` prints, under
 // schemas/models-ls.schema.json (D784).
 type modelsLsDoc struct {
@@ -100,8 +115,8 @@ type modelsModel struct {
 	// Source is where the price comes from: catalog, local (the owner's
 	// model_prices), embedded (this binary's Claude table) or none (the
 	// model has no row at all).
-	Source    string `json:"source"`
-	InputPerM float64 `json:"input_per_m,omitempty"`
+	Source     string  `json:"source"`
+	InputPerM  float64 `json:"input_per_m,omitempty"`
 	OutputPerM float64 `json:"output_per_m,omitempty"`
 	// Catalog is a catalog-priced row's own provenance.
 	Catalog *priceCatalog `json:"catalog,omitempty"`
@@ -146,7 +161,7 @@ func runModelsLs(cmd *cobra.Command, o *modelsLsOptions) error {
 		return err
 	}
 	doc := modelsLsDoc{
-		Version: 1,
+		Version: modelsLsDocVersion,
 		Catalog: modelsCatalogOf(rows),
 		Routes:  modelsRouteRows(lc),
 		Models:  modelsModelRows(lc, table, rows, repos),
@@ -295,17 +310,17 @@ func modelsModelRow(lc *localcfg.Config, table *pricing.Table, id string, row pr
 	m := modelsModel{ID: id, Route: modelsRouteOf(lc, id), AllowedTo: modelsAllowedTo(lc, id)}
 	switch {
 	case row.Local:
-		m.Source = "local"
+		m.Source = modelsSourceLocal
 	case row.Catalog != nil:
-		m.Source = "catalog"
+		m.Source = modelsSourceCatalog
 		m.Catalog = row.Catalog
 		if entry, ok := table.Lookup(id); ok {
 			m.Note = entry.CatalogRange()
 		}
 	case row.ID != "":
-		m.Source = "embedded"
+		m.Source = modelsSourceEmbedded
 	default:
-		m.Source = "none"
+		m.Source = modelsSourceNone
 		m.Refused = table.Refusal(id)
 	}
 	m.InputPerM, m.OutputPerM = row.InputPerM, row.OutputPerM
@@ -385,7 +400,11 @@ func modelsUsage(ctx context.Context, lc *localcfg.Config, table *pricing.Table)
 		if bg := config.EffectiveBackground(cfg.Agent, lc.Providers); bg != row.Background {
 			row.BackgroundEffective = bg
 		}
-		for _, p := range config.CheckProviderPolicy(cfg.Agent, cfg.Budget.AllowedModels, name, lc.Providers, table) {
+		var allowed []string
+		if cfg.Budget != nil {
+			allowed = cfg.Budget.AllowedModels
+		}
+		for _, p := range config.CheckProviderPolicy(cfg.Agent, allowed, name, lc.Providers, table) {
 			row.Problems = append(row.Problems, p.String())
 		}
 		out = append(out, row)
@@ -451,7 +470,7 @@ func writeModelsLs(cmd *cobra.Command, lc *localcfg.Config, doc modelsLsDoc) err
 			allow = "every repository"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Name), oneLine(r.Host),
-			oneLine(strings.Join(r.Models, ", ")), feeCell(r.FeePct), oneLine(allow), oneLine(r.Note))
+			oneLine(routeModelsCell(r)), feeCell(r.FeePct), oneLine(allow), oneLine(r.Note))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -517,6 +536,17 @@ func writeModelsLs(cmd *cobra.Command, lc *localcfg.Config, doc modelsLsDoc) err
 	return tw.Flush()
 }
 
+// routeModelsCell is the ROUTES table's MODELS cell. The direct route claims
+// the whole embedded table, and six IDs there would set the width of the table
+// for every other route, so it is said in words; the JSON document keeps the
+// IDs themselves, which is where a consumer reads them.
+func routeModelsCell(r modelsRoute) string {
+	if r.Name == config.RouteDirect {
+		return fmt.Sprintf("every Claude model (%d in the embedded table)", len(r.Models))
+	}
+	return strings.Join(r.Models, ", ")
+}
+
 // feeCell is a route's fee as a reader reads it: no fee is a dash rather than
 // a row of zeroes.
 func feeCell(pct float64) string {
@@ -529,7 +559,7 @@ func feeCell(pct float64) string {
 // priceCell is one price, or a dash on a row that has none: a model with no
 // price row must not read as free.
 func priceCell(perM float64, source string) string {
-	if source == "none" {
+	if source == modelsSourceNone {
 		return "—"
 	}
 	return fmt.Sprintf("$%g", perM)
