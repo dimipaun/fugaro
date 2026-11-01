@@ -215,11 +215,3 @@ func routeCell(route string) string {
 func priceUSD(perM float64) string {
 	return fmt.Sprintf("$%g", perM)
 }
-
-// dash is a cell with nothing in it.
-func dash(s string) string {
-	if s == "" {
-		return "—"
-	}
-	return s
-}

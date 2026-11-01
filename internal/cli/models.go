@@ -64,13 +64,8 @@ func modelsRouteOf(lc *localcfg.Config, id string) string {
 	return ""
 }
 
-// modelsRouteNames are the routes of the selected project, in name order: the
-// direct route first and the owner's providers after it, so every surface
-// lists them the same way.
-func modelsRouteNames(lc *localcfg.Config) []string {
-	names := []string{config.RouteDirect}
-	if lc == nil {
-		return names
-	}
-	return append(names, slices.Sorted(maps.Keys(lc.Providers))...)
+// sortedProviderNames are the owner's route names, sorted: the order every
+// surface lists them in, so two reads of one config cannot disagree.
+func sortedProviderNames(providers map[string]config.ModelProvider) []string {
+	return slices.Sorted(maps.Keys(providers))
 }
