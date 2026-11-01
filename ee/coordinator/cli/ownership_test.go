@@ -5,6 +5,7 @@ package cli
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -188,6 +189,78 @@ func TestDeclareRefusesAnotherInstallationsDatabase(t *testing.T) {
 		if !reflect.DeepEqual(f.db.Value(coordpath.PathRoot), own) {
 			t.Fatalf("%s: the refused declaration wrote under /%s: %v, want %v", tc.what, coordpath.PathRoot, f.db.Value(coordpath.PathRoot), own)
 		}
+	}
+}
+
+// rootReadDown puts the failure inside the ownership question, at its first
+// read, the way slice 1's tests do with a transport that fails one request
+// (internal/cli/ownership_test.go, rootReadDownTransport): the fake answers
+// every call but the shallow root GET — infra.DB.Check's first read through
+// rtdb.RootKeys — with a 503, which is an outage and not a refusal. It is that
+// one request and not the whole database, because a database that answers
+// nothing would fail the WRITE too, and the test could then not tell a gate
+// that refused the write from a gate that was never asked: with the read down
+// alone, a writer that skipped the question reaches the fake's own nodes and
+// its record lands under /coordinator.
+func rootReadDown(f *coordinatorReportFixture) {
+	f.db.RefusePath("/.json", http.StatusServiceUnavailable, "UNAVAILABLE", "", "the database is unreachable")
+}
+
+// TestCoordinatorReportExitsTwoWhenTheDatabaseCannotBeRead is the split the
+// report's writer owes its callers, the code slice 1's own outage tests hold
+// for the commands (TestBudgetSetExitsTwoWhenTheDatabaseCannotBeRead): a
+// database that is not this installation's is the operator's to fix and exits
+// 1 (the refusals above), while a database that cannot be read at all is an
+// outage and exits 2, so a script does not go and edit a config over a network
+// that was down. Failing closed is the whole point: a question that cannot be
+// answered is not an answer, and a report written on one is a record in a
+// database nobody proved is this installation's.
+func TestCoordinatorReportExitsTwoWhenTheDatabaseCannotBeRead(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	rootReadDown(f)
+
+	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app",
+		"--branch", "release/v0.11.0", "--file", "internal/cli/run.go")
+	if err == nil {
+		t.Fatal("coordinator report wrote while the database could not be read")
+	}
+	if fcli.ExitCode(err) != fcli.ExitRemoteError {
+		t.Fatalf("coordinator report: exit %d, want 2 (an outage, not a refusal): %v", fcli.ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "nothing was reported") {
+		t.Errorf("the outage does not say what was not done: %v", err)
+	}
+	if v := f.db.Value(coordpath.PathRoot); v != nil {
+		t.Errorf("the failed report wrote under /%s: %v", coordpath.PathRoot, v)
+	}
+}
+
+// TestDeclareFailsClosedWhenTheDatabaseCannotBeRead is the same outage at the
+// launch declarer. The declaration is advisory and the caller turns a failure
+// into a warning line (internal/cli/run.go), so this is not about the launch
+// stopping: it is that a launch whose database could not be read must not
+// declare into it on the strength of a question nobody answered. The class is
+// held too — the outage comes back as one, and not as the refusal the caller
+// drops without a word (a refusal is what a launcher who may not write gets,
+// and it says nothing about a database that never answered).
+func TestDeclareFailsClosedWhenTheDatabaseCannotBeRead(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	rootReadDown(f)
+	cloud := openFromConfig(t, f.cloudFixture)
+
+	err := Declare(context.Background(), cloud, appSlug,
+		&task.Spec{Version: 1, RunID: "20261024-120000-abcd", RequestedBy: "someone@example.com", Branch: "fugaro/x"})
+	if err == nil {
+		t.Fatal("the launch declarer declared while the database could not be read")
+	}
+	if fcli.ExitCode(err) != fcli.ExitRemoteError {
+		t.Fatalf("the launch declarer: exit %d, want 2 (an outage, not a refusal): %v", fcli.ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "nothing was declared") {
+		t.Errorf("the outage does not say what was not done: %v", err)
+	}
+	if v := f.db.Value(coordpath.PathRoot); v != nil {
+		t.Errorf("the failed declaration wrote under /%s: %v", coordpath.PathRoot, v)
 	}
 }
 
