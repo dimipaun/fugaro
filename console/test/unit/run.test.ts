@@ -29,7 +29,15 @@ import { describe, expect, it } from 'vitest'
 
 import { UNAVAILABLE_MARK, estimated, measured, notional, unavailable } from '../../src/shared/availability'
 import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
-import { buildRunModel, renderRun } from '../../src/renderer/screens/run'
+import {
+  RUN_LOGS_BUSY,
+  RUN_RECORD_BUSY,
+  buildRunModel,
+  renderRun,
+  renderRunFrame,
+  runBusyLabel,
+  runMainChildren,
+} from '../../src/renderer/screens/run'
 import type {
   RunFactory,
   RunModel,
@@ -742,7 +750,14 @@ describe('renderRun: the two columns', () => {
     expect(classesOf(layout)).toEqual(['run-main', 'run-aside'])
 
     const main = one(tree, 'run-main')
+    // The column's own busy slot is its first child. It is empty in a one-shot
+    // drawing -- `entry.ts`'s `showRun` draws the record read's mark into it
+    // while that read is out -- and an empty slot is not laid out at all
+    // (`flight-deck.css`). It is drawn for the reason the Spend sections' slots
+    // are: the frame goes up before either read answers, so the mark has
+    // somewhere to go.
     expect(classesOf(main)).toEqual([
+      'console-busy-slot',
       'run-stages',
       'run-tolerated-absent',
       'run-diagnosis',
@@ -767,6 +782,103 @@ describe('renderRun: the two columns', () => {
       expect(panel.tag, `${name} is a section`).toBe('section')
       expect(panel.getAttribute('aria-label'), `${name} is named`).toBeTruthy()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The frame the click draws (console 0.118.0).
+// ---------------------------------------------------------------------------
+
+describe('renderRunFrame: the frame a run is opened in', () => {
+  it('draws the run that was clicked, its way back, and its two sections empty', () => {
+    // The owner's report of 2026-11-01: a click on a run id looked like it had
+    // not registered, because the screen waited for `diagnose` and `logs` before
+    // drawing anything at all. The frame is what the click itself draws -- the
+    // id it names is the one the door was asked about, and there is nothing of
+    // the record in it yet.
+    const frame = renderRunFrame(factory, 'light', TRACKED)
+    const root = frame.root as FakeScreen
+    expect(root.classes).toContain('run')
+    expect(root.getAttribute('data-theme')).toBe('light')
+    expect(one(frame.root, 'run-id').tag).toBe('h1')
+    expect(one(frame.root, 'run-id').textContent).toBe(TRACKED)
+    // The way back is drawn with the frame, and bound in the same turn: a door
+    // that only appeared once both reads answered would be a door the operator
+    // cannot take out of a screen they are waiting on.
+    expect(one(frame.root, 'run-crumb-live').tag).toBe('button')
+    expect(one(frame.root, 'run-layout') as FakeScreen).toBeDefined()
+
+    // Neither section carries a figure, and both are named regions.
+    for (const [name, section] of [
+      ['run-diagnosis', frame.diagnosis],
+      ['run-logs', frame.logs],
+    ] as const) {
+      expect(section.tag, `${name} is a section`).toBe('section')
+      expect(section.getAttribute('aria-label'), `${name} is named`).toBeTruthy()
+    }
+    expect(all(frame.root, 'run-log-line')).toEqual([])
+    expect(all(frame.root, 'run-stages')).toEqual([])
+
+    // The frame leaves the main column empty and hands its two callers the one
+    // order: `renderRun` appends it to a fresh column, and the entry replaces
+    // the column's children with it on every fill. The column's own busy slot
+    // is where the record read's mark goes, and the log section's is where the
+    // log read's goes.
+    expect(frame.main.childNodes()).toEqual([])
+    const logsSlot = frame.logs.childNodes()
+    expect(logsSlot).toHaveLength(1)
+    expect((logsSlot[0] as FakeScreen).classes).toEqual(['console-busy-slot'])
+    expect((frame.mainSlot as FakeScreen).classes).toEqual(['console-busy-slot'])
+  })
+
+  it('writes the main column as one order, and leaves the diagnosis out until its read answers', () => {
+    const frame = renderRunFrame(factory, 'light', TRACKED)
+    const record = factory.create('section')
+    const arrival = factory.create('section')
+
+    // The two reads answer in an unknown order, and the column is one list
+    // rather than two halves: the record's panels, then the diagnosis, then the
+    // log window and what the log read brought with it.
+    expect(runMainChildren(frame, { before: [record], diagnosis: true, arrivals: [arrival] })).toEqual([
+      frame.mainSlot,
+      record,
+      frame.diagnosis,
+      frame.logs,
+      arrival,
+    ])
+    // A run whose diagnosis refused has no diagnosis section in the column at
+    // all: the refusal is drawn in the slot instead, and an empty named region
+    // beside it would be a panel that says the run reported nothing.
+    expect(runMainChildren(frame, { before: [], diagnosis: false, arrivals: [] })).toEqual([
+      frame.mainSlot,
+      frame.logs,
+    ])
+  })
+
+  it('draws a hostile run id as the mark, in the heading and in the busy label', () => {
+    // The id comes from a row the console drew, but it is not this screen's own
+    // string: it is put through the `runId` class, and one the class refuses is
+    // drawn as the console's `n/a` with the reason in the `title` -- never as
+    // markup, a control character or a bidi override.
+    const hostile = [
+      '<img src=x onerror=alert(1)>',
+      'run\u0007id',
+      'run‮id',
+      'run⁦id⁩',
+    ]
+    for (const run of hostile) {
+      const frame = renderRunFrame(factory, 'light', run)
+      const heading = one(frame.root, 'run-id')
+      expect(heading.textContent, run).toBe(UNAVAILABLE_MARK)
+      expect(heading.getAttribute('title'), run).toBeTruthy()
+      // The busy label is a sentence with the id in it, so it is the second
+      // place a hostile id would reach the screen.
+      expect(runBusyLabel(run, RUN_RECORD_BUSY), run).toBe(`Reading ${RUN_RECORD_BUSY} of ${UNAVAILABLE_MARK}`)
+      expect(runBusyLabel(run, RUN_LOGS_BUSY), run).toBe(`Reading ${RUN_LOGS_BUSY} of ${UNAVAILABLE_MARK}`)
+    }
+    // A run id the class admits is drawn as itself, so the case above is about
+    // the refusal and not about the label being constant.
+    expect(runBusyLabel(TRACKED, RUN_RECORD_BUSY)).toBe(`Reading ${RUN_RECORD_BUSY} of ${TRACKED}`)
   })
 })
 

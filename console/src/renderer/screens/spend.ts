@@ -1892,17 +1892,24 @@ export interface SpendControls {
 }
 
 /**
- * SPEND_DEFAULT_CONTROLS is the screen as it opens, and none of the three
- * defaults is the console's invention: `30d` is `reportDefaultSince` and `day`
- * is `--by`'s own default, so the first read is the read an operator's own
- * `fugaro report --json` would have made, and the person view is off (D15).
+ * SPEND_DEFAULT_CONTROLS is the screen as it opens: the recent week, by day,
+ * with the person view off (D15).
+ *
+ * **`7d` is the owner's choice and not the CLI's default** (console 0.118.0,
+ * "when going to the Spend screen, let's default to 7d/day"): the question this
+ * screen is opened with is what the last few days cost, so the week just gone is
+ * what opens, and a month of days is one click away in the picker.
+ * `report`'s own `--since` default is untouched -- `reportDefaultSince` is 30
+ * days, and this screen still writes `--since` into the read it sends -- and the
+ * picker still offers `30d`, `90d` and `12w` beside the week, so no window the
+ * operator could ask for before is gone: what changed is the one it opens on.
  *
  * `until` is `null` on purpose. The CLI defaults it to today in UTC and this
  * screen cannot know what today is: a date it invented would be a day nobody
  * measured, drawn as if it had been asked for.
  */
 export const SPEND_DEFAULT_CONTROLS: SpendControls = Object.freeze({
-  since: '30d',
+  since: '7d',
   until: null,
   by: 'day',
   persons: false,

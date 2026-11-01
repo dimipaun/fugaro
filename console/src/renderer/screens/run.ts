@@ -87,8 +87,11 @@ import type { OperationName } from '../../main/ipc'
 import { launcherFull } from '../../shared/launcher'
 import { readRigor, rigorLayerWord, rigorModeWord } from '../../shared/rigor'
 import type { RigorView } from '../../shared/rigor'
+import { sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import { putLink, putReading, putText } from '../app'
+import { BUSY_SLOT_CLASS } from '../section'
+import type { SkeletonBlock, SkeletonShape } from '../skeleton'
 import { disabledWrite } from '../writes'
 import type { ElementLike } from '../app'
 
@@ -1176,27 +1179,38 @@ function maybeCell(
   return element
 }
 
-/** header draws the run's identity, where it ended and what it is doing now:
- * the breadcrumb, the run id, the meta line, the retry the console refuses, the
- * Rigor row, the status strip and the halt banner. */
-function header(factory: RunFactory, model: RunModel): ScreenElement {
+/** headerFrame draws the run's identity as far as the click carries it: where
+ * the run sits (the crumb's way back to Live), the id the operator clicked and
+ * the retry the console refuses. The meta line, the Rigor row, the status strip
+ * and the halt banner are the record's and are `fillHeader`'s. */
+function headerFrame(factory: RunFactory, run: string): { readonly header: ScreenElement; readonly crumb: ScreenElement } {
   const element = make(factory, 'header', 'run-header')
-  element.append(breadcrumb(factory, model))
+  // The crumb's first half is drawn here and its second by `fillCrumb`: the
+  // breadcrumb's first word is the Live view and exists before any read, while
+  // the repository and the run are the record's own.
+  const crumb = make(factory, 'nav', 'run-crumb')
+  crumb.setAttribute('aria-label', 'Breadcrumb')
+  literal(cell(crumb, factory, 'button', 'run-crumb-live'), 'Live')
+  crumbSeparator(factory, crumb)
+  element.append(crumb)
   const head = cell(element, factory, 'div', 'run-head')
   const heading = cell(head, factory, 'h1', 'run-id')
-  putText(heading, model.row.run, 'runId', 'row.run')
+  // **The id is drawn from the click and not from the record.** The operator
+  // opened this run by clicking its id, so the one thing this screen owes them
+  // in the frame the click happened in is that id in the heading; the record's
+  // own `row.run` is drawn again in the crumb when it lands, and the two are the
+  // same string for every door into a run (`entry.ts` draws each door's id from
+  // the row it was drawn on).
+  putText(heading, run, 'runId', 'row.run')
   // The one write this screen draws and does not perform (`writes.ts`): the
   // design's primary action, refused in the one place a reviewer reads.
   head.append(disabledWrite(factory, 'run-retry', 'Retry run'))
-  element.append(metaLine(factory, model))
-  if (model.row.rigor !== null) element.append(rigorLine(factory, model.row.rigor))
-  element.append(statusStrip(factory, model))
-  if (model.halt !== null) element.append(haltLine(factory, model.halt))
-  return element
+  return { header: element, crumb }
 }
 
 /**
- * breadcrumb is where the run sits: the Live view, the repository and the run.
+ * fillCrumb is the rest of the breadcrumb: where the run sits -- the repository
+ * and the run itself -- which is what the run's own record names.
  *
  * **The Live crumb is a real `button`.** The console navigates with buttons and
  * never with a navigating attribute (`entry.ts`'s own note on the view
@@ -1205,19 +1219,24 @@ function header(factory: RunFactory, model: RunModel): ScreenElement {
  * opened. The two slashes are `aria-hidden`: they separate the crumbs visually
  * and are not part of what a breadcrumb reads out.
  */
-function breadcrumb(factory: RunFactory, model: RunModel): ScreenElement {
-  const element = make(factory, 'nav', 'run-crumb')
-  element.setAttribute('aria-label', 'Breadcrumb')
-  literal(cell(element, factory, 'button', 'run-crumb-live'), 'Live')
-  crumbSeparator(factory, element)
+function fillCrumb(factory: RunFactory, model: RunModel, crumb: ScreenElement): void {
   // The repository's crumb: the mono value, or the console's mark with its
   // reason when the record carries no repository.
-  const repo = cell(element, factory, 'span', 'run-crumb-repo', model.row.repo === null || model.row.repo === '' ? 'run-meta-absent' : 'run-meta-value')
+  const repo = cell(crumb, factory, 'span', 'run-crumb-repo', model.row.repo === null || model.row.repo === '' ? 'run-meta-absent' : 'run-meta-value')
   putMaybe(repo, model.row.repo, 'repository', 'row.repo')
-  crumbSeparator(factory, element)
-  const run = cell(element, factory, 'span', 'run-crumb-run')
+  crumbSeparator(factory, crumb)
+  const run = cell(crumb, factory, 'span', 'run-crumb-run')
   putText(run, model.row.run, 'runId', 'row.run')
-  return element
+}
+
+/** fillHeader is the rest of the header: the run's own columns, its rigor, its
+ * status strip and, for a halted run, the line naming why. All of them are the
+ * record's, so all of them arrive with it. */
+function fillHeader(factory: RunFactory, model: RunModel, header: ScreenElement): void {
+  header.append(metaLine(factory, model))
+  if (model.row.rigor !== null) header.append(rigorLine(factory, model.row.rigor))
+  header.append(statusStrip(factory, model))
+  if (model.halt !== null) header.append(haltLine(factory, model.halt))
 }
 
 /** crumbSeparator is the decorative slash between two crumbs. */
@@ -1943,10 +1962,9 @@ function pullRequestPanel(factory: ScreenFactory, model: RunPullRequest): Screen
   return element
 }
 
-/** logsPanel is the capped window and the link to the transcript. */
-function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
-  const element = make(factory, 'section', 'run-logs')
-  element.setAttribute('aria-label', LOGS_PANEL_NAME)
+/** fillLogsPanel draws the capped window and the link to the transcript into
+ * the section the frame drew. */
+function fillLogsPanel(factory: ScreenFactory, model: RunLogs, element: ScreenElement): void {
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'Logs · capped window')
   const list = cell(element, factory, 'ol', 'run-log-list')
   for (const line of model.lines) {
@@ -1985,14 +2003,12 @@ function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
     const note = cell(element, factory, 'p', 'run-log-link-note')
     literal(note, model.linkBecause)
   }
-  return element
 }
 
-/** diagnosePanel is the rest of `diagnose`: everything else the document says
- * about why the run is where it is. */
-function diagnosePanel(factory: RunFactory, model: RunModel): ScreenElement {
-  const element = make(factory, 'section', 'run-diagnosis')
-  element.setAttribute('aria-label', DIAGNOSIS_PANEL_NAME)
+/** fillDiagnosePanel is the rest of `diagnose` -- everything else the document
+ * says about why the run is where it is -- drawn into the section the frame
+ * drew. */
+function fillDiagnosePanel(factory: RunFactory, model: RunModel, element: ScreenElement): void {
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'diagnosis')
   const diagnosis = model.diagnosis
   // The two test lists are chips: the word carries the tone *and* the reading,
@@ -2052,7 +2068,6 @@ function diagnosePanel(factory: RunFactory, model: RunModel): ScreenElement {
   // pair, the two warnings about it and the two splits are the ledger panel's
   // (step 3b), because they are all accounts of the same run's spend and belong
   // beside the total they are read against.
-  return element
 }
 
 /**
@@ -2076,6 +2091,55 @@ const REPLAY_PANEL_NAME = 'Replay'
 const LEDGER_PANEL_NAME = 'Ledger'
 
 const PR_PANEL_NAME = 'Pull request'
+
+/**
+ * RUN_RECORD_SHAPE and RUN_LOGS_SHAPE are the two sections' skeletons, and they
+ * are exported because the **entry** places them: the record's read (`diagnose
+ * RUN --json`, which draws the header's figures, the timeline, the ledger and
+ * the diagnosis) and the capped window's (`logs RUN --json`) are two reads, so
+ * the section whose read is still out wears the shape of what it will hold while
+ * the other one is already filled.
+ *
+ * They are this screen's own and not `skeleton.ts`'s `SKELETON_SHAPES`, which is
+ * the five **tabs** of the navigation: Run detail is reached from a row rather
+ * than offered in the navigation, so it has no tab to hang a shape on and the
+ * two sections carry theirs.
+ */
+export const RUN_RECORD_SHAPE: SkeletonShape = Object.freeze({
+  section: 'run-record',
+  // The record's own shape: the meta line under the header, the timeline's
+  // rows, the ledger's total and the diagnosis' tail.
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row', 'line', 'row', 'row']),
+})
+
+export const RUN_LOGS_SHAPE: SkeletonShape = Object.freeze({
+  section: 'run-logs',
+  // The log window's: its heading, a run of lines and the link under them.
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row', 'row', 'line']),
+})
+
+/**
+ * runBusyLabel names what one of the two reads is reading, and each section
+ * carries its own: the record's mark is over the main column and the log
+ * window's over its own section, and a mark that said "and" would be a section
+ * naming a read it is not waiting for.
+ *
+ * **The id is the click's own text, and it goes through the same `runId` rule
+ * the heading does.** The label is drawn with `literal` (`section.ts`), and a
+ * string a screen refused to draw must not be printed into a label instead --
+ * `UNAVAILABLE_MARK` is what the heading shows for it, so the two agree.
+ */
+export function runBusyLabel(run: string, reading: string): string {
+  const id = sanitizeText(run, 'runId', 'row.run')
+  return `Reading ${reading} of ${id.ok ? id.text : UNAVAILABLE_MARK}`
+}
+
+/** RUN_RECORD_BUSY and RUN_LOGS_BUSY are what each mark says it is reading, in
+ * the words the screen's own panels carry: the operation is `run.diagnose` and
+ * its panel is the diagnosis, and the second read is the capped log window. */
+export const RUN_RECORD_BUSY = 'the diagnosis'
+
+export const RUN_LOGS_BUSY = 'the log window'
 
 /**
  * The scrubber's own axis: a 56-unit-high track with the rail twelve of those
@@ -2215,35 +2279,178 @@ function replayPanel(factory: RunFactory, model: RunReplay): ScreenElement {
   return element
 }
 
-/** renderRun walks the model through Task 2.0's writers. */
-export function renderRun(factory: RunFactory, model: RunModel, theme: RunTheme): ScreenElement {
+/**
+ * DrawnRunFrame is the Run screen's shell: the two columns, the two sections
+ * that fill as their own reads land, and the slot each one puts a busy mark
+ * into.
+ *
+ * **The shell is drawn once and patched per section**, which is the owner's rule
+ * of 2026-10-31 in this screen's own terms. Both reads used to be awaited before
+ * anything was drawn, so a click on a run id answered with the *previous* screen
+ * for as long as `diagnose` and `logs` took; the frame is what the click draws
+ * instead, in its own turn: the id, the way back to Live and the shape of what
+ * is coming.
+ */
+export interface DrawnRunFrame {
+  readonly root: ScreenElement
+  /** header and crumb are the parts of the run's own header the click can
+   * already draw, and the two elements the record's fill adds the rest to. */
+  readonly header: ScreenElement
+  readonly crumb: ScreenElement
+  readonly main: ScreenElement
+  /** mainSlot holds the record read's busy mark. It is the first child of the
+   * main column rather than anything inside the diagnosis, because the mark is
+   * the *top* of the column: the diagnosis panel is below the timeline and a
+   * mark inside it would be a mark under the fold, which is the one place a
+   * section's busy state must not live. */
+  readonly mainSlot: ScreenElement
+  readonly aside: ScreenElement
+  readonly diagnosis: ScreenElement
+  readonly logs: ScreenElement
+  readonly logsSlot: ScreenElement
+}
+
+/**
+ * renderRunFrame draws the run screen's shell and no figure at all: the
+ * breadcrumb's way back to Live, the id that was clicked, the retry the console
+ * refuses, the two columns and the two sections. It is what `showRun` puts up in
+ * the click's own turn, and `renderRun` is this frame with both sections filled.
+ *
+ * **The main column is drawn empty, and both callers write it through
+ * `runMainChildren`.** The column holds the busy slot, what the record draws, the
+ * diagnosis, the log window and the arrivals -- two of which are the frame's and
+ * three of which are a read's -- and the two reads answer in an order nobody
+ * chooses, so there is no append order the frame could fix that would still hold
+ * when the log window answered first. Drawing the column empty is what lets
+ * `renderRun` append it in one pass and the entry *replace* it as each read
+ * lands, with the same list describing both.
+ */
+export function renderRunFrame(factory: RunFactory, theme: RunTheme, run: string): DrawnRunFrame {
   const root = make(factory, 'section', 'run')
   root.setAttribute('data-theme', theme)
-  root.append(header(factory, model))
-  // The main column and the aside: the reading order of the page, which is the
-  // order the brief lists rather than the order the design's panels were built
-  // in. The run's own spend by stage goes under the timeline it belongs to, and
-  // an absent `tolerated` block draws the one line naming the missing key in the
-  // panel's own place, because a run that tolerated nothing, a record written
-  // before the field existed and a run whose record could not be read all write
-  // no block.
+  const drawn = headerFrame(factory, run)
+  root.append(drawn.header)
   const layout = cell(root, factory, 'div', 'run-layout')
   const main = cell(layout, factory, 'div', 'run-main')
-  main.append(stagePanel(factory, model))
-  if (model.spendStages.length > 0) main.append(spendStagesPanel(factory, model))
-  if (model.tolerated === null) {
-    literal(cell(main, factory, 'p', 'run-tolerated-absent'), TOLERATED_ABSENT)
-  } else {
-    main.append(toleratedPanel(factory, model.tolerated))
-  }
-  main.append(diagnosePanel(factory, model))
-  main.append(logsPanel(factory, model.logs))
-  main.append(replayPanel(factory, model.replay))
+  const mainSlot = make(factory, 'div', BUSY_SLOT_CLASS)
+  const diagnosis = make(factory, 'section', 'run-diagnosis')
+  diagnosis.setAttribute('aria-label', DIAGNOSIS_PANEL_NAME)
+  const logs = make(factory, 'section', 'run-logs')
+  logs.setAttribute('aria-label', LOGS_PANEL_NAME)
+  const logsSlot = make(factory, 'div', BUSY_SLOT_CLASS)
+  logs.append(logsSlot)
   const aside = cell(layout, factory, 'aside', 'run-aside')
-  aside.append(ledgerPanel(factory, model))
-  aside.append(pullRequestPanel(factory, model.pullRequest))
-  for (const warning of model.warnings) {
-    textCell(root, factory, 'p', warning, 'sentence', 'warnings[]', 'run-warning')
+  return {
+    root,
+    header: drawn.header,
+    crumb: drawn.crumb,
+    main,
+    mainSlot,
+    aside,
+    diagnosis,
+    logs,
+    logsSlot,
   }
-  return root
+}
+
+/** DrawnRunRecord is what the run's own read drew into the columns: the panels
+ * that stand above the diagnosis, and the warnings under the layout. */
+export interface DrawnRunRecord {
+  /** the panels the record draws above the diagnosis: the verify timeline, the
+   * spend by stage and the tolerated block (or the one line naming the block it
+   * does not carry). */
+  readonly before: readonly ScreenElement[]
+}
+
+/**
+ * fillRunRecord draws everything the run's own record carries: the header's
+ * figures, the timeline and the spend by stage, the tolerated block, the
+ * diagnosis, the ledger and the pull request, and the record's own warnings.
+ *
+ * The by-stage panel is drawn only when the document has stages, and an absent
+ * `tolerated` block draws the one line naming the missing key in the panel's own
+ * place, because a run that tolerated nothing, a record written before the field
+ * existed and a run whose record could not be read all write no block.
+ *
+ * It answers the panels the caller has to place **above** the diagnosis: they
+ * are built here and not appended, because the log window's read may have been
+ * the first to land and the column is written as one list.
+ */
+export function fillRunRecord(factory: RunFactory, model: RunModel, frame: DrawnRunFrame): DrawnRunRecord {
+  fillCrumb(factory, model, frame.crumb)
+  fillHeader(factory, model, frame.header)
+  const before: ScreenElement[] = [stagePanel(factory, model)]
+  if (model.spendStages.length > 0) before.push(spendStagesPanel(factory, model))
+  before.push(
+    model.tolerated === null
+      ? literal(make(factory, 'p', 'run-tolerated-absent'), TOLERATED_ABSENT)
+      : toleratedPanel(factory, model.tolerated),
+  )
+  fillDiagnosePanel(factory, model, frame.diagnosis)
+  frame.aside.append(ledgerPanel(factory, model))
+  frame.aside.append(pullRequestPanel(factory, model.pullRequest))
+  for (const warning of model.warnings) {
+    textCell(frame.root, factory, 'p', warning, 'sentence', 'warnings[]', 'run-warning')
+  }
+  return { before }
+}
+
+/** fillRunLogs draws the capped window into the section the frame drew, and
+ * answers the arrivals panel that belongs under it -- the replay of the same
+ * window. */
+export function fillRunLogs(factory: RunFactory, model: RunModel, frame: DrawnRunFrame): readonly ScreenElement[] {
+  fillLogsPanel(factory, model.logs, frame.logs)
+  return [replayPanel(factory, model.replay)]
+}
+
+/** RunMainParts is what the two reads have drawn into the main column. */
+export interface RunMainParts {
+  readonly before: DrawnRunRecord['before']
+  /** whether the diagnosis section belongs in the column at all: it does once
+   * its read has answered, and it does not while that read is out or when it
+   * refused -- a section holding nothing but its own busy slot is an empty card
+   * above the log window, and a refusal is drawn in the column's own slot
+   * instead. */
+  readonly diagnosis: boolean
+  /** the arrivals panel, drawn with the log window it replays. It is absent when
+   * that read refused: a replay of a window nobody read would be figures about
+   * logs the console could not ask for. */
+  readonly arrivals: readonly ScreenElement[]
+}
+
+/**
+ * runMainChildren is the order of the run screen's main column: the column's own
+ * busy slot, what the run's record draws, the diagnosis, the capped log window
+ * and the arrivals.
+ *
+ * **The column is written as a whole list, and that is what the two independent
+ * reads cost.** The log window's read can land before the record's, and a
+ * section that can only be appended to cannot put the record's panels above the
+ * diagnosis once the log window is already there: so each read draws its own
+ * part, and the caller writes the column from `parts` in this order -- an append
+ * for the one-shot `renderRun`, a replacement for the entry, where the second
+ * read to land has to sit under the first.
+ */
+export function runMainChildren(frame: DrawnRunFrame, parts: RunMainParts): readonly ScreenElement[] {
+  return [
+    frame.mainSlot,
+    ...parts.before,
+    ...(parts.diagnosis ? [frame.diagnosis] : []),
+    frame.logs,
+    ...parts.arrivals,
+  ]
+}
+
+/** renderRun walks the model through Task 2.0's writers, in one pass: the frame,
+ * both fills and the column in its order. A caller that has both answers at once
+ * -- a static draw, a test of the drawing alone -- is this; the entry draws the
+ * frame first and fills each section as its read lands. */
+export function renderRun(factory: RunFactory, model: RunModel, theme: RunTheme): ScreenElement {
+  const frame = renderRunFrame(factory, theme, model.row.run)
+  const record = fillRunRecord(factory, model, frame)
+  const arrivals = fillRunLogs(factory, model, frame)
+  for (const child of runMainChildren(frame, { before: record.before, diagnosis: true, arrivals })) {
+    frame.main.append(child)
+  }
+  return frame.root
 }
