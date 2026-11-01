@@ -11,6 +11,11 @@ reader should check, the number is where it was.) This document is the pin: wher
 
 **Owner:** the owner of this installation. **Date:** 2026-10-31.
 
+**Written before one of its answers, and dated so a reader is not misled:** §6's **U7** was settled by
+an observation the owner ran on **2026-11-01**, so that row carries the answer where the rest of this
+document records the question, and [spec.md](spec.md) §7, spec §8's step 6 and CSR4b's block in the
+plan carry it too.
+
 ---
 
 ## 1. The one sentence the rest of this document serves
