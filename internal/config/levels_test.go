@@ -600,3 +600,143 @@ func TestResolveLevelsWarnsEffortIgnoredModel(t *testing.T) {
 		t.Errorf("warnings = %v; want none: no effort is set", warns)
 	}
 }
+
+// TestResolveLevelsTaskBlockBeatsTheConfigsNone pins the order of the two
+// layers the resolver reads for a level's on/off: the task's block is the one
+// above the merged configuration's, so a task that names a key of a level
+// turns it on over a configuration that wrote `none`, and a task that writes
+// `none` turns off a level the configuration set. It is the order
+// config.LayerCopyKey gives the layers, moved one level up.
+func TestResolveLevelsTaskBlockBeatsTheConfigsNone(t *testing.T) {
+	in := LevelInputs{
+		Config: &Config{Agent: Agent{
+			Models: ModelRoles{Coder: "claude-sonnet-5-5", Reviewer: "claude-opus-5-5"},
+			Levels: ReviewLevels{L2: &LevelSetting{Off: true}},
+		}},
+		Mode: rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+		Task: &ReviewLevels{L2: &LevelSetting{Model: "openai/gpt-4o"}},
+	}
+	got, _, err := ResolveLevels(in)
+	if err != nil {
+		t.Fatalf("ResolveLevels with the task naming l2 over the configuration's none: %v", err)
+	}
+	if !got.L2.On || got.L2.Model != "openai/gpt-4o" {
+		t.Errorf("l2 = %+v; want it on the task's openai/gpt-4o: the task is the layer above the configuration", got.L2)
+	}
+
+	// The other direction: the configuration names the level and the task
+	// writes none, which is the last word on whether the level runs.
+	in.Config = &Config{Agent: Agent{
+		Models: ModelRoles{Coder: "claude-sonnet-5-5", Reviewer: "claude-opus-5-5"},
+		Levels: ReviewLevels{L2: &LevelSetting{Model: "openai/gpt-4o"}},
+	}}
+	in.Task = &ReviewLevels{L2: &LevelSetting{Off: true}}
+	got, _, err = ResolveLevels(in)
+	if err != nil {
+		t.Fatalf("ResolveLevels with the task writing l2 none over the configuration's block: %v", err)
+	}
+	if got.L2.On {
+		t.Errorf("l2 = %+v; want it off: the task wrote none and no floor requires the level", got.L2)
+	}
+}
+
+// TestResolveLevelsOffLevelCarriesNoSettings: the resolver reads a level's
+// model, effort and focus before it knows whether the level runs, so a level
+// that then turns out to be off must come back with none of the three. A
+// caller that read a model off an off level would put it in a stage the level
+// does not run — and the settings are the reason the block is refused at
+// decode when `none: true` sits beside one, so a block that carries both must
+// not be the way past that rule either.
+func TestResolveLevelsOffLevelCarriesNoSettings(t *testing.T) {
+	in := LevelInputs{
+		Config: &Config{Agent: Agent{
+			Models: ModelRoles{Coder: "claude-sonnet-5-5", Reviewer: "claude-opus-5-5"},
+		}},
+		Mode: rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+		Task: &ReviewLevels{L2: &LevelSetting{
+			Off: true, Model: "openai/gpt-4o", Effort: "max", Focus: "auth boundaries",
+		}},
+	}
+	got, warns, err := ResolveLevels(in)
+	if err != nil {
+		t.Fatalf("ResolveLevels with l2 off beside its settings: %v", err)
+	}
+	if got.L2 != (ResolvedLevel{}) {
+		t.Errorf("l2 = %+v; want the zero ResolvedLevel: a level that does not run has no model, effort or focus", got.L2)
+	}
+	if len(warns) != 0 {
+		t.Errorf("warnings = %v; want none: an off level has no model to warn about", warns)
+	}
+}
+
+// TestResolveLevelsErrorReturnsNoLevels: a refusal must not hand back the
+// levels it was in the middle of resolving. A caller that acted on them would
+// launch the very run that was refused — the same-model pair, the effort on a
+// provider route, the model outside allowed_models — and every one of these
+// has at least one level already set when the refusal is raised.
+func TestResolveLevelsErrorReturnsNoLevels(t *testing.T) {
+	models := ModelRoles{Coder: "claude-sonnet-5-5", Reviewer: "claude-opus-5-5"}
+	for _, tc := range []struct {
+		what string
+		in   LevelInputs
+	}{
+		{"two levels on one model", LevelInputs{
+			Config: &Config{Agent: Agent{Models: ModelRoles{Coder: "openai/gpt-4o", Reviewer: "openai/gpt-4o"}}},
+			Mode:   rigor.Pro, Recipe: levelRecipe(t, "standard"),
+		}},
+		{"an effort on a provider-served model", LevelInputs{
+			Config: &Config{Agent: Agent{Models: models, Levels: ReviewLevels{L2: &LevelSetting{Model: "deepseek/deepseek-v4-flash", Effort: "high"}}}},
+			Mode:   rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+			Providers: map[string]ModelProvider{"provider-a": {Models: []string{"deepseek/*"}}},
+		}},
+		{"l2 on a model outside allowed_models", LevelInputs{
+			Config: &Config{Agent: Agent{Models: models}},
+			Mode:   rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+			AllowedModels: []string{"openai/gpt-4o"},
+		}},
+	} {
+		got, _, err := ResolveLevels(tc.in)
+		if err == nil {
+			t.Errorf("%s: ResolveLevels refused nothing", tc.what)
+			continue
+		}
+		if got != (Levels{}) {
+			t.Errorf("%s: levels = %+v beside the refusal %v; want the zero Levels, which no caller can act on", tc.what, got, err)
+		}
+	}
+}
+
+// TestResolveLevelsRefusesEffortOutsideTheSet: the effort's set is closed, and
+// the resolver refuses a value outside it as well as the decoder does
+// (LevelSetting.validate). It is the same refusal for the same reason — Claude
+// Code takes a value it does not know without a word, sends the model's own
+// default, and the run looks like it did what the setting asked — and the
+// resolver is the check a task that never went through the decoder meets, at
+// the launcher and at the runner's bootstrap (L3.2, L4.2).
+func TestResolveLevelsRefusesEffortOutsideTheSet(t *testing.T) {
+	in := LevelInputs{
+		Config: &Config{Agent: Agent{
+			Models: ModelRoles{Coder: "claude-sonnet-5-5", Reviewer: "claude-opus-5-5"},
+		}},
+		Mode: rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+		Task: &ReviewLevels{L2: &LevelSetting{Effort: "auto"}},
+	}
+	_, _, err := ResolveLevels(in)
+	if err == nil {
+		t.Fatal(`l2 ran with the effort "auto"; want it refused: the set is closed and Claude Code would send the model's default without a word`)
+	}
+	for _, want := range []string{"l2.effort", `"auto"`, "low, medium, high, xhigh, max"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+
+	// Each value of the set is admitted, so what is refused is the value and
+	// not an effort at level 2.
+	for _, effort := range Efforts {
+		in.Task = &ReviewLevels{L2: &LevelSetting{Effort: effort}}
+		if _, _, err := ResolveLevels(in); err != nil {
+			t.Errorf("ResolveLevels with l2.effort %q: %v; want it admitted", effort, err)
+		}
+	}
+}
