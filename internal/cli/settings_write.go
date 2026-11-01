@@ -48,10 +48,14 @@ type settingsEdit struct {
 	// TypedWhy is the sentence saying why nothing stands in for the typed
 	// name, shown by the refusal of a session with no terminal.
 	TypedWhy string
-	// InsideRepo is true when Path lives inside a checkout (`--layer repo`).
-	// An agent session may write such a file, which it could edit anyway,
-	// unless the edit is Typed.
-	InsideRepo bool
+	// Kind is the document Path is: the local project config, the local project
+	// layer file, or a repository's fugaro.yaml. It is one fact and not two,
+	// because both things it decides must agree: the reader of the
+	// compare-and-swap (a checkout's file and the layer file are read through
+	// config.ReadRegular, the local config as the person's own dotfile) and
+	// whether an agent session may write the file at all — it may write one it
+	// could edit anyway, a repository's, unless the edit is Typed.
+	Kind settingsDocKind
 	// Command is the command a refusal in a coding agent's session prints for
 	// the person to run at their own terminal. It is the whole of what the
 	// refusal may produce beside the diff.
@@ -85,7 +89,7 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// it could edit anyway, except when the edit is the typed one — the
 	// owner's own hand, whose file decides the ceiling of every run the
 	// branch starts.
-	if marker := agentMarker(os.Getenv); marker != "" && (!e.InsideRepo || e.Typed) {
+	if marker := agentMarker(os.Getenv); marker != "" && (!e.insideRepo() || e.Typed) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			e.Path, marker, e.What, e.Command)
@@ -110,9 +114,10 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// the older read would silently discard that edit. The comparison is the
 	// whole of the compare-and-swap: a file that changed is a refusal with
 	// nothing written, so the person repeats the edit against what is there.
-	// A file inside a checkout is re-read through config.ReadRegular, the
-	// reader the caller's own read used, so a swap for a symlink is refused
-	// here too rather than written through.
+	// The re-read is the reader the caller's own read used — config.ReadRegular
+	// for a checkout's file and for the project layer file, os.ReadFile for the
+	// local config — so a swap for a symlink is refused here too rather than
+	// written through.
 	current, err := readSettingsCurrent(e)
 	if err != nil {
 		return userErr("re-reading %s before writing it: %v", e.Path, err)
@@ -132,16 +137,22 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	return nil
 }
 
+// insideRepo reports whether the edit lands in a repository's own fugaro.yaml
+// (`--layer repo`), the one document an agent session may write.
+func (e settingsEdit) insideRepo() bool { return e.Kind == settingsDocRepo }
+
 // readSettingsCurrent re-reads the file one edit is about to overwrite, for
-// the comparison that refuses an edit built on bytes that have moved. A file
-// inside a checkout is read the way the caller read it — config.ReadRegular,
-// which refuses a symlink, a FIFO or an oversized file — so the swap it guards
-// against cannot be made with one.
+// the comparison that refuses an edit built on bytes that have moved. It reads
+// the document the way the caller's own read read it: a checkout's fugaro.yaml
+// and the project layer file through config.ReadRegular, which refuses a
+// symlink, a FIFO or an oversized file, so the swap it guards against cannot be
+// made with one; the local project config through os.ReadFile, as every other
+// reader of that file in this package reads the person's own dotfile.
 func readSettingsCurrent(e settingsEdit) ([]byte, error) {
-	if e.InsideRepo {
-		return config.ReadRegular(e.Path, config.LayerMaxBytes)
+	if e.Kind == settingsDocLocal {
+		return os.ReadFile(e.Path)
 	}
-	return os.ReadFile(e.Path)
+	return config.ReadRegular(e.Path, config.LayerMaxBytes)
 }
 
 // confirmSettingsWrite is the ordinary y/N confirmation: --yes answers it, a

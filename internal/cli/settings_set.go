@@ -121,12 +121,11 @@ const (
 // settingsTarget is where one write lands: the file, the path inside it, and
 // what it takes to read the edited bytes back strictly.
 type settingsTarget struct {
-	layer      string
-	kind       settingsDocKind
-	path       string
-	keyPath    []string
-	insideRepo bool
-	anchor     config.LayerAnchor
+	layer   string
+	kind    settingsDocKind
+	path    string
+	keyPath []string
+	anchor  config.LayerAnchor
 	// project is the selected project's name: a repository's fugaro.yaml is
 	// refused when it is anchored to another one.
 	project string
@@ -329,7 +328,7 @@ func settingsResolveTarget(ctx context.Context, row settings.Row, o settingsWrit
 		if err != nil {
 			return settingsTarget{}, err
 		}
-		return settingsTarget{layer: layer, kind: settingsDocRepo, path: path, keyPath: strings.Split(row.Key, "."), insideRepo: true, project: lc.Name}, nil
+		return settingsTarget{layer: layer, kind: settingsDocRepo, path: path, keyPath: strings.Split(row.Key, "."), project: lc.Name}, nil
 	}
 }
 
@@ -790,15 +789,15 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	}
 	typed, why := settingsTypedWrite(key, oldValue, value, mode)
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
-		Path:       target.path,
-		Old:        old,
-		New:        newData,
-		What:       fmt.Sprintf("write %s in %s", key, target.path),
-		Typed:      typed,
-		TypedWhy:   why,
-		InsideRepo: target.insideRepo,
-		Command:    settingsWriteCommand("set", key, value, o, target.layer),
-		Yes:        o.yes,
+		Path:     target.path,
+		Old:      old,
+		New:      newData,
+		What:     fmt.Sprintf("write %s in %s", key, target.path),
+		Typed:    typed,
+		TypedWhy: why,
+		Kind:     target.kind,
+		Command:  settingsWriteCommand("set", key, value, o, target.layer),
+		Yes:      o.yes,
 	}); err != nil {
 		return err
 	}
@@ -845,15 +844,15 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	}
 	typed, why := settingsTypedWrite(key, settingsValueIn(old, target.keyPath), "", "unset")
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
-		Path:       target.path,
-		Old:        old,
-		New:        newData,
-		What:       fmt.Sprintf("remove %s from %s", key, target.path),
-		Typed:      typed,
-		TypedWhy:   why,
-		InsideRepo: target.insideRepo,
-		Command:    settingsWriteCommand("unset", key, "", o, target.layer),
-		Yes:        o.yes,
+		Path:     target.path,
+		Old:      old,
+		New:      newData,
+		What:     fmt.Sprintf("remove %s from %s", key, target.path),
+		Typed:    typed,
+		TypedWhy: why,
+		Kind:     target.kind,
+		Command:  settingsWriteCommand("unset", key, "", o, target.layer),
+		Yes:      o.yes,
 	}); err != nil {
 		return err
 	}

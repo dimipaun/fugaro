@@ -111,7 +111,7 @@ func TestSettingsWriteTypedRefusesInAnAgentSession(t *testing.T) {
 	err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
 		What: "loosen a", Typed: true, TypedWhy: "it loosens a ceiling",
-		InsideRepo: true, Command: "fugaro settings set a 2 --layer repo", Yes: true,
+		Kind: settingsDocRepo, Command: "fugaro settings set a 2 --layer repo", Yes: true,
 	})
 	if err == nil {
 		t.Fatal("a Typed edit ran in a coding agent's session")
@@ -137,7 +137,7 @@ func TestSettingsWriteInsideRepoRunsInAnAgentSession(t *testing.T) {
 	cmd.SetOut(&out)
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
-		What: "write a", InsideRepo: true, Command: "fugaro settings set a 2 --layer repo", Yes: true,
+		What: "write a", Kind: settingsDocRepo, Command: "fugaro settings set a 2 --layer repo", Yes: true,
 	}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -247,10 +247,43 @@ func TestSettingsWriteRefusesASymlinkSwapInsideACheckout(t *testing.T) {
 	cmd.SetOut(&out)
 	err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
-		What: "write a", InsideRepo: true, Command: "fugaro settings set a 2 --layer repo", Yes: true,
+		What: "write a", Kind: settingsDocRepo, Command: "fugaro settings set a 2 --layer repo", Yes: true,
 	})
 	if err == nil {
 		t.Fatal("the write followed a symlink a checkout's file was swapped for")
+	}
+	if got := readFileString(t, target); got != "a: 1\n" {
+		t.Errorf("the write reached through the symlink:\n%s", got)
+	}
+}
+
+// TestSettingsWriteRefusesASymlinkSwapInTheLayerFile: the project layer file is
+// a checkout's kind of document — settingsReadDocument reads it through
+// config.ReadRegular, refusing a symlink, a FIFO or an oversized file — so the
+// compare-and-swap reads it that way too, and a file swapped for a symlink
+// between the caller's read and the write is refused rather than written
+// through to whatever the link names (F4).
+func TestSettingsWriteRefusesASymlinkSwapInTheLayerFile(t *testing.T) {
+	path, lc := settingsEditFixture(t)
+	target := filepath.Join(t.TempDir(), "elsewhere.yaml")
+	if err := os.WriteFile(target, []byte("a: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	err := applySettingsEdit(cmd, lc, settingsEdit{
+		Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
+		What: "write a", Kind: settingsDocLayer, Command: "fugaro settings set a 2 --layer project", Yes: true,
+	})
+	if err == nil {
+		t.Fatal("the write followed a symlink the layer file was swapped for")
 	}
 	if got := readFileString(t, target); got != "a: 1\n" {
 		t.Errorf("the write reached through the symlink:\n%s", got)
@@ -271,7 +304,7 @@ func TestSettingsWriteNamesTheWideningBeforeTheTypedPrompt(t *testing.T) {
 	cmd.SetIn(strings.NewReader(lc.Name + "\n"))
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
-		What: "loosen a", Typed: true, TypedWhy: why, InsideRepo: true,
+		What: "loosen a", Typed: true, TypedWhy: why, Kind: settingsDocRepo,
 		Command: "fugaro settings set a 2 --layer repo",
 	}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
