@@ -1081,19 +1081,24 @@ checkout again. A repository the project config does not enroll is
 `not_enrolled`; a path that had to be escaped or truncated for printing, or
 that is not absolute or does not carry a well-formed identity, is
 `not_representable` — **the printed string names a different directory than the
-stored one, so it must never be presented as a path that works**. A state file
-that cannot be read (not JSON, another version, over its size bound, not a
-regular file) is a warning naming it and `checkouts: []` for every
+stored one, so it must never be presented as a path that works** — and so is a
+path under the machine's temporary directory, which this machine does not
+record any more and does not read: a scratchpad a coding agent made is a live
+checkout, and the row is a working directory the console must not be sent to. A
+state file that cannot be read (not JSON, another version, over its size bound,
+not a regular file) is a warning naming it and `checkouts: []` for every
 installation — never a silent "there are none", and never a listing that fails.
 
 **One row carries one reason, and which one it is is fixed.** In order:
 
 1. `not_representable` — decided from the row's own strings, **before anything
    touches the disk**: the path as printed is not the path as stored, the path
-   is not absolute, or the identity is not a provider and an `owner/name`. A
-   row that fails here is never examined further, so a relative path that
-   happens to exist under the reader's working directory is still
-   `not_representable` and not a valid checkout.
+   is not absolute, the identity is not a provider and an `owner/name`, or the
+   path is under the machine's temporary directory. A row that fails here is
+   never examined further, so a relative path that happens to exist under the
+   reader's working directory is still `not_representable` and not a valid
+   checkout, and a path under the temporary directory is `not_representable`
+   whether it is there or not, and whatever it is a checkout of.
 2. `missing` — the path is not a directory that exists.
 3. `unreadable` — it is there, and its `fugaro.yaml` cannot be read.
 4. `not_a_checkout` — it is not a git checkout's own root.
