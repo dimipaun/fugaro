@@ -3135,17 +3135,24 @@ This command has no subcommands.
 
 List runs with their status, stage, cost and PR
 
-List runs, newest first, joining the runs bucket with what the backend knows.
+List runs, newest first -- created descending, then run descending --
+joining the runs bucket with what the backend knows.
 
 By default ls shows the last 7 days of the local config's repositories (every
 repository in the bucket when the config lists none). A run shows as succeeded
 only when its result.json says so; an execution that ended without finalizing
 is an infra_error.
 
---limit N reads the objects of the newest N runs alone, so a run left out
-costs nothing to leave out; the N are the newest of every repository
-listed, and --mine, --batch, --state and --pr then narrow fewer rows than
-that, never more. 0, the default, reads every run of the window.
+--limit N prints the newest N rows of the listing and shortens nothing else:
+the window is still read, and the totals line, in the text listing and in
+--json's totals, is the whole window's, because a page is not a total. 0,
+the default, prints every row of the window.
+
+--after RUN-ID starts the listing after that run: the rows strictly after it
+in the listing's order, so the same argv with the last id of a page is the
+next page. The id is the run_id --json carries; one the listing does not
+hold is refused rather than answered with an empty page, which reads as no
+more runs. Neither flag goes with --watch, which redraws the whole listing.
 
 --state STATE lists only runs in that state, matched against the status --json
 carries: the `halted (run_cap)` cell is --state halted, and --help lists the
@@ -3162,13 +3169,14 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--after` | string | "" | no | print only the rows after this run id in the listing |
 | `--all` | bool | `false` | no | every repository in the runs bucket |
 | `--batch` | string | "" | no | only runs of this batch |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--limit` | int | `0` | no | read and list only the newest N runs (0, the default, is every run of the window) |
+| `--limit` | int | `0` | no | print only the newest N rows (0, the default, is every row of the window; the totals stay the window's) |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |

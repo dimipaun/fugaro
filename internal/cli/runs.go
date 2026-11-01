@@ -50,8 +50,9 @@ type lsOptions struct {
 	state                    string
 	all, mine, watch, asJSON bool
 	interval                 time.Duration
-	pr                       int // only the runs on this pull request, when set
-	limit                    int // only the newest N runs of the window, when > 0
+	pr                       int    // only the runs on this pull request, when set
+	limit                    int    // print the newest N rows of the window, when > 0
+	after                    string // start the listing after this run, when set
 }
 
 // lsStates are the run states --state accepts, sorted: runstore's own states
@@ -95,7 +96,6 @@ var lsNow = time.Now
 type lsFilter struct {
 	slugs  []string
 	since  time.Time // zero means no bound
-	limit  int       // read the newest N runs only, when > 0
 	mine   string    // keep runs requested by this identity, when set
 	batch  string    // keep runs of this batch, when set
 	state  string    // keep runs in this state, when set
@@ -132,15 +132,21 @@ func newLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List runs with their status, stage, cost and PR",
-		Long: "List runs, newest first, joining the runs bucket with what the backend knows.\n\n" +
+		Long: "List runs, newest first -- created descending, then run descending --\n" +
+			"joining the runs bucket with what the backend knows.\n\n" +
 			"By default ls shows the last " + strconv.Itoa(lsDefaultDays) + " days of the local config's repositories (every\n" +
 			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
 			"only when its result.json says so; an execution that ended without finalizing\n" +
 			"is an infra_error.\n\n" +
-			"--limit N reads the objects of the newest N runs alone, so a run left out\n" +
-			"costs nothing to leave out; the N are the newest of every repository\n" +
-			"listed, and --mine, --batch, --state and --pr then narrow fewer rows than\n" +
-			"that, never more. 0, the default, reads every run of the window.\n\n" +
+			"--limit N prints the newest N rows of the listing and shortens nothing else:\n" +
+			"the window is still read, and the totals line, in the text listing and in\n" +
+			"--json's totals, is the whole window's, because a page is not a total. 0,\n" +
+			"the default, prints every row of the window.\n\n" +
+			"--after RUN-ID starts the listing after that run: the rows strictly after it\n" +
+			"in the listing's order, so the same argv with the last id of a page is the\n" +
+			"next page. The id is the run_id --json carries; one the listing does not\n" +
+			"hold is refused rather than answered with an empty page, which reads as no\n" +
+			"more runs. Neither flag goes with --watch, which redraws the whole listing.\n\n" +
 			"--state STATE lists only runs in that state, matched against the status --json\n" +
 			"carries: the `halted (run_cap)` cell is --state halted, and --help lists the\n" +
 			"states the flag takes. A run's state is in its result.json, so this filter\n" +
@@ -158,7 +164,8 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
 	f.StringVar(&o.state, "state", "", "only runs in this state ("+strings.Join(lsStates, ", ")+")")
-	f.IntVar(&o.limit, "limit", 0, "read and list only the newest N runs (0, the default, is every run of the window)")
+	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows (0, the default, is every row of the window; the totals stay the window's)")
+	f.StringVar(&o.after, "after", "", "print only the rows after this run id in the listing")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
 	f.DurationVar(&o.interval, "interval", 10*time.Second, "--watch's redraw interval")
@@ -193,6 +200,12 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if o.limit < 0 {
 		return userErr("--limit %d: use a count, or 0 for every run of the window", o.limit)
 	}
+	// The flags are read as typed rather than by value, the way --pr is: a
+	// reader who wrote either beside --watch asked for a page of a listing
+	// that redraws, and that is the combination being refused.
+	if o.watch && (cmd.Flags().Changed("limit") || cmd.Flags().Changed("after")) {
+		return userErr("--watch redraws the whole listing until every run has settled: --limit and --after don't go with it")
+	}
 	if o.state != "" && !slices.Contains(lsStates, o.state) {
 		return userErr("--state %q: use one of %s", o.state, strings.Join(lsStates, ", "))
 	}
@@ -202,7 +215,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	}
 	defer env.Close()
 
-	f := lsFilter{batch: o.batch, state: o.state, limit: o.limit, pr: o.pr, warn: cmd.ErrOrStderr()}
+	f := lsFilter{batch: o.batch, state: o.state, pr: o.pr, warn: cmd.ErrOrStderr()}
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
 		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}
@@ -231,10 +244,14 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		if err != nil {
 			return err
 		}
+		page, err := pageRows(rows, o.after, o.limit)
+		if err != nil {
+			return err
+		}
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
-		if err := printRows(out, env.lc.Name, rows, warnings, now, o.asJSON); err != nil {
+		if err := printRowsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON); err != nil {
 			return err
 		}
 		if !o.watch || allSettled(rows) {
@@ -284,9 +301,10 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 	return slugs, nil
 }
 
-// loadRows reads the runs f selects -- the newest f.limit of them when it is
-// set, which bounds the reads and not only the rows -- joins each with its
-// execution, and returns the rows newest first. A run whose launch.json or
+// loadRows reads the runs f selects, joins each with its execution, and
+// returns the rows newest first. It reads the whole window whatever the
+// listing goes on to print: the totals cover every row it read, so a page is
+// never the sum beside it (D818). A run whose launch.json or
 // result.json is corrupt, or names an execution that isn't the run's, is an
 // error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
@@ -316,22 +334,6 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 			for _, id := range ids {
 				refs = append(refs, ref{slug, id})
 			}
-		}
-		// A run ID starts with its mint time, so ordering the refs by ID puts
-		// the newest runs first before any object is read and --limit then
-		// reads the newest N runs' objects and nothing older. The order is
-		// across the repositories listed, not within each, because the N are
-		// the newest runs of the listing. Without a limit the refs keep the
-		// order they were gathered in, which is what the warnings a listing
-		// prints are read in.
-		if f.limit > 0 {
-			slices.SortStableFunc(refs, func(a, b ref) int {
-				if c := strings.Compare(b.id, a.id); c != 0 {
-					return c
-				}
-				return strings.Compare(a.slug, b.slug)
-			})
-			refs = refs[:min(len(refs), f.limit)]
 		}
 	}
 
@@ -404,12 +406,41 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch) ||
 			(f.state != "" && string(r.Status) != f.state)
 	})
+	// The listing's order, which --after's cursor is defined by: created
+	// descending, then the run reference descending. Two runs minted in the
+	// same second -- which is what the reference's own mint time leaves
+	// unordered -- are ordered by that reference, so the order is total and
+	// the row a cursor stops at is the row a reader sees.
 	slices.SortStableFunc(rows, func(a, b runview.Row) int {
 		if c := b.Created.Compare(a.Created); c != 0 {
 			return c
 		}
-		return strings.Compare(a.Run, b.Run)
+		return strings.Compare(b.Run, a.Run)
 	})
+	return rows, nil
+}
+
+// pageRows is the page a listing prints out of the rows it read: the rows
+// strictly after the cursor in the listing's own order, then the newest limit
+// of them. The totals are the caller's to take over the whole window, never
+// over what this returns.
+//
+// A cursor the window does not hold is refused rather than answered with an
+// empty page. The two are not the same answer: an empty page reads as "no more
+// runs", and a caller that walked off the end of the window by mistake -- a
+// filter that dropped the cursor's run, a --since that cut it off -- would
+// page nothing for ever.
+func pageRows(rows []runview.Row, after string, limit int) ([]runview.Row, error) {
+	if after != "" {
+		i := slices.IndexFunc(rows, func(r runview.Row) bool { return r.RunID == after })
+		if i < 0 {
+			return nil, userErr("--after %s: no run in this listing has that id", after)
+		}
+		rows = rows[i+1:]
+	}
+	if limit > 0 && limit < len(rows) {
+		rows = rows[:limit]
+	}
 	return rows, nil
 }
 
@@ -602,9 +633,17 @@ func allSettled(rows []runview.Row) bool {
 }
 
 // printRows prints rows as a table with a totals line, or as one JSON
-// document. The warnings come before the table, or go into the document.
+// document. The warnings come before the table, or go into the document. The
+// totals are the rows' own; a caller printing a page of a wider listing hands
+// that listing's totals to printRowsWithTotals instead.
 func printRows(w io.Writer, project string, rows []runview.Row, warnings []string, now time.Time, asJSON bool) error {
-	tot := runview.Sum(rows)
+	return printRowsWithTotals(w, project, rows, runview.Sum(rows), warnings, now, asJSON)
+}
+
+// printRowsWithTotals is printRows with the totals given rather than summed
+// from the rows: a listing that printed a page still totals the window it read
+// (D818), so the number beside a page is never the page's own.
+func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot runview.Totals, warnings []string, now time.Time, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
