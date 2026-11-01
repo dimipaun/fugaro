@@ -33,9 +33,12 @@
 // are constants here rather than environment: the console reports to one
 // project, and a run that could point them elsewhere is a run that could send a
 // customer's sources to somebody else's account. The release is the console's
-// own version -- `SENTRY_SYMBOLS_RELEASE` when the caller knows it (the release
-// workflow stamps the tag's version, which is what the app runs) and
-// `console/package.json`'s otherwise. It is the *bare* version and not
+// own version, read from `console/package.json` -- or from
+// `SENTRY_SYMBOLS_RELEASE`, which a caller that knows the version another way
+// may set. The release job sets neither: it refuses a tag whose X.Y.Z is not
+// `console/package.json`'s `version`, so the file on its tree is the tag's
+// version, and the file is what the app was stamped with. It is the *bare*
+// version and not
 // `@sentry/electron`'s own `name@version` default, because the scrubber drops
 // any release that is not `crash.ts`'s `RELEASE_RE` shape -- and an `@` is not
 // in it -- so a `name@version` tag would name a release no event can carry.
