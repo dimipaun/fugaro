@@ -744,6 +744,9 @@ var propertyAgentSites = map[string]string{
 	// The second one drives the same function WITHOUT a marker, so the two
 	// together say the skip is the marker's and not a site that does nothing.
 	"init_stages.go pinCredentialsImage": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate (with none)",
+	// The layer stage refuses a marker itself for the same reason: it is
+	// SelfConfirming, so the loop would call it.
+	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
 }
 
 // outsideAgentSites are the agent-marker sites the property does not cover,

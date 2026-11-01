@@ -191,6 +191,11 @@ func initStages(e *initEngine) []initflow.Stage {
 	stages = append(stages, newRulesStage(e))
 	e.policy = newPolicyMigrateStage(e)
 	stages = append(stages, e.policy)
+	// The layer stage after the policy one: the project layer this run would
+	// publish is read under the node the policy stage just moved in place, so a
+	// layer whose claims the older node could not carry is judged by the same
+	// installation it is published for (init_layer_stage.go).
+	stages = append(stages, newLayerStage(e))
 	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
 	// are a stage of this run too: fugaro update is the whole upgrade, so the
 	// one command the user runs may not leave the checkout it runs in behind

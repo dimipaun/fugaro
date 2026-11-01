@@ -2027,7 +2027,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if r.shadow {
 			planAgent.Models.Coder = r.championCoder
 		}
-		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
+		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor())
 		if err := checkPlan(plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}

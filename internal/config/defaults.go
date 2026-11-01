@@ -34,12 +34,22 @@ var Bases = []string{BaseKind}
 // "workflows.web.base: base: was removed in 0.7.0...", the word doubled.
 const legacyBaseMessage = "was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)"
 
-// The round knobs' defaults, named: `fugaro budget preview` counts a
-// recipe's stages at these when it has no checkout of the repository to read
-// the knobs from, so the two must not drift apart.
+// The loop counts the budget floor is computed at, deliberately flat: a run's
+// rounds come from the mode that resolves for it (internal/rigor's
+// DefaultRounds) and from the layers over it, and no single default stands for
+// them any more.
+//
+// A floor computed from a mode's own row would move with the mode whose budget
+// fraction it floors, and the two rows below the value here — POC's and
+// Hotfix's, one round each, whose fraction is the tightest of all — would lower
+// it: the floor exists so a fraction cannot put a run under one stage's lease
+// (RigorBudgetFloorUSD), so the number under it must not come from the run it
+// protects. These are the counts every mode ran at before the per-mode ruling,
+// which is the conservative direction: no installation's floor moves, and none
+// can start fitting a cap it did not fit before.
 const (
-	DefaultFirstLineRounds = 1
-	DefaultReviewRounds    = 2
+	rigorBudgetFloorFirstRounds  = 1
+	rigorBudgetFloorReviewRounds = 2
 	// DefaultAgentAuth is agent.auth's default: a fugaro.yaml that names none
 	// authenticates with a Vertex key. applyDefaults applies it, and
 	// AgentOf is the other reader of the rule.
@@ -121,7 +131,7 @@ func smokeStages() int {
 		if len(ps) > 0 {
 			continue
 		}
-		if n := recipe.StageBound(r, DefaultFirstLineRounds, DefaultReviewRounds); smallest == 0 || n < smallest {
+		if n := recipe.StageBound(r, rigorBudgetFloorFirstRounds, rigorBudgetFloorReviewRounds); smallest == 0 || n < smallest {
 			smallest = n
 		}
 	}
@@ -196,6 +206,13 @@ func KnownAgentAuth(auth string) bool { return slices.Contains(AgentAuths, auth)
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
 // default depends on the checkout's lockfile, so it is not applied here:
 // DefaultCache computes it, and M4's cache restore applies it.
+//
+// The two round knobs are deliberately left at 0 when nothing set them: their
+// default depends on the rigor mode a run resolves, which is every layer's
+// decision plus the run's own request and paths — none of it known here — so
+// the unset value travels to the one place that does know it (internal/runner's
+// planOf and internal/cli's budget preview read rigor.DefaultRounds). A layer
+// that does set one still wins, and 0 is "unset" at every layer (validate).
 func applyDefaults(c *Config) {
 	if c.Git.BaseBranch == "" {
 		c.Git.BaseBranch = "main"
@@ -207,14 +224,8 @@ func applyDefaults(c *Config) {
 	if c.Agent.Auth == "" {
 		c.Agent.Auth = DefaultAgentAuth
 	}
-	if c.Agent.ReviewRounds == 0 {
-		c.Agent.ReviewRounds = DefaultReviewRounds
-	}
 	if c.Agent.FirstLineReview == "" {
 		c.Agent.FirstLineReview = FirstLineAuto
-	}
-	if c.Agent.FirstLineRounds == 0 {
-		c.Agent.FirstLineRounds = DefaultFirstLineRounds
 	}
 	if c.Agent.MaxBudgetUSD == 0 {
 		c.Agent.MaxBudgetUSD = 25
