@@ -309,8 +309,8 @@ func gitStream(ctx context.Context, repo *gitops.Repo, w io.Writer, args ...stri
 // anything that reaches the developer. The leftover commit, the run's own
 // commits, the changed paths, the rigour mode, the verify records, the patch
 // object and the verdict are all the run's own; the push, the pull request,
-// the status section, the reviewers, the report comment and the backlog filing
-// are not, and nothing here calls the provider at all (D554).
+// the status section, the reviewers and the report comment are not, and
+// nothing here calls the provider at all (D554).
 //
 // The status says how the run ended — halted, cancelled, or the verdict Decide
 // reached — and the outcome is none in every case, which is what tells a
@@ -321,7 +321,16 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	if halt != nil {
 		leftover = leftoverHaltMessage
 	}
-	committed, err := r.repo.CommitAll(ctx, leftover)
+	// The champion's leftover commit holds back the artifacts finalize refuses
+	// (stray.go), and this arm holds back the same ones, so the two arms'
+	// changed paths and patch objects describe the same checkout of the same
+	// work — which is what a pair is scored on (D559). Nothing is recorded as
+	// refused here: this arm has no branch for a refusal to be about.
+	strays, err := r.strayArtifacts(ctx)
+	if err != nil {
+		return fmt.Errorf("listing what the run left untracked: %w", err)
+	}
+	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
