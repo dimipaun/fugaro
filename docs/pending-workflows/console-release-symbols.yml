@@ -1,0 +1,1416 @@
+# STAGED, NOT APPLIED. This file is the console's signing, notarisation and
+# stapling pipeline **on the console's own release tag**, written by the run that
+# gave the console its own release stream (the owner's addendum of 2026-10-22:
+# three independent streams -- CLI = animals on `v*`, Console = fruits on
+# `console-v*`, Mobile = birds). **No agent copies, edits, renames or deletes
+# it** -- GitHub rejects a Fugaro push that touches .github/workflows/**, so an
+# agent run cannot deliver a workflow change at all, and every workflow change in
+# this repository is staged here for a human (docs/pending-workflows/README.md).
+#
+# **THIS FILE SUPERSEDES docs/pending-workflows/console-release.yml**, which is
+# the same pipeline released from the CLI's `v*` tag: that file's staged copy and
+# the applied copy under .github/workflows/ are byte-identical today, and this
+# one is that text with the three changes below and nothing else. The file it
+# replaces is staged *and* applied at once, and the staged copy stays after the
+# copy-in (docs/pending-workflows/README.md), so the copy-in writes this file
+# over the staged `console-release.yml` **before** it writes the applied one.
+# There is one copy-in procedure here and not two: the three commands are with
+# the update-feed paragraph below, and the ones this file inherited named a
+# `console-release-tag.yml` that was applied and removed on 2026-10-23, so they
+# were unrunnable. What the copy-in leaves is `.github/workflows/console-release.yml`
+# and the staged docs/pending-workflows/console-release.yml byte-identical again,
+# which is what TestDocsConsoleReleaseWorkflowIsStagedAndPinned asserts, and why
+# the staged copy is written from this file rather than from the applied one: a
+# staged copy that differs from the file that runs puts `main` in the state the
+# staging directory exists to avoid, where the byte-identity clause is red and
+# scripts/release-gate.sh therefore refuses *every* tag, the CLI's included.
+# Nothing else about the copy-in changes: the protected environment, the
+# reviewer and the tag ruleset are the same controls, and this file adds no
+# secret to them.
+#
+# **THIS FILE SUPERSEDES docs/pending-workflows/console-release.yml**, and the
+# running pipeline plus one step is the whole of it. It is staged by the run
+# that gives the console's crash reports the symbols they are read with (the
+# owner's ruling of 2026-11-01; design section 7.4): after the build, and after
+# the step that verifies the shipped artifacts, it runs
+# `console/scripts/upload-sentry-symbols.mjs`, which pushes the packaged app's
+# native debug files and the main process's JavaScript and source maps to the
+# project the crash reporter reports to -- the maps tagged with the console's own
+# version, the debug files keyed by the debug id inside each one, which is why
+# `debug-files upload` takes no release. **The symbols are filed and no report is
+# read with them yet** (docs/pending-workflows/README.md says which four things
+# a later task has to add), so the step is groundwork rather than a fix.
+#
+# **It adds one repository secret, `SENTRY_AUTH_TOKEN`, to the `console-release`
+# environment, and it adds it to one step's `env:` only** -- no other step reads
+# it, and it is never on an argv: `sentry-cli` takes it from the environment
+# (`console/scripts/upload-sentry-symbols.mjs` says why). **The step is a no-op
+# that exits 0 while that secret does not exist**, printing one line, so copying
+# this file in is safe today and becomes an upload the day the owner adds the
+# secret to the environment. Nothing else in the file moves: the action pins,
+# the trigger, the permissions, the protected environment, the runners, the
+# Linux leg and the publish order are the file you already have.
+#
+# To apply it, from the repository root -- the first command is the one that
+# keeps `console-release.yml` and its staged copy byte-identical, which is what
+# `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` asserts:
+#
+#     cp docs/pending-workflows/console-release-symbols.yml docs/pending-workflows/console-release.yml
+#     cp docs/pending-workflows/console-release-symbols.yml .github/workflows/console-release.yml
+#     git rm docs/pending-workflows/console-release-symbols.yml
+#     git commit -m "console: upload the crash reporter's symbols from the release job"
+#
+# **The staged copy is deleted after the copy-in**, as `console-linux.yml`'s and
+# `console-release-feed.yml`'s are: the file that runs is then the only copy of
+# this step, and the two sentences in `## console-release-symbols.yml` of
+# docs/pending-workflows/README.md -- this directory's opening line and the last
+# paragraph of website/README.md -- are what the same commit rewrites.
+#
+# **What it changes, in three bullets and nothing else.** Until the copy-in,
+# `.github/workflows/console-release.yml` is the older text and a CLI `vX.Y.Z`
+# tag still starts a console build; this file is what stops that.
+#
+#   - **The trigger: a push of a `console-vX.Y.Z` tag, and nothing else.** The
+#     CLI's `vX.Y.Z` tag no longer starts a console build, and a console tag no
+#     longer starts a CLI release (release.yml and images.yml still trigger on
+#     their own strict `v[0-9]+.[0-9]+.[0-9]+` pattern, and on nothing else).
+#     That is the whole point of the three streams: a CLI release
+#     and a console release are now separate events, and neither one implies the
+#     other. Nothing else in the `on:` block moves: no pull request, no
+#     `workflow_run`, no `workflow_dispatch`, no branch list, no `paths:`. The
+#     security reason for the tag-only trigger is unchanged and is the one
+#     console-tests.yml's split exists for: this job reads the Apple signing
+#     certificate and the App Store Connect key, and a tag push is the only event
+#     a branch of this repository cannot produce.
+#   - **The version, and the refusal that goes with it.** X.Y.Z is still the
+#     tag's -- taken from `console-vX.Y.Z` minus its prefix -- and it is still
+#     stamped on every pack with `-c.extraMetadata.version=X.Y.Z`. What is new is
+#     that a tag whose version is **not console/package.json's `version`** is
+#     refused before anything is built: `console/package.json` is the console's
+#     version line, it is bumped to X.Y.Z in a commit on `main` before the tag
+#     (like the plugin version, and never after), and `docs/release.md`'s
+#     "Console releases" section is the procedure. Both legs make the refusal,
+#     each from its own checkout, so either can be re-run alone and neither
+#     trusts the other's. The gate itself is unchanged and stays CLI-only
+#     (scripts/release-gate.sh refuses anything that is not a strict `vX.Y.Z`),
+#     so both legs hand it `v` + the version: what it is asked for is the part
+#     about the commit -- an ancestor of origin/main, and the required checks
+#     green on it -- and the shape of this run's own tag was already checked by
+#     prefix, strictly, one step earlier.
+#   - **The release body is the console's own notes.** `publish` reads
+#     `docs/releases/console/vX.Y.Z.md` out of the tagged tree and hands it to
+#     `gh release create --notes-file`, after the standing statement about what
+#     is and is not signed. The file is the console's own end-user text -- its
+#     first paragraph is one sentence saying what the console gives a user -- and
+#     it is not the CLI's `docs/releases/vX.Y.Z.md` or the CLI-keyed
+#     `website/data/release-summaries.yaml`. The release job checks the file
+#     exists and is not empty before it builds anything, so a tag without notes
+#     fails in seconds rather than after a signed, notarised build.
+#
+# **What the Linux leg adds, in one paragraph.** A third job, `linux`, on
+# `ubuntu-24.04` with `contents: read` and `checks: read` and **no environment
+# and no secret**: it runs the same release gate, installs the same pinned
+# toolchain, builds with the same packer and the same fuses, verifies the shipped
+# AppImage and .deb (including reading the fuse wire back out of the executable
+# inside each one), and uploads them as `console-linux-assets`. `publish` now
+# waits for both jobs, re-checks each leg against its own sums file, merges the
+# two legs into one asset set with one `console-sha256sums.txt`, signs that file
+# keyless with cosign (`id-token: write`, the same call GoReleaser makes for the
+# CLI's archives) into `console-sha256sums.txt.sigstore.json`, and attaches all
+# of it to `console-vX.Y.Z`. Nothing else in the file moved.
+#
+# **Before the copy-in, the owner creates the protected environment this file
+# names** (Settings, Environments, `console-release`): required reviewers = the
+# owner, deployment branches restricted to tags. A staging file cannot create an
+# environment, and this workflow is only as safe as the environment its secrets
+# live in. **The staged copy is NOT deleted after the copy-in**: while both files
+# exist, TestDocsConsoleReleaseWorkflowIsStagedAndPinned asserts they are
+# byte-identical, so an edit to one without the other fails a named test rather
+# than drifting silently.
+#
+# **What the update feed adds, in one paragraph.** The step is Task 4.4 of
+# docs/plans/2026-10-15-desktop-console.md, which names the staged
+# docs/pending-workflows/console-release.yml in its own file list, and the design
+# it serves is section 7.3 of docs/design/desktop-console.md, which is where
+# electron-builder's companion electron-updater and the `latest-mac.yml` manifest
+# are named as the feed client and its format. electron-builder
+# publishes nothing here -- `build.publish` stays `null` in console/package.json
+# -- so the manifest electron-updater reads, `latest-mac.yml`, is written by the
+# release job beside the .zip it describes, out of the bytes that step has just
+# verified: the tag's X.Y.Z, the .zip's name **as GitHub stores it** (the
+# packer's default macOS artifact name carries a space and GitHub renders it as
+# a dot, so the feed names the form electron-updater will actually fetch), its
+# base64 SHA-512, its size, and the RFC 3339 UTC time of the run. That file's
+# own SHA-256 joins the job's `console-sha256sums.txt`, so it travels under the
+# one keyless cosign signature over the merged sums file; `publish` requires
+# exactly one of it, checks it against the sums and attaches it with the rest.
+# One console release therefore feeds the console's own stream, and nothing
+# else about this file moves: no new action, no new secret, no new environment,
+# and no change to the trigger, to the permissions each job holds or to the
+# draft-then-publish order. No `blockmap` either: the differential download is a
+# later decision that is off by default, so the feed carries the fields a full
+# download needs and nothing else.
+#
+# **One consequence belongs to the website, and it is written here because the
+# step that meets it is a different run.** The feed's own SHA-256 joins the job's
+# console-sha256sums.txt, so the release's sums file names one asset that is not
+# a download. `website/data/console-sha256sums.txt` is that file copied verbatim
+# when the site's console downloads are turned on (W3.1), and
+# TestWebsiteConsoleReleaseFactsAreComplete requires every name in it to resolve
+# to an entry in website/content/downloads.json -- so the run that refreshes the
+# site after this change has to offer `latest-mac.yml` there, or leave the sums
+# file alone until it does. Neither this workflow nor this directory can decide
+# that, and a reader who copies the sums file without reading this line gets a
+# red `main` instead of a quiet gap between the release and the page.
+#
+# The three commands that copy this file in, and the staged copy of
+# console-release.yml stays after them:
+#
+#     cp docs/pending-workflows/console-release-feed.yml docs/pending-workflows/console-release.yml
+#     cp docs/pending-workflows/console-release-feed.yml .github/workflows/console-release.yml
+#     git rm docs/pending-workflows/console-release-feed.yml
+#
+# THE REAL CONTROL IS THE ENVIRONMENT'S REVIEWER AND A TAG RULESET, NOT THIS
+# FILE'S GATE. A tag push runs the workflow file *at the tagged commit*, so a
+# tag on a branch whose copy of this file (or of scripts/release-gate.sh) was
+# edited runs the edited copy -- with the gate weakened or removed. What stops
+# that is outside the file: the `console-release` environment's required
+# reviewer (the owner) and a tag ruleset restricting who may create, update or
+# delete `v*` tags (docs/release.md, "Before you tag"). **The approver confirms
+# the tag's commit is on main before approving the deployment.** The first run
+# step below checks the same thing from inside the job (the tagged commit is an
+# ancestor of origin/main), which catches a mistake, not an attacker who
+# controls the tagged tree.
+#
+# WHAT THIS FILE IS, AND WHY IT IS NOT console-tests.yml
+#
+#   - It runs on **one event: a push of a strict `console-vX.Y.Z` tag** -- the
+#     console's own stream, not the CLI's (the owner's addendum of 2026-10-22;
+#     design section 7.1's D11 was "one gate, the CLI's tag", and the tag is the
+#     half of it the owner has since split). It carries **no pull-request
+#     trigger of any kind**, and that is a security boundary rather than
+#     tidiness: this job reads the Apple signing certificate and the App Store
+#     Connect key, and a branch of this repository can open a pull request. The
+#     console's *tests* are Task 1.4's separate console-tests.yml, which runs on
+#     every pull request and holds no secret at all (design section 9.4; plan
+#     Task 4.2's two-file table).
+#   - **Three jobs, and the write token is never in a job that runs a
+#     packer.** `release` (protected environment, the Apple secrets, the
+#     packer) holds `contents: read` and `checks: read` only: it gates,
+#     builds, signs, notarises, staples, verifies, and uploads the finished
+#     macOS assets with their SHA-256 sums as a workflow artifact. `linux`
+#     (2026-10-20) is the same shape for the Linux artifacts: read-only, no
+#     environment, **no secret at all**, because an unsigned AppImage and .deb
+#     have nothing to sign with -- it gates, builds, verifies the shipped bytes
+#     and uploads them with their own sums file. `publish` (no environment, no
+#     packer, no Apple secret, no Linux secret, no checkout) is the only job
+#     with `contents: write`: it downloads both artifacts, re-checks every
+#     asset against the sums, merges the two legs, signs the merged sums file
+#     keyless with cosign, and publishes the release.
+#   - **It publishes its OWN release, `console-vX.Y.Z`, and never touches the
+#     CLI's release** (the owner's ruling of 2026-10-17, "Separate console
+#     release"). GoReleaser publishes the CLI's `vX.Y.Z` release from its own tag
+#     push, and with immutable releases on nothing can be added to it once it is
+#     published. So `publish` creates `console-vX.Y.Z` (X.Y.Z from the console
+#     tag this run was triggered by) as a DRAFT, uploads every asset to the draft --
+#     the .dmg, the .zip, the verification record and the SHA-256 sums -- and
+#     publishes it in the same step, so the release is complete before it
+#     becomes immutable. A re-run never clobbers: if `console-vX.Y.Z` already
+#     exists, published or as a draft from an earlier attempt, the job fails
+#     with a message saying what to do. **The tag is the owner's, not this
+#     job's**: the `console-vX.Y.Z` push is what starts the run, so `publish`
+#     never creates, moves or reuses it -- it only checks that the tag still
+#     resolves to the commit this run built, and refuses if it has moved. The
+#     Homebrew cask for the console, when there is one (a later task), points at
+#     this release.
+#   - **The version is the tag's, and it is console/package.json's.** Every pack
+#     is stamped with `-c.extraMetadata.version=X.Y.Z` from the tag (through
+#     `env:`), after a step that refuses any tag that is not a strict
+#     `console-vX.Y.Z` *and* a step that refuses one whose X.Y.Z is not
+#     `console/package.json`'s `version`. That second refusal is what makes
+#     `console/package.json` the console's version line rather than a file that
+#     says 0.0.0 forever: it is bumped to X.Y.Z on `main` before the tag, in the
+#     same commit as the notes file, and the tag is the record of it. The .dmg
+#     and .zip file names carry that version, the app's
+#     CFBundleShortVersionString is it, and the update feed of Task 4.3/4.4
+#     depends on it. The Linux leg
+#     stamps the same version the same way, and
+#     `build.linux.artifactName` names its two artifacts
+#     `Fugaro.Console-X.Y.Z-linux-x64.AppImage` and `.deb`.
+#   - Its secrets come from a **job-level `environment:`** naming the protected
+#     GitHub environment `console-release`. **Six of them are the Apple signing
+#     material**, and they are reached only as `${{ secrets.NAME }}` in the
+#     `env:` of **exactly one step**, the one that signs, notarises and staples;
+#     **the seventh is the symbol upload's `SENTRY_AUTH_TOKEN`**, and it is
+#     reached the same way in the one step that uploads the crash reporter's
+#     symbols, after the signing step has removed its key material. Never in a
+#     workflow- or job-level `env:`, never inlined into a command line, never
+#     handed to an action's `with:`.
+#   - **No secret is placed in any step's environment or on disk while
+#     third-party code installs.** (The runner process itself receives the
+#     environment's secrets when the job starts; what this file controls is
+#     where they are exposed.) The checkout, setup-node, `npm ci
+#     --ignore-scripts` from the lockfile, the explicit Electron download and
+#     an unsigned warm-up pack (which fetches the two Electron archives and the
+#     packer's DMG and zip toolsets into its cache) all run first, with no
+#     secret in any step's environment. The signing step then creates the
+#     keychain, writes the key file, packs, notarises and staples, and removes
+#     the key material on its own exit; the `if: always()` step at the end of
+#     the job is a backstop for a step that was killed.
+#   - **It fails closed.** The signing step's first act is to refuse to go on
+#     unless all six secrets are non-empty, naming the missing one. A signing
+#     job that skips when a secret is absent ships an **unsigned** build under
+#     a signed release's name, which is the worst outcome this file can produce.
+#     No step carries an `if:` except the cleanup's `always()`, no step or job
+#     carries `continue-on-error`, and `|| true` appears in the cleanup step
+#     and nowhere else.
+#   - `scripts/release-gate.sh` runs before anything is built, exactly as
+#     release.yml and images.yml run it (D18).
+#   - **The order is: build the bundle, notarise it, staple it, and only then
+#     pack the .dmg and the .zip -- and what is verified is the bundle inside
+#     the shipped artifacts. The packer notarises nothing here.** The packer
+#     (the pinned local electron-builder, `--mac --universal --publish never`)
+#     is run twice -- and only the first of the two rebuilds. First `npm run
+#     package -- --dir -c.mac.notarize=false`, which runs `npm run build` and
+#     then builds and signs the universal `.app` and nothing else:
+#     electron-builder's own notarise-and-staple is *inside* that command
+#     (`@electron/notarize` submits the bundle and staples the ticket while
+#     packing), so a lost connection to Apple there fails the pack with no way
+#     to retry just the staple -- what the October 2026 run's fourth attempt
+#     hit -- and the switch plus `--dir` keep that call and the targets out of
+#     the first pack. This file then zips the bundle and submits it once,
+#     staples the ticket to the bundle and validates it (see the next bullet),
+#     and only then runs `npm run package:targets -- --prepackaged "$APP"
+#     -c.mac.notarize=false` to build the `.dmg` and the `.zip` *from the
+#     stapled bundle*, so both artifacts carry a bundle that already holds its
+#     ticket. That second invocation is the variant Task 4.1's `package` script
+#     has no reason to be: `package:targets` is `electron-builder` alone, with
+#     no `npm run build`, because `--prepackaged` packs the bundle that is
+#     already built -- and re-running the build there would spend the compile
+#     again while this step holds the unlocked keychain and the `.p8` path in
+#     its environment. What the first pack builds is unchanged. The `.dmg` is
+#     then signed (electron-builder leaves `dmg.sign` false), submitted,
+#     stapled and validated the same way, because the disk image is its own
+#     artifact and Gatekeeper assesses it on open. The owner's own `npm run
+#     package` on their Mac (console/README.md, Task 4.1) passes neither
+#     switch: it still notarises and staples through the packer.
+#   - **Every `xcrun stapler` call is retried, bounded -- and nothing else
+#     is.** `xcrun stapler staple` and `xcrun stapler validate` reach Apple's
+#     ticket-delivery service over the network, and the October 2026 release
+#     run failed there with `NSURLErrorDomain Code=-1005 "The network
+#     connection was lost"` against `.../com.apple.gk.ticket-delivery/...` --
+#     a lost connection, not a rejected notarisation: release run 39163351646
+#     was attempted five times -- the **fourth attempt** died in the packer's
+#     own staple (error 68, inside `npm run package`), and the **fifth** in a
+#     `stapler validate` on the bundle here, not on the disk image. The three
+#     earlier attempts never reached Apple: the first failed within about a
+#     second with no step having started (its log records no cause), and the
+#     second and third on setup -- missing `APPLE_API_*` secrets, then a
+#     certificate import with the wrong password.
+#     `retry_apple_network`, defined once in
+#     `console/scripts/notarize-and-staple.sh` and, character for character,
+#     once in the verification step, retries those calls on either side of it
+#     up to five times with a growing pause (15, 30, 60, 90 seconds), printing
+#     each attempt's number and exit code, and returns the failure only after
+#     the fifth -- so a ticket that is genuinely absent still refuses to
+#     publish.
+#     **The other Apple-network calls are deliberately not retried**, because
+#     none of them can be separated from work that must not be repeated:
+#     `xcrun notarytool submit --wait` is the submission itself (a rejection is
+#     final, its result is read from `notarytool`'s exit status and Apple's JSON
+#     answer together and anything but a clean exit with "Accepted" refuses at
+#     once, and re-submitting is not this file's business). So codesign, the
+#     submission and its `--wait` result, the team
+#     checks, the gate and the fail-closed secret check all fail at once,
+#     exactly as before, and the retried validations in the verification step
+#     are what guard the copies of the bundle that actually ship, inside the
+#     .dmg and the .zip.
+#   - The signing, notarising, stapling and verifying are `run:` calls to
+#     xcrun, codesign, security and the macOS runner's own tools, **not
+#     actions**. The actions the file uses -- checkout and setup-node before
+#     the signing step, upload-artifact after it (when the key material is
+#     already removed) and download-artifact in `publish` -- are pinned to
+#     full commits with version comments, the artifact pins being the ones
+#     release.yml and images.yml already use. The `linux` job uses those same
+#     four pins and adds none: it signs nothing. `publish` adds exactly one,
+#     `sigstore/cosign-installer` at the pin release.yml and images.yml
+#     already carry, because signing the merged sums file keyless is the one
+#     thing no `run:` call can do without it.
+#
+# THE SECRETS, BY NAME (the owner's, 2026-10-17). D4 does not settle the
+# notarisation credential; the decision recorded here is the **App Store Connect
+# API key**, not an app-specific password, so APPLE_ID and APPLE_APP_PASSWORD are
+# deliberately absent:
+#
+#     APPLE_CERTIFICATE            base64 of the Developer ID Application .p12,
+#                                  one line (the G2 Sub-CA certificate)
+#     APPLE_CERTIFICATE_PASSWORD   that .p12's password
+#     APPLE_TEAM_ID                an identifier, not a credential; the signing
+#                                  step checks the certificate names it before
+#                                  packing, and the signature after
+#     APPLE_API_KEY                the App Store Connect .p8 file's contents
+#     APPLE_API_KEY_ID             the key's id
+#     APPLE_API_ISSUER             the issuer uuid
+#
+# No value of any of them appears in this file, in this repository, or in any run
+# an agent performs: they exist only in the protected environment above.
+
+name: console-release
+
+on:
+  push:
+    tags: ["console-v[0-9]+.[0-9]+.[0-9]+"]
+
+# The workflow inherits nothing. `contents: read` is the checkout, and the
+# release job declares what it needs on itself, below.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: release
+    # The protected environment the owner creates (plan Task 4.5): required
+    # reviewers on the owner, deployment branches restricted to tags. Every
+    # secret below is read through it. The approver confirms the console tag's
+    # commit is on main before approving (see the header).
+    environment: console-release
+    # One signing run at a time. GitHub keeps a single pending run per group, so
+    # two tags pushed in quick succession can drop the middle one (re-push it).
+    concurrency:
+      group: console-release
+      cancel-in-progress: false
+    # Pinned, never macos-latest: the runner image is the signing toolchain
+    # (Xcode's codesign, notarytool and stapler), and a label that moves under a
+    # tag changes that toolchain without a reviewed edit. macos-15 is arm64; the
+    # build is universal, so the runner's architecture does not limit the
+    # artifact. Bumped on purpose, like every other pin here.
+    runs-on: macos-15
+    timeout-minutes: 90
+    # Read-only: this job runs the packer's dependency tree twice, and the
+    # write token is the `publish` job's alone.
+    permissions:
+      contents: read # the checkout
+      checks: read # scripts/release-gate.sh reads the commit's check-runs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # First: the tagged commit is on main. A tag push runs this file as it is
+      # at the tagged commit, so this is a check against a mistake (a tag on
+      # the wrong commit), not against someone who edited this file on a
+      # branch -- that is the environment reviewer's and the tag ruleset's job
+      # (the header). The full history is why the checkout asks for depth 0.
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --quiet --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not reachable from origin/main: refusing to sign a console for a tag that is not on main"
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME ($GITHUB_SHA) is on main"
+
+      # The tag is a strict console-vX.Y.Z, checked here, before anything is
+      # built and with no secret anywhere: X.Y.Z is stamped into every pack as
+      # the app's version, and it names the console-vX.Y.Z release. The prefix is
+      # stripped with `${TAG#console-v}` and never `${TAG#v}`: a leading `v` is
+      # not the tag's, so the latter would leave `console-vX.Y.Z` as the version
+      # and stamp the app with it.
+      - name: The tag is a strict console-vX.Y.Z
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^console-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a strict console-vX.Y.Z tag: this is the console's own release stream and it is triggered by that tag alone (the CLI's vX.Y.Z tag releases the CLI), so a tag of any other shape would build a console nothing can name"
+            exit 1
+          fi
+          echo "version=${TAG#console-v}" >> "$GITHUB_OUTPUT"
+          echo "the console is built as version ${TAG#console-v}"
+
+      # The console's own version line, refused before anything is built: the
+      # tag's X.Y.Z has to be console/package.json's `version`, which is bumped
+      # to it on main before the tag (docs/release.md, "Console releases"), the
+      # same way the plugin version is. Without this the tag would be the only
+      # place the version lived, and a release could ship an app whose own
+      # version line, its update feed and its file names disagree with it. It is
+      # the same call release.yml makes for the plugin's version, one file over.
+      - name: The tag's version is console/package.json's
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          declared="$(jq -r .version console/package.json)"
+          if [ -z "$declared" ] || [ "$declared" = "null" ]; then
+            echo "::error::console/package.json carries no version: it is the console's version line and the tag is checked against it"
+            exit 1
+          fi
+          if [ "$declared" != "$VERSION" ]; then
+            echo "::error::the tag is console-v$VERSION and console/package.json says $declared: refusing to release a console whose own version line disagrees with its tag. Bump console/package.json to $VERSION on main, in the same commit as docs/releases/console/v$VERSION.md, and tag that commit"
+            exit 1
+          fi
+          echo "the console's version line and its tag both say $VERSION"
+
+      # The console's own release notes, refused here too -- before the 90
+      # minutes of packing, signing and notarising that follow -- and read for
+      # real by `publish`, which is the job that has no checkout and fetches them
+      # from the tagged tree. A release whose notes file is missing would
+      # otherwise be published from an empty body.
+      - name: The console's notes for this version exist
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          NOTES_PATH="docs/releases/console/v$VERSION.md"
+          if [ ! -s "$NOTES_PATH" ]; then
+            echo "::error::$NOTES_PATH is missing or empty on the tagged commit: the console's release body is that file, so refusing to build a release whose notes do not exist"
+            exit 1
+          fi
+          wc -l "$NOTES_PATH"
+
+      # The same gate the CLI's own tag is subject to, and the same script: a tag
+      # that is not strict, is not reachable from main, or whose checks did not
+      # pass is refused here rather than signed. It is handed **`v` + the
+      # version**, not the console tag: `scripts/release-gate.sh` is the CLI's
+      # gate and stays CLI-only (it refuses anything that is not a strict
+      # vX.Y.Z), and the shape of this run's own tag was already checked, strictly
+      # and by prefix, one step above. What the gate is asked for here is the part
+      # that is about the commit rather than about the tag: the tagged commit is
+      # an ancestor of origin/main, and the required checks (`test`, `terraform`,
+      # `rules` and both console legs) succeeded on it.
+      - name: The tag is strict, on main, and its checks passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/release-gate.sh "v$VERSION"
+
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field test/unit/pinning.test.ts keeps an exact pin. No step has held a
+      # secret yet. No `cache:`: a restored cache is written by other runs, and
+      # this job signs what it builds.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: console/package.json
+
+      # Task 4.1's install, with no secret on the runner: `npm ci` from the
+      # committed lockfile (the packer is the pinned electron-builder
+      # devDependency) with lifecycle scripts off.
+      - name: Install the pinned toolchain
+        working-directory: console
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Everything the packer downloads, downloaded now, with no secret on the
+      # runner. `install.js` is Electron's own download of its distribution
+      # (verified against the pinned package's checksums.json); the unsigned
+      # warm-up pack runs the same `npm run package` with signing off, so the
+      # two Electron archives the universal build needs (verified against
+      # build.electronDownload's hashes) and the DMG and zip toolsets land in
+      # the packer's cache here and not in the step that holds the key. Its
+      # output is deleted: nothing unsigned is published.
+      - name: Download Electron and warm the packer's cache, with no secret present
+        working-directory: console
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          node node_modules/electron/install.js
+          # Notarisation off here as well, for the same reason as the signed
+          # pack below -- the packer's own staple is inside `npm run package`
+          # and is not this file's to retry -- even though no credential is in
+          # this step's environment for it to activate from.
+          npm run package -- -c.mac.identity=null -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
+          rm -rf release
+
+      # **The only step that holds a secret**, and everything that needs one
+      # happens inside it: the fail-closed check, the temporary keychain, the
+      # App Store Connect key file, two `npm run package` calls with the
+      # packer's notarisation off (they sign with the hardened runtime and
+      # entitlements.mac.plist and flip the fuses; the first builds the .app,
+      # the second the .dmg and the .zip from it), the team checks, and the
+      # notarisation, staple and validation of the .app and of the disk image
+      # through console/scripts/notarize-and-staple.sh. The key material is
+      # removed when the step exits, pass or fail, so no later step runs with
+      # it on disk.
+      #
+      # - The .p12 and the .p8 are created under `umask 077` (a subshell, so the
+      #   packed bundle's own file modes are not affected) -- never created
+      #   readable and tightened afterwards.
+      # - The key is imported with `-T /usr/bin/codesign` only, and the
+      #   partition list is `apple-tool:,apple:` (codesign is an Apple-signed
+      #   tool). `/usr/bin/security` is deliberately NOT a trusted application:
+      #   with it, any later command could `security export` the private key
+      #   without a prompt.
+      # - The identity is named by its SHA-1 (CSC_NAME) in the keychain this
+      #   step created (CSC_KEYCHAIN), so a runner carrying more than one
+      #   identity cannot pick another, and the certificate's
+      #   team is checked against APPLE_TEAM_ID **before** packing -- before a
+      #   notarisation submission is spent -- and the built signature's
+      #   TeamIdentifier again after.
+      # - The packer's environment holds the identity, the key file's PATH, the
+      #   key id and the issuer: the certificate, its password and the key's
+      #   contents are unset before it runs. electron-builder reads
+      #   APPLE_API_KEY as a path to the .p8.
+      - name: Sign, notarise and staple the console
+        id: signed
+        working-directory: console
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Fail closed, before anything else. Only the names are printed.
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            # ${!name} is bash's indirect expansion: the value of the variable
+            # the loop names, so this reads the environment and never a literal.
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing secret(s):$missing -- refusing to build, sign or notarise: an unsigned console published under a signed release's name is worse than no console at all"
+            exit 1
+          fi
+
+          KEYCHAIN="$RUNNER_TEMP/console-signing.keychain-db"
+          P12="$RUNNER_TEMP/console-certificate.p12"
+          KEY="$RUNNER_TEMP/appstoreconnect.p8"
+          remove_key_material() {
+            rm -f "$P12" "$KEY"
+            if ! security delete-keychain "$KEYCHAIN" 2>/dev/null; then
+              echo "no temporary keychain left to delete"
+            fi
+            if ! security list-keychains -d user -s login.keychain-db; then
+              echo "::warning::could not restore the keychain search list"
+            fi
+          }
+          trap remove_key_material EXIT
+
+          # The certificate, into a keychain this step creates.
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          (umask 077 && printf '%s' "$APPLE_CERTIFICATE" | tr -d '\n' | openssl base64 -d -A > "$P12")
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$P12"
+          identity_line="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/"Developer ID Application: / && !found {print; found = 1}')"
+          if [ -z "$identity_line" ]; then
+            echo "::error::the imported certificate carries no Developer ID Application identity: nothing here can be signed for distribution"
+            exit 1
+          fi
+          # The team, checked on the certificate BEFORE anything is signed or
+          # submitted to the notary service.
+          case "$identity_line" in
+            *"($APPLE_TEAM_ID)\""*) ;;
+            *)
+              echo "::error::the Developer ID Application certificate is not issued to APPLE_TEAM_ID's team: refusing to sign or notarise"
+              exit 1
+              ;;
+          esac
+          identity="$(awk '{print $2}' <<<"$identity_line")"
+          team="$APPLE_TEAM_ID"
+
+          # The App Store Connect key, as a private file; its path is what the
+          # packer and notarytool read.
+          (umask 077 && printf '%s' "$APPLE_API_KEY" > "$KEY")
+
+          # Pack, stamped with the tag's version. `unset` keeps the
+          # certificate, its password and the key's contents out of the
+          # environment the packer's processes inherit; it does not erase them
+          # from this shell's own starting environment, which another process
+          # of the same user could still read (ps -E) while the step runs.
+          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID
+          export CSC_NAME="$identity"
+          export CSC_KEYCHAIN="$KEYCHAIN"
+          export APPLE_API_KEY="$KEY"
+          # The bundle only, and with the packer's own notarisation off: `--dir`
+          # builds no .dmg and no .zip, and `-c.mac.notarize=false` keeps
+          # electron-builder from submitting the bundle and stapling it inside
+          # its own process, where a lost connection to Apple's ticket delivery
+          # fails the pack and the staple cannot be retried on its own (the
+          # fourth attempt of the October 2026 release run, error 68). The
+          # submission, staple and validation are this file's, in the script
+          # below.
+          npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
+
+          APP="release/mac-universal/Fugaro Console.app"
+          if [ ! -d "$APP" ]; then
+            echo "::error::the packer produced no $APP"
+            exit 1
+          fi
+          if ! info="$(codesign -dv --verbose=4 "$APP" 2>&1)"; then
+            echo "::error::$APP carries no readable signature"
+            exit 1
+          fi
+          signed_team="$(sed -n 's/^TeamIdentifier=//p' <<<"$info")"
+          if [ "$signed_team" != "$team" ]; then
+            echo "::error::$APP is signed by team '$signed_team', not by APPLE_TEAM_ID's team"
+            exit 1
+          fi
+          # The bundle: notarised once (the submission is never retried, and
+          # anything but a clean `notarytool` exit with an "Accepted" answer
+          # refuses at once), then stapled and
+          # validated -- both retried, 5 attempts with a growing pause, because
+          # both reach Apple's ticket-delivery service over the network and a
+          # lost connection there is not a rejection. The fifth failure of
+          # either is the refusal, and the bundle is not packed into anything
+          # until it carries its ticket. The script owns the retry helper,
+          # character for character the copy the verification step carries; its
+          # own checks (the credential triples, the status, the artifact's
+          # kind) fail at once, and nothing but `xcrun stapler` is retried
+          # anywhere in this file.
+          # `scripts/` is `console/scripts/` -- this step runs in console.
+          scripts/notarize-and-staple.sh app "$APP"
+
+          # The .dmg and the .zip, built from the stapled bundle -- the whole
+          # point of the order, since what ships is the bundle inside them. The
+          # packer's notarisation stays off here too: the bundle is already
+          # notarised and stapled, and the .dmg is this file's own submission,
+          # below. This pack goes through `package:targets` -- Task 4.1's
+          # `package` script without its `npm run build` -- because
+          # `--prepackaged` packs the bundle that is already built, so the
+          # rebuild would only spend the compile again, here, where the
+          # keychain is unlocked and the .p8's path is exported.
+          npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
+
+          shopt -s nullglob
+          dmgs=(release/*.dmg)
+          zips=(release/*.zip)
+          if [ "${#dmgs[@]}" -ne 1 ] || [ "${#zips[@]}" -ne 1 ]; then
+            echo "::error::want exactly one .dmg and one .zip under console/release, found ${#dmgs[@]} and ${#zips[@]}"
+            exit 1
+          fi
+          DMG="${dmgs[0]}"
+          ZIP="${zips[0]}"
+          # The file names carry the stamped version; a pack that ignored the
+          # stamp would publish 0.0.0 under a release named for the tag.
+          case "$DMG|$ZIP" in
+            *"-$VERSION-"*"|"*"-$VERSION-"*) ;;
+            *)
+              echo "::error::the packed artifacts ($DMG, $ZIP) do not carry version $VERSION"
+              exit 1
+              ;;
+          esac
+
+          # The disk image: signed (Apple's guidance for a notarised .dmg; no
+          # hardened runtime, which is for executables), then submitted, stapled
+          # and validated by the same script. The fifth attempt of the October
+          # 2026 run failed at a `stapler validate` on the **bundle** ($APP,
+          # above), before any target existed -- not here: the disk image gets
+          # the same helper because its staple and validation reach the same
+          # service over the same network, not because it failed. A rejected
+          # submission leaves no ticket and refuses at once: the script checks
+          # `notarytool`'s exit status and Apple's own status, so the submission
+          # is never retried.
+          codesign --sign "$identity" --keychain "$KEYCHAIN" --timestamp "$DMG"
+          scripts/notarize-and-staple.sh dmg "$DMG"
+
+          echo "dmg=$PWD/$DMG" >> "$GITHUB_OUTPUT"
+          echo "zip=$PWD/$ZIP" >> "$GITHUB_OUTPUT"
+          echo "signed, notarised and stapled: the bundle in both artifacts, and the disk image"
+
+      # The fact the release records, exactly as the CLI's release records its
+      # checksums: the commands the design names, their real output, in a text
+      # file published with the artifacts (design section 7.2). Each one must
+      # succeed -- a record that swallowed a failure would be the output of a
+      # verification that did not pass.
+      #
+      # **What is verified is what is shipped**: the SHA-256 of the .dmg and the
+      # .zip (so the record is tied to the published bytes), the bundle inside
+      # the mounted .dmg, the bundle inside the extracted .zip, and the disk
+      # image itself. The loose .app the packer left is in neither artifact.
+      - name: Verify the shipped artifacts, and record it
+        env:
+          DMG: ${{ steps.signed.outputs.dmg }}
+          ZIP: ${{ steps.signed.outputs.zip }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          RECORD="$RUNNER_TEMP/console-verification.txt"
+          SUMS="$RUNNER_TEMP/console-sha256sums.txt"
+          : > "$RECORD"
+          printf '# Fugaro Console %s: signature, Gatekeeper and notarisation, as shipped\n' "$GITHUB_REF_NAME" >> "$RECORD"
+          record() {
+            printf '\n$ %s\n' "$*" >> "$RECORD"
+            if ! "$@" >> "$RECORD" 2>&1; then
+              printf '::error::%s failed: this build is not shippable\n' "$*"
+              cat "$RECORD"
+              exit 1
+            fi
+          }
+          # The same helper as console/scripts/notarize-and-staple.sh carries,
+          # character for character: the ticket lookups below reach the same
+          # Apple service over the same
+          # network, so a validation that fails transiently is retried (5
+          # attempts, 15/30/60/90 seconds) and every attempt lands in the record
+          # with its number and exit code. It wraps `xcrun stapler validate`
+          # and nothing else -- codesign, spctl, hdiutil and ditto are not
+          # network calls, and a real failure of any of them still stops the
+          # record at once.
+          retry_apple_network() {
+            local attempt=1 status=0
+            while [ "$attempt" -le 5 ]; do
+              if "$@"; then
+                status=0
+              else
+                status=$?
+              fi
+              echo "apple-network attempt $attempt of 5: $* exited $status"
+              if [ "$status" -eq 0 ]; then
+                return 0
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                return "$status"
+              fi
+              case "$attempt" in
+                1) sleep 15 ;;
+                2) sleep 30 ;;
+                3) sleep 60 ;;
+                4) sleep 90 ;;
+              esac
+              attempt=$((attempt + 1))
+            done
+          }
+          # The bytes this record is about.
+          (cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")" "$(basename "$ZIP")") > "$SUMS"
+          record cat "$SUMS"
+          # The .dmg, mounted read-only, and the bundle inside it.
+          MOUNT="$RUNNER_TEMP/dmg-mount"
+          mkdir -p "$MOUNT"
+          record hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+          IN_DMG="$MOUNT/Fugaro Console.app"
+          record codesign --verify --deep --strict --verbose=2 "$IN_DMG"
+          record codesign -d --entitlements - "$IN_DMG"
+          record spctl --assess --type execute --verbose=4 "$IN_DMG"
+          record retry_apple_network xcrun stapler validate "$IN_DMG"
+          # The .zip, extracted, and the bundle inside it.
+          UNZIP="$RUNNER_TEMP/unzipped"
+          mkdir -p "$UNZIP"
+          record ditto -x -k "$ZIP" "$UNZIP"
+          IN_ZIP="$UNZIP/Fugaro Console.app"
+          record codesign --verify --deep --strict --verbose=2 "$IN_ZIP"
+          record spctl --assess --type execute --verbose=4 "$IN_ZIP"
+          record retry_apple_network xcrun stapler validate "$IN_ZIP"
+          # And the disk image itself, which is what Gatekeeper assesses when
+          # the download is opened.
+          record codesign --verify --strict --verbose=2 "$DMG"
+          record retry_apple_network xcrun stapler validate "$DMG"
+          record spctl --assess --type open --context context:primary-signature -v "$DMG"
+          record hdiutil detach "$MOUNT"
+          # The update feed: the manifest electron-updater reads
+          # from this release. electron-builder cannot write it -- build.publish
+          # is null in console/package.json -- so it is built here, out of the
+          # bytes this step has just verified. `url` and `path` name the .zip
+          # the way GitHub stores it and not the way the packer named it: the
+          # default macOS artifact name carries a space and GitHub renders it
+          # as a dot, so a feed in the packer's own spelling would point
+          # electron-updater at an asset that does not exist.
+          FEED_ASSET="$(basename "$ZIP" | tr ' ' '.')"
+          ZIP_SHA512="$(openssl dgst -sha512 -binary "$ZIP" | base64 | tr -d '\n')"
+          ZIP_SIZE="$(stat -f%z "$ZIP")"
+          FEED="$(dirname "$ZIP")/latest-mac.yml"
+          printf 'version: %s\nfiles:\n  - url: %s\n    sha512: %s\n    size: %s\npath: %s\nsha512: %s\nreleaseDate: %s\n' "$VERSION" "$FEED_ASSET" "$ZIP_SHA512" "$ZIP_SIZE" "$FEED_ASSET" "$ZIP_SHA512" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$FEED"
+          (cd "$(dirname "$FEED")" && shasum -a 256 "$(basename "$FEED")") >> "$SUMS"
+          record cat "$FEED"
+          record cat "$SUMS"
+          cat "$RECORD"
+          ASSETS="$RUNNER_TEMP/console-assets"
+          mkdir -p "$ASSETS"
+          cp "$DMG" "$ZIP" "$RECORD" "$SUMS" "$ASSETS/"
+          cp "$FEED" "$ASSETS/"
+
+      # The crash reporter's symbols, from the build that was just verified
+      # (the owner's ruling of 2026-11-01; design section 7.4). A scrubbed
+      # report carries a function name, an app-relative file and a line, and
+      # nothing readable: the debug files and the main process's source maps are
+      # what turn those three into a stack trace a maintainer can open, so they
+      # are uploaded per release and tagged with the console's own version.
+      #
+      # **This is the file's second secret**, `SENTRY_AUTH_TOKEN`, and it is in
+      # this step's `env:` and nowhere else.
+      # `console/scripts/upload-sentry-symbols.mjs` reads nothing from it but
+      # whether it is empty -- the token reaches `sentry-cli` through the
+      # environment it inherits, never on an argv, where any process of the same
+      # user could read it -- and the region, the org and the project are
+      # constants in that script rather than variables here. **With no secret
+      # configured the script prints one line and exits 0 without running the
+      # CLI at all**, so this step is inert until the owner adds the token to the
+      # `console-release` environment (docs/pending-workflows/README.md).
+      - name: Upload the crash reporter's symbols, when a token is configured
+        working-directory: console
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/upload-sentry-symbols.mjs
+
+      # The finished assets go to the `publish` job as a workflow artifact:
+      # this job never holds a token that can write a release. The key
+      # material was removed when the signing step exited.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: console-release-assets
+          path: ${{ runner.temp }}/console-assets
+          if-no-files-found: error
+          retention-days: 1
+
+      # Always, and last: a backstop for the signing step's own exit trap, for
+      # a step that was killed rather than exited. The runner is destroyed
+      # afterwards anyway; this makes the material's lifetime explicit. `|| true`
+      # is deliberate here and nowhere else in this file: a cleanup that failed
+      # must not turn a green signing run red.
+      - name: Remove the key material
+        if: always()
+        run: |
+          set -eu
+          hdiutil detach "$RUNNER_TEMP/dmg-mount" || true
+          security list-keychains -d user -s login.keychain-db || true
+          security delete-keychain "$RUNNER_TEMP/console-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/appstoreconnect.p8" "$RUNNER_TEMP/console-certificate.p12"
+
+  # The Linux leg (the owner's ruling of 2026-10-20: "yes, Linux for 0.10.0,
+  # unsigned"). The same tagged commit, the same pinned packer, the same fuses:
+  # `npm run package:linux` produces an AppImage and a .deb for x64. **This job
+  # holds no secret at all** -- no environment, no keychain, no certificate --
+  # because there is nothing to sign with and nothing to notarise: **an AppImage
+  # is not code-signed**, and the integrity claim for these files is the SHA-256
+  # sums file and the Sigstore bundle `publish` attaches beside them.
+  #
+  # Why it is a second job rather than a step in `release`: that job's runner is
+  # the macOS signing toolchain, and every step after the install runs inside the
+  # window in which the Apple key material is on disk. A Linux build there would
+  # be a `--linux` pack inside a job that has a certificate mounted, for no
+  # reason at all. It is also why this job can be re-run on its own.
+  linux:
+    name: linux
+    # One build at a time, for the same reason as `release`: GitHub keeps a
+    # single pending run per group.
+    concurrency:
+      group: console-release-linux
+      cancel-in-progress: false
+    # Pinned, never ubuntu-latest: the runner image is the packaging toolchain
+    # (`dpkg-deb`, and the AppImage runtime app-builder downloads), and a label
+    # that moves under a tag would change it without a reviewed edit.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # Read-only: the write token is `publish`'s alone, and this job never holds
+    # one. `checks: read` is scripts/release-gate.sh.
+    permissions:
+      contents: read # the checkout
+      checks: read # scripts/release-gate.sh reads the commit's check-runs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # The same checks the macOS job makes: the tagged commit is on main, the
+      # tag is a strict console-vX.Y.Z, its version is console/package.json's,
+      # and the commit's check-runs passed the same gate script. Both legs run
+      # them rather than one trusting the other's: they are separate jobs, and
+      # either can be re-run alone.
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --quiet --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not reachable from origin/main: refusing to package a console for a tag that is not on main"
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME ($GITHUB_SHA) is on main"
+
+      - name: The tag is a strict console-vX.Y.Z
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^console-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a strict console-vX.Y.Z tag: this is the console's own release stream and it is triggered by that tag alone (the CLI's vX.Y.Z tag releases the CLI), so a tag of any other shape would package a console nothing can name"
+            exit 1
+          fi
+          echo "version=${TAG#console-v}" >> "$GITHUB_OUTPUT"
+          echo "the console is built as version ${TAG#console-v}"
+
+      # The same version-line refusal the macOS leg makes -- the tag's X.Y.Z is
+      # console/package.json's `version`, which is bumped to it on main before
+      # the tag -- run here too rather than trusted from there: the two legs are
+      # separate jobs and either can be re-run alone.
+      - name: The tag's version is console/package.json's
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          declared="$(jq -r .version console/package.json)"
+          if [ -z "$declared" ] || [ "$declared" = "null" ]; then
+            echo "::error::console/package.json carries no version: it is the console's version line and the tag is checked against it"
+            exit 1
+          fi
+          if [ "$declared" != "$VERSION" ]; then
+            echo "::error::the tag is console-v$VERSION and console/package.json says $declared: refusing to package a console whose own version line disagrees with its tag. Bump console/package.json to $VERSION on main, in the same commit as docs/releases/console/v$VERSION.md, and tag that commit"
+            exit 1
+          fi
+          echo "the console's version line and its tag both say $VERSION"
+
+      - name: The tag is strict, on main, and its checks passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/release-gate.sh "v$VERSION"
+
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field the console's own pinning test keeps an exact pin.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: console/package.json
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Install the pinned toolchain
+        working-directory: console
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Electron's own download of its distribution, verified against the pinned
+      # package's `checksums.json`, and then the build. The archive this fetches
+      # is `electron-v<version>-linux-x64.zip` -- the one
+      # `build.electronDownload.checksums` pins beside the two darwin ones, so
+      # nothing here is verified against a hash fetched at pack time.
+      - name: Download Electron and build the app
+        working-directory: console
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          node node_modules/electron/install.js
+          npm run build
+
+      # The packer, with no signing identity to discover and nothing to publish:
+      # `--publish never` is in the script itself. The `unset` below is
+      # unguarded on purpose: this job holds no signing material, and a shell
+      # that could not clear an inherited `CSC_*` variable has to fail here
+      # rather than carry it into the packer. It runs the fuse hook
+      # (`dist/main/fuses.js`) against `release/linux-unpacked/fugaro-console`,
+      # which reads the fuse wire back and fails the build if a flip did not
+      # take -- so the binary inside both artifacts is the hardened one, or
+      # there is no artifact at all. The version is stamped in from the tag
+      # (console/package.json says 0.0.0), and it is what names the artifacts.
+      - name: Build the Linux artifacts
+        working-directory: console
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          unset CSC_LINK CSC_NAME CSC_KEY_PASSWORD
+          npm run package:linux -- -c.extraMetadata.version="$VERSION"
+          shopt -s nullglob
+          appimages=(release/*.AppImage)
+          debs=(release/*.deb)
+          if [ "${#appimages[@]}" -ne 1 ] || [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::want exactly one .AppImage and one .deb under console/release, found ${#appimages[@]} and ${#debs[@]}"
+            exit 1
+          fi
+
+      # The fact the release records, in the same shape the macOS leg records
+      # its own: the commands, their real output, in a text file published with
+      # the artifacts. Every one of them must succeed -- a record that swallowed
+      # a failure would be the output of a verification that did not pass.
+      #
+      # **What is verified is what is shipped.** The SHA-256 of the AppImage and
+      # the .deb is the whole integrity claim these files carry, because an
+      # AppImage is not code-signed: there is no signature to check and no
+      # issuer to name. Both are then opened -- the .deb with `dpkg-deb`, the
+      # AppImage with its own runtime's `--appimage-extract` -- and the copy of
+      # the executable *inside each one* has its fuse wire read with the same
+      # `@electron/fuses` the build hook uses. That last check is the one thing
+      # the pack-time hook cannot say about the packaged result: that the
+      # **shipped** binary is the flipped one.
+      - name: Verify the shipped artifacts, and record it
+        working-directory: console
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          RECORD="$RUNNER_TEMP/console-linux-verification.txt"
+          SUMS="$RUNNER_TEMP/console-linux-sha256sums.txt"
+          : > "$RECORD"
+          printf '# Fugaro Console %s: the Linux artifacts, as shipped\n' "$GITHUB_REF_NAME" >> "$RECORD"
+          record() {
+            printf '\n$ %s\n' "$*" >> "$RECORD"
+            if ! "$@" >> "$RECORD" 2>&1; then
+              printf '::error::%s failed: this build is not shippable\n' "$*"
+              cat "$RECORD"
+              exit 1
+            fi
+          }
+          # The fuse reader, written here rather than inlined three times so the
+          # record shows the command that ran rather than a page of JavaScript.
+          # It exits non-zero naming the first fuse that is not what this build
+          # requires, and prints what it read when they all are.
+          cat > check-fuses.mjs <<'FUSES'
+          // Read the fuse wire out of a packaged executable and refuse it
+          // unless every fuse is the value design section 5.1 rule 4 requires.
+          // The same six the pack-time hook (`src/main/fuses.ts`) flips, read
+          // the same way -- `getCurrentFuseWire` is the read-back, not the
+          // flip, so this is an independent check of the bytes on disk.
+          import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
+          const required = [
+            [FuseV1Options.RunAsNode, false],
+            [FuseV1Options.EnableNodeOptionsEnvironmentVariable, false],
+            [FuseV1Options.EnableNodeCliInspectArguments, false],
+            [FuseV1Options.EnableEmbeddedAsarIntegrityValidation, true],
+            [FuseV1Options.OnlyLoadAppFromAsar, true],
+            [FuseV1Options.GrantFileProtocolExtraPrivileges, false],
+          ]
+          const path = process.argv[2]
+          const wire = await getCurrentFuseWire(path)
+          for (const [option, wanted] of required) {
+            const expected = wanted ? FuseState.ENABLE : FuseState.DISABLE
+            const actual = wire[option]
+            if (actual !== expected) {
+              console.error(`the fuse ${option} is ${actual} in ${path}, and this build requires ${expected}`)
+              process.exit(1)
+            }
+          }
+          console.log(`${required.length} fuses are set as required in ${path}`)
+          FUSES
+          # The app the two artifacts are built from, and the fuses it carries.
+          # The pack-time hook flipped this file and read the wire back; this
+          # reads it again, from the tree the packer archived.
+          record uname -m
+          record file release/linux-unpacked/fugaro-console
+          record node check-fuses.mjs release/linux-unpacked/fugaro-console
+          # The bytes this record is about, named exactly as the macOS leg names
+          # its own: bare file names, so the sums file verifies from the
+          # directory the assets ship in.
+          shopt -s nullglob
+          APPIMAGE="$(ls release/*.AppImage)"
+          DEB="$(ls release/*.deb)"
+          for f in "$APPIMAGE" "$DEB"; do
+            case "$f" in
+              *"-$VERSION-"*) ;;
+              *)
+                echo "::error::$f is not named for version $VERSION"
+                exit 1
+                ;;
+            esac
+          done
+          (cd "$(dirname "$APPIMAGE")" && sha256sum "$(basename "$APPIMAGE")" "$(basename "$DEB")") > "$SUMS"
+          record cat "$SUMS"
+          # The .deb, opened: its control fields and its own file list.
+          record dpkg-deb --info "$DEB"
+          record dpkg-deb --contents "$DEB"
+          # And the executable inside it -- the file an operator actually
+          # installs -- extracted and read the same way.
+          DEB_ROOT="$RUNNER_TEMP/deb-root"
+          rm -rf "$DEB_ROOT"
+          record dpkg-deb --extract "$DEB" "$DEB_ROOT"
+          record test -x "$DEB_ROOT/opt/Fugaro Console/fugaro-console"
+          record sha256sum "$DEB_ROOT/opt/Fugaro Console/fugaro-console"
+          record node check-fuses.mjs "$DEB_ROOT/opt/Fugaro Console/fugaro-console"
+          # And the AppImage, unpacked with its own runtime: `--appimage-extract`
+          # needs no FUSE mount, no display and no sandbox, so it works on a
+          # runner that can do neither.
+          APPIMAGE_ROOT="$RUNNER_TEMP/appimage-root"
+          APPIMAGE_ABS="$(realpath "$APPIMAGE")"
+          rm -rf "$APPIMAGE_ROOT"
+          mkdir -p "$APPIMAGE_ROOT"
+          chmod +x "$APPIMAGE"
+          (cd "$APPIMAGE_ROOT" && record "$APPIMAGE_ABS" --appimage-extract)
+          record test -x "$APPIMAGE_ROOT/squashfs-root/fugaro-console"
+          record sha256sum "$APPIMAGE_ROOT/squashfs-root/fugaro-console"
+          record node check-fuses.mjs "$APPIMAGE_ROOT/squashfs-root/fugaro-console"
+          cat "$RECORD"
+          ASSETS="$RUNNER_TEMP/console-linux-assets"
+          mkdir -p "$ASSETS"
+          cp "$APPIMAGE" "$DEB" "$RECORD" "$SUMS" "$ASSETS/"
+
+      # The finished assets go to the `publish` job as a workflow artifact, as
+      # the macOS leg's do: this job never holds a token that can write a
+      # release. No key material was ever on this runner.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: console-linux-assets
+          path: ${{ runner.temp }}/console-linux-assets
+          if-no-files-found: error
+          retention-days: 1
+
+  # The only job that can write a release, and it runs no repository code: no
+  # checkout, no packer, no environment, no Apple secret, no Linux secret. It
+  # takes the assets both build jobs verified, re-checks them against their
+  # SHA-256 sums, merges them into one release with one sums file, signs that
+  # sums file keyless with cosign, and publishes the console's own release.
+  publish:
+    name: publish
+    needs: [release, linux]
+    # Pinned for the same reason as the release job's runner.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write # create and publish the console-vX.Y.Z release
+      # `cosign sign-blob` below is keyless: the identity is this run's OIDC
+      # token, exchanged for a short-lived Fulcio certificate, and the
+      # transcript goes to Rekor. Exactly as release.yml declares it.
+      id-token: write # cosign keyless signing
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: console-release-assets
+          path: ${{ runner.temp }}/console-macos
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: console-linux-assets
+          path: ${{ runner.temp }}/console-linux
+
+      # The bytes that arrive are the bytes the release job verified: exactly
+      # one .dmg and one .zip, both named for the tag's version, both listed in
+      # the sums, and every listed file matching.
+      - name: The assets match the sums the release job recorded
+        working-directory: ${{ runner.temp }}/console-macos
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^console-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a strict console-vX.Y.Z tag"
+            exit 1
+          fi
+          VERSION="${TAG#console-v}"
+          shopt -s nullglob
+          dmgs=(./*.dmg)
+          zips=(./*.zip)
+          if [ "${#dmgs[@]}" -ne 1 ] || [ "${#zips[@]}" -ne 1 ]; then
+            echo "::error::want exactly one .dmg and one .zip in the artifact, found ${#dmgs[@]} and ${#zips[@]}"
+            exit 1
+          fi
+          for f in "${dmgs[0]}" "${zips[0]}"; do
+            case "$f" in
+              *"-$VERSION-"*) ;;
+              *)
+                echo "::error::$f is not named for version $VERSION"
+                exit 1
+                ;;
+            esac
+            if ! grep -qF "  ${f#./}" console-sha256sums.txt; then
+              echo "::error::$f is not listed in console-sha256sums.txt"
+              exit 1
+            fi
+          done
+          if [ ! -s latest-mac.yml ]; then
+            echo "::error::want exactly one non-empty latest-mac.yml beside the console's zip and the artifact carries none: electron-updater reads that file from this release, so a release without it is a console that can never update"
+            exit 1
+          fi
+          if ! grep -qF "  latest-mac.yml" console-sha256sums.txt; then
+            echo "::error::latest-mac.yml is not listed in console-sha256sums.txt: the feed ships under the sums file cosign signs, and a feed the sums file does not cover is a manifest nothing vouches for"
+            exit 1
+          fi
+          sha256sum --strict --check console-sha256sums.txt
+
+      # The same, for the Linux leg, in the same words -- and it is not a
+      # formality: this is the check that the unsigned AppImage and .deb are the
+      # bytes the linux job hashed, since there is no signature on them to say
+      # so later.
+      - name: The Linux assets match the sums the linux job recorded
+        working-directory: ${{ runner.temp }}/console-linux
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^console-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a strict console-vX.Y.Z tag"
+            exit 1
+          fi
+          VERSION="${TAG#console-v}"
+          shopt -s nullglob
+          appimages=(./*.AppImage)
+          debs=(./*.deb)
+          if [ "${#appimages[@]}" -ne 1 ] || [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::want exactly one .AppImage and one .deb in the artifact, found ${#appimages[@]} and ${#debs[@]}"
+            exit 1
+          fi
+          for f in "${appimages[0]}" "${debs[0]}"; do
+            case "$f" in
+              *"-$VERSION-"*) ;;
+              *)
+                echo "::error::$f is not named for version $VERSION"
+                exit 1
+                ;;
+            esac
+            if ! grep -qF "  ${f#./}" console-linux-sha256sums.txt; then
+              echo "::error::$f is not listed in console-linux-sha256sums.txt"
+              exit 1
+            fi
+          done
+          sha256sum --strict --check console-linux-sha256sums.txt
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # One release, one sums file, one claim about all of it. Each leg wrote
+      # sums over its own artifacts and the two sets are disjoint, so the
+      # shipped file is the two concatenated -- and the concatenation is
+      # verified *in the directory that ships*, so the sums file the release
+      # carries is one whose every line was just checked against the bytes
+      # beside it. Two legs shipping the same file name stops the job rather
+      # than letting one quietly overwrite the other.
+      - name: Merge the two legs into one release, and one sums file
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/console-release"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          shopt -s nullglob
+          for leg in console-macos console-linux; do
+            files=("$leg"/*)
+            if [ "${#files[@]}" -eq 0 ]; then
+              echo "::error::$leg is empty: refusing to publish a release that is missing a leg"
+              exit 1
+            fi
+            for f in "${files[@]}"; do
+              base="$(basename "$f")"
+              case "$base" in
+                console-sha256sums.txt|console-linux-sha256sums.txt) continue ;;
+              esac
+              if [ -e "$OUT/$base" ]; then
+                echo "::error::both legs ship a file named $base: refusing to overwrite one with the other"
+                exit 1
+              fi
+              mv "$f" "$OUT/$base"
+            done
+          done
+          cat console-macos/console-sha256sums.txt console-linux/console-linux-sha256sums.txt > "$OUT/console-sha256sums.txt"
+          cd "$OUT"
+          ls -la
+          sha256sum --strict --check console-sha256sums.txt
+
+      # The signature that says who published this, over the sums file that
+      # covers every asset -- which is the only signature any of these files
+      # has: the AppImage and the .deb are unsigned, so this is what an operator
+      # verifies them against. It is the same call GoReleaser makes for the
+      # CLI's archives (.goreleaser.yaml): `cosign sign-blob --yes --bundle`,
+      # keyless, so the identity is this workflow's OIDC token and the
+      # transcript is in Rekor's transparency log. No key of the owner's is
+      # involved and none could be: this job holds no secret.
+      - name: Sign the release's sums file, keyless
+        working-directory: ${{ runner.temp }}/console-release
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle=console-sha256sums.txt.sigstore.json console-sha256sums.txt
+          ls -la console-sha256sums.txt.sigstore.json
+
+      # The console's OWN release, console-vX.Y.Z, and never the CLI's: the
+      # CLI's vX.Y.Z release is GoReleaser's, and with immutable releases on it
+      # cannot take an asset once published (the owner's ruling of 2026-10-17,
+      # "Separate console release"). The release is created as a draft with
+      # every asset on it and then published, so it is complete before it is
+      # immutable. `--latest=false` keeps the CLI's release the repository's
+      # latest. A re-run never clobbers: an existing console release (published,
+      # or a draft from an earlier attempt) stops the job with a message. The TAG
+      # itself is the owner's -- the `console-vX.Y.Z` push that started this run --
+      # so it is never created, moved or reused here: the step only checks that it
+      # still resolves to this run's commit.
+      - name: Publish the console's own release
+        working-directory: ${{ runner.temp }}/console-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#console-v}"
+          CONSOLE_TAG="console-v$VERSION"
+          # Every one of these must exist: `ls` fails on a glob that does not
+          # match, and `set -e` turns that into a stopped job. A release that
+          # shipped without one of its legs, or without the sums file or the
+          # bundle that make it verifiable, is the one outcome this step must
+          # not be able to reach.
+          DMG="$(ls ./*.dmg)"
+          APP_ZIP="$(ls ./*.zip)"
+          APPIMAGE="$(ls ./*.AppImage)"
+          DEB="$(ls ./*.deb)"
+          RECORD="console-verification.txt"
+          LINUX_RECORD="console-linux-verification.txt"
+          SUMS="console-sha256sums.txt"
+          BUNDLE="console-sha256sums.txt.sigstore.json"
+          FEED="latest-mac.yml"
+          test -s "$FEED"
+          test -s "$LINUX_RECORD"
+          test -s "$BUNDLE"
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$CONSOLE_TAG\") | if .draft then \"draft\" else \"published\" end")"
+          case "$existing" in
+            "") ;;
+            *published*)
+              echo "::error::the release $CONSOLE_TAG is already published: releases are immutable here and this job never clobbers one. A new console build needs a new console tag"
+              exit 1
+              ;;
+            *)
+              echo "::error::a draft $CONSOLE_TAG exists from an earlier attempt: delete it (gh release delete $CONSOLE_TAG) and re-run this job; it is never overwritten"
+              exit 1
+              ;;
+          esac
+          # The tag is NOT created here, and it cannot be absent: it is the tag
+          # this run was triggered by ($GITHUB_REF_NAME), so the owner has
+          # already pushed it and the push is what started this job. What is
+          # checked is that it resolves to **this run's commit**, and that is the
+          # whole of it: a release published under a tag that has moved would
+          # carry assets built from a different commit than the tag now names.
+          # The ref is resolved through the commits endpoint rather than read off
+          # `git/ref/tags/`, because that endpoint returns the tag *object* for an
+          # annotated tag and the commit for a lightweight one; the commits
+          # endpoint peels both. Any failure to resolve it stops the job: this
+          # tag exists, so an unreadable one is not "no such tag".
+          if ! tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CONSOLE_TAG" --jq .sha)"; then
+            echo "::error::could not resolve the tag $CONSOLE_TAG to a commit: this run was triggered by that tag, so it exists, and refusing to publish a release whose tag cannot be read"
+            exit 1
+          fi
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::the tag $CONSOLE_TAG resolves to $tag_sha, not to this run's commit $GITHUB_SHA: refusing to publish a release under a tag that has moved"
+            exit 1
+          fi
+          echo "$CONSOLE_TAG is $GITHUB_SHA, the commit this run built"
+          # The body: the standing statement about what is and is not signed,
+          # then the console's OWN notes for this version -- the file the release
+          # job refused to build without. `publish` has no checkout (it runs no
+          # repository code), so the notes are read through the API, at the
+          # tagged commit rather than at whatever the default branch holds now;
+          # read there, they cannot disagree with the artifacts beside them. The
+          # content is body text and nothing executes it. Only a 404 -- the file
+          # is not on the tagged commit -- makes the read fail.
+          NOTES_PATH="docs/releases/console/v$VERSION.md"
+          NOTES="$RUNNER_TEMP/console-release/console-release-notes.md"
+          BODY="$RUNNER_TEMP/console-release/console-release-body.md"
+          if ! gh api "repos/$GITHUB_REPOSITORY/contents/$NOTES_PATH?ref=$GITHUB_SHA" --jq .content 2>/dev/null | base64 -d > "$NOTES"; then
+            echo "::error::$NOTES_PATH could not be read from $GITHUB_SHA: the console's release body is that file, so refusing to publish a release that would carry no notes"
+            exit 1
+          fi
+          test -s "$NOTES" || { echo "::error::$NOTES_PATH is empty on $GITHUB_SHA: a release body of nothing is refused"; exit 1; }
+          {
+            printf '%s\n\n' "The Fugaro desktop console built from the console's own $TAG tag (the console's release stream, the same release gate, the same pinned packer and the same Electron fuses on both platforms). The macOS build is signed with a Developer ID certificate, notarised and stapled; console-verification.txt records the checks run on those exact files. **The Linux build is unsigned**: an AppImage is not code-signed and this project has no Linux signing key, so the AppImage and the .deb for x64 carry no signature of their own -- their integrity claim is the SHA-256 in console-sha256sums.txt, which covers every file here and is itself signed keyless with Sigstore (console-sha256sums.txt.sigstore.json, verify with cosign verify-blob). console-linux-verification.txt records the commands run on those exact files, including a read-back of the Electron fuse wire from the executable inside each artifact."
+            cat "$NOTES"
+          } > "$BODY"
+          # No `--target`: the tag already exists (it is this run's own
+          # `$GITHUB_REF_NAME`, checked against $GITHUB_SHA above), and `--target`
+          # is only read when gh creates the tag itself. Passing it would suggest
+          # this step creates or moves a tag, which it must never do.
+          gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \
+            --title "Fugaro Console $VERSION" \
+            --notes-file "$BODY" \
+            "$DMG" "$APP_ZIP" "$APPIMAGE" "$DEB" "$RECORD" "$LINUX_RECORD" "$SUMS" "$BUNDLE" "$FEED"
+          gh release edit "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+          echo "published $CONSOLE_TAG"

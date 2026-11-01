@@ -137,8 +137,17 @@ import {
 } from '../../src/renderer/skeleton'
 import {
   COORDINATOR_BUSY,
+  COORDINATOR_LAUNCH_WORD,
   COORDINATOR_NO_AGE_WORD,
+  COORDINATOR_OPEN_SPEND_WORD,
+  COORDINATOR_QUEUE_BUSY,
+  COORDINATOR_QUEUE_JOBS_CLASS,
+  COORDINATOR_QUEUE_JOBS_WORD,
+  COORDINATOR_QUEUE_PART_CLASS,
+  COORDINATOR_QUEUE_REPO_KILL_WORD,
+  COORDINATOR_RETRY_WORD,
   COORDINATOR_SOURCE_LINE,
+  COORDINATOR_TOTALS_BUSY,
 } from '../../src/renderer/screens/coordinator'
 import { PROJECTS_BUSY } from '../../src/renderer/screens/projects'
 import type { SkeletonShape } from '../../src/renderer/skeleton'
@@ -146,7 +155,9 @@ import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
   LAUNCH_FORM_CLASS,
   LAUNCH_OPEN_CLASS,
+  LAUNCH_PLAN_TASK_CLASS,
   LAUNCH_REPOSITORY_CLASS,
+  LAUNCH_SUBMIT_CLASS,
   LAUNCH_TASK_CLASS,
   LAUNCH_TITLE_CLASS,
 } from '../../src/renderer/screens/launch'
@@ -2236,6 +2247,45 @@ function railBridge(
   return { ...base, rail }
 }
 
+/**
+ * queueBridge is the fake bridge for the Coordinator's action queue (console
+ * 0.118.0, K1): one open installation that records a checkout and offers the
+ * repositories the case gives it -- `QUEUE_OFFER` alone unless a case about the
+ * prefill's match needs another -- and the runs, plan and budget reads answered
+ * by the case.
+ *
+ * **Every call is recorded in the order it was made**, which is what lets a case
+ * say that the queue's four reads went out in the turn the tab was opened in --
+ * the claim the owner's rule of 2026-10-31 is about. `launchRun` is the
+ * console's one write and is recorded here too, so "the queue spawned nothing"
+ * is a claim about the same list.
+ */
+function queueBridge(
+  answers: Readonly<Record<string, AReply>>,
+  repositories: readonly string[] = [QUEUE_OFFER],
+): FakeBridge {
+  const base = railBridge([
+    {
+      ...listRow('acme', { open: true }),
+      checkout: '/home/operator/src/acme',
+      repositories,
+    },
+  ])
+  // The base's list is the same array its own reads append to; it is typed
+  // `readonly` because a case reads it, and this helper is the one writer.
+  const calls = base.calls as { name: string; args: unknown }[]
+  for (const name of ['coordinatorStatus', 'listRuns', 'planStatus', 'showBudget', 'launchRun']) {
+    base.bridge[name] = (args: unknown): unknown => {
+      calls.push({ name, args })
+      const answer = answers[name]
+      return answer === undefined
+        ? { ok: false, reason: `the console did not read ${name} in this case` }
+        : answer(args)
+    }
+  }
+  return base
+}
+
 function rowsOf(document: FakeDocument): readonly FakeNode[] {
   return classed(railOf(document), RAIL_ROW_CLASS)
 }
@@ -2244,6 +2294,14 @@ function rowNamed(document: FakeDocument, project: string): FakeNode {
   const row = rowsOf(document).find((each) => classed(each, RAIL_NAME_CLASS)[0]?.textContent === project)
   if (row === undefined) throw new Error(`the rail drew no row for ${project}`)
   return row
+}
+
+/** askForJobs presses the queue's jobs control and lets its answer land: the
+ * jobs are the one read the Coordinator does not make on entry (rule 5 of §6.2's
+ * opening), so a case about a job item is a case that asked for it. */
+async function askForJobs(document: FakeDocument): Promise<void> {
+  buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).click()
+  await flush()
 }
 
 function buttonLabelled(root: FakeNode, label: string): FakeNode {
@@ -3235,14 +3293,24 @@ describe('the placeholder a tab switch draws', () => {
     )
 
     // ---- Coordinator -----------------------------------------------------
-    // The Coordinator is the one tab of these whose read is still out: its frame
-    // -- the source line and the console's sentence about the view's age -- is up
-    // in the click's frame, with its section's mark over the shape of what is
-    // coming.
+    // The Coordinator is the one tab of these that draws a frame of its own with
+    // reads still out: the source line and the console's sentence about the
+    // view's age are up in the click's frame, and its sections wear the mark and
+    // the shape of what is coming. The installation records no checkout, so two
+    // of its four reads are made at all -- the stored view and `budget show` --
+    // and the budget's answer is already in hand: this case released that holder
+    // under Spend, so the part it owns is drawn from a refusal while the stored
+    // view is still on its way. The jobs are the read the tab does not make on
+    // entry (rule 5), so this case asks for them below, before they can refuse.
     buttonFor(document, 'coordinator').click()
     await flush()
     expect(busyLabels(document), 'the Coordinator drew no mark of its own').toContain(COORDINATOR_BUSY)
-    expect(operationOf(document), 'the Graph’s refusal outlived its tab').toBe(null)
+    // The Graph's sentence is gone, and what names a command on this panel is
+    // the **Coordinator's own** reads: the budget read whose refusal Spend
+    // released above landed in the queue's budget part, and it names
+    // `budget.show` -- the command, not the tab that asked for it. The run list
+    // is the one read still out, and it is the read the queue's mark is for.
+    expect(operationOf(document), 'the Graph’s refusal outlived its tab').toBe('budget.show')
     expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
     await vi.advanceTimersByTimeAsync(READING_STILL_MS)
     expect(holdsText(panelOf(document), READING_STILL), 'the mark never said the read was slow').toBe(true)
@@ -3250,8 +3318,35 @@ describe('the placeholder a tab switch draws', () => {
     coordinator.release({ ok: false, reason: COORDINATOR_REFUSAL })
     await flush()
     expect(operationOf(document), 'the coordinator read draws its own refusal').toBe('coordinator.status')
+    // ...and the budget's refusal did not go with it: they are two reads, and
+    // the queue draws one part each.
+    expect(classed(panelOf(document), 'unavailable-operation').map((node) => node.textContent)).toContain(
+      'budget.show',
+    )
     expect(holdsText(panelOf(document), COORDINATOR_REFUSAL)).toBe(true)
     expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
+
+    // The jobs are read when the operator asks for them and not before: the
+    // press is what makes `runs ls` go out, and its refusal is drawn in the part
+    // the control was drawn in.
+    buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).click()
+    runs.release({ ok: false, reason: RUNS_REFUSAL })
+    await flush()
+    // The run list was the last read made, and each refusal is where its own
+    // read belongs: the document's in the queue's first part, the run list's in
+    // the second, the budget's in the fourth. The third -- the plan tasks -- is
+    // **not a refusal but a note**: this installation records no checkout, so
+    // `plan status` was never asked and the part says the tasks are not known.
+    const parts = classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS)
+    expect(
+      parts.map((part) => classed(part, 'unavailable-operation')[0]?.textContent ?? null),
+      'a part drew a refusal for a read that is not its own',
+    ).toEqual(['coordinator.status', 'runs.list', null, 'budget.show'])
+    expect(holdsText(panelOf(document), COORDINATOR_REFUSAL)).toBe(true)
+    expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
+    // Every read behind every section has answered, so no section is waiting:
+    // there is no spinner left on a queue the console has finished reading.
+    expect(busyLabels(document)).toEqual([])
   })
 
   it('asks the operator to read the tab by the word the navigation gave it', () => {
@@ -3413,10 +3508,17 @@ describe('the skeleton a tab draws while its data is on its way', () => {
    * Coordinator, the console's sentence about the view's age -- so a placeholder
    * standing in for the whole screen would be a shape over a header the console
    * already knows. The other three wait as a panel, and their sections are
-   * `SKELETON_SHAPES[tab]`. */
-  const ownShape = (tab: string): SkeletonShape | null => {
-    if (tab === 'projects') return PROJECTS_SHAPE
-    if (tab === 'coordinator') return COORDINATOR_SHAPE
+   * `SKELETON_SHAPES[tab]`.
+   *
+   * **The Coordinator is a list and not one shape** (console 0.118.0, K1): its
+   * frame holds three sections, each with a read of its own -- the action queue,
+   * the fleet's totals and the panel of repositories -- and all three are empty
+   * in the click's frame, so all three wear the shape of what is coming. That is
+   * the owner's rule of 2026-10-31 drawn: four reads that start together and a
+   * section per read, rather than the whole tab behind its slowest. */
+  const ownShape = (tab: string): readonly SkeletonShape[] | null => {
+    if (tab === 'projects') return [PROJECTS_SHAPE]
+    if (tab === 'coordinator') return SKELETON_SHAPES.coordinator
     return null
   }
 
@@ -3430,7 +3532,7 @@ describe('the skeleton a tab draws while its data is on its way', () => {
       // click started has already answered in a test.
       const own = ownShape(tab)
       expect(skeletonsOf(document), `the ${tab} tab drew no skeleton in the click’s own frame`).toEqual(
-        own === null ? SKELETON_SHAPES[tab].map((shape) => shape.section) : [own.section],
+        (own ?? SKELETON_SHAPES[tab]).map((shape) => shape.section),
       )
       // The sentence a reader is told is still drawn -- visually hidden beside
       // the shapes rather than printed over them -- and the blocks hold the shape
@@ -3454,7 +3556,7 @@ describe('the skeleton a tab draws while its data is on its way', () => {
           `the ${tab} screen’s own section is not marked busy`,
         ).toBe(true)
       }
-      for (const shape of own === null ? SKELETON_SHAPES[tab] : [own]) {
+      for (const shape of own ?? SKELETON_SHAPES[tab]) {
         expect(blocksOf(document, shape.section), `${tab}'s ${shape.section} drew the wrong blocks`).toEqual([
           ...shape.blocks,
         ])
@@ -4574,6 +4676,48 @@ const BUDGET_DOC = Object.freeze({
   warnings: [],
 })
 
+/** QUEUE_OFFER is the one repository identity the open installation offers: the
+ * `<provider>/<owner>/<name>` string the launch form's `select` holds as an
+ * option's value, and the value the form sends. */
+const QUEUE_OFFER = 'github/owner/repo-a'
+
+/** QUEUE_REPO is how the queue's **own documents** spell that repository, and it
+ * is deliberately not `QUEUE_OFFER`: `runs ls --json` and `plan status` both
+ * carry a repository as `owner/name`, with no provider, while the form offers
+ * the installation's identity. The two are different strings for the same
+ * repository, and joining them is the whole of what the prefill does. */
+const QUEUE_REPO = 'owner/repo-a'
+
+/** QUEUE_RUN_ID and QUEUE_RUN_PLAN_TASK are the two strings the run the queue
+ * offers to retry carries: the id the console draws and opens, and the plan task
+ * its own launch recorded, which the console keeps as stored. */
+const QUEUE_RUN_ID = '20261031-101502-9f00'
+const QUEUE_RUN_PLAN_TASK = 'plans/2026-10-01-a/task-one'
+
+/** QUEUE_RUN is one `runs ls --json` row the action queue takes: a run that
+ * ended without succeeding, with the plan task its launch recorded. */
+const QUEUE_RUN: Readonly<Record<string, unknown>> = {
+  run: QUEUE_RUN_ID,
+  repo: QUEUE_REPO,
+  status: 'failed',
+  terminal: true,
+  title: 'the job that did not finish',
+  plan_task: QUEUE_RUN_PLAN_TASK,
+}
+
+/** QUEUE_PLAN_TASK is the plan task of the one item `QUEUE_PLAN` holds: the
+ * plan's own id and the task's own id, joined the way the flag spells it. */
+const QUEUE_PLAN_TASK = 'plans/2026-10-01-example-graph/task-three'
+
+/** QUEUE_PLAN is the plan read's own document -- the committed plan-status
+ * fixture, with its repository the one `QUEUE_REPO` names, spelled the way the
+ * read spells it. Its `task-three` is the CLI's own `state == "ready"`, so it is
+ * one item of the queue and one press of Launch. */
+const QUEUE_PLAN: unknown = {
+  ...(PLAN_STATUS as Record<string, unknown>),
+  repo: QUEUE_REPO,
+}
+
 describe('the frame a tab answers in, and the read it does not wait for', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -4636,8 +4780,12 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       COORDINATOR_SOURCE_LINE,
     )
     expect(classed(panelOf(document), 'coordinator-age')[0]?.textContent).toBe(COORDINATOR_NO_AGE_WORD)
-    expect(busyLabels(document)).toEqual([COORDINATOR_BUSY])
-    expect(skeletonsOf(document)).toEqual([COORDINATOR_SHAPE.section])
+    // One mark per section the frame holds, in the order the frame draws them --
+    // the queue, the fleet's totals, the panel of repositories -- because each
+    // is a read of its own and none of them waits for another (the owner's rule
+    // of 2026-10-31, drawn).
+    expect(busyLabels(document)).toEqual([COORDINATOR_QUEUE_BUSY, COORDINATOR_TOTALS_BUSY, COORDINATOR_BUSY])
+    expect(skeletonsOf(document)).toEqual(SKELETON_SHAPES.coordinator.map((shape) => shape.section))
     expect(classed(panelOf(document), 'coordinator-detail')).toEqual([])
 
     status.release({ ok: true, data: { document: COORDINATOR_STATUS } })
@@ -4701,9 +4849,251 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     await flush()
     buttonFor(document, 'coordinator').click()
     expect(stamped(document), 'the stale view was served without its stamp').not.toBeNull()
-    expect(busyLabels(document)).toEqual([COORDINATOR_BUSY])
+    expect(busyLabels(document)).toEqual([COORDINATOR_QUEUE_BUSY, COORDINATOR_TOTALS_BUSY, COORDINATOR_BUSY])
     await flush()
     expect(calls.filter((call) => call.name === 'coordinatorStatus').length).toBe(2)
+  })
+
+  it('starts the Coordinator’s own reads in the click’s own turn, and reads the jobs only when the queue is asked for them', async () => {
+    // Two rules meet on the screen with the most reads of any tab. The owner's
+    // rule of 2026-10-31: the stored view, the plan tasks and the budget are
+    // three independent documents, so all three are asked for in the turn the
+    // tab was opened in and each part of the queue is painted the moment its own
+    // answer lands -- never one spinner held until the last of them. And rule 5
+    // of §6.2's opening: jobs are never part of a first paint, so `runs ls --json`
+    // is the one read the tab does not make on entry -- the part the jobs fill
+    // carries the control that asks for them, and the read goes out on the press.
+    const status = holding()
+    const runs = holding()
+    const plans = holding()
+    const caps = holding()
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => status.reply(),
+      listRuns: () => runs.reply(),
+      planStatus: () => plans.reply(),
+      showBudget: () => caps.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'coordinator').click()
+    // **Nothing is awaited, and that is the claim**: the three calls went out in
+    // the click's own turn, so none of them is a consequence of another. A
+    // screen that asked for the plan tasks after the stored view had answered
+    // would show one call here, and the queue would be behind the slowest read
+    // of the page. `listRuns` is not among them: the jobs are the read this tab
+    // does not make until the operator asks.
+    expect(calls.slice(before).map((call) => call.name)).toEqual([
+      'coordinatorStatus',
+      'planStatus',
+      'showBudget',
+    ])
+    // While they are all out, each section says what it is reading.
+    expect(busyLabels(document)).toEqual([COORDINATOR_QUEUE_BUSY, COORDINATOR_TOTALS_BUSY, COORDINATOR_BUSY])
+
+    // The budget is the smallest of the three and answers first: its refusal is
+    // on the screen while the pull requests and the plan tasks -- the two reads
+    // this page is mostly about -- are still coming.
+    caps.release({ ok: false, reason: BUDGET_REFUSAL })
+    await flush()
+    const parts = classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS)
+    expect(
+      parts.map((part) => classed(part, 'unavailable-operation')[0]?.textContent ?? null),
+      'an answer painted a part that is not its own',
+    ).toEqual([null, null, null, 'budget.show'])
+    expect(busyLabels(document), 'the queue stopped saying it is reading one answer in').toContain(
+      COORDINATOR_QUEUE_BUSY,
+    )
+
+    // The other two, and every read this visit makes has answered: the item the
+    // plan read carried is drawn, the section's mark comes down -- a queue
+    // waiting on a press is not a queue being read -- and the jobs have not been
+    // asked for at all.
+    plans.release(planStatusReply(QUEUE_PLAN))
+    status.release({ ok: true, data: { document: COORDINATOR_STATUS } })
+    await flush()
+    expect(holdsText(panelOf(document), 'task-three')).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+    // The queue has read nothing of the run list: the Live screen's own join
+    // asked for it (`maybeRefreshRigor`), and this tab has not.
+    const readForTheQueue = calls.filter((call) => call.name === 'listRuns').length
+
+    // The press is the read, and it is one read: the control says it was pressed
+    // and the section says it is reading again.
+    buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).click()
+    expect(calls.filter((call) => call.name === 'listRuns').length - readForTheQueue).toBe(1)
+    expect(
+      buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).attributes.get('aria-expanded'),
+    ).toBe('true')
+    expect(busyLabels(document)).toContain(COORDINATOR_QUEUE_BUSY)
+
+    runs.release({ ok: true, data: { document: { runs: [QUEUE_RUN] } } })
+    await flush()
+    expect(holdsText(panelOf(document), QUEUE_RUN_ID)).toBe(true)
+    // One button per item: the job's Retry and the ready task's Launch.
+    expect(
+      classed(panelOf(document), 'coordinator-queue-button').length,
+      'the queue drew no button for the two items it found',
+    ).toBe(2)
+    // The control is gone, replaced by the items it asked for: a second press
+    // has nothing to press.
+    expect(classed(panelOf(document), COORDINATOR_QUEUE_JOBS_CLASS)).toEqual([])
+    // Every read has answered, so no section is waiting any more -- and the
+    // budget's refusal is still where it belongs, drawn in its own part: the
+    // reads that answered are not taken down for it, and it is not taken down
+    // for them.
+    expect(busyLabels(document)).toEqual([])
+    expect(
+      classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS).map(
+        (part) => classed(part, 'unavailable-operation')[0]?.textContent ?? null,
+      ),
+    ).toEqual([null, null, null, 'budget.show'])
+  })
+
+  it('opens the launch confirmation on a queue item’s own repository and plan task, and spawns nothing until the operator submits', async () => {
+    // Retry and Launch lead to the console's **one** write (V2.5.1, rule 11):
+    // the item's repository and plan task are filled into the form the operator
+    // already confirms in the main process's own window, and this file sends
+    // nothing until they press that form's submit. No run id is written here and
+    // none is passed: main mints it when the launch is confirmed, and this file
+    // has no argv to put one in -- the prefill is a value on a control, not a
+    // call.
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: { runs: [QUEUE_RUN] } } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+
+    // The job item's Retry, which is the queue's button for a run that ended
+    // without succeeding.
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    // Nothing is awaited: the Live screen the form lives on is drawn in the
+    // click's own frame, and the item's two values are already in it.
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the form was not given the item’s repository',
+    ).toBe(QUEUE_OFFER)
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_RUN_PLAN_TASK)
+    // The form is revealed, and the control that hides it says so: a form filled
+    // out of sight would be a press that appears to do nothing.
+    expect(launchField(document, LAUNCH_FORM_CLASS).attributes.get('hidden')).toBeUndefined()
+    expect(launchField(document, LAUNCH_OPEN_CLASS).attributes.get('aria-expanded')).toBe('true')
+    // Nothing is spawned by opening the form: this file's one write is the
+    // form's own submit, and the operator has not pressed it.
+    expect(calls.filter((call) => call.name === 'launchRun')).toEqual([])
+
+    typeInto(document, LAUNCH_TASK_CLASS, 'try the nightly job again')
+    launchField(document, LAUNCH_SUBMIT_CLASS).click()
+    await flush()
+    const launched = calls.filter((call) => call.name === 'launchRun').map((call) => call.args)
+    expect(launched, 'the confirmation was asked for more than once').toHaveLength(1)
+    // Rule 11's five fields and nothing else: no run id, no flag, no path. The
+    // item's repository and plan task are *values* of those fields, and the key
+    // set is the schema's.
+    expect(launched[0]).toEqual({
+      installation: 'acme',
+      repository: QUEUE_OFFER,
+      task: 'try the nightly job again',
+      planTask: QUEUE_RUN_PLAN_TASK,
+    })
+  })
+
+  it('clears the repository when two of the installation’s identities name the item’s repository', async () => {
+    // The same repository can be recorded on two providers -- a provider is part
+    // of the identity and not of the `owner/name` the documents carry -- and
+    // there is then no one identity the item's repository is. The choice the
+    // prefill may not make is the operator's earlier one: a Retry that kept the
+    // GitHub identity standing would launch on a host nobody asked for, with
+    // this item's plan task.
+    const { bridge } = queueBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        listRuns: () => ({ ok: true, data: { document: { runs: [QUEUE_RUN] } } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      ['github/owner/repo-a', 'bitbucket/owner/repo-a'],
+    )
+    const document = await boot(bridge, new FakeDocument())
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, 'github/owner/repo-a')
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the form kept a repository the item’s own document does not single out',
+    ).toBe('')
+    // The rest of the item is still handed over: it is the repository that has
+    // no single answer, and the operator is left to choose one.
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_RUN_PLAN_TASK)
+  })
+
+  it('clears the repository when the item names one the installation does not record', async () => {
+    // A queue item's repository is not re-validated against the installation's
+    // own list: the plan read is the one the session opened on, and the run list
+    // is the installation's runs, but neither is a promise that this form has an
+    // option for what the item carries. Nothing is written for a repository the
+    // form does not offer -- and what the select held is cleared rather than
+    // kept, for the reason above.
+    const elsewhere: unknown = { ...(PLAN_STATUS as Record<string, unknown>), repo: 'someone-else/repo-z' }
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: {} } }),
+      planStatus: () => planStatusReply(elsewhere),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, QUEUE_OFFER)
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    buttonLabelled(panelOf(document), COORDINATOR_LAUNCH_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the form kept the repository of an item it has no option for',
+    ).toBe('')
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_PLAN_TASK)
+  })
+
+  it('answers a budget alert by opening Spend, and names the ground the alert stands on', async () => {
+    // A BUDGET item's one button is a navigation (D812): the queue never calls
+    // `budget kill` or `budget resume` -- those are the CLI's, behind a typed
+    // confirmation -- so what the alert does is take the operator to the screen
+    // that draws the fleet's money and its caps.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: {} } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      // The committed budget document's one repository is killed, which is a
+      // ground the operator can see and act on -- and one this screen does not
+      // act on itself.
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    expect(holdsText(panelOf(document), COORDINATOR_QUEUE_REPO_KILL_WORD)).toBe(true)
+
+    buttonLabelled(panelOf(document), COORDINATOR_OPEN_SPEND_WORD).click()
+    // The navigation is answered in the frame it happened in: Spend's button is
+    // the current page before any read of that screen has answered.
+    expect(
+      buttonFor(document, 'spend').attributes.get('aria-current'),
+      'the alert did not move the console to Spend',
+    ).toBe('page')
+    await flush()
+    // And the screen behind it is Spend's own: this session has read the budget
+    // it draws its caps from, and its report read is the refusal the fake bridge
+    // answers with -- named by the screen that asked for it.
+    expect(operationOf(document), 'the alert left the Coordinator’s screen on the panel').toBe(
+      'spend.report',
+    )
   })
 
   it('draws the Graph’s canvas while the run list never answers, and asks for that list only afterwards', async () => {
