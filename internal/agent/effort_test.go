@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,53 +14,48 @@ import (
 
 func TestEffortVarsClaudeOnly(t *testing.T) {
 	for _, e := range config.Efforts {
-		got, err := EffortVars(e, false)
-		if err != nil {
-			t.Errorf("EffortVars(%q, false): %v", e, err)
+		got := mustEffortVars(t, e, false)
+		if len(got) != 1 {
+			t.Errorf("EffortVars(%q, false) = %v, want one variable", e, got)
 			continue
 		}
-		if len(got) != 1 || got["CLAUDE_CODE_EFFORT_LEVEL"] != e {
-			t.Errorf("EffortVars(%q, false) = %v, want CLAUDE_CODE_EFFORT_LEVEL=%q alone", e, got, e)
+		for k, v := range got {
+			if v != e {
+				t.Errorf("EffortVars(%q, false) sets %s=%q, want %q", e, k, v, e)
+			}
 		}
 	}
-	got, err := EffortVars("", false)
-	if err != nil {
-		t.Fatalf("EffortVars(\"\", false): %v", err)
-	}
-	if len(got) != 0 {
+	if got := mustEffortVars(t, "", false); len(got) != 0 {
 		t.Errorf("EffortVars(\"\", false) = %v, want nothing: an absent effort leaves the model's own default", got)
 	}
 }
 
 func TestEffortVarsNeverOnProviderStage(t *testing.T) {
 	for _, e := range config.Efforts {
-		got, err := EffortVars(e, true)
-		if err != nil {
-			t.Errorf("EffortVars(%q, true): %v", e, err)
-			continue
-		}
-		if len(got) != 0 {
+		if got := mustEffortVars(t, e, true); len(got) != 0 {
 			t.Errorf("EffortVars(%q, true) = %v, want nothing: a provider route sends no effort (G5)", e, got)
 		}
 	}
-	// A provider stage's variables are applied beside ProviderRouteVars', and
-	// G5's MAX_THINKING_TOKENS=0 has to survive them.
-	for _, e := range config.Efforts {
-		stage := ProviderRouteVars()
-		vars, err := EffortVars(e, true)
-		if err != nil {
-			t.Fatalf("EffortVars(%q, true): %v", e, err)
-		}
-		for k, v := range vars {
-			stage[k] = v
-		}
-		if stage["MAX_THINKING_TOKENS"] != "0" || stage["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] != "1" {
-			t.Errorf("EffortVars(%q, true) over ProviderRouteVars() = %v, want MAX_THINKING_TOKENS=0 and CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 kept", e, stage)
-		}
-		if _, ok := vars["MAX_THINKING_TOKENS"]; ok {
-			t.Errorf("EffortVars(%q, true) sets MAX_THINKING_TOKENS: the stage's thinking-off value is ProviderRouteVars' to set", e)
-		}
+	// G5's other half: a stage applies these beside ProviderRouteVars', so an
+	// empty result is what leaves MAX_THINKING_TOKENS=0 standing rather than
+	// replacing it. Asserted on the composition, since that is where a
+	// non-empty result would do its damage.
+	stage := ProviderRouteVars()
+	for k, v := range mustEffortVars(t, "max", true) {
+		stage[k] = v
 	}
+	if want := ProviderRouteVars(); !maps.Equal(stage, want) {
+		t.Errorf("ProviderRouteVars() with EffortVars(max, true) merged = %v, want %v unchanged", stage, want)
+	}
+}
+
+func mustEffortVars(t *testing.T, effort string, provider bool) map[string]string {
+	t.Helper()
+	vars, err := EffortVars(effort, provider)
+	if err != nil {
+		t.Fatalf("EffortVars(%q, %v): %v", effort, provider, err)
+	}
+	return vars
 }
 
 func TestEffortVarsRefusesUnknown(t *testing.T) {
@@ -78,13 +74,12 @@ func TestEffortVarsRefusesUnknown(t *testing.T) {
 }
 
 func TestEffortVarsSetsTheVariable(t *testing.T) {
-	got, err := EffortVars("xhigh", false)
-	if err != nil {
-		t.Fatalf("EffortVars(\"xhigh\", false): %v", err)
-	}
+	// The one test that writes the variable's name literally: the other tests
+	// read whatever key came back, so a rename would slip past them.
 	want := map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "xhigh"}
+	got := mustEffortVars(t, "xhigh", false)
 	if len(got) != len(want) {
-		t.Fatalf("EffortVars = %v, want %v", got, want)
+		t.Fatalf("EffortVars(\"xhigh\", false) = %v, want %v", got, want)
 	}
 	for k, v := range want {
 		if got[k] != v {

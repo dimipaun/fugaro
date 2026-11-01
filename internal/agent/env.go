@@ -338,6 +338,9 @@ func ProviderRouteVars() map[string]string {
 // effort there would look applied and be no-ops (G5, D725) -- and nothing
 // for an absent effort, which already means the model's own default.
 //
+// Nothing calls it yet: the runner that puts its answer in a stage's
+// environment is L4.2, and until that lands this is the piece it builds on.
+//
 // The value is validated before either of those is decided: it comes from
 // the launcher's task field, and Claude Code is no gate at all -- the flag
 // warns and sends the default, the variable and the settings key are dropped
