@@ -92,6 +92,8 @@ import {
   SWITCHER_MENU_CLASS,
   SWITCHER_NAME_CLASS,
   SWITCHER_VERSION_CLASS,
+  GRAPH_BUSY,
+  RUNS_SINCE,
   VIEW_PANEL_CLASS,
   VIEWS,
   bootDashboard,
@@ -102,6 +104,7 @@ import {
   tabTarget,
 } from '../../src/renderer/entry'
 import { decodeSnapshot } from '../../src/shared/schema'
+import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
 import {
@@ -129,7 +132,11 @@ import {
   SKELETON_CLASS,
   SKELETON_SHAPES,
 } from '../../src/renderer/skeleton'
-import { COORDINATOR_BUSY } from '../../src/renderer/screens/coordinator'
+import {
+  COORDINATOR_BUSY,
+  COORDINATOR_NO_AGE_WORD,
+  COORDINATOR_SOURCE_LINE,
+} from '../../src/renderer/screens/coordinator'
 import { PROJECTS_BUSY } from '../../src/renderer/screens/projects'
 import type { SkeletonShape } from '../../src/renderer/skeleton'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
@@ -4149,6 +4156,363 @@ describe('a read that lands after the operator left its tab', () => {
     expect(panelOf(document).children[0], 'a late log link drew the run over the view on screen').toBe(
       chosen,
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Each tab answers in the frame it was opened in, and the reads it does not
+// wait for (the owner's rule of 2026-10-31, `CLAUDE.md`'s console rules 1-5).
+//
+// Every read here is measured on the owner's installation: `coordinator status
+// --from-store --all` about thirteen seconds and 724 KB, `budget show` about
+// one, `runs ls --json` about six and 248 KB for a day. A tab that waited for
+// all of them answered a click with nothing for twenty seconds, which is the
+// report these cases are the fix for.
+// ---------------------------------------------------------------------------
+
+/** BUDGET_DOC is `budget show --json` as the Projects screen reads it: one
+ * repository with a kill switch that is on. Invented, like the fixture next
+ * door. */
+const BUDGET_DOC = Object.freeze({
+  project: 'example-project',
+  mode: 'enforce',
+  day: '2026-10-15',
+  global: { daily_cap_usd: 40, per_run_cap_usd: 8, counted_usd: 12.5, kill: null },
+  defaults: { repo_daily_cap_usd: 10, repo_per_run_cap_usd: 2 },
+  repos: [
+    {
+      slug: 'example-owner/example-repo',
+      repo: 'example-owner/example-repo',
+      daily_cap_usd: 20,
+      daily_cap_source: 'repo',
+      per_run_cap_usd: 4,
+      per_run_cap_source: 'global',
+      counted_usd: 12.5,
+      kill: { by: 'operator@example.test', at: '2026-10-15T11:30:00Z', reason: 'spend rate' },
+      running: [],
+    },
+  ],
+  running: [],
+  warnings: [],
+})
+
+describe('the frame a tab answers in, and the read it does not wait for', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('reads the run list never on Projects, and paints the kills out of `budget show` alone', async () => {
+    // The owner's measured read (`runs ls --json`, about six seconds for a day)
+    // used to start before this screen could draw anything, which is the twenty
+    // seconds the tab took with no feedback. It is not this screen's read at all
+    // any more: `budget show` is.
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(
+      calls.slice(before).map((call) => call.name),
+      'the Projects tab made a read that is not its own',
+    ).toEqual(['showBudget'])
+    expect(
+      calls.slice(before).some((call) => call.name === 'listRuns'),
+      'the Projects tab read the run list, which is the read the owner measured at six seconds',
+    ).toBe(false)
+    // What is on the screen is the budget document's own: the kill switch, its
+    // operator and its reason, and no figure any run list could add.
+    expect(classed(panelOf(document), 'projects-kill-row').length).toBeGreaterThan(0)
+    expect(holdsText(panelOf(document), 'spend rate')).toBe(true)
+    // The operator is a person, and the console draws one through the
+    // sanitizer's own class: the address loses its local part (`sanitize.ts`).
+    expect(classed(panelOf(document), 'projects-kill-by')[0]?.textContent).toBe(ADDRESS_PLACEHOLDER)
+  })
+
+  it('draws the Coordinator’s own header in the click’s frame, and its summary the moment the view lands', async () => {
+    // The longest read of any tab: the header is the console's own words and
+    // needs no document, so it is drawn before the read is awaited -- and the
+    // summary follows the document in the same turn, while each repository's
+    // records are laid out in a chunk of their own (a 724 KB document read in
+    // one turn is the freeze the chunks are for).
+    const status = holding()
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        coordinatorStatus: () => status.reply(),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    // Nothing is awaited: this is the frame the click happened in.
+    const source = classed(panelOf(document), 'coordinator-source')[0]
+    expect(source?.textContent, 'the Coordinator drew no source line before its read').toBe(
+      COORDINATOR_SOURCE_LINE,
+    )
+    expect(classed(panelOf(document), 'coordinator-age')[0]?.textContent).toBe(COORDINATOR_NO_AGE_WORD)
+    expect(busyLabels(document)).toEqual([COORDINATOR_BUSY])
+    expect(skeletonsOf(document)).toEqual([COORDINATOR_SHAPE.section])
+    expect(classed(panelOf(document), 'coordinator-detail')).toEqual([])
+
+    status.release({ ok: true, data: { document: COORDINATOR_STATUS } })
+    await flush()
+    // The summary is up and the mark is gone; the details are queued, one
+    // repository per chunk.
+    expect(busyLabels(document)).toEqual([])
+    expect(skeletonsOf(document)).toEqual([])
+    const details = classed(panelOf(document), 'coordinator-detail')
+    expect(details.length, 'the summary drew no repository detail host').toBeGreaterThan(0)
+    expect(classed(panelOf(document), 'coordinator-record'), 'the detail was drawn in the summary’s own turn').toEqual([])
+
+    await vi.advanceTimersByTimeAsync(10)
+    expect(
+      classed(panelOf(document), 'coordinator-record').length,
+      'the queued chunks never drew the records',
+    ).toBeGreaterThan(0)
+  })
+
+  it('draws the Coordinator’s cached view at once, stamped, and reads it again only past five minutes', async () => {
+    const statuses: ReturnType<typeof holding>[] = []
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        coordinatorStatus: () => {
+          const answer = holding()
+          statuses.push(answer)
+          return answer.reply()
+        },
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    statuses[0]?.release({ ok: true, data: { document: COORDINATOR_STATUS } })
+    await flush()
+    await vi.advanceTimersByTimeAsync(10)
+
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'coordinator').click()
+    // Nothing is awaited: the view this session already read is drawn in the
+    // click's own frame -- summary and all -- and it says when it was read.
+    expect(
+      classed(panelOf(document), 'coordinator-detail').length,
+      'the cached view drew nothing in the click’s own frame',
+    ).toBeGreaterThan(0)
+    expect(stamped(document)).toMatch(/^as of \d\d:\d\d$/)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(classed(panelOf(document), 'coordinator-record').length).toBeGreaterThan(0)
+    await flush()
+    expect(
+      calls.filter((call) => call.name === 'coordinatorStatus').length,
+      'a view that came out of the cache was read again',
+    ).toBe(1)
+
+    // Five minutes old, and it is drawn **and** read again: a view is never
+    // silently older than the rule allows.
+    vi.setSystemTime(Date.now() + CACHE_FRESH_MS)
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'coordinator').click()
+    expect(stamped(document), 'the stale view was served without its stamp').not.toBeNull()
+    expect(busyLabels(document)).toEqual([COORDINATOR_BUSY])
+    await flush()
+    expect(calls.filter((call) => call.name === 'coordinatorStatus').length).toBe(2)
+  })
+
+  it('draws the Graph’s canvas while the run list never answers, and asks for that list only afterwards', async () => {
+    // The canvas is the plan. `runs ls --json` is what a node's door is resolved
+    // against -- four characters of a run id -- so it decorates a picture that is
+    // already true without it, and the Graph is drawn, and readable, before the
+    // list is even asked for.
+    const runs = holding()
+    const { bridge, calls } = graphBridge({
+      planStatus: () => planStatusReply(),
+      listRuns: () => runs.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'graph').click()
+    await flush()
+    expect(
+      classed(panelOf(document), 'graph-canvas').length,
+      'the canvas waited for the run list',
+    ).toBeGreaterThan(0)
+    expect(
+      classed(panelOf(document), 'graph-node').length,
+      'the canvas was drawn from the plan alone',
+    ).toBeGreaterThan(0)
+    const asked = calls.filter((call) => call.name === 'listRuns')
+    expect(asked.length, 'the Graph never asked for the run list at all').toBeGreaterThan(0)
+
+    // And the list never answering changes nothing about what is on screen: no
+    // mark, no refusal, no empty panel.
+    expect(busyLabels(document)).toEqual([])
+    expect(operationOf(document)).toBe(null)
+  })
+
+  it('reads the run list for a day, on every read it makes of it', async () => {
+    // The window is the rule, not a detail: a console that read the whole run
+    // log would pay for the reads of every installation the owner has ever run.
+    const { bridge, calls } = fakeBridge({
+      replies: { subscribeLive: () => snapshotReply(liveFrame()), listRuns: () => runsReply() },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'graph').click()
+    await flush()
+    await flush()
+    const asked = calls.filter((call) => call.name === 'listRuns')
+    expect(asked.length, 'no run list was read: the case proves nothing').toBeGreaterThan(0)
+    for (const call of asked) {
+      expect((call.args as { readonly since?: unknown }).since, 'a run list was read for all time').toBe(
+        RUNS_SINCE,
+      )
+    }
+  })
+
+  it('fills the Live rows’ mode column when the join lands, without the frame ever waiting for it', async () => {
+    // The mode on a Live row is not in the live document: it is joined from
+    // `runs ls --json` by run id (`shared/rigor.ts`). The rows are drawn without
+    // it and the column fills in the moment it lands -- a join that never
+    // answered would leave the frame exactly as it is, which is a screen about
+    // what is running now rather than a screen holding a read.
+    const join = holding()
+    const { bridge } = fakeBridge({
+      replies: { subscribeLive: () => snapshotReply(liveFrame()), listRuns: () => join.reply() },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    expect(
+      classed(panelOf(document), 'live-run').length,
+      'the frame drew no rows: the case proves nothing',
+    ).toBeGreaterThan(0)
+    expect(classed(panelOf(document), 'live-run-mode')).toEqual([])
+
+    join.release({
+      ok: true,
+      data: {
+        document: {
+          project: 'example-project',
+          runs: [{ run: '20261015-120000-aa01', rigor: { mode: 'pro', from: 'repo' } }],
+          warnings: [],
+        },
+      },
+    })
+    await flush()
+    expect(
+      classed(panelOf(document), 'live-run-mode').map((node) => node.textContent),
+      'the join landed and the mode column stayed empty',
+    ).toEqual(['Pro'])
+  })
+
+  it('keeps the stream filter the operator pressed last when the first press draws after it', async () => {
+    // Two presses in one turn -- a click and a mis-click, or the arrow key after
+    // the mouse -- and each of them is a layout the engine answers on its own
+    // time. The drawing that answers the press the operator has already replaced
+    // is `null` and must not be drawn: the tab that stays is the one they chose
+    // last, whatever order the two answers arrive in.
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const tabs = classed(panelOf(document), 'graph-tab')
+    expect(tabs.map((tab) => tab.attributes.get('data-tab'))).toEqual(['stream:example', 'stream:', 'all'])
+    ;(tabs[0] as FakeNode).click()
+    ;(tabs[1] as FakeNode).click()
+    await flush()
+    expect(
+      classed(panelOf(document), 'graph-tab').map((tab) => tab.attributes.get('aria-selected')),
+      'the stream the operator pressed first is the one that is showing',
+    ).toEqual(['false', 'true', 'false'])
+  })
+
+  it('never draws the run list a read the operator left over the tab they moved to', async () => {
+    // The decoration is the read that arrives after the one the operator is
+    // waiting for, and it has no mark of its own: it is the **sequence check** on
+    // the Graph that keeps it off a tab nobody is on. **The mutation this case is
+    // proven against is that check -- the two `stale(mine)` guards
+    // `decorateRuns` stands on, the one after the read and the one after the
+    // drawing -- and dropping them fails this case**: the older picture is drawn
+    // over the Live tab the operator moved to. Each guard alone survives the
+    // mutation, which is why the case names the pair.
+    const lists: ReturnType<typeof holding>[] = []
+    const { bridge } = graphBridge({
+      subscribeLive: () => snapshotReply(liveFrame()),
+      listRuns: () => {
+        const answer = holding()
+        lists.push(answer)
+        return answer.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    expect(lists, 'the Live rigor join is not in flight: the case proves nothing').toHaveLength(1)
+    buttonFor(document, 'graph').click()
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    buttonFor(document, 'live').click()
+    await flush()
+    const chosen = panelOf(document).children[0] as FakeNode
+    expect(chosen.attributes.get('class'), 'the operator never left the Graph: the case proves nothing').toBe(
+      'live',
+    )
+
+    lists[1]?.release(runsReply())
+    await flush()
+    expect(panelOf(document).children[0], 'a run list nobody waited for replaced the view on screen').toBe(
+      chosen,
+    )
+    expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
+  })
+
+  it('never lets a read the operator has replaced draw over the picture they kept', async () => {
+    // Two quick presses of the Graph's own Refresh, and the read the first one
+    // started answers last: it is not the newest read's and must not be drawn.
+    // This is the Graph's half of "the latest change's view is the one that
+    // stays, whatever order the answers arrive in", and it is the second press's
+    // mark that is on screen while the earlier answer lands under it -- a
+    // refusal drawn there would take the canvas down for a read nobody asked
+    // for. Two guards stand between the two (the section's token and the read's
+    // generation), and either one alone is enough: the case is the behaviour,
+    // and `decorateRuns`' case below is the one that is proven against a
+    // mutation.
+    const plans = readQueue()
+    const { bridge } = graphBridge({
+      planStatus: plans.reply,
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'graph').click()
+    await flush()
+    plans.release(0, planStatusReply())
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    const refresh = classed(panelOf(document), 'graph-refresh')[0]
+    expect(refresh, 'the Graph drew no Refresh control: the case proves nothing').toBeDefined()
+    refresh?.click()
+    refresh?.click()
+    // The first press's read answers with a refusal, and it is nobody's read any
+    // more: the picture stays, the mark stays up for the read the operator asked
+    // for last, and no refusal screen is drawn.
+    plans.release(1, { ok: false, reason: GRAPH_REFUSAL })
+    await flush()
+    expect(operationOf(document), 'a read the operator had replaced drew its refusal').toBe(null)
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
+    expect(
+      classed(panelOf(document), 'graph-canvas').length,
+      'a read the operator had replaced took the canvas down',
+    ).toBeGreaterThan(0)
+    expect(busyLabels(document)).toEqual([GRAPH_BUSY])
+
+    // The read the operator asked for last is drawn when it lands.
+    plans.release(2, planStatusReply())
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
   })
 })
 
