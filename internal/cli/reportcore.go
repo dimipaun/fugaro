@@ -49,7 +49,7 @@ func (l *lazyFacts) Facts(ctx context.Context, from, to int64) (map[int64][]budg
 		return nil, nil, err
 	}
 	l.env = env
-	return budget.BucketFacts{Bucket: env.bucket.Bucket, Warn: l.warn, Slugs: l.slugs}.Facts(ctx, from, to)
+	return budget.BucketFacts{Bucket: env.bucket.Bucket, Warn: l.warn, Slugs: l.slugs, Backend: l.lc.Backend()}.Facts(ctx, from, to)
 }
 
 func (l *lazyFacts) close() {
