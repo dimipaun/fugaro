@@ -683,10 +683,10 @@ failover of §11.3, each writing the account that served the stage into the same
 
 `runstore.Record.StageAccounts` is `map[string]string` with `json:"stage_accounts,omitempty"`, and
 `schemas/result.schema.json` declares it beside `oauth_account`. **The field lives in the run record and
-in that schema and nowhere else.** Being **additive** it bumps no format version and breaks no
-reader: a record written before the field decodes unchanged, and a record that carries it is still a
-valid `result.json` — the schema's `additionalProperties: false` is satisfied because the field is
-declared there.
+in that schema and nowhere else.** Being **additive** it bumps no format version and breaks no reader: a
+record written before the field decodes unchanged, and a record that carries it is still a valid
+`result.json` — the schema's `additionalProperties: false` is satisfied because the field is declared
+there.
 
 **Nothing reads it, and no read surface is touched.** `internal/runview`'s `Row`, `internal/watch`'s
 `JSONRun`, the console's record decoder and the console's redactor are not A2's files and not A7's, so
