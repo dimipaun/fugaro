@@ -283,6 +283,10 @@ than the existing strip widened**, and it is tightened **on the `review` stage i
 `fugaro run --pr N` already runs — so a review that exists today gets the same posture and the design
 does not leave the older path behind it. Three things change:
 
+**The posture is review mode's and not the in-loop reviewer's: it applies to the standalone review job
+and to the `review` mode of `fugaro run --pr N`, while a coding run's own in-loop review rounds stay
+byte-for-byte as they are today until a later task tightens them.**
+
 - **the head's `CLAUDE.md` and `.claude/rules/` are not loaded at all.** They are the head's own
   instructions to a model, written by the change under review, so a reviewer that reads them is being
   told what to think by the thing it is judging. **O6 is answered: the reviewer is given the BASE
@@ -1044,7 +1048,8 @@ run by the owner in their own terminal.
    from CSR4b** — those are the things whose existence depends on its answer, so asking the question
    through them would be circular. On the sandbox installation, the owner runs a one-off execution of
    the deployed job image whose entrypoint forks a child that (a) tries to reach a host on the
-   network, (b) tries to read the parent's environment through `/proc`, and (c) is fenced — a network
+   network **and the instance metadata server**, (b) tries to read the parent's environment through
+   `/proc`, and (c) is fenced — a network
    namespace (`unshare -n` where the image has it, or the equivalent the platform allows), **and a PID
    namespace with its own `/proc` mount, or a different uid, whichever the platform allows** — and
    records what the child could do. **What is being observed is one of three things:** the child

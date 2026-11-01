@@ -6,10 +6,11 @@ with the options named below, and the owner's seven rulings of 2026-11-01 (**O1�
 they touch. An answered decision is not an
 approval to start: **every task still carries its own gate**, and two of them are hard. **E7** (the
 credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's
-merge path, and **U7** (an owner-run live observation) gates CSR4b's launch. A task starts only when the
-decisions and the gates it names are satisfied. **CSR4a carries D894(a)'s configuration posture and
-waits on nothing** — it is standalone hardening of a stage that exists today — while **CSR4b carries
-D885's mutation machinery and does not start until U7's probe has returned**.
+merge path, and **U7** (an owner-run live observation) gates CSR4b's launch **and the first slice's
+signed `ship` path**, through the routing design **#1514**'s **D1074** (its **C3.9e**). A task starts
+only when the decisions and the gates it names are satisfied. **CSR4a carries D894(a)'s configuration
+posture and waits on nothing** — it is standalone hardening of a stage that exists today — while
+**CSR4b carries D885's mutation machinery and does not start until U7's probe has returned**.
 
 **The task ids are prefixed `CSR`, and that is deliberate.** This design's tasks were `R1–R7` in an
 earlier draft, and the rigor work stream's own tasks are **R0** and **R1** — so wherever both are
@@ -48,7 +49,8 @@ merge path cannot run** (§1 and CSR7 say so).
 
 **The first slice is the smallest thing that lets a cloud run use a named OAuth account end to end:
 `fugaro accounts add` plus the reviewer job.** It is two dependencies that must land together — E1
-(the account) and CSR1/CSR7/CSR2 (a **job that mounts it read-only**, and the command that launches it) —
+(the account) and CSR1/CSR7/CSR2 (a **job that mounts no secret at all** and fetches its read-only
+token by name, and the command that launches it) —
 because either alone buys nothing the owner asked for: E1 alone makes `fugaro run --token` work (which
 is PR #1470's own subject), and a review job with no named account is a review on the installation's
 default token, which the coder's job already had.
@@ -101,7 +103,10 @@ must both hold before the chain works, and only one of them is reachable from `f
    reviewer's model calls through, admitted for the review run's account alone.
 
 So **CSR7 cannot run, CSR2 cannot run, and the coordinator's `ship` → merge path cannot be built** until
-E7 is met. **CSR1, CSR3, CSR4a and CSR4b are unaffected** — none of them launches or authenticates a job, and CSR3 in
+E7 is met. **And U7 holds the same `ship` path, not CSR4b alone:** the routing design **#1514**'s
+**D1074** (its **C3.9e**) makes the owner-run observation a precondition of the first slice's signed
+`ship` path, so that path is built after the probe returns as well. **CSR1, CSR3, CSR4a and CSR4b are
+unaffected** — none of them launches or authenticates a job, and CSR3 in
 particular is **runner-side and needs no command** (it says so in its own block, and it does not
 depend on CSR2). **CSR5 and CSR6 are gated transitively, through CSR2**: CSR5 ships the fix brief CSR2's `show`
 reads the artifact for, and CSR6 carries the gates and the notes for the command, so neither can finish
@@ -126,7 +131,8 @@ writes. Every task that touches a shared file takes it **alone**, and the others
 | `internal/runner/prompts.go` | CSR3, CSR4a, CSR4b, CSR5 | the review prompt, its template sections, and the fix brief's findings posture |
 | `internal/runner/reviewmode.go` | CSR2, CSR3, CSR4a, CSR4b | the review bootstrap and the comment path CSR2 stops taking; CSR4a's D894(a) half reads the base's `fugaro.yaml`, instructions and prompt here |
 | `internal/runner/runner.go` | CSR3, CSR4b, **only if** the hook is there — otherwise no task here | **reserved**: one writer across work streams. Every task prefers `reviewmode.go`; a task that needs the stage machine or the finalize path takes this file alone and says so (see the paragraph below) |
-| `schemas/` (new files only) | CSR3, CSR4b | each schema's own new file; no shared edit |
+| `internal/agent/settings.go` + `settings_test.go` | CSR4a, CSR4b | the one place the launch posture lives: CSR4a writes the managed-hooks-only, no-project-MCP, user-and-managed setting sources and the fresh home (D894(a)), and CSR4b adds D891(a)'s four deny rules to `DenyRules` afterwards. One task holds it at a time, and CSR4a goes first |
+| `schemas/` | CSR3, CSR4b | CSR3 **edits the existing `schemas/result.schema.json`** (O4's display-only `independent` tier) and adds `review.schema.json`; CSR4b adds its own new file. The edited schema is one writer's at a time |
 | `internal/cli/recipes_skew.go` | CSR2, CSR3, CSR6, CSR7 | one writer (CSR6) for the gate constants; CSR2/CSR3/CSR7 declare what they need |
 | `internal/infra/projectjobs.go` + `projectjobs_test.go` | CSR7 | the `ProjectJob` set the installation root deploys. CSR7 adds the review-only variant and its service account; nothing else here reads the set |
 | `internal/config/config.go` + `claude_accounts.go` | CSR7, E1 | `config.ProjectJobAccounts` is where a profile's job set is computed, and **E1's `accounts add` converges the same set**. CSR7 must not land a second spelling: it takes these after E1, alone |
@@ -348,6 +354,10 @@ than at what the token may do. **Depends on:** nothing. **This is standalone har
 exists today and it ships first** — it waits on U7 for nothing, on CSR3 for nothing and on E7 for
 nothing, and it tightens the `review` stage itself, so `fugaro run --pr N` gets the posture too.
 
+**The posture is review mode's and not the in-loop reviewer's: it applies to the standalone review job
+and to the `review` mode of `fugaro run --pr N`, while a coding run's own in-loop review rounds stay
+byte-for-byte as they are today until a later task tightens them.**
+
 - **The head's own configuration never loads (D894(a), O6).** The review stage's working directory is
   the pull request's head, and `claude -p` would otherwise read that head's `.claude/settings.json`
   (hooks and permission allows), its `.mcp.json`, its `CLAUDE.md`, its `.claude/rules` and its skills.
@@ -420,8 +430,11 @@ it launches only after U7's owner-run live observation has returned** (below).
   review --mutate` to answer U7 would need CSR2's command and this task's mutation code, and CSR4b may not
   start until U7 returns — a question asked by the thing whose existence it decides. So the probe is
   **standalone**: a one-off execution of the deployed job image whose entrypoint forks a child that
-  tries to reach the network and is fenced with a network namespace (`unshare -n` where the image has
-  it), recording whether the fence is available and whether it holds. **Check 125's step 7 is the
+  tries to reach the network **and the instance metadata server**, tries to read the parent's
+  environment through `/proc`, and is fenced with a network namespace (`unshare -n` where the image has
+  it) **and a PID namespace with its own `/proc` mount, or a different uid, whichever the platform
+  allows** — recording which of the three outcomes it saw, exactly as [spec.md](spec.md) §8's step 6
+  describes it. **Check 125's step 7 is the
   confirmation afterwards**, on the mutation path that actually uses the fence. **CSR4b does not start
   until step 6 has returned**, and **the answer decides the task**: if a child can be fenced, the rest
   of this task proceeds as written; **if it cannot, the task stops and the owner is asked again** —
@@ -634,7 +647,8 @@ on `/v1/messages`.**
   option (a)**: the **credentials service** signs `review.json`, and a verdict that does not verify is
   never a `ship`. That answer moved the signature **into** the plan — **CSR3** writes the signing client,
   the verifier and their refusal tests, and **CSR7** keeps the signing key **off** the review variant:
-  the job holds the Claude token and nothing else. What is still **not** here is the caller: **the
+  under **O1** that variant mounts **no secret at all** — no signing key and no Claude token. What is
+  still **not** here is the caller: **the
   coordinator** that reads an artifact, verifies it and merges on a verified `ship` is the
   coordinator's own work stream, and it **cannot be built until E7 is met** (§1), since the token the
   whole chain rests on comes from a service that is not yet enabled.
