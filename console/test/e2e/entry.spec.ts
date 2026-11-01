@@ -836,7 +836,9 @@ test.describe('the renderer entry, in the real window', () => {
         const row = document.querySelector('tr.live-run')
         ;(row as HTMLElement | null)?.click()
         const drawn = document.querySelector('div.console-panel')?.firstElementChild ?? null
-        const main = drawn?.querySelector('div.run-main') ?? null
+        // The record read's mark is on its own host and not on the whole column:
+        // the log window is the column's other child, and it wears its own.
+        const main = drawn?.querySelector('div.run-record') ?? null
         const logs = drawn?.querySelector('section.run-logs') ?? null
         return {
           drawn: drawn?.getAttribute('class') ?? null,
@@ -866,7 +868,7 @@ test.describe('the renderer entry, in the real window', () => {
       // own refusal naming its own command -- and no busy mark outlives them.
       await expect(panel.locator('h1.run-id')).toHaveText('20261015-120000-aa01')
       await expect(panel.locator('div.console-busy')).toHaveCount(0)
-      await expect(panel.locator('div.run-main > div.console-busy-slot .unavailable-operation')).toHaveText('run.diagnose')
+      await expect(panel.locator('div.run-record > div.console-busy-slot .unavailable-operation')).toHaveText('run.diagnose')
       await expect(panel.locator('section.run-logs .unavailable-operation')).toHaveText('run.logs')
     } finally {
       await close(launched)
