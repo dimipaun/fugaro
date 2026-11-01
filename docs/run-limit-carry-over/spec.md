@@ -144,9 +144,11 @@ states that rather than implying otherwise:
 
 - **A launcher — or the agent that shares its container — can drop a predecessor from the chain, or rewrite
   the limit up.** It **can** write and delete records under `runs/`: its grant is `objectUser` on the `runs/`
-  and `tokens/` prefixes, not on one run's
-  (`deploy/terraform/gcp/modules/installation/iam.tf:172-187`, F21), and the chain read sees exactly the
-  records it is given (T2, T4).
+  and `tokens/` prefixes, conditioned as a **prefix match** —
+  `resource.name.startsWith("projects/_/buckets/…/objects/runs/")` — so it is **not** confined to one run's
+  prefix but covers every run and every sub-path beneath `runs/`
+  (`deploy/terraform/gcp/modules/installation/iam.tf:172-190`, the condition at `:186`; F21), and the chain
+  read sees exactly the records it is given (T2, T4).
 - **Only the per-run cap and the daily and project caps are hard bounds**, because those are the database's
   own rules. A chain limit bounds an **honest orchestrator's** runaway spend, which is the failure it exists
   to close; it is not a defence against a hostile launcher, and this design does not sell it as one (T4, T5).
@@ -217,7 +219,8 @@ run's `task.json` `overrides` (§2), so raising it is an edit of that stored tas
 `runs/$slug/` — carrying the reason for the raise, which the record keeps the way its policy record already
 keeps the reason a looser value was dropped (`policy.ignored`, `internal/runstore/runstore.go:865`). **Said
 plainly, because the alternative is a claim this design cannot support: a launcher can do the same.** It holds
-`objectUser` on the `runs/` prefix (F21) and can rewrite that task exactly as an operator can, so the rule is
+`objectUser` on the `runs/` and `tokens/` prefixes (F21) and can rewrite that task exactly as an operator can,
+so the rule is
 a **convention the installation states**, not a bound the platform enforces — an honest launcher raises an
 exhausted chain by that path and records why, and a hostile one never needed permission. What is hard stays
 unchanged: the per-run cap and the daily and project caps are the database's own rules (§4's second bullet),
@@ -306,18 +309,25 @@ a run's record for this work. No member is renamed, retyped or removed, and no v
 
 **The rigor table's rows are not the ceilings a mode runs at** (F15). `RoundCeiling`
 (`internal/rigor/rounds.go:51-56`) is `min(max(n, minRoundCeiling), widestRoundCeiling)` with `minRoundCeiling`
-**2** and `widestRoundCeiling` 10, and the table's rows (`:31-38`) are POC 1, Startup 2, Pro 3, Critical the
-widest, Hotfix 1: **two of the five (POC's 1 and Hotfix's 1) sit below the floor and are lifted to 2; Pro's 3
-and Critical's 10 sit above it and are untouched.** An earlier draft said "every row is at or below the floor",
-which is false, and the claim that matters is the narrower one: **the ceiling a mode spends is what
-`RoundCeiling` returns** — today **POC 2, Startup 2, Pro 3, Critical 10, Hotfix 2** — quoted as an example of
-that function's output today, never as a table of its own.
+**2** and `widestRoundCeiling` **10**, and the table's rows (`:31-38`) are POC 1, Startup 2, Pro 3, Critical
+**`widestRoundCeiling` — the widest row, whose number is 10** — and Hotfix 1: **two of the five (POC's 1 and
+Hotfix's 1)
+sit below the floor and are lifted to 2; Pro's 3 and Critical's 10 sit above it and are untouched.** An
+earlier draft said "every row is at or below the floor", which is false, and the claim that matters is the
+narrower one: **the ceiling a mode spends is what `RoundCeiling` returns** — today **POC 2, Startup 2, Pro 3,
+Critical 10, Hotfix 2** — quoted as an example of that function's output today, never as a table of its own.
 
-**The owner's per-level loop defaults** (the rigor modes' open question **O3**, answered 2026-11-01): **poc
-1/1, startup 2/2, pro 3/3, critical 3/5, hotfix 1/1** — **defaults only**, recorded as the owner gave them;
-the rigor work that implements O3 names the pair. What this design takes from the answer is the rule rather
-than the numbers: **per run, the rounds are the level's default unless the recipe sets them**, capped by
-`RoundCeiling`'s output and by the chain's remaining.
+**The owner's per-level loop defaults** (given 2026-11-01): **poc 1/1, startup 2/2, pro 3/3, critical 3/5,
+hotfix 1/1** — **defaults only**, recorded as the owner gave them, with the two numbers of each pair named by
+the rigor work that implements them. **They are defaults, not the floor, and O3's recorded answer still
+stands:** the rigor modes' own record settles *"whether a mode may reduce the review round ceiling below
+today's default of 2"* with **"the floor stays 2 (`minRoundCeiling`)"** (the owner's ruling of 2026-10-27,
+`docs/rigor-modes/reconciliation.md`). A level whose default is 1 therefore still runs at 2 today, because
+`RoundCeiling` clamps it, and whether the floor itself moves is an edit the **rigor work** owns
+(`minRoundCeiling`, `internal/rigor/rounds.go`) — not one this design makes, and one that changes no figure
+here, because what this design quotes is `RoundCeiling`'s **output** either way. What it takes from the
+answer is the rule rather than the numbers: **per run, the rounds are the level's default unless the recipe
+sets them**, capped by that output and by the chain's remaining.
 
 `--max-review-rounds` therefore **refuses only against the chain's own limit, never against the mode's**
 (D1057): the mode's number is already the engine's clamp, and a per-launch limit that refused against it
@@ -357,7 +367,7 @@ boundary in exactly one place — it lets a launcher ask for limits — so the t
 | # | Threat | Why it fails, or what this design adds |
 | --- | --- | --- |
 | T1 | **A caller understates what was used** so the restart gets a fresh budget | `used` is read by the engine from the ledger (§4). A caller's `--used-*` is accepted only when it *raises* the charge (D1048). A caller that states a smaller figure is refused, naming both |
-| T2 | **The launcher forges a run record** with a smaller cost, deletes one, or drops a predecessor from its chain | It **can**: its grant is `objectUser` on the `runs/` and `tokens/` prefixes, not on one run's (`deploy/terraform/gcp/modules/installation/iam.tf:172-187`, F21), and the chain's membership lives in exactly those records (§4). What that buys it is a chain that reads **cheaper**, and saying so is the honest limit of this design: with the budget on, the *money* figure is the database's, so a forged cost changes no figure the engine reads — but a dropped predecessor is a chain the engine cannot see, and the per-run and daily caps are what stop the run that follows (D1046, T4) |
+| T2 | **The launcher forges a run record** with a smaller cost, deletes one, or drops a predecessor from its chain | It **can**: its grant is `objectUser` on the `runs/` and `tokens/` prefixes, a prefix match rather than one run's (`deploy/terraform/gcp/modules/installation/iam.tf:172-190`, the condition at `:186`; F21), and the chain's membership lives in exactly those records (§4). What that buys it is a chain that reads **cheaper**, and saying so is the honest limit of this design: with the budget on, the *money* figure is the database's, so a forged cost changes no figure the engine reads — but a dropped predecessor is a chain the engine cannot see, and the per-run and daily caps are what stop the run that follows (D1046, T4) |
 | T3 | **A launcher writes its own chain's ledger down**, with a token it minted for one of its runs | It cannot, for as long as the rules bind it. Every leaf is increase-only and `released + spent <= reserved` (`internal/budget/rules/rules.json.tmpl:56-91`), so `Reserved − Released >= Spent` in every reachable state and `Outstanding()` never falls below the settled spend (F20). A launcher holds `signJwt` and can mint a token for any `(slug, run)` (`docs/design/v1.md` §6.1, M9b known limits (2)) — and the most that buys it is to *raise* its own chain's charge. **`firebasedatabase.admin` is not bound by the rules at all** — it is IAM — and it is held by budget admins (`deploy/terraform/gcp/modules/firebase/iam.tf:53-59`), by the history account (`:81-85`) and by the coordinator's writer (`:138-143`), none of which is a launcher (`:44-50` gives launchers the **viewer** role) |
 | T4 | **A chain split** dodges the limit — a task restarted as a "new" chain that shares no link | The chain is derived from the link, and the link is what the launcher must name: a `--continues` the records cannot confirm (no such run, or a run not in this repository) is refused. A launcher that names *no* link gets a fresh chain — and **a launcher is trusted in this design**, because it can already mint a token for any run and can launch a first run with no limit at all (§2), so a hostile launcher is out of scope here rather than defeated by this. What the link closes is an **honest** orchestrator's runaway restart loop; what stays hard is the per-run cap and the **daily and project caps**, whose counters are per (repository, day) and per (project, day) whatever any chain says (`internal/budget/model.go:249-266`) |
 | T5 | **The agent** (which shares the container) understates the chain it is in | It holds no launcher credential and no budget admin, so it can move no hard bound — but the chain's membership and limit are run records, and the job's own account writes records under `runs/<slug>/` (`deploy/terraform/gcp/modules/workflow/sa.tf:22-35`), so a compromised container **can** drop a predecessor from its chain and rewrite a limit written there. That is the residual `docs/design/v1.md` §6.1 already documents, and it is why §4 says in as many words that a chain bounds an **honest** orchestrator: what the container cannot reach is the per-run, daily and project caps |

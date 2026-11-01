@@ -153,7 +153,13 @@ batch is N chains, not one.
   chain's remaining, and a refusal names that output — today POC 2, Startup 2, Pro 3, Critical 10, Hotfix 2.
   `RoundCeiling` (`internal/rigor/rounds.go:51-56`) is `min(max(n, minRoundCeiling=2), widestRoundCeiling=10)`
   and **two of the table's five rows sit below the floor** (POC 1, Hotfix 1) while **two sit above it** (Pro 3
-  and Critical 10), so the code quotes the function's answer and never the row (F15).
+  and Critical 10), so the code quotes the function's answer and never the row (F15). The owner's per-level
+  **defaults** given 2026-11-01 (poc 1/1, startup 2/2, pro 3/3, critical 3/5, hotfix 1/1) do not change
+  that: O3's recorded ruling keeps the floor at **2** (`docs/rigor-modes/reconciliation.md` §8), so a level
+  whose default is 1 still runs at 2 today, and whether the *floor* moves is the rigor work's edit of
+  `minRoundCeiling` — nothing here. **So the two tests below call `RoundCeiling` and assert against its
+  return, never against a literal transcribed from either table**, which is what keeps them correct whichever
+  way that question is settled.
 - **Red step:** `TestRunRefusesALooseningLimit` fails while `--max-usd` does not exist;
   `TestRunGatesTheLimitsOnTheImage` fails while the gate is absent.
 - **Tests:** `TestRunRefusesALooseningLimit` (both numbers and the layer named),
@@ -245,7 +251,8 @@ the gateway changes (D1059). The ledger figures it can read are its own run's (L
 A chain limit is a launcher's number held in the **root launch's `task.json`** (D1046), so raising an
 exhausted chain is a **rewrite of that stored task, with the reason for the raise recorded** — no new command
 and no new node (F22, spec §4). The design does not pretend a launcher cannot do it: a launcher holds
-`objectUser` on `runs/` (F21), so what this task builds is the **supported path** an honest launcher uses, and
+`objectUser` on the `runs/` and `tokens/` prefixes (F21), so what this task builds is the **supported path**
+an honest launcher uses, and
 the reason it is a convention rather than a platform-enforced bound is written where a reader finds it
 (spec §9).
 

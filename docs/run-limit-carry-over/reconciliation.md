@@ -123,9 +123,15 @@ force today are **POC 2, Startup 2, Pro 3, Critical 10, Hotfix 2**. An earlier d
 row is at or below the floor", which is false for two of the five rows, and the corrected claim is the
 narrower one — quote **`RoundCeiling`'s output**, never the table's row. *Consequence:* `--max-review-rounds`
 composes under that output and the engine's own refusal names it (spec §8, D1057). **The owner's per-level
-loop defaults** — the rigor modes' open item **O3**, answered 2026-11-01 — are **poc 1/1, startup 2/2, pro
-3/3, critical 3/5, hotfix 1/1**: **defaults only**, and recorded as the owner gave them. Per run the rounds
-are the level's default unless the recipe sets them, capped by `RoundCeiling`'s output and by the chain's
+loop defaults** — given 2026-11-01 — are **poc 1/1, startup 2/2, pro 3/3, critical 3/5, hotfix 1/1**:
+**defaults only**, recorded as the owner gave them. **They are not O3's answer, and O3 is not contradictory
+with them:** the rigor modes' own record settles O3 ("whether a mode may reduce the review round ceiling
+below today's default of 2") with the owner's 2026-10-27 ruling that **the floor stays 2
+(`minRoundCeiling`)** (`docs/rigor-modes/reconciliation.md` §8). A level whose default is 1 therefore runs
+at **2** today, the floor `RoundCeiling` clamps it to, and whether the *floor* moves is an edit of
+`minRoundCeiling` in `internal/rigor/rounds.go` that the **rigor work** owns. Nothing here moves with it:
+this design quotes `RoundCeiling`'s output, so the figures in F15 are the same either way. Per run the
+rounds are the level's default unless the recipe sets them, capped by that output and by the chain's
 remaining (spec §8).
 
 **F16: Missing on `main`. The cloud senior review is an open design, not code.** `docs/cloud-senior-review/`
@@ -186,8 +192,9 @@ performs the chain read and the runner re-reads only its own (spec §3; plan L1)
 
 **F21: Conflicts. Who can write the run record, and who can write the ledger, are different questions.**
 The launcher's grant is `roles/storage.objectUser` on the runs bucket conditioned on `runs/` **and**
-`tokens/` (`deploy/terraform/gcp/modules/installation/iam.tf:172-187`), so a launcher **may write,
-overwrite and delete run records under `runs/`** — it is not confined to its own run's prefix. A job's own
+`tokens/` (`deploy/terraform/gcp/modules/installation/iam.tf:172-190`, the condition at `:186`), so a
+launcher **may write, overwrite and delete run records under `runs/`** — it is not confined to its own run's
+prefix. A job's own
 account is `roles/storage.objectUser` conditioned on `runs/<slug>/`, `cache/<slug>/` and `locks/<slug>/`
 (`deploy/terraform/gcp/modules/workflow/sa.tf:22-35`), and per `docs/design/v1.md` §6.1 **"the condition
 names objects, so it also denies listing the bucket… The runner never lists"** — and the agent shares the
@@ -205,29 +212,36 @@ owner's (the database, `fugaro budget set`) or the launcher's (a launch argument
 **launcher's** number (D1045). Because that number lives in the **root launch's `task.json`** (D1046), raising
 an exhausted chain is a **rewrite of that stored task**, carrying the reason for the raise — no new command,
 no new node and no operator-only write path. *What that costs, said plainly because the alternative is a claim
-the tree does not support:* the launcher holds `objectUser` on `runs/` (F21) and can rewrite that task exactly
-as an operator can, so this is a **convention the installation states**, not a bound the platform enforces —
+the tree does not support:* the launcher holds `objectUser` on the `runs/` and `tokens/` prefixes (F21) and
+can rewrite that task exactly as an operator can, so this is a **convention the installation states**, not a
+bound the platform enforces —
 an honest launcher raises by that path and records why, and the per-run and daily caps stay hard
 either way (spec §4, §6; D1061).
 
 ## 2. What is missing, and what conflicts
 
-- **Missing:** a launch flag for any of the four dimensions except time (F1); a whole-run token total in
+**Three statuses, one per bullet below, and a bullet's status is its first words:** *missing*, *conflicts*,
+and *settled — no longer a conflict*. Only the first two are work; the third is a question this folder
+raised, the owner answered on 2026-11-01, and nothing further is needed for.
+
+- **Missing.** A launch flag for any of the four dimensions except time (F1); a whole-run token total in
   the fallback record (F8); `runs show` (F9); any engine read of "what a chain already used" (F7 exists as
   data, not as a read); and a **carrier** for a chain's membership and its limit, which this design answers
   with the run records themselves and no new node (F22, D1046).
-- **Conflicts:** the per-run cap's carrier is the job environment, which a launch cannot write (F3); the
+- **Conflicts.** The per-run cap's carrier is the job environment, which a launch cannot write (F3); the
   one existing per-launch limit may raise (F18), so the new family is separate rather than a reuse; the
   policy layer has no member for two of the four dimensions and its third layer has no name of its own
   (F4); two of the rigor table's five rows sit below a floor, so *`RoundCeiling`'s output* is the ceiling and
   not the row (F15); and the run records are neither listable by the runner nor writable by the launcher alone
   (F21).
-- **No longer a conflict, by the owner's answer (2026-11-01):** the ledger question. The budget database
-  already holds a per-run ledger whose every leaf is increase-only (F20), so the *money and token* figures of
-  a chain have an answer in the tree and need no new node, no rules change and no new wire field. What the
-  owner's answer does **not** claim is that the chain is enforced: its membership and its limit live in the
-  run records, which a launcher or a compromised container can rewrite, so the chain bounds an honest
-  orchestrator and the hard bounds stay the per-run and daily caps (spec §4, §9).
+- **Settled — no longer a conflict, by the owner's answer (2026-11-01): the ledger question.** The budget
+  database already holds a per-run ledger whose every leaf is increase-only (F20), so the *money and token*
+  figures of a chain have an answer in the tree and need no new node, no rules change and no new wire field.
+  Nothing is left to decide or to build for it; the reading is carried into the spec (spec §4). *What the
+  answer does not claim*, recorded with it so nobody reads more into it than it says: the chain is **not
+  enforced**. Its membership and its limit live in the run records, which a launcher or a compromised
+  container can rewrite, so the chain bounds an honest orchestrator and the hard bounds stay the per-run and
+  daily caps (spec §4, §9).
 - **The image skew.** `task.Parse` decodes with `DisallowUnknownFields` (`internal/task/task.go:863`), so a
   job image whose runner predates the new `overrides` members refuses the whole task. Every other field
   added to a task is gated by `checkImageSince` (`internal/cli/recipes_skew.go:700`) against a `*Since`
@@ -270,7 +284,7 @@ in [README.md](README.md) §"Numbers this work holds"; the open pull requests' n
 | **D1058** | The cloud senior reviewer | **A review job on PR N joins the PR's chain by its PR link, and the chain's `--max-review-rounds` counts senior-review iterations** — it is what bounds that design's review-fix loop. It does not open a chain of its own. | Folding the reviewer into the coding chain by *budget merge* rather than by link: it is a different job on a different account, and the link is what the chain already means (F16) |
 | **D1059** | The gateway's lease and the daily caps | **Nothing changes: the chain hands the gateway a smaller cap and the database's day caps keep binding.** | Teaching the gateway the chain puts a second budget in the enforcement path, in the one component the whole spend story rests on (F6, F14) |
 | **D1060** | Clock skew in the chain's time read | **Take the larger of the record's elapsed time and the sum of its stages' `duration_s`.** | Trusting `started_at` alone lets a record whose start is moved forward report less elapsed time |
-| **D1061** | How does an exhausted chain get raised? | **By rewriting the root launch's `task.json` `overrides`, with the reason for the raise recorded** — the limit lives in that record (D1046), so no new command, no new node and no operator-only write path is needed. **Stated with it, because it is the honest reading: a launcher can do the same.** | Calling it operator-only would be a claim the platform does not enforce: a launcher holds `objectUser` on `runs/` (F21) and can rewrite the task itself, so the rule is a **convention the installation states** — an honest launcher raises through that path and records why, and the per-run and daily caps stay hard either way (F22, spec §4, §6) |
+| **D1061** | How does an exhausted chain get raised? | **By rewriting the root launch's `task.json` `overrides`, with the reason for the raise recorded** — the limit lives in that record (D1046), so no new command, no new node and no operator-only write path is needed. **Stated with it, because it is the honest reading: a launcher can do the same.** | Calling it operator-only would be a claim the platform does not enforce: a launcher holds `objectUser` on the `runs/` and `tokens/` prefixes (F21) and can rewrite the task itself, so the rule is a **convention the installation states** — an honest launcher raises through that path and records why, and the per-run and daily caps stay hard either way (F22, spec §4, §6) |
 
 ## 4. Open items this work found and did not decide
 
@@ -297,6 +311,6 @@ question this design does not answer. The spec states the mode and its limit pla
 | # | Claim | Why it is not verified here |
 | --- | --- | --- |
 | U1 | That Cloud Run's `jobs.run` override cannot carry environment variables | Read off the Go client's API surface and the backend seam, not against the live API; the answer does not depend on it (D1041 carries the limits in the task either way) |
-| U2 | ~~That a launcher's write grant on the runs bucket is its own run's prefix only~~ | **Withdrawn.** The grant's own condition (`deploy/terraform/gcp/modules/installation/iam.tf:172-187`) names `runs/` and `tokens/`, not one run's prefix, so a launcher can write and delete any repository record under `runs/`. F21 records the fact and D1046 is what it costs the design |
+| U2 | ~~That a launcher's write grant on the runs bucket is its own run's prefix only~~ | **Withdrawn.** The grant's own condition (`deploy/terraform/gcp/modules/installation/iam.tf:172-190`, `:186`) names `runs/` and `tokens/` as **prefix matches**, not one run's prefix, so a launcher can write and delete any repository record under `runs/`. F21 records the fact and D1046 is what it costs the design |
 | U3 | The exact cost of the `runs show` read over a long chain | `docs/console-coordinator-v2/spec.md:131` measures `runs ls --json --since 24h` at about 5.8 s; a chain read is one resolution plus the chain's ledgers, unmeasured |
 | U4 | ~~Whether a chain's ledger read may cross runs~~ | **Settled, and no longer an open item.** `runs/$slug/$run` carries `.read: "RUN"` and nothing else (`internal/budget/rules/rules.json.tmpl:56-57`), and `RUN` requires `auth.token.fs == $slug && auth.token.fr == $run` (`internal/budget/rules/rules.go:580`), so **a run's token cannot read a sibling's ledger** — `USER` reaches only `spend/<day>/runs/$slug/$run`. The read is therefore the **launcher's**, which already holds `roles/firebasedatabase.viewer` (`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`) and reads every path, and the runner re-reads only its **own** ledger plus the chain's records (spec §3, §4; plan L1). The earlier draft called this an admin read and made it the plan's one blocking pre-work item; both were wrong — the launcher holds the **viewer** role, not the admin one — and the answer changes **who performs the read, not one figure and not one test** |
