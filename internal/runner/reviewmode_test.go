@@ -2051,19 +2051,21 @@ func TestReviewStageRefusesProjectHooksAndMCP(t *testing.T) {
 			})
 			addPR(h, 7, "feature", "")
 			var raw, home string
+			var argv []string
 			read := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 				_, _, raw = settingsEnv(t, h)
 				home = envValue(req.Env, "HOME")
+				argv = agent.Args(req)
 				return reviewVerdictStep("ship", nil)(t, ctx, req)
 			}
 			if _, err := h.run(t, read); err != nil {
 				t.Fatal(err)
 			}
 			var s struct {
-				DisableAllHooks            *bool    `json:"disableAllHooks"`
-				AllowManagedHooksOnly      *bool    `json:"allowManagedHooksOnly"`
-				EnableAllProjectMcpServers *bool    `json:"enableAllProjectMcpServers"`
-				SettingSources             []string `json:"settingSources"`
+				DisableAllHooks            *bool
+				AllowManagedHooksOnly      *bool
+				AllowManagedMcpServersOnly *bool
+				AllowedMcpServers          *[]string
 			}
 			if err := json.Unmarshal([]byte(raw), &s); err != nil {
 				t.Fatalf("managed settings %s: %v", raw, err)
@@ -2074,11 +2076,27 @@ func TestReviewStageRefusesProjectHooksAndMCP(t *testing.T) {
 			if s.DisableAllHooks == nil || !*s.DisableAllHooks {
 				t.Errorf("the review stage's settings do not refuse every hook: %s", raw)
 			}
-			if s.EnableAllProjectMcpServers == nil || *s.EnableAllProjectMcpServers {
-				t.Errorf("the review stage's settings do not refuse project MCP servers: %s", raw)
+			if s.AllowManagedMcpServersOnly == nil || !*s.AllowManagedMcpServersOnly {
+				t.Errorf("the review stage's settings do not restrict MCP servers to the managed file's: %s", raw)
 			}
-			if !slices.Equal(s.SettingSources, []string{"user", "managed"}) {
-				t.Errorf("the review stage's setting sources = %v, want [user managed]: %s", s.SettingSources, raw)
+			if s.AllowedMcpServers == nil || len(*s.AllowedMcpServers) != 0 {
+				t.Errorf("the review stage's MCP allow-list is absent or not empty: %s", raw)
+			}
+			// The mechanism, not just the file: setting-source selection is a
+			// flag and a project-scoped MCP server loads under `claude -p`
+			// whatever a settings file says, so the argv is half of the
+			// posture and the only half that reaches those two.
+			if !slices.Contains(argv, "--strict-mcp-config") {
+				t.Errorf("the review stage's argv reads every other MCP configuration: %q", argv)
+			}
+			i := slices.Index(argv, "--setting-sources")
+			if i < 0 || i+1 >= len(argv) || argv[i+1] != "user" {
+				t.Errorf("the review stage's argv does not take its setting sources from the user level alone: %q", argv)
+			}
+			for _, dead := range []string{"settingSources", "enableAllProjectMcpServers"} {
+				if strings.Contains(raw, dead) {
+					t.Errorf("the review stage's settings carry %s, which enforces nothing: %s", dead, raw)
+				}
 			}
 			if home == "" || home == envValue(h.deps.Env, "HOME") {
 				t.Errorf("the review stage ran with the image's own HOME %q, not a fresh one", home)

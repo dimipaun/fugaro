@@ -71,15 +71,15 @@ func DenyRules(denyWeb, review bool) []string {
 	return deny
 }
 
-// ReviewHomeName is the directory, under the run's state directory, that a
-// review stage's session uses as HOME.
-const ReviewHomeName = "review-home"
-
-// reviewSettingSources are the settings levels a review stage's session
-// reads: the user's (which ReviewHome makes an empty directory of its own)
-// and the managed file. The project level is the reviewed pull request's own
-// checkout, which is exactly what the reviewer must not be configured by.
-var reviewSettingSources = []string{"user", "managed"}
+// ReviewSettingSources are the setting sources a review-mode stage is
+// launched with (--setting-sources, agent.Request.SettingSources): the user
+// level alone. The project and local levels are the reviewed pull request's
+// own checkout, which is exactly what the reviewer must not be configured by,
+// and the user level is empty because the stage runs with a home of its own
+// (ReviewHome). Setting-source selection exists only as this flag and as the
+// SDK option — it is not a settings key at all — so a managed file can
+// neither state it nor take it away.
+var ReviewSettingSources = []string{"user"}
 
 type managedSettings struct {
 	Env         map[string]string `json:"env"`
@@ -89,10 +89,10 @@ type managedSettings struct {
 	// The review stage's posture, below, and absent from every other
 	// stage's file: pointers, so a stage that sets none of them writes no
 	// such key and "false" is a value rather than an omission.
-	DisableAllHooks            *bool    `json:"disableAllHooks,omitempty"`
-	AllowManagedHooksOnly      *bool    `json:"allowManagedHooksOnly,omitempty"`
-	EnableAllProjectMcpServers *bool    `json:"enableAllProjectMcpServers,omitempty"`
-	SettingSources             []string `json:"settingSources,omitempty"`
+	DisableAllHooks            *bool     `json:"disableAllHooks,omitempty"`
+	AllowManagedHooksOnly      *bool     `json:"allowManagedHooksOnly,omitempty"`
+	AllowManagedMcpServersOnly *bool     `json:"allowManagedMcpServersOnly,omitempty"`
+	AllowedMcpServers          *[]string `json:"allowedMcpServers,omitempty"`
 }
 
 // reviewPosture turns on the review stage's posture (D894(a)). The review
@@ -102,22 +102,35 @@ type managedSettings struct {
 // and its ordinary egress, which no deny rule on the agent's own tools
 // reaches. The strip (the runner's stripClaudeConfig) is one deletion from
 // one code path, so the launch is the boundary as well: hooks from the
-// managed file alone (and that file declares none, so none run at all), no
-// project MCP server, and setting sources from the user and managed levels —
-// never the project's.
+// managed file alone (and that file declares none, so none run at all), and
+// no MCP server from anywhere but the managed file — of which there are none,
+// since allowedMcpServers is empty.
+//
+// Two keys this posture used to carry are gone because neither of them did
+// anything. settingSources is not a settings key at all — setting-source
+// selection is the --setting-sources flag (ReviewSettingSources), which the
+// review-mode stage passes — and enableAllProjectMcpServers: false blocks
+// nothing: under `claude -p` a project-scoped MCP server loads without
+// asking. The MCP keys here and --strict-mcp-config (the same stage's argv)
+// are what actually refuse one.
 func (s *managedSettings) reviewPosture() {
-	no, yes := false, true
+	yes, none := true, []string{}
 	s.DisableAllHooks, s.AllowManagedHooksOnly = &yes, &yes
-	s.EnableAllProjectMcpServers = &no
-	s.SettingSources = reviewSettingSources
+	s.AllowManagedMcpServersOnly = &yes
+	s.AllowedMcpServers = &none
 }
+
+// ReviewHomeName is the directory, under the run's state directory, that a
+// review stage's session uses as HOME.
+const ReviewHomeName = "review-home"
 
 // ReviewHome returns the directory a review stage's session runs with as
 // HOME, creating it 0700 under stateDir (D894(a)). The image's own home is
 // the user level of Claude Code's settings, so a settings file baked into
 // the image would contribute a rule to a session that reads a pull request
 // it must not trust; a fresh, empty directory is what leaves that level with
-// nothing in it.
+// nothing in it — and ReviewSettingSources names that same level, so the
+// session reads the empty one.
 func ReviewHome(stateDir string) (string, error) {
 	home := filepath.Join(stateDir, ReviewHomeName)
 	if err := os.MkdirAll(home, 0o700); err != nil {

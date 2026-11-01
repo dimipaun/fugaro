@@ -534,7 +534,13 @@ func (r *run) reviewMode(ctx context.Context) {
 	if len(r.reviewHeads) == 1 {
 		prompt = r.reviewPromptWithInput(ctx, prompt)
 	}
-	req := agent.Request{Prompt: prompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+	req := agent.Request{Prompt: prompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema,
+		// The two flags that keep the reviewed head's own configuration out
+		// of the session, which the managed file cannot do on its own
+		// (D894(a)): setting-source selection is a flag and not a settings
+		// key, and a project-scoped MCP server loads under `claude -p`
+		// whether or not a settings file asks for it.
+		SettingSources: agent.ReviewSettingSources, StrictMCPConfig: true}
 	res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 	r.countTokens(res)
 	if !ok {
