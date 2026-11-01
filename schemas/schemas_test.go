@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/tier"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -2562,6 +2563,44 @@ func TestRecipeSchemaDigestStepsMatchGo(t *testing.T) {
 	}
 }
 
+// TestRecipeSchemaAdversarialStepsMatchGo pins the schema's step shape for
+// the adversarial step (review level 3, D720) against recipe.Parse, shape by
+// shape: the step comes after the review and last of all, so the schema has
+// to accept it exactly where the parser does — with or without a first_line
+// step before the pair, with or without the leading check, and with the
+// bounce only where a first_line step exists to bounce to. A schema wider
+// than the parser accepts a recipe file the CLI would refuse, and one that is
+// narrower refuses a recipe that runs.
+func TestRecipeSchemaAdversarialStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	for _, tc := range []struct{ name, text string }{
+		{"review then adversarial", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: {}\n"},
+		{"first line then the pair", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: {}\n"},
+		{"check before the pair", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - review: {}\n  - adversarial: {}\n"},
+		{"check before all three", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - first_line: {}\n  - review: {}\n  - adversarial: {}\n"},
+		{"both bounce", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - adversarial: { bounce: first_line }\n"},
+		{"only the adversarial bounces", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: { bounce: first_line }\n"},
+		{"rounds on both", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: { max_rounds: 3 }\n  - adversarial: { max_rounds: 10 }\n"},
+		{"adversarial before the review", "version: 1\nname: a\nsteps:\n  - adversarial: {}\n  - review: {}\n"},
+		{"adversarial without a review", "version: 1\nname: a\nsteps:\n  - adversarial: {}\n"},
+		{"adversarial twice", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: {}\n  - adversarial: {}\n"},
+		{"a step after the adversarial", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: {}\n  - first_line: {}\n"},
+		{"adversarial bounce with no first line", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: { bounce: first_line }\n"},
+		{"adversarial bounce on the wrong target", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: { bounce: review }\n"},
+		{"adversarial rounds over the maximum", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: { max_rounds: 11 }\n"},
+		{"adversarial with an unknown knob", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: { rounds: 2 }\n"},
+		{"adversarial in a mode review recipe", "version: 1\nname: a\nmode: review\nsteps:\n  - review: {}\n  - adversarial: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
+	}
+}
+
 func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for _, f := range globAll(t, "../testdata/config/layered/valid/*.yaml") {
@@ -3906,4 +3945,329 @@ func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	if len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
 		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout naming 0.15.0", ps)
 	}
+}
+
+// TestTaskSchemaReviewLevelsMatchesTheGoField ties task.schema.json's
+// `review_levels` property to the Go type it mirrors (task.Spec.ReviewLevels,
+// config.ReviewLevels): the schema is additionalProperties: false, so a
+// property missing here, or one of the block's keys named differently from
+// the Go field's own JSON tag, makes every task a launcher writes with levels
+// schema-invalid — and only the schema's consumers would notice, since no Go
+// test reads this document (the defect that made the plan_task, oauth_token
+// and compression_off properties necessary, one field at a time).
+//
+// The enum and the cap are read from config's own constants rather than
+// restated, and the documents below are marshalled from task.Spec, so
+// renaming either side's spelling, moving the bound or dropping a value from
+// the closed set stops the two agreeing.
+//
+// Mutation (rename the property to `reviewLevels` in schemas/task.schema.json,
+// or drop one of the five effort values from its enum): the document carrying
+// the block is rejected as an unknown key, or the level at that effort is,
+// and this fails.
+func TestTaskSchemaReviewLevelsMatchesTheGoField(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Defs       map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.Properties["review_levels"]
+	if !ok {
+		t.Fatal("task.schema.json has no review_levels property: a task carrying one is schema-invalid (additionalProperties: false)")
+	}
+	var block struct {
+		AdditionalProperties *bool                      `json:"additionalProperties"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatal(err)
+	}
+	if block.AdditionalProperties == nil || *block.AdditionalProperties {
+		t.Error("review_levels does not carry additionalProperties: false: a key beside l1, l2 and l3 would be read by nobody")
+	}
+	if want := []string{"l1", "l2", "l3"}; !sameStrings(keysOf(t, block.Properties), want) {
+		t.Errorf("review_levels properties = %v, want %v (config.ReviewLevels' own three levels)", keysOf(t, block.Properties), want)
+	}
+	// Every level is the one object, by $ref, so the three cannot drift
+	// apart from each other.
+	for _, level := range []string{"l1", "l2", "l3"} {
+		var ref struct {
+			Ref string `json:"$ref"`
+		}
+		if err := json.Unmarshal(block.Properties[level], &ref); err != nil {
+			t.Fatal(err)
+		}
+		if ref.Ref != "#/$defs/level" {
+			t.Errorf("review_levels.%s = %q, want a $ref to #/$defs/level, the one level object", level, ref.Ref)
+		}
+	}
+	raw, ok = doc.Defs["level"]
+	if !ok {
+		t.Fatal("task.schema.json has no $defs.level: every review level's $ref points at nothing")
+	}
+	var level struct {
+		AdditionalProperties *bool `json:"additionalProperties"`
+		Properties           map[string]struct {
+			Type      string   `json:"type"`
+			Enum      []string `json:"enum"`
+			MaxLength int      `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &level); err != nil {
+		t.Fatal(err)
+	}
+	if level.AdditionalProperties == nil || *level.AdditionalProperties {
+		t.Error("$defs.level does not carry additionalProperties: false: a key inside a level would be read by nobody")
+	}
+	if want := []string{"effort", "focus", "model", "none"}; !sameStrings(keysOf(t, level.Properties), want) {
+		t.Errorf("$defs.level properties = %v, want %v (config.LevelSetting's own four keys, `none` being Off's tag)", keysOf(t, level.Properties), want)
+	}
+	if got := level.Properties["effort"].Enum; !slices.Equal(got, config.Efforts) {
+		t.Errorf("$defs.level.effort enum = %v, want config.Efforts %v", got, config.Efforts)
+	}
+	if got := level.Properties["focus"].MaxLength; got != config.MaxLevelFocusBytes {
+		t.Errorf("$defs.level.focus maxLength = %d, want config.MaxLevelFocusBytes %d", got, config.MaxLevelFocusBytes)
+	}
+	if got := level.Properties["none"].Type; got != "boolean" {
+		t.Errorf("$defs.level.none type = %q, want boolean (config.LevelSetting.Off)", got)
+	}
+
+	// Both readers see the same document: the schema validates the JSON, and
+	// task.Parse is what the runner does with it. The block's own rules are
+	// the decoder's, so a document either reader refuses and the other
+	// accepts is the drift this test exists for — each case asserts both.
+	sch := compile(t, "task.schema.json")
+	agree := func(t *testing.T, s task.Spec) (schemaErr, parseErr error) {
+		t.Helper()
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, parseErr = task.Parse(data)
+		return sch.Validate(inst), parseErr
+	}
+	base := task.Spec{Version: 1, RunID: "20261031-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	spec := func(r *config.ReviewLevels) task.Spec {
+		s := base
+		s.ReviewLevels = r
+		return s
+	}
+	for _, tc := range []struct {
+		name string
+		s    task.Spec
+		ok   bool
+	}{
+		{"no levels", spec(nil), true},
+		{"all three levels", spec(&config.ReviewLevels{
+			L1: &config.LevelSetting{Model: "claude-haiku-4-5"},
+			L2: &config.LevelSetting{Off: true},
+			L3: &config.LevelSetting{Model: "claude-opus-5-5", Effort: "xhigh", Focus: "the migration and its rollback"},
+		}), true},
+		{"the lowest and the highest effort", spec(&config.ReviewLevels{
+			L1: &config.LevelSetting{Effort: config.Efforts[0]},
+			L3: &config.LevelSetting{Effort: config.Efforts[len(config.Efforts)-1]},
+		}), true},
+		{"a focus at the cap in ASCII", spec(&config.ReviewLevels{
+			L3: &config.LevelSetting{Focus: strings.Repeat("a", config.MaxLevelFocusBytes)},
+		}), true},
+		{"an effort outside the closed set", spec(&config.ReviewLevels{
+			L3: &config.LevelSetting{Effort: "auto"},
+		}), false},
+		{"a focus over the cap in ASCII", spec(&config.ReviewLevels{
+			L3: &config.LevelSetting{Focus: strings.Repeat("a", config.MaxLevelFocusBytes+1)},
+		}), false},
+		{"none: true beside a model", spec(&config.ReviewLevels{
+			L2: &config.LevelSetting{Off: true, Model: "claude-opus-5-5"},
+		}), false},
+	} {
+		schemaErr, parseErr := agree(t, tc.s)
+		if tc.ok && (schemaErr != nil || parseErr != nil) {
+			t.Errorf("%s: schema = %v, task.Parse = %v, want both to accept", tc.name, schemaErr, parseErr)
+		}
+		if !tc.ok && schemaErr == nil && parseErr == nil {
+			t.Errorf("%s: both readers accepted the document", tc.name)
+		}
+	}
+}
+
+// keysOf returns m's keys, sorted, for a comparison that does not depend on
+// the order a JSON object was written in.
+func keysOf[V any](t *testing.T, m map[string]V) []string {
+	t.Helper()
+	if m == nil {
+		t.Fatal("the object has no properties")
+	}
+	return slices.Sorted(maps.Keys(m))
+}
+
+// TestSettingsSchema holds schemas/settings.schema.json to the registry and to
+// the command that writes the document. The document's rows are dynamic — one
+// per key and scope — so the schema cannot pin them by name; what it can pin,
+// and what this test checks, is that the schema loads, that its layer
+// vocabulary is settings.Layers (the same list --layer takes) and that its
+// $defs.keyDefaults carries every registry key with the default the registry
+// gives it. That is the DEFAULT column's contract written down where a
+// consumer of the JSON document can read it, and D841's "pinned by a test
+// rather than generated": the values are written out here, and this test is
+// what makes a row that moves without them red.
+//
+// The document itself is validated against this schema by
+// TestSettingsJSONMatchesSchema in internal/cli, which is where the command
+// that writes it lives.
+func TestSettingsSchema(t *testing.T) {
+	data, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	defs, ok := doc["$defs"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs")
+	}
+	// A schema that does not compile is a schema nobody can use, and the
+	// $refs between $defs are exactly where a hand edit breaks.
+	compile(t, "settings.schema.json")
+
+	wantLayers := settings.Layers
+	if got := stringsOf(t, defs, "source", "properties", "layer", "enum"); !slices.Equal(got, wantLayers) {
+		t.Errorf("$defs.source: the layer enum is %v, and settings.Layers is %v", got, wantLayers)
+	}
+	// WINS and --why's level name where a value came from, which is a layer of
+	// settings.Layers — or `profile <name>` when one of the project layer's
+	// profiles decided it, the spelling config.SourceProfile holds and spec
+	// §2.2 says is config show's own. The two nodes share one definition, so a
+	// consumer reads one vocabulary and WINS cannot accept what a level does
+	// not.
+	dec, ok := defs["decider"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs.decider")
+	}
+	branches, ok := dec["anyOf"].([]any)
+	if !ok || len(branches) != 2 {
+		t.Fatalf("$defs.decider: want an anyOf of two branches — the layer names and the profile form — got %v", dec["anyOf"])
+	}
+	first, ok := branches[0].(map[string]any)
+	if !ok {
+		t.Fatalf("$defs.decider: the first branch is %v, not the layer list", branches[0])
+	}
+	if got := stringsOf(t, first, "enum"); !slices.Equal(got, wantLayers) {
+		t.Errorf("$defs.decider: the layer enum is %v, and settings.Layers is %v", got, wantLayers)
+	}
+	second, ok := branches[1].(map[string]any)
+	if !ok {
+		t.Fatalf("$defs.decider: the second branch is %v, not the profile form", branches[1])
+	}
+	pattern, _ := second["pattern"].(string)
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("$defs.decider: the profile pattern %q does not compile: %v", pattern, err)
+	}
+	for _, want := range []string{config.SourceProfile("svc"), config.SourceProfile("node-web-2")} {
+		if !re.MatchString(want) {
+			t.Errorf("$defs.decider: the pattern %q refuses %q, which a profile source is", pattern, want)
+		}
+	}
+	// A bare `profile` is the layer, and the enum's member: the pattern must
+	// not be the thing that admits it, or the list would stop being the pin.
+	if re.MatchString(settings.LayerProfile) {
+		t.Errorf("$defs.decider: the pattern %q matches %q, so a bare layer name comes in through the profile branch", pattern, settings.LayerProfile)
+	}
+	for _, tc := range []struct{ def, path string }{
+		{"row", "row.properties.wins"},
+		{"level", "level.properties.layer"},
+	} {
+		node := nodeOf(t, defs, strings.Split(tc.path, ".")...)
+		if got, _ := node["$ref"].(string); got != "#/$defs/decider" {
+			t.Errorf("$defs.%s: %s is %v, and it is the decider vocabulary", tc.def, tc.path, node)
+		}
+	}
+
+	kd, ok := defs["keyDefaults"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs.keyDefaults")
+	}
+	props, ok := kd["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("$defs.keyDefaults has no properties")
+	}
+	rows := settings.Rows()
+	if len(props) != len(rows) {
+		t.Errorf("$defs.keyDefaults carries %d keys, and the registry has %d rows", len(props), len(rows))
+	}
+	for _, r := range rows {
+		entry, ok := props[r.Key].(map[string]any)
+		if !ok {
+			t.Errorf("%s: no $defs.keyDefaults entry", r.Key)
+			continue
+		}
+		want := r.Default.Value
+		if want == "" {
+			want = r.Default.Unset
+		}
+		if got, _ := entry["default"].(string); got != want {
+			t.Errorf("%s: the schema's default is %q, and the registry says %q", r.Key, got, want)
+		}
+		if got, _ := entry["$comment"].(string); got != r.Default.Const {
+			t.Errorf("%s: the schema's $comment is %q, and the registry's constant is %q", r.Key, got, r.Default.Const)
+		}
+		delete(props, r.Key)
+	}
+	for key := range props {
+		t.Errorf("$defs.keyDefaults carries %s, and the registry has no such row", key)
+	}
+}
+
+// nodeOf is one schema node, walked by property names.
+func nodeOf(t *testing.T, node map[string]any, path ...string) map[string]any {
+	t.Helper()
+	cur := node
+	for _, key := range path {
+		next, ok := cur[key].(map[string]any)
+		if !ok {
+			t.Fatalf("%v: no object at %q", path, key)
+		}
+		cur = next
+	}
+	return cur
+}
+
+// stringsOf is a schema node's string array, walked by property names.
+func stringsOf(t *testing.T, node map[string]any, path ...string) []string {
+	t.Helper()
+	var cur any = node
+	for _, key := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			t.Fatalf("%v: not an object at %q", path, key)
+		}
+		if cur, ok = m[key]; !ok {
+			t.Fatalf("%v: missing %q", path, key)
+		}
+	}
+	raw, ok := cur.([]any)
+	if !ok {
+		t.Fatalf("%v: not an array", path)
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("%v: %v is not a string", path, v)
+		}
+		out = append(out, s)
+	}
+	return out
 }

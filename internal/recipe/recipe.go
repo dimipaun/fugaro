@@ -59,7 +59,13 @@ type StepKind string
 const (
 	StepFirstLine StepKind = "first_line"
 	StepReview    StepKind = "review"
-	StepCheck     StepKind = "check"
+	// StepAdversarial is review level 3 (D720): a second, harder review after
+	// the senior one, run in a fresh session, at most once and only after the
+	// review step. Its bounce is the same single target the review step's is:
+	// a rejection runs the fix and then another first-line loop before the
+	// next adversarial round.
+	StepAdversarial StepKind = "adversarial"
+	StepCheck       StepKind = "check"
 	// StepDigest is the report run's deterministic step (T3.1): the runner
 	// writes the run reports the repository is missing and commits them, so
 	// a recipe may hold it only as the first step of a mode: implement
@@ -96,8 +102,10 @@ const (
 type Step struct {
 	Kind      StepKind
 	MaxRounds int
-	// Bounce is review: {bounce: first_line}: a senior rejection runs the
-	// cheap loop again instead of ending the run.
+	// Bounce is review: {bounce: first_line} or adversarial: {bounce:
+	// first_line}: a rejection of either runs the cheap loop again instead of
+	// ending the run (or, for the adversarial step, instead of going straight
+	// to the next adversarial round).
 	Bounce bool
 	// Command is a check step's commands.* key.
 	Command CheckCommand
@@ -250,6 +258,23 @@ func UsesV08(r *Recipe) bool {
 // cannot judge, a development base image among them.
 func UsesDigest(r *Recipe) bool {
 	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepDigest })
+}
+
+// UsesAdversarial reports whether r holds the adversarial step, review level
+// 3. It reads the parsed steps rather than a parse-time flag, for the same
+// reason UsesDigest does: a parser that predates the step refuses the whole
+// recipe ("is not a step type") instead of dropping the key, so no recipe
+// that parses without the step can have carried one.
+//
+// It is read by the launch gate: recipeSinceFor chooses adversarialSince when
+// the embedded recipe holds the step (internal/cli/recipes_skew.go), so an
+// adversarial launch against a job image whose runner predates the release
+// that acts on it is refused before it starts, naming fugaro image refresh,
+// rather than reaching the runner's own parse refusal at bootstrap. Unlike
+// the digest step there is no task field behind it, so the gate has nothing
+// else to judge a recipe the launcher cannot read (a repository-sourced one).
+func UsesAdversarial(r *Recipe) bool {
+	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepAdversarial })
 }
 
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
@@ -631,7 +656,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 	for i, item := range v.Content {
 		path := fmt.Sprintf("steps[%d]", i)
 		if item.Kind != yaml.MappingNode || len(item.Content) != 2 {
-			p.add(path, item.Line, "must be one step: first_line: {...}, check: {...}, digest: {...}, review: {...}, plan: {...} or render: {...}")
+			p.add(path, item.Line, "must be one step: first_line: {...}, review: {...}, adversarial: {...}, check: {...}, digest: {...}, plan: {...} or render: {...}")
 			continue
 		}
 		k, body := item.Content[0], item.Content[1]
@@ -642,6 +667,8 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			kind = StepFirstLine
 		case string(StepReview):
 			kind = StepReview
+		case string(StepAdversarial):
+			kind = StepAdversarial
 		case string(StepCheck):
 			kind = StepCheck
 			r.newKeys = true
@@ -660,7 +687,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			if msg, ok := reserved[k.Value]; ok {
 				p.add(kpath, k.Line, "%s", msg)
 			} else {
-				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, check, digest, review, plan and render)")
+				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan and render)")
 			}
 			continue
 		}
@@ -696,8 +723,10 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 							s.MaxRounds = n
 						}
 					}
-				case kind == StepReview && bk.Value == "bounce":
-					r.newKeys = true
+				case (kind == StepReview || kind == StepAdversarial) && bk.Value == "bounce":
+					if kind == StepReview {
+						r.newKeys = true
+					}
 					bp := kpath + ".bounce"
 					if bs, ok := p.str(bp, bv); ok {
 						if bs != "first_line" {
@@ -928,7 +957,7 @@ func (p *parser) order(r *Recipe, src []int) {
 		return
 	}
 	steps := r.Steps
-	checks, firsts, reviews := 0, 0, 0
+	checks, firsts, reviews, adversarials := 0, 0, 0, 0
 	sawOther, firstSeen := false, false
 	digests, digestAt := 0, -1
 	for i, s := range steps {
@@ -974,6 +1003,18 @@ func (p *parser) order(r *Recipe, src []int) {
 			if s.Bounce && !firstSeen {
 				p.add(path, 0, "bounce: first_line needs a first_line step before the review")
 			}
+		case StepAdversarial:
+			sawOther = true
+			adversarials++
+			if adversarials > 1 {
+				p.add(path, 0, "adversarial may appear at most once")
+			}
+			if reviews == 0 {
+				p.add(path, 0, "adversarial must come after review")
+			}
+			if s.Bounce && !firstSeen {
+				p.add(path, 0, "bounce: first_line needs a first_line step before the adversarial step")
+			}
 		case StepPlan, StepRender:
 			// Refused here rather than in steps(), which reads a step
 			// before the recipe's mode is necessarily known.
@@ -989,8 +1030,8 @@ func (p *parser) order(r *Recipe, src []int) {
 	switch {
 	case reviews == 0:
 		p.add("steps", 0, "must end with a review step: readiness needs the senior review's ship verdict")
-	case steps[len(steps)-1].Kind != StepReview:
-		p.add("steps", 0, "review must be the last step")
+	case steps[len(steps)-1].Kind != StepReview && steps[len(steps)-1].Kind != StepAdversarial:
+		p.add("steps", 0, "review must be the last step, or the adversarial step after it")
 	}
 	if r.Mode == ModeReview {
 		// use_when is deliberately not restricted here: it is the routing
@@ -998,7 +1039,7 @@ func (p *parser) order(r *Recipe, src []int) {
 		// review-only recipe needs exactly as much as any other, and it
 		// names nothing to run.
 		switch {
-		case checks > 0 || firsts > 0 || reviews != 1:
+		case checks > 0 || firsts > 0 || adversarials > 0 || reviews != 1:
 			p.add("steps", 0, "mode: review allows exactly one review step and nothing else")
 		case r.ReviewerIsCoder || r.CoderIsReviewer:
 			p.add("roles", 0, "mode: review has no coder step to map roles onto: remove roles")
@@ -1014,7 +1055,7 @@ func (p *parser) orderArtifact(steps []Step, src []int) {
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
-		case StepCheck, StepFirstLine, StepDigest, StepReview:
+		case StepCheck, StepFirstLine, StepDigest, StepReview, StepAdversarial:
 			// check included: an artifact recipe has no implement for a
 			// gate to judge, no report to write and no review to give a
 			// ship verdict.

@@ -41,7 +41,7 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	iam.AddSigner(testSigner)
 	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
 	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
-		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set("fugaro/project", "aurora")
 	// The database a real installation runs against carries Fugaro's own mark
 	// (init wrote it): a writer that asks the shared ownership check refuses a
@@ -462,7 +462,7 @@ func newOffModeBudget(t *testing.T, budget string) *launchBudgetFixture {
 func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) {
 	budget := func(f *launchBudgetFixture) string {
 		return "budget: { mode: off, per_run_usd: 5, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
-			", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n"
+			", firebase_api_key: " + settingsFakeAPIKey + " }\n"
 	}
 	// The allow-list admits the fixture's repository: a published policy with
 	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
@@ -521,7 +521,7 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	})
 	t.Run("a policy with no signer is refused", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
-		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
 		_, _, err := runBudget(t)
@@ -549,7 +549,7 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 func TestLaunchReadsThePolicyOnce(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
-		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	publishPolicy(t, f, `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatal(err)
@@ -583,7 +583,7 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
-		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	f.db.DenyRead(projectpolicy.PathShared())
@@ -613,7 +613,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
-		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"allow_repo":["acme/*"]}`))
 	_, _, err := runBudget(t)
@@ -655,7 +655,7 @@ func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newOffModeBudget(t, "")
 			f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
-				", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+				", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 			f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 			f.db.Set(projectpolicy.PathShared(), json.RawMessage(node))
 			_, _, err := runBudget(t)
@@ -684,7 +684,7 @@ func TestLaunchClassifiesAnUnreachablePolicyReadAsRemote(t *testing.T) {
 	l.Close() // nothing answers on that port now
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
-		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	_, _, err = runBudget(t)
 	if err == nil || ExitCode(err) != ExitRemoteError {
 		t.Fatalf("err = %v (exit %d), want a remote failure (exit %d)", err, ExitCode(err), ExitRemoteError)

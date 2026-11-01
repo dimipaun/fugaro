@@ -284,7 +284,7 @@ workflows:
 // TestRecordJSON pins the record's field names, which the check and
 // fugaro image status read.
 func TestRecordJSON(t *testing.T) {
-	key := Key(Resolved{BaseRef: "web", BaseDigest: baseDigest, Packages: []string{"left-pad@1.3.0"}, Tools: []string{"node@22.11.0"}})
+	key := Key(Resolved{BaseRef: "web", BaseDigest: baseDigest, Packages: []string{factOf("left-pad", "1.3.0", "")}, Tools: []string{"node@22.11.0"}})
 	r := Record{Version: RecordVersion, Repo: "acme/webapp", Workflow: "web", KeyFiles: map[string]string{"yarn.lock": "abc"}, Key: key}
 	data, err := json.Marshal(r)
 	if err != nil {

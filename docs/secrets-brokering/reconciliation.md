@@ -449,8 +449,8 @@ the proxy (S1) is 0.14.0.
   repositories the block admits.
 
 - **O7 (found in review round 3).** `fugaro update --provision-credentials` refuses a development
-  build (`internal/cli/init_credentials.go` `resolveImage`), so Check 191 runs only on a released
-  0.14.0, and the flip and Check 192 move to the next release. D490's "the proxy in 0.14.0" holds for
+  build (`internal/cli/init_credentials.go` `resolveCredentialsImage`), so Check 191 runs only on a
+  released 0.14.0, and the flip and Check 192 move to the next release. D490's "the proxy in 0.14.0" holds for
   the inert proxy; confirm that the flip follows in the next release.
 - **O8 (review round 3, left open after the last round).** The flip has no readiness gate that the
   bundle holds a Bitbucket token (only the owner can read the bundle): the operator notes order it

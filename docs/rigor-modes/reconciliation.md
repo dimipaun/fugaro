@@ -227,13 +227,14 @@ precedence.** Class: **Exists**.
 `internal/recipe/recipe.go` holds `MaxReviewRounds = 10` and
 `MaxFirstLineRounds = 3` (`internal/config/config.go` holds the second of the
 two as well, for the config's own bound);
-`fugaro.yaml` sets `agent.review_rounds` (default 2, range 1..10);
-`internal/task/task.go`'s `Spec.Overrides.ReviewRounds` wins over it; a recipe's
-`max_rounds` participates through `planOf`. `docs/recipes.md` documents the
-precedence. Consequence: "max fix rounds" per mode must say which of these it
-sets. The recommendation is that a mode sets a *ceiling* that the existing
-precedence then operates beneath, so no existing task file changes meaning (D7,
-plan T3.2).
+`fugaro.yaml` sets `agent.review_rounds` (range 0..10, 0 or unset being the
+resolved mode's row); `internal/task/task.go`'s `Spec.Overrides.ReviewRounds`
+wins over it; a recipe's `max_rounds` participates through `planOf`.
+`docs/recipes.md` documents the precedence. Consequence: "max fix rounds" per mode
+must say which of these it sets. *O3 is answered* (2026-10-31): a mode sets a
+**default** and not a ceiling — the four inputs above still win, and an unset knob
+takes the mode's row — so the recommendation in the sentence before this one is
+superseded (D7, plan T3.2).
 
 **F7 — Mode config cannot reuse a `review:` block, and adding a top-level key is
 five edits.** Class: **Wrong** (see C1) — and the five edits are the Rule part.
@@ -519,7 +520,7 @@ as a decision or an item rather than assuming the merge (D2, O2, O3).
 **Rule** — the rule being that this list is what survived, and what did not is
 recorded so a reader does not re-derive it. Dropped for being unverifiable from
 the tree: that the reviewer prompt can be made to score reliably (U1); that a
-score changes a model's behaviour at all; that `agent.review_rounds`'s default of
+score changes a model's behaviour at all; that `agent.review_rounds`'s then-default of
 2 is a policy choice rather than a latency one; that the console can render a
 scored row without a contract change (U7); that any workflow reacts to a merge
 (U5); that a Hotfix PR's ready state survives `settlePR` on a provider other than
@@ -712,7 +713,7 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 22 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 23 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 89 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
@@ -2130,6 +2131,20 @@ answer is a number in a table — but it is the kind of number the owner should 
 once, in the open, rather than a default an implementer picks.
 *Owner ruling 2026-10-27:* the floor stays 2 (`minRoundCeiling`), and a
 repository with no `rigor:` block keeps today's behaviour, with no ceiling.
+*Owner ruling 2026-10-31, superseding the above:* a mode **may** go below two, and
+the question is answered as **defaults** rather than as a ceiling. Each mode
+supplies its own default counts — **POC 1/1, Startup 2/2, Pro 3/3, Critical 3/5,
+Hotfix 1/1**, each pair being the first-line (inner) rounds and the senior rounds
+the mode runs by default — and the `minRoundCeiling` clamp to two goes with the
+answer. It is a default and not a cap: the task override, the recipe's
+`max_rounds`, the repository's `agent.review_rounds` and `agent.first_line_rounds`,
+and the project layer each set another number, up or down, within the recipe's
+bounds (inner 1–3, senior 1–10), which are the only ceiling there is. A repository
+with no `rigor:` block resolves Pro and runs Pro's row, 3/3, where it ran 1/2
+before; `rigor.default: critical` is the pin a repository keeps the older
+behaviour with. The names that meant a ceiling (`minRoundCeiling`,
+`AdversarialCeiling`) go with the clamp, because a field never changes meaning,
+and `internal/rigor/rounds.go` states the table under names that mean a default.
 
 **O4 — What happens to a ready Hotfix PR nobody merges.** It sits ready and
 unmerged, which is a state no other mode produces and nothing expires. Whether

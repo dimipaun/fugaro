@@ -69,6 +69,19 @@ type Config struct {
 	// with no information in it, since the machine has no baseline to compare
 	// against). An installation that writes no policy node carries none.
 	PolicyGeneration string `yaml:"policy_generation,omitempty"`
+	// LayerGeneration is the published project layer's generation as of the
+	// last publish that wrote this file's layer, or the publish the local
+	// layer file was seeded from (D854): it is what tells the two readings of
+	// `unpublished` apart — a local edit (still the published generation,
+	// which is the owner's change to publish) from a stale copy of another
+	// machine's (the published generation has moved past it, so publishing
+	// would revert someone else's publish). A file carrying none was never
+	// written from a published object — every installation before the first
+	// `fugaro update` of this release — and the next run ADOPTS the
+	// generation it reads rather than refusing. It is the layer stage's
+	// record, beside the policy stage's PolicyGeneration: one record per
+	// stage that publishes, and neither is wire.
+	LayerGeneration string `yaml:"layer_generation,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind
@@ -507,7 +520,10 @@ type LongContext struct {
 // UpdateCheckEnabled reports whether the daily update check and its stderr
 // nag run for this config: true unless update_check: false.
 func (c *Config) UpdateCheckEnabled() bool {
-	return c.UpdateCheck == nil || *c.UpdateCheck
+	if c.UpdateCheck == nil {
+		return config.DefaultUpdateCheck
+	}
+	return *c.UpdateCheck
 }
 
 // BudgetMode is the budget's mode: "off" when there is no budget block or
@@ -1007,6 +1023,31 @@ func ProjectPath(getenv func(string) string, name string) (string, error) {
 	return filepath.Join(d, name+".yaml"), nil
 }
 
+// LayerFile is the local project layer file of project name: the project's
+// own name under the config home's projects/ directory, beside its project
+// config (D830). The path is a convention and nothing records it — there is no
+// --layer flag and no config key for it — so the file the owner edits and the
+// file `fugaro update` publishes are the same one by construction.
+//
+// The name is `<project>.layer.yaml`, and the dot is the whole of why: a
+// project name is a-z, 0-9 and '-' (config.ProjectNameRE), so a file this one
+// names can never be read back as a project config. `Projects()` lists every
+// projects/<name>.yaml whose <name> is a project name, and a `-layer.yaml` file
+// would be listed as a project of its own — a phantom second project for a
+// single-project installation, and a real collision for a project actually
+// named foo-layer, whose own layer file would then be project `foo`'s
+// (docs/rigor-command/reconciliation.md, D830 amendment of 2026-11-01).
+func LayerFile(getenv func(string) string, name string) (string, error) {
+	if !config.ProjectNameRE.MatchString(name) {
+		return "", fmt.Errorf("%q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", name)
+	}
+	d, err := ProjectsDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, name+".layer.yaml"), nil
+}
+
 // legacyPath is where the local config lived before project configs; it
 // isn't read any more, only mentioned when there is no project config.
 func legacyPath(getenv func(string) string) string {
@@ -1172,6 +1213,15 @@ func oldMailboxKeychainItem(mailbox *yaml.Node) string {
 	return ""
 }
 
+// The local loader's own values, which Parse leaves in place for a file that
+// sets the key nowhere. They are named because the settings registry cites
+// them in the DEFAULT column (spec §2.4): the row for one of these keys is the
+// value a run gets, not an "unset means" sentence.
+const (
+	DefaultMaxParallel      = 20
+	DefaultBuildMachineType = "E2_HIGHCPU_8"
+)
+
 // Parse decodes the config strictly, applies defaults and validates it.
 func Parse(data []byte) (*Config, error) {
 	var top map[string]yaml.Node
@@ -1198,10 +1248,10 @@ func Parse(data []byte) (*Config, error) {
 		c.Version = 1
 	}
 	if c.MaxParallel == 0 {
-		c.MaxParallel = 20
+		c.MaxParallel = DefaultMaxParallel
 	}
 	if c.Build.MachineType == "" {
-		c.Build.MachineType = "E2_HIGHCPU_8"
+		c.Build.MachineType = DefaultBuildMachineType
 	}
 	if err := c.validate(); err != nil {
 		return &c, err

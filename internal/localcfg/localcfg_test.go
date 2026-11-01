@@ -1593,3 +1593,98 @@ func TestReviewFloorNotInShared(t *testing.T) {
 		t.Errorf("the published file names review_floor:\n%s", b)
 	}
 }
+
+// TestLayerFileIsTheProjectNameUnderProjects: the one local layer file is the
+// project's own name, with .layer.yaml, beside its config (D830) — the path is
+// a convention and nothing records it.
+func TestLayerFileIsTheProjectNameUnderProjects(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	p, err := LayerFile(get, "aurora")
+	if err != nil || p != filepath.Join(dir, "xdg", "fugaro", "projects", "aurora.layer.yaml") {
+		t.Fatalf("LayerFile = %q, %v", p, err)
+	}
+	// A name that is not a single path element would put the file, which
+	// `fugaro update` writes as the owner's own layer, anywhere on the
+	// machine — the same refusal ProjectPath makes.
+	for _, name := range []string{"../x", "a/b", "", "Aurora", "-x", "x-", strings.Repeat("a", 41)} {
+		if _, err := LayerFile(get, name); err == nil {
+			t.Errorf("LayerFile accepted %q", name)
+		}
+	}
+}
+
+// TestTheLayerFileIsNeverAProject: the layer file sits in the projects/
+// directory beside the project configs, so an installation that ends `fugaro
+// update` with one must still hold exactly one project. A project name cannot
+// contain a dot (config.ProjectNameRE), and the file's stem has one.
+func TestTheLayerFileIsNeverAProject(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	projects, err := ProjectsDir(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "aurora.yaml"), []byte("name: aurora\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	layer, err := LayerFile(get, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layer, []byte("version: 1\nproject: aurora\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Projects(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "aurora" {
+		t.Errorf("Projects = %q with a layer file beside the project config, want [aurora]", got)
+	}
+}
+
+// TestAProjectNamedLayerIsNotTheLayerFile: `foo-layer` is a project name, so
+// project foo's layer file must not be project `foo-layer`'s config — nor the
+// other way round, with `foo-layer`'s own layer file read as project `foo`'s.
+func TestAProjectNamedLayerIsNotTheLayerFile(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	projects, err := ProjectsDir(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "foo-layer.yaml"), []byte("name: foo-layer\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Projects(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "foo-layer" {
+		t.Fatalf("Projects = %q, want [foo-layer]", got)
+	}
+	foo, err := LayerFile(get, "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := LayerFile(get, "foo-layer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foo == named || foo == filepath.Join(projects, "foo-layer.yaml") {
+		t.Errorf("project foo's layer file is %q, which is project foo-layer's config", foo)
+	}
+	if named != filepath.Join(projects, "foo-layer.layer.yaml") {
+		t.Errorf("project foo-layer's layer file is %q", named)
+	}
+}
