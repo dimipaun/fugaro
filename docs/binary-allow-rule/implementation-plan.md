@@ -49,15 +49,26 @@ before a line of it is written.
 The vocabulary moves in five places, and four of them are this repository's (F13). This task moves
 the four and leaves the fifth (the console, E2) named.
 
-- **Files (6):** `internal/runstore/runstore.go` (`StatusUnreviewed`, its comment, and a
+- **Files (7):** `internal/runstore/runstore.go` (`StatusUnreviewed`, its comment, and a
   `Statuses` slice so the set has **one** spelling the way `rigor.Modes` and `tier.Tiers` do),
   `schemas/result.schema.json` (the `status` enum, line 16), `internal/digest/digest.go` (the
   `statuses` closed set reads the slice instead of restating it), `internal/runstore/runstore_test.go`,
-  `schemas/schemas_test.go`, `internal/digest/digest_test.go`.
+  `schemas/schemas_test.go`, `internal/digest/digest_test.go`, and `internal/cli/runs_test.go`
+  (the guard test named above; **`internal/cli/runs.go` and `internal/cli/watch_queued.go`
+  themselves are read and deliberately left alone**).
 - **Red step:** `TestResultSchemaStatusesAgreeWithGo` fails — the schema's enum does not carry
   `unreviewed`, and the Go list does not either; the two fail together from the first edit, which is
   the property the test exists for (the shape `TestResultSchemaHaltReasonsAgreeWithGo` and
   `TestTaskSchemaRigorRequestMatchesTheGoRules` already use).
+- **Named and explicitly *not* changed (the reviewer's question, answered rather than left open):**
+  `internal/cli/runs.go` and `internal/cli/watch_queued.go` both test a status, and neither needs a
+  line. `runs.go:493` and `watch_queued.go:236` ask `Status == StatusRunning` — an equality with
+  **one** value, not membership of a set of terminal ones — and `runs.go:807` does the same for the
+  draft row it builds. A new *terminal* value is invisible to all three by construction, and that is
+  the point of asking an equality rather than a negated list: the day someone rewrites one of them
+  as `status != succeeded`, this task's `TestRunsListsReadTheStatusWord` (added to
+  `internal/cli/runs_test.go`) goes red. That test is in this task's file list below, which grows to
+  7.
 - **Tests:** `TestResultSchemaStatusesAgreeWithGo`, `TestDigestRendersUnreviewedAsItself` (a record
   whose status is the new value renders the word, not `other`), and `TestRunstoreStatusesAreTheWireVocabulary`
   (the list is exactly the constants, so a constant added without a list edit is red).
@@ -109,14 +120,19 @@ node only — nothing reads it yet — so it lands without waiting for anything.
 - **Red step:** `TestBinariesAllowPatternsAreRefusedAtDecode` fails — `website/public/**.png`,
   `/etc/passwd`, `..`, and an empty entry are all accepted by a decoder that has no such member, and
   the task exists to refuse them where they are written.
-- **Tests:** `TestBinariesAllowPatternsAreRefusedAtDecode`, `TestBinariesAbsentAdmitsNothing`,
-  `TestBinariesWrittenEmptyAdmitsNothing` (the two spellings of D987, told apart),
-  `TestBinariesMaxBytesDefaultsAndLowerOnly`, `TestVersionSinceCoversEveryVersion` (already exists;
+- **Tests:** `TestBinariesAllowPatternsAreRefusedAtDecode`, `TestAnOverLongBinariesPatternIsRefused`,
+  `TestBinariesAbsentAdmitsNothing`, `TestBinariesWrittenEmptyAdmitsNothing` (admission time only:
+  absent and empty both admit nothing here, and AR1's two publish tests tell the two spellings apart
+  where D987 actually distinguishes them), `TestBinariesMaxBytesDefaultsAndLowerOnly`,
+  `TestVersionSinceCoversEveryVersion` (already exists;
   it fails until the row lands), and `TestPolicyUnknownKeysStillListsBinariesForAnOlderReader`
   (the wrong direction: a version-4 reader must list a version-5 node's member, never decode past
   it silently — the bump is what makes the refusal `RunnerSkew` instead, D990).
 - **Bounds:** entries bounded in count and length the way `rigor.MaxAreas` / `MaxAreaPattern` bound
   areas, because the list reaches the run record and the pull request body.
+  `TestAnOverLongBinariesPatternIsRefused` is the fifth check of §2.1 made a test rather than a
+  sentence: the four `rebuild.paths` pattern checks are shared, the length bound is the one the
+  spec's first draft left out of its count.
 
 ### AR1. The owner's carrier, the publish, and the convergence (D987, D990). **Needs S3**
 
@@ -173,17 +189,32 @@ node only — nothing reads it yet — so it lands without waiting for anything.
 
 ### AR4. The residual: the run's own diff (D989, F3, F4, F14)
 
-- **Files (4):** `internal/runner/stray.go` (the diff reader and the shared predicate),
+- **Files (5):** `internal/runner/stray.go` (the diff reader and the shared predicate),
   `internal/runner/diffbase.go` (`--name-status` beside the numstat read, so an **added** path is
-  known), `internal/runner/runner.go` (the hunk that runs it), and
+  known), `internal/runner/runner.go` (the hunk that runs it), `internal/runner/shadow.go`, and
   `internal/runner/stray_test.go`.
 - **Red step:** `TestASelfCommittedBinaryFailsTheRun` fails — an agent that commits a payload in
   implement, and one that stages it with `git add -N` first, both reach the branch with no refusal
   today.
 - **Tests:** `TestASelfCommittedBinaryFailsTheRun`, `TestAGitAddIntentToAddBinaryFailsTheRun` (F4),
   `TestAModifiedTrackedBinaryIsNotRefused` (§2.1's deliberate tolerance),
-  `TestTheAutofixCommitIsChecked` (`gate.go`'s path), `TestTheDigestStepCommitIsChecked`
-  (`digest.go`'s path), and `TestTheRefusalNamesThePathAndTheSize`.
+  `TestTheAutofixCommitIsChecked` (`gate.go:357`'s path), `TestTheDigestStepCommitIsChecked`
+  (`digest.go:359`'s path), `TestTheTwoReadingsPairByPath` (the pairing is by path, never by index —
+  F14's addition; a range whose two git orderings differ, which is the case an index-based pairing
+  gets wrong silently), `TestAnAddedThenDeletedBinaryIsNotRefused` (the deliberate hole named in
+  spec.md §4.2 and residual 4: the add is hidden by a later delete, and this test makes closing it
+  a decision), and `TestTheRefusalNamesThePathAndTheSize`.
+- **`shadow.go`, named rather than assumed away.** The **fifth** committer is
+  `internal/runner/shadow.go:324` — a challenger arm's own leftover `CommitAll`, which is a
+  different call site from finalize's and would otherwise be the one commit path the rule never
+  reads. It is checked for the same reason #1476 holds stray paths back from it: the two arms'
+  records have to agree about what the run did, and a challenger arm that admitted a payload and
+  reported a clean run would make the pairing's own comparison lie. **The bytes are not the same
+  risk** — *"nothing of a challenger's reaches the developer"* (`shadow.go:37`), so the arm's branch
+  is nobody's merge — which is why this is one hunk and one test
+  (`TestTheChallengerArmIsChecked`) and not a second enforcement point. The hunk is a call to §4.3's
+  predicate with the same policy and the same diff range the finalize call passes; it writes no new
+  reader and no second answer to "is it admitted".
 - **Note:** the run is refused; its commits are not rewritten (D988).
 
 ### AR5. What the agent sees (D992, D993)
@@ -239,13 +270,13 @@ publishes.
 | --- | --- | --- | --- |
 | 1 | **The status label, whole** | NV0–NV2 | it closes a falsehood, has no dependency at all, and does not touch a policy, a stage or the settings work. It can land in the same release as anything else, first, and it is the cheapest thing to review |
 | 2 | **The node member and the merge** | AR0, AR2 | no publish, no stage, no other design: the shape and the direction, tested against a policy built by hand. This is the slice that a reviewer of this design can judge on its own |
-| 3 | **The runner's two checks** | AR3, AR4, AR6 (with **E1**, #1476) | the enforcement lands once, in finalize, where the run's own commits and its stray files are both readable |
-| 4 | **The prompt, the refusals and the pull request line** | AR5 | the sentences a run and a person read, after the checks they describe exist |
-| 5 | **The publish** | AR1 (with **E3**, settings S3) | last, because it rides a stage S3 builds. Before it lands the rule is enforceable but unpublished, which is exactly what step 2's hand-built fixture tests |
-| 6 | **The docs, the skill and the notes** | AR7 | with the release, not before it |
+| 3 | **The runner's two checks, the sentences and the end-to-end test, as one slot** | AR3, AR4, AR5, AR6 (with **E1**, #1476) | the enforcement lands once, in finalize, where the run's own commits and its stray files are both readable. **AR5 is in this row and not its own row** because §1.1 puts AR3–AR5 in one slot: all three write `stray.go` and `runner.go`, and the sentences must describe checks that exist. AR5 names no file AR3–AR4 do not already name except `prompts.go` and `prflow.go` |
+| 4 | **The publish** | AR1 (with **E3**, settings S3) | last, because it rides a stage S3 builds. Before it lands the rule is enforceable but unpublished, which is exactly what step 2's hand-built fixture tests |
+| 5 | **The docs, the skill and the notes** | AR7 | with the release, not before it |
 
 **The one-line answer:** the label first (NV0–NV2), the rule's runner half next (AR0, AR2, then
-AR3–AR6 once #1476 has landed), and the publish last, immediately after the settings design's S3.
+AR3–AR6 in one slot once #1476 has landed), and the publish last, immediately after the settings
+design's S3.
 
 ## 5. Operator steps
 

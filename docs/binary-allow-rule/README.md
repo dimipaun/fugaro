@@ -47,9 +47,13 @@ this folder is about cost.
    failed; nobody answered.
 
 Both are small. The reason this folder is four documents is that the first one has a **residual** —
-a binary the agent commits itself, or one swept into a commit by `gate.go`'s autofix or
-`digest.go`'s step, never passes through the check #1476 put in finalize — and the second changes a
-word on a wire the console, the phone, `fugaro watch`, the digest and the user census all read.
+a binary the agent commits itself, or one swept into a commit by `gate.go`'s autofix, by
+`digest.go`'s step or by the challenger arm's own `shadowFinalize` commit, never passes through the
+check #1476 put in finalize — and the second changes a word on a wire the console, the phone,
+`fugaro watch`, the digest and the user census all read. Two limits are named rather than papered
+over: a committed payload is refused *after* it is on the branch (history is not rewritten), and a
+path the agent adds and then deletes in a later commit is not refused at all, because the check
+reads the two ends of the run's diff. Both are in spec.md §4.2 and §9's residual table.
 
 | File | Role |
 | --- | --- |

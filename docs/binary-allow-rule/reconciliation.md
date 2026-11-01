@@ -32,12 +32,15 @@ images and fonts: 32 `.png`, 7 `.woff2`, 4 `.webp`, 1 `.ico`, spread over `brand
 `brand/fugaro-logo.png` at 855 285 bytes. A run whose task is "update the site's hero image" is a
 run this repository asks for, and today it ends a failed draft.
 
-**F3 — the check reads one of the four ways a file reaches the branch.** #1476 guards finalize's
-leftover commit (`gitops.CommitAllExcept`) only. **(needs #1476)** The other three are the agent's
-own `git commit` in implement, `internal/runner/gate.go:357`'s `CommitAll` of a `commands.fix`
-working-tree change, and `internal/runner/digest.go:359`'s report step's commit; `shadow.go`'s arm
-commits the same way finalize does. A binary committed by any of the first three is on the branch
-and no check saw it.
+**F3 — the check reads one of the five ways a file reaches a branch.** #1476 guards finalize's
+leftover commit (`gitops.CommitAllExcept`, `runner.go:3442`) only. **(needs #1476)** The other four
+are the agent's own `git commit` in implement, `internal/runner/gate.go:357`'s `CommitAll` of a
+`commands.fix` working-tree change, `internal/runner/digest.go:359`'s report step's commit, and —
+the one a first reading misses — `internal/runner/shadow.go:324`'s commit inside `shadowFinalize`,
+which is a **separate function** from `finalize` and so is not covered by anything placed in
+`finalize`. (`runner.go:3836`'s backlog commit is not one of them: it commits the engine's own
+`docs/backlog/` files.) A binary committed by any of the first four is on a branch and no check saw
+it.
 
 **F4 — `git add -N` defeats the check by construction.** `gitops.Untracked` is
 `git ls-files --others --exclude-standard`, which lists a path git would *add*. A path staged with
@@ -69,9 +72,14 @@ not for the round.
 
 **F8 — the pattern language this rule needs already exists, twice, with one rule.** `rigor.Area.Match`
 and `internal/config`'s `rebuild.paths` both match with `github.com/bmatcuk/doublestar/v4` and both
-validate with the same four checks in the same order: not empty, not absolute, no `..` component,
-`doublestar.ValidatePattern` (`internal/rigor/area.go:63`, `internal/config/validate.go:383`). F9's
-rule in this tree — one matcher, one pattern rule — is what forbids a fifth spelling here.
+validate a pattern with the same four checks in the same order: not empty, not absolute, no `..`
+component, `doublestar.ValidatePattern` (`internal/rigor/area.go:63`, `internal/config/validate.go:383`).
+**The count is four for the pattern rule and five for `Area.Validate` as a whole**, which also
+bounds a match's length (`MaxAreaPattern`, 200) — an area-specific check the binaries entries need
+too, since an entry is copied into the run record and into the pull request's status line. Writing
+"four" for the binaries rule, as this folder's first draft did in spec.md §2.1, undercounts by the
+one check that bounds text on a wire. F9's rule in this tree — one matcher, one pattern rule — is
+what forbids a fifth spelling here.
 
 **F9 — the dependency is already direct.** `doublestar/v4` is in `go.mod` (`v4.10.2`) and imported
 by `internal/rigor`, `internal/config` and others. The allow rule adds no module.
@@ -112,6 +120,17 @@ derived wrongly there. The fifth reader is the console (`console/src/shared/sche
 out of it. The reading §4.2 needs is `--name-status` (an `A` row) cross-referenced with the numstat
 binary flag, or `--diff-filter=A` beside it; the design names the shape and the plan's task pins it.
 
+**The cross-reference is by path, never by index, and that is a design requirement rather than an
+implementation detail.** Two separate `-z` invocations produce two NUL-delimited streams whose
+ordering is git's, not a promise: pairing row *i* of one with row *i* of the other would mispair
+silently the first time the two orderings differ (a rename, a submodule, a path git quotes
+differently). §4.2 therefore reads **one** stream for the status (`--name-status -z --no-renames`)
+and builds the binary set as a `map[string]bool` **keyed by the path** the numstat stream reports,
+then looks each `A` path up in that map. `--no-renames` is what makes the path a single field on the
+numstat side too; a path absent from the map is *unreadable*, and the design refuses it rather than
+treating it as text (F1's rule: the check fails closed). AR4's `TestTheTwoReadingsPairByPath` pins
+this with a range whose two orderings differ, so an index-based pairing is red rather than latent.
+
 ## 2. The decisions
 
 Each is written as a **recommendation** with the cost of the alternative, so that "as recommended"
@@ -127,8 +146,9 @@ globs) is simpler to explain but cannot say `brand/*.png`, so the owner of this 
 to admit `brand/` wholesale, which is a wider grant than the one they want.
 
 **D982 — the pattern language is the tree's existing one.** **Recommended:** doublestar globs,
-validated at publish time by the same four checks `rigor.Area.Validate` and `internal/config`'s
-`rebuild.paths` apply, with no new matcher and no new module. *Cost of the alternative:* a bespoke
+validated at publish time by the four checks `internal/config`'s `rebuild.paths` applies plus the
+length bound `rigor.Area.Validate` adds (`MaxAreaPattern`, 200) — five, not four, per F8 — with no
+new matcher and no new module. *Cost of the alternative:* a bespoke
 "`**` means any depth, everything else is literal" language would be smaller to document and would
 be a **second** glob semantics in a tree that has gone out of its way to have one; and a
 loosely-validated pattern is the failure mode the emptiest-looking lock produces — a project that
@@ -185,14 +205,19 @@ cannot be complete — `gate.go`'s autofix and `digest.go`'s step commit *after*
 review and fix rounds run after it too; a check there would need a second one later anyway, which is
 two places for one rule.
 
-**D989 — close the residual, at one point.** **Recommended:** yes — finalize reads the run's own diff
-(`diffBase()...HEAD`) and refuses an **added** path that is binary and unadmitted, so the agent's own
-commit, `git add -N`, `gate.go`'s autofix commit and `digest.go`'s step all meet one check. Modified
-paths are not refused. No commit is rewritten. *Cost of the alternative:* **leaving it open** keeps
-the diff smaller and leaves F4 as a documented bypass — a run can put a payload on the branch with
-one `git add -N` and one commit, and "the reviewer will see it" is false for exactly the bytes the
-rule exists for. **Checking at each committer** instead is four copies of one rule, four reads of the
-checkout, and a fifth committer added later that nobody remembers to guard.
+**D989 — close the residual, with one reading, called from both finalize paths.** **Recommended:**
+yes — the run's own diff (`diffBase()...HEAD`) is read once and an **added** path that is binary and
+unadmitted is refused, so the agent's own commit, `git add -N`, `gate.go`'s autofix commit and
+`digest.go`'s step all meet one check. The *reading* is one; the *call sites* are two, because
+`shadowFinalize` (`shadow.go:321`) is a separate function and a check written only in `finalize`
+would leave the challenger arm's own leftover commit unread. Modified paths are not refused. No
+commit is rewritten. *Cost of the alternative:* **leaving it open** keeps the diff smaller and
+leaves F4 as a documented bypass — a run can put a payload on the branch with one `git add -N` and
+one commit, and "the reviewer will see it" is false for exactly the bytes the rule exists for.
+**Checking at each committer** instead is a copy of one rule per call site, one read of the checkout
+per copy, and a committer added later that nobody remembers to guard — which is the mistake that
+already happened once: this design's first draft counted four committers and missed
+`shadowFinalize`.
 
 **D990 — the policy version.** **Recommended:** **bump `projectpolicy.Version` 4 → 5**, add
 `VersionSince[5] = "0.15.0"`, and carry the convergence test the HARD RULE asks for. A version-4
