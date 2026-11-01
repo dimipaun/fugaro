@@ -25,6 +25,14 @@ const factsWorkers = 32
 // whose record cannot be read (corrupt or oversized, written by the run's own
 // account) is skipped with a warning; any other read error fails the pass,
 // because a day must never be written from a bucket that could not be read.
+//
+// Every read here is a read of the bucket, and it stays one: this pass is a
+// budget check (budget history --rollover writes a day's record from what it
+// returns), so it may not be answered from the CLI's local run cache
+// (internal/runcache) the way a listing's rows are. Its own listing and its
+// own reads are what it counts with, and a pass that took a number from a
+// file on the machine would record a day from something other than the
+// bucket.
 type BucketFacts struct {
 	Bucket *blob.Bucket
 	Warn   func(string)

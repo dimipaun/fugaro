@@ -223,9 +223,9 @@ func TestRunsLsSecondCallReadsOnlyChangedGenerations(t *testing.T) {
 	ctx := context.Background()
 	d, ids := genRuns(t, 3)
 	env := envOn(t, f, blobx.Wrap(blob.NewBucket(d)))
-	list := func(cache bool) []string {
+	list := func(cached bool) []string {
 		t.Helper()
-		rows, err := loadRows(ctx, env, lsFilter{slugs: []string{appSlug}, cache: cache}, time.Now())
+		rows, err := loadRows(ctx, env, lsFilter{slugs: []string{appSlug}, noCache: !cached}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,9 +277,9 @@ func TestRunsLsNoCacheReadsEveryObject(t *testing.T) {
 	ctx := context.Background()
 	d, ids := genRuns(t, 3)
 	env := envOn(t, f, blobx.Wrap(blob.NewBucket(d)))
-	list := func(cache bool) []string {
+	list := func(cached bool) []string {
 		t.Helper()
-		rows, err := loadRows(ctx, env, lsFilter{slugs: []string{appSlug}, cache: cache}, time.Now())
+		rows, err := loadRows(ctx, env, lsFilter{slugs: []string{appSlug}, noCache: !cached}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}

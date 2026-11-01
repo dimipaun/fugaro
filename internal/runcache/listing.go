@@ -30,8 +30,9 @@ var cachedNames = map[string]bool{"task.json": true, "launch.json": true, "resul
 //
 // What a listing reports decides whether there is an index at all: a bucket
 // that carries no generation per object -- file:// and mem:// do not, and
-// only GCS does -- and a listing that failed or left a generation out both
-// answer nil, "no index, read every object from the bucket". That is the
+// only GCS does -- a listing that failed or left a generation out, and one
+// that saw no object at all, each answer nil, "no index, read every object
+// from the bucket". That is the
 // cache being off, never a failure of the command that asked: the caller
 // then reads the bucket exactly as it did before this package existed, and a
 // real failure of the bucket is reported by the read that follows.
@@ -59,6 +60,15 @@ func List(ctx context.Context, b *blobx.Bucket, slug, from string) map[string]in
 	for {
 		obj, err := it.Next(ctx)
 		if errors.Is(err, io.EOF) {
+			// A listing that saw none of the window's objects while the
+			// caller's own listing of the same window found runs is no
+			// listing this cache can key on: an index that names nothing
+			// would make every object of every run absent, and the caller
+			// would draw an empty listing rather than read the bucket. The
+			// answer is no index.
+			if len(index) == 0 {
+				return nil
+			}
 			return index
 		}
 		if err != nil {

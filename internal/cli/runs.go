@@ -104,18 +104,22 @@ type lsFilter struct {
 	pr     int       // keep runs on this pull request (task or record), when set
 	runRef string    // "<slug>/<run-id>": only this run (diagnose)
 	warn   io.Writer // where non-fatal problems go; nil discards them
-	// cache reads the run objects through the local run cache
-	// (internal/runcache), which answers an object from the last listing
-	// when its generation is unchanged. Only a listing for display sets it
-	// -- runs ls, and the report command through api.LoadRows -- and only
-	// for a GCS bucket, which is the only one that reports a generation.
+	// noCache reads every object from the bucket, as every listing did
+	// before the run cache existed. A listing reads through the cache by
+	// default -- runs ls, and the report command through api.LoadRows, the
+	// one helper both go through -- because that is what the cache is for:
+	// the same window listed again and again.
 	//
-	// Everything else leaves it false, and the reason is the same for all
-	// of them: a cached object is what a listing saw, so it may draw a
-	// status, never decide. resolvePR (does this PR allow a follow-up?) and
-	// the budget's own facts pass (what the rollover records for a day)
-	// read the bucket as it is now.
-	cache bool
+	// It is set where a cached object would answer more than a display
+	// number. resolvePR asks whether this pull request allows a follow-up,
+	// which is a launch, and the budget's own facts pass (what the rollover
+	// records for a day, internal/budget/rollover_facts.go) is a budget
+	// check that never goes through this loader at all. A cached object is
+	// what a listing saw, and a decision has to see the bucket.
+	//
+	// runs ls --no-cache sets it too: the whole cache is an optimisation,
+	// so ignoring it must cost nothing but time.
+	noCache bool
 }
 
 // lsRef names one run a listing means to read.
@@ -125,14 +129,15 @@ type lsRef struct{ slug, id string }
 // one index per repository, from one listing of it, shared by every run of
 // that repository.
 //
-// Nothing is built when the listing did not ask for the cache, which is how
-// every caller that is not a display listing -- and --no-cache -- reads the
-// bucket exactly as it did before the cache existed. runcache.Open and
-// runcache.List answer nil for a cache the CLI cannot place and for a bucket
-// that reports no generation per object, and both fall back to the same
-// thing: a reader that reads the bucket.
-func lsReaders(ctx context.Context, env *cloudEnv, cache bool, refs []lsRef) map[string]runcache.Reader {
-	if !cache {
+// Nothing is built for a listing that asked not to be cached (lsFilter's
+// noCache), and that is how a decision and --no-cache read the bucket
+// exactly as they did before the cache existed: the reader of every
+// repository is then the zero Reader, which reads the bucket. runcache.Open
+// and runcache.List answer nil for a cache the CLI cannot place and for a
+// bucket that reports no generation per object, and a nil cache or a nil
+// index falls back to the same thing.
+func lsReaders(ctx context.Context, env *cloudEnv, cached bool, refs []lsRef) map[string]runcache.Reader {
+	if !cached {
 		return nil
 	}
 	c, err := runcache.Open(os.Getenv, env.lc.Name, cacheBucketID(env))
@@ -266,7 +271,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	}
 	defer env.Close()
 
-	f := lsFilter{batch: o.batch, state: o.state, limit: o.limit, pr: o.pr, warn: cmd.ErrOrStderr(), cache: !o.noCache}
+	f := lsFilter{batch: o.batch, state: o.state, limit: o.limit, pr: o.pr, warn: cmd.ErrOrStderr(), noCache: o.noCache}
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
 		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}
@@ -403,7 +408,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// run's three objects' generations, so the runs the previous listing
 	// already read are answered locally and the reads that leave the machine
 	// are the objects that changed.
-	readers := lsReaders(ctx, env, f.cache, refs)
+	readers := lsReaders(ctx, env, !f.noCache, refs)
 	runs := make([]runObjects, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
