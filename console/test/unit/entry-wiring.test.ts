@@ -697,9 +697,9 @@ describe('the dashboard the entry mounts', () => {
       expect(classed(panel, 'run-id')[0]?.textContent).toBe('20261015-120000-aa01')
       expect(classed(panel, 'run-crumb-live')[0]?.tagName).toBe('BUTTON')
       // Both sections wear their own mark and say what they are reading.
-      const main = classed(panel, 'run-main')[0] as FakeNode
+      const main = classed(panel, 'run-record')[0] as FakeNode
       const logsSection = classed(panel, 'run-logs')[0] as FakeNode
-      expect(main?.attributes.get('data-busy'), 'the run column does not say it is reading').toBe('true')
+      expect(main?.attributes.get('data-busy'), 'the record’s host does not say it is reading').toBe('true')
       expect(main?.attributes.get('aria-busy')).toBe('true')
       expect(logsSection?.attributes.get('aria-busy')).toBe('true')
       const labels = classed(panel, 'console-busy-label').map((node) => node.textContent)
@@ -734,7 +734,7 @@ describe('the dashboard the entry mounts', () => {
       // replays: it is up as soon as that read lands, before the record's has.
       expect(classed(panel, 'run-replay')).toHaveLength(1)
       expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
-      expect(classed(panel, 'run-main')[0]?.attributes.get('data-busy')).toBe('true')
+      expect(classed(panel, 'run-record')[0]?.attributes.get('data-busy')).toBe('true')
       expect(classed(panel, 'console-busy-label').map((node) => node.textContent)).toEqual([
         'Reading the diagnosis of 20261015-120000-aa01',
       ])

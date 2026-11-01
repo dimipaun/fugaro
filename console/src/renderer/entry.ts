@@ -150,6 +150,7 @@ import {
   renderRunFrame,
   runBusyLabel,
   runMainChildren,
+  runRecordChildren,
 } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
 import { READING_STILL_MS, renderReading } from './screens/reading'
@@ -2813,10 +2814,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * It answers the generation it claimed, because the switch itself is a door
    * that holds a drawing: `show` hands it to `placeReading` for the views whose
    * read has not started yet.
+   *
+   * **Leaving the Run screen ends both of its reads here**, rather than in
+   * `show`'s row of doors: a run is left for the switch `show` makes and for the
+   * ones it does not -- the rail's issue view and the onboarding screen -- and
+   * both of that screen's sections have a read whose answer is written into
+   * nodes the next view has already detached.
    */
   const markCurrent = (id: string): number => {
     const mine = claim()
     markButtons(id)
+    if (id !== 'run') leaveRun()
     currentView = id
     syncPolling()
     return mine
@@ -2841,6 +2849,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   /** leaveGraph is the same door for the Graph: its section's mark belongs to
    * the tab the operator is on, and the Graph's own controls put one up. */
   let leaveGraph: () => void = () => undefined
+
+  /** leaveRun is the same door for the Run screen's two sections: `showRun` sets
+   * it. It is called from `markCurrent` and not from `show`, because a run is
+   * left for anything at all -- a tab, the rail's issue view, the onboarding
+   * screen -- and only `show` passes through the four doors above. Those two
+   * reads write a fifteen-second line as well as a mark, and the line is armed
+   * for a section nobody is looking at the moment the run is left. */
+  let leaveRun: () => void = () => undefined
 
   /** show switches the panel to one view. The Live screen is not re-read here --
    * its model is the one the last poll drew, which is the point of a live
@@ -3107,7 +3123,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           if (target !== null && typeof target.closest === 'function' && target.closest('button') !== null) {
             return
           }
-          void showRun(id)
+          showRun(id)
         })
       }
     }
@@ -3783,7 +3799,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // A card with no run is selected like any other and opens nothing, and
         // its tooltip says why.
         if (screen.current.selected === key) {
-          if (run !== null) void showRun(run)
+          if (run !== null) showRun(run)
           return
         }
         chooseTask(key)
@@ -3799,7 +3815,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           // Enter opens the card's run where it has one and **selects** it where
           // it has none: the keyboard's own way into the inspector, which a card
           // with no run would otherwise not have at all.
-          if (run !== null) void showRun(run)
+          if (run !== null) showRun(run)
           else chooseTask(key)
           return
         }
@@ -3841,7 +3857,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const open = classed(drawn, 'graph-inspector-open')[0]
     if (open !== undefined) {
       const run = open.getAttribute('data-run-id')
-      if (run !== null) surface.nodeOf(open).addEventListener('click', () => void showRun(run))
+      if (run !== null) surface.nodeOf(open).addEventListener('click', () => showRun(run))
     }
 
     const refresh = classed(drawn, 'graph-refresh')[0]
@@ -4974,6 +4990,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const runRecordRead = sectionRead({ factory, theme })
   const runLogsRead = sectionRead({ factory, theme })
 
+  /** leaveRun ends both reads' busy state when the operator leaves the run: a
+   * mark and a fifteen-second line are for the run on screen, and a read that
+   * landed after it was left would draw into a column nothing is showing. */
+  leaveRun = () => {
+    runRecordRead.end()
+    runLogsRead.end()
+  }
+
   /**
    * showRun opens one run: its own record (`diagnose RUN --json`, which draws
    * the header's figures, the timeline, the ledger and the diagnosis) and the
@@ -4992,11 +5016,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * waits for the other: the record's answer fills the header, the timeline, the
    * ledger and the diagnosis, the log window's fills the log section and the
    * arrivals under it, and a refusal names the operation it came from and is
-   * drawn in its own section -- `run.diagnose` over the main column, `run.logs`
-   * in the log section -- rather than taking the whole screen down. Handing the
-   * screen `null` instead would draw an empty log window and a ledger of `n/a`,
-   * which reads as "this run logged nothing and spent nothing" when what
-   * happened is that the console could not ask (Global Constraint 5).
+   * drawn in its own section -- `run.diagnose` over the record's own region,
+   * `run.logs` in the log section -- rather than taking the whole screen down.
+   * Handing the screen `null` instead would draw an empty log window and a
+   * ledger of `n/a`, which reads as "this run logged nothing and spent nothing"
+   * when what happened is that the console could not ask (Global Constraint 5).
    *
    * The **link is the log section's own second read**: `logs RUN --url` refuses
    * for a run whose transcript is not linked, which is a fact about the link and
@@ -5036,27 +5060,33 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let logLink: string | null = null
 
     /**
-     * placeMain writes the main column's children in the screen's own order.
+     * placeMain writes the two hosts' children in the screen's own order.
      *
-     * **It replaces the column rather than appending to it**, because the two
-     * reads answer in an order nobody chooses: the log window's read can land
-     * first, and the record's panels belong *above* the diagnosis. A column
-     * built by appends would have put the timeline under the log window for
-     * every operator whose log read answered first, and the two answers arrive
-     * from the same CLI within a second of each other.
+     * **It replaces them rather than appending to them**, because the two reads
+     * answer in an order nobody chooses: the log window's read can land first,
+     * and the record's panels belong *above* the diagnosis. A column built by
+     * appends would have put the timeline under the log window for every
+     * operator whose log read answered first, and the two answers arrive from
+     * the same CLI within a second of each other.
      *
-     * The frame draws the column empty and `showRun` calls this once as soon as
-     * the two marks are up: the sections and the slot the marks go into are the
-     * frame's, and this is what writes them into the page in their order.
+     * The frame draws both hosts empty and `showRun` calls this once as soon as
+     * the two marks are up: the sections and the slots the marks go into are the
+     * frame's, and this is what writes them into the page in their order. The
+     * record's children go into the record's own host, which is what its busy
+     * mark is on -- the log window is the column's other child and is not inside
+     * the region that mark dims and announces.
      */
     const placeMain = (): void => {
-      const children = runMainChildren(drawn, { before, diagnosis: diagnosisDrawn, arrivals })
-      surface.nodeOf(drawn.main).replaceChildren(...children.map((each) => surface.nodeOf(each)))
+      const parts = { before, diagnosis: diagnosisDrawn, arrivals }
+      const record = runRecordChildren(drawn, parts).map((each) => surface.nodeOf(each))
+      const column = runMainChildren(drawn, parts).map((each) => surface.nodeOf(each))
+      surface.nodeOf(drawn.recordHost).replaceChildren(...record)
+      surface.nodeOf(drawn.main).replaceChildren(...column)
     }
 
     const recordToken = runRecordRead.start()
     const logsToken = runLogsRead.start()
-    runRecordRead.mark(recordToken, drawn.main, drawn.mainSlot, runBusyLabel(run, RUN_RECORD_BUSY), RUN_RECORD_SHAPE)
+    runRecordRead.mark(recordToken, drawn.recordHost, drawn.mainSlot, runBusyLabel(run, RUN_RECORD_BUSY), RUN_RECORD_SHAPE)
     runLogsRead.mark(logsToken, drawn.logs, drawn.logsSlot, runBusyLabel(run, RUN_LOGS_BUSY), RUN_LOGS_SHAPE)
     placeMain()
 
@@ -5072,12 +5102,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     const loadRecord = async (): Promise<void> => {
       const answer = documentOf(await bridge.diagnoseRun({ run }))
-      // The token goes first: the mark this column wears may belong to a later
+      // The token goes first: the mark this host wears may belong to a later
       // visit, and `settle` would take that one down with it.
       if (!runRecordRead.settle(recordToken)) return
       if (stale(mine)) return
-      // The mark the read wore comes out of the column's slot, and the refusal,
-      // when there is one, is drawn in its place: the column has no section of
+      // The mark the read wore comes out of the host's slot, and the refusal,
+      // when there is one, is drawn in its place: the host has no section of
       // its own until the record answers, and a refusal is not a section.
       surface.nodeOf(drawn.mainSlot).replaceChildren()
       if (!answer.ok) {
@@ -5380,12 +5410,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * again. It is the Graph card's own write -- the one place a checkout is set
    * from inside a view -- and the read after it is what turns the card back into
    * the picture: the write is only recorded here, and the plan is what says
-   * whether the directory the CLI re-validated is one the Graph can read. */
+   * whether the directory the CLI re-validated is one the Graph can read.
+   *
+   * **The generation is taken before the write, and both answers are dropped
+   * when it is stale.** The write is answered after the pairing probe, which
+   * takes seconds, and the operator can move to another tab in that time: the
+   * read and the refusal both belong to the Graph, so neither is drawn once the
+   * Graph is not the view on screen -- exactly as `readGraph` guards its own
+   * answer. The read that follows the write is held to `mine` rather than to a
+   * claim taken after it, so what it draws is the generation this press took:
+   * a plan read that was already in flight when the checkout changed cannot land
+   * under it, and one the operator has left since is dropped like any other. */
   const useCheckout = (project: string, checkout: string): void => {
+    const mine = claim()
     void railBridge.setInstallationCheckout({ project, checkout }).then((reply) => {
+      if (stale(mine) || currentView !== 'graph') return
       const accepted = replyData(reply).ok
       answered('installation.checkout', reply, project, true)
-      if (accepted) void readGraph(claim(), null)
+      if (accepted) void readGraph(mine, null)
     })
   }
 
