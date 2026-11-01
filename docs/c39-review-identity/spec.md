@@ -1,10 +1,11 @@
 # The review identity, the read-only mint and the signed verdict
 
 This is the design. Where it and [reconciliation.md](reconciliation.md) disagree, **the reconciliation
-wins**. The owner decisions it is written to are **D1062–D1074**, each with the cost of its alternative,
+wins**. The owner decisions it is written to are **D1062–D1075**, each with the cost of its alternative,
 in [reconciliation.md](reconciliation.md) §3; the owner answered them all on **2026-11-01** — D1062–D1071
-as recommended, D1072 as 0.16.0, D1063 as amended by the same day's ruling **O1**, and D1073/D1074 as the
-review added them.
+as recommended, D1072 as 0.16.0, D1063 as amended by the same day's ruling **O1**, D1073/D1074 as the
+review added them, and **D1075** in the round-5 review of this folder, as the recommendation its row
+carried.
 
 ---
 

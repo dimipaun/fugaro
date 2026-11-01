@@ -1,8 +1,9 @@
 # C3.9's review half: implementation plan
 
 **Nothing here is approved to build, and every decision is answered.** The owner answered
-[reconciliation.md](reconciliation.md) §3's **D1062–D1074** on 2026-11-01 — D1062–D1071 as recommended,
-D1072 as 0.16.0, D1063 as amended by that day's ruling O1, and D1073/D1074 as the review added them — so
+[reconciliation.md](reconciliation.md) §3's **D1062–D1075** on 2026-11-01 — D1062–D1071 as recommended,
+D1072 as 0.16.0, D1063 as amended by that day's ruling O1, D1073/D1074 as the review added them, and D1075 as
+the published policy's derivation — so
 each task below is written to an answer and not to a recommendation. Each
 task touches at most 10 files, names its tests, starts with a red step, and ends at the gates below.
 [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md) keeps

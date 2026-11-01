@@ -3,9 +3,11 @@
 Read against `origin/main` at `a38cfeec` and against the open pull requests of 2026-11-01 (their heads
 fetched and their `docs/` grepped for the decision and check numbers they write). Line numbers are that
 commit's. Each finding is **Exists**, **Missing** or **Conflicts**, with its consequence for the spec or
-the plan. **F1–F14**, **D1062–D1074** and **X1–X4** are this folder's own numbering. Every decision was
-answered by the owner on **2026-11-01** (§3), D1063 as amended by that day's ruling **O1**, and the same
-review corrected four claims the first draft made (§1, "What the review of 2026-11-01 corrected").
+the plan. **F1–F14**, **D1062–D1075** and **X1–X4** are this folder's own numbering. Every decision was
+answered by the owner on **2026-11-01** (§3) — D1062–D1071 as recommended, D1072 as 0.16.0, D1063 as amended
+by that day's ruling **O1**, D1073/D1074 as the review added them and **D1075** in the round-5 review of this
+folder — and the same review corrected four claims the first draft made (§1, "What the review of 2026-11-01
+corrected").
 
 ## 1. The findings
 
