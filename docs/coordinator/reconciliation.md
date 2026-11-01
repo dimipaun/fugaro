@@ -545,8 +545,8 @@ operation and a new ruling. → **Q8**.
 `docs/design/desktop-console.md` §5.1 rule 7 — *"Job-written text is text"* — and the code
 follows it: `console/src/renderer/app.ts` writes through `element.textContent`
 (`:124,138,159,174`), never `innerHTML`; the sanitizers are
-`console/src/shared/sanitize.ts` (`sanitizeText:2387`, `sanitizeRefusal:2624`,
-`safeUrl:2656`); navigation and window-open are denied
+`console/src/shared/sanitize.ts` (`sanitizeText:2415`, `sanitizeRefusal:2652`,
+`safeUrl:2684`); navigation and window-open are denied
 (`console/src/main/window.ts:231 denyNavigation`, `:242 denyWindowOpen`), and there is
 exactly one validated `shell.openExternal`.
 A coordinator answering *"what's holding up the payments release?"* produces free text that

@@ -444,9 +444,10 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	// so it is a writer like `policy publish` and takes the same two refusals —
 	// the shared config is not an operator's own installation (and its repos:
 	// map is not the one a bare owner/name resolves against), and the database
-	// must be this project's. The config's path is not this command's business:
-	// editing the allow-list moves no generation of the node's policy keys.
-	lc, db, _, err := openProjectBudget(ctx, o.cloud)
+	// must be this project's. The path is the file the generation is recorded
+	// in: the edit rewrites the whole node, so it moves the generation its keys
+	// are read at exactly as a publish does, and the record has to follow it.
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
@@ -523,7 +524,7 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 		allow = append(allow, canonical)
 		slices.Sort(allow)
 	}
-	return putAllowRepos(ctx, out, lc, db, etag, raw, before, nonNil(allow))
+	return putAllowRepos(ctx, out, configPath, lc, db, etag, raw, before, nonNil(allow))
 }
 
 // putAllowRepos is the write every editor of allow_repos ends in: the node is
@@ -540,7 +541,21 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 // ran, or the credential may not write it) left the list exactly as it was — an
 // operator who read "allow_repos: [a] → [a b]" on a failed write would take the
 // entry for enrolled.
-func putAllowRepos(ctx context.Context, out io.Writer, lc *localcfg.Config, db *rtdb.Client, etag string, raw []byte, before, allow []string) error {
+//
+// The generation is recorded after that write, the same record `policy publish`
+// keeps and for the same reason: this is a PutIfMatch of the whole node, so the
+// generation its policy keys are read at moves even though the only member that
+// changed is allow_repos, and a file left naming the generation from before this
+// edit would refuse the operator's next config edit against the node this very
+// command wrote, with a re-seed offered as the way out that would revert it.
+//
+// It is recorded only when this machine's file was written from the generation
+// this edit wrote against. A record that already names another one is a file
+// whose keys are older than the node — another machine published in between —
+// and that is D854's refusal to make, so the record is left exactly as it is and
+// the next `fugaro update` still refuses and offers the re-seed: a record
+// written here would hide the newer node and publish the older file over it.
+func putAllowRepos(ctx context.Context, out io.Writer, configPath string, lc *localcfg.Config, db *rtdb.Client, etag string, raw []byte, before, allow []string) error {
 	patched, err := patchPolicyJSON(raw, "allow_repos", allow)
 	if err != nil {
 		return userErr("editing %s: %v; nothing was written", projectpolicy.PathShared(), err)
@@ -556,7 +571,10 @@ func putAllowRepos(ctx context.Context, out io.Writer, lc *localcfg.Config, db *
 	}
 	fmt.Fprintf(out, "allow_repos: %v → %v\n", before, allow)
 	fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
-	return nil
+	if lc.PolicyGeneration != etag {
+		return nil
+	}
+	return recordPublishedGeneration(ctx, out, db, lc, configPath, patched)
 }
 
 // removalWarning is what `repos rm` asks the operator to confirm. Removing an
@@ -813,7 +831,7 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	if m := agentMarker(os.Getenv); m != "" {
 		return userErr("nothing was written: fugaro project sync adds to the published allow-list, which is what admits a repository to the project, and --github-app-key reads the App's private key with your own credentials to ask GitHub which repositories the App is installed on: %s", initflow.AgentRefusal(m))
 	}
-	lc, db, _, err := openProjectBudget(ctx, o.cloud)
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
@@ -876,7 +894,7 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, what); err != nil {
 		return err
 	}
-	return putAllowRepos(ctx, out, lc, db, etag, raw, before, nonNil(allow))
+	return putAllowRepos(ctx, out, configPath, lc, db, etag, raw, before, nonNil(allow))
 }
 
 // syncAppKey is the App's private key, parsed, behind --github-app-key.

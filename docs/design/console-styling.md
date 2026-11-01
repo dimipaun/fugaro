@@ -167,7 +167,7 @@ eight that are hooks here as well — `data-key` for the spend screen (§2.3, §
 `data-view` for the navigation and the people panel (§2.1, §2.5) — stay licensed, and §2.11
 says so.
 
-Three facts hold across every screen and are stated once:
+Four facts hold across every screen and are stated once:
 
 - **A number is never bare.** Every figure goes through `putReading` (`app.ts`), which
   calls `formatReading` (`console/src/shared/availability.ts`), so the marks are fixed console-wide:
@@ -181,6 +181,21 @@ Three facts hold across every screen and are stated once:
 - **The theme travels as an attribute.** Each screen's root is
   `<section class="<screen>" data-theme="light|dark">`; nothing else about the drawing
   depends on the theme today.
+- **A panel whose data has not arrived draws the shape of what is coming** (the owner,
+  2026-10-31: "when changing tabs in the Console we should show a skeleton while we load the
+  data, no?"). A tab switch draws one `div.console-skeleton` per section the tab is made of
+  — a `div.console-skeleton-block` per thing that is coming, each carrying `data-shape`
+  (`line`, `chip`, `row`, `card` or `band`) and the `data-section` its own wrapper names —
+  and a section whose own read is in flight draws one too, in place of the content it does
+  not have yet. The whole tree is `aria-hidden`, because a block is a shape and not a
+  reading, and what a reader who cannot see it is told is the panel's own sentence in
+  `span.console-reading-status` — visually hidden beside the blocks, with the fifteen-second
+  `p.console-busy-still` under them. The shapes are `console/src/renderer/skeleton.ts`'s
+  (`SKELETON_SHAPES`, one list per tab), the placeholder that draws them is
+  `screens/reading.ts`'s and the per-section one is `renderer/section.ts`'s, so the hooks
+  above are the console's rather than one screen's — and the heights the blocks hold are
+  `--skeleton-*` steps of `flight-deck.css`, so the section does not move when the read
+  lands.
 
 ### 2.1 The dashboard's chrome — `src/renderer/entry.ts`
 
@@ -577,29 +592,47 @@ exported: it is the sentence a row draws, not a vocabulary anything reads.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 
-Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
-(where there is one) `data-operation`: `caps`, `kill`, `repositories`, `jobs`, `accounts`,
+Seven panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
+(where there is one) `data-operation`: `caps`, `kill`, `repositories`, `accounts`,
 `secrets`, `policy`, `enrollment`. **The panel's state is a word as well as a frame**:
 `span.projects-state` draws `read`, `not read`, or the design's word for a card this CLI
 cannot read at all — `locked` — so no rule has to carry a state on a tone alone (§3.5).
 
+**The jobs panel is gone, and so is the second read behind it** (the owner's report of
+2026-10-31: that list "is slow and serves no purpose there"). `runs ls --json` is about
+248 KB and six seconds for a day of runs, and this screen started it before the caps —
+the whole of the panel's content — could be drawn, which is what made the tab about
+twenty seconds with nothing on screen. The screen makes **one** read, `budget show
+--json`; the jobs table, the `projects-jobs-*` hooks beside it, `data-operation="runs.list"`
+and the two repository claims the run list carried (the enrolled-and-seen split and the
+"seen, not enrolled" card) all leave the vocabulary with it. The repositories panel draws
+the cap document's own `repos` and says nothing about which of them have run: a repository
+enrolled with no run is not the same fact as a repository that ran with no cap row.
+
+**The screen's shell is `section.projects > div.projects-body > div.console-busy-slot`**,
+and the entry mounts it in the frame the tab is opened in. The mark, the skeleton and the
+`aria-busy` on `.projects-body` are `src/renderer/section.ts`'s (§2.11, and the console
+rule in `.claude/rules/console.md`): the section is dimmed while the read is out, never
+blanked, and says "still reading" after a quarter of a minute. A screen this session has
+already read is drawn at once, stamped `as of HH:MM` with a Refresh control.
+
 | Group | Class hooks |
 |---|---|
 | Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-state`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
-| Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches all three**, and the third is **unreachable today** — see below |
+| Notes | two hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches both**, and the second is **unreachable today** — see below. The jobs panel's own note went with the panel |
 | Caps | `projects-caps`, `projects-reserve`, `projects-reserve-word`, `projects-reserve-value`, `projects-cap-table`, `projects-cap-head`, `projects-cap`, `projects-cap-scope`, `projects-cap-cell`, `projects-cap-value`, `projects-cap-source` |
 | Kill | `projects-kills`, `projects-kill-list`, `projects-kill-row`, `projects-kill-scope`, `projects-kill-repo`, `projects-kill-state`, `projects-kill-action`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
-| Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-both`, `projects-only-enrolled-repo`, `projects-only-seen-repo`, `projects-repo-card-none`, `projects-repo-card-note`, `projects-repo-add` |
-| Jobs | `projects-jobs`, `projects-job-table`, `projects-job-head`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-mode`, `projects-job-mode-cell`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
 `read`, `unavailable`, `not-built`**; `data-operation`
-(`budget.show|runs.list|accounts.inventory|secrets.inventory`, absent on `policy` and
+(`budget.show|accounts.inventory|secrets.inventory`, absent on `policy` and
 `enrollment`); `data-scope` (`global|defaults|repo`, on a caps row and on a kill row);
 `data-slug` (the same two rows); `data-killed` (`true`|`false` on a kill row, and `true` on
-the banner a killed row carries); `data-kind` (`both|enrolled|seen`, on a repository card).
+the banner a killed row carries); `data-kind` (`enrolled` alone, on a repository card —
+the run list that carried the other two went with the jobs panel).
 
 The `not-built` state is the design's own honesty rule in the DOM: `policy` and
 `enrollment` carry `data-state="not-built"` and a `projects-because` sentence ("not
@@ -630,21 +663,15 @@ largest single lease the project has out (`span.projects-reserve-word` names it,
 only when the document has them, and nothing invented when it does not. The row's own action
 is drawn through `disabledWrite` (§5.1): `Kill` on a live row, `Revive` on a killed one.
 
-**The repositories are three cards**, `article.projects-repo-card`, one per state of the
-document: a repository with a cap row and a run (`data-kind="both"`), one with a cap row and
-no run yet (`data-kind="enrolled"`, saying so in `p.projects-repo-card-note`), and one that
-ran with no cap row (`data-kind="seen"`, in the warn tone, saying so, and the one card that
-draws an action: `Add cap`, through `disabledWrite`). A known but empty set says `none` in
-`p.projects-repo-card-none` rather than drawing an empty card or nothing at all. The panel's
-reason for an unread set stays `projects-because` (`repositoriesBecause`), so a set no
-document reported is never drawn as an empty one.
-
-**The jobs are a table**, `table.projects-job-table`: the run, the repository, the workflow,
-the status, the stage, the requester, the launcher, the timestamp, the mode where the column
-exists, and **the three cost accounts in three cells** — the subscription's model dollars
-(notional), the compute dollars (billed) and their total — each through `numberCell`, so
-every figure carries its own reading's state and a value the document does not carry is
-`n/a` and never `$0.00`.
+**The repositories are one card**, `article.projects-repo-card`, drawn from the cap
+document's own `repos`: `data-kind="enrolled"` and a title saying so, then one
+`li.projects-repo-enrolled` per repository. It was three cards, one per state of a document
+that also listed runs — a repository with a cap row and a run (`both`), one with a cap row
+and no run yet (`enrolled`), and one that ran with no cap row (`seen`, with the only action
+any card drew, `Add cap`) — and the two that needed a run went with the run list. A known
+but empty set says `none` in `p.projects-repo-card-none` rather than drawing an empty card
+or nothing at all. The panel's reason for an unread set stays `projects-because`
+(`repositoriesBecause`), so a set no document reported is never drawn as an empty one.
 
 The accounts and secrets panels draw their rows as lists (`ul.projects-account-list`,
 `ul.projects-secret-list`). **Neither read is wired in this build**, so the two panels are
@@ -662,20 +689,10 @@ hook is emitted by the code and reachable by no feed today; it becomes reachable
 `complete: true` and a non-empty `note` can arrive together, which is why it stays in the
 vocabulary rather than being deleted.
 
-Readings: money (`usd`) for the reserve, the caps and the job figures; counts for the panel
-counts, the jobs panel's dropped/total line and the secret versions. **No reading is a time
-on this screen** — every date is text.
-
-**`projects-job-mode` is the jobs row's rigor mode, and the column is conditional.** The
-cell, `td.projects-job-mode-cell`, draws the mode's word — the five §2.3 names — or the
-record's own value when this
-build does not know it, or `-` for a run whose record carries no block; and **no cell is
-drawn at all unless some listed run carries a block**, which is the rule `fugaro runs ls`
-writes for its own MODE column (`internal/cli/runs.go`'s `showMode`). A project whose runs
-all predate the field therefore draws the jobs list it drew before, and not a column of
-dashes. The cell is the mode and nothing else: the CLI's own cell appends the layer and the
-strictest matched area (`pro (repo payments +2)`), and the screen that has room for that
-whole answer is the run detail's Rigor row (§2.6).
+Readings: money (`usd`) for the reserve and the caps; counts for the panel counts and the
+secret versions. **No reading is a time on this screen** — every date is text, and no cell
+of this screen carries a rigor mode: the run detail owns that answer (§2.6), and the jobs
+row that used to repeat it went with the run list.
 
 ### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
@@ -975,6 +992,14 @@ worker's answer, written as SVG attributes because `style-src 'self'` admits no 
 style, §5.5) and a **list** that is the same model with every title whole. Regions in tree
 order: header → tabs → chips → canvas, or the list, never both.
 
+**The screen answers a control in the frame it was pressed in** (0.117.0). The refresh,
+the stream filter's tabs and the plan select are one section's controls, and
+`src/renderer/section.ts` puts the busy mark and `aria-busy` on `section.graph` for as long
+as the read it started is out — the canvas already drawn stays under the mark, dimmed and
+never blanked — and says it is still reading after a quarter of a minute. The canvas is
+drawn from the plan status alone and the run overlay decorates it when the run list lands,
+so a screen that waited for both reads would be the all-or-nothing wait this rule forbids.
+
 **The picture is read left to right** (console redesign, step 6a). The layout engine is
 asked for `elk.direction: 'RIGHT'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a task sits to
 the **left** of the tasks that need it, the layers it computes are the columns a reader
@@ -1117,6 +1142,14 @@ the console's own empty sentence instead of the panels. **The read is one comman
 (`fugaro coordinator status --from-store --all --json`) and the drawing adds no control, no
 link and no gesture: the screen is read-only, which is why no rule here needs a transition
 beyond the focus ring the shared blocks already carry.
+
+**What is already known is drawn before the read** (0.117.0): the source line and the
+console's age sentence are mounted in the frame the tab is opened in, and the body's own
+section is filled when the document arrives — the summary first, the per-PR and per-run
+detail after, in idle chunks or on the operator's expand. While the read is out the body
+carries `src/renderer/section.ts`'s busy mark, its `aria-busy` and a skeleton of the same
+shape, and a document this session has already read is drawn at once, stamped `as of
+HH:MM` with a Refresh control.
 
 | Hook | Drawn as | Note |
 |---|---|---|
@@ -1718,7 +1751,7 @@ the `ElementLike` interface is untouched (a media query is not a DOM write).
 | Panel / section title (`projects-title`, `run-panel-title`, `spend-account-title`) | `--font-size-md` (15px) | 600 | sans |
 | Table header (`projects-repos-label`, `run-log-time`, a column caption) | `--font-size-xs` (11px), uppercase, letter-spaced | 500 | sans |
 | Row text, labels, controls | `--font-size-sm` (12px) — the dense default | 400 | sans |
-| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the three Projects note hooks — `projects-note`, `projects-jobs-note`, `projects-accounts-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
+| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the two Projects note hooks — `projects-note`, `projects-accounts-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
 | **Every number, id, slug, path, timestamp and log line** | `--font-size-sm` | 400 | `--font-mono` with `font-variant-numeric: tabular-nums` |
 
 Money is always tabular and right-aligned, in mono, with the `$` inside the same cell —
@@ -1769,6 +1802,8 @@ animated would be a figure whose last frame is a lie about when the value was re
 - **Forced colours draw no animation at all** (§4.4): under `forced-colors: active` every state is its mark and its border, the same drawing the reduced-motion arm leaves behind.
 
 **Amendment, 2026-10-31: the busy mark's one turn, and nothing else moves.** The owner's rule of 2026-10-31 — "we need to render parts of screen as soon as we get that data, not wait for it all before we show anything" — needs the other half of the same complaint: a control change used to look like nothing had happened, and a section whose read has not answered has to say so **in the frame the click happened in**. A mark that says "reading" without moving is a mark a reader takes for a stopped console, so the busy mark (`console/src/renderer/section.ts`, drawn into a section's own slot) may draw **one** spinning element, `span.console-busy-spinner` in `flight-deck.css`, turned by **one** keyframe, `console-busy-turn`, whose only property is `transform`. The count above therefore becomes four. It is not a figure and not a state of a screen: it carries no number and no word about the data, it is drawn only while a read is in flight, and it is the only motion the console has outside the graph screen. Its two arms follow the rules above rather than restating them: under `prefers-reduced-motion: reduce` the element is **not drawn at all** (`display: none`, with the animation stopped on that same selector) and the static word `span.console-busy-still-mark` is shown in its place, because the global freeze would leave a ring wherever its last frame put it — a picture of half a circle rather than of reading; under `forced-colors: active` it declares no animation at all.
+
+**Amendment, 2026-11-01: the skeleton's one shimmer.** The owner, 2026-10-31: "when changing tabs in the Console we should show a skeleton while we load the data, no?" A skeleton of still blocks is a panel that may as well be a picture of a panel, so a block that is waiting on a read may carry **one** shimmer: `div.console-skeleton-block` in `flight-deck.css`, swept by **one** keyframe, `console-skeleton-shimmer`, whose only property is `background-position` over a gradient of two steps of the vocabulary. The count above therefore becomes five. It is bounded exactly as the turn before it is: one element and one keyframe; it carries no figure, no word and no state (the whole skeleton tree is `aria-hidden`, §2's fourth fact); it is drawn only while a read is in flight; and it is not a state of a screen. Its two arms are §3.9's rules rather than exceptions to them: under `prefers-reduced-motion: reduce` the blocks are **static** — the animation is stopped on the selector that started it and the sweep is taken off, because the global freeze would otherwise leave the gradient wherever the sweep stopped, which is a picture of a half-loaded block — and under `forced-colors: active` they declare **no animation at all** and are drawn as the system's own outline (§4.4).
 
 **What this amendment does not change.** The 120 ms `--duration-fast` hover and focus transitions are still the only motion on every other screen, the reduce rule is still written once in `base.css` and still applies to everything this screen does not restate, and the graph screen still takes its colours and its spacing from the shared token layer — which is why this is an amendment to the motion rule and to nothing else in this design.
 

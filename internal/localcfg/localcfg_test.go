@@ -1421,7 +1421,7 @@ func TestProjectBaseBranchValidated(t *testing.T) {
 // not know refuses the whole document — so the list is unreadable until the
 // field exists. It is carried as it is written, and it is dropped from the
 // published shared config: the rule a root is held to is the node's
-// (projectpolicy.validBitbucketAPIRoots), applied where the node is built
+// (projectpolicy.ValidBitbucketAPIRoots), applied where the node is built
 // (the publish calls projectpolicy.Decode through checkPolicyBytes), so there
 // is no second copy of it here to drift from that one.
 func TestBitbucketAPIRootsParse(t *testing.T) {

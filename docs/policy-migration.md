@@ -93,9 +93,18 @@ against.
 
 That record belongs to the agreement between the file and the node, not to one
 run's write, so it is refreshed by every write: the migration, the publish, the
-re-seed's own migration, and the publish `fugaro project policy publish` makes
-from the explicit door. A run that finds the file and the node **agreeing** while
-the record names another generation — a migration-only write of an earlier
+re-seed's own migration, the publish `fugaro project policy publish` makes from
+the explicit door, and the allow-list edits `fugaro project repos add`,
+`repos rm` and `sync` make — those three rewrite the whole node, so its
+generation moves even though `allow_repos` is the only member that changed, and
+a record left behind by one of them would refuse the operator's next config edit
+with a re-seed offered over it, which is the overwrite this rule exists to
+prevent. Each door records only when the file was written from the generation
+that door wrote against: a record that already names another one is a file whose
+keys are older than the node, and there the refusal is the answer, so nothing is
+recorded and the next `fugaro update` still asks. A run that finds the file and
+the node **agreeing** while the record names another generation — a
+migration-only write of an earlier
 release, a door that published without recording, a re-seed put right by hand —
 writes the record and nothing else: no node, a backup of the file, and the next
 edit of the config is the publish it asks for. A record left behind at an older

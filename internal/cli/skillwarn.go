@@ -65,16 +65,20 @@ func warnStaleSkills(cmd *cobra.Command) {
 	}
 }
 
-// staleLine is the one warning line for r, "" when there is none.
+// staleLine is the one warning line for r, "" when there is none. The remedy
+// is the one command that does the whole upgrade, and it names where to run
+// it: the line prints inside a coding agent's session too, where fugaro update
+// writes nothing by design, so pointing at the checkout's local half instead
+// would hand that session the work-around of the refusal.
 func staleLine(r pluginwire.Report) string {
 	pin, bin := strings.TrimPrefix(r.Ref, "v"), strings.TrimPrefix(r.Binary, "v")
 	switch {
 	case r.Pin == pluginwire.Outdated:
-		return fmt.Sprintf("warning: the Fugaro plugin pinned in .claude/settings.json is %s, this is %s: run fugaro upgrade --local", pin, bin)
+		return fmt.Sprintf("warning: the Fugaro plugin pinned in .claude/settings.json is %s, this is %s: run fugaro update in your own terminal", pin, bin)
 	case r.Pin == pluginwire.Newer:
 		return fmt.Sprintf("warning: the Fugaro plugin pinned in .claude/settings.json is %s, newer than this fugaro %s: upgrade fugaro (brew upgrade dimipaun/tap/fugaro)", pin, bin)
 	case r.Install == pluginwire.InstalledDiffers:
-		return fmt.Sprintf("warning: the installed Fugaro plugin is %s but .claude/settings.json pins %s: run fugaro upgrade --local, or in Claude Code run /plugin marketplace update fugaro", r.Version, pin)
+		return fmt.Sprintf("warning: the installed Fugaro plugin is %s but .claude/settings.json pins %s: run fugaro update in your own terminal, or in Claude Code run /plugin marketplace update fugaro", r.Version, pin)
 	}
 	return ""
 }
