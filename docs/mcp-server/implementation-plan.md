@@ -9,7 +9,7 @@ paragraph — §1 says which task each answer moves.
 
 | D | The question | Written to | If the owner answers the other way |
 | --- | --- | --- | --- |
-| D920 | Public endpoint, or P8's IAM invoker | Public, bearer token is the gate | **M4, M5, M7, M8, M9, M10 are void.** An IAM-invoked endpoint has no metadata documents, no registration and no token endpoint; what survives is M1–M3 and a tool registry reached by a Google identity. The plan is then a different, much smaller plan. |
+| D920 | Public endpoint, or P8's IAM invoker | Public, bearer token is the gate | **M5, M6, M8, M9, M10 are void, and M4 and M7 shrink.** An IAM-invoked endpoint has no metadata documents, no registration and no token endpoint; what survives is M1–M3 and a tool registry reached by a Google identity. The plan is then a different, much smaller plan. |
 | D921 | The OAuth library | `zitadel/oidc` | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
 | D922 | Where the token records live | A subtree nobody may read | **M3 changes** from "name and deny" to "grant the coordinator's account", and its red step inverts. |
 | D923 | How the person signs in | The installation's own custom-token flow | **M6 changes**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
@@ -122,7 +122,7 @@ is asked here for every task that changes who may reach what.
 - **Depends on:** D920 answered.
 - **Owner check:** the service is applied only by `fugaro update`, and this plan does not run it.
 
-### M5 — The authorization server's five endpoints
+### M5 — The authorization server: its two metadata documents and its four endpoints
 
 - **Files (9):** `ee/coordinator/mcpauth/server.go`, `server_test.go`, `metadata.go`,
   `metadata_test.go`, `register.go`, `register_test.go`, `authorize.go`, `token.go`,

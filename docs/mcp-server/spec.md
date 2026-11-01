@@ -150,8 +150,9 @@ the server holds no per-connection state. That is what lets the service scale to
 the coordinator's own §7 already required ("plain HTTP requests mean scale-to-zero is no problem").
 
 **The endpoint is public, and the bearer token is the gate** (D920). No token, no reachable path that
-does anything; the only unauthenticated answers are the 401 that starts the flow and the two
-metadata documents the flow needs.
+does anything. What answers a caller who has not yet got one is the 401 that starts the flow, the
+two metadata documents the flow needs, and the authorization server's own four endpoints — all of
+them work nobody is charged for and none of them reaches the project's state.
 
 This is a **departure from the coordinator's P8**, which chose Cloud Run IAM invoker as the
 authorization for the front door — a deliberate departure from the MCP specification recorded there
@@ -253,9 +254,9 @@ is that v1 does not invent one. The project already has two lists — the launch
 own spec §4 says "whoever can reach the project's coordinator is in the project; no extra permission
 model in v1", and that sentence was written when *reaching* the coordinator meant holding a Google
 identity with `roles/run.invoker`. Making the endpoint public (D920) removes the thing that sentence
-leaned on, so this design puts the project's own two lists in its place (D933). That is the one place the design adds an authorization rule the coordinator's
-spec does not have, and it adds it because D920 otherwise leaves a public endpoint with no rule at
-all.
+leaned on, so this design puts the project's own two lists in its place (D933). That is the one place
+the design adds an authorization rule the coordinator's spec does not have, and it adds it because
+D920 otherwise leaves a public endpoint with no rule at all.
 
 ## 5. The tools
 
@@ -310,10 +311,10 @@ with an environment override on the job carrying the token's limit in **a variab
 the run's ceiling is the tighter of that and the job's own — so **the gateway enforces the token's
 spend limit**, the run's ledger charges against it, and a wrong number at the coordinator cannot
 widen a ceiling, because the run takes the tighter side itself. The one thing the design refuses
-outright is routing the limit through the
-agent's own `--max-budget-usd` flag: that figure is the agent's own estimate of cost, and the
-repository's own dogfooding notes record that it misprices non-Anthropic models by roughly an order
-of magnitude. A limit enforced there would be a limit enforced by the wrong number.
+outright is routing the limit through the agent's own `--max-budget-usd` flag: that figure is the
+agent's own estimate of cost, and the repository's own dogfooding notes record that it misprices
+non-Anthropic models by roughly an order of magnitude. A limit enforced there would be a limit
+enforced by the wrong number.
 
 **What is stored, and where** (D922). Only **hashes** — never a token value, never a refresh token,
 never a client secret. The record lives in a subtree **no client of the project's database may
@@ -362,9 +363,9 @@ mandatory. It is written as the questions a reader should be able to answer from
 
 **Who can call the front door.** Everyone on the network (D920). There is no network gate, no VPN,
 no allowlist of sources and no mutual TLS; the platform's IAM is off by design, and the handler is
-the only gate. That is the price of "standard clients connect without custom config", and three
-things pay it: every unauthenticated path is one of five endpoints with no work behind it, every
-refusal is recorded, and nothing behind the gate is reachable without a token. **If this premise is
+the only gate. That is what "standard clients connect without custom config" costs, and three things
+pay for it: every unauthenticated path is a metadata document or an authorization endpoint with no
+work behind it, every refusal is recorded, and nothing behind the gate is reachable without a token. **If this premise is
 wrong — if the endpoint is not in fact public because the platform refuses the request before it
 reaches the handler — the design loses nothing; the GCP live checklist is where that is confirmed,
 and the owner owes that check.**
@@ -438,8 +439,8 @@ description. The coordinator:
   A run's credential continues to reach the run the only way it reaches any run: the platform mounts
   it into the job, and the job's own service account is the only reader.
 - **never exposes the database's contents as an MCP tool.** The coordinator's own §7 already says
-  "local agents never touch Firestore directly"; the front door is a caller, so the rule is that the
-  node layout stays private and a tool answers with a view, never with a path.
+  "[l]ocal agents never touch Firestore directly"; the front door is a caller, so the rule is that
+  the node layout stays private and a tool answers with a view, never with a path.
 - **never launches anything but the project's own job.** No arbitrary command, no arbitrary image,
   no repository outside the project's list (D931).
 - **never treats a token limit as advice.** A limit that cannot be enforced is not offered.
@@ -461,8 +462,7 @@ and ask for it.
 - The three open items of the owner's spec are answered or narrowed: the library is §3's
   recommendation (D921), the licence question is closed by not taking that option, and
   re-verification against the live MCP specification and the project's Identity Platform features is
-  an owner check before implementation, listed in [implementation-plan.md](implementation-plan.md)
-  §owner checks.
+  an owner check before implementation, listed in [reconciliation.md](reconciliation.md) §6.
 - **Which of the fourteen decisions the owner declines.** The design is written to the recommended
   answer everywhere, and every alternative is priced in the reconciliation, so a different answer is
   a different document rather than an edit.
