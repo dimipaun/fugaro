@@ -202,16 +202,15 @@ local-config-only by construction (spec §7). The only thing the two designs sha
 
 ## 4. Decisions D860–D875
 
-**Every decision is answered (2026-10-31).** D860, D861, D864, D865, D866, D867, D869 and D870 are
-answered as recommended; **D862** is answered with the design's alternative (a) and **D868** against
-the recommendation (`--yes` covers everything); **D863, D871 and D872 are moot**, because D862's
-answer removes the pty and the capture they were about. Each row's recommendation comes first, then
-the alternative's cost, then the answer. The plan in [implementation-plan.md](implementation-plan.md)
-is written to the answers.
+**Every decision is answered: D860–D872 on 2026-10-31 and D873–D875 on 2026-11-01.** D860, D861, D864,
+D865, D866, D867, D869 and D870 are answered as recommended; **D862** is answered with the design's
+alternative (a) and **D868** against the recommendation (`--yes` covers everything); **D863, D871 and
+D872 are moot**, because D862's answer removes the pty and the capture they were about. Each row's
+recommendation comes first, then the alternative's cost, then the answer. The plan in
+[implementation-plan.md](implementation-plan.md) is written to the answers.
 
-**D873, D874 and D875 were answered by the owner on 2026-11-01**, the day after the rest, and they are
-not about `accounts add` at all: they are about **which account a run uses when the project holds
-several** — the question the owner's brief did not ask. All three are answered as
+**D873, D874 and D875 are not about `accounts add` at all**: they are about **which account a run uses
+when the project holds several** — the question the owner's brief did not ask. All three are answered as
 recommended, and spec §11 is written to them.
 
 | D | Question | Recommendation | The alternative, and its cost | Answer |
