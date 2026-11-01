@@ -257,8 +257,8 @@ mid-stage; always logged. **"Allowed for that stage" is two rules and not one** 
 repository's admission (`claudeAccountAllowed`, the list `accounts ls` prints), and the narrower stage
 scope — a stage is served only by the accounts its own job exists for, so a `review` stage's walk is the
 **review-class** accounts the cloud-senior-review design's review job variant is built for
-([cloud-senior-review](../cloud-senior-review/spec.md) §2; the class is the routing design **#1514**'s
-**D1062**, open). With the switch off nothing changes at all: explicit-only, which is what
+([cloud-senior-review](../cloud-senior-review/spec.md) §2; the class is **D1062** of the routing design
+**#1514**, which is open). With the switch off nothing changes at all: explicit-only, which is what
 §11.2's chain already gives, and which is the shipped behaviour. It comes after A2 because the keys (A1)
 and the node that carries them (A2) have to exist before there is a list to walk.
 
@@ -274,7 +274,8 @@ start and not only at launch), `TestAutoReviewStageWalksOnlyReviewClassAccounts`
 scope**, the second rule: an account that is admitted for the repository but is **not of the review
 class** — no review job variant of the cloud-senior-review design is built for it — is never chosen for
 the `review` stage, whatever the list says; the sibling of the test above, and the one that keeps stage
-scope from collapsing back into the repository's allow-list), `TestAutoOffMeansExplicitOnly` (with the switch off the walk never runs,
+scope from collapsing back into the repository's allow-list),
+`TestAutoOffMeansExplicitOnly` (with the switch off the walk never runs,
 the account is the chain's own, and the record names one account), `TestAutoNeverSwitchesMidStage` (a
 rate limit inside a stage ends that attempt: the stage's transcript, its cost and its verdict are one
 account's), `TestAutoLogsEveryFailover`.
