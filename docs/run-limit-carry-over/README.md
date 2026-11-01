@@ -16,7 +16,7 @@ make that a hole the orchestrator cannot close from outside:
 
 - The per-run dollar cap is not a launch argument at all: it is the **job's environment**
   (`FUGARO_MAX_RUN_USD`, `internal/runner/spend.go:23`), written when the job was created by
-  `fugaro init` / `fugaro update`, and read by the runner at bootstrap. A launcher cannot pass a cap.
+  `fugaro setup` and re-converged by `fugaro update`, and read by the runner at bootstrap. A launcher cannot pass a cap.
 - The one limit a launch *can* pass, `--total-timeout`, is a **timeout** and may raise the run's own clock
   (`internal/cli/run.go:2344`); nothing a launch passes can tighten the dollar or token ceiling.
 - Every limit is measured from **zero at each run**. A follow-up (`--pr N`) or a retry starts with the

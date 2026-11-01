@@ -22,7 +22,7 @@ repository's `agent.review_rounds`, and `max_budget_usd` is a stage-level `claud
 **F3: Conflicts. The per-run dollar cap is the job's environment, not a launch argument.**
 `MaxRunUSDEnv` is `FUGARO_MAX_RUN_USD` (`internal/runner/spend.go:23`), read by `spendFromEnv` (`:93`), and
 handed to the gateway as `Options.Cap` (`internal/runner/gateway.go:138`). The value is written into the
-job when `fugaro init` / `fugaro update` creates it. *Consequence:* a per-launch cap cannot ride the job
+job when `fugaro setup` creates it and re-converged by `fugaro update`. *Consequence:* a per-launch cap cannot ride the job
 environment; it must ride `task.json`, which is the one per-launch carrier the runner reads (spec §2).
 
 **F4: Exists. The merge is tighten-only, in one place.** `policy.Merge` (`internal/policy/merge.go:44`)
