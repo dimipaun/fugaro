@@ -350,6 +350,15 @@ func TestUpdatePolicyStageRefusesWhenThePublishedGenerationIsNewer(t *testing.T)
 			t.Errorf("the re-seed does not say %q:\n%s", want, out)
 		}
 	}
+	// The three-way state points the way a re-seed moves the values — the node's
+	// into this machine's file. The publish's own arrow would tell the operator
+	// the reverse, which is the one thing the re-seed exists to stop.
+	if !strings.Contains(out, "(this machine) re-seeded from") {
+		t.Errorf("the re-seed does not say which way its values move:\n%s", out)
+	}
+	if strings.Contains(out, "(this machine) -> ") {
+		t.Errorf("the re-seed is worded as a publish:\n%s", out)
+	}
 	// And the file's policy keys are now written from the generation that is
 	// published, so the next run has nothing to refuse or to do.
 	gen := recordedGeneration(t, f)
@@ -456,6 +465,190 @@ func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishRecordsTheGenerationOfItsOwnWrite: the explicit door
+// writes one node, so it keeps the record the stage keeps (D854), in the file it
+// built that node from. The record is what the operator's next config edit is
+// read against: a door that recorded nothing would refuse that edit against the
+// node it had just written, and offer a re-seed as the way out that would revert
+// the edit.
+func TestProjectPolicyPublishRecordsTheGenerationOfItsOwnWrite(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
+		t.Errorf("policy_generation = %q, want the ETag of the node the door wrote (%q)", gen, want)
+	}
+
+	// The operator's next edit. The node the door wrote is the generation the
+	// file is written from, so this is the publish it asks for — not the state
+	// that refuses it and hands back a re-seed of the file over the edit.
+	setConfig(t, f, func(s string) string { return strings.Replace(s, "per_run_usd: 5", "per_run_usd: 7", 1) })
+	h := newMigrationRig(t, f, &initOptions{})
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "the local config states what the published policy does not carry") {
+		t.Fatalf("the edit after the door's own publish is %s %q, want the publish it asks for", st.State, st.Detail)
+	}
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("the edit after the door's own publish was refused: %v\n%s", err, out)
+	}
+	if got := nodeCeiling(t, f); got != 7 {
+		t.Errorf("the node's ceiling is %v, want the edit's 7", got)
+	}
+}
+
+// TestUpdatePolicyStageRefreshesAStaleRecordWhenTheNodeMatches: the record
+// belongs to the agreement between the file and the node, not to this run's own
+// write. A file whose policy keys are exactly what the node carries, whose
+// record names another generation — an earlier release's migration-only write,
+// the explicit door's publish, a hand-fixed re-seed refusal — is the state that
+// refuses the operator's next legitimate edit and offers a re-seed of the file
+// over it. So the run refreshes the record, writes no node, and every other byte
+// of the file stays where it is.
+func TestUpdatePolicyStageRefreshesAStaleRecordWhenTheNodeMatches(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	gen := recordedGeneration(t, f)
+	if gen == "" {
+		t.Fatal("the door recorded no generation, so this test is not about a stale record")
+	}
+	setConfig(t, f, func(s string) string {
+		return strings.Replace(s, "policy_generation: "+gen, "policy_generation: etag-from-an-earlier-publish", 1)
+	})
+	before, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("a file whose record names another generation is %s %q, want the record it asks for", st.State, st.Detail)
+	}
+	for _, want := range []string{"carries what the local config states", "etag-from-an-earlier-publish", nodeETag(t, f)} {
+		if !strings.Contains(st.Detail, want) {
+			t.Errorf("the check does not say %q: %q", want, st.Detail)
+		}
+	}
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the record was not refreshed: %v\n%s", err, out)
+	}
+	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
+		t.Errorf("policy_generation = %q, want the generation of the node it agrees with (%q)", gen, want)
+	}
+	after, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("the node was written for a record that belongs to the file:\nbefore %s\nafter  %s", before, after)
+	}
+	if len(out) == 0 || !strings.Contains(out, "recorded the published policy node's generation") {
+		t.Errorf("the run does not say what it recorded:\n%s", out)
+	}
+	if backups, err := filepath.Glob(f.path + ".bak-*"); err != nil {
+		t.Fatal(err)
+	} else if len(backups) == 0 {
+		t.Errorf("the record replaced %s with no backup beside it", f.path)
+	}
+
+	h.s.forget()
+	st, err = h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done {
+		t.Errorf("the run after the refresh is %s %q, want nothing to do", st.State, st.Detail)
+	}
+}
+
+// TestUpdatePolicyRecordsTheGenerationOfAMigrationOnlyWrite: the migration
+// writes the same node the publish writes, so the record follows it too. A run
+// that recorded only when it published would leave the file behind the node it
+// had just migrated, and the operator's next edit refused against it.
+func TestUpdatePolicyRecordsTheGenerationOfAMigrationOnlyWrite(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	if gen := recordedGeneration(t, f); gen != "" {
+		t.Fatalf("the fixture records a generation (%q) and this test is about a file that records none", gen)
+	}
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Detail, "is version 3 and this Fugaro writes version") {
+		t.Fatalf("the check is %q, want the migration's own line: this test is about a run that publishes nothing", st.Detail)
+	}
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
+		t.Errorf("policy_generation = %q, want the generation of the node this run migrated to (%q)", gen, want)
+	}
+}
+
+// TestUpdatePolicyReseedWithAMigrationRecordsTheGenerationItWrote: D854's
+// re-seed and a pending migration are one run, and the record belongs to the
+// node the run ends at. A run that recorded the generation the file was
+// re-seeded from would leave the file naming the node as it was before its own
+// write — and the next edit refused against the node this very run wrote.
+func TestUpdatePolicyReseedWithAMigrationRecordsTheGenerationItWrote(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	f.db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
+		"budget": map[string]any{"mode": "enforce", "per_run_usd": 9},
+	}))
+	h := newMigrationRig(t, f, &initOptions{})
+	// The fixture's budget block is the flow style projectConfigText writes, and
+	// a member inside a flow collection is one yamledit refuses to splice: the
+	// re-seed this test is about is the one that lands.
+	blockBudgetConfig(t, f)
+
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "moved past the generation") {
+		t.Fatalf("a file behind a node that is also older than this version is %s %q, want the re-seed it asks for", st.State, st.Detail)
+	}
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the re-seed and the migration did not finish: %v\n%s", err, out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Fatalf("the node is version %d, want %d: the migration beside the re-seed never ran", got, projectpolicy.Version)
+	}
+	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
+		t.Errorf("policy_generation = %q, want the generation of the node this run wrote (%q)", gen, want)
+	}
+
+	// The operator's next edit is read against the node this run wrote: the file
+	// and this node agree, and the node has a new ETag, so nothing may refuse it.
+	h.s.forget()
+	st, err = h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done {
+		t.Errorf("the run after the re-seed and the migration is %s %q, want nothing to do", st.State, st.Detail)
+	}
+}
+
 // TestUpdatePolicyStageAdoptsTheGenerationWhenNothingIsRecorded: the other half
 // of D854, and the state of every installation before its first publish of this
 // release — a file that records no generation has no baseline to compare
@@ -470,8 +663,14 @@ func TestUpdatePolicyStageAdoptsTheGenerationWhenNothingIsRecorded(t *testing.T)
 		t.Fatalf("the fixture records a generation (%q) and this test is about a file that records none", gen)
 	}
 
-	if out, err := h.apply(t, true); err != nil {
+	out, err := h.apply(t, true)
+	if err != nil {
 		t.Fatalf("a file with no baseline refused to adopt the published node: %v\n%s", err, out)
+	}
+	// The adoption is said: it is the answer to the question a reader of the
+	// file has afterwards — where the generation that appeared in it came from.
+	if !strings.Contains(out, "adopts the one it publishes") {
+		t.Errorf("the run does not say it adopted the published node's generation:\n%s", out)
 	}
 	if got := nodeCeiling(t, f); got != 5 {
 		t.Errorf("the node's ceiling is %v, want the local config's 5", got)
@@ -627,6 +826,27 @@ func TestInstallationAtThePreviousVersionConvergesPolicyStage(t *testing.T) {
 	}
 }
 
+// convergeJSONOf reads the --json result out of a run's whole stdout. The
+// document is the tail of it (initRun.printResult writes it last, indented two
+// spaces) and the stages print their own diffs ahead of it, so decoding the
+// stream from its first byte makes a stage that printed where it should have
+// skipped fail as malformed JSON instead of as the state it is — which is the
+// assertion this helper exists for.
+func convergeJSONOf(t *testing.T, out string) convergeJSON {
+	t.Helper()
+	start := 0
+	if i := strings.LastIndex(out, "\n{"); i >= 0 {
+		start = i + 1
+	} else if !strings.HasPrefix(out, "{") {
+		t.Fatalf("the run printed no JSON result:\n%s", out)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out[start:]), &res); err != nil {
+		t.Fatalf("the tail of the run's output is not the JSON result (%v):\n%s", err, out)
+	}
+	return res
+}
+
 // TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips: the publish half
 // holds #1460's adoption gate, and it holds the same one the migration half
 // does. The node here is already at this version and the local config states
@@ -646,10 +866,7 @@ func TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
 			if err != nil {
 				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
 			}
-			var res convergeJSON
-			if err := json.Unmarshal([]byte(out), &res); err != nil {
-				t.Fatalf("%v:\n%s", err, out)
-			}
+			res := convergeJSONOf(t, out)
 			if got := res.state(initflow.Policy); got != "skipped" {
 				t.Errorf("the policy stage is %q, want skipped: the publish wrote the node into a database this installation never adopted\n%s", got, out)
 			}

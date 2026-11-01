@@ -290,6 +290,31 @@ func TestUpgradeRunsTheRulesStepBeforeThePolicyItGates(t *testing.T) {
 		}
 	})
 
+	t.Run("a run that publishes and migrates nothing says so", func(t *testing.T) {
+		r, db := rig(t)
+		// The node is at this version — nothing to migrate — and carries a
+		// ceiling the checkout's own config does not state, under a rules
+		// generation that is already deployed: the whole of this run's write is
+		// the publish.
+		db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+		db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
+			"version": projectpolicy.Version,
+			"budget":  map[string]any{"mode": "enforce", "per_run_usd": 9},
+		}))
+		got, out := runUpgradePolicyStep(t, r.root)
+		if got.state != stepDone {
+			t.Fatalf("the policy step is %s: %s\n%s", got.state, got.reason, out)
+		}
+		// The outcome is the write's own line (doneDetail): a step that reported a
+		// migration here would report one from this version to this version.
+		if want := "published the node the local config states"; got.reason != want {
+			t.Errorf("the step reports %q, want %q", got.reason, want)
+		}
+		if got := nodeVersionOn(t, db); got != projectpolicy.Version {
+			t.Errorf("the published node is version %d, want %d", got, projectpolicy.Version)
+		}
+	})
+
 	t.Run("without the rules step the same migration is refused", func(t *testing.T) {
 		r, db := rig(t)
 		got, out := runUpgradePolicyStep(t, r.root)
