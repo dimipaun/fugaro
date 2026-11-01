@@ -372,6 +372,70 @@ export function validateExternalUrl(raw: string): ExternalUrlDecision {
 }
 
 /**
+ * PULL_REQUEST_ROUTES is the whole of what a provider may be, and the host and
+ * the path segment each one's pull requests live under. It is two entries and
+ * not a pattern: a provider the console does not know has no host to build on,
+ * and a table is the only shape in which "which providers does this console
+ * draw a link for" is one reviewable answer. A `Map` rather than an object
+ * literal, so that a `provider` spelled `constructor` is a miss rather than a
+ * prototype member. Both hosts are already on `ALLOWED_EXTERNAL_HOSTS`, and
+ * neither is added to it here.
+ */
+const PULL_REQUEST_ROUTES: ReadonlyMap<string, { readonly host: string; readonly segment: string }> =
+  new Map([
+    ['github', { host: 'github.com', segment: 'pull' }],
+    ['bitbucket', { host: 'bitbucket.org', segment: 'pull-requests' }],
+  ])
+
+/**
+ * PULL_REQUEST_REPO_RE is the repository half of the builder: **exactly** the
+ * two segments a repository has, each of them beginning with a letter or a
+ * digit and continuing in the host's own name alphabet. It is stricter than the
+ * `repository` kind the IPC schema accepts on purpose, and the strictness is
+ * the whole point: a value that is already a path (`owner/name/pull/1`) or one
+ * that walks (`owner/../evil`) is refused here, before a URL exists, rather
+ * than being pasted into one.
+ *
+ * A segment cannot begin with `.`, so `.` and `..` are refused by the alphabet
+ * and not by a list of forbidden names; there is exactly one `/` in the pattern,
+ * so a third segment cannot appear; and every character that could end the
+ * authority or start a query, a fragment or a userinfo (`:`, `@`, `?`, `#`, `%`,
+ * `\`, a space) is outside the alphabet.
+ */
+const PULL_REQUEST_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/**
+ * pullRequestUrl builds the one URL this console opens that comes from a
+ * document's own fields (D814, D815), and it builds it **from three fields
+ * rather than reading it**: a pull request document carries a `url`, and that
+ * field is displayed as text and never handed to the browser, because a URL a
+ * job wrote is not a fact about the repository (rule 2, reconciliation F2).
+ *
+ * `null` is the answer for everything else -- an unknown provider, a repository
+ * that is not exactly `owner/name` in the host's alphabet, a number that is not
+ * a positive safe integer -- and a `null` is a refusal that opens nothing.
+ *
+ * **This is the first gate and `validateExternalUrl` is the second**, which is
+ * the order rule 2 states: the URL is built here and then handed to
+ * `openExternalValidated`, so a host check never stands alone in front of a
+ * string that came from somewhere else. The builder asks `validateExternalUrl`
+ * for its own answer as well, so what it returns is provably a URL the console
+ * would open, and a table entry above that drifted from the allow-list would
+ * answer `null` here rather than reach the operating system.
+ */
+export function pullRequestUrl(provider: string, repo: string, number: number): string | null {
+  const route = PULL_REQUEST_ROUTES.get(provider)
+  if (route === undefined) return null
+  if (!PULL_REQUEST_REPO_RE.test(repo)) return null
+  if (!Number.isSafeInteger(number) || number < 1) return null
+  const [owner, name] = repo.split('/')
+  const decision = validateExternalUrl(
+    `https://${route.host}/${owner}/${name}/${route.segment}/${String(number)}`,
+  )
+  return decision.ok ? decision.url : null
+}
+
+/**
  * openExternalValidated is the one call to `shell.openExternal` in the console.
  * It returns whether it opened anything, so a caller can tell the user what
  * happened rather than pretending. Note that the URL that reaches the OS is the
