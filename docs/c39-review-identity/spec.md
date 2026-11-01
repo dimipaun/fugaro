@@ -307,7 +307,14 @@ prose never leaves the run (D892).
 
 **Admission**, in the order `ServeHTTP` already makes its decisions (§4.4): the review class (§2.1); the
 pairing (§3.2) and the review claim rule (§3.3); the stop flag; the run live, already checked by `verifyRun`
-(§3.4); and, last, the mark of §5.6, which is what makes the answer the run's first and only signature.
+(§3.4); the account's **key**, read before anything is written and **failing closed** — a missing entry, an
+entry that is not a usable key, an unreadable bundle is `state_unavailable` or the bundle's own typed
+refusal, and never a signature under something else (§6.4); and, last, the mark of §5.6, which is what makes
+the answer the run's first and only signature. **The key comes before the mark on purpose**: a run whose key
+does not exist yet is refused with nothing written, so the operator's `creds set` and a re-run sign the head,
+where a mark taken and then found unanswerable would be an unsigned review and a re-review. C3.9e's
+`TestSignRouteRefusesAReviewAccountWithNoKeyYet` asserts both halves of that order — the typed refusal and
+**no mark written**.
 
 **The message that is signed is framed, not the bare digest (D1073, the owner's answer of 2026-11-01)**:
 
@@ -381,7 +388,10 @@ timestamp, so there is no window to widen here, and the temporal rules that appl
 service already keeps for the caller's Google ID token — `verifyJob`'s (`auth.go:423`): expiry, an `iat` not
 in the future and a `nbf` not in the future, the last two against the one shared `clockSkew` the package
 declares (`auth.go:123`, used at `:489` and `:492`) — and for the run identity, `verifyRun`'s
-(`auth.go:516`), which applies the same three against the same constant (`:547`). **`checkLive` (`auth.go:665`)
+(`auth.go:516`), which applies **two** of them against the same constant: expiry (`:545`) and an `iat` not
+in the future (`:547`). It checks no `nbf` because a Firebase ID token carries none: that claim belongs to
+the Google-issued job token, and `verifyJob` is the rule that reads it (`:492`). Inventing a third check for
+the run identity would be a rule this design did not need to add. **`checkLive` (`auth.go:665`)
 has no tolerance of its own and reads no token's window**: it reads the run's write-once outcome, so the
 liveness rule is a fact about the run and not a clock comparison. **This design adds no third tolerance**,
 and the verifier's own token is held to the same three rules rather than to a second spelling of them.
@@ -457,7 +467,9 @@ identities and whose credential always belongs to a tier, and neither holds for 
    carries a tier. The exemption grows from the one purpose to the three credential-naming purposes that
    have no tier — and `:442`'s arm, widened the same way, keeps refusing a tier on all three, so the
    change adds no way to record a tier the service never assigned. C3.9e names the test that holds the sign
-   line to it (`TestSignLineCarriesACredentialAndNoTier`).
+   line to it (`TestSignLineCarriesACredentialAndNoTier`) and C3.9f the one that holds the verify line
+   (`TestVerifyLineCarriesACredentialAndNoTier`), each beside a case that asserts a job purpose still
+   carries neither the credential-without-tier shape nor a tier of its own.
 2. **`Job` and `Caller` are set together** (`audit.go:438`), because the identity is what carries both. A
    verifier is not a run in a job and reports no `Identity.Job` at all, so the verify purpose carries
    `Caller` without `Job`, and the rule is relaxed for **that purpose only** — a job-purpose line that
@@ -509,7 +521,7 @@ service's, over IAM, and the only reader of the node is the service.
 
 **Both identity tokens are registered with the service's redaction, and that registration is the call's**
 (D1074): the run's Firebase ID token and the job's Google ID token are the caller's own values, and the
-service holds them for **the length of one call** as `call.scrubs` (`internal/credsvc/forward.go:99`), the
+service holds them for **the length of one call** as `call.scrubs` (`internal/credsvc/forward.go:104`), the
 list `readCall(r, []string{req.RunIDToken, req.JobIDToken})` (`server.go:530`) builds — the same registration
 the model path makes, and the list the upstream request's body and headers and the answer's own stream are
 scrubbed with (`cascade.go:517`). **It is not the auditor's own scrub**: `WithAuditScrub` is armed **once**,
@@ -537,7 +549,8 @@ second half.
 connection, a process that dies between the two — then the run has no signature and **cannot ask again**:
 the review is unsigned, and the remedy is re-reviewing the head (§3.4), never a second signature. That is
 the direction this failure is allowed to go, and it is the opposite of the one §6.4 picks for an unreadable
-key.
+key — which is read **before** the mark (§5.2), so a run with no usable key takes no mark and loses no
+signature it could still be given.
 
 ---
 
@@ -764,11 +777,20 @@ file is a rendering and this section is the check: **where the two disagree, thi
 The HARD RULE is that `fugaro update` is the whole upgrade and that a release ships no operator step that
 is *another command*. This slice's reading of it, stated because a reviewer must be able to check it:
 
-- **No Terraform, no new container, no new grant.** The key is a bundle entry (§6.1), so the installation
-  root's plan is unchanged and an installation that has never opted in is byte-for-byte untouched by this
-  work: the review class is empty when no policy publishes a profile, the routes answer their refusals, and
+- **No new resource, no new container, no new grant, and one variable that is null until someone asks for
+  it.** The key is a bundle entry (§6.1), so no plan this work touches gains a resource and an installation
+  that has never opted in is byte-for-byte untouched by this work: the review class is empty when no policy
+  publishes a profile, the routes answer their refusals, and
   `TestReviewAccountsAreTheNamesProjectJobsDeploys` holds an installation with no review job to an empty
-  set.
+  set. The one Terraform change is the verify route's verifier list (C3.9g1): a variable beside the service's
+  others, whose `env` entry is rendered **only when the field is set**, so the plan of an installation that
+  never sets it is the plan it has today — the same seven names, held as an assertion by the tftest's unset
+  run. **Where that value comes from at `fugaro update` is D1075, recorded and not decided**
+  ([reconciliation.md](reconciliation.md) §3): the recommendation is the **configuration `fugaro update`
+  already holds and publishes as the policy** — the source `internal/infra/tfvars.go`'s `Credentials()`
+  (`:289`) and `CredentialsJobAccounts` (`:343`) already read — so naming verifiers is the publication the
+  owner already makes and not a new act, and the alternative readings — a second, unpublished local
+  configuration, or a value derived from the coordinator's deployment — are stated there with their costs.
 - **An installation already opted in converges with an ordinary `fugaro update`** for everything this
   slice adds to *code*: the classes, the routes, the refusals, the audit purposes. The service's image is
   re-pinned by `fugaro update` already.

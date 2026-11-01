@@ -38,7 +38,7 @@ them and renames none of them.
   because a review job's model calls come to the service ([spec.md](spec.md) §1). That is CSR7's module to
   change and no task here touches it.
 - **E7, the service enabled for the installation**: `fugaro update --provision-credentials`, the App key in
-  the bundle, and the review variant deployed. C3.9a–C3.9g change nothing about that deployment; they make
+  the bundle, and the review variant deployed. C3.9a–C3.9g2 change nothing about that deployment; they make
   the service **admit** what E7 deploys.
 - **The coordinator** (`docs/coordinator/`): the verify route is built and its caller class configured
   empty. The component that calls it, and the merge path that acts on a verified verdict, is that work
@@ -55,7 +55,7 @@ them and renames none of them.
 | 1 | C3.9b | C3.9a, and **CSR1 merged** (the set it serves) |
 | 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074) |
 | 3 | C3.9f | C3.9a, C3.9c, C3.9e (the frame the verify route recomputes) |
-| 4 | C3.9g | C3.9e, C3.9f; the live check it names is not run until **CSR7 and CSR2** are on `main` |
+| 4 | C3.9g1, C3.9g2 | C3.9e, C3.9f; the two are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
 
 ## Where each decision lands
 
@@ -67,14 +67,14 @@ them and renames none of them.
 | D1065 which token set | C3.9b | D1071 who generates the bytes | C3.9d |
 | D1066 the repository, and the table | C3.9a (the table), C3.9b (the mint's use) | D1072 the release slot | §"Release slot" |
 | D1067 what is signed | C3.9e | D1073 the framed message | C3.9e (built), C3.9f (recomputed) |
-| D1074 one signature per run, and U7 | C3.9e | | |
+| D1074 one signature per run, and U7 | C3.9e | D1075 the verifier list's value (**open**) | C3.9g1 (the field), C3.9g2 (the wiring) |
 
 ## Where each finding lands
 
 | Finding | Task | Finding | Task |
 | --- | --- | --- | --- |
 | F1 no account class | C3.9a | F8 D892 vs Q6's one container | C3.9c |
-| F2 the gate's text covers the variant | C3.9a, C3.9g | F9 the bundle's closed key set | C3.9c |
+| F2 the gate's text covers the variant | C3.9a, C3.9g2 | F9 the bundle's closed key set | C3.9c |
 | F3 the mint's repository is the account's | C3.9b | F10 the write path, and the missing generating mode | C3.9d |
 | F4 no slug → canonical resolution | C3.9a | F11 signing is an end-of-run act | C3.9e |
 | F5 the set is hard-coded, CSR1 is missing | C3.9b | F12 no verifier class | C3.9f |
@@ -86,9 +86,9 @@ them and renames none of them.
 `go build ./... && gofmt -l . && go vet ./...` (gofmt prints nothing); the task's named tests with
 `GOFLAGS=-p=2 go test ./internal/<pkg>/ -run '<names>' -count=1`; `GOFLAGS=-p=2 go test ./internal/cli/ -run
 Docs -count=1 -timeout 40m` when a doc changed; `go test ./internal/eeboundary/... -count=1`; and
-`go test -tags terraform ./internal/infra/...` in C3.9g, which is the task that wires the variable. Never the
+`go test -tags terraform ./internal/infra/...` in C3.9g1, which is the task that wires the variable. Never the
 whole `internal/cli` or `internal/runner` package. No task adds a dependency, so `go.mod` is unchanged by all
-seven.
+eight.
 
 ## C3.9a. The review class, the repository table and the pairing (D1062, D1063, D1064, D1066, F1, F2, F4, F13). **SEC**
 
@@ -259,7 +259,7 @@ already exist rather than new ones.
   exactly the revoke. `TestCredsSetGenerateTwiceRevokesTheOriginalKey` is the test that holds it — it asserts
   that a value signed with the original key no longer verifies after two generates — and the help text says
   so in one sentence, so an operator does not have to infer it.
-- **Files (4):** `internal/cli/creds.go` (the flag, the generation, the two-entry write, the help text),
+- **Files (5):** `internal/cli/creds.go` (the flag, the generation, the two-entry write, the help text),
   `internal/cli/creds_test.go`, `internal/cli/creds_pty_test.go` (the terminal path, which is the one an
   owner actually uses), and the doc that quotes `creds set`'s help — `docs/credentials-service/`'s bundle
   document — with the pin test that reads it (`internal/cli/docs_credentials_bundle_test.go`) updated in the
@@ -319,10 +319,19 @@ spelling of them. What the route deliberately does not do is in [spec.md](spec.m
   and never a signature; a second sign is refused with the wire's existing `request_refused` status (the
   status set is closed) and logged, and a run marked but unanswered is an unsigned review and a re-review —
   the direction §5.6 chooses on purpose.
+- **The key is read before the mark, and an absent key is a refusal that leaves the mark unwritten** (F6,
+  §5.2 and §6.4 of [spec.md](spec.md)): the handler reads the account's bundle entry first, **failing
+  closed** — a missing entry, an entry that is not a usable key, an unreadable bundle is `state_unavailable`
+  or the bundle's own typed refusal, and **no signature under anything else** — and only a key in hand
+  reaches the mark. The order is what makes the two failures different on purpose: a run with no key yet is
+  refused **before** anything is written, so the operator's `creds set` and a re-run sign the head, while a
+  mark that cannot be taken is a refusal for a run that has already signed. `TestSignRouteRefusesAReviewAccountWithNoKeyYet`
+  asserts both halves — the typed refusal and **no mark written** — which is what holds the order in place
+  rather than leaving it to the handler's own reading order.
 - **Both identity tokens are registered with the redaction for the call, and that is `call.scrubs` rather
   than the auditor's scrub** (D1074): the two header values this route verifies — the run's Firebase ID token
   and the job's Google ID token — are the caller's own tokens, and the service registers them **for the
-  length of one call** as `call.scrubs` (`internal/credsvc/forward.go:99`), the list `readCall(r,
+  length of one call** as `call.scrubs` (`internal/credsvc/forward.go:104`), the list `readCall(r,
   []string{req.RunIDToken, req.JobIDToken})` (`server.go:530`) builds and the same registration the model
   path makes: the upstream request's body and headers are scrubbed with it and so is the answer's own stream
   (`cascade.go:517`). **It is not `WithAuditScrub`**: that one is armed **once**, by the bundle loader, with
@@ -396,24 +405,31 @@ not made for them.
   the test that names the rule (it asserts the comparison helper is reached with equal-length inputs, and
   that a same-length wrong signature is a plain `valid:false`).
 - **The verify line carries the verifier as its caller and the key as its credential** (§5.5), and it is the
-  purpose **two** of `checked`'s rules move for: `Caller` is the verified `email`, `Credential` is the
-  review-signing key's bundle entry name, and the line has **no** `Job` — the field set's "job and caller
-  together" rule (`audit.go:438`) carries `Caller` without `Job` for this purpose only, and no other purpose
-  may. **It has no `Run` and no `Repository` either**, and the `StatusOK` requirement that a line names both
-  (`audit.go:462`–`:473`) is relaxed the same way and no further: a verifier is not a run, holds no run
-  identity and is not a job of this installation, so the line's act is the purpose, the credential and the
-  status. `TestVerifyLineCarriesTheCallerWithoutAJob` holds the first and
-  `TestVerifyAnswerIsAuditedWithoutARunOrAJob` the second, each beside a case that asserts the rule still
+  purpose **three** of `checked`'s rules move for. `Caller` is the verified `email`, `Credential` is the
+  review-signing key's bundle entry name, and the key is a signing key and not a model credential of the
+  cascade, so the line carries **no tier**: the both-or-neither rule (`audit.go:448`) refuses a line naming a
+  credential without one for every purpose but `PurposeMint`, and C3.9e grows that exemption to the sign
+  purpose — this task grows it **once more, to the verify purpose and no further**, so that `:442`'s arm
+  keeps refusing a tier on all three and the change adds no way to record a tier the service never assigned.
+  `TestVerifyLineCarriesACredentialAndNoTier` is the test that holds it, beside a case that asserts the rule
+  still refuses the bare-credential shape for a job purpose. The line has **no** `Job` either — the field
+  set's "job and caller together" rule (`audit.go:438`) carries `Caller` without `Job` for this purpose
+  only, and no other purpose may — and **no `Run` and no `Repository`**, with the `StatusOK` requirement that
+  a line names both (`audit.go:462`–`:473`) relaxed the same way and no further: a verifier is not a run,
+  holds no run identity and is not a job of this installation, so the line's act is the purpose, the
+  credential and the status. `TestVerifyLineCarriesTheCallerWithoutAJob` holds the second and
+  `TestVerifyAnswerIsAuditedWithoutARunOrAJob` the third, each beside a case that asserts the rule still
   refuses the relaxed shape for a job purpose.
 - **Files (8):** `internal/credsvc/verdict.go` (the handler, the request and answer shapes, the frame
   recompute through C3.9e's builder, the constant-time compare), `internal/credsvc/server.go` (`VerifyPath`,
   `routeAct`'s row, the path answered ahead of `RequestFromHTTP`), `internal/credsvc/wire.go` (the request's
   two new fields and their bounded shapes), `internal/credsvc/auth.go` (`AuthConfig.VerifierAccounts`, the
   verifier branch — one branch, not a second verifier), `internal/credsvc/audit.go`
-  (`PurposeReviewVerify`, the caller-without-job rule and the `StatusOK`-without-run rule, both for this
-  purpose only), `internal/credsvc/verdict_test.go`,
+  (`PurposeReviewVerify`, the credential-without-tier exemption grown to this purpose as the third case of
+  the shape the mint and the sign purposes already are, the caller-without-job rule and the
+  `StatusOK`-without-run rule, all three for this purpose only), `internal/credsvc/verdict_test.go`,
   `internal/credsvc/auth_test.go`, `internal/credsvc/audit_test.go`. The list itself is **configured** —
-  C3.9g wires the variable — and this task's tests build the config directly, so nothing here needs
+  C3.9g2 wires the variable — and this task's tests build the config directly, so nothing here needs
   Terraform.
 - **Red step:** `TestVerifyRouteAnswersValidForTheRealPairAndFalseForTheTamperedOne` fails while the route
   is a 404; `TestVerifyRouteRefusesAnEmptyVerifierList` fails while an unconfigured installation still
@@ -426,6 +442,8 @@ not made for them.
   with `valid:false` and no coordinator check),
   `TestVerifyRouteIsAnsweredAheadOfTheSharedParse`,
   `TestVerifyComparesTheSignatureInConstantTime` (F7's constant-time rule),
+  `TestVerifyLineCarriesACredentialAndNoTier` (§5.5's first rule: the key's name with no tier, and a job
+  purpose that still carries neither),
   `TestVerifyLineCarriesTheCallerWithoutAJob` (§5.5's field-set rule),
   `TestVerifyAnswerIsAuditedWithoutARunOrAJob` (the second relaxation: a `StatusOK` line with no `Run` and
   no `Job`, for the verify purpose only),
@@ -438,34 +456,74 @@ not made for them.
   own read because `readCall` never runs for it — §5.6),
   `TestVerifyRouteAuditsTheActAndNeverTheDigestOrTheSignature`.
 
-## C3.9g. The verifier list's deployment, the amendment, the docs, and the named live check (D1063, D1070, F2)
+## C3.9g1. The verifier list's variable, its types and its tests (D1063, D1070, F2)
 
-Two halves: the one place this plan changes a deployment, and the documents.
+The one deployment change in the whole plan, and it is inert: a new `verifier_accounts` beside the service's
+other variables, **null by default**, so an installation that never sets it is untouched. Its second half is
+C3.9g2, and the two are **one pull request and not two merges**: `TestCredentialsServiceEnvIsTheDeploymentsOwn`
+(`internal/cli/credentials_serve_test.go:386`) holds the module's own `FUGARO_*` names
+(`deploy/terraform/gcp/modules/installation/credentials.tf`) and the CLI's `credentialsServiceEnvNames`
+(`internal/cli/credentials_serve.go:177`) equal in **both** directions, so a merge that carried one side only
+would leave the tree red between them. The split is for review size, not for sequencing.
 
-- **The one deployment change in the whole plan, and it is inert.** The verifier list is set by a new
-  variable beside the service's others, which means two allow-lists grow by exactly one and both refuse a
-  name they do not know: `internal/cli/credentials_serve.go`'s `credentialsServiceEnvNames` (`:177`) and
-  `internal/infra/tf/cover.go`'s `credentialsServiceEnv` (`:792`), which
-  `TestGoldenCredentialsServiceCarriesItsSevenNames` (`internal/infra/tf/credentials_golden_test.go:95`)
-  holds equal to the golden plan's seven names in both directions. That test becomes *eight*, and the golden
-  plan is regenerated with `scripts/gen-golden-plans.sh` rather than hand-edited. It defaults to **null**, so
-  an installation that never sets it is byte-for-byte unchanged and `fugaro update` converges it with no
-  operator step — which is what §9 of [spec.md](spec.md) claims, and what
-  `TestCredentialsServeRefusesWithoutItsEnvironment` (`internal/cli/credentials_serve_test.go:100`) plus the
-  golden test must keep true.
-- **Files (9):** `internal/cli/credentials_serve.go` (the variable), `internal/cli/credentials_serve_test.go`,
-  `internal/infra/tf/cover.go` (the allow-list), `internal/infra/tf/credentials_golden_test.go`,
-  `internal/infra/tf/testdata/golden/installation-credentials.plan.json` (regenerated),
-  `deploy/terraform/gcp/modules/installation/credentials.tf`, `internal/infra/tfvars.go`,
-  `docs/credentials-service/implementation-plan.md` (the two edits of §"The amendment the implementing pull
-  request carries"), `docs/c39-review-identity/live-check.md` (in this folder already, as the design's
-  **stub** of the register row — its shape and §8's eleven steps one line each — which that task fills in
-  with the number it takes at its merge; §8 of [spec.md](spec.md) is the check itself).
+- **The variable, and the entry is conditional on it.** `variable "credentials_service"`
+  (`deploy/terraform/gcp/modules/installation/variables.tf:336`) and the root's own pass-through
+  (`deploy/terraform/gcp/roots/installation/variables.tf:184`) gain the list, and
+  `credentials.tf` renders it as one more `env` entry beside the seven it sets
+  (`deploy/terraform/gcp/modules/installation/credentials.tf:398`–`:448`) **only when the field is set** —
+  which is what the two halves of §9's claim rest on: an installation that never sets it renders the same
+  seven names and its plan is byte-for-byte unchanged, while the fixture that does set it plans **eight**.
+- **The type and the writer.** `CredentialsServiceSpec` gains the field
+  (`internal/infra/tfvars.go:180`) and `Credentials()` fills it (`:289`) from the configuration it already
+  reads the service's other fields from — the source `fugaro update` holds and publishes as the policy, the
+  same one `CredentialsJobAccounts` (`:343`) reads the job table from — so the value is not an operator's
+  new act. **D1075 is open** and records exactly this recommendation, with the alternatives' costs.
+- **Two allow-lists grow by exactly one, and each refuses a name it does not know**:
+  `internal/infra/tf/cover.go`'s `credentialsServiceEnv` (`:792`) and, on C3.9g2's side,
+  `internal/cli/credentials_serve.go`'s `credentialsServiceEnvNames` (`:177`).
+- **The tests that hold it, and why they move together.** `TestGoldenCredentialsServiceCarriesItsSevenNames`
+  (`internal/infra/tf/credentials_golden_test.go:95`) compares the golden plan's environment to
+  `credentialsServiceEnv` in **both** directions, so the fixture that sets the field
+  (`internal/infra/testdata/installation-credentials.tfvars.json`) makes the plan carry eight names and the
+  test's `want` map — and the test's own name, which counts them, from
+  `TestGoldenCredentialsServiceCarriesItsSevenNames` to `TestGoldenCredentialsServiceCarriesItsNames` —
+  grows with it. The golden plan
+  (`internal/infra/tf/testdata/golden/installation-credentials.plan.json`) is regenerated with
+  `scripts/gen-golden-plans.sh` rather than hand-edited. The tftest's exact env map
+  (`deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`, the `assert` that holds the whole
+  environment as a map and whose message and comment today refuse an eighth entry) gains the name — and the
+  sentence that counts the names — in the run that **sets** the field, while its unset run keeps its own
+  `length(…) == 7` assertion — the byte-for-byte half held as a test rather than asserted in prose.
+- **Files (9):** `deploy/terraform/gcp/modules/installation/variables.tf` (the variable),
+  `deploy/terraform/gcp/roots/installation/variables.tf` (its pass-through),
+  `deploy/terraform/gcp/modules/installation/credentials.tf` (the conditional `env` entry),
+  `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` (the exact map, and the unset
+  run's seven), `internal/infra/tfvars.go` (the field and the writer), `internal/infra/tf/cover.go` (the
+  allow-list), `internal/infra/tf/credentials_golden_test.go` (the map, and the test's name),
+  `internal/infra/testdata/installation-credentials.tfvars.json` (the fixture that sets the field) and
+  `internal/infra/tf/testdata/golden/installation-credentials.plan.json` (regenerated).
+- **Red step:** `TestGoldenCredentialsServiceCarriesItsNames` fails while the cover's allow-list still holds
+  seven names and the plan carries eight, and the tftest's exact-map assertion fails while the module renders
+  seven where the run's variables set the field.
+- **Tests:** `GOFLAGS=-p=2 go test ./internal/infra/tf/ -run 'Credentials' -count=1`; `go test -tags terraform
+  ./internal/infra/...`; and `terraform fmt -check -recursive deploy/terraform` with the installation root's
+  own `validate` and `test`, which is where the tftest runs.
+
+## C3.9g2. The `credentials_serve` wiring, the amendment, the docs, and the named live check (D1063, D1070, F2)
+
+C3.9g1's half on the CLI side, and the documents. It lands with C3.9g1, for the reason stated there.
+
+- **The wiring.** `internal/cli/credentials_serve.go` reads the eighth name into the service's config and
+  carries it in `credentialsServiceEnvNames` (`:177`), which the file's own comments count as seven today
+  (`:54`, `:168`, `:208`, `:275`) and which move to eight with it — `TestCredentialsServeRefusesWithoutItsEnvironment`
+  (`internal/cli/credentials_serve_test.go:100`) is the test that keeps the refusal for a name that is
+  missing, and `TestCredentialsServiceEnvIsTheDeploymentsOwn` (`:386`) the one that keeps the two sides
+  equal.
 - **`fugaro update` owes nothing new**, and the release notes say so rather than leaving it to be inferred:
-  no Terraform for the key, no new container, no new grant, no operator step beyond the service's own
-  documented `creds set` for the key's bytes (§9 of [spec.md](spec.md)). The variable defaults to null, so an
-  installation that never sets it is untouched; whoever wants the verify route reachable sets it and runs the
-  one command, which is the HARD RULE's shape.
+  no Terraform for the key, no new container, no new grant, and nothing beyond the service's own documented
+  `creds set` for the key's bytes (§9 of [spec.md](spec.md)). The variable defaults to null, so an
+  installation that never sets it is untouched; whoever wants the verify route reachable gets the value from
+  the published policy and runs the one command, which is the HARD RULE's shape.
 - **The live-check register row is not this design's, and the check's file already exists as a stub.**
   `docs/gcp-live-checklist.md` is on the do-not-touch list of the release window in flight (0.15.0's while
   this was written, and 0.16.0's now that D1072 answers the slot), so **this design PR writes no register
@@ -476,12 +534,18 @@ Two halves: the one place this plan changes a deployment, and the documents.
   Check 190 (the heading and its scope parentheses, the `NOT RUN` paragraph that carries no steps of its
   own, and the four sections after it) and §8's eleven steps one line each under §8's own numbering — so
   this task adds nothing to that file but the number it takes and the row it puts in the register.
+- **Files (4):** `internal/cli/credentials_serve.go` (the name, the config and the allow-list),
+  `internal/cli/credentials_serve_test.go`, `docs/credentials-service/implementation-plan.md` (the two edits
+  of §"The amendment the implementing pull request carries"), and `docs/c39-review-identity/live-check.md`
+  (in this folder already, as the design's **stub** of the register row — its shape and §8's eleven steps
+  one line each — which that task fills in with the number it takes at its merge; §8 of [spec.md](spec.md)
+  is the check itself).
 - **Red step:** the plan amendment has no red test of its own — it is prose in a file whose facts
   `TestPlanTestListsNamesOnlyTestsThatExist` (`internal/cli/docs_credentials_plan_tests_test.go`) parses, and
   which must stay green; the live check is red by being **NOT RUN** until CSR7 and CSR2 exist, which is the state
   the check itself records.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Backlog' -count=1 -timeout 40m`;
-  `GOFLAGS=-p=2 go test ./internal/infra/tf/ -run 'Credentials' -count=1`; and
+  `GOFLAGS=-p=2 go test ./internal/cli/ -run 'CredentialsServe|CredentialsServiceEnv' -count=1`; and
   `GOFLAGS=-p=2 go test ./internal/cli/ -run 'PlanTestListsNamesOnlyTestsThatExist|DocsCredentials' -count=1`.
 
 ---
@@ -489,7 +553,7 @@ Two halves: the one place this plan changes a deployment, and the documents.
 ## The amendment the implementing pull request carries
 
 C3.9a narrows Global Constraint 6's scope in **code**; the plan that owns the sentence is amended in the
-same pull request, by C3.9g, and the amendment is **two edits and no more**:
+same pull request, by C3.9g2, and the amendment is **two edits and no more**:
 
 1. **Global Constraint 6** (`docs/credentials-service/implementation-plan.md:111`) keeps its sentence for
    the jobs it was written for — "per-repository jobs only until the phase-3 shared-job rules are on `main`"
@@ -519,24 +583,24 @@ different reason has taken a wrong turn.
 | `internal/credsvc/wire.go` | C3.9f | the verify request's `run` and `repository` fields and their bounded shapes |
 | `internal/credsvc/review.go` | C3.9a, C3.9b | a: creates it — the class, the table, the claim rule; b: the set chooser beside the class |
 | `internal/credsvc/verdict.go` | C3.9e, C3.9f | e: creates it — the frame builder, the sign handler and the mark; f: the verify handler, the constant-time compare and the caller class's own shape checks |
-| `internal/credsvc/audit.go` | C3.9e, C3.9f | one purpose each, `ValidPurpose` in the first of the two, and the credential-without-tier exemption of `checked` (`:442`, `:448`) grown to the sign purpose; f carries the verify purpose's two relaxations — `Caller` without `Job` (`:438`) and a `StatusOK` line with no `Run` and no `Job` (`:462`–`:473`) |
+| `internal/credsvc/audit.go` | C3.9e, C3.9f | one purpose each, `ValidPurpose` in the first of the two, and the credential-without-tier exemption of `checked` (`:442`, `:448`) grown to the sign purpose and, by f, once more to the verify purpose; f carries the verify purpose's other two relaxations as well — `Caller` without `Job` (`:438`) and a `StatusOK` line with no `Run` and no `Job` (`:462`–`:473`) |
 | `internal/credsvc/bundle.go` | C3.9c, read by C3.9e/C3.9f | c: the kind, the key set, the accessor; the routes only call the accessor |
-| `internal/cli/credentials_serve.go` | C3.9a, C3.9e, C3.9f | a: the review set and the repository table; e: the create-only writer's wiring; f: the verifier list variable |
-| `internal/credsvc/*_test.go` | many | each task adds its own file where it can; the three existing files it extends (`auth_test.go`, `sharedjobs_test.go`, `forward_test.go`, `bundle_test.go`) are named in the task |
+| `internal/cli/credentials_serve.go` | C3.9a, C3.9e, C3.9g2 | a: the review set and the repository table; e: the create-only writer's wiring; g2: the verifier list's name, the config field and the allow-list |
+| `internal/credsvc/*_test.go` | many | each task adds its own file where it can; the four existing files it extends (`auth_test.go`, `sharedjobs_test.go`, `forward_test.go`, `bundle_test.go`) are named in the task |
 
 ## Live checks
 
 One, and it is **named and not numbered** — the shape [docs/run-limit-carry-over/README.md](../run-limit-carry-over/README.md)
 chose on 2026-11-01: the register's highest **written** section is **Check 190**, open pull requests claim
 above it, and the register's own rule is that a claim above the highest written section is settled at its
-merge. So the task that writes this check (C3.9g) takes the number free at **its** merge. The check is
+merge. So the task that writes this check (C3.9g2) takes the number free at **its** merge. The check is
 [spec.md](spec.md) §8: **eleven steps**, owner-run, **no agent performs any step of it**, and **NOT RUN**
-until C3.9a–C3.9g ship and the review work's **CSR7** and **CSR2** are on `main` — because step 3 launches a
+until C3.9a–C3.9g2 ship and the review work's **CSR7** and **CSR2** are on `main` — because step 3 launches a
 review with `fugaro review --pr N`, which is CSR2, on the variant CSR7 deploys.
 
 Step 8 is the one that needs a configuration act rather than a fact, and the check says so: the owner's own
-identity is put in the verifier list (C3.9f's variable) and the installation is converged by the one
-documented command, which is what makes the hand-made verify call possible. **Step 9 is U7's property,
+identity is put in the verifier list (C3.9g1's variable, which C3.9g2's wiring reads) and the installation is
+converged by the one documented command, which is what makes the hand-made verify call possible. **Step 9 is U7's property,
 observed after the route exists** (D1074): a sign attempt and a metadata-server request from inside a mutant
 subprocess must both fail, and the check says the owner re-runs the pre-build observation against the
 shipped image rather than trusting it. Cost: one sandbox review run's spend, the artifact kept, and nothing
@@ -550,9 +614,9 @@ created, enabled or deleted outside the sandbox.
   0.15.0 and the owner moved it). CSR7 is the
   variant whose account C3.9a admits, CSR2 is the command that launches it, and this work is what makes the
   launch possible: a release that shipped CSR7 with **no** service admission would ship exactly the failure
-  E7 and D893 (c) exist to prevent. The order inside the window is C3.9a–C3.9f, then CSR7 and CSR2.
+  E7 and D893 (c) exist to prevent. The order inside the window is C3.9a–C3.9g2, then CSR7 and CSR2.
 - **`fugaro update` carries it whole.** An opted-in installation converges with the one documented command:
   the image pin moves, the classes and the routes arrive in the code, and the key is the credentials
   service's own documented `creds set` step, named by `doctor` and by the service's refusal when it is
   missing. Nothing in this plan asks an operator to run anything else, and no task adds an operator step to
-  a release's `### For operators` — the one variable C3.9g adds is null by default.
+  a release's `### For operators` — the one variable C3.9g1 adds is null by default.

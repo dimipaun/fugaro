@@ -9,7 +9,7 @@ an owner's own terminal.
 **The number is taken at that task's merge, not here.** `docs/gcp-live-checklist.md` is on the
 do-not-touch list of the release window in flight (0.16.0's, D1072), so the section below is written under
 the **name** §8 gives it and the number is the one free at the merge of the pull request that adds it —
-C3.9g's, per [implementation-plan.md](implementation-plan.md) C3.9g. That is the register's own rule: a
+C3.9g2's, per [implementation-plan.md](implementation-plan.md) C3.9g2. That is the register's own rule: a
 claim above the highest written section is settled at its merge, and whichever of two open claims merges
 second renumbers itself. The highest written section on `main` is **Check 190**
 ([README.md](README.md) §"Numbers this work holds").
@@ -38,7 +38,7 @@ split this file makes):
 > ## Check <N>: the review class reads one repository, signs one verdict, and reaches nothing else (the
 > `fugaro` installation only, sandbox repository only, never `belong`; run by you; NOT RUN)
 >
-> **NOT RUN.** Written by task **C3.9g** of
+> **NOT RUN.** Written by task **C3.9g2** of
 > [c39-review-identity/implementation-plan.md](implementation-plan.md), and **run by the owner**; the
 > steps are [c39-review-identity/live-check.md](live-check.md) — this section carries no steps of its own.
 > It is red until this slice and the review work's **CSR7** and **CSR2** are on `main` (§8's own sentence),
