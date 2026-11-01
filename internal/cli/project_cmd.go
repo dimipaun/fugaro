@@ -478,7 +478,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		// that works, and for the owner's rule of 2026-10-30 it is two
 		// commands: a newer Fugaro knows the keys, and `fugaro update` is
 		// what carries the node over without a deletion.
-		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (fugaro upgrade), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
+		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
 			projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, nil
@@ -2798,7 +2798,7 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 	if p == nil || len(p.UnknownKeys) == 0 {
 		return nil
 	}
-	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
+	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update'",
 		projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 }
 

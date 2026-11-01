@@ -205,7 +205,14 @@ func TestMigrateRefusesANewerNode(t *testing.T) {
 			t.Errorf("Migrate(version %d) reported %+v, want no changes", v, changes)
 		}
 		for _, reader := range []Reader{ReaderCLI, ReaderRunner} {
-			if msg := SkewSentence(ve, reader); !strings.Contains(msg, "fugaro upgrade") {
+			// The too-new remedy differs per reader: the CLI's binary is the
+			// package manager's to replace (`fugaro upgrade` only moves a
+			// checkout onto it), the job's image is refreshed.
+			remedy := "brew upgrade dimipaun/tap/fugaro"
+			if reader == ReaderRunner {
+				remedy = "refresh the runner image (fugaro upgrade)"
+			}
+			if msg := SkewSentence(ve, reader); !strings.Contains(msg, remedy) {
 				t.Errorf("SkewSentence(%d over %d, %v) = %q, want the too-new remedy", v, Version, reader, msg)
 			}
 		}

@@ -3307,6 +3307,7 @@ func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
 				t.Fatalf("%s: %v was accepted", tc.what, tc.args)
 			}
 			assertEscapedRefusal(t, err.Error(), tc.wantIn, hostile, escaped)
+			assertNamesTheBinaryUpgrade(t, err.Error())
 		})
 	}
 	t.Run("the launch gate, which refuses a run against the node", func(t *testing.T) {
@@ -3324,7 +3325,23 @@ func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
 			t.Fatal("a launch against a node with an unknown key was accepted")
 		}
 		assertEscapedRefusal(t, err.Error(), "never takes effect", hostile, escaped)
+		assertNamesTheBinaryUpgrade(t, err.Error())
 	})
+}
+
+// assertNamesTheBinaryUpgrade: a refusal whose remedy is a newer Fugaro names
+// the package manager's command, because `fugaro upgrade` never upgrades the
+// binary it runs — it moves a checkout onto the installed release. The reader
+// of such a refusal is on the older side, so a fix naming `fugaro upgrade`
+// leaves them with no move at all.
+func assertNamesTheBinaryUpgrade(t *testing.T, msg string) {
+	t.Helper()
+	if !strings.Contains(msg, "brew upgrade dimipaun/tap/fugaro") {
+		t.Errorf("the refusal does not name the binary upgrade: %s", msg)
+	}
+	if strings.Contains(msg, "fugaro upgrade") {
+		t.Errorf("the refusal sends the operator to fugaro upgrade, which never upgrades fugaro itself: %s", msg)
+	}
 }
 
 // assertEscapedRefusal checks one refusal of the unknown policy keys: that it

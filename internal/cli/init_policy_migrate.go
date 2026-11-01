@@ -298,7 +298,7 @@ func refuseMigrationUnknownKeys(moved []byte) error {
 	if err != nil || !found || len(p.UnknownKeys) == 0 {
 		return nil
 	}
-	return userErr("%s carries %d key(s) this Fugaro does not know (%s), and migrating it would write a document whose meaning this binary cannot read: nothing was written; upgrade Fugaro (fugaro upgrade), then run %s again",
+	return userErr("%s carries %d key(s) this Fugaro does not know (%s), and migrating it would write a document whose meaning this binary cannot read: nothing was written; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run %s again",
 		projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys), selfCommand()+" update")
 }
 
