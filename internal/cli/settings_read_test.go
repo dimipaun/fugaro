@@ -111,6 +111,22 @@ workflows:
 ` + extra
 }
 
+// settingsRepoFromProfile is a repository's own file anchored to the GCP
+// project testProjectLayer's cache carries, whose one workflow names profile
+// svc and leaves commands.build to it. The resolved config then holds a value
+// neither the repository's file nor the layer's defaults wrote — the one origin
+// whose WINS word is `profile <name>` and not a layer name.
+const settingsRepoFromProfile = `version: 1
+project: aurora
+gcp_project: proj-1234
+git:
+  provider: github
+workflows:
+  web:
+    profile: svc
+    commands: { test: go test ./... }
+`
+
 // settingsJSON runs the read and decodes the document.
 func readSettingsJSON(t *testing.T, args ...string) settingsTestDoc {
 	t.Helper()
@@ -293,36 +309,53 @@ func TestSettingsAllReposShowsUnknownWithoutACheckout(t *testing.T) {
 }
 
 // TestSettingsWinsNamesALayerTheRowHas: WINS is either `default` or a layer the
-// key's own row says it may be set in, so the column can never name a store
-// that could not have decided the value. The read used to print WINS env for
-// update_check — a layer that row does not carry, and printed precisely when
-// the environment was not what decided the value.
+// key's own row says it may be set in — `profile <name>` being the profile
+// level's own spelling — so the column can never name a store that could not
+// have decided the value. The read used to print WINS env for update_check — a
+// layer that row does not carry, and printed precisely when the environment was
+// not what decided the value.
 func TestSettingsWinsNamesALayerTheRowHas(t *testing.T) {
-	settingsFixture(t, "max_parallel: 3\n")
+	home := settingsFixture(t, "max_parallel: 3\n")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoFromProfile)
 	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
 		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
 		CheckedAt: time.Now(), YAML: testProjectLayer,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	doc := readSettingsJSON(t)
-	won := 0
+	doc := readSettingsJSON(t, "--all-repos")
+	won, profile, scopes := 0, 0, map[string]bool{}
 	for _, r := range doc.Settings {
-		if r.Scope != "project" || r.Wins == "default" {
+		if r.Wins == "default" {
 			continue
 		}
 		won++
+		scopes[r.Scope] = true
 		row, ok := settings.Lookup(r.Key)
 		if !ok {
 			t.Errorf("%s: the document carries a key the registry does not", r.Key)
 			continue
 		}
-		if !slices.Contains(row.Layers, r.Wins) {
-			t.Errorf("%s: wins = %q, and the row's layers are %v", r.Key, r.Wins, row.Layers)
+		layer := r.Wins
+		if strings.HasPrefix(layer, "profile ") {
+			layer, profile = settings.LayerProfile, profile+1
+		}
+		if !slices.Contains(row.Layers, layer) {
+			t.Errorf("%s (%s): wins = %q, and the row's layers are %v", r.Key, r.Scope, r.Wins, row.Layers)
 		}
 	}
 	if won == 0 {
 		t.Fatal("no row was decided by a layer, so this test checked nothing")
+	}
+	// Both scopes, and a profile-decided row among them: a read that answered
+	// the repository scope from the project scope's layers would leave the
+	// profile spelling unchecked, and the mapping above is what makes it
+	// checkable at all.
+	if !scopes["project"] || !scopes["repo:owner/repo-a"] {
+		t.Errorf("the rows a layer decided are in %v, want both scopes", scopes)
+	}
+	if profile == 0 {
+		t.Error("no row's WINS named a profile, so the profile spelling is unchecked")
 	}
 }
 
@@ -675,6 +708,220 @@ func TestSettingsWritesNothing(t *testing.T) {
 	after := snapshotTree(t, home)
 	if before != after {
 		t.Errorf("the read changed this machine:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// TestSettingsRepoScopeReportsTheKeyTheRepositorySets: a registry key with a
+// varying middle segment (workflows.*.commands.test) is the repository's own
+// path once resolved, and the resolution is keyed by real workflow names — so a
+// row that looked the key up as written found nothing and printed the built-in
+// default while the checkout set the key. The project scope of the same key
+// still says no offline layer decided it.
+func TestSettingsRepoScopeReportsTheKeyTheRepositorySets(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML(""))
+	doc := readSettingsJSON(t, "workflows.*.commands.test", "--all-repos")
+	repo := rowOf(t, doc, "workflows.*.commands.test", "repo:owner/repo-a")
+	if repo.Value == nil || *repo.Value != "go test ./..." {
+		t.Fatalf("the repository scope = %q, wins = %q, state = %q, want the checkout's own command", deref(repo.Value), repo.Wins, repo.State)
+	}
+	if repo.Wins != "repo" {
+		t.Errorf("wins = %q, want repo: the checkout sets the key", repo.Wins)
+	}
+	if proj := rowOf(t, doc, "workflows.*.commands.test", "project"); proj.Wins != "default" {
+		t.Errorf("the project scope's wins = %q, want default: no offline layer sets a workflow command", proj.Wins)
+	}
+}
+
+// TestSettingsRepoScopeNamesTheProfileThatDecidedAValue: a value the project
+// layer's profile supplied is still the value a run gets, and WINS says so in
+// the resolution's own words — `profile <name>`, the spelling spec §2.2 pins to
+// `config show`'s (config.SourceProfile). A row that printed the bare layer
+// name would not say which profile decided it, and the level is not the ten
+// names `--layer` takes.
+func TestSettingsRepoScopeNamesTheProfileThatDecidedAValue(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoFromProfile)
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
+		CheckedAt: time.Now(), YAML: testProjectLayer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	doc := readSettingsJSON(t, "workflows.*.commands.build", "workflows.*.commands.test", "--repo", "owner/repo-a")
+	fromProfile := rowOf(t, doc, "workflows.*.commands.build", "repo:owner/repo-a")
+	if fromProfile.Value == nil || *fromProfile.Value != "sh build.sh" {
+		t.Fatalf("the repository scope = %q, wins = %q, state = %q, want the profile's sh build.sh", deref(fromProfile.Value), fromProfile.Wins, fromProfile.State)
+	}
+	if fromProfile.Wins != config.SourceProfile("svc") {
+		t.Errorf("wins = %q, want %q: the workflow named profile svc, which supplied the value", fromProfile.Wins, config.SourceProfile("svc"))
+	}
+	if fromProfile.State != "ok" {
+		t.Errorf("state = %q, want ok", fromProfile.State)
+	}
+	// The key the checkout does set is the checkout's, so the two words are not
+	// one: the row is not reporting the profile for a value the repository
+	// wrote.
+	fromRepo := rowOf(t, doc, "workflows.*.commands.test", "repo:owner/repo-a")
+	if fromRepo.Value == nil || *fromRepo.Value != "go test ./..." || fromRepo.Wins != "repo" {
+		t.Errorf("workflows.*.commands.test = %q/%q, want the checkout's own command and repo", deref(fromRepo.Value), fromRepo.Wins)
+	}
+}
+
+// TestSettingsProjectScopeReadsTheLayersDefaults: the project layer's defaults:
+// are the project level of a resolved fugaro.yaml key (spec §2.2), so the
+// project scope reports the value a run gets from them. The keys the fixture's
+// defaults do not carry still read as defaults: the decoded fields cannot tell
+// `review_rounds: 0` from an unset key, so a read that took the block for the
+// answer would print a 0 for agent.review_rounds and its 25-dollar default for
+// agent.max_budget_usd.
+func TestSettingsProjectScopeReadsTheLayersDefaults(t *testing.T) {
+	settingsFixture(t, "")
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
+		CheckedAt: time.Now().Add(-3 * time.Minute), YAML: testProjectLayer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	doc := readSettingsJSON(t, "git.provider", "agent.auth", "agent.review_rounds", "agent.max_budget_usd")
+	for _, tc := range []struct{ key, value string }{
+		{"git.provider", "github"},
+		{"agent.auth", "api-key"},
+	} {
+		row := rowOf(t, doc, tc.key, "project")
+		if row.Value == nil || *row.Value != tc.value || row.Wins != "project" {
+			t.Errorf("%s = %q/%q, want the layer's defaults: %q decided by project", tc.key, deref(row.Value), row.Wins, tc.value)
+		}
+		if row.State != "stale 3m" {
+			t.Errorf("%s: state = %q, want the cache's age: the layer read is a cached copy", tc.key, row.State)
+		}
+	}
+	for _, tc := range []struct{ key, value string }{
+		{"agent.review_rounds", "2"},
+		{"agent.max_budget_usd", "25"},
+	} {
+		row := rowOf(t, doc, tc.key, "project")
+		if row.Value == nil || *row.Value != tc.value || row.Wins != "default" {
+			t.Errorf("%s = %q/%q, want %q: the layer's defaults do not write it", tc.key, deref(row.Value), row.Wins, tc.value)
+		}
+	}
+}
+
+// TestSettingsScopesAgreeOnADefaultedValue: a key no layer sets prints the
+// DEFAULT column's value in both scopes, and the sentence saying what unset
+// means where that is the default. The repository scope printed the DEFAULT
+// column's own text — `4 (config.DefaultCPU)` — where the project scope printed
+// `4`, so one key had two answers a consumer had to know to compare.
+func TestSettingsScopesAgreeOnADefaultedValue(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML(""))
+	doc := readSettingsJSON(t, "workflows.*.resources.cpu", "git.pr.checkpoints", "--all-repos")
+	// The registry is the oracle, the way valueOrDefault reads it: the value
+	// alone, or the sentence saying what unset means. The DEFAULT column is the
+	// other rendering — `4 (config.DefaultCPU)` — and it belongs there only.
+	for _, key := range []string{"workflows.*.resources.cpu", "git.pr.checkpoints"} {
+		row, ok := settings.Lookup(key)
+		if !ok {
+			t.Fatalf("%s: not a registry key", key)
+		}
+		want := row.Default.Value
+		if want == "" {
+			want = row.Default.Unset
+		}
+		proj := rowOf(t, doc, key, "project")
+		if proj.Value == nil || *proj.Value != want {
+			t.Errorf("%s in the project scope = %q, want %q", key, deref(proj.Value), want)
+		}
+		repo := rowOf(t, doc, key, "repo:owner/repo-a")
+		if repo.Value == nil || *repo.Value != want || repo.Wins != "default" {
+			t.Errorf("%s in the repository scope = %q/%q, want the registry's %q and default", key, deref(repo.Value), repo.Wins, want)
+		}
+	}
+}
+
+// TestSettingsRepoScopeBeatsTheProjectScopesLocalValue: the two scopes answer
+// one key from different documents, and the repository's own file is the
+// stricter of the two (spec §2.2: local < repo). A repository scope that let
+// the local config decide would print the installation's GCP project for a
+// checkout that pins its own.
+func TestSettingsRepoScopeBeatsTheProjectScopesLocalValue(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoFromProfile)
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
+		CheckedAt: time.Now(), YAML: testProjectLayer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	doc := readSettingsJSON(t, "gcp_project", "--all-repos")
+	proj := rowOf(t, doc, "gcp_project", "project")
+	if proj.Value == nil || *proj.Value != "aurora-gcp" || proj.Wins != "local" {
+		t.Errorf("the project scope = %q/%q, want the local config's aurora-gcp and local", deref(proj.Value), proj.Wins)
+	}
+	repo := rowOf(t, doc, "gcp_project", "repo:owner/repo-a")
+	if repo.Value == nil || *repo.Value != "proj-1234" {
+		t.Fatalf("the repository scope = %q, wins = %q, want the checkout's proj-1234", deref(repo.Value), repo.Wins)
+	}
+	if repo.Wins != "repo" {
+		t.Errorf("wins = %q, want repo: the checkout sets the key, and the project scope's local value is not this row's answer", repo.Wins)
+	}
+}
+
+// TestSettingsUnreadNamesThePathItIsAbout: a checkout whose fugaro.yaml does
+// not resolve reads `unread: <reason>`, and the reason is the problem's own
+// line, which starts with the key it is about. The message alone — `is "", but
+// the project layer given is GCP project "proj-1234"'s` — says nothing about
+// which key of the file it means, so a reader could not tell a missing
+// gcp_project from a missing project.
+func TestSettingsUnreadNamesThePathItIsAbout(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML(""))
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
+		CheckedAt: time.Now(), YAML: testProjectLayer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	doc := readSettingsJSON(t, "agent.review_rounds", "--repo", "owner/repo-a")
+	row := rowOf(t, doc, "agent.review_rounds", "repo:owner/repo-a")
+	if !strings.HasPrefix(row.State, "unread: gcp_project: ") {
+		t.Errorf("state = %q, want a reason that names the key the problem is about", row.State)
+	}
+}
+
+// TestSettingsUpdateCheckReadsItsEnvLayer: update_check is the one key a
+// process environment sets as well as a file, and the order is the run's — env
+// over local (spec §2.2) — so the row says off while FUGARO_NO_UPDATE_CHECK is
+// set to the value updatewarn.go reads, whatever the local file says. A row
+// that read the file first would call an installation whose runs turn the
+// check off one that checks for updates.
+func TestSettingsUpdateCheckReadsItsEnvLayer(t *testing.T) {
+	settingsFixture(t, "update_check: true\n")
+	reg, ok := settings.Lookup("update_check")
+	if !ok || !slices.Contains(reg.Layers, settings.LayerEnv) {
+		t.Fatalf("update_check's layers = %v, want the environment among them", reg.Layers)
+	}
+	file := rowOf(t, readSettingsJSON(t, "update_check"), "update_check", "project")
+	if file.Value == nil || *file.Value != "true" || file.Wins != "local" {
+		t.Errorf("without the variable the row = %q/%q, want the local file's true", deref(file.Value), file.Wins)
+	}
+
+	t.Setenv(noUpdateCheckEnv, "1")
+	off := rowOf(t, readSettingsJSON(t, "update_check"), "update_check", "project")
+	if off.Value == nil || *off.Value != "false" || off.Wins != "env" {
+		t.Errorf("with %s=1 the row = %q/%q, want false/env: the environment is read before the file", noUpdateCheckEnv, deref(off.Value), off.Wins)
+	}
+	if doc := readSettingsJSON(t, "update_check", "--layer", "env"); len(doc.Settings) != 1 {
+		t.Errorf("--layer env kept %d rows, want the one key the environment can decide", len(doc.Settings))
+	}
+
+	// The variable's word is "1" (noUpdateCheckEnv is compared with it), so a
+	// row that read the variable for being set at all would call the check off
+	// for FUGARO_NO_UPDATE_CHECK=0.
+	t.Setenv(noUpdateCheckEnv, "0")
+	on := rowOf(t, readSettingsJSON(t, "update_check"), "update_check", "project")
+	if on.Value == nil || *on.Value != "true" || on.Wins != "local" {
+		t.Errorf("with %s=0 the row = %q/%q, want the local file's true", noUpdateCheckEnv, deref(on.Value), on.Wins)
 	}
 }
 

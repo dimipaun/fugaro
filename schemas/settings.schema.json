@@ -103,6 +103,29 @@
         }
       }
     },
+    "decider": {
+      "anyOf": [
+        {
+          "enum": [
+            "default",
+            "project",
+            "profile",
+            "repo",
+            "flag",
+            "local",
+            "shared",
+            "policy",
+            "caps",
+            "env"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^profile .+$"
+        }
+      ],
+      "$comment": "The origin of a value, as WINS and --why's levels print it: a layer name, or `profile <name>` when one of the project layer's profiles decided it — config.SourceProfile's spelling, which spec §2.2 says is `config show`'s own. The layer list is settings.Layers, the same list --layer takes; the profile form is a pattern because profile names are the project layer's vocabulary, not the read's."
+    },
     "default": {
       "type": "object",
       "properties": {
@@ -130,18 +153,7 @@
       ],
       "properties": {
         "layer": {
-          "enum": [
-            "default",
-            "project",
-            "profile",
-            "repo",
-            "flag",
-            "local",
-            "shared",
-            "policy",
-            "caps",
-            "env"
-          ]
+          "$ref": "#/$defs/decider"
         },
         "value": {
           "type": "string"
@@ -178,18 +190,7 @@
           "$comment": "Absent, not null and not a sentinel, when the row is sensitive: the only spelling a consumer cannot mistake for the value."
         },
         "wins": {
-          "enum": [
-            "default",
-            "project",
-            "profile",
-            "repo",
-            "flag",
-            "local",
-            "shared",
-            "policy",
-            "caps",
-            "env"
-          ],
+          "$ref": "#/$defs/decider",
           "description": "The layer that decided the value, or `default` when none did."
         },
         "default": {
@@ -813,6 +814,9 @@
         },
         "name": {
           "default": "unset = the file is refused (name: is required)"
+        },
+        "policy_generation": {
+          "default": "unset = none: no generation is recorded; the next update adopts the published one"
         },
         "profile": {
           "default": "unset = the project layer's default_profile"

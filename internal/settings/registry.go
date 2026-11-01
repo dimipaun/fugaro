@@ -477,7 +477,11 @@ var localRows = []Row{
 	loc("commit_email", "Fugaro's own address", "setup", docSetup),
 	loc("max_parallel", "Fugaro's own cap", "config", docSetup),
 	loc("base_branch", "none: each repository's own branch", "config", docSetup),
-	loc("update_check", "", "setup", docSetup),
+	// update_check is the one key a process environment sets as well as a
+	// file (spec §2.2: env overrides local), so its row carries the env level
+	// the read prints for FUGARO_NO_UPDATE_CHECK. Its default is a value and
+	// comes from defaultValues below.
+	{Key: "update_check", Layers: []string{LayerLocal, LayerShared, LayerEnv}, Merge: Replace, Owner: "setup", Doc: docSetup},
 	loc("secret_rotation_days", "0: no rotation period is recorded", "secrets", docSetup),
 	loc("secret_expires", "none: no expiry date is recorded", "secrets", docSetup),
 	loc("bitbucket_api_roots", "the provider's public API", "secrets", docSetup),
@@ -596,10 +600,10 @@ var defaultValues = map[string]Default{
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the
-// Realtime Database API key is public but is a credential-shaped string, so it
-// is redacted unless --show-sensitive asks for it. Every other key's value is
-// a name, a path or a number, and TestRegistryMarksEverySensitiveKey holds
-// this list to the keys that look like credentials.
+// Realtime Database API key is public but is a credential-shaped string, so
+// its row prints set or unset and nothing more. Every other key's value is a
+// name, a path or a number, and TestRegistryMarksEverySensitiveKey holds this
+// list to the keys that look like credentials.
 var sensitiveKeys = map[string]bool{
 	"budget.firebase_api_key": true,
 }

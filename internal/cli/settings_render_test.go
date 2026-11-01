@@ -11,6 +11,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -80,7 +81,7 @@ func TestSettingsSensitiveKeyUnsetSaysSo(t *testing.T) {
 // cache the read marks stale, and a sensitive row.
 func TestSettingsJSONMatchesSchema(t *testing.T) {
 	home := settingsFixture(t, "budget:\n  firebase_api_key: "+settingsFakeAPIKey+"\nrepos:\n  owner/repo-b: {}\n")
-	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML("agent:\n  review_rounds: 3\n"))
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoFromProfile+"agent:\n  review_rounds: 3\n")
 	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
 		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
 		CheckedAt: time.Now().Add(-3 * time.Minute), YAML: testProjectLayer,
@@ -131,6 +132,29 @@ func TestSettingsJSONMatchesSchema(t *testing.T) {
 		if !states[want] {
 			t.Errorf("the document carries no %q state (it has %v)", want, states)
 		}
+	}
+
+	// And with both branches of $defs.decider in it: the layer names and the
+	// spelling for a value a profile decided (config.SourceProfile), in the
+	// row and in the level --why adds beside it. A fixture that stopped
+	// producing one would leave that branch of the schema unchecked.
+	var parsed settingsTestDoc
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	byProfile, levelByProfile := false, false
+	for _, r := range parsed.Settings {
+		if r.Wins == config.SourceProfile("svc") {
+			byProfile = true
+		}
+		for _, l := range r.Levels {
+			if l.Layer == config.SourceProfile("svc") {
+				levelByProfile = true
+			}
+		}
+	}
+	if !byProfile || !levelByProfile {
+		t.Errorf("the document's rows decided by a profile: %v, and a level naming one: %v, want both", byProfile, levelByProfile)
 	}
 }
 

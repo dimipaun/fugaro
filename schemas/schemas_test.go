@@ -3941,17 +3941,56 @@ func TestSettingsSchema(t *testing.T) {
 	compile(t, "settings.schema.json")
 
 	wantLayers := settings.Layers
-	for _, tc := range []struct {
-		def  string
-		path []string
-	}{
-		{"source", []string{"source", "properties", "layer", "enum"}},
-		{"row", []string{"row", "properties", "wins", "enum"}},
-		{"level", []string{"level", "properties", "layer", "enum"}},
+	if got := stringsOf(t, defs, "source", "properties", "layer", "enum"); !slices.Equal(got, wantLayers) {
+		t.Errorf("$defs.source: the layer enum is %v, and settings.Layers is %v", got, wantLayers)
+	}
+	// WINS and --why's level name where a value came from, which is a layer of
+	// settings.Layers — or `profile <name>` when one of the project layer's
+	// profiles decided it, the spelling config.SourceProfile holds and spec
+	// §2.2 says is config show's own. The two nodes share one definition, so a
+	// consumer reads one vocabulary and WINS cannot accept what a level does
+	// not.
+	dec, ok := defs["decider"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs.decider")
+	}
+	branches, ok := dec["anyOf"].([]any)
+	if !ok || len(branches) != 2 {
+		t.Fatalf("$defs.decider: want an anyOf of two branches — the layer names and the profile form — got %v", dec["anyOf"])
+	}
+	first, ok := branches[0].(map[string]any)
+	if !ok {
+		t.Fatalf("$defs.decider: the first branch is %v, not the layer list", branches[0])
+	}
+	if got := stringsOf(t, first, "enum"); !slices.Equal(got, wantLayers) {
+		t.Errorf("$defs.decider: the layer enum is %v, and settings.Layers is %v", got, wantLayers)
+	}
+	second, ok := branches[1].(map[string]any)
+	if !ok {
+		t.Fatalf("$defs.decider: the second branch is %v, not the profile form", branches[1])
+	}
+	pattern, _ := second["pattern"].(string)
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("$defs.decider: the profile pattern %q does not compile: %v", pattern, err)
+	}
+	for _, want := range []string{config.SourceProfile("svc"), config.SourceProfile("node-web-2")} {
+		if !re.MatchString(want) {
+			t.Errorf("$defs.decider: the pattern %q refuses %q, which a profile source is", pattern, want)
+		}
+	}
+	// A bare `profile` is the layer, and the enum's member: the pattern must
+	// not be the thing that admits it, or the list would stop being the pin.
+	if re.MatchString(settings.LayerProfile) {
+		t.Errorf("$defs.decider: the pattern %q matches %q, so a bare layer name comes in through the profile branch", pattern, settings.LayerProfile)
+	}
+	for _, tc := range []struct{ def, path string }{
+		{"row", "row.properties.wins"},
+		{"level", "level.properties.layer"},
 	} {
-		got := stringsOf(t, defs, tc.path...)
-		if !slices.Equal(got, wantLayers) {
-			t.Errorf("$defs.%s: the enum is %v, and settings.Layers is %v", tc.def, got, wantLayers)
+		node := nodeOf(t, defs, strings.Split(tc.path, ".")...)
+		if got, _ := node["$ref"].(string); got != "#/$defs/decider" {
+			t.Errorf("$defs.%s: %s is %v, and it is the decider vocabulary", tc.def, tc.path, node)
 		}
 	}
 
@@ -3988,6 +4027,20 @@ func TestSettingsSchema(t *testing.T) {
 	for key := range props {
 		t.Errorf("$defs.keyDefaults carries %s, and the registry has no such row", key)
 	}
+}
+
+// nodeOf is one schema node, walked by property names.
+func nodeOf(t *testing.T, node map[string]any, path ...string) map[string]any {
+	t.Helper()
+	cur := node
+	for _, key := range path {
+		next, ok := cur[key].(map[string]any)
+		if !ok {
+			t.Fatalf("%v: no object at %q", path, key)
+		}
+		cur = next
+	}
+	return cur
 }
 
 // stringsOf is a schema node's string array, walked by property names.

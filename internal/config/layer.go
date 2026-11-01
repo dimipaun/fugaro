@@ -127,6 +127,41 @@ func (l *ProjectLayer) SetsGovernance() bool {
 	return ok
 }
 
+// SetsDefault reports whether the layer's text writes a fugaro.yaml key under
+// defaults:, at any value — its own, or the nearest ancestor the text writes,
+// because a list is one key (Resolution.Sources' own rule: rigor.areas is set
+// by its list, not by each rule's mode).
+//
+// The text answers it, not LayerDefaults: the decoded fields cannot tell an
+// unset key from one written with the type's zero value — agent.review_rounds:
+// 0 and agent.model: "" decode to the same fields as keys the layer never
+// wrote — so a reader that took the zero for a value would print a 0 or a
+// blank for a key the layer does not set.
+func (l *ProjectLayer) SetsDefault(key string) bool {
+	if l == nil {
+		return false
+	}
+	cur, ok := l.tree["defaults"]
+	if !ok || cur == nil {
+		return false
+	}
+	for _, part := range strings.Split(key, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			// The text writes a leaf here, and the path goes on: only a list
+			// has keys under it, and a list is one key. A scalar has none.
+			n, _ := cur.(*yaml.Node)
+			return n != nil && n.Kind != yaml.ScalarNode
+		}
+		next, ok := m[part]
+		if !ok || next == nil {
+			return false
+		}
+		cur = next
+	}
+	return true
+}
+
 // LayerRigor is defaults.rigor: the same two keys the repository's own
 // rigor: block carries, because either layer may set either of them
 // (docs/project-layer.md §5).

@@ -35,6 +35,12 @@ const (
 func staleState(d time.Duration) string { return "stale " + humanAge(d) }
 func unreadState(reason string) string  { return "unread: " + reason }
 
+// updateCheckKey is the one key the environment sets (spec §2.2: env overrides
+// local, and today only update_check has both). FUGARO_NO_UPDATE_CHECK is the
+// variable updatewarn.go reads to turn the check off, so the read names the
+// same one.
+const updateCheckKey = "update_check"
+
 // setting is one row of the read: a key in one scope, the value a run gets,
 // the layer that decided it, the built-in default and the state of the read.
 type setting struct {
@@ -244,7 +250,10 @@ func (r *settingsRead) readRepo(name, dir string) repoRead {
 	}
 	cfg, res, ps := config.Resolve(data, r.layer)
 	if len(ps) > 0 {
-		rr.state = unreadState(ps[0].Message)
+		// String, not Message: the message alone says "is "", but the
+		// project layer given is …" with nothing saying which key of the
+		// file it is about.
+		rr.state = unreadState(ps[0].String())
 		return rr
 	}
 	rr.config, rr.res, rr.state = cfg, res, stateOK
@@ -338,19 +347,38 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 				}
 			}
 		}
+	case row.Key == updateCheckKey && os.Getenv(noUpdateCheckEnv) == "1":
+		// The one key the environment sets, and it is read before the local
+		// file because that is the order a run gets (spec §2.2): the switch
+		// below would take the local config's update_check otherwise, and the
+		// row would say a run checks for updates when its process turns the
+		// check off.
+		s.Value, s.Wins = "false", settings.LayerEnv
 	case slices.Contains(row.Layers, settings.LayerLocal) && r.local != nil:
 		if v, ok := valueAt(r.local, row.Key); ok {
 			s.Value, s.Wins = v, settings.LayerLocal
 		}
+	case isYAMLKey(row) && r.layer != nil && r.layer.SetsDefault(row.Key):
+		// The layer's defaults: are the project level of a fugaro.yaml key
+		// (spec §2.2), so the project scope reports the value a run gets from
+		// them rather than the key's built-in default. Two answers from two
+		// places: the text says whether the layer writes the key at all
+		// (SetsDefault), and the decoded block says what it writes — the
+		// fields alone cannot tell `review_rounds: 0` from an unset key.
+		//
+		// The layer here is the cached copy, so the state is the cache's,
+		// exactly as it is for a `layer.` key read from the same file.
+		if v, ok := valueAt(r.layer, "defaults."+row.Key); ok {
+			s.Value, s.Wins = v, settings.LayerProject
+			if r.layerAge > 0 {
+				s.State = staleState(r.layerAge)
+			}
+		}
 	}
 	if s.Wins == settings.LayerDefault {
-		// A key no layer sets prints the default value, never a blank: a
-		// row whose default is a sentence prints the sentence, because
-		// there is no value to print and a blank would read as "off".
-		s.Value = s.DefaultValue
-		if s.Value == "" {
-			s.Value = s.DefaultUnset
-		}
+		// A key no layer sets prints what its default says, and never a
+		// blank: a blank would read as "off".
+		s.Value = valueOrDefault(s)
 	}
 	if row.Sensitive {
 		s.Value = sensitiveText(s.Value, s.Wins)
@@ -376,17 +404,22 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 	if !isYAMLKey(row) || repo.config == nil {
 		return s
 	}
-	v, ok := valueAt(repo.config, row.Key)
+	v, path, ok := valueAtPath(repo.config, row.Key)
 	if !ok {
 		return s
 	}
 	s.Value = v
-	s.Wins = settings.LayerDefault
-	if src, ok := repo.res.Sources[row.Key]; ok {
-		s.Wins = src
-	}
+	// The resolution is asked about the path the read actually took: the
+	// registry names a varying segment with * (workflows.*.commands.test) and
+	// Sources is keyed by real workflow names, so looking the key up as
+	// written found nothing and the row printed its default while the
+	// checkout set the key. Its answer is the level a run resolves the key
+	// at — a layer of settings.Layers, or `profile <name>` when one of the
+	// layer's profiles supplied the value, the spelling config.SourceProfile
+	// holds and WINS prints (spec §2.2).
+	s.Wins = repo.res.SourceOf(path)
 	if s.Wins == settings.LayerDefault {
-		s.Value = s.Default
+		s.Value = valueOrDefault(s)
 	}
 	if row.Sensitive {
 		s.Value = sensitiveText(v, s.Wins)
@@ -418,6 +451,18 @@ func sensitiveText(value, wins string) string {
 	return "set"
 }
 
+// valueOrDefault is the VALUE a row prints when no layer decides it: the
+// default value, or the sentence saying what unset means. It is the one place
+// the two are chosen between, so the project and repository scopes cannot
+// answer a key differently — the repository scope printed the DEFAULT column's
+// own text (`4 (config.DefaultCPU)`) where the project scope printed `4`.
+func valueOrDefault(s setting) string {
+	if s.DefaultValue != "" {
+		return s.DefaultValue
+	}
+	return s.DefaultUnset
+}
+
 // defaultText is the DEFAULT column: the value with the constant that holds
 // it, or the "unset means" sentence.
 func defaultText(row settings.Row) string {
@@ -442,39 +487,60 @@ func humanAge(d time.Duration) string {
 }
 
 // valueAt reads a dotted path out of a decoded document and renders it the way
-// the read prints it. "*" matches any map key or list index, and the first one
-// in sorted order is used, so two reads of one document agree. It is the one
-// reader every offline layer goes through: the registry's keys are the
-// documents' own yaml paths, so no layer needs a reader of its own (F6).
+// the read prints it. It is the one reader every offline layer goes through:
+// the registry's keys are the documents' own yaml paths, so no layer needs a
+// reader of its own (F6).
 func valueAt(doc any, path string) (string, bool) {
+	v, _, ok := valueAtPath(doc, path)
+	return v, ok
+}
+
+// valueAtPath is valueAt with the path it took. "*" matches any map key or list
+// index, and the first one in sorted order is used, so two reads of one
+// document agree; the concrete path names the entry the walk stepped into, so a
+// reader with a second question about the same value — repoRow asks the
+// resolution which layer set it — asks it about the key it read rather than
+// about the pattern.
+func valueAtPath(doc any, path string) (string, string, bool) {
 	v := reflect.ValueOf(doc)
 	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
-			return "", false
+			return "", "", false
 		}
 		v = v.Elem()
 	}
+	concrete := ""
 	for _, part := range strings.Split(path, ".") {
-		v = stepInto(v, part)
+		var step string
+		v, step = stepInto(v, part)
 		if !v.IsValid() {
-			return "", false
+			return "", "", false
+		}
+		switch {
+		case strings.HasPrefix(step, "["):
+			concrete += step
+		case concrete == "":
+			concrete = step
+		default:
+			concrete += "." + step
 		}
 	}
 	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
-			return "", false
+			return "", "", false
 		}
 		v = v.Elem()
 	}
-	return renderValue(v), true
+	return renderValue(v), concrete, true
 }
 
 // stepInto is one path element: a struct's field by yaml tag, a map's value by
-// key, or a list's first element.
-func stepInto(v reflect.Value, part string) reflect.Value {
+// key, or a list's first element. It answers the name the walk took as well as
+// the value: the field's tag, the map's key, or the list index.
+func stepInto(v reflect.Value, part string) (reflect.Value, string) {
 	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
-			return reflect.Value{}
+			return reflect.Value{}, ""
 		}
 		v = v.Elem()
 	}
@@ -484,19 +550,19 @@ func stepInto(v reflect.Value, part string) reflect.Value {
 		for i := range t.NumField() {
 			tag := strings.Split(t.Field(i).Tag.Get("yaml"), ",")[0]
 			if tag == part {
-				return v.Field(i)
+				return v.Field(i), tag
 			}
 		}
 	case reflect.Map:
 		if part == "*" {
 			keys := v.MapKeys()
 			if len(keys) == 0 {
-				return reflect.Value{}
+				return reflect.Value{}, ""
 			}
 			slices.SortFunc(keys, func(a, b reflect.Value) int {
 				return strings.Compare(fmt.Sprint(a.Interface()), fmt.Sprint(b.Interface()))
 			})
-			return v.MapIndex(keys[0])
+			return v.MapIndex(keys[0]), fmt.Sprint(keys[0].Interface())
 		}
 		// A path element is text, so a map is addressable only by a string
 		// key: every map the config types carry is one — map[string]Workflow
@@ -506,17 +572,19 @@ func stepInto(v reflect.Value, part string) reflect.Value {
 		// the invalid value rather than guessing at a rendering of its key.
 		kt := v.Type().Key()
 		if kt.Kind() != reflect.String {
-			return reflect.Value{}
+			return reflect.Value{}, ""
 		}
 		key := reflect.ValueOf(part).Convert(kt)
-		return v.MapIndex(key)
+		return v.MapIndex(key), part
 	case reflect.Slice, reflect.Array:
 		if v.Len() == 0 {
-			return reflect.Value{}
+			return reflect.Value{}, ""
 		}
-		return v.Index(0)
+		// A list is one key (Resolution.SourceOf's own rule), so the index is
+		// written the way a path spells one and the resolution ignores it.
+		return v.Index(0), "[0]"
 	}
-	return reflect.Value{}
+	return reflect.Value{}, ""
 }
 
 // renderValue is a leaf as the read prints it: a list joins with ", ", a bool
