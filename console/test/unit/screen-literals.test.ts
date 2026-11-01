@@ -159,12 +159,6 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
-    RIGOR_ABSENT: 'the dash `runs ls`\'s MODE column draws for a run whose record carries no rigor block (`shared/rigor.ts`), a console constant',
-    word: {
-      within: 'rigorCell',
-      reason:
-        '`rigorModeWord(view.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `textCell` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
-    },
   },
   // The drawers outside `src/renderer/screens`: `src/shared/notice.ts` writes
   // the notice card's text slots, and `src/shared/version.ts` composes the
@@ -470,7 +464,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'panel.operation': '`OperationName`, the closed IPC allow-list union',
     'row.scope': '`ProjectCapScope`, a closed union the model assigns (`global`, `defaults`, `repo`)',
     slug: { within: 'capRowLine', reason: '`sanitizedKey(row.slug)`: the slug as `sanitizeText` drew it, null when refused' },
-    theme: { within: 'renderProjects', reason: 'a `ProjectsTheme`, the closed theme tuple' },
+    theme: {
+      within: 'renderProjectsFrame',
+      reason:
+        'a `ProjectsTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderProjects` draws the whole screen by calling it (console 0.117.0)',
+    },
   },
   'degraded.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -627,7 +625,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   },
   'coordinator.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
-    theme: { within: 'renderCoordinator', reason: 'a `CoordinatorTheme`, the closed theme tuple' },
+    theme: {
+      within: 'renderCoordinatorFrame',
+      reason:
+        'a `CoordinatorTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderCoordinator` draws the whole screen by calling it (console 0.117.0)',
+    },
   },
   'reading.ts': {
     theme: { within: 'renderReading', reason: 'a `SkewTheme`, the closed two-word theme union' },
