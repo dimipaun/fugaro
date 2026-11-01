@@ -92,6 +92,8 @@ import {
   openExternalValidated,
   openStartupWindow,
   openWindowFor,
+  PULL_REQUEST_PROVIDERS,
+  pullRequestUrl,
   runVersionHandshake,
   startupWindow,
   validateExternalUrl,
@@ -490,6 +492,76 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
     // The handover did happen -- the OS was asked -- so a test that only
     // asserted `false` would also pass for a shell this function never reached.
     expect(opened).toEqual(['https://github.com/fugaro/fugaro'])
+  })
+})
+
+describe('a pull request link is built from three fields and never read (D814, D815)', () => {
+  it('builds the GitHub form from the provider, the repository and the number', () => {
+    expect(pullRequestUrl('github', 'owner/repo-a', 1458)).toBe('https://github.com/owner/repo-a/pull/1458')
+  })
+
+  it('knows exactly the two providers, and no third', () => {
+    // The set the IPC schema's own `gitProvider` kind is read from, so the two
+    // cannot drift: a third provider here would be one the schema admits.
+    expect(PULL_REQUEST_PROVIDERS).toEqual(['github', 'bitbucket'])
+  })
+
+  it('builds the Bitbucket form from the same three fields', () => {
+    expect(pullRequestUrl('bitbucket', 'owner/repo-a', 1458)).toBe(
+      'https://bitbucket.org/owner/repo-a/pull-requests/1458',
+    )
+  })
+
+  // The six hostile inputs the plan names, and the reason each one is a `null`
+  // rather than a URL: an unknown provider has no host to build; a `repo` that
+  // is not exactly `owner/name` is a path a job wrote; and a number that is not
+  // a positive safe integer is not a pull request number. Every one of them is
+  // refused **here**, before `validateExternalUrl` is reached, because this is
+  // the first gate -- rule 2's "no link is built from a field a job wrote".
+  const hostile: ReadonlyArray<readonly [string, string, number, string]> = [
+    ['gitlab', 'owner/repo-a', 1458, 'a provider the console does not know'],
+    ['github', 'owner/../evil', 1458, 'a repository that walks out of its own path'],
+    ['github', 'owner/repo-a/pull/1', 1458, 'a repository that is already a URL path'],
+    ['github', 'owner/repo-a', 0, 'zero'],
+    ['github', 'owner/repo-a', -1, 'a negative number'],
+    ['github', 'owner/repo-a', 1.5, 'a fraction'],
+  ]
+
+  it.each(hostile)('answers null for %s / %s / %s (%s)', (provider, repo, number) => {
+    expect(pullRequestUrl(provider, repo, number)).toBeNull()
+  })
+
+  const otherHostile: ReadonlyArray<readonly [string, string, number, string]> = [
+    ['github', 'owner', 1, 'one segment only'],
+    ['github', 'owner/repo-a/', 1, 'a trailing separator'],
+    ['github', '/owner/repo-a', 1, 'a leading separator'],
+    ['github', 'owner/repo-a?x=1', 1, 'a query'],
+    ['github', 'owner/repo-a#f', 1, 'a fragment'],
+    ['github', 'owner:repo-a/x', 1, 'a colon'],
+    ['github', 'owner@evil.test/x', 1, 'an at sign'],
+    ['github', 'owner/repo a', 1, 'a space'],
+    ['github', 'https://github.com/owner/repo-a', 1, 'a whole URL'],
+    ['github', 'owner/repo-a', 2 ** 53, 'past the safe integers'],
+    ['github', 'owner/repo-a', Number.NaN, 'not a number at all'],
+  ]
+
+  it.each(otherHostile)('answers null for %s / %s / %s (%s)', (provider, repo, number) => {
+    expect(pullRequestUrl(provider, repo, number)).toBeNull()
+  })
+
+  it('builds nothing that the one path to the browser would refuse', () => {
+    // The two functions are one gate in two steps, and this is the join: what
+    // the builder returns is a URL `validateExternalUrl` opens, on the
+    // allow-list it already carries. A builder that spelled its own host would
+    // fail here rather than at the operating system.
+    for (const [provider, host] of [
+      ['github', 'github.com'],
+      ['bitbucket', 'bitbucket.org'],
+    ] as const) {
+      const url = pullRequestUrl(provider, 'owner/repo-a', 1458)
+      expect(url?.startsWith(`https://${host}/`), `${provider} builds on ${host}`).toBe(true)
+      expect(validateExternalUrl(url as string)).toEqual({ ok: true, url })
+    }
   })
 })
 

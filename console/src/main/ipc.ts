@@ -5,12 +5,13 @@
 //
 // The console has no IPC bridge. It has a fixed table of named operations --
 // one per read the console performs, the CLI reads among them for the documents
-// the dashboard draws out of design section 2.1, plus the one validated link
-// (that section's list holds a thirteenth row, the picker's own `fugaro config
-// list --json`; it belongs to the installations picker window and is not an
-// operation of this table -- `src/preload/installations.ts` is its surface) --
-// and three
-// prohibitions that are the whole of the rule:
+// the dashboard draws out of design section 2.1, plus the two links (the one
+// validated URL the console is handed, and the pull request link it builds from
+// three fields of a document, K2a, D815) -- and three prohibitions that are the
+// whole of the rule. (That section's list holds a thirteenth row, the picker's
+// own `fugaro config list --json`; it belongs to the installations picker window
+// and is not an operation of this table -- `src/preload/installations.ts` is its
+// surface.)
 //
 //   - **no `invoke(channel, ...)`**: nothing anywhere in the console takes a
 //     channel from a caller. `channelForOperation` derives a channel from a name
@@ -92,7 +93,7 @@ import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shar
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
 import { APP_ENTRY_URL, APP_HOST, APP_SCHEME } from './protocol'
-import { validateExternalUrl } from './window'
+import { PULL_REQUEST_PROVIDERS, pullRequestUrl, validateExternalUrl } from './window'
 import { checkLaunchPlanTask, checkLaunchTask, checkLaunchTitle } from './launchrules'
 
 /**
@@ -228,6 +229,14 @@ export const REPORT_MAX_WEEKS = 522
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
  *   - `link` -- the one URL, and it must pass `validateExternalUrl`;
+ *   - `gitProvider` -- the closed set of two words the coordinator stores a
+ *     repository's host as, in the stored view's own `provider` field
+ *     (`github`, `bitbucket`: `PULL_REQUEST_PROVIDERS`, `src/main/window.ts`).
+ *     It is read from the builder's own table rather than spelled again here,
+ *     so a provider the schema admits is one `pullRequestUrl` has a host for.
+ *     It is the one kind whose value is a document field rather than a CLI
+ *     flag's, and it exists because the pull request link is **built** from
+ *     that field instead of read out of the document's `url` (D814, D815);
  *   - `installationName` -- one installation's project name, the handle the CLI
  *     itself printed for it (`isProjectName`, `src/main/installations.ts`): not
  *     empty, at most `MAX_INSTALLATION_NAME_LENGTH`, no whitespace, no control
@@ -264,6 +273,7 @@ export type ArgumentKind =
   | 'pullRequest'
   | 'flag'
   | 'link'
+  | 'gitProvider'
   | 'installationName'
   | 'installationCheckout'
   | 'launchTask'
@@ -370,7 +380,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-four operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Twenty-five operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -397,11 +407,15 @@ export const LAUNCH_PAYLOAD_WIDTH =
  *
  * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
- * no CLI command can be asked for). `openExternal` is the one operation that is
- * not a command at all and the only way out of the console: its URL argument
- * goes through `validateExternalUrl` -- `https:` only, no credentials, no port,
- * host on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer can open a link the
- * console would have opened anyway. `installation.current` is the dashboard's
+ * no CLI command can be asked for). **The two `link.` operations are the ones
+ * that are no command at all, and together they are the whole way out of the
+ * console.** `openExternal` is handed a URL, which goes through
+ * `validateExternalUrl` -- `https:` only, no credentials, no port, host on
+ * `ALLOWED_EXTERNAL_HOSTS` -- so the renderer can open a link the console would
+ * have opened anyway. `openPullRequest` (K2a, D814/D815) is handed **no URL at
+ * all**: three fields of a document, from which the main process builds the
+ * link itself, so the first gate is a build rather than a check and a `url`
+ * field a job wrote has nowhere to enter. `installation.current` is the dashboard's
  * read of the installation the operator chose, or D13's no-installation state;
  * its handler is `handlersFor`'s **optional** `installation` dep, so a build
  * without a store answers it with that state rather than failing to register.
@@ -922,6 +936,53 @@ export const CONSOLE_OPERATIONS = [
         kind: 'link',
         required: true,
         why: 'the design’s validated external link: `https:` only, no credentials, no port, host on the allow-list. It spawns nothing.',
+      },
+    ],
+  },
+  // The clickable pull request number (Coordinator v2 K2a, D814 and D815).
+  //
+  // **This operation takes no URL, and that is its whole design.** A pull
+  // request document carries a `url` field, and no field of any document ever
+  // reaches this operation: it takes the three fields the URL is *built* from
+  // -- the repository's provider, its slug and the number -- and the main
+  // process builds the link itself with `pullRequestUrl` (`src/main/window.ts`),
+  // which is the first gate rule 2 asks for. What is built is then handed to
+  // `openExternalValidated`, the console's one call to `shell.openExternal` and
+  // its second gate, so the host allow-list is applied to a URL this process
+  // spelled rather than to a string a job wrote. A `null` build -- an unknown
+  // provider, a slug that is not `owner/name`, a number that is not a positive
+  // integer -- is a refusal that opens nothing and shows the number as text.
+  //
+  // It is a second operation rather than a second argument kind on
+  // `link.openExternal` because the two are two different things to say: that
+  // operation hands over a URL the console was given, and this one takes fields
+  // and has no way to express a URL at all. The three keys are closed like
+  // every other schema's, and the two providers are the builder's own set
+  // rather than a list spelled here.
+  {
+    name: 'link.openPullRequest',
+    method: 'openPullRequest',
+    command: null,
+    flags: [],
+    summary: 'a pull request number as a link: the URL is built here, from three fields, and never read',
+    args: [
+      {
+        key: 'provider',
+        kind: 'gitProvider',
+        required: true,
+        why: 'the host the link is built on, one of the two the builder knows. It is a word from the coordinator’s stored view (C1’s additive `provider` field), never an inference from a URL a job wrote (D814).',
+      },
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: true,
+        why: 'the repository the pull request belongs to, as the CLI’s own canonical `owner/name`. The narrower pattern the link may be built from — exactly two segments, no `..`, no third `/` — is `pullRequestUrl`’s, and a value that only passes this kind is still refused there.',
+      },
+      {
+        key: 'number',
+        kind: 'pullRequest',
+        required: true,
+        why: 'the pull request number, a positive integer. It is a segment of the path the main process spells, so it can never carry one.',
       },
     ],
   },
@@ -1462,6 +1523,9 @@ export function isNeverReachable(operation: {
 // leading segment cannot be `.` or `..`, which the grammar refuses by requiring
 // an alphanumeric first character.
 const REPOSITORY_RE = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/
+/** MAX_PROVIDER_LENGTH bounds the `gitProvider` kind before its membership
+ * check runs, and it is the longest word the builder's own set carries. */
+const MAX_PROVIDER_LENGTH = Math.max(...PULL_REQUEST_PROVIDERS.map((name) => name.length))
 const RUN_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4,16}$/
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // The two `--since` flags are two different grammars, and each one is written
@@ -1858,6 +1922,15 @@ function validateValue(
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
       return { ok: true, value: decision.url }
     }
+    case 'gitProvider':
+      // A closed set of two words and nothing else: this is the value the
+      // *builder* keys its host table by, so a provider it does not know is a
+      // link that cannot be built and a refusal here rather than a `null` one
+      // step later.
+      if (!PULL_REQUEST_PROVIDERS.includes(value)) {
+        return refuse(`${spec.key} must be one of ${PULL_REQUEST_PROVIDERS.join(', ')}`)
+      }
+      return { ok: true, value }
     case 'installationName':
       // `isProjectName` (`src/main/installations.ts`), spelled here for the
       // reason the two bounds above give: the store's own rule, which is what
@@ -1965,6 +2038,13 @@ function kindLimit(kind: ArgumentKind): number {
       return 12
     case 'link':
       return MAX_URL_LENGTH
+    case 'gitProvider':
+      // The longest word in the closed set, and a bound rather than a grammar:
+      // membership is what decides, so a hostile payload cannot make the check
+      // work on a long string. It is read off the set rather than spelled as a
+      // digit, so a third provider longer than these two cannot be refused by
+      // the bound before its own grammar sees it.
+      return MAX_PROVIDER_LENGTH
     case 'installationName':
       return MAX_INSTALLATION_NAME_LENGTH
     case 'installationCheckout':
@@ -2236,6 +2316,41 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
  */
 export function startupCompatibility(read: () => unknown): ConsoleHandler {
   return () => readStoredCompatibility(read())
+}
+
+/**
+ * openPullRequestHandler is `link.openPullRequest`'s implementation, and it
+ * lives here for the same reason `startupCompatibility` does: it is not a read
+ * of the CLI, so it is not a row of `handlersFor`, and the entry point -- which
+ * cannot be imported under a test, because it loads Electron's runtime -- is
+ * not the place a rule this security-sensitive is written.
+ *
+ * The opener is an argument rather than a call to `shell.openExternal` so that
+ * what the handler does with a hostile triple is a thing a test can watch: the
+ * only way to reach the browser from here is to call `open`, and the handler
+ * calls it **only** with a URL `pullRequestUrl` built. A `null` build returns
+ * without calling it at all, which is the refusal D815 asks for -- nothing
+ * opens, and the number stays text.
+ *
+ * The three fields are narrowed to their types before the builder sees them,
+ * the way `openExternalFromShell` narrows its one argument: the validator has
+ * already refused anything that is not a string or a number, so this is a
+ * narrowing and not a second check, and a value that is somehow neither is a
+ * refusal rather than a build from something the schema did not describe.
+ */
+export function openPullRequestHandler(open: (url: string) => Promise<unknown>): ConsoleHandler {
+  return async (args) => {
+    const provider = args['provider']
+    const repo = args['repo']
+    const number = args['number']
+    if (typeof provider !== 'string' || typeof repo !== 'string' || typeof number !== 'number') {
+      return null
+    }
+    const url = pullRequestUrl(provider, repo, number)
+    if (url === null) return null
+    await open(url)
+    return null
+  }
 }
 
 /** ConsoleReply is what every operation answers with: the document, or the
