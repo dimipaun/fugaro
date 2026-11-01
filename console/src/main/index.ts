@@ -62,6 +62,8 @@ import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
 import type { CrashReportingHandle } from './crash-electron'
+import { startCrashReportingSafely } from './crash'
+import { createCrashSettings, readCrashSwitch } from './crashstore'
 import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
@@ -890,28 +892,34 @@ let crashReporting: CrashReportingHandle | null = null
  */
 async function main(): Promise<void> {
   // **The crash reporter comes up before anything it could report on, and the
-  // module that holds the SDK comes up with it and not before.** The gate is an
-  // allow test and not a list of the answers that shut it: `optedIn` is `null`
-  // -- nothing has read the switch yet, and reading it is the next slice's,
-  // which reads the per-user switch this console keeps for itself -- and only a
-  // `true` reaches the reporter, so the third state D734 makes off is off here
-  // because it is not a yes rather than because this file knows its name. What
-  // follows from it is the whole of this slice's cost: in a console whose switch
-  // is not a yes, `./crash-electron` and
-  // the fourteen packages `@sentry/electron/main` reaches are never loaded and no
-  // client exists to start -- so a start that reports nothing pays nothing for
-  // the wiring that would, and the DSN sitting one import away is never read.
+  // module that holds the SDK comes up with it and not before.** The switch is
+  // the console's own per-user file (`crash.json`), read here -- before this
+  // function's first `await`, so the answer is the file's at the moment the app
+  // is ready rather than one a later stage could have moved -- and it is handed
+  // to the gate as a **value**. The gate is an allow test rather than a list of
+  // the answers that shut it: only the file's own `true` reaches the reporter, so
+  // `"true"`, `1` and a file that cannot be read are off because they are not a
+  // yes rather than because this file knows their names (`./crashstore` refuses
+  // them once and `crashReportingDecision` refuses them again). What follows from
+  // it is the whole of this slice's cost: in a console whose switch is not a yes,
+  // `./crash-electron` and the fourteen packages `@sentry/electron/main` reaches
+  // are never loaded and no client exists to start -- so a start that reports
+  // nothing pays nothing for the wiring that would.
   //
-  // Everything after the yes is `startCrashReporting`'s: the DSN constant the
-  // build carries (`./crash-dsn`), and the one way a yes can still end without a
-  // client, which is a caller that passed a DSN of its own. That is why this
-  // file needs no opinion about either -- and why it imports nothing from
-  // `./crash` to ask a question `===` answers.
+  // **A start that fails after the yes is a console that still starts.** The load
+  // and the client are two things that can fail -- an import that rejects (a
+  // damaged archive, a file the build did not carry) and an `init` that throws --
+  // and neither may keep the window from opening. Both are caught by
+  // `startCrashReportingSafely`, which answers `null` and says one constant line:
+  // `crashReporting` stays null, the quit path below has nothing to close, and
+  // this function carries on to the rest of the startup. Everything after that is
+  // `startCrashReporting`'s own: the DSN constant of every build (`./crash-dsn`)
+  // and the app root the frames are cut at.
   //
   // The reporter is wired here rather than beside the window because a crash
   // before the window opens is the one an operator most wants back, and because
   // the handle has to be closed on the way out.
-  const optedIn: unknown = null
+  const optedIn: unknown = readCrashSwitch(app.getPath('userData'))
   if (optedIn === true) {
     // The `.js` is the CommonJS build's spelling rather than a file this source
     // tree has: `dist/main/index.js` carries this `import()` as `tsc` emitted it
@@ -920,8 +928,13 @@ async function main(): Promise<void> {
     // `test/e2e/crash-init.spec.ts` resolves the emitted specifier and loads it
     // for that reason. The type-checking config resolves either spelling, so it
     // is the build that decides.
-    const { startCrashReporting } = await import('./crash-electron.js')
-    crashReporting = startCrashReporting({ optedIn, appRoot: app.getAppPath() })
+    crashReporting = await startCrashReportingSafely({
+      load: () => import('./crash-electron.js'),
+      input: { optedIn, appRoot: app.getAppPath() },
+      log: (line) => {
+        console.error(line)
+      },
+    })
   }
   // The icon first, and before any window exists: an unpackaged console has no
   // bundle to carry `build/icon.png`, so until this runs the dock shows
@@ -984,6 +997,12 @@ async function main(): Promise<void> {
     directory: app.getPath('userData'),
     controller: () => updates,
   })
+  // **The crash switch's one source is `crash.json`**, and it is the same file
+  // the startup above read: the menu item writes it and answers with what the
+  // file says afterwards, and the next launch's read is what the change applies
+  // to. Nothing is started or stopped here -- the reporter is created once, in
+  // `main`, and this is the setting that decides whether it is. */
+  const crashSettings = createCrashSettings({ directory: app.getPath('userData') })
   updates = startUpdates({
     isLaunchFlowIdle: () => launchRunner.isIdle(),
     switchOn: () => updateSettings.auto,
@@ -1031,6 +1050,20 @@ async function main(): Promise<void> {
     onRecordRemoved: (project) => {
       launchRunner.cancelFor(project)
     },
+    // The crash reporter's checkbox, on the platforms the owner's ruling of
+    // 2026-10-30 gives it (`darwin` and `linux`) and not on Windows. It is the
+    // console's own setting rather than the updater's, so it is handed over
+    // whether or not a controller is running: the Linux build has no updater and
+    // still has this item, which is why it is not inside the `updates === null`
+    // test below.
+    ...(process.platform === 'darwin' || process.platform === 'linux'
+      ? {
+          crashMenu: {
+            send: crashSettings.send,
+            setSend: (on) => crashSettings.setSend(on),
+          },
+        }
+      : {}),
     // The two update items, handed over **only while a controller is running**:
     // `startUpdates` answered null on everything that is not a packaged macOS
     // app, so the menu carries neither item off a Mac and in development, and

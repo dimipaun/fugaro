@@ -24,7 +24,7 @@
 // that reads `node:fs`) and a duplicate nobody compares is a duplicate that
 // drifts.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -47,6 +47,8 @@ import {
   invokeOperation,
 } from '../../src/preload/installations'
 import { createInstallationPicker } from '../../src/main/picker'
+import type { CrashMenuOptions } from '../../src/main/picker'
+import { CRASH_SWITCH_UNWRITTEN, createCrashSettings, nodeCrashFs, readCrashSwitch } from '../../src/main/crashstore'
 import { UPDATES_SWITCH_UNWRITTEN, createUpdateSettings, nodeUpdatesFs, readUpdateSwitch } from '../../src/main/updatestore'
 import type { UpdateController } from '../../src/main/updates'
 import { TEMP_ROOTS } from '../../src/main/installationstate'
@@ -55,6 +57,7 @@ import {
   OPEN_EXTERNAL_FAILED,
   PICKER_ENTRY_URL,
   REVEAL_FAILED,
+  CRASH_SEND_ITEM_LABEL,
   UPDATE_AUTO_LABEL,
   UPDATE_NOW_LABEL,
   pickerOptions,
@@ -201,6 +204,7 @@ function pickerOver(
     readonly openExternal?: (url: string) => Promise<boolean>
     readonly reveal?: (path: string) => Promise<boolean> | boolean
     readonly updateMenu?: UpdateMenuOptions
+    readonly crashMenu?: CrashMenuOptions
   } = {},
 ) {
   const ipcMain = fakeIpcMain()
@@ -259,6 +263,7 @@ function pickerOver(
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
     ...(options.updateMenu === undefined ? {} : { updateMenu: options.updateMenu }),
+    ...(options.crashMenu === undefined ? {} : { crashMenu: options.crashMenu }),
   })
   return { picker, ipcMain, windows, opened, revealed, menu: () => applicationMenu, redraws: () => redraws }
 }
@@ -1451,6 +1456,101 @@ describe('the picker’s window', () => {
     expect(labels).toEqual([INSTALLATIONS_MENU_LABEL, undefined, undefined])
     expect(labels).not.toContain(UPDATE_AUTO_LABEL)
     expect(labels).not.toContain(UPDATE_NOW_LABEL)
+  })
+
+  it('carries the crash reporter’s checkbox, drawn from the store the click moves (run 2)', () => {
+    // The switch is `crash.json`, so the item's `checked` is read from it rather
+    // than handed in as a constant, and the click is Electron's own: the item has
+    // already moved its `checked` when the handler runs, and that state -- not one
+    // this file computed -- is what the store is asked to keep. On is the
+    // direction that proves the write: it is the one that is not the file's
+    // absent default.
+    const directory = freshDirectory()
+    const settings = createCrashSettings({ directory })
+    const { picker, menu } = pickerOver({
+      crashMenu: { send: settings.send, setSend: (on) => settings.setSend(on) },
+    })
+    picker.installMenu()
+    const item = appMenuItems(menu()).find((entry) => entry.label === CRASH_SEND_ITEM_LABEL)
+    // The label says what the item does **and** when the change takes effect: the
+    // reporter is started once, at startup, so this click is a decision about the
+    // next launch and the item says so rather than leaving an operator to find
+    // out. There is no second, greyed-out line stating it.
+    expect(CRASH_SEND_ITEM_LABEL).toBe('Send Crash Reports (applies at the next launch)')
+    expect(item?.type).toBe('checkbox')
+    expect(item?.checked).toBe(false)
+    expect(readdirSync(directory)).toEqual([])
+
+    item?.click?.()
+    expect(item?.checked).toBe(true)
+    expect(readCrashSwitch(directory)).toBe(true)
+    expect(readdirSync(directory)).toEqual(['crash.json'])
+
+    // ...and off again, which is the same code path in the other direction.
+    appMenuItems(menu()).find((entry) => entry.label === CRASH_SEND_ITEM_LABEL)?.click?.()
+    expect(readCrashSwitch(directory)).toBe(false)
+  })
+
+  it('draws the crash checkbox checked when the store says the switch is on', () => {
+    const directory = freshDirectory()
+    const settings = createCrashSettings({ directory })
+    settings.setSend(true)
+    const { picker, menu } = pickerOver({
+      crashMenu: { send: settings.send, setSend: (on) => settings.setSend(on) },
+    })
+    picker.installMenu()
+    expect(appMenuItems(menu()).find((entry) => entry.label === CRASH_SEND_ITEM_LABEL)?.checked).toBe(true)
+  })
+
+  it('redraws the crash checkbox from the value in force when the write behind a click fails', () => {
+    // The same rule U4b has, and for the same reason: the box has already moved
+    // itself, a write that did not land leaves the file saying `true`, and the
+    // operator must be shown the switch this console is actually using. Nothing
+    // thrown in the store reaches the process either -- a throw out of a menu
+    // click is Electron's uncaught-error dialog over a running app.
+    const directory = freshDirectory()
+    // The file says `true` before the failing writer is built -- unlike the
+    // update switch, whose absent file already draws checked, this one's default
+    // is off, so the value has to be in the file for the click to be moving it.
+    createCrashSettings({ directory }).setSend(true)
+    const settings = createCrashSettings({
+      directory,
+      fs: {
+        ...nodeCrashFs,
+        writeFile: () => {
+          throw new Error('ENOSPC: no space left on device')
+        },
+      },
+    })
+    const { picker, menu, redraws } = pickerOver({
+      crashMenu: { send: settings.send, setSend: (on) => settings.setSend(on) },
+    })
+    picker.installMenu()
+    const drawn = redraws()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let clicked: MenuItem | undefined
+    try {
+      clicked = appMenuItems(menu()).find((entry) => entry.label === CRASH_SEND_ITEM_LABEL)
+      expect(clicked?.checked).toBe(true)
+      expect(() => clicked?.click?.()).not.toThrow()
+      expect(logged.mock.calls).toEqual([[CRASH_SWITCH_UNWRITTEN]])
+    } finally {
+      logged.mockRestore()
+    }
+    expect(clicked?.checked).toBe(false)
+    expect(redraws()).toBe(drawn + 1)
+    expect(appMenuItems(menu()).find((entry) => entry.label === CRASH_SEND_ITEM_LABEL)?.checked).toBe(true)
+    expect(readCrashSwitch(directory)).toBe(true)
+  })
+
+  it('has no crash item when the entry hands over none', () => {
+    // What `src/main/index.ts` passes on Windows, where the owner's ruling of
+    // 2026-10-30 does not put this item.
+    const { picker, menu } = pickerOver()
+    picker.installMenu()
+    const labels = appMenuItems(menu()).map((entry) => entry.label)
+    expect(labels).not.toContain(CRASH_SEND_ITEM_LABEL)
+    expect(labels.filter((label) => label !== undefined)).toEqual([INSTALLATIONS_MENU_LABEL])
   })
 })
 
