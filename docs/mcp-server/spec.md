@@ -2,7 +2,7 @@
 
 **Status: design only.** Nothing here is approved and no line of it is implemented. The owner's spec
 of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
-**recommended** answer of each decision in [reconciliation.md](reconciliation.md) §3 (D920–D933), and
+**recommended** answer of each decision in [reconciliation.md](reconciliation.md) §4 (D920–D934), and
 **where the two disagree the reconciliation wins** — §0 is the record of what was asked, not of what
 this design proposes. Implementation is **not** approved: the owner decides, task by task, after
 [implementation-plan.md](implementation-plan.md) has been reviewed.
@@ -161,6 +161,12 @@ client on a laptop or on a phone is a standard MCP client, and no standard MCP c
 Google ID token for the project, nor is it reasonable to ask a person to install `gcloud` and hold
 `roles/run.invoker` before a chat client may list their own tasks. The reconciliation records the
 cost of each side; the owner decides.
+
+**The front door is off until the owner turns it on** (D934). An installation that never opted into
+the coordinator has no service for anything to reach; one that did gets the endpoint **off** until a
+person turns it on, and a request to a front door that is off is refused before the handler reads a
+token. A project that asked for the coordinator's read-only view does not thereby acquire a public
+write endpoint.
 
 **What the service answers without a token**, and nothing else:
 
@@ -463,7 +469,7 @@ and ask for it.
   recommendation (D921), the licence question is closed by not taking that option, and
   re-verification against the live MCP specification and the project's Identity Platform features is
   an owner check before implementation, listed in [reconciliation.md](reconciliation.md) §6.
-- **Which of the fourteen decisions the owner declines.** The design is written to the recommended
+- **Which of the fifteen decisions the owner declines.** The design is written to the recommended
   answer everywhere, and every alternative is priced in the reconciliation, so a different answer is
   a different document rather than an edit.
 - **The exact client-credentials shape for unattended callers** — one client per agent, or one per

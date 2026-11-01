@@ -3,7 +3,7 @@
 **Status: design only, 2026-11-01. Nothing here is approved, nothing here is implemented, and the
 implementation is deliberately not approved by this document.** The owner's spec of 2026-10-24 is
 copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code for the first time
-here; [reconciliation.md](reconciliation.md) §4 puts fourteen decisions (D920–D933) in front of the
+here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions (D920–D934) in front of the
 owner, each with the recommendation first and the cost of the alternative. **If the implementation
 happens, [implementation-plan.md](implementation-plan.md) §5 recommends 0.16.0 "Moose"** — the design
 belongs to the 0.15.0 documentation window, the code to the release after it, and §5 says why.
@@ -36,8 +36,9 @@ One document set, four files:
 | File | What it holds |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, copied **verbatim**, as §0 — and then the design written to every recommendation: the front door and its transport (§2), the authorization server and its flow (§3), Firebase as the identity provider (§4), the six tools (§5), tokens, rigor windows and spend limits (§6), unattended agents (§7), **the threat model (§8)**, the coordinator's prohibitions (§9), and the console's graph write (§10) |
-| [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F31), each with a path and a line; then the **fourteen decisions, D920–D933** (§4), the number block and how it was read (§5), and the owner checks that no hermetic test can stand in for (§6) |
-| [implementation-plan.md](implementation-plan.md) | What the owner must answer first (§1), the order and what forces it (§2), ten tasks **M1–M10** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3), the **shared-files table** (§4), **the release slot** (§5), the test rules (§6) and what the plan does not own (§7) |
+| [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F31), each with a path and a line; then the **fifteen decisions, D920–D934** (§4), the number block and how it was read (§5), and the owner checks that no hermetic test can stand in for (§6) |
+| [implementation-plan.md](implementation-plan.md) | What the owner must answer first (§1), the order and what forces it (§2), ten tasks **M1–M10** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block —
+the **shared-files table** (§4), **the release slot** (§5), the test rules (§6) and what the plan does not own (§7) |
 | `README.md` | This file: the status, the reading of the number block, and what a reader should not take from here |
 
 ## Names and figures
@@ -65,8 +66,8 @@ Read at launch by hand, not from a neighbour's line:
 | Highest number in `docs/` on `origin/main` (`3d6ed04d`) | **D900**, in `docs/rigor-command/README.md`:117 |
 | Highest number in the open pull requests' own diffs | **D899** (`docs/cloud-senior-review`, #1472) |
 | Also taken, the same morning | **D901–D919**, by `docs/run-without-checkout` (#1481) |
-| **This work's block** | **D920–D933** — the fourteen decisions of [reconciliation.md](reconciliation.md) §4 |
-| Reserved, unused | **D934–D939** |
+| **This work's block** | **D920–D934** — the fifteen decisions of [reconciliation.md](reconciliation.md) §4 |
+| Reserved, unused | **D935–D939** |
 | A later task takes | **D940**, and re-checks the facts above rather than this conclusion |
 
 `grep -rhoE 'D[0-9]{3,4}' docs` is not quite enough on its own, for two reasons this folder records

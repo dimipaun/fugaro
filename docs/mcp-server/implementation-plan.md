@@ -1,7 +1,7 @@
 # The hosted MCP server: implementation plan
 
 **Nothing here is approved and nothing here may start.** The design is [spec.md](spec.md), the
-findings and the fourteen decisions are [reconciliation.md](reconciliation.md). This plan is written
+findings and the fifteen decisions are [reconciliation.md](reconciliation.md). This plan is written
 to **every recommendation**, so an owner who answers a decision the other way changes a task, not a
 paragraph — §1 says which task each answer moves.
 
@@ -22,6 +22,7 @@ paragraph — §1 says which task each answer moves.
 | D931 | How a run is started, and the coordinator's own tools | `internal/backend`, one new grant, both tool sets on one endpoint | **M9 changes** (the sweep instead of a direct launch), and the tool-naming decision moves into M7. |
 | D932 | Where `stream_logs` reads | The run's own artefacts | **M8 and M4 change**: one more grant, able to read every log line in the project. |
 | D933 | Who a person is | The project's launcher and operator lists | **M7 and M10 change**, and a permission model that does not exist yet has to be designed. |
+| D934 | Whether the front door is on by default | Off until the owner turns it on | **M4 gains the switch** and the live checklist gains a state; the other reading puts a public write endpoint on installations that asked only for a read-only view. |
 
 ## 2. The order, and what forces it
 
@@ -121,6 +122,31 @@ is asked here for every task that changes who may reach what.
 - **SEC:** **yes, mandatory.** It creates a public endpoint and a new service account.
 - **Depends on:** D920 answered.
 - **Owner check:** the service is applied only by `fugaro update`, and this plan does not run it.
+
+#### For operators
+
+The front door is **OFF on every installation until the owner turns it on**, and turning it on is
+`fugaro update` — not a second command, because the repository's rule is that one command is the
+whole upgrade. The flag is update's own, and the release notes' `### For operators` section carries
+the one line that says so, in the release that ships M4:
+
+```sh
+fugaro update --firebase-project <firebase-project-id> --mcp-server
+```
+
+That run creates, in the installation's GCP project:
+
+- the coordinator's Cloud Run **service** — the resident service D196 decided and the coordinator's
+  own P7 builds, which is not the aggregation **job** P5 adds;
+- its own service account, and the public invoker binding D920 asks for;
+- the launch grant on the project's own job (M9), the one new privilege this design asks for;
+- the front door's own configuration: the redirect allowlist of D928 and the switch of D934.
+
+An installation that opted into the coordinator for its read-only view acquires **none** of it: the
+aggregation job and the front door are separate opt-ins, and a public write endpoint is not something
+an upgrade should hand a project that asked for a dashboard. M4 carries the convergence test the
+repository requires of a migration: an installation at the previous version, updated with the flag,
+ends with exactly the resources above — and an installation that did not pass it ends with none.
 
 ### M5 — The authorization server: its two metadata documents and its four endpoints
 

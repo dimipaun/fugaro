@@ -61,7 +61,7 @@ answers the other way is answering a different document, not making an edit.
 
 ## 4. The decisions
 
-Fourteen. Every one is written **recommendation first**, and every alternative carries its cost. The
+Fifteen. Every one is written **recommendation first**, and every alternative carries its cost. The
 owner answers them; an answer picks an option and approves no work.
 
 | D | The question | The recommendation | The alternative, and its cost | Blocks |
@@ -80,6 +80,7 @@ owner answers them; an answer picks an option and approves no work.
 | **D931** | How does `submit_task` start a run, and what does the coordinator see besides the six tools? | **Through the same seam `fugaro run` uses** (`internal/backend`), with the token's ceiling of D924 attached to that execution, and the coordinator's service account gaining the launch role on the project's own job — a **new grant**, flagged for independent review. The coordinator's own tool set (F31) is **served on the same endpoint under its existing names**, so one `tools/list` shows both, and its tools keep their meanings. | **Write a pending-task node and let the coordinator's scheduled sweep launch it** (the pattern P5 already uses): a launch delayed by the sweep interval, a second writer racing the first, and a run that can silently never start while the caller sees success. Cost of the recommendation: a new IAM grant on a public-facing service, which is the one new privilege this design asks for. | `submit_task`, `cancel_task`, and the coordinator's own tool set. |
 | **D932** | Where does `stream_logs` read from? | **The run's own recorded artefacts in the runs bucket** (F14), which the coordinator may already read (F3): the answer is the same material the console and `get_result` draw on, it needs no new grant, and it cannot read a log line outside the run. | **Stream Cloud Logging live** (F13): one more grant, this one able to read **every log line in the project**, mitigated only by a filter — the widest privilege in the design, for a tail that `fugaro logs` already serves a person. Cost of the recommendation: the tail lags the run, and a caller that wants live output waits for the next recorded stage rather than watching characters arrive. | `stream_logs`; the coordinator's grant list. |
 | **D933** | Who is a person, once reaching the endpoint no longer means holding a Google identity? | **The project's own two lists** (F8): a launcher may call the task tools, an operator may also read the audit record. **F29's sentence in the coordinator's spec is replaced by this**, and the audit record of F22 becomes the operator's. | **Any signed-in identity of the project.** It is what F29 says today, and it was defensible only while the platform did the filtering; with a public endpoint it means every Firebase user of the project is a launcher, and the two lists `fugaro user` maintains would govern nothing. **Or: a new permission model** — a role per scope, a table, an admin surface: a second model beside the lists the project already has, for one front door. Cost of the recommendation: an identity that is signed in but on neither list gets a clear refusal, and a project that admits nobody with `fugaro user` has a coordinator nobody can use. | D920's premise; the whole authorization story. |
+| **D934** | Is the front door **on** for every installation that has a coordinator, or does the owner turn it on? | **Off until the owner turns it on, on the coordinator's own opt-in.** An installation that never opted into the coordinator has no service for anything to reach; one that did gets the endpoint **off** until a person turns it on, and a request to a front door that is off is refused before the handler reads a token. | **On wherever the coordinator is.** An installation that opted in for a *read-only aggregator* would acquire a **public write endpoint** — `submit_task` spends money — as a side effect of an upgrade, which is exactly the surprise the repository's rule about `fugaro update` exists to prevent. Cost of the recommendation: one more switch, one more state on the live checklist, and a client that reaches an installation which has not turned it on is refused rather than redirected. | M4, and the operator story. |
 
 **The four the owner should read first.** **D920** decides whether the owner's spec is
 implementable at all, and it reverses a departure the coordinator's own plan recorded deliberately —
@@ -89,8 +90,8 @@ collision with a decision already taken once (`docs/mobile-auth` D221) on the id
 place where the owner's own words, read literally, would produce a limit that does not hold.
 
 **What each answer changes.** A different answer to D920 or D923 is a different document: the flow,
-the endpoint's shape and §8 all move. A different answer to D927, D928, D930 or D932 is a parameter
-and an edit. A different answer to D922, D924, D929 or D931 is an edit plus a task in the plan that
+the endpoint's shape and §8 all move. A different answer to D927, D928, D930, D932 or D934 is a
+parameter and an edit. A different answer to D922, D924, D929 or D931 is an edit plus a task in the plan that
 would otherwise not exist — the plan's task list names which.
 
 ## 5. The number block, and why it is D920
@@ -106,7 +107,7 @@ Read at launch, by hand rather than from a neighbour's line:
   in its own README that it takes **D901–D919**. That block is therefore not free, and taking it
   would collide with a concurrent work.
 
-So this work takes **D920–D933** — the fourteen decisions above — and **reserves D934–D939**, which
+So this work takes **D920–D934** — the fifteen decisions above — and **reserves D935–D939**, which
 nothing here uses. A later task that needs a number takes **D940** and re-checks this section's facts
 rather than its conclusion.
 
