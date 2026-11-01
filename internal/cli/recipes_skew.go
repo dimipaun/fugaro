@@ -299,12 +299,14 @@ const digestSince = "0.13.0"
 // checklist verifies it against the tag actually cut, the way digestSince's
 // bullet records.
 //
-// A repository-sourced recipe is not judged by this constant: the task
-// carries its name alone, and reading the file at the task's ref needs the
-// checkout this gate's clone half has no context for (checkCloneRecipeImage
-// takes no context.Context; only its caller in run.go could resolve one), so
-// such a launch stays on recipesSince and an image that cannot run the step
-// refuses the recipe at bootstrap as infra_error instead of at the launcher.
+// A repository-sourced recipe is judged by this constant too, the step having
+// no field of its own in the task: the task carries the recipe's name alone,
+// so recipeSinceFor judges the file this checkout holds (repoRecipeForGate,
+// the read recipeForLaunch shares) on the baked path and on the clone one
+// alike — checkCloneRecipeImage takes the context that read needs. A launch
+// whose file cannot be read here — no checkout, an unreadable or invalid one —
+// stays on recipesSince, with the runner's parse refusal as the backstop,
+// exactly as it is for a name this launcher cannot resolve at all.
 const adversarialSince = "0.15.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads

@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -504,7 +505,16 @@ func TestBudgetPreviewTypicalJSONSubscription(t *testing.T) {
 // history is averaged over must sum to it for every catalog recipe and every
 // way the round knobs can leave a loop out: the mirror of the runner's loop
 // and StageBound must never drift apart.
+//
+// The adversarial default is the mode's senior row on both sides, read from
+// the one source (rigor.AdversarialDefault): the preview resolves a mode and
+// the bound has no mode to read, so the count takes the mode's row directly
+// where the bound takes it as an argument. No catalog recipe carries the step
+// today, so the mode here changes nothing; passing the strictest mode is what
+// keeps a recipe that gains one from reading higher on one side than the
+// other.
 func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
+	const mode = rigor.Critical
 	for _, name := range recipe.CatalogNames() {
 		t.Run(name, func(t *testing.T) {
 			text, ok := recipe.CatalogText(name)
@@ -518,10 +528,10 @@ func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
 			for _, f := range []int{0, 1} {
 				for _, n := range []int{0, 1} {
 					sum := 0
-					for _, c := range previewTypicalCounts(rp, f, n) {
+					for _, c := range previewTypicalCounts(rp, f, n, mode) {
 						sum += c
 					}
-					if want := recipe.StageBound(rp, f, n); sum != want {
+					if want := recipe.StageBound(rp, f, n, rigor.AdversarialDefault(mode)); sum != want {
 						t.Errorf("first_line_rounds %d, review_rounds %d: the typical shape has %d stages, the bound has %d", f, n, sum, want)
 					}
 				}
@@ -545,7 +555,9 @@ func TestBudgetPreviewDigestCountsNoImplementStage(t *testing.T) {
 	if len(problems) > 0 {
 		t.Fatalf("run-digest: %s", recipe.ProblemsText(problems))
 	}
-	counts := previewTypicalCounts(rp, 3, 10)
+	// The mode is the preview's, and run-digest carries no adversarial step,
+	// so it decides nothing here.
+	counts := previewTypicalCounts(rp, 3, 10, rigor.Critical)
 	if n := counts["implement"]; n != 0 {
 		t.Errorf("implement stages = %d, want none", n)
 	}
@@ -564,8 +576,11 @@ func TestBudgetPreviewDigestCountsNoImplementStage(t *testing.T) {
 // stages. No catalog recipe carries the step, so the catalog-wide pin above
 // never reaches this arm; these shapes are its own. The mirror is the bound
 // where the step caps itself at the one round a typical run spends, which is
-// where that pin reads it too; the parser's default of two rounds is the
-// bound's and not the typical run's, exactly as review_rounds 2 is standard's.
+// where that pin reads it too; a step that writes no max_rounds takes the
+// mode's senior row on the bound's side and is still one round on the typical
+// run's, exactly as review_rounds 2 is standard's. That row is the mode's, so
+// one mode's row moves only the bound: the last two cases hold the same shape
+// under Pro and Critical.
 func TestBudgetPreviewAdversarialStages(t *testing.T) {
 	parse := func(t *testing.T, step string) *recipe.Recipe {
 		t.Helper()
@@ -580,28 +595,31 @@ func TestBudgetPreviewAdversarialStages(t *testing.T) {
 	// below are what level 3 adds to it.
 	for name, tc := range map[string]struct {
 		step string
+		mode rigor.Mode
 		want map[string]int
-		// bound is StageBound(rp, 1, 1) here, and mirrors whether the typical
-		// count must be it: it must, where the step's own cap is the one
-		// round a typical run spends.
+		// bound is StageBound(rp, 1, 1, rigor.AdversarialDefault(mode)) here,
+		// and mirrors whether the typical count must be it: it must, where the
+		// step's own cap is the one round a typical run spends.
 		bound   int
 		mirrors bool
 	}{
-		"bouncing": {step: "adversarial: { max_rounds: 1, bounce: first_line }",
+		"bouncing": {step: "adversarial: { max_rounds: 1, bounce: first_line }", mode: rigor.Startup,
 			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 11, mirrors: true},
-		"no bounce": {step: "adversarial: { max_rounds: 1 }",
+		"no bounce": {step: "adversarial: { max_rounds: 1 }", mode: rigor.Startup,
 			want: map[string]int{"implement": 1, "review_first": 2, "review": 2, "fix": 4}, bound: 9, mirrors: true},
-		"the parser's default rounds": {step: "adversarial: { bounce: first_line }",
-			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 15},
+		"no max_rounds under Pro": {step: "adversarial: { bounce: first_line }", mode: rigor.Pro,
+			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 19},
+		"no max_rounds under Critical": {step: "adversarial: { bounce: first_line }", mode: rigor.Critical,
+			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 27},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rp := parse(t, tc.step)
-			counts := previewTypicalCounts(rp, 1, 1)
+			counts := previewTypicalCounts(rp, 1, 1, tc.mode)
 			if !maps.Equal(counts, tc.want) {
 				t.Errorf("counts = %v, want %v", counts, tc.want)
 			}
-			if bound := recipe.StageBound(rp, 1, 1); bound != tc.bound {
-				t.Errorf("StageBound(rp, 1, 1) = %d, want %d", bound, tc.bound)
+			if bound := recipe.StageBound(rp, 1, 1, rigor.AdversarialDefault(tc.mode)); bound != tc.bound {
+				t.Errorf("StageBound(rp, 1, 1, rigor.AdversarialDefault(%s)) = %d, want %d", tc.mode, bound, tc.bound)
 			}
 			sum := 0
 			for _, c := range counts {
@@ -621,7 +639,8 @@ func TestBudgetPreviewAdversarialStages(t *testing.T) {
 // read from a checkout; the count stays the bound's mirror, so a knob that
 // ever does reach 0 (a project layer, say) can never make the preview price
 // stages the runner would not run. A knob above 1 is one round here: the
-// typical run is the one that does not loop.
+// typical run is the one that does not loop. The mode is the preview's, and
+// standard carries no adversarial step, so it decides nothing here.
 func TestBudgetPreviewTypicalCountsHonourTheRoundKnobs(t *testing.T) {
 	text, ok := recipe.CatalogText("standard")
 	if !ok {
@@ -647,7 +666,7 @@ func TestBudgetPreviewTypicalCountsHonourTheRoundKnobs(t *testing.T) {
 			"implement": 1, "review_first": 2, "review": 1, "fix": 3}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := previewTypicalCounts(rp, tc.first, tc.rounds); !maps.Equal(got, tc.want) {
+			if got := previewTypicalCounts(rp, tc.first, tc.rounds, rigor.Critical); !maps.Equal(got, tc.want) {
 				t.Errorf("previewTypicalCounts(standard, %d, %d) = %v, want %v", tc.first, tc.rounds, got, tc.want)
 			}
 		})

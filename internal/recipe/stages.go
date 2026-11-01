@@ -22,11 +22,18 @@ package recipe
 // An adversarial step (review level 3) adds n3*(2 + 2*f) when it bounces and
 // n3*2 when it does not: each of its n3 rounds is one adversarial review and
 // its fix, and a bounce inserts the same cheap first-line loop a bouncing
-// review round does. n3 is the step's own max_rounds, or
-// DefaultAdversarialRounds when it writes none. The step's own bound errs
-// high the same way: a round that ends the run early costs fewer stages, and
-// a recipe that writes no bounce still pays only n3*2.
-func StageBound(r *Recipe, f, n int) int {
+// review round does. n3 is the step's own max_rounds, or n3Default where it
+// writes none. That default is the caller's to pass, because a rigor mode
+// lives in internal/rigor and that package's own test imports this one, so the
+// import cannot go the other way: a caller that resolved a mode passes
+// rigor.AdversarialDefault(mode) — the mode's senior row, the number the
+// senior review starts from — and a caller that has no mode passes the
+// strictest row the modes' table holds, rigor.AdversarialDefault(rigor.Critical),
+// 5. Both are one source, and the direction a bound may err in is high: a
+// recipe that wants the shorter term writes the step's own max_rounds. The
+// step's own bound errs high the same way: a round that ends the run early
+// costs fewer stages, and a recipe that writes no bounce still pays only n3*2.
+func StageBound(r *Recipe, f, n, n3Default int) int {
 	if r.Mode == ModeReview || r.Mode == ModeArtifact {
 		return 1
 	}
@@ -49,7 +56,7 @@ func StageBound(r *Recipe, f, n int) int {
 				rounds = s.MaxRounds
 			}
 		case StepAdversarial:
-			adversarial = DefaultAdversarialRounds
+			adversarial = n3Default
 			if s.MaxRounds > 0 {
 				adversarial = s.MaxRounds
 			}

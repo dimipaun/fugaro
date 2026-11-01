@@ -465,7 +465,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		project = previewProjectRigor(ctx, lc)
 	}
 	knobs := previewKnobsOf(cfg, project)
-	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds)
+	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds, rigor.AdversarialDefault(knobs.mode))
 	doc := &previewDoc{Project: lc.Name, GCPProject: lc.GCPProject, Repo: repo, Slug: slug,
 		Recipe: rr.Name, Source: string(rr.Source), Runs: o.runs, Stages: stages,
 		KnobsFrom: knobs.from, PerRunCapSource: []string{}, Notes: []string{}}
@@ -725,7 +725,7 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 // design's "with fewer than 5 runs, the line is omitted" and a recipe that
 // runs no agent stage at all are silent: there is nothing to explain.
 func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config, knobs previewKnobs) (usd float64, stages int, missing, model string) {
-	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds)
+	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds, knobs.mode)
 	for _, n := range counts {
 		stages += n
 	}
@@ -798,9 +798,16 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // first and rounds are the checkout's first_line_rounds and review_rounds (a
 // step's own max_rounds overriding its knob, as recipe.StageBound takes
 // them), each read as at most one round: a loop the knobs leave at 0 never
-// runs, so its stages are not counted -- the sum here is StageBound(rp, f, n)
-// for the same f and n, which the tests pin for every catalog recipe.
-func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
+// runs, so its stages are not counted -- the sum here is StageBound(rp, f, n,
+// n3) for the same f, n and n3, which the tests pin for every catalog recipe.
+//
+// mode is the rigor mode the preview resolved, and it supplies the one number
+// this recipe has no knob for: an adversarial step that writes no max_rounds
+// takes the mode's senior row (rigor.AdversarialDefault, the number the senior
+// review starts from), where StageBound -- which has no mode to read -- takes
+// the strictest row instead. Both are one round in a typical run, so the
+// figures here are the same either way; it is the ceiling above that differs.
+func previewTypicalCounts(rp *recipe.Recipe, first, rounds int, mode rigor.Mode) map[string]int {
 	if rp.Mode == recipe.ModeReview {
 		return map[string]int{"review": 1}
 	}
@@ -814,9 +821,9 @@ func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
 			n, bounce = roundCount(rounds, s.MaxRounds), s.Bounce
 		case recipe.StepAdversarial:
 			// The level-3 rounds have no agent.* knob yet, so the step's own
-			// max_rounds or the parser's default is what a typical run spends
+			// max_rounds or the mode's senior row is what a typical run spends
 			// one of (L1.3/L4.4 add the knob and this read moves to it).
-			adv, advBounce = roundCount(recipe.DefaultAdversarialRounds, s.MaxRounds), s.Bounce
+			adv, advBounce = roundCount(rigor.AdversarialDefault(mode), s.MaxRounds), s.Bounce
 		}
 	}
 	cheap := 0

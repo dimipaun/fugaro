@@ -416,14 +416,13 @@ func TestAdversarialBounceTarget(t *testing.T) {
 	}
 }
 
-// TestAdversarialRoundsDefault: a step without max_rounds takes
-// DefaultAdversarialRounds, the value internal/config aliases for
-// agent.adversarial_rounds, and Parse leaves the field at 0 so the reader
-// applies it (as it does for agent.first_line_rounds and review_rounds).
+// TestAdversarialRoundsDefault: a step without max_rounds is left at 0 by the
+// parser, so the reader applies the rounds a step that writes none takes, as
+// it does for a first_line or review step. That reader is the rigor mode's own
+// senior row (rigor.AdversarialDefault, the owner's ruling of 2026-10-31):
+// this package holds no default of its own to alias, which is why
+// StageBound takes the number from its caller.
 func TestAdversarialRoundsDefault(t *testing.T) {
-	if DefaultAdversarialRounds != 2 {
-		t.Fatalf("DefaultAdversarialRounds = %d, want 2", DefaultAdversarialRounds)
-	}
 	r := mustParse(t, "version: 1\nname: x\nsteps:\n  - review: {}\n  - adversarial: {}\n")
 	if r.Steps[1].MaxRounds != 0 {
 		t.Fatalf("MaxRounds = %d, want 0 (the default is the reader's)", r.Steps[1].MaxRounds)
