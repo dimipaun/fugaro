@@ -214,8 +214,14 @@ func localLayerFileCheck(lc *localcfg.Config, rf resolvedFile) []doctorCheck {
 	case st.Unpublished:
 		return []doctorCheck{{ID: "local-layer-file", Severity: "warning", Problem: st.unpublishedText(), Fix: fix}}
 	case !st.Exists && !st.Published:
-		return []doctorCheck{{ID: "local-layer-file", Severity: "info",
-			Problem: fmt.Sprintf("no local layer file at %s, and this project has published no layer: there is nothing to seed it from", st.Path)}}
+		// Neither side exists, which is an installation that publishes no
+		// layer and has never been seeded: there is nothing to edit, nothing
+		// to publish and nothing to seed from, so the check says nothing. A
+		// row here would be a finding on a clean installation — doctor's own
+		// clean screen is one line (TestDoctorSecretScopeIsNotAChoice), and a
+		// pointer to `--all` for a state with no action in it is the one thing
+		// that screen exists not to do.
+		return nil
 	case !st.Exists:
 		return []doctorCheck{{ID: "local-layer-file", Severity: "warning",
 			Problem: fmt.Sprintf("the local layer file %s does not exist while a project layer is published: %s seeds it from the published layer", st.Path, fix), Fix: fix}}
