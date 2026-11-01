@@ -1593,3 +1593,24 @@ func TestReviewFloorNotInShared(t *testing.T) {
 		t.Errorf("the published file names review_floor:\n%s", b)
 	}
 }
+
+// TestLayerFileIsTheProjectNameUnderProjects: the one local layer file is the
+// project's own name, with -layer.yaml, beside its config (D830) — the path is
+// a convention and nothing records it.
+func TestLayerFileIsTheProjectNameUnderProjects(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	p, err := LayerFile(get, "aurora")
+	if err != nil || p != filepath.Join(dir, "xdg", "fugaro", "projects", "aurora-layer.yaml") {
+		t.Fatalf("LayerFile = %q, %v", p, err)
+	}
+	// A name that is not a single path element would put the file, which
+	// `fugaro update` writes as the owner's own layer, anywhere on the
+	// machine — the same refusal ProjectPath makes.
+	for _, name := range []string{"../x", "a/b", "", "Aurora", "-x", "x-", strings.Repeat("a", 41)} {
+		if _, err := LayerFile(get, name); err == nil {
+			t.Errorf("LayerFile accepted %q", name)
+		}
+	}
+}

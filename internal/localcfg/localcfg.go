@@ -69,6 +69,19 @@ type Config struct {
 	// with no information in it, since the machine has no baseline to compare
 	// against). An installation that writes no policy node carries none.
 	PolicyGeneration string `yaml:"policy_generation,omitempty"`
+	// LayerGeneration is the published project layer's generation as of the
+	// last publish that wrote this file's layer, or the publish the local
+	// layer file was seeded from (D854): it is what tells the two readings of
+	// `unpublished` apart — a local edit (still the published generation,
+	// which is the owner's change to publish) from a stale copy of another
+	// machine's (the published generation has moved past it, so publishing
+	// would revert someone else's publish). A file carrying none was never
+	// written from a published object — every installation before the first
+	// `fugaro update` of this release — and the next run ADOPTS the
+	// generation it reads rather than refusing. It is the layer stage's
+	// record, beside the policy stage's PolicyGeneration: one record per
+	// stage that publishes, and neither is wire.
+	LayerGeneration string `yaml:"layer_generation,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind
@@ -1005,6 +1018,22 @@ func ProjectPath(getenv func(string) string, name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(d, name+".yaml"), nil
+}
+
+// LayerFile is the local project layer file of project name: the project's
+// own name under the config home's projects/ directory, beside its project
+// config (D830). The path is a convention and nothing records it — there is no
+// --layer flag and no config key for it — so the file the owner edits and the
+// file `fugaro update` publishes are the same one by construction.
+func LayerFile(getenv func(string) string, name string) (string, error) {
+	if !config.ProjectNameRE.MatchString(name) {
+		return "", fmt.Errorf("%q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", name)
+	}
+	d, err := ProjectsDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, name+"-layer.yaml"), nil
 }
 
 // legacyPath is where the local config lived before project configs; it

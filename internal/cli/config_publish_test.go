@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -177,7 +178,7 @@ func TestPublishLayerRefusedAsLauncher(t *testing.T) {
 		t.Fatalf("fixture layer is invalid: %v", ps)
 	}
 	var w bytes.Buffer
-	_, err := publishLayer(ctx, &w, b, l, true)
+	_, err := publishLayer(ctx, &w, b, l, true, nil, layerRecord{})
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
 		t.Fatalf("err = %v", err)
 	}
@@ -758,5 +759,98 @@ func TestConfigPublishWithNoFilePublishesTheLocalLayer(t *testing.T) {
 	}
 	if bucketText(t, f, config.LayerKey) != testProjectLayer {
 		t.Fatal("the local layer file was not what was published")
+	}
+}
+
+// TestConfigPublishRefusesWhenTheLocalFileDoesNotExist: the defaulted path has
+// no flag to correct, so the refusal names the command that seeds one.
+func TestConfigPublishRefusesWhenTheLocalFileDoesNotExist(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	noAgentSession(t)
+	_, _, err := execute(t, "config", "publish")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro update") || strings.Contains(err.Error(), "--") {
+		t.Fatalf("err = %v", err)
+	}
+	if bucketText(t, f, config.LayerKey) != testProjectLayer {
+		t.Fatal("the published layer moved")
+	}
+}
+
+// TestConfigPublishRecordsTheGenerationItWroteAt: the explicit door records the
+// generation it published at (D854), so an edit made afterwards reads as a
+// local edit to publish and not as another machine's copy.
+func TestConfigPublishRecordsTheGenerationItWroteAt(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, "")
+	noAgentSession(t)
+	path := localLayerPath(t)
+	if err := os.WriteFile(path, []byte(testProjectLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "config", "publish", "--executable-changes"); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.LayerGeneration == "" {
+		t.Fatal("the publish at the local layer file recorded no generation")
+	}
+	// The owner edits the file afterwards: still the published generation, so
+	// the state is a local edit, not a stale copy.
+	if err := os.WriteFile(path, []byte(strings.Replace(testProjectLayer, "sh test.sh", "sh test-all.sh", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := localLayerState(os.Getenv, lc, "aurora", mustPublishedLayer(t, f), 0)
+	st.Generation, _ = strconv.ParseInt(lc.LayerGeneration, 10, 64)
+	if !st.Unpublished || st.Cause != layerLocalEdit {
+		t.Fatalf("after an edit the state is %+v, want a local edit", st)
+	}
+}
+
+// mustPublishedLayer reads the fixture's published object as the bucket holds
+// it, for the state assertions above.
+func mustPublishedLayer(t *testing.T, f *cloudFixture) *config.ProjectLayer {
+	t.Helper()
+	l, ps := config.ParseProjectLayer([]byte(bucketText(t, f, config.LayerKey)), config.LayerAnchor{})
+	if len(ps) > 0 {
+		t.Fatalf("the published layer is invalid: %v", ps)
+	}
+	return l
+}
+
+// TestConfigLayerPrintsTheLocalPathAndItsUnpublishedState: `config layer` names
+// the one local layer file and says, in the shared word, whether it is the
+// object it just printed.
+func TestConfigLayerPrintsTheLocalPathAndItsUnpublishedState(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	noAgentSession(t)
+	layerCheckout(t, f, minimalAnchored)
+	path := localLayerPath(t)
+	if err := os.WriteFile(path, []byte(testProjectLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The door that publishes the local layer file records the generation it
+	// wrote at, so the edit below is one this machine made and not an unknown.
+	if _, _, err := execute(t, "config", "publish", "--executable-changes"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "config", "layer")
+	if err != nil || !strings.Contains(out, "local layer file: "+path) || strings.Contains(out, "unpublished") {
+		t.Fatalf("in step: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(testProjectLayer, "sh test.sh", "sh test-all.sh", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "config", "layer")
+	if err != nil || !strings.Contains(out, "unpublished") || !strings.Contains(out, layerLocalEdit) ||
+		!strings.Contains(out, "fugaro update") {
+		t.Fatalf("unpublished: %v\n%s", err, out)
 	}
 }

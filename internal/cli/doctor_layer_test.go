@@ -435,3 +435,59 @@ func TestDoctorHelpMentionsTheLayerChecks(t *testing.T) {
 		}
 	}
 }
+
+// TestDoctorReportsALocalLayerFileThatIsUnpublished: doctor's own door on the
+// one local layer file (D830) — §1's path, the shared word `unpublished` and
+// the cause the record tells apart (D854) — and the checks that were already
+// there are asserted in the same test, so the addition is shown not to have
+// moved them.
+func TestDoctorReportsALocalLayerFileThatIsUnpublished(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	dir := layerCheckout(t, f, minimalAnchored)
+	noAgentSession(t)
+	ctx := context.Background()
+	slug := mustSlug("github", "acme/other")
+
+	path := localLayerPath(t)
+	if err := os.WriteFile(path, []byte(testProjectLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The explicit door records the generation it published at, so the edit
+	// below is this machine's own and not an older generation's copy.
+	if _, _, err := execute(t, "config", "publish", "--executable-changes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(testProjectLayer, "sh test.sh", "sh test-all.sh", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeRunRecord(t, f, slug, "20261008-090000-aaaa", nil)
+
+	lc := fileEnv(t, f).lc
+	rf := resolvedLayerFixture(t, ctx, lc, dir)
+	cs := doctorLayerChecks(ctx, lc, dir, rf)
+	if c := layerCheck(cs, "local-layer-file"); c == nil || c.Severity != "warning" ||
+		!strings.Contains(c.Problem, path) || !strings.Contains(c.Problem, "unpublished") ||
+		!strings.Contains(c.Problem, layerLocalEdit) || !strings.Contains(c.Problem, "fugaro update") {
+		t.Fatalf("local-layer-file: %+v", cs)
+	}
+	if c := layerCheck(cs, "project-layer"); c == nil || c.Severity != "info" || !strings.Contains(c.Problem, "project layer aurora generation") {
+		t.Fatalf("project-layer moved: %+v", cs)
+	}
+	if c := layerCheck(cs, "project-layer-drift"); c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "ran without the project layer") {
+		t.Fatalf("project-layer-drift moved: %+v", cs)
+	}
+	if c := layerCheck(cs, "project-layer-copy"); c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "has no copy") {
+		t.Fatalf("project-layer-copy moved: %+v", cs)
+	}
+
+	// It reads no bucket, so it is reported on the paths that stop before the
+	// bucket read too: the one line the owner needs in the state that breaks
+	// `fugaro rigor set` must not vanish with the network.
+	none := rf
+	none.Layer = foundLayer{}
+	if c := layerCheck(doctorLayerChecks(ctx, lc, dir, none), "local-layer-file"); c == nil || !strings.Contains(c.Problem, path) {
+		t.Fatalf("the check vanished with the published layer: %+v", c)
+	}
+}

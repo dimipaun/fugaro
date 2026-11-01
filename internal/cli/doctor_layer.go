@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,7 +30,9 @@ import (
 //   - whether the repository's copy, which the daily check and Cloud Build
 //     read, is current;
 //   - whether each workflow's image was built from the image settings it
-//     resolves to now.
+//     resolves to now;
+//   - the one local layer file (localLayerFileCheck), which reads no bucket
+//     and so is reported even when none of the above can be.
 //
 // Best effort: what cannot be read says nothing.
 func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf resolvedFile) []doctorCheck {
@@ -46,7 +49,7 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		if rf.Layer.Note != "" {
 			msg += ": " + rf.Layer.Note
 		}
-		return []doctorCheck{{ID: "project-layer", Severity: "info", unread: unknown, Problem: msg}}
+		return append([]doctorCheck{{ID: "project-layer", Severity: "info", unread: unknown, Problem: msg}}, localLayerFileCheck(lc, rf)...)
 	}
 	problem := fmt.Sprintf("project layer %s generation %d (sha256 %s) applies; fugaro config show prints where each value comes from", l.Project, rf.Layer.Generation, shortSHA(l.SHA256))
 	if rf.Layer.Note != "" {
@@ -64,24 +67,164 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 	// layer-drift, copy-staleness and image-config state here.
 	oi, ok := readOrigin(ctx, root)
 	if !ok || oi.Rewritten {
-		return out
+		return append(out, localLayerFileCheck(lc, rf)...)
 	}
 	slug, err := task.Slug(rf.Cfg.Git.Provider, oi.Repo)
 	if err != nil {
-		return out
+		return append(out, localLayerFileCheck(lc, rf)...)
 	}
 	b, err := blobx.Open(ctx, lc.BucketURL())
 	if err != nil {
-		return out
+		return append(out, localLayerFileCheck(lc, rf)...)
 	}
 	env := &cloudEnv{lc: lc, bucket: b}
 	defer env.Close() // closes b, and env.records if recordBucket opened one
+	out = append(out, localLayerFileCheck(lc, rf)...)
 	out = append(out, layerDrift(ctx, b, slug, l)...)
 	out = append(out, layerCopyCheck(ctx, b, slug, l)...)
 	if rb, err := env.recordBucket(ctx); err == nil {
 		out = append(out, imageConfigChecks(ctx, rb, slug, rf.Cfg, rf.Res)...)
 	}
 	return out
+}
+
+// The three causes of the shared word `unpublished`. Differing bytes are never
+// the whole answer: a local edit is the owner's change, to publish, and a stale
+// copy is another machine's publish this file would revert, to re-seed — and
+// the record (D854) is the only thing that tells them apart.
+const (
+	layerLocalEdit       = "a local edit"
+	layerLocalStale      = "a stale copy from another machine"
+	layerLocalUnrecorded = "not recorded as written from the published layer"
+)
+
+// layerLocalState is the one local layer file (D830) against the published
+// object: the same sha256 comparison `fugaro config layer`, doctor and
+// `fugaro rigor show` all decide the shared word `unpublished` by, plus the
+// record that says which of its causes this is.
+//
+// The published side is handed in already resolved (pub, gen) and is never
+// read from the bucket here: the callers hold it, and a state that vanished
+// when the bucket was unreachable would be missing exactly when it is needed.
+type layerLocalState struct {
+	Path   string
+	Exists bool
+	SHA256 string // the local file's, when it exists
+	// Published is whether an object applies, with its own sha256 and the
+	// generation this machine resolved it at.
+	Published    bool
+	PublishedSHA string
+	Generation   int64
+	// Recorded is the local project config's layer_generation, "" when
+	// nothing is recorded.
+	Recorded string
+	// Unpublished is true only when both sides are present and their
+	// sha256s differ: with either absent there is nothing to compare.
+	Unpublished bool
+	Cause       string
+}
+
+// localLayerState reads the local layer file of project project ("" when this
+// machine cannot name it) and compares it with pub, the published object as
+// this machine resolved it (nil: none applies). lc is the local project config
+// the record lives in.
+func localLayerState(getenv func(string) string, lc *localcfg.Config, project string, pub *config.ProjectLayer, gen int64) layerLocalState {
+	var st layerLocalState
+	if project == "" {
+		return st
+	}
+	path, err := localcfg.LayerFile(getenv, project)
+	if err != nil {
+		return st
+	}
+	st.Path = path
+	if data, err := os.ReadFile(path); err == nil {
+		st.Exists, st.SHA256 = true, config.LayerSum(data)
+	}
+	if lc != nil {
+		st.Recorded = lc.LayerGeneration
+	}
+	if pub == nil {
+		return st
+	}
+	st.Published, st.PublishedSHA, st.Generation = true, pub.SHA256, gen
+	if st.Exists && st.SHA256 != pub.SHA256 {
+		st.Unpublished = true
+		st.Cause = layerLocalCause(st)
+	}
+	return st
+}
+
+// layerLocalCause names which reading of `unpublished` this is. The record is
+// the generation this file's bytes were written from: still the published one
+// means the owner's own edit, an older one means the published object has
+// moved past this file (someone else's publish, which publishing would
+// revert), and none at all means no publish this machine can compare with.
+func layerLocalCause(st layerLocalState) string {
+	recorded, err := strconv.ParseInt(st.Recorded, 10, 64)
+	switch {
+	case st.Recorded == "" || err != nil:
+		return layerLocalUnrecorded
+	case recorded < st.Generation:
+		return layerLocalStale
+	default:
+		return layerLocalEdit
+	}
+}
+
+// unpublishedText is the one sentence the doors that call the state
+// `unpublished` print: the word, both sha256s, which of the two causes it is,
+// and the remedy that fits it. It is "" for a state that is not unpublished.
+func (s layerLocalState) unpublishedText() string {
+	if !s.Unpublished {
+		return ""
+	}
+	const pub = "the published project layer"
+	switch s.Cause {
+	case layerLocalStale:
+		return fmt.Sprintf("unpublished: the local layer file %s (sha256 %s) differs from %s (sha256 %s): the published layer has moved past generation %s this file was written from, so this is %s — run fugaro update to re-seed it from the published one",
+			s.Path, shortSHA(s.SHA256), pub, shortSHA(s.PublishedSHA), generationText(s.Recorded), layerLocalStale)
+	case layerLocalUnrecorded:
+		return fmt.Sprintf("unpublished: the local layer file %s (sha256 %s) differs from %s (sha256 %s), and no generation is recorded for this file, so it is %s — run fugaro update to publish it",
+			s.Path, shortSHA(s.SHA256), pub, shortSHA(s.PublishedSHA), layerLocalUnrecorded)
+	}
+	return fmt.Sprintf("unpublished: the local layer file %s (sha256 %s) differs from %s (sha256 %s): this is %s — run fugaro update to publish it",
+		s.Path, shortSHA(s.SHA256), pub, shortSHA(s.PublishedSHA), layerLocalEdit)
+}
+
+// localLayerFileCheck is doctor's line for the one local layer file (D830).
+// It is appended to doctorLayerChecks's output on every path that function
+// returns from, because it reads no bucket: the published side is the already
+// resolved rf, and the one line the owner needs in the state that breaks
+// `fugaro rigor set` must not vanish with the network.
+func localLayerFileCheck(lc *localcfg.Config, rf resolvedFile) []doctorCheck {
+	project := ""
+	var pub *config.ProjectLayer
+	if l := rf.Layer.Layer; l != nil {
+		project, pub = l.Project, l
+	} else if lc != nil {
+		project = lc.Name
+	}
+	st := localLayerState(getenvOS, lc, project, pub, rf.Layer.Generation)
+	if st.Path == "" {
+		return nil
+	}
+	fix := selfCommand() + " update"
+	switch {
+	case st.Unpublished:
+		return []doctorCheck{{ID: "local-layer-file", Severity: "warning", Problem: st.unpublishedText(), Fix: fix}}
+	case !st.Exists && !st.Published:
+		return []doctorCheck{{ID: "local-layer-file", Severity: "info",
+			Problem: fmt.Sprintf("no local layer file at %s, and this project has published no layer: there is nothing to seed it from", st.Path)}}
+	case !st.Exists:
+		return []doctorCheck{{ID: "local-layer-file", Severity: "warning",
+			Problem: fmt.Sprintf("the local layer file %s does not exist while a project layer is published: %s seeds it from the published layer", st.Path, fix), Fix: fix}}
+	case !st.Published:
+		return []doctorCheck{{ID: "local-layer-file", Severity: "warning",
+			Problem: fmt.Sprintf("the local layer file %s (sha256 %s) is not published: this project has published no layer, and %s publishes this one", st.Path, shortSHA(st.SHA256), fix), Fix: fix}}
+	}
+	return []doctorCheck{{ID: "local-layer-file", Severity: "info",
+		Problem: fmt.Sprintf("the local layer file %s (sha256 %s) is the published project layer (generation %d)", st.Path, shortSHA(st.SHA256), st.Generation)}}
 }
 
 // layerDrift compares the repository's last run with the published layer.
