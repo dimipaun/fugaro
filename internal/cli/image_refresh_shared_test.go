@@ -206,10 +206,14 @@ func TestRunRefusesSharedCheckoutWhenLocalConfigNamesTheRepo(t *testing.T) {
 // holds the number to the release actually cut — the same job every other
 // *Since constant's bullet does. It also holds the bullet to the second
 // release this feature has: sharedSince is the release whose *runner* clones
-// for a shared job, while the image such a job runs is 0.15.0's
-// (config.SharedCheckoutSince, the release validation refuses checkout:
-// shared until), and a bullet that calls 0.14.0 the release the shared
-// images ship in would have an operator verify the wrong number.
+// for a shared job, while the image such a job runs is
+// config.SharedCheckoutSince's (0.15.0), and a bullet that calls 0.14.0 the
+// release the shared images ship in would have an operator verify the wrong
+// number. That second number is stale: 0.15.0 shipped without building or
+// refreshing a shared image, and no release does — what a repository reads
+// names no release at all (config/image.go's SharedCheckoutRefusal), and
+// the release that ships these images is the one that moves the constant
+// and this bullet together.
 func TestSharedSinceHasAReleaseBullet(t *testing.T) {
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
@@ -229,7 +233,7 @@ func TestSharedSinceHasAReleaseBullet(t *testing.T) {
 	}
 	for _, want := range []string{"the release whose runner clones", config.SharedCheckoutSince} {
 		if !strings.Contains(bullet, want) {
-			t.Errorf("docs/release.md's sharedSince bullet does not say %q: the images arrive in %s, not in the runner's release", want, config.SharedCheckoutSince)
+			t.Errorf("docs/release.md's sharedSince bullet does not say %q: the bullet has to name both releases this feature has, and the image is %s's", want, config.SharedCheckoutSince)
 		}
 	}
 }

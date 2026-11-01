@@ -249,7 +249,7 @@ func TestSharedCheckoutShippedIsTheGateValidationRefusesBy(t *testing.T) {
 // set, holding no repository's source — and clones the repository's own
 // source at launch, so the keys that describe that layer are exactly the
 // ones it accepts. Behind sharedShipped, because the kind is refused until
-// 0.15.0 ships the images it would run.
+// a release ships the images it would run, and none has.
 func TestValidateCheckoutSharedAllowsDependencyKeys(t *testing.T) {
 	sharedShipped(t)
 	cfg, problems := Parse([]byte(sharedYAML))
