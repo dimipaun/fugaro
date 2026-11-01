@@ -7,9 +7,11 @@ with option (a), D893 with option (c), and **D894 with option (a)** last — and
 things the review of that round raised (**O1–O7** of 2026-11-01, recorded in the same section, which
 take no decision number: an answer picks an option rather than allocating one) — but **an answer is
 not an approval**: no task in [implementation-plan.md](implementation-plan.md) may start before the
-owner approves it, and two of them wait on gates outside this design (**E7** and **U7**, below): **U7**
-is not CSR4b's gate alone — the first slice's signed `ship` path waits on the same owner-run
-observation, through the routing design **#1514**'s **D1074** (its **C3.9e**).
+owner approves it, and one of them waits on a gate outside this design (**E7**, below). **U7**, the
+owner-run observation of the deployed fence, **is ANSWERED (2026-11-01)** — both fences hold — so it
+gates nothing: it was never CSR4b's gate alone, and the same answer is the observation the first
+slice's signed `ship` path waited on, through the routing design **#1514**'s **D1074** (its
+**C3.9e**).
 
 **Asked by:** the owner, 2026-10-31, as priority ONE right after the CLI 0.14.1 and console 0.116.1
 releases: the **independent review** run today on the owner's own machine — a local session with the
@@ -99,14 +101,17 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   **Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` are denied for the rest of the review stage**,
   the mutant being applied and reverted by the runner rather than by the agent's shell. What is left is
   the `/proc` read, which §7 states as the residual and which only the separate container reduces.
-  **The mutation half is CSR4b, and it is gated:** no network namespace or `unshare` in Cloud Run's
-  gen2 has been checked (**U7**), and that
-  question **cannot be measured hermetically** — it is a property of the deployed execution
-  environment — so **it is an owner-run live probe taken before CSR4b launches**, independent of CSR2
-  (the old form, Check 125's step 6, ran `fugaro review --mutate` and so needed both — circular);
-  **Check 125 step 7 is now the confirmation after CSR4b**, and the probe is its own step. If a child
-  process cannot be fenced the answer falls back to **(b)**
-  or **(c)** and the owner is asked again — the design does not assume a fence it has not seen.
+  **The mutation half is CSR4b, and the probe it waited on has returned:** no network namespace or
+  `unshare` in Cloud Run's gen2 had been checked (**U7**), and that
+  question could **not be measured hermetically** — it is a property of the deployed execution
+  environment — so it was an owner-run live probe, independent of CSR2
+  (the old form, Check 125's step 6, ran `fugaro review --mutate` and so needed both — circular).
+  **U7 is ANSWERED (2026-11-01): both fences — the network namespace and a private `/proc` — are
+  available and hold**, measured on the sandbox installation with the unfenced exposure recorded
+  beside them; its five caveats are [reconciliation.md](reconciliation.md) §6's, and the first is a
+  requirement on CSR4b. **Check 125 step 7 stays the confirmation after CSR4b**, on the path that
+  actually uses the fence. Had a child been unfenceable, the answer would have fallen back to **(b)**
+  or **(c)** and the owner been asked again — the design does not assume a fence it has not seen.
   **The settings posture is CSR4a, and it ships first**: it is standalone hardening of a stage that
   exists today and waits on no probe.
 - **It does not launch on a job that already exists.** The shared project job of
