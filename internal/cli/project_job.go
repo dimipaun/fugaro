@@ -62,9 +62,11 @@ type launchProjectJob struct {
 func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*launchProjectJob, error) {
 	// The workflow's own checkout: says whether this is a clone workflow, and
 	// which profile it selects. Both are read from the repository's own
-	// fugaro.yaml, so with no checkout of repo in the working directory
-	// (fugaro run --repo ... from a machine that does not hold it) there is
-	// no answer to either.
+	// fugaro.yaml, so a checkout that cannot be read — the working directory
+	// is not repo's (fugaro run --repo ... from a machine that does not hold
+	// it), or it is and the file is missing or does not resolve over the
+	// project layer — leaves no answer to either. checkoutParse says nil for
+	// both, and the refusal below names both.
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
 		// For an installation that has published no profiles the per-repository
@@ -84,7 +86,7 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		if err != nil || !found || p == nil || len(p.Profiles) == 0 {
 			return nil, nil
 		}
-		return nil, userErr("fugaro run --repo %s is launched from outside %s's checkout, so which Cloud Run job it targets cannot be decided: a workflow's checkout: kind and profile are read from the checkout's own fugaro.yaml, and a clone workflow runs on a shared project job where a baked one runs on the repository's own. Run it from %s's checkout", spec.Repo, spec.Repo, spec.Repo)
+		return nil, userErr("fugaro run --repo %s cannot tell which Cloud Run job it targets: the working directory is not %s's checkout, or its fugaro.yaml could not be read (see fugaro validate). A workflow's checkout: kind and profile are read from that checkout's fugaro.yaml, and a clone workflow runs on a shared project job where a baked one runs on the repository's own. Run it from %s's checkout", spec.Repo, spec.Repo, spec.Repo)
 	}
 	w, ok := co.Workflows[spec.Workflow]
 	if !ok || w.Checkout != config.CheckoutClone {
