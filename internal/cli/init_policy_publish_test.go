@@ -1095,3 +1095,150 @@ func unadoptedPublishAssertions(t *testing.T, db *gcpfake.RTDB) {
 		t.Errorf("another installation's mark moved: %v", got)
 	}
 }
+
+// looserPublishFixture is the state D846's second door is about: the node is
+// published at a ceiling the local config now states a higher one for, so the
+// publish this run would make raises what every run of the project is admitted
+// by. The file's own edit is written the way an operator writes it — the config
+// text, not the node — so the drift the stage reads is the one a real edit
+// leaves.
+func looserPublishFixture(t *testing.T) *projectFixture {
+	t.Helper()
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return strings.Replace(s, "per_run_usd: 5", "per_run_usd: 7", 1) })
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNodeAt(5))
+	return f
+}
+
+// typedRigWithPlan is newMigrationRig with an operator at a terminal who types
+// the project's name, which is the confirmation a loosening publish asks for and
+// --yes never stands in for.
+func typedRigWithPlan(t *testing.T, f *projectFixture) *migrationRig {
+	t.Helper()
+	typed(t)
+	h := newMigrationRig(t, f, &initOptions{})
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	return h
+}
+
+// TestUpdatePublishLooserNodeNeedsTheTypedName: D846 reaches the second door
+// that writes a ceiling. The node is published at 5 and the local config states
+// 7, so this publish raises what every run of the project is admitted by —
+// exactly the widening `settings set` reserves for the project's own hand — and
+// --yes alone does not confirm it. The name typed at a terminal does.
+func TestUpdatePublishLooserNodeNeedsTheTypedName(t *testing.T) {
+	f := looserPublishFixture(t)
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := h.apply(t, true); err == nil {
+		t.Fatalf("--yes alone published a node looser than the published one:\n%s", out)
+	}
+	if got := nodeCeiling(t, f); got != 5 {
+		t.Fatalf("the node's ceiling is %v, want the published 5: the loosening was written behind the refusal", got)
+	}
+	if gen := recordedGeneration(t, f); gen != "" {
+		t.Errorf("policy_generation = %q, and the refused publish recorded a generation for a file it did not write", gen)
+	}
+
+	h = typedRigWithPlan(t, f)
+	if out, err := h.apply(t, false); err != nil {
+		t.Fatalf("the project's name typed at a terminal did not confirm the publish: %v\n%s", err, out)
+	}
+	if got := nodeCeiling(t, f); got != 7 {
+		t.Errorf("the node's ceiling is %v, want the typed 7", got)
+	}
+}
+
+// TestUpdatePublishLooserNodeRefusesYesAlone: the refusal is what an operator
+// running the one upgrade command from a script — or an agent's session — reads
+// instead of the write, so it names the member that loosens and the command that
+// reaches the same publish at a terminal. A refusal that named neither would
+// leave them with the loosening unapplied and no move.
+func TestUpdatePublishLooserNodeRefusesYesAlone(t *testing.T) {
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	f := looserPublishFixture(t)
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes alone published a node looser than the published one:\n%s", out)
+	}
+	for _, want := range []string{"budget.per_run_usd", "5", "7", "fugaro update", "needs a real terminal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if !strings.Contains(out, "budget.per_run_usd") {
+		t.Errorf("the diff the refusal stands on does not name the member that loosens:\n%s", out)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+		t.Fatal("the node is gone")
+	} else if got := nodeCeiling(t, f); got != 5 {
+		t.Errorf("the node's ceiling is %v, want the published 5: the loosening was written", got)
+	}
+}
+
+// TestUpdatePublishTighterNodeKeepsYes: the safe direction keeps the
+// confirmation it has. The node is published at 9 and the local config states 5,
+// so the publish lowers a ceiling every run of the project is admitted by — the
+// ordinary case this stage exists for, and one --yes confirms as it always did.
+func TestUpdatePublishTighterNodeKeepsYes(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("--yes no longer confirms a publish that lowers a ceiling: %v\n%s", err, out)
+	}
+	if got := nodeCeiling(t, f); got != 5 {
+		t.Errorf("the node's ceiling is %v, want the config's 5", got)
+	}
+}
+
+// TestUpdatePublishUnchangedNodeAsksNothingNew: a node that already carries what
+// the local config states raises nothing and removes nothing, so the run that
+// only records its generation asks for no confirmation at all — and the member
+// the typed gate reads is not reached, because there is no publish to read it
+// from.
+func TestUpdatePublishUnchangedNodeAsksNothingNew(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The record is made stale, so this run has the one write it can make — the
+	// generation record in this machine's file — and no publish at all.
+	gen := recordedGeneration(t, f)
+	if gen == "" {
+		t.Fatal("the door recorded no generation, so this test is not about an unchanged node meeting the stage")
+	}
+	setConfig(t, f, func(s string) string {
+		return strings.Replace(s, "policy_generation: "+gen, "policy_generation: etag-from-an-earlier-publish", 1)
+	})
+	h := newMigrationRig(t, f, &initOptions{})
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "carries what the local config states") {
+		t.Fatalf("an unchanged node with a stale record is %s %q, want the record-only run", st.State, st.Detail)
+	}
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the record-only run was refused: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "CONFIRM") {
+		t.Errorf("a run with nothing to publish asked for a confirmation:\n%s", out)
+	}
+	if got := nodeCeiling(t, f); got != 5 {
+		t.Errorf("the node's ceiling is %v, want the untouched 5", got)
+	}
+}

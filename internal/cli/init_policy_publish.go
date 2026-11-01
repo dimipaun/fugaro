@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -163,6 +164,98 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 		return nil, nil, nil, err
 	}
 	return body, pol, sources, nil
+}
+
+// policyCeiling is one member a publish loosens: the node's key, and the two
+// values as a settings write spells them.
+type policyCeiling struct {
+	Member string
+	Was    string
+	Now    string
+}
+
+// policyCeilingMembers are the published node's ceiling members, in key order:
+// the keys `settings set` compares through settingsLoosens. A node's other
+// members — base_branch, routing, model_prices, the profiles, review_floor —
+// decide where a run goes and what it may do, and none of them is a ceiling a
+// publish raises, so none of them is what the typed name guards here.
+var policyCeilingMembers = []string{"budget.mode", "budget.per_run_usd", "budget.max_run_tokens", "budget.allowed_models"}
+
+// policyCeilingValues is a node's ceiling members spelled the way the settings
+// commands spell them, so the one comparison (settingsLoosens) decides both
+// doors and a widening this stage would ask nobody about is a widening
+// `settings set` refuses. The spellings are the ones settings_set.go reads: the
+// mode's own name, a list joined with ",", and a number as the yaml file writes
+// it — where 0 is the value that sets no cap at all, which settingsLoosens
+// already reads as the loosest a ceiling can be written.
+func policyCeilingValues(p *projectpolicy.Policy) map[string]string {
+	out := make(map[string]string, len(policyCeilingMembers))
+	if p == nil {
+		return out
+	}
+	out["budget.mode"] = p.Budget.Mode
+	out["budget.per_run_usd"] = formatFloat(p.Budget.PerRunUSD)
+	out["budget.max_run_tokens"] = strconv.FormatInt(p.Budget.MaxRunTokens, 10)
+	out["budget.allowed_models"] = strings.Join(p.Budget.AllowedModels, ", ")
+	return out
+}
+
+// policyLoosening is the ceiling members the node about to be published would
+// loosen, measured against the node it replaces, in key order.
+//
+// The comparison is settingsLoosens, the same function `settings set` decides
+// with, because the two are one question: what a run of this project is
+// admitted by. A member the new node states nothing for is the ceiling REMOVED
+// — the value text cannot say it, since an emptied model list reads as a subset
+// of every list and a mode that is gone reads as nothing to compare — so it is
+// named here, the way `settings unset` is typed before its own comparison is
+// asked rather than by it.
+func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
+	was, now := policyCeilingValues(old), policyCeilingValues(new)
+	var out []policyCeiling
+	for _, member := range policyCeilingMembers {
+		before, after := was[member], now[member]
+		if before == after {
+			continue
+		}
+		switch {
+		case after == "":
+			out = append(out, policyCeiling{Member: member, Was: before, Now: "(removed)"})
+		case settingsLoosens(member, before, after):
+			out = append(out, policyCeiling{Member: member, Was: before, Now: after})
+		}
+	}
+	return out
+}
+
+// loosening is this run's publish measured against the node it replaces, and it
+// is empty for every run that publishes nothing: Migrate moves a version and
+// derives the members the config states, and a member it derives is not a
+// ceiling the operator's config states.
+func (m *policyMigration) loosening() []policyCeiling {
+	if m.pub == nil {
+		return nil
+	}
+	return policyLoosening(m.node, m.pub.pol)
+}
+
+// looseningWhy is the sentence the typed confirmation shows and the refusal
+// gives: which member loosens, from what to what, and the command that reaches
+// the same publish at the operator's own terminal. --yes is named as the thing
+// that does not stand in rather than passed over, because the operator reading
+// this from a script has just passed it and would otherwise take it for the
+// answer.
+func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "this publish loosens %s, which every run of the project is admitted by: ", projectpolicy.PathShared())
+	for i, c := range loosening {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "%s %s -> %s", c.Member, c.Was, c.Now)
+	}
+	fmt.Fprintf(&b, ". The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s", selfCommand()+" update")
+	return b.String()
 }
 
 // printPolicyPublishDiff is what the operator confirms: which members this
