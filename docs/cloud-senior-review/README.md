@@ -100,7 +100,8 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   test runs in a subprocess with **the token scrubbed from its environment and egress denied**, and
   **Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` are denied for the rest of the review stage**,
   the mutant being applied and reverted by the runner rather than by the agent's shell. What is left is
-  the `/proc` read, which §7 states as the residual and which only the separate container reduces.
+  the `/proc` read from the agent's own stage — the fenced mutant's child no longer reads the parent's
+  `/proc` — which §7 states as the residual and which only the separate container reduces.
   **The mutation half is CSR4b, and the probe it waited on has returned:** no network namespace or
   `unshare` in Cloud Run's gen2 had been checked (**U7**), and that
   question could **not be measured hermetically** — it is a property of the deployed execution

@@ -851,7 +851,7 @@ saw: a child fenced with `unshare -rn` or `unshare -rnpf --mount-proc` reaches n
 fenced with `unshare -rpf --mount-proc` or `unshare -rnpf --mount-proc` is given **a `/proc` of its
 own**; `unshare -n`, `setpriv` and `runuser` are refused in that environment. Unfenced, the same child
 reached the internet **and both metadata addresses** and read the parent's environment and
-`/proc/1/environ` — the exposure the fence is for. **So D891(a) is implemented as written, and the
+`/proc/1/environ` — the exposure the fence is for. **So D891(a) stands as written, and the
 conditional tail is not taken:** the **(b)** and **(c)** fallbacks stay in §4 for the record, and
 neither is the design's answer, because the fence the answer assumed was measured and is there.
 **`/proc` was the same question asked in the same breath, and it is closed the same way:** the
