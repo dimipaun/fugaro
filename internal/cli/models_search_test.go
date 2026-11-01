@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // TestModelsSearchFindsACatalogRow: a substring of a catalog model ID finds
@@ -92,6 +94,32 @@ func TestModelsSearchNamesTheClaimingRoute(t *testing.T) {
 	}
 	if !strings.Contains(other, "no route") {
 		t.Errorf("a hit no route claims does not say so:\n%s", other)
+	}
+}
+
+// TestModelsSearchRefusesAPriceTableItCannotBuild: the search reads the owner's
+// model_prices to know which rows they replace, so a table that will not build
+// is the search's own error rather than a search that quietly answers without
+// them — a catalog row shown where the owner set a price is a wrong price, not
+// a missing one, and a model they priced would vanish from the hits.
+// `models ls` and `budget prices` surface the same error, and a config that
+// reaches the CLI clean cannot reach this at all (localcfg validates the
+// overrides as it loads them), which is exactly why the branch is pinned here
+// by the function's own contract.
+func TestModelsSearchRefusesAPriceTableItCannotBuild(t *testing.T) {
+	one := 1.0
+	// An alias as a model_prices key: localcfg.Config.Overrides refuses it, and
+	// the search must not answer from the catalog rows it could still read.
+	lc := &localcfg.Config{ModelPrices: map[string]localcfg.ModelPrice{
+		"sonnet": {InputPerM: &one, OutputPerM: &one},
+	}}
+
+	rows, err := modelsSearchRows(lc, "deepseek")
+	if err == nil {
+		t.Fatalf("the search answered from a price table it could not build: %d rows", len(rows))
+	}
+	if !strings.Contains(err.Error(), "alias") {
+		t.Errorf("the search's error is %v, and it does not say what the table build refused", err)
 	}
 }
 

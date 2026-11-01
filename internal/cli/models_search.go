@@ -87,6 +87,12 @@ func runModelsSearch(cmd *cobra.Command, o *modelsSearchOptions, text string) er
 // models the owner's own model_prices prices — which is what a miss tells a
 // reader to write, so a model already priced that way is found rather than
 // reported missing.
+//
+// The owner's overrides decide which rows they replace, so a table that will
+// not build is this function's error rather than a search that answers from
+// the catalog alone: a row shown where the owner set a price is a wrong price,
+// not a missing one, and a model they priced would vanish from the hits.
+// `models ls` and `budget prices` surface the same error (priceTable).
 func modelsSearchRows(lc *localcfg.Config, text string) ([]modelsSearchRow, error) {
 	needle := strings.ToLower(text)
 	out := []modelsSearchRow{}
@@ -94,12 +100,14 @@ func modelsSearchRows(lc *localcfg.Config, text string) ([]modelsSearchRow, erro
 	if err != nil {
 		return nil, err
 	}
+	table, ov, err := priceTable(lc, budgetNow())
+	if err != nil {
+		return nil, err
+	}
 	local := map[string]priceRow{}
-	if table, ov, err := priceTable(lc, budgetNow()); err == nil {
-		for _, r := range priceRowsFor(table, ov) {
-			if r.Local {
-				local[r.ID] = r
-			}
+	for _, r := range priceRowsFor(table, ov) {
+		if r.Local {
+			local[r.ID] = r
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(cat.Models)) {
