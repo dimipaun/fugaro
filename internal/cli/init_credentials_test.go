@@ -1212,6 +1212,21 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 		t.Errorf("applies = %v, want the installation root's alone", apps)
 	}
 
+	// The next ordinary update is the converged one, and it asks the registry
+	// nothing: the reference already names this release, so there is no image
+	// to move and no reason to reach the network — which is also why an owner
+	// whose registry is briefly unreachable updates as they did before this
+	// migration existed.
+	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("the update after the re-pin failed: %v\n%s%s", err, out, errOut)
+	}
+	if r.resolveCalls != 1 || r.arCalls != 1 {
+		t.Errorf("the converged update resolved %d image(s) and read %d back, want the first run's one and one: the re-pin is needed once per release and not once per run", r.resolveCalls, r.arCalls)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("the converged update's image = %v, want %s", got, r.credentialsRef())
+	}
+
 	// An installation that has NOT opted in is untouched: nothing is resolved,
 	// no credentials_service is written, and the release's image is not pinned
 	// onto an installation whose owner never asked for the service.
