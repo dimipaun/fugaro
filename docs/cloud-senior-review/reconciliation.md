@@ -46,8 +46,12 @@ number **written** on `main` is now **D872**, the tail of the `accounts add` des
 (merged as #1470), which reserved **D873–D879** and left them unused; below it sit the `settings`
 design's D840–D859 (merged as #1464). No open pull request reserves a decision above D872. **D880 is
 therefore still the next free number**, and this work's block is **D880–D899**, of
-which **D880–D893 are written and answered** — D891 by the owner with option (a), **D892 with option
-(a)** and **D893 with option (c)** — and **D894–D899 are reserved and unused**. `D800` in `docs/` is the false positive the
+which **D880–D894 are written and answered** — D891 by the owner with option (a), **D892 with option
+(a)**, **D893 with option (c)** and **D894 with option (a)** — and **D895–D899 are reserved and
+unused**. The owner's seven rulings of 2026-11-01 (**O1–O7**, §4) amend the decisions they touch and
+**take no decision number of their own**, because an answer picks an option rather than allocating
+one — the convention this work's own §4 states, borrowed from the coordinator design's reconciliation.
+`D800` in `docs/` is the false positive the
 `docs/models-commands/` README records (`U+D800` inside a quoted value), not a decision. The check
 register reads **124 as the next free number above 123** and the Cloud Batch backend took it, so this
 work claims **Check 125**.
@@ -312,12 +316,16 @@ against a job's default egress, so a token in the stage's environment (`CLAUDE_C
 mounted secret env var) is reachable from the reviewed diff three ways: the environment, `/proc`, and
 the network. **Consequence:** the design states the residual instead of claiming a mitigation it has
 not built, and **D891 is answered — option (a)**: the mutant runs in a subprocess with the token
-scrubbed and egress denied, and Bash is denied for the rest of the review stage, which leaves the
-`/proc` read as the residual.
+scrubbed and egress denied, and **Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` are denied for
+the rest of the review stage** — the agent's shell stops being a general exfiltration path and it
+cannot rewrite the tree it is being checked against — which leaves the `/proc` read as the residual.
+**O1 removes the token from that environment altogether** (the reviewer's model calls go through the
+credentials service), so the residual shrinks to the review job's own one-hour, read-only installation
+token; U7's probe asks the `/proc` half as well as the egress half.
 
 **F25. `Rule` — the artifact is the one thing a review job produces that leaves the run, and the
 redaction rule covers the transcript, not it.** `internal/agent/redact.go` redacts what is published
-from agent output, and the transcript artifact rides that rule (F18); §3 lets a coordinator or a
+from agent output, and the transcript artifact rides that rule (F18); §3 once let a coordinator or a
 person paste `review.md` into a comment or a description. Reviewer prose generated from an untrusted
 diff is exactly the sort of text the redaction exists for — and **`review.json` carries the same
 prose** (`overview`, `strengths`, `issues[].summary`/`.fix`/`.evidence`, `security`, `performance`,
@@ -328,7 +336,10 @@ artifact's exact bytes, so a redaction applied at publish time would change the 
 and break every signature over them; the redacted bytes are the signed bytes. **And redaction is a
 literal-value match** (`internal/agent/redact.go`'s registered forms: the raw value, its JSON-escaped
 form, a multi-line secret's own lines, and the encodings `encodedForms` lists) — §7 states what that
-does not reach.
+does not reach. **And O5 answers what the redaction does not make safe: `review.md` is never posted
+verbatim** — a coordinator that has something to say derives a **bounded, re-redacted summary** of its
+own — **and never on a public repository** at all. Redaction is what makes the artifact safe to *store*
+and to *sign*; it is not what makes it safe to *publish*, and the ruling keeps the two apart.
 
 **F26. `Rule` — `accounts rm` is not revocation. It said so in this pull request's *first* draft, and
 the current spec.md no longer does.** What
@@ -366,44 +377,69 @@ a bound an honest coordinator honours rather than one the database stops it at.
 ## 4. Owner decisions
 
 Recommendation first in each, with the cost of the alternative. **D880–D894 are this work's block;
-D895–D899 are reserved and unused.** **D880–D893 are answered, and D894 is open.** The owner answers
-D894 in the morning, with option (a) recommended. D891 was answered first, with
-option (a); the review of this branch's fix round then raised **D892** and **D893** — whether a
-coordinator may **act** on a verdict at all, and how the review job's read-only token reaches it — and
-the owner has answered both: **D892 with option (a)** — the verdict is signed, and the owner's ruling
-of 2026-11-01 moved **who signs**: the **credentials service** produces the signature, so the signing
-key never enters a container that runs untrusted code — and **D893 with option (c)** (the token comes
-from the credentials service, by name — not the per-launch secret this design recommended). **D894 was
-raised after them**, by the review of the round that answered them: the cloud reviewer reads a branch
-it must not trust, and the design had never said which configuration its Claude session loads. **CSR4 is
-unblocked, subject to
-U7's owner-run live observation**, and the plan carries the machinery D891(a) names. **D893(c) makes
-the credentials service a hard precondition of the whole design**, and because that service ships
-dormant and does not yet admit a project-scoped job, **CSR7, CSR2 and the coordinator's `ship` → merge
-path stay blocked until it is met** (§6's **E7** and D893's own entry below say exactly what is
-missing).
+D895–D899 are reserved and unused.** **All of them are answered, and the last of them is D894.** D891
+was answered first, with option (a); the review of this branch's fix round then raised **D892** and
+**D893** — whether a coordinator may **act** on a verdict at all, and how the review job's read-only
+token reaches it — and the owner answered both: **D892 with option (a)** — the verdict is signed, and
+the owner's ruling of 2026-11-01 moved **who signs**: the **credentials service** produces the
+signature, so the signing key never enters a container that runs untrusted code — and **D893 with
+option (c)** (the token comes from the credentials service, by name — not the per-launch secret this
+design recommended). **D894 was raised after them**, by the review of the round that answered them: the
+cloud reviewer reads a branch it must not trust, and the design had never said which configuration its
+Claude session loads — **the owner answered it with option (a)**, so the head is diff content and never
+configuration, and **O6** fixes what the reviewer is given in its place.
+
+**The seven rulings of 2026-11-01 (O1–O7) take no decision number.** They are recorded here, in the
+entries they amend, and in the README's own row; an answer picks an option rather than allocating a
+number, which is the convention this section borrows from the coordinator design's reconciliation. In
+one place: **O1** routes the reviewer's model calls through the credentials service's tier A, so the
+review container holds no OAuth token and needs no `routing.claude: {via: cascade}` (it amends #1514's
+**D1063**); **O2** makes the new command supersede the in-job-review design's **Q16**; **O3** frames
+the signed message (the digest plus the verified `fr`/`fs`) rather than signing a bare digest; **O4**
+keeps the record's `verdict` at `ship|changes` and puts the display-only `independent` on `tier`, and
+fails the run when the sign call fails; **O5** forbids posting `review.md` verbatim; **O6** gives the
+reviewer the **base** branch's `CLAUDE.md` and `.claude/rules`; **O7** moves the release slot to
+**0.16.0 or later**, gated on C3.9.
+
+**CSR4a is unblocked and ships first; CSR4b is unblocked subject to U7's owner-run live observation**,
+and the plan carries the machinery D891(a) names. **D893(c) makes the credentials service a hard
+precondition of the whole design**, and because that service ships dormant and does not yet admit a
+project-scoped job, **CSR7, CSR2 and the coordinator's `ship` → merge path stay blocked until it is
+met** (§6's **E7** and D893's own entry below say exactly what is missing).
 
 - **D891 (ANSWERED by the owner, option (a)). May the review job's reviewer run repository code —
   Bash, and D885's mutation test — in the container that holds the person's token?** *The owner's
   answer:* **(a) the mutation test runs in a subprocess with the token scrubbed from its environment
-  and egress denied, and Bash is denied for the rest of the stage.** The reviewer keeps the one
-  capability it needs for a security-sensitive pull request (`cargo test`-style, one named test, one
-  mutant), the stage loses the shell as a general exfiltration path, and the two things F24 names (the
-  environment and the network) are the two things this closes; the residual it leaves is the `/proc`
-  read, which is what `mixed-credentials.md` §6 already lives with and which the separate job is the
-  only mitigation for. **The machinery is CSR4's** (a SEC task): the mutant is applied, run and reverted
-  by the **runner** rather than by the agent's Bash, and `internal/agent/settings.go`'s `DenyRules`
-  gains Bash for the rest of the review stage. **How egress is denied for a subprocess inside a Cloud
+  and egress denied, and Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` are denied for the rest
+  of the review stage.** The reviewer keeps the one capability it needs for a security-sensitive pull
+  request (`cargo test`-style, one named test, one mutant), the stage loses the shell as a general
+  exfiltration path, the agent can no longer rewrite the tree it is being checked against while the
+  check runs, and the two things F24 names (the environment and the network) are the two things this
+  closes; the residual it leaves is the `/proc` read, which is what `mixed-credentials.md` §6 already
+  lives with and which the separate job is the only mitigation for. **O1 shrinks that residual
+  further, and the two are independent:** with the reviewer's model calls going through the
+  credentials service, **there is no OAuth token in the review container for the scrub to remove** —
+  the environment route is closed by not mounting the token at all — so the best case for a process
+  that reads `/proc` is the review job's own **one-hour, read-only installation token**, not the
+  person's subscription token. **The machinery is CSR4b's** (a SEC task): the mutant is applied, run and
+  reverted by the **runner** rather than by the agent's Bash — **restored from the bytes the runner
+  read before it applied the mutant and holds in its own memory**, not by `git checkout --`, which
+  would let the head's `.gitattributes` filters, `core.fsmonitor` and hooks choose what the revert
+  runs — and `internal/agent/settings.go`'s `DenyRules` gains the four rules for the rest of the
+  review stage. **How egress is denied for a subprocess inside a Cloud
   Run container is UNVERIFIED** — a network namespace or `unshare` in gen2 has not been checked; that
-  is **U7** in §6. *The alternatives the owner did not take, kept for the record* — **(b) deny Bash
+  is **U7** in §6, **and U7 asks the `/proc` half in the same breath** (a PID namespace with its own
+  `/proc` mount, or a different uid), because the two residuals are the same question asked twice.
+  *The alternatives the owner did not take, kept for the record* — **(b) deny Bash
   and drop D885's cloud mutation check**: cheaper and simpler, everything stays read-only, and the
   independent review of a security-sensitive pull request loses the check that tells "the test
   exists" from "the test would have caught this" — the review goes back to reading the test rather
   than running it, which is what the owner does by hand today;
   **(c) accept the residual and record it**: no machinery at all, and the design then has to say, in
-  `SECURITY.md`'s own posture, that a review job is a container that holds a person's subscription
-  token and runs an untrusted diff's code — which is the same exposure the coder's job already has on
-  that account, so the separate job's value would be *context* and *scope*, not containment.
+  `SECURITY.md`'s own posture, that a review job is a container that runs an untrusted diff's code —
+  which, under O1, it is *without* a model credential in it, so the separate job's value would be
+  *context* and *scope* rather than containment, and the fallback (a mounted token) is what would make
+  the older exposure statement true again.
 
 - **D892 (ANSWERED by the owner, option (a)). How does the coordinator know a verdict is the review
   job's, given that another job on the same shared project job can write under the review run's own
@@ -423,12 +459,21 @@ missing).
   verifies on every call (**F16**, and §4's D893 entry): the job service account's Google ID token,
   whose `email` claim is checked against the installation's job accounts, and the **run's own Firebase
   identity**, whose claims name the repository (`fs`), the run (`fr`) and the pull requests it may
-  write (`fpr`). The service answers with the **HMAC-SHA-256 of that digest under the account's
+  write (`fpr`). The service answers with the **HMAC-SHA-256 over a framed message under the account's
   review-signing key**, lowercase hex, and the job writes it into the **sidecar object beside the
   artifact**, `runs/<slug>/<review-run>/artifacts/review.json.sig`, one line of lowercase hex — not
   into `review.json`, so the bytes that were signed are the bytes that are stored. **The algorithm is
   the design's, not the implementation's** — named here so the signer and the verifier cannot disagree
   without an error on either side, and so neither end can quietly accept a weaker construction.
+  **O3 fixes the message, and it is not the bare digest:** what is signed is the digest **together with
+  the two identities the service verified on the call** — the run's Firebase identity (`fr`) and the
+  repository claim (`fs`) — concatenated in a fixed order with fixed separators, one signature per
+  review run. A signature over a bare digest could be lifted from one review run to another wherever
+  two artifacts happen to hash alike; the frame binds *who asked* beside *what was asked about*. The
+  framing is a constant the artifact writer holds (**CSR3**'s), the service signs the bytes it is
+  given, and **the verifier re-frames from its own copy of the two claims** rather than from anything
+  the artifact or the caller asserts — the verify call presents the digest, the signature and the same
+  two claims, and the service answers yes or no.
   **What the key is exposed to, stated at its true size:** it is held by the **credentials service
   only** — a Secret Manager secret in the installation's project, **one per account**, read by the
   service's own service account and by nothing else (not the review variant, not the shared project
@@ -440,7 +485,9 @@ missing).
   reviewer prose safe to publish, and a redaction applied at publish time would change the bytes that
   were signed. So `review.json` and `review.md` both pass through `internal/agent/redact.go` **in the
   run, before CSR3 takes the digest**, and the signature covers the redacted bytes. **Replay, and what the verifier refuses:** the digest covers the object's exact
-  bytes, so `repository`, `pr`, `head_sha` and `review_run` are bound by the signature — and a valid
+  bytes, so `repository`, `pr`, `head_sha` and `review_run` are bound by the signature, and **O3's
+  frame binds the run and the repository beside the digest**, so a signature cannot be moved to
+  another run's frame either — and a valid
   artifact of an *earlier* review of the same pull request is still a valid signature over a valid
   object, so the verifier additionally refuses unless **`review_run` equals the run the coordinator
   launched** (the nonce), **`repository` and `pr` are that pull request's**, and **`head_sha` equals
@@ -518,9 +565,15 @@ missing).
   (`RunTokenPermissions`, `internal/credsvc/github.go:263`), so a review identity must be served **CSR1's fourth,
   read-only set**, and the choice must be made from the verified identity's own claims (no `fb` → a
   run that pushes nothing) rather than from any field a caller could send; the repository must come
-  from the run identity's `fs` for a review caller (above); and the **D892 sign and verify
+  from the run identity's `fs` for a review caller (above); the **review class on `/v1/messages`**
+  **O1** routes the reviewer's model calls through, admitted for the account the review run names and
+  for no other (this **amends the credentials-service routing design #1514's D1063**; a review job
+  needs no `routing.claude: {via: cascade}` to be admitted, because that switch is the operator's
+  consent for a *coding* run's cascade while a review job's credential is decided by its own class);
+  and the **D892 sign and verify
   endpoints** with their authentication and the per-account key rotation behind them must exist at
-  all. **The precondition, said
+  all. **The C3.9 that all of this is:** #1514 splits it into **C3.9a–C3.9g**, which is the form this
+  design names because that pull request is where the split is written. **The precondition, said
   plainly:** the cloud senior reviewer **requires the credentials service to be enabled for the
   installation**. The service **ships dormant**, and (c) turns that from an option into a
   requirement, so: the installation must have opted in (`fugaro update --provision-credentials`, the
@@ -545,8 +598,8 @@ missing).
   is a **plain value in the execution object**, readable by anyone in the project who can read that
   execution.
 
-- **D894 (OPEN, recommended option (a)). Which configuration does the cloud reviewer's Claude session
-  load, given that it reads a branch it must not trust?** *The gap, stated against the code:* the
+- **D894 (ANSWERED by the owner, option (a)). Which configuration does the cloud reviewer's Claude
+  session load, given that it reads a branch it must not trust?** *The gap, stated against the code:* the
   review job's working directory is the **PR head**, so `claude -p` loads **that head's** Claude Code
   configuration. **Part of that is already closed on `main`, and the design never said so:** review
   mode's checkout **removes** the head's `.claude/`, `.claude-plugin/`, `.mcp.json` and
@@ -571,20 +624,31 @@ missing).
   configuration is the base's, the working tree is the PR's) and calls it a residual risk of the same
   trust as write access to the branch; this design never carried that sentence across, and a cloud
   reviewer is a *worse* place for it than a follow-up, because the whole point of the job is that its
-  verdict is independent of the branch it reads. *Recommended:* **(a) the head is diff content, never
-  configuration.** Keep `stripClaudeConfig` as it is and **extend it to `CLAUDE.md`** — the head's
-  `CLAUDE.md`, at every depth, is **removed like the rest** (it stays in the diff the reviewer is
-  given, which is where a change to it belongs and where a security review should see it), and the
-  stage's **managed settings** are tightened so that the launch itself is the boundary: **managed
-  hooks only**, **no project MCP**, and **setting sources from user and managed only** — so a hook or
-  an MCP server that reaches the checkout by any other route still does not run. `fugaro.yaml`, the
-  instructions and the review prompt stay the base's, as they already are. This becomes **part of CSR4
-  (SEC)**, and its red test is **two halves, because only one of them is red**:
+  verdict is independent of the branch it reads. *The owner's answer:* **(a) the head is diff content,
+  never configuration.** The head's `CLAUDE.md` and `.claude/rules/`, at every depth, are **not
+  loaded** — they stay in the diff the reviewer is given, which is where a change to them belongs and
+  where a security review should see it — and **O6 fixes what the reviewer is given in their place:
+  the BASE branch's copies**, read from the base ref and not from the head and not out of the head's
+  `.git`; where the base has none, the reviewer is given none rather than falling back to the head's.
+  The stage's **managed settings** are tightened so the launch itself is the boundary: **managed hooks
+  only**, **no project MCP**, and **setting sources from user and managed only** — so a hook or an MCP
+  server that reaches the checkout by any other route still does not run — and the session's `HOME` is
+  a **fresh directory the job creates**, so no user-level settings file baked into the image
+  contributes a rule either. `fugaro.yaml`, the instructions and the review prompt stay the base's, as
+  they already are, **and so is the account: `agent.oauth_token` is resolved from `--token` or from
+  the configuration at the base ref (§1's order), so a head that names an account or a model in its
+  own settings chooses nothing.** **This tightens the `review` stage itself, not a new one** — the
+  stage `fugaro run --pr N` already runs — so a review that exists today gets the same posture and the
+  design does not leave the older path behind it. **It is CSR4a's (SEC), it is standalone hardening of
+  a stage that exists today, and it ships first:** it waits on U7 for nothing. CSR4b is the other half
+  of the old CSR4 — D885's mutation machinery, which does wait on U7's owner-run probe. **CSR4a's red
+  test is two halves, because only one of them is red:**
   `TestReviewModeStripsClaudeConfig` **already** removes a planted hook and `.mcp.json`, so a test
   that only planted those would pass today and would be no red step at all — the red halves are the
   **settings posture** the stage is launched under (which carries no
   `disableAllHooks`/`allowManagedHooksOnly`/setting-sources keys today) and the head's **`CLAUDE.md`**
-  (which survives the strip by design). *Cost:* the head's
+  (which survives the strip by design, and which the base's copy replaces rather than simply deleting,
+  O6). *Cost:* the head's
   own configuration is not honoured at all, so a repository that legitimately configures its review
   through `.claude/` or `CLAUDE.md` gets the base's configuration instead — which is the correct
   default for a reviewer that must not be steered by the thing it reviews, and the cost is one
@@ -602,7 +666,13 @@ missing).
 - **D880. The trigger is a new command, `fugaro review --pr N`.** *Recommended:* a command, because
   the review job is a different job with a different account and a different token scope, and only a
   command can name that; `fugaro run --pr N --recipe review-only` stays as the low-level verb for a
-  review that needs no separate credential. *Cost of the alternative:* spelling it as `fugaro run
+  review that needs no separate credential. **O2 is answered: this command supersedes the
+  in-job-review design's Q16** (`docs/in-job-review/reconciliation.md:370`), which answered *extend
+  `review-only`/`pick` rather than add a second entry point* — superseded here not because that answer
+  was wrong about the recipes but because **a recipe cannot change a job's credential**, so no
+  extension of `review-only` can put the reviewer on a named account in a container the coder never
+  ran in. That document is another work stream's and this round does not edit it; the supersession is
+  recorded here and in [spec.md](spec.md) §5. *Cost of the alternative:* spelling it as `fugaro run
   --pr N --recipe review-only` (no new command) runs the review **in the coder's job** with the
   coder's credential (**F1**, **F3**), which is the configuration this design exists to leave; a
   recipe stage cannot change a job's credential at all.
@@ -672,15 +742,24 @@ missing).
   and quoted, naming the review run it came from, and the coordinator then asks for a review of the
   **new head** (**F20**). *Cost of the alternative:* the owner copies the findings — which is what
   happens today by hand, and it is the step this design exists to remove.
-- **D888. The first slice is E1 plus the review job, and the release slot is 0.15.0.** *Recommended:*
-  the smallest thing that lets a cloud run use a named account end to end is `fugaro accounts add`
-  (**E1**, designed in PR #1470, merged, not built) *plus* the review job — the permission set (CSR1),
+- **D888. The first slice is E1 plus the review job, and the release slot is 0.16.0 or later.**
+  *Recommended:* the smallest thing that lets a cloud run use a named account end to end is
+  `fugaro accounts add` (**E1**, designed in PR #1470, merged, not built — its own tasks **A1** the
+  local config edit, **A2** the converge half and **A3** `--claude`) *plus* the review job — the
+  permission set (CSR1),
   **the review-only job variant and service account that make the set a boundary (CSR7)**, and the
   command that launches it (CSR2) —
   because E1 alone makes a named account usable by
-  `fugaro run --token`, and the review job is the first thing in this design that needs it; 0.15.0,
-  with the version gates (`internal/cli/recipes_skew.go`'s `…Since` precedent) in the same release.
-  *Cost of the alternative:* a 0.14.2 slice — it would have to carry E1 (a new command, a config
+  `fugaro run --token`, and the review job is the first thing in this design that needs it; **0.16.0
+  or later, gated on C3.9** (**O7** is answered, and it moves the slot this decision first named as
+  0.15.0), with the version gates (`internal/cli/recipes_skew.go`'s `…Since` precedent) in the same
+  release. The slice also reuses the settings design's **S5** (`internal/cli/settings_write.go`), the
+  shared write helper `accounts add`'s converge half uses. **Why the gate and not just the number:**
+  the whole first slice needs the credentials service — the review identity admitted, the read-only
+  set, the review class on `/v1/messages` and the sign and verify endpoints, i.e. **C3.9** of that
+  service's Slice 3, split by #1514 into **C3.9a–C3.9g** — so **0.16.0 ships the command and the job
+  variant and neither can run** until C3.9 lands (**E7**). *Cost of the alternative:* a 0.14.2 slice —
+  it would have to carry E1 (a new command, a config
   edit, a policy publish and a job deploy) and the review job (a new job shape, a third permission
   set and a new artifact format) with no room for the gates, and one missed gate silently ignores a
   field the owner typed.
@@ -688,7 +767,7 @@ missing).
   number is claimed in this work's README and the eight steps are written in [spec.md](spec.md) §8;
   the `docs/gcp-live-checklist.md` row and section are written by the task that implements the check,
   because that file is another work stream's. *Cost of the alternative:* write the row now — it means
-  touching a file the 0.15.0 rulings name, and the register's own rule is that a claim is settled at
+  touching a file the 0.16.0 rulings name, and the register's own rule is that a claim is settled at
   its merge, so a row written here could still have to be renumbered.
 - **D890. The review job's stage passes its own schema and reads its own artifact.** *Recommended:* the
   review job hands `schemas/review.schema.json` to its stage and decodes the result with the artifact's
@@ -712,7 +791,7 @@ missing).
 | **E4** | `website/content/cli-reference.md` (generated by `ee/clidoc`) and `website/**` | it must **not** hand-edit it: the task that adds `fugaro review` regenerates the page, and if the page is outside its scope it records that in its own pull request (F22) | with CSR2 |
 | **E5** | review levels L1.1/L4.3 (PR #1424, #1407) — the effort key, the L3 adversarial level | nothing for correctness: this design **records** the effort it sets and works with no key, and its security-sensitive checklist overlaps L3 without depending on it | independent |
 | **E6** | `internal/cli/recipes_skew.go`'s `…Since` gate precedent | it must copy the shape (an unshipped constant, a release-checklist line, a refusal naming the release) for every new task field or recipe construct it adds | with CSR1/CSR6/CSR7 |
-| **E7** | **the credentials service, enabled and admitting a project-scoped job** ([docs/credentials-service/](../credentials-service/implementation-plan.md): the `--provision-credentials` opt-in, the App key in the bundle, **Global Constraint 6** and its **C3.9** in Slice 3, *unscheduled*; the read-only set its mint must serve, the repository resolved from the run identity rather than from a one-repository job account, and **D892(a)'s sign and verify endpoints** with their authentication and the per-account key rotation) | nothing structurally — the keyless fetch path is already in the tree — but **D893(c) makes it a precondition, not an option**: without it the review job cannot fetch the head at all, and D892(a)'s signer lives there too. It is another work stream's task and this plan adds no task for it | **blocks CSR7, CSR2 and the coordinator's `ship` → merge path** |
+| **E7** | **the credentials service, enabled and admitting a project-scoped job** ([docs/credentials-service/](../credentials-service/implementation-plan.md): the `--provision-credentials` opt-in, the App key in the bundle, **Global Constraint 6** and its **C3.9** in Slice 3, *unscheduled* — **split by the routing design #1514 into C3.9a–C3.9g**; the read-only set its mint must serve, the repository resolved from the run identity rather than from a one-repository job account, **the review class on `/v1/messages`** that **O1** routes the reviewer's model calls through (amending #1514's **D1063**), and **D892(a)'s sign and verify endpoints** with their authentication and the per-account key rotation) | nothing structurally — the keyless fetch path is already in the tree — but **D893(c) makes it a precondition, not an option**: without it the review job cannot fetch the head at all, and D892(a)'s signer lives there too. It is another work stream's task and this plan adds no task for it | **blocks CSR7, CSR2 and the coordinator's `ship` → merge path** |
 
 ## 6. UNVERIFIED
 
@@ -724,7 +803,7 @@ missing).
 | **U4** | Does a truncated verdict output announce itself (a Claude Code `result` event, a non-zero exit) or does it look like a short answer? | **D886**'s "truncated is a failed review" needs an observation to hang on; the implementation task's test is a fake agent returning a clipped result, and Check 125's step 3 is the live one |
 | **U5** | Does the review job's transcript carry the token if the reviewer echoes its environment? | `redact.go` and `r.addSecret` say it should not; the observation is Check 125's step 2 ("its log must name no token value") plus a hermetic test in the implementing task |
 | **U6** | Can a launched review job be told the head SHA the coordinator observed, so a head that moved between the coordinator's read and the job's fetch is refused rather than silently reviewed? | `FetchPRHead` resolves the head at bootstrap today and records it (`ReviewedPR.SHA`); whether to pass the expected SHA in is **not decided here** and is left to the implementing task with the owner's D880 answer in hand |
-| **U7** | **How is egress denied for a subprocess inside a Cloud Run container?** D891(a) answers that the mutation test runs with the token scrubbed and **egress denied**, and no network namespace or `unshare` in gen2 has been checked — Cloud Run's second-generation execution environment may not permit the one, and the job's own egress is the job's, not a child process's | **A standalone owner-run probe of the deployed gen2 environment, taken before CSR4 launches — not the task's first step, and not a hermetic test.** It cannot be measured hermetically: the plan's rule is hermetic tests only (`t.TempDir()`, no network, no cloud), and whether a child process can be fenced is a property of the **deployed execution environment**, which no test in this repository can hold. **It is deliberately not asked through the mutation check**, which was this row's first form and was circular: `fugaro review --mutate` needs CSR2's command and CSR4's mutation code, and CSR4 may not start until U7 returns, so the question would have been asked by the thing whose existence it decides. So it is **Check 125's step 6**, and that step is a **probe of its own** — a one-off execution of the deployed job image whose entrypoint forks a child that tries to reach the network and is fenced with a network namespace (`unshare -n` where the image has it), recording which of the three outcomes it saw. **Check 125's step 7 is the confirmation afterwards**, on the mutation path that actually uses the fence. **CSR4 does not start until step 6 returns**, and if a child cannot be fenced that is an amendment to D891's answer and the owner is asked again — the design does not quietly fall back to `denyWeb` |
+| **U7** | **How is egress denied for a subprocess inside a Cloud Run container — and can that child be given a `/proc` of its own?** D891(a) answers that the mutation test runs with the token scrubbed and **egress denied**, and no network namespace or `unshare` in gen2 has been checked — Cloud Run's second-generation execution environment may not permit the one, and the job's own egress is the job's, not a child process's. **The `/proc` half is the same question asked twice** (§7): if the child cannot be fenced, the parent's `/proc` and environment stay readable from the stage that runs the head's test, and if it can be given **its own PID namespace with its own `/proc` mount, or run under a different uid**, they do not | **A standalone owner-run probe of the deployed gen2 environment, taken before CSR4b launches — not the task's first step, and not a hermetic test.** It cannot be measured hermetically: the plan's rule is hermetic tests only (`t.TempDir()`, no network, no cloud), and whether a child process can be fenced is a property of the **deployed execution environment**, which no test in this repository can hold. **It is deliberately not asked through the mutation check**, which was this row's first form and was circular: `fugaro review --mutate` needs CSR2's command and CSR4b's mutation code, and CSR4b may not start until U7 returns, so the question would have been asked by the thing whose existence it decides. So it is **Check 125's step 6**, and that step is a **probe of its own** — a one-off execution of the deployed job image whose entrypoint forks a child that tries to reach the network, tries to read the parent's environment through `/proc`, and is fenced with a network namespace (`unshare -n` where the image has it) **and a PID namespace with its own `/proc` mount, or a different uid**, recording which of the three outcomes it saw. **Check 125's step 7 is the confirmation afterwards**, on the mutation path that actually uses the fence. **CSR4b does not start until step 6 returns**, and if a child cannot be fenced that is an amendment to D891's answer and the owner is asked again — the design does not quietly fall back to `denyWeb`. **O1 shrinks what the `/proc` half protects:** with the model calls routed through the credentials service, the best case for a process that reads the parent's `/proc` is the review job's own one-hour, read-only installation token, not the person's subscription token |
 | **UNVERIFIED-2** | **Answered by D893 (c): the token is never handed in.** How does the minted read-only installation token **reach** the review job, and is the channel acceptable? The launch path passes per-run variables as a Cloud Run execution override (`internal/backend/gcp/run.go:169`), whose value is a **plain value in the execution object**, readable by anyone who can read that execution; a mounted short-lived secret would not be. | It was a **decision, not an observation**, and the owner has taken it: **(c) the job fetches the token from the credentials service, by name** — no per-launch secret, no value in an execution object, and **CSR7 wires the variant to the service** rather than handing it anything. What the answer costs is not a channel but a **precondition** (the service enabled, admitting a project-scoped job, and minting CSR1's read-only set), and D893's entry in §4 states it in full |
 
 Nothing above is approved by being written down. Answering a decision is not approving a task.
