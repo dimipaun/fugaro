@@ -235,7 +235,7 @@ Agent-refusal inconsistencies:
    - This is already the dependency F8 of `docs/models-commands/reconciliation.md` (UC1 part b).
    - `project policy publish` stays, for `--delete`, `--seed-repos` and scripted use.
    - It gains an agent refusal, for parity with `config publish`.
-2. **`fugaro update` gains a "Layer" stage** (#1463 D831). It publishes `~/.config/fugaro/projects/<name>-layer.yaml` (D830) through `publishLayer` and `fanOutLayer` (config_publish.go:99, :357).
+2. **`fugaro update` gains a "Layer" stage** (#1463 D831). It publishes `~/.config/fugaro/projects/<name>.layer.yaml` (D830) through `publishLayer` and `fanOutLayer` (config_publish.go:99, :357).
    - **Migration:** the first `update` on an installation whose layer is published and has no local file *seeds* the local file from the published bytes, shows it, and confirms. Without this, the first `rigor set` or `settings set --layer project` would fail with "no local file", which would be a manual step the HARD RULE forbids.
    - `config publish` defaults its FILE argument to that path.
    - `config layer` stops requiring a checkout when `--project` is given.

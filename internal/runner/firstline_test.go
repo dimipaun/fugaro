@@ -14,8 +14,19 @@ import (
 
 // firstLineCfg is the fixture config with a coder and a reviewer model and
 // extra agent lines (the first line is on unless extra says otherwise).
+//
+// The first-line rounds are pinned at the fixture's own one unless extra names
+// a number itself: an unset knob now takes the rigor mode's row
+// (internal/rigor's DefaultRounds, the owner's ruling of 2026-10-31), which
+// for the Pro an unconfigured fixture resolves is three, and these cases are
+// about how the loops behave at one cheap round rather than about that
+// default. A case that wants the mode to supply the number drops the line from
+// the fixture instead.
 func firstLineCfg(t *testing.T, rounds int, extra string) string {
 	t.Helper()
+	if !strings.Contains(extra, "first_line_rounds") {
+		extra = "  first_line_rounds: 1\n" + extra
+	}
 	cfg := testutil.FixtureFiles(t)["fugaro.yaml"]
 	out := strings.Replace(cfg, "  review_rounds: 2\n", "  review_rounds: "+string(rune('0'+rounds))+"\n  models: { coder: coder-model, reviewer: senior-model }\n"+extra, 1)
 	if out == cfg {
@@ -288,7 +299,10 @@ func TestFirstLineCostCountsToCap(t *testing.T) {
 // one with a coder, a senior reviewer and the first line on.
 func withFirstLine(t *testing.T, cfg string) string {
 	t.Helper()
-	out := strings.Replace(cfg, "review_rounds: 2", "review_rounds: 2\n  models: { coder: coder-model, reviewer: senior-model }\n  first_line_review: on", 1)
+	// first_line_rounds comes with first_line_review: the cases that use this
+	// helper script one cheap round, and an unset knob would take the resolved
+	// mode's row instead (internal/rigor's DefaultRounds).
+	out := strings.Replace(cfg, "review_rounds: 2", "review_rounds: 2\n  models: { coder: coder-model, reviewer: senior-model }\n  first_line_review: on\n  first_line_rounds: 1", 1)
 	if out == cfg {
 		t.Fatal("no review_rounds: 2 in the config")
 	}

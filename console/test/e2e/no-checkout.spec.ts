@@ -209,12 +209,13 @@ test.describe('the Graph with no installation checkout', () => {
     await expect(page.locator(PANEL)).not.toContainText(NO_PLAN_CHECKOUT)
 
     await page.locator(nav('projects')).click()
-    // Projects draws its own screen and says in it which reads refused (the stub
-    // answers neither `budget show` nor the run list), rather than replacing the
-    // panel with one read's refusal.
+    // Projects makes one read now, `budget show` (the jobs list is gone with its
+    // `runs ls`), and the stub does not answer it: the screen draws that one
+    // refusal inside its own section, rather than replacing the panel with it.
     await expect(page.locator(`${PANEL} section.projects`)).toHaveCount(1)
     await expect(page.locator(PANEL)).not.toContainText(NO_PLAN_CHECKOUT)
-    await expect(page.locator(`${PANEL} ${OPERATION}`)).toHaveCount(0)
+    await expect(page.locator(`${PANEL} ${OPERATION}`)).toHaveCount(1)
+    await expect(page.locator(`${PANEL} ${OPERATION}`, { hasText: 'budget.show' })).toHaveCount(1)
 
     await page.locator(nav('coordinator')).click()
     await expect(page.locator(`${PANEL} section.coordinator`)).toHaveCount(1)

@@ -1170,8 +1170,8 @@ func TestCascadeRefusedWithoutCredsRulesMarker(t *testing.T) {
 		{
 			what:    "above this Fugaro's",
 			gen:     rules.CredsRulesVersion + 1,
-			wants:   []string{"fugaro upgrade", "newer binary", "above"},
-			refuses: []string{"from this Fugaro"},
+			wants:   []string{"brew upgrade dimipaun/tap/fugaro", "newer binary", "above"},
+			refuses: []string{"from this Fugaro", "fugaro upgrade"},
 		},
 	} {
 		f.db.Set(rules.PathCredsRulesMarker(), c.gen)

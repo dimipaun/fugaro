@@ -367,7 +367,7 @@ notes and never asks for a summary of them.
 
 **The release names are fruits, used once each, in order.** The list starts **Cherry**
 (`0.110.0`), then **Mango** (`0.111.0`), then **Melon** (`0.112.0`), then **Nectarine**
-(`0.113.0`), then **Orange** (`0.114.0`), then **Papaya** (`0.115.0`), then **Peach** (`0.116.0`), then **Pear** (`0.117.0`); the name is the heading of
+(`0.113.0`), then **Orange** (`0.114.0`), then **Papaya** (`0.115.0`), then **Peach** (`0.116.0`), then **Pear** (`0.117.0`), then **Plum** (`0.118.0`); the name is the heading of
 that version's notes file, and the list is extended by one when the next console release is
 cut. **Apple is avoided** — in any spelling, including its varieties, and most visibly as
 "Apple": the desktop app is not an Apple product and a console release titled after one would

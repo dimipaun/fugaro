@@ -1421,7 +1421,7 @@ func TestProjectBaseBranchValidated(t *testing.T) {
 // not know refuses the whole document — so the list is unreadable until the
 // field exists. It is carried as it is written, and it is dropped from the
 // published shared config: the rule a root is held to is the node's
-// (projectpolicy.validBitbucketAPIRoots), applied where the node is built
+// (projectpolicy.ValidBitbucketAPIRoots), applied where the node is built
 // (the publish calls projectpolicy.Decode through checkPolicyBytes), so there
 // is no second copy of it here to drift from that one.
 func TestBitbucketAPIRootsParse(t *testing.T) {
@@ -1442,6 +1442,48 @@ func TestBitbucketAPIRootsParse(t *testing.T) {
 	}
 	if c.BitbucketAPIRoots == nil {
 		t.Error("Shared() cleared the receiver's own list")
+	}
+}
+
+// TestSecretRotationRecordRefused: the operator's rotation record — the period
+// doctor measures against and the dates it reports — is refused at load rather
+// than at doctor. A period or a date this file cannot use would turn into a
+// check that silently says nothing: doctor reads a malformed date as a name it
+// has no fact about, so the secret the operator recorded would drop out of the
+// sweep without a word. Whether the name exists is doctor's to find; the shape
+// is this document's, beside the other shape rules, and the refusal names the
+// entry it read.
+func TestSecretRotationRecordRefused(t *testing.T) {
+	c, err := Parse([]byte(sample + "secret_rotation_days: 30\nsecret_expires:\n  bitbucket-token: \"2026-11-05\"\n"))
+	if err != nil {
+		t.Fatalf("the operator's own record was refused: %v", err)
+	}
+	if c.SecretRotationDays != 30 || c.SecretExpires["bitbucket-token"] != "2026-11-05" || len(c.SecretExpires) != 1 {
+		t.Errorf("the record read as %d day(s) and %v", c.SecretRotationDays, c.SecretExpires)
+	}
+	// Zero is how the record says "no period", and it is what an absent key says
+	// too: only a period doctor could measure against a negative age is refused.
+	for _, ok := range []string{"secret_rotation_days: 0\n", ""} {
+		c, err := Parse([]byte(sample + ok))
+		if err != nil || c.SecretRotationDays != 0 {
+			t.Errorf("%q: (%d, %v), want no period and no error", ok, c.SecretRotationDays, err)
+		}
+	}
+	for _, tc := range []struct{ name, body, want string }{
+		{"a negative period", "secret_rotation_days: -1\n", "secret_rotation_days must be zero or more days"},
+		{"a period no age is outside", "secret_rotation_days: -30\n", "secret_rotation_days must be zero or more days"},
+		{"a date in the operator's own spelling", "secret_expires:\n  bitbucket-token: \"05/11/2026\"\n", `secret_expires.bitbucket-token "05/11/2026" is not a date (YYYY-MM-DD)`},
+		{"a date with a one-digit day", "secret_expires:\n  bitbucket-token: \"2026-11-5\"\n", "is not a date"},
+		{"a date that does not exist", "secret_expires:\n  bitbucket-token: \"2026-02-30\"\n", "is not a date"},
+		{"a date that is a number", "secret_expires:\n  bitbucket-token: 20261105\n", "is not a date"},
+		{"a name with nothing in it", "secret_expires:\n  \"\": \"2026-11-05\"\n", "secret_expires has an entry with no secret name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(sample + tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse = (%+v, %v), want an error naming %q", c, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -1549,5 +1591,100 @@ func TestReviewFloorNotInShared(t *testing.T) {
 		t.Fatal(err)
 	} else if strings.Contains(string(b), "review_floor") {
 		t.Errorf("the published file names review_floor:\n%s", b)
+	}
+}
+
+// TestLayerFileIsTheProjectNameUnderProjects: the one local layer file is the
+// project's own name, with .layer.yaml, beside its config (D830) — the path is
+// a convention and nothing records it.
+func TestLayerFileIsTheProjectNameUnderProjects(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	p, err := LayerFile(get, "aurora")
+	if err != nil || p != filepath.Join(dir, "xdg", "fugaro", "projects", "aurora.layer.yaml") {
+		t.Fatalf("LayerFile = %q, %v", p, err)
+	}
+	// A name that is not a single path element would put the file, which
+	// `fugaro update` writes as the owner's own layer, anywhere on the
+	// machine — the same refusal ProjectPath makes.
+	for _, name := range []string{"../x", "a/b", "", "Aurora", "-x", "x-", strings.Repeat("a", 41)} {
+		if _, err := LayerFile(get, name); err == nil {
+			t.Errorf("LayerFile accepted %q", name)
+		}
+	}
+}
+
+// TestTheLayerFileIsNeverAProject: the layer file sits in the projects/
+// directory beside the project configs, so an installation that ends `fugaro
+// update` with one must still hold exactly one project. A project name cannot
+// contain a dot (config.ProjectNameRE), and the file's stem has one.
+func TestTheLayerFileIsNeverAProject(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	projects, err := ProjectsDir(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "aurora.yaml"), []byte("name: aurora\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	layer, err := LayerFile(get, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layer, []byte("version: 1\nproject: aurora\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Projects(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "aurora" {
+		t.Errorf("Projects = %q with a layer file beside the project config, want [aurora]", got)
+	}
+}
+
+// TestAProjectNamedLayerIsNotTheLayerFile: `foo-layer` is a project name, so
+// project foo's layer file must not be project `foo-layer`'s config — nor the
+// other way round, with `foo-layer`'s own layer file read as project `foo`'s.
+func TestAProjectNamedLayerIsNotTheLayerFile(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	projects, err := ProjectsDir(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "foo-layer.yaml"), []byte("name: foo-layer\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Projects(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "foo-layer" {
+		t.Fatalf("Projects = %q, want [foo-layer]", got)
+	}
+	foo, err := LayerFile(get, "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := LayerFile(get, "foo-layer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foo == named || foo == filepath.Join(projects, "foo-layer.yaml") {
+		t.Errorf("project foo's layer file is %q, which is project foo-layer's config", foo)
+	}
+	if named != filepath.Join(projects, "foo-layer.layer.yaml") {
+		t.Errorf("project foo-layer's layer file is %q", named)
 	}
 }

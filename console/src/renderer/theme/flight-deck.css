@@ -152,6 +152,22 @@
   --section-gap: 20px;
   --panel-pad: 18px 22px;
   --hit-min: 44px;
+
+  /* A section's skeleton (console 0.116.1), one height per kind of block plus
+   * the gap between two of them. **These are the claim that the panel does not
+   * move**, which is why they are steps of the vocabulary the content itself
+   * draws with (`--row-height` and its compact form are what a list row is
+   * measured in, `--space-2xs` is the padding-block of one) rather than five
+   * numbers chosen to look right: a skeleton drawn at its own heights is a
+   * panel that jumps the moment the read lands, and the jump is the one thing
+   * the skeleton is for. */
+  --skeleton-line: 12px;
+  --skeleton-chip: var(--row-height-compact);
+  --skeleton-row: var(--row-height);
+  --skeleton-card: 72px;
+  --skeleton-band: 48px;
+  --skeleton-gap: var(--space-2xs);
+  --skeleton-shimmer-ms: 2600ms;
 }
 
 header.console-header {
@@ -2466,8 +2482,7 @@ div.projects-kills div.projects-kill {
  * row, `Revive` on a killed one (`disabledWrite`, `src/renderer/writes.ts`).
  * They are real buttons -- a keyboard reader meets them and hears why they do
  * nothing -- and they are painted as a control and not as a figure. */
-button.projects-kill-action,
-button.projects-repo-add {
+button.projects-kill-action {
   align-self: center;
   margin-left: auto;
   padding: var(--space-3xs) var(--space-sm);
@@ -2479,7 +2494,7 @@ button.projects-repo-add {
   cursor: not-allowed;
 }
 
-/* ---- The three repository cards ------------------------------------------ */
+/* ---- The repository card ------------------------------------------------- */
 
 div.projects-repos {
   display: grid;
@@ -2515,102 +2530,16 @@ ul.projects-repo-list {
   padding: 0;
 }
 
-li.projects-repo-both,
-li.projects-only-enrolled-repo,
-li.projects-only-seen-repo {
+li.projects-repo-enrolled {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-2);
 }
 
-p.projects-repo-card-none,
-p.projects-repo-card-note {
+p.projects-repo-card-none {
   margin: 0;
   font-size: var(--font-size-xs);
   color: var(--text-3);
-}
-
-/* The card the screen exists for: a repository running with no cap row. Amber,
- * and the sentence "Running with no cap row." under its heading carries the
- * fact on its own -- the tone is the second channel, never the only one. */
-article.projects-repo-card[data-kind='seen'] {
-  background: var(--warn-tint);
-  border-color: var(--warn-border);
-}
-
-article.projects-repo-card[data-kind='seen'] h3.projects-repo-card-title,
-article.projects-repo-card[data-kind='seen'] p.projects-repo-card-note,
-article.projects-repo-card[data-kind='seen'] li.projects-only-seen-repo {
-  color: var(--warn-text);
-}
-
-/* ---- The jobs table ------------------------------------------------------ */
-
-div.projects-jobs {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  overflow-x: auto;
-}
-
-table.projects-job-table {
-  width: 100%;
-  min-width: 1080px;
-  border-collapse: collapse;
-  font-size: var(--text-sm);
-}
-
-table.projects-job-table th.projects-job-head {
-  padding: var(--space-2xs) var(--space-sm);
-  font-size: var(--text-label);
-  font-weight: 400;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  text-align: left;
-  color: var(--text-3);
-  border-bottom: var(--rule-width) solid var(--line);
-}
-
-table.projects-job-table td {
-  padding: var(--space-2xs) var(--space-sm);
-  vertical-align: top;
-}
-
-table.projects-job-table tr.projects-job {
-  border-bottom: var(--rule-width) solid var(--line-subtle);
-}
-
-table.projects-job-table td.projects-job-run {
-  font-family: var(--font-mono);
-  color: var(--text-2);
-}
-
-table.projects-job-table td.projects-job-model,
-table.projects-job-table td.projects-job-compute,
-table.projects-job-table td.projects-job-total {
-  text-align: right;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-/* The three accounts are told apart **by the marks the formatter writes into the
- * cell** -- `~$` for the plan's dollars, `est.` for a figure nobody has billed
- * yet -- and by nothing else: this table has no reading-state hook to paint, and
- * a tone inferred from the column would paint a billed model figure like an
- * estimate. The three cells are monospace and right-aligned so the accounts line
- * up down the column and are never added. */
-
-/* The conditional MODE column: a cell of its own, so the table keeps its
- * columns when only some rows carry a rigor block. */
-table.projects-job-table td.projects-job-mode-cell {
-  white-space: nowrap;
-}
-
-p.projects-jobs-note {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3xs);
-  margin: 0;
 }
 
 /* ---- Accounts and the secrets inventory --------------------------------- */
@@ -2718,6 +2647,21 @@ p.console-busy-still {
 section[data-busy='true'] > *:not(.console-busy-slot),
 div[data-busy='true'] > *:not(.console-busy-slot) {
   opacity: 0.55;
+}
+
+/* An empty slot is not a box. The slot is the section's first child whether or
+ * not anything is being read -- it has to be there for the mark to have
+ * somewhere to go, and the Graph's drawings are built before anyone knows
+ * whether a control will be pressed -- and an empty element is still a flex item:
+ * in a column with a gap it would push the section down by one gap, for nothing.
+ * `display: none` takes it out of the layout entirely, so a section nobody is
+ * re-reading is laid out exactly as it was before the slot existed.
+ *
+ * The rule names no tag, and that is deliberate: the slot is the section
+ * helper's own element, drawn by every tab through that helper's constant, so a
+ * tag here would be this stylesheet guessing at another module's element. */
+.console-busy-slot:empty {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2966,4 +2910,115 @@ section.graph svg .graph-node-mark {
 
 section.graph svg .graph-node-run {
   font-family: var(--font-mono);
+}
+
+/* ---- A section's skeleton (console 0.116.1) ------------------------------ */
+
+/* The owner, 2026-10-31: "when changing tabs in the Console we should show a
+ * skeleton while we load the data, no?" A tab switch draws one skeleton per
+ * section (`renderer/skeleton.ts` holds the shapes, `screens/reading.ts` draws
+ * them into the placeholder and `renderer/section.ts` draws one into a section
+ * whose own read is still out), and this block is the whole of what a skeleton
+ * is to look at: a block, at the height of the thing that is coming.
+ *
+ * **A block is a tone, never a figure.** It carries no number, no word and no
+ * state, its whole tree is `aria-hidden`, and the sentence that says a read is
+ * running is drawn beside it (`span.console-reading-status`, visually hidden,
+ * and `p.console-busy-still` after fifteen seconds). Nothing here is a
+ * percentage or a bar: the console knows only that a read has not answered.
+ *
+ * **The one motion is a slow shimmer, and it is the design's second bounded
+ * exception** (section 3.9's amendment of 2026-11-01): one keyframe,
+ * `console-skeleton-shimmer`, whose only property is `background-position`, on
+ * `div.console-skeleton-block` and on nothing else. Both arms below are the
+ * amendment's: under `prefers-reduced-motion: reduce` the blocks are **static**
+ * -- the animation is stopped on the selector that started it and the sweep is
+ * taken off, because a gradient the global freeze stopped mid-sweep is a block
+ * that looks half-loaded -- and under `forced-colors: active` they are
+ * **outlined**: no animation, no fill, and a border in the system's own ink.
+ *
+ * **The row is the height, and the width is the shape.** Every kind is a
+ * `--skeleton-*` step, so a section added tomorrow reaches for a token the
+ * content already uses rather than for a number; `line` and `chip` are narrower
+ * than the column because a heading and a chip are, and the rest run the full
+ * width. */
+
+div.console-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--skeleton-gap);
+  inline-size: 100%;
+}
+
+div.console-skeleton-block {
+  border-radius: var(--radius-chip);
+  background-color: var(--track);
+  background-image: linear-gradient(90deg, var(--track) 0%, var(--surface-2) 50%, var(--track) 100%);
+  background-size: 240% 100%;
+  animation: console-skeleton-shimmer var(--skeleton-shimmer-ms) ease-in-out infinite;
+}
+
+div.console-skeleton-block[data-shape='line'] {
+  block-size: var(--skeleton-line);
+  inline-size: 40%;
+}
+
+div.console-skeleton-block[data-shape='chip'] {
+  block-size: var(--skeleton-chip);
+  inline-size: 96px;
+}
+
+div.console-skeleton-block[data-shape='row'] {
+  block-size: var(--skeleton-row);
+  inline-size: 100%;
+}
+
+div.console-skeleton-block[data-shape='card'] {
+  block-size: var(--skeleton-card);
+  inline-size: 100%;
+}
+
+div.console-skeleton-block[data-shape='band'] {
+  block-size: var(--skeleton-band);
+  inline-size: 100%;
+}
+
+@keyframes console-skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* The placeholder's sentence and the fifteen-second line are for a reader and
+ * not for the eye: the visible half of the panel is the skeletons, and this is
+ * the theme's own visually-hidden rule -- the element keeps its text, its role
+ * and its place in the accessibility tree, and takes no space on the page. */
+span.console-reading-status {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  div.console-skeleton-block {
+    animation: none;
+    background-image: none;
+  }
+}
+
+@media (forced-colors: active) {
+  div.console-skeleton-block {
+    animation: none;
+    background-image: none;
+    background-color: Canvas;
+    border: var(--rule-width) solid CanvasText;
+  }
 }

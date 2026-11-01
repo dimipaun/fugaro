@@ -486,7 +486,14 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	case "ship":
 		return fmt.Sprintf("%sreview: ship in round %d", who, last.Round)
 	case "none":
-		return fmt.Sprintf("%sreview round %d: skipped, no verdict", who, last.Round)
+		if last.Tier == runstore.TierFirst {
+			return fmt.Sprintf("first-line review round %d: skipped, no verdict", last.Round)
+		}
+		// A senior round is never skipped: this is one whose answer carried no
+		// parseable verdict, retried once and then left the run with no verdict
+		// at all (seniorLoop), and the line is the reason Decide gave for
+		// keeping the pull request a draft.
+		return fmt.Sprintf("%sreview round %d returned no parseable verdict after a retry", who, last.Round)
 	}
 	return fmt.Sprintf("%sreview round %d: %s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last))
 }
@@ -569,32 +576,6 @@ func (r *run) checkpointValue() *runstore.Checkpoint {
 	}
 	cp := *r.rec.Checkpoint
 	return &cp
-}
-
-// backlogPart is the section's account of the items the run wrote: the ids it
-// filed and the ids it closed as the follow-up that fixed them, beside the
-// review line that says what was left open, so a reader of the pull request can
-// cite an item without opening the tree (D9, D26, D27, D31 — the closing rule's
-// "names the item id in its body"). "" for a run that wrote neither, which is
-// most of them.
-func (r *run) backlogPart() string {
-	var parts []string
-	if len(r.rec.Backlog) > 0 {
-		parts = append(parts, "filed "+backlogIDs(r.rec.Backlog))
-	}
-	if len(r.rec.BacklogClosed) > 0 {
-		parts = append(parts, "closed "+backlogIDs(r.rec.BacklogClosed))
-	}
-	return strings.Join(parts, ", ")
-}
-
-// backlogIDs renders ids as the section cites them, one code span each.
-func backlogIDs(ids []string) string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, "`"+inlineText(id)+"`")
-	}
-	return strings.Join(out, ", ")
 }
 
 // rigorPart is the section's line for the mode the run resolved (D18, D24):
@@ -732,7 +713,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

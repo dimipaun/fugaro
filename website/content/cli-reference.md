@@ -1242,7 +1242,9 @@ This command has no subcommands.
 
 Publish the project layer: defaults and profiles for every repository of the project (fugaro/project-layer.yaml in the runs bucket)
 
-Usage: `fugaro config publish FILE`
+Publish the project layer. FILE defaults to this project's one local layer file (<config home>/fugaro/projects/<project>.layer.yaml), which is the file the owner edits and the file fugaro update publishes: the argument is only for publishing a layer kept somewhere else.
+
+Usage: `fugaro config publish [FILE]`
 
 Flags:
 
@@ -1624,8 +1626,13 @@ name. With --check-github-app, in your own terminal, it also asks GitHub whether
 each GitHub App the config records is installed on its repository with the
 permissions Fugaro's runs ask for: that is the one thing that reads a secret's
 value (the App's private key, with your own credentials, held in memory only to
-sign, never printed), and it is refused in a coding agent's session. Otherwise
-it never prints a secret's value and never creates, enables or
+sign, never printed), and it is refused in a coding agent's session. With
+--check-bitbucket-token, in your own terminal, it also reads the credentials
+service's bundle to see that it holds a Bitbucket token and asks Bitbucket
+whether it still accepts it, one GET /repositories/<repo> per proxied
+repository: that too reads a secret's value (with your own credentials, in
+memory only, never printed) and is refused in a coding agent's session.
+Otherwise it never prints a secret's value and never creates, enables or
 changes anything.
 
 Inside a checkout whose project publishes a project layer (fugaro config
@@ -1662,6 +1669,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--all` | bool | `false` | no | print every check, the informational and audit lines included |
+| `--check-bitbucket-token` | bool | `false` | no | also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--check-github-app` | bool | `false` | no | also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |
@@ -3133,6 +3141,16 @@ repository in the bucket when the config lists none). A run shows as succeeded
 only when its result.json says so; an execution that ended without finalizing
 is an infra_error.
 
+--limit N reads the objects of the newest N runs alone, so a run left out
+costs nothing to leave out; the N are the newest of every repository
+listed, and --mine, --batch, --state and --pr then narrow fewer rows than
+that, never more. 0, the default, reads every run of the window.
+
+--state STATE lists only runs in that state, matched against the status --json
+carries: the `halted (run_cap)` cell is --state halted, and --help lists the
+states the flag takes. A run's state is in its result.json, so this filter
+reads every run it filters -- it narrows the listing, never the reads.
+
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
@@ -3149,12 +3167,14 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--limit` | int | `0` | no | read and list only the newest N runs (0, the default, is every run of the window) |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+| `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
 
 Subcommands:
