@@ -237,7 +237,7 @@ ETag-guarded write as `add`, and the only refusal any of them carries today is
 
 ## S4. The layer side of the read (SD4, D845)
 
-The read side only: the layer's local file has a path — `~/.config/fugaro/projects/<project>-layer.yaml`,
+The read side only: the layer's local file has a path — `~/.config/fugaro/projects/<project>.layer.yaml`,
 resolved by `localcfg.LayerFile` — and a local file that differs from the published object is
 `unpublished`. The stage itself is E2 and is not written here. **`localcfg.LayerFile` is not on
 `main`**: the rigor design's R0 lands it (its E2 above), so this task's red step is red against a

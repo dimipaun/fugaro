@@ -2349,6 +2349,12 @@ func TestDoctorProjectSecretExtraAccessorsReadsNoValue(t *testing.T) {
 // than warning past it — so doctor says so before the project's name is
 // typed. It is a warning, not a failure: a repository that only copies
 // history never needs it.
+//
+// The message names the ordinary update as well (0.15.0), because that is the
+// path an owner meets this on without naming any flag: an installation that
+// opted in re-pins the credentials service's image at the release's signed
+// digest, through this same binary, on every upgrade after the release it
+// opted in under.
 func TestDoctorChecksTheCosignVerifier(t *testing.T) {
 	old := basepin.CosignBin
 	t.Cleanup(func() { basepin.CosignBin = old })
@@ -2386,6 +2392,9 @@ func TestDoctorChecksTheCosignVerifier(t *testing.T) {
 	c := check(t, run(t))
 	if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "cosign is not on PATH") || !strings.Contains(c.Fix, "install cosign") {
 		t.Errorf("with no cosign: %+v", c)
+	}
+	if want := "an ordinary fugaro update of an installation that opted in with --provision-credentials"; !strings.Contains(c.Problem, want) {
+		t.Errorf("the message does not say %q: an installation that opted in resolves the release's credentials image through this same binary on an upgrade that names no flag, so a message that stops at --base sends the owner into a failing fugaro update from a machine doctor called clean: %+v", want, c)
 	}
 }
 

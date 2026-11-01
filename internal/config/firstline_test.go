@@ -12,15 +12,21 @@ func firstLineCfg(t *testing.T, agentYAML string) Config {
 	return *cfg
 }
 
+// TestFirstLineDefaults: first_line_review still has a flat default ("auto",
+// which AgentOf's provider test then reads), but first_line_rounds does not:
+// the number a run spends depends on the rigor mode it resolves, so an unset
+// knob stays 0 here and rigor.DefaultRounds supplies it where the run is
+// planned (internal/runner's planOf, internal/cli's previewKnobsOf). The mode
+// is not known at load, which is why the default cannot be applied here.
 func TestFirstLineDefaults(t *testing.T) {
 	a := firstLineCfg(t, "  auth: api-key").Agent
-	if a.FirstLineReview != "auto" || a.FirstLineRounds != 1 {
-		t.Fatalf("defaults = %q, %d", a.FirstLineReview, a.FirstLineRounds)
+	if a.FirstLineReview != "auto" || a.FirstLineRounds != 0 {
+		t.Fatalf("defaults = %q, %d; want auto and an unset 0 (the mode's default is applied at the run)", a.FirstLineReview, a.FirstLineRounds)
 	}
 }
 
 func TestFirstLineRoundsBounds(t *testing.T) {
-	for n, ok := range map[string]bool{"0": true /* unset: default 1 */, "1": true, "3": true, "4": false, "-1": false} {
+	for n, ok := range map[string]bool{"0": true /* unset: the mode's default */, "1": true, "3": true, "4": false, "-1": false} {
 		_, ps := Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { first_line_rounds: " + n + " }\n" +
 			"workflows:\n  server: { commands: { build: make, test: make test } }\n"))
 		if (len(ps) == 0) != ok {

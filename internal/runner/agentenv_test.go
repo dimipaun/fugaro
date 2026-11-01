@@ -182,7 +182,10 @@ func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 // carries the web tools alone and the review assertions fail. Mutation (a
 // constant review=true): the implement and fix assertions fail.
 func TestManagedSettingsDenyBinaryReadsInReviewStages(t *testing.T) {
-	g := newGW(t, gwConfig(t, "  first_line_review: on\n"), "observe", "")
+	// first_line_rounds comes with first_line_review: this case scripts one
+	// cheap round, and an unset knob takes the resolved mode's row instead
+	// (internal/rigor's DefaultRounds).
+	g := newGW(t, gwConfig(t, "  first_line_review: on\n  first_line_rounds: 1\n"), "observe", "")
 	h := g.harness
 	var denies [][]string
 	read := func(inner step) step {
