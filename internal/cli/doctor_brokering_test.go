@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -218,13 +221,11 @@ func (r *brokeringRig) putBundle(t *testing.T, doc string) string {
 	return id
 }
 
-// bitbucketFake stands in for Bitbucket's own API. The token check makes one
+// bitbucketAnswer stands in for what an API root answers the token check: one
 // call per proxied repository — GET /repositories/<workspace>/<slug> — and
-// nothing else, which the returned counter pins.
-func bitbucketFake(t *testing.T, status int) (*httptest.Server, *atomic.Int64) {
-	t.Helper()
-	var calls atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// nothing else, which the counter pins.
+func bitbucketAnswer(status int, calls *atomic.Int64) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if status != http.StatusOK {
 			http.Error(w, `{"error":{"message":"refused"}}`, status)
@@ -232,7 +233,26 @@ func bitbucketFake(t *testing.T, status int) (*httptest.Server, *atomic.Int64) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"is_private":true}`)
-	}))
+	}
+}
+
+// bitbucketFake stands in for Bitbucket's own API.
+func bitbucketFake(t *testing.T, status int) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var calls atomic.Int64
+	srv := httptest.NewServer(bitbucketAnswer(status, &calls))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+// bitbucketFakeTLS is bitbucketFake over TLS, and it is what a test lists in
+// bitbucket_api_roots: the rule a listed root is held to admits https alone
+// (projectpolicy.ValidBitbucketAPIRoots), so a root a test wants the check to
+// ask has to answer over TLS.
+func bitbucketFakeTLS(t *testing.T, status int) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var calls atomic.Int64
+	srv := httptest.NewTLSServer(bitbucketAnswer(status, &calls))
 	t.Cleanup(srv.Close)
 	return srv, &calls
 }
@@ -246,6 +266,28 @@ func useBitbucketRoot(t *testing.T, root string, client *http.Client) {
 	oldURL, oldHTTP := bitbucketAPIURL, bitbucketAPIClient
 	bitbucketAPIURL, bitbucketAPIClient = root, client
 	t.Cleanup(func() { bitbucketAPIURL, bitbucketAPIClient = oldURL, oldHTTP })
+}
+
+// useBitbucketClient points only the token check's HTTP client, for the tests
+// whose installation lists its roots: those are asked instead of the default
+// one, so the client has to trust them and the default root is left alone.
+func useBitbucketClient(t *testing.T, client *http.Client) {
+	t.Helper()
+	old := bitbucketAPIClient
+	bitbucketAPIClient = client
+	t.Cleanup(func() { bitbucketAPIClient = old })
+}
+
+// bitbucketRootsClient trusts the test servers it is given, which the check's
+// own client has to: a listed root answers over TLS, with a certificate that is
+// the test server's own.
+func bitbucketRootsClient(t *testing.T, servers ...*httptest.Server) *http.Client {
+	t.Helper()
+	pool := x509.NewCertPool()
+	for _, s := range servers {
+		pool.AddCert(s.Certificate())
+	}
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
 }
 
 // pinDoctorNow makes the age checks measure against now for one test.
@@ -527,10 +569,10 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 	t.Run("a root the installation lists", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
-		mine, mineCalls := bitbucketFake(t, http.StatusOK)
+		mine, mineCalls := bitbucketFakeTLS(t, http.StatusOK)
 		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+mine.URL+"\n")
 		def, defCalls := bitbucketFake(t, http.StatusUnauthorized)
-		useBitbucketRoot(t, def.URL, def.Client())
+		useBitbucketRoot(t, def.URL, bitbucketRootsClient(t, mine))
 
 		o, err := r.doctor(t, "--check-bitbucket-token")
 		if err != nil {
@@ -553,8 +595,9 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 	t.Run("a root the installation lists refuses the token", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
-		mine, _ := bitbucketFake(t, http.StatusUnauthorized)
+		mine, _ := bitbucketFakeTLS(t, http.StatusUnauthorized)
 		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+mine.URL+"\n")
+		useBitbucketClient(t, bitbucketRootsClient(t, mine))
 
 		o, err := r.doctor(t, "--check-bitbucket-token")
 		if err != nil {
@@ -576,9 +619,10 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 	t.Run("two listed roots, one accepting", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
-		mine, _ := bitbucketFake(t, http.StatusOK)
-		other, _ := bitbucketFake(t, http.StatusUnauthorized)
+		mine, _ := bitbucketFakeTLS(t, http.StatusOK)
+		other, _ := bitbucketFakeTLS(t, http.StatusUnauthorized)
 		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+other.URL+"\n  - "+mine.URL+"\n")
+		useBitbucketClient(t, bitbucketRootsClient(t, mine, other))
 
 		o, err := r.doctor(t, "--check-bitbucket-token")
 		if err != nil {
@@ -593,9 +637,10 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 	t.Run("two listed roots, one refusing and one that does not answer", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
-		one, _ := bitbucketFake(t, http.StatusUnauthorized)
-		two, _ := bitbucketFake(t, http.StatusBadGateway)
+		one, _ := bitbucketFakeTLS(t, http.StatusUnauthorized)
+		two, _ := bitbucketFakeTLS(t, http.StatusBadGateway)
 		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+one.URL+"\n  - "+two.URL+"\n")
+		useBitbucketClient(t, bitbucketRootsClient(t, one, two))
 
 		o, err := r.doctor(t, "--check-bitbucket-token")
 		if err != nil {
@@ -607,18 +652,66 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 		}
 	})
 
+	// A listed root is a copy, and the node's rule is what admits it before a
+	// credential goes to it: this file is not where a root is validated (the
+	// publish that builds the node is), so a root only this file spells and the
+	// rule refuses — http, or carrying userinfo — is a host doctor will not
+	// send the token to. Skipping it is not the token being refused: the
+	// question goes unasked, which is what the line reports.
+	t.Run("a listed root that is not https", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		plain, plainCalls := bitbucketFake(t, http.StatusOK)
+		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+plain.URL+"\n")
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || vs[0].OK || vs[0].Severity != "info" {
+			t.Fatalf("bitbucket-token-valid = %+v, want one informational line: the root would take the token in clear, so it is not asked", vs)
+		}
+		if !strings.Contains(vs[0].Problem, "could not be asked") {
+			t.Errorf("the line does not say the question went unasked: %q", vs[0].Problem)
+		}
+		if plainCalls.Load() != 0 {
+			t.Errorf("the http root was asked %d time(s), want none: the token goes over it in clear", plainCalls.Load())
+		}
+	})
+
+	t.Run("a listed root that carries userinfo", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		mine, mineCalls := bitbucketFakeTLS(t, http.StatusOK)
+		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - https://person-1@"+strings.TrimPrefix(mine.URL, "https://")+"\n")
+		useBitbucketClient(t, bitbucketRootsClient(t, mine))
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || vs[0].OK || vs[0].Severity != "info" {
+			t.Fatalf("bitbucket-token-valid = %+v, want one informational line: a root with userinfo in it is not asked", vs)
+		}
+		if mineCalls.Load() != 0 {
+			t.Errorf("the root carrying userinfo was asked %d time(s), want none: userinfo is a credential written into the root", mineCalls.Load())
+		}
+	})
+
 	// Each root is bounded by the client's timeout, and a root that runs into
 	// it is a question not answered: rotating a credential because a mirror is
 	// slow is exactly the false warning this check must not write.
 	t.Run("a listed root that does not answer in time", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
-		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slow := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(300 * time.Millisecond)
 		}))
 		t.Cleanup(slow.Close)
 		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+slow.URL+"\n")
-		useBitbucketRoot(t, slow.URL, &http.Client{Timeout: 50 * time.Millisecond})
+		useBitbucketRoot(t, slow.URL, &http.Client{Timeout: 50 * time.Millisecond, Transport: slow.Client().Transport})
 
 		o, err := r.doctor(t, "--check-bitbucket-token")
 		if err != nil {
@@ -639,6 +732,10 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 // root nobody listed), and a check that reads a credential with the operator's
 // own identity must not be pointed at a host by something a launcher can set.
 func TestDoctorBitbucketTokenRoots(t *testing.T) {
+	// The variable a launcher can set names a host here, and it changes
+	// nothing: a root that is in the answer is one the owner listed.
+	t.Setenv(providers.EnvBitbucketAPIURL, "https://unlisted.example")
+
 	lc := &localcfg.Config{}
 	if got := bitbucketTokenRoots(lc); len(got) != 1 || got[0] != bitbucket.DefaultBaseURL {
 		t.Errorf("bitbucketTokenRoots(no list) = %v, want Bitbucket's own API alone", got)

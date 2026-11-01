@@ -122,6 +122,7 @@ import {
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
 } from '../../src/renderer/section'
+import { SKELETON_BLOCK_CLASS, SKELETON_CLASS, SKELETON_SHAPES } from '../../src/renderer/skeleton'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
   LAUNCH_FORM_CLASS,
@@ -2970,6 +2971,164 @@ describe('the placeholder a tab switch draws', () => {
     const rail = railBridge([listRow('aurora', { open: true }), orbitRow()])
     void rail
     expect(readingOf(document), 'the Live screen this console holds is not a placeholder').toBe(null)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The skeleton a tab draws while its data is on its way (console 0.116.1).
+//
+// The owner, 2026-10-31: "when changing tabs in the Console we should show a
+// skeleton while we load the data, no?" The placeholder's own sentence says a
+// tab is waiting, and the shapes beside it are what the panel is going to be:
+// one wrapper per section of that tab (`renderer/skeleton.ts`'s
+// `SKELETON_SHAPES`), replaced section by section as the reads land. The
+// helper's own claims -- what a block is, that the tree says nothing to a reader
+// and that the heights are the vocabulary's -- are `skeleton.test.ts`'s, and the
+// shimmer's two arms are `graph-motion.test.ts`'s.
+// ---------------------------------------------------------------------------
+
+/** skeletonsOf is the panel's skeletons in document order, as the section each
+ * one stands in for. */
+function skeletonsOf(document: FakeDocument): readonly string[] {
+  return classed(panelOf(document), SKELETON_CLASS).map((node) => node.attributes.get('data-section') ?? '')
+}
+
+/** skeletonOf is one section's skeleton, or `null` when that section is not
+ * waiting on anything. */
+function skeletonOf(document: FakeDocument, section: string): FakeNode | null {
+  return (
+    classed(panelOf(document), SKELETON_CLASS).find(
+      (node) => node.attributes.get('data-section') === section,
+    ) ?? null
+  )
+}
+
+/** blocksOf is one section's blocks, as the kind each one is drawn as. */
+function blocksOf(document: FakeDocument, section: string): readonly string[] {
+  const wrapper = skeletonOf(document, section)
+  if (wrapper === null) return []
+  return classed(wrapper, SKELETON_BLOCK_CLASS).map((node) => node.attributes.get('data-shape') ?? '')
+}
+
+/** everyReadHeld is a bridge whose reads all hold, which is what a case about a
+ * wait needs: a tab that has just been clicked stays on its placeholder for as
+ * long as the case says. */
+function everyReadHeld(): FakeBridge {
+  return graphBridge({
+    planStatus: () => holding().reply(),
+    showBudget: () => holding().reply(),
+    runReport: () => holding().reply(),
+    listRuns: () => holding().reply(),
+    coordinatorStatus: () => holding().reply(),
+  })
+}
+
+describe('the skeleton a tab draws while its data is on its way', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('draws each tab’s sections, in the order the tab draws them, in the click’s own frame', async () => {
+    for (const tab of Object.keys(READING_WORDS) as readonly (keyof typeof READING_WORDS)[]) {
+      const { bridge } = everyReadHeld()
+      const document = await boot(bridge, new FakeDocument())
+      buttonFor(document, tab).click()
+      // **Nothing is awaited**: the whole point of the shape is that it is up in
+      // the frame the click happened in, not a turn later when the read the
+      // click started has already answered in a test.
+      expect(skeletonsOf(document), `the ${tab} tab drew no skeleton in the click’s own frame`).toEqual(
+        SKELETON_SHAPES[tab].map((shape) => shape.section),
+      )
+      // The sentence a reader is told is still drawn -- visually hidden beside
+      // the shapes rather than printed over them -- and the blocks hold the shape
+      // of the section they stand in for.
+      expect(readingOf(document), `the ${tab} placeholder lost its sentence`).toContain(
+        `Reading ${READING_WORDS[tab]}…`,
+      )
+      for (const shape of SKELETON_SHAPES[tab]) {
+        expect(blocksOf(document, shape.section), `${tab}'s ${shape.section} drew the wrong blocks`).toEqual([
+          ...shape.blocks,
+        ])
+      }
+      await flush()
+    }
+  })
+
+  it('replaces one section’s skeleton the moment that section’s read lands, and no other', async () => {
+    // Spend is the tab whose two reads answer apart, which is what makes the
+    // per-section half of the owner's rule visible: the caps are drawn from their
+    // own answer while the report is still waiting, and the report's shape -- and
+    // its mark -- stay exactly where they were.
+    const caps = holding()
+    const report = holding()
+    const { bridge } = graphBridge({
+      planStatus: () => holding().reply(),
+      showBudget: () => caps.reply(),
+      runReport: () => report.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'spend').click()
+    expect(skeletonsOf(document)).toEqual(['caps', 'report'])
+
+    caps.release({ ok: true, data: { document: {} } })
+    await flush()
+    // The caps landed: their section is the shell's own, drawn from the answer,
+    // and its skeleton is gone with the wait it stood for.
+    expect(sectionOf(document, 'spend-caps').getAttribute('data-available')).toBe('true')
+    expect(skeletonOf(document, 'caps')).toBeNull()
+    // The report is still waiting, and that is the whole difference: one
+    // section's answer is not the other section's, and a panel that replaced
+    // both when the first landed would be the all-or-nothing redraw the owner's
+    // rule of 2026-10-31 refuses.
+    expect(skeletonsOf(document), 'the report’s skeleton went with the caps’ answer').toEqual(['report'])
+    expect(blocksOf(document, 'report')).toEqual([...SKELETON_SHAPES.spend[1]!.blocks])
+    expect(sectionOf(document, 'spend-report').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
+
+    report.release({ ok: true, data: { document: reportDoc('2026-10-01') } })
+    await flush()
+    expect(skeletonsOf(document)).toEqual([])
+    expect(theSpendView(document)).toEqual(['2026-10-01'])
+  })
+
+  it('draws a refused section’s own sentence instead of a skeleton', async () => {
+    // A refusal is the section's answer: the read was made and it failed, so
+    // there is nothing coming and nothing to hold the shape of.
+    const report = holding()
+    const { bridge } = graphBridge({
+      planStatus: () => holding().reply(),
+      showBudget: () => ({ ok: false, reason: BUDGET_REFUSAL }),
+      runReport: () => report.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'spend').click()
+    expect(skeletonsOf(document)).toEqual(['caps', 'report'])
+
+    await flush()
+    expect(holdsText(sectionOf(document, 'spend-caps'), BUDGET_REFUSAL)).toBe(true)
+    expect(skeletonOf(document, 'caps'), 'a section that refused is not a section that is waiting').toBeNull()
+    expect(skeletonsOf(document)).toEqual(['report'])
+  })
+
+  it('takes the shape down with the placeholder when the tab’s whole read lands', async () => {
+    const plan = holding()
+    const { bridge } = graphBridge({
+      planStatus: () => plan.reply(),
+      showBudget: () => holding().reply(),
+      runReport: () => holding().reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'graph').click()
+    expect(skeletonsOf(document)).toEqual(SKELETON_SHAPES.graph.map((shape) => shape.section))
+
+    plan.release(planStatusReply())
+    await flush()
+    expect(readingOf(document), 'the Graph landed and the placeholder is still up').toBe(null)
+    expect(skeletonsOf(document), 'the skeleton outlived the placeholder it was drawn for').toEqual([])
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
   })
 })
 

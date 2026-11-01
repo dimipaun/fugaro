@@ -152,6 +152,22 @@
   --section-gap: 20px;
   --panel-pad: 18px 22px;
   --hit-min: 44px;
+
+  /* A section's skeleton (console 0.116.1), one height per kind of block plus
+   * the gap between two of them. **These are the claim that the panel does not
+   * move**, which is why they are steps of the vocabulary the content itself
+   * draws with (`--row-height` and its compact form are what a list row is
+   * measured in, `--space-2xs` is the padding-block of one) rather than five
+   * numbers chosen to look right: a skeleton drawn at its own heights is a
+   * panel that jumps the moment the read lands, and the jump is the one thing
+   * the skeleton is for. */
+  --skeleton-line: 12px;
+  --skeleton-chip: var(--row-height-compact);
+  --skeleton-row: var(--row-height);
+  --skeleton-card: 72px;
+  --skeleton-band: 48px;
+  --skeleton-gap: var(--space-2xs);
+  --skeleton-shimmer-ms: 2600ms;
 }
 
 header.console-header {
@@ -2966,4 +2982,115 @@ section.graph svg .graph-node-mark {
 
 section.graph svg .graph-node-run {
   font-family: var(--font-mono);
+}
+
+/* ---- A section's skeleton (console 0.116.1) ------------------------------ */
+
+/* The owner, 2026-10-31: "when changing tabs in the Console we should show a
+ * skeleton while we load the data, no?" A tab switch draws one skeleton per
+ * section (`renderer/skeleton.ts` holds the shapes, `screens/reading.ts` draws
+ * them into the placeholder and `renderer/section.ts` draws one into a section
+ * whose own read is still out), and this block is the whole of what a skeleton
+ * is to look at: a block, at the height of the thing that is coming.
+ *
+ * **A block is a tone, never a figure.** It carries no number, no word and no
+ * state, its whole tree is `aria-hidden`, and the sentence that says a read is
+ * running is drawn beside it (`span.console-reading-status`, visually hidden,
+ * and `p.console-busy-still` after fifteen seconds). Nothing here is a
+ * percentage or a bar: the console knows only that a read has not answered.
+ *
+ * **The one motion is a slow shimmer, and it is the design's second bounded
+ * exception** (section 3.9's amendment of 2026-11-01): one keyframe,
+ * `console-skeleton-shimmer`, whose only property is `background-position`, on
+ * `div.console-skeleton-block` and on nothing else. Both arms below are the
+ * amendment's: under `prefers-reduced-motion: reduce` the blocks are **static**
+ * -- the animation is stopped on the selector that started it and the sweep is
+ * taken off, because a gradient the global freeze stopped mid-sweep is a block
+ * that looks half-loaded -- and under `forced-colors: active` they are
+ * **outlined**: no animation, no fill, and a border in the system's own ink.
+ *
+ * **The row is the height, and the width is the shape.** Every kind is a
+ * `--skeleton-*` step, so a section added tomorrow reaches for a token the
+ * content already uses rather than for a number; `line` and `chip` are narrower
+ * than the column because a heading and a chip are, and the rest run the full
+ * width. */
+
+div.console-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--skeleton-gap);
+  inline-size: 100%;
+}
+
+div.console-skeleton-block {
+  border-radius: var(--radius-chip);
+  background-color: var(--track);
+  background-image: linear-gradient(90deg, var(--track) 0%, var(--surface-2) 50%, var(--track) 100%);
+  background-size: 240% 100%;
+  animation: console-skeleton-shimmer var(--skeleton-shimmer-ms) ease-in-out infinite;
+}
+
+div.console-skeleton-block[data-shape='line'] {
+  block-size: var(--skeleton-line);
+  inline-size: 40%;
+}
+
+div.console-skeleton-block[data-shape='chip'] {
+  block-size: var(--skeleton-chip);
+  inline-size: 96px;
+}
+
+div.console-skeleton-block[data-shape='row'] {
+  block-size: var(--skeleton-row);
+  inline-size: 100%;
+}
+
+div.console-skeleton-block[data-shape='card'] {
+  block-size: var(--skeleton-card);
+  inline-size: 100%;
+}
+
+div.console-skeleton-block[data-shape='band'] {
+  block-size: var(--skeleton-band);
+  inline-size: 100%;
+}
+
+@keyframes console-skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* The placeholder's sentence and the fifteen-second line are for a reader and
+ * not for the eye: the visible half of the panel is the skeletons, and this is
+ * the theme's own visually-hidden rule -- the element keeps its text, its role
+ * and its place in the accessibility tree, and takes no space on the page. */
+span.console-reading-status {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  div.console-skeleton-block {
+    animation: none;
+    background-image: none;
+  }
+}
+
+@media (forced-colors: active) {
+  div.console-skeleton-block {
+    animation: none;
+    background-image: none;
+    background-color: Canvas;
+    border: var(--rule-width) solid CanvasText;
+  }
 }
