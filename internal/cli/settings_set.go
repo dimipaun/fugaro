@@ -359,10 +359,12 @@ func settingsValueIn(data []byte, path []string) string {
 	}
 }
 
-// settingsListEmpty reports whether the node at path is a sequence with no
-// items: the shape the loader refuses where an absent key and an empty list
-// mean different things.
-func settingsListEmpty(data []byte, path []string) bool {
+// settingsListGoneOrEmpty reports whether the node at path is now a sequence
+// with no items, or is gone: the two shapes the loader tells from a written
+// list, and the two an edit that removes the last item can leave behind. The
+// caller checks it only when the edit changed the document, so a key that was
+// never there and stayed away is not mistaken for an emptied list.
+func settingsListGoneOrEmpty(data []byte, path []string) bool {
 	var tree map[string]any
 	if yaml.Unmarshal(data, &tree) != nil {
 		return false
@@ -375,8 +377,13 @@ func settingsListEmpty(data []byte, path []string) bool {
 		}
 		cur, ok = m[p]
 		if !ok {
-			return false
+			return true
 		}
+	}
+	if cur == nil {
+		// The key stands with nothing after it, which is what the signature
+		// writes for a sequence it emptied.
+		return true
 	}
 	s, ok := cur.([]any)
 	return ok && len(s) == 0
@@ -535,13 +542,14 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err != nil {
 		return userErr("%s: %v", key, err)
 	}
-	if mode == "remove" && settingsListEmpty(newData, target.keyPath) {
+	changed := yamledit.Changed(old, newData)
+	if mode == "remove" && changed && settingsListGoneOrEmpty(newData, target.keyPath) {
 		return userErr("removing %s would leave %s an empty list, and an absent key and an empty list mean different things: remove the key with `fugaro settings unset %s --layer %s` instead", quoteWord(o.remove), key, key, target.layer)
 	}
 	if err := settingsReparse(target, newData); err != nil {
 		return err
 	}
-	if !yamledit.Changed(old, newData) {
+	if !changed {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
 		return nil
 	}
