@@ -3238,10 +3238,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// It is the same read planRepo makes for Readiness's D11 gate, and it is
 	// memoized, so this moves that read earlier rather than adding one. A
 	// read that FAILS is left to planRepo, which stops the run on the same
-	// error: this side passes nothing then, and passing nothing is the one
-	// answer that judges no entry — never an empty node, which would read a
-	// node the operator cannot reach as "nothing is proxied" and refuse their
-	// entry over it.
+	// error — except for a node written by an older release, which planRepo
+	// counts as present so the policy stage can migrate it: this side passes
+	// nothing then too, until that stage has migrated the node. Passing
+	// nothing is the one answer that judges no entry — never an empty node,
+	// which would read a node the operator cannot reach as "nothing is
+	// proxied" and refuse their entry over it.
 	//
 	// None of it is conditioned on --plan-only: a disagreement is a
 	// contradiction in the configuration, not a change to make, and a plan
