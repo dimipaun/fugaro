@@ -91,9 +91,12 @@ func renderFlowKey(key string) string {
 // it. plainForm's answer is about block style, where `x, y` is one scalar and
 // `}` is a character like any other; between braces the same bytes are two
 // members and the end of the mapping, so the value is read back where it is
-// going to be written rather than trusted to the other answer.
+// going to be written rather than trusted to the other answer. A quote is
+// refused whatever YAML reads it as, because this package's own scan of the line
+// takes it for the start of a quoted scalar and would never find the end of the
+// member again.
 func flowPlainForm(value string) (string, bool) {
-	if value == "" || strings.ContainsAny(value, "\n\r\t") {
+	if value == "" || strings.ContainsAny(value, "\n\r\t\"'") {
 		return "", false
 	}
 	var n yaml.Node
