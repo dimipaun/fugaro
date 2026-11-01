@@ -914,31 +914,31 @@ test.describe('the Spend screen', () => {
     // The picker asks for a window; the header draws the range that came back.
     // The two are different statements, and the series is the document's own:
     // `report` reads a window of the history, so a day inside the range with no
-    // row is a gap and never a zero.
+    // row is a gap and never a zero. The screen opens on the recent week
+    // (console 0.118.0), so the week is what the first mount asks for and the
+    // month is the change.
     const wide: JSONDoc = { ...REPORT, since: '2026-10-05' }
     const asked = await mountWired(SPEND_DEFAULT_CONTROLS, { '30d': REPORT, '7d': wide })
     const before = await screen(page)
 
     expect(before.windows).toEqual(['7d', '30d', '90d', '12w'])
-    expect(before.currentWindows).toEqual(['30d'])
-    expect(asked.asked).toEqual([{ by: 'day', since: '30d' }])
+    expect(before.currentWindows).toEqual(['7d'])
+    expect(asked.asked).toEqual([{ by: 'day', since: '7d' }])
     expect(before.bars).toBe(6)
-    expect(before.gaps).toEqual(['2026-10-14'])
+    // Eleven days of which the history holds three: the eight days it does not
+    // hold are one hatched column and one table sentence each.
+    expect(before.gaps).toHaveLength(8)
+    expect(before.gaps).toContain('2026-10-05')
+    expect(before.gapSentences).toHaveLength(8)
 
-    const moved = await mountWired({ ...SPEND_DEFAULT_CONTROLS, since: '7d' }, { '30d': REPORT, '7d': wide })
+    const moved = await mountWired({ ...SPEND_DEFAULT_CONTROLS, since: '30d' }, { '30d': REPORT, '7d': wide })
     const after = await screen(page)
 
     // One read, with the new window and nothing else changed.
-    expect(moved.asked).toEqual([{ by: 'day', since: '7d' }])
-    expect(after.currentWindows).toEqual(['7d'])
-    // Eleven days of which the history holds three: the eight days it does not
-    // hold are one hatched column and one table sentence each, and the widened
-    // range is the only thing that changed -- the bars the history does carry
-    // are the same six.
+    expect(moved.asked).toEqual([{ by: 'day', since: '30d' }])
+    expect(after.currentWindows).toEqual(['30d'])
     expect(after.bars).toBe(6)
-    expect(after.gaps).toHaveLength(8)
-    expect(after.gaps).toContain('2026-10-05')
-    expect(after.gapSentences).toHaveLength(8)
+    expect(after.gaps).toEqual(['2026-10-14'])
     // A day the history does not hold is a gap and never a zero, and the
     // assertion is scoped to the chart on purpose: the caps panel is built
     // from `BUDGET` and legitimately draws `$0.00` for a cap nothing has been
@@ -954,10 +954,10 @@ test.describe('the Spend screen', () => {
     // off. The document the read answers with carries the person rows -- a
     // window holding a stale document is the case the withholding is for -- and
     // none of them is drawn, and no address is anywhere in the text.
-    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '30d': PERSON_REPORT })
+    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '7d': PERSON_REPORT })
     const hidden = await screen(page)
 
-    expect(off.asked).toEqual([{ by: 'day', since: '30d' }])
+    expect(off.asked).toEqual([{ by: 'day', since: '7d' }])
     expect(JSON.stringify(off.asked)).not.toContain('person')
     expect(hidden.personsEnabled).toBe('false')
     expect(hidden.personState).toBe('off')
@@ -968,10 +968,10 @@ test.describe('the Spend screen', () => {
     // The operator's own switch: the same read with `by person` and nothing
     // else, and the rows are drawn -- as the console's marker, never the
     // address.
-    const on = await mountWired(personView(SPEND_DEFAULT_CONTROLS, true), { '30d': PERSON_REPORT })
+    const on = await mountWired(personView(SPEND_DEFAULT_CONTROLS, true), { '7d': PERSON_REPORT })
     const shown = await screen(page)
 
-    expect(on.asked).toEqual([{ by: 'person', since: '30d' }])
+    expect(on.asked).toEqual([{ by: 'person', since: '7d' }])
     expect(shown.personsEnabled).toBe('true')
     expect(shown.personState).toBe('on')
     expect(shown.rows).toBe(2)
@@ -987,18 +987,18 @@ test.describe('the Spend screen', () => {
   test('draws the by-person panel from its own read, and keeps the addresses out of it', async () => {
     // The knob on is a *second* read, through a second allow-listed operation
     // (`runs stats --json`), with the window translated from the picker's own
-    // (`spend.ts`'s `PERSON_WINDOW_DAYS`: `30d` is `30d` in both grammars, and
-    // the week form is the one that is not).
+    // (`spend.ts`'s `PERSON_WINDOW_DAYS`: the opening `7d` is a day count both
+    // grammars read, and the twelve-week form is the one they do not).
     const wired = await mountWired(
       personView(SPEND_DEFAULT_CONTROLS, true),
-      { '30d': REPORT },
+      { '7d': REPORT },
       'light',
       STATS_DOCUMENT,
     )
     const drawn = await screen(page)
 
-    expect(wired.asked).toEqual([{ by: 'person', since: '30d' }])
-    expect(wired.askedPeople).toEqual([{ since: '30d' }])
+    expect(wired.asked).toEqual([{ by: 'person', since: '7d' }])
+    expect(wired.askedPeople).toEqual([{ since: '7d' }])
     expect(drawn.peoplePanel).toBe(1)
     expect(drawn.peopleAvailable).toBe('true')
     expect(drawn.peopleView).toBe('all')
@@ -1027,7 +1027,7 @@ test.describe('the Spend screen', () => {
     expect(drawn.peopleSamples).toEqual(['3', '1', '0', '4'])
 
     // The knob off is one read and no panel at all -- not an empty one.
-    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '30d': REPORT }, 'light', STATS_DOCUMENT)
+    const off = await mountWired(SPEND_DEFAULT_CONTROLS, { '7d': REPORT }, 'light', STATS_DOCUMENT)
     const hidden = await screen(page)
 
     expect(off.askedPeople).toEqual([])
@@ -1042,13 +1042,13 @@ test.describe('the Spend screen', () => {
     // screen through `sanitizeRefusal` like every other refusal.
     const refused = await mountWired(
       personView(SPEND_DEFAULT_CONTROLS, true),
-      { '30d': REPORT },
+      { '7d': REPORT },
       'light',
       { refusal: 'runs stats: you are not an operator of this project' },
     )
     const drawn = await screen(page)
 
-    expect(refused.asked).toEqual([{ by: 'person', since: '30d' }])
+    expect(refused.asked).toEqual([{ by: 'person', since: '7d' }])
     expect(drawn.peoplePanel).toBe(1)
     expect(drawn.peopleAvailable).toBe('false')
     expect(drawn.peopleReason).toBe('runs stats: you are not an operator of this project')
@@ -1207,8 +1207,8 @@ test.describe('the Spend view in the dashboard', () => {
     cli.seedSpend({
       budget: { document: BUDGET },
       reports: {
-        '30d': { document: reportWindow('2026-09-16') },
-        '7d': { document: reportWindow('2026-10-09'), delaySeconds: 3 },
+        '7d': { document: reportWindow('2026-10-09') },
+        '30d': { document: reportWindow('2026-09-16'), delaySeconds: 3 },
         '90d': { document: reportWindow('2026-07-18'), delaySeconds: 0.5 },
       },
     })
@@ -1225,9 +1225,9 @@ test.describe('the Spend view in the dashboard', () => {
   test('answers a control change in the frame it happened in, and keeps the last change’s view', async () => {
     await page.locator(tab('spend')).click()
     const since = page.locator(`${THE_SPEND} span.spend-since`)
-    // The view opens on `30d`, which is the console's own default, and the
-    // header draws the day the stub's document for that window covers.
-    await expect(since).toHaveText('2026-09-16')
+    // The view opens on `7d`, which is the console's own default (0.118.0), and
+    // the header draws the day the stub's document for that window covers.
+    await expect(since).toHaveText('2026-10-09')
 
     // **The click's own frame.** The window is pressed and the section read in
     // the same turn of the event loop, with nothing awaited in between -- so a
@@ -1235,7 +1235,7 @@ test.describe('the Spend view in the dashboard', () => {
     // the three seconds this window's read takes are not part of the wait.
     const inTheFrame = await page.evaluate((scope) => {
       const button = Array.from(document.querySelectorAll(`${scope} ol.spend-picker button.spend-window`)).find(
-        (one) => one.textContent === '7d',
+        (one) => one.textContent === '30d',
       )
       if (button === undefined) return null
       ;(button as HTMLElement).click()
@@ -1257,9 +1257,9 @@ test.describe('the Spend view in the dashboard', () => {
     expect(inTheFrame).toEqual({
       busy: 'true',
       marked: true,
-      label: 'Reading spend for 7d, by day…',
+      label: 'Reading spend for 30d, by day…',
       spinner: true,
-      since: '2026-09-16',
+      since: '2026-10-09',
     })
 
     // The second change, made before the first read has answered. Its view is
@@ -1274,7 +1274,7 @@ test.describe('the Spend view in the dashboard', () => {
     // the superseded read exists: the ceiling is on that poll, so a loaded
     // machine slows this case down rather than letting it pass before the answer
     // it is about has been produced.
-    await expect.poll(() => cli.answeredReads(), { timeout: 30_000 }).toContain('report 7d')
+    await expect.poll(() => cli.answeredReads(), { timeout: 30_000 }).toContain('report 30d')
     // The answer has been printed by then; this is the hop to the renderer and
     // not a read, and it is the only fixed wait the case has left.
     await page.waitForTimeout(1000)

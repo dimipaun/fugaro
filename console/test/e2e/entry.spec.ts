@@ -46,6 +46,10 @@
 //     process spawns the installation's own `fugaro watch --json`, and the
 //     fixture's repository and runs appear in the page -- drawn by the one
 //     script the document loaded, with no code injected into the window.
+//   - **a run row is answered in the frame it was clicked in.** The click and
+//     the reading of the panel happen in one task, while the run's two reads are
+//     real IPC calls that cannot answer inside it: the run screen's frame, both
+//     of its sections marked busy, is what the click itself draws.
 //
 // **The premise (Task 3.4b; review S3).** Every launch here runs against a
 // scratch `--user-data-dir` seeded with one **active installation naming the
@@ -813,6 +817,62 @@ test.describe('the renderer entry, in the real window', () => {
       await close(launched)
     }
   })
+  test('a click on a run row draws the run’s frame in the click’s own frame, and fills it after', async () => {
+    // The owner's report of 2026-11-01: clicking a run id looked as though it
+    // had not registered, because the screen waited for `diagnose` and `logs`
+    // before drawing anything. The click and the reading of the panel below
+    // happen in **one task**, from the page's own world: the two reads are real
+    // IPC calls and cannot answer inside the task that started them, so what
+    // this reads is the frame the click itself drew -- the heading, both
+    // sections marked busy with their own skeletons, and no figure.
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const launched = await launch(stub.env)
+    try {
+      const panel = launched.page.locator('div.console-panel')
+      const row = panel.locator('tr.live-run').first()
+      await expect(row.locator('td.live-run-id')).toHaveText('20261015-120000-aa01')
+
+      const frame = await launched.page.evaluate(() => {
+        const row = document.querySelector('tr.live-run')
+        ;(row as HTMLElement | null)?.click()
+        const drawn = document.querySelector('div.console-panel')?.firstElementChild ?? null
+        const main = drawn?.querySelector('div.run-main') ?? null
+        const logs = drawn?.querySelector('section.run-logs') ?? null
+        return {
+          drawn: drawn?.getAttribute('class') ?? null,
+          heading: drawn?.querySelector('h1.run-id')?.textContent ?? null,
+          wayBack: drawn?.querySelector('button.run-crumb-live')?.textContent ?? null,
+          mainBusy: main?.getAttribute('aria-busy') ?? null,
+          logsBusy: logs?.getAttribute('aria-busy') ?? null,
+          skeletons: drawn?.querySelectorAll('div.console-skeleton').length ?? -1,
+          labels: [...(drawn?.querySelectorAll('span.console-busy-label') ?? [])].map(
+            (one) => one.textContent ?? '',
+          ),
+          runLogLines: drawn?.querySelectorAll('p.run-log-line').length ?? -1,
+        }
+      })
+      expect(frame.drawn, 'the click drew no run screen').toBe('run')
+      expect(frame.heading).toBe('20261015-120000-aa01')
+      expect(frame.wayBack).toBe('Live')
+      expect(frame.mainBusy).toBe('true')
+      expect(frame.logsBusy).toBe('true')
+      expect(frame.skeletons).toBe(2)
+      expect(frame.labels).toContain('Reading the diagnosis of 20261015-120000-aa01')
+      expect(frame.labels).toContain('Reading the log window of 20261015-120000-aa01')
+      expect(frame.runLogLines, 'a log window was drawn before its read answered').toBe(0)
+
+      // And the frame is what stays: the reads answer afterwards -- this stub
+      // refuses anything but `watch` and `doctor`, so each section ends in its
+      // own refusal naming its own command -- and no busy mark outlives them.
+      await expect(panel.locator('h1.run-id')).toHaveText('20261015-120000-aa01')
+      await expect(panel.locator('div.console-busy')).toHaveCount(0)
+      await expect(panel.locator('div.run-main .unavailable-operation')).toHaveText('run.diagnose')
+      await expect(panel.locator('section.run-logs .unavailable-operation')).toHaveText('run.logs')
+    } finally {
+      await close(launched)
+    }
+  })
+
   test('the chrome keeps its marks under forced colors, the rail’s rows with them (design section 6.4)', async () => {
     // Section 4.4's promise, read from inside a page the system is painting in
     // forced colors: the current view is still marked, the chrome's boundary is
