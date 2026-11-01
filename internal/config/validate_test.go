@@ -136,3 +136,53 @@ workflows:
 		t.Error("a file that opts in resolves to the same hash as one that does not")
 	}
 }
+
+// TestValidateRefusesDuplicateAreaGlob is F14: two rigor.areas rules of one
+// layer that carry the same glob are refused, each named at the rule that
+// repeats it. Both would match exactly the same paths, and only the strictest
+// matched rule decides (D20c) — so one of the two is a rule the run's record
+// could never name for anything the other does not also cover, and a layer
+// that says the same thing twice is a mistake the writer cannot see.
+//
+// The same glob in the two layers is not this and stays allowed: the area
+// lists are a union rather than a replacement, and each is judged in its own
+// layer (D20c).
+func TestValidateRefusesDuplicateAreaGlob(t *testing.T) {
+	const repo = minimalRepo + `git: { provider: github }
+rigor:
+  default: pro
+  areas:
+    - { name: payments, match: "payments/**", mode: hotfix }
+    - { name: payments-api, match: "payments/api/**", mode: pro }
+    - { name: payments-again, match: "payments/**", mode: poc }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+	cfg, ps := Parse([]byte(repo))
+	if cfg != nil {
+		t.Fatalf("a file with two rules for one glob resolved: %+v", cfg.Rigor)
+	}
+	if len(ps) != 1 || ps[0].Path != "rigor.areas[2]" {
+		t.Fatalf("problems = %s", problemsText(ps))
+	}
+	for _, want := range []string{`"payments/**"`, "areas[0]"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the refusal of rigor.areas[2] does not carry %q: %q", want, ps[0].Message)
+		}
+	}
+
+	// The project layer's rule for the same glob, over a repository that
+	// writes its own: two layers, two rules, nothing refused.
+	const layer = `version: 1
+project: acme
+gcp_project: acme-fugaro
+defaults:
+  rigor:
+    areas:
+      - { name: payments, match: "payments/**", mode: hotfix }
+`
+	same := strings.Replace(repo, "    - { name: payments-again, match: \"payments/**\", mode: poc }\n", "", 1)
+	if c, _, ps := Resolve([]byte(same), mustLayer(t, layer)); c == nil || len(ps) > 0 {
+		t.Fatalf("the same glob in the two layers was refused: %s", problemsText(ps))
+	}
+}
