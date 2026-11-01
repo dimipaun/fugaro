@@ -10,8 +10,9 @@ disagrees with [spec.md](spec.md), it wins.**
   show`. Every `console/…` and `internal/…` citation below is a line of that commit unless it says
   otherwise.
 - **S5, `fugaro settings get|set|unset`, pull request #1525**, branch `fugaro/20261101-151752-0d66`,
-  head `f7871b3a`, **open in review and not merged**. It is read through `git show
-  FETCH_HEAD:<path>`, and every citation into it is marked **S5 #1525**. It is the command every
+  head `f7871b3a` — **read while it was open, and merged into `main` as #1525
+  (`f09f10e5`) while this design was in review**, unchanged, so every line number taken from it above
+  still holds on this branch. Every citation into it is marked **S5 #1525**. It is the command every
   edit in this design spawns, so it is the single most load-bearing input here.
 - **`docs/settings-commands/`** — its [spec.md](../settings-commands/spec.md) §4.2, §4.3 and §4.4
   (the write path, `unset`, and the allow-list of keys the generic path owns),
@@ -27,7 +28,7 @@ disagrees with [spec.md](spec.md), it wins.**
   `console/src/renderer/screens/projects.ts`, `console/src/renderer/writes.ts`, and the unit and e2e
   tests named in the findings.
 
-**Not read:** any open pull request other than #1525. Where this design needs a number or a fact
+**Not read:** any open pull request (#1525 has since merged). Where this design needs a number or a fact
 that lives in another open design (#1514's D1063/D1074 are the two this tree cites), it says so
 rather than guessing.
 
@@ -212,8 +213,9 @@ does not have (F5/P4). None of the four is a console change, and three of them a
 ## 4. Owner decisions
 
 Recommendation first in each, with the reason and the cost of the alternative. **D1100–D1139 are
-this work's block. D1100 and D1101 are ANSWERED by the owner on 2026-11-01, in the ask itself;
-D1102–D1121 are written and every one is `OPEN`; D1122–D1139 are reserved and unused.**
+this work's block. D1100–D1121 are ANSWERED by the owner on 2026-11-01: D1100 and D1101 in the ask
+itself, and D1102–D1120 and D1121 as recommended in his ruling on this design — the one exception is
+D1107, which stays `OPEN` with all three of its options. D1122–D1139 are reserved and unused.**
 
 An answer here is not an approval: the plan's tasks start only when the owner approves them.
 
@@ -231,91 +233,97 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   that wins, and for a widening one extra deliberate tick. The rejected alternative is option **C**
   of **D1107**, which is this design's own first sketch and the form the owner ruled out.
 
-- **D1102 (OPEN, recommended: the CLI's read carries the writability facts). Which rows get a
-  pencil, and where does the console learn it?** *Options:* **(a)** `settings --json`'s row gains
-  three fields — `writable` (a boolean: the generic path owns this key), `owner` (the command family
-  that writes it, or the empty string), and `target_layer` (the layer `settings set` would write
-  with no `--layer`, i.e. `settingsDefaultLayer`'s answer); **(b)** the console keeps its own copy
-  of `settingsGenericKeys` and `settingsGenericPrefixes`; **(c)** the console draws a pencil on
-  every row and lets the CLI refuse the ones it will not write. *Recommendation:* **(a)**, and the
-  reason is the settings design's own F12 argument turned around: a list kept in TypeScript is a
-  fourth copy of a fact that already has one home, and it drifts the day a key is added to the
-  registry — silently, in the direction of offering an edit that will be refused, or hiding one that
-  would work. **(c)** is worse than **(b)**: it puts a button on every row and makes a refusal the
-  ordinary path, which teaches the operator that the console's refusals are noise. *Cost of (a):* a
-  wire-format addition to a document the console reads, which is an addition of members and
-  therefore no version bump (`schemas/settings.schema.json`'s `version` stays 1); it is **P2**.
-  *Where it is written:* the console's own contract section, `console/docs/json-contract.md` §6.15,
-  which the settings design's D848 already reserved for the Settings view.
+- **D1102 (ANSWERED by the owner, 2026-11-01, as recommended: the CLI's read carries the writability
+  facts). Which rows get a pencil, and where does the console learn it?** *Options:* **(a)**
+  `settings --json`'s row gains three fields — `writable` (a boolean: the generic path owns this
+  key), `owner` (the command family that writes it, or the empty string), and `target_layer` (the
+  layer `settings set` would write with no `--layer`, i.e. `settingsDefaultLayer`'s answer); **(b)**
+  the console keeps its own copy of `settingsGenericKeys` and `settingsGenericPrefixes`; **(c)** the
+  console draws a pencil on every row and lets the CLI refuse the ones it will not write.
+  *Recommendation:* **(a)**, and the reason is the settings design's own F12 argument turned around:
+  a list kept in TypeScript is a fourth copy of a fact that already has one home, and it drifts the
+  day a key is added to the registry — silently, in the direction of offering an edit that will be
+  refused, or hiding one that would work. **(c)** is worse than **(b)**: it puts a button on every
+  row and makes a refusal the ordinary path, which teaches the operator that the console's refusals
+  are noise. *Cost of (a):* a wire-format addition to a document the console reads, which is an
+  addition of members and therefore no version bump (`schemas/settings.schema.json`'s `version`
+  stays 1); it is **P2**. *Where it is written:* the console's own contract section,
+  `console/docs/json-contract.md` §6.15, which the settings design's D848 already reserved for the
+  Settings view. *Answered as recommended by the owner on 2026-11-01, in [spec.md](spec.md).*
 
-- **D1103 (OPEN, recommended: one spawn of `settings set|unset` per confirmed window). Which command
-  does a pencil spawn?** *Options:* **(a)** `fugaro settings set KEY VALUE …` or `fugaro settings
-  unset KEY …`, spawned once per confirmed window, through the allow-list; **(b)** the console
-  writes the file itself; **(c)** the console batches several edits into one child.
-  *Recommendation:* **(a)**, because the brief's rule 1 is that the console has no editing code of
-  its own and **(b)** is the whole of what that forbids: a second editor would have to reproduce
-  `internal/yamledit`'s comment-preserving splice, the strict re-parse, the backup and the atomic
-  write, and it would be the copy that drifts. **(c)** is refused because the CLI's confirmation,
-  its compare-and-swap and its `next: fugaro update` line are per edit, and a batch would show the
-  operator one dialog for a set of writes whose individual diffs they have not read. *Cost of (a):*
-  one child per edit, which is a second of latency on a machine where the console already spawns
-  children for every read.
+- **D1103 (ANSWERED by the owner, 2026-11-01, as recommended: one spawn of `settings set|unset` per
+  confirmed window). Which command does a pencil spawn?** *Options:* **(a)** `fugaro settings set
+  KEY VALUE …` or `fugaro settings unset KEY …`, spawned once per confirmed window, through the
+  allow-list; **(b)** the console writes the file itself; **(c)** the console batches several edits
+  into one child. *Recommendation:* **(a)**, because the brief's rule 1 is that the console has no
+  editing code of its own and **(b)** is the whole of what that forbids: a second editor would have
+  to reproduce `internal/yamledit`'s comment-preserving splice, the strict re-parse, the backup and
+  the atomic write, and it would be the copy that drifts. **(c)** is refused because the CLI's
+  confirmation, its compare-and-swap and its `next: fugaro update` line are per edit, and a batch
+  would show the operator one dialog for a set of writes whose individual diffs they have not read.
+  *Cost of (a):* one child per edit, which is a second of latency on a machine where the console
+  already spawns children for every read. *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
-- **D1104 (OPEN, recommended: the value is its own argv element, and the value word is separated by
-  `--`). How does a value reach the CLI, and how is flag injection prevented?** *Options:* **(a)**
-  `settings set KEY --layer L --yes -- <VALUE>`, with the value as a **separate argv element** after
-  the `--` terminator, and list edits in the `=` form (`--add=V`, `--remove=V`); **(b)** the value
-  after the key with no terminator, relying on the value never beginning with `-`; **(c)** the value
-  on the child's stdin. *Recommendation:* **(a)**. The reason is the one rule 11 already gives for
-  `--title=` and `--plan-task=`: **a value that follows `=` is part of the flag's own word, and
-  nothing that follows can be read as a flag** — but `VALUE` is a **positional** argument here
-  (`Use: "set KEY VALUE"`, **S5 #1525** `internal/cli/settings_set.go:163`), so there is no `=` to
-  hide behind and the terminator is the equivalent. `settings set commit_name --layer local --yes --
-  -draft` sets the name `-draft`; without the `--`, pflag reads `-draft` as an unknown shorthand and
-  the edit fails — or worse, a value spelled `--layer` silently retargets the write. **(b)** is the
-  form this row must never build. **(c)** is refused because S5 reads stdin for its confirmation,
-  not for its value (`confirmSettingsWrite`, **S5 #1525** `internal/cli/settings_write.go:151`), so
-  a value on stdin would have to arrive before the confirmation that the console has not shown yet.
-  *Every word is a fixed literal of the console's own, and the value is passed as an array element
-  with `shell: false`* — the property `argvFor` (`console/src/main/spawn.ts:980`) already guarantees
-  and `console/test/unit/spawn.test.ts` already pins. *On the WSL route the wrapper's own
+- **D1104 (ANSWERED by the owner, 2026-11-01, as recommended: the value is its own argv element, and
+  the value word is separated by `--`). How does a value reach the CLI, and how is flag injection
+  prevented?** *Options:* **(a)** `settings set KEY --layer L --yes -- <VALUE>`, with the value as a
+  **separate argv element** after the `--` terminator, and list edits in the `=` form (`--add=V`,
+  `--remove=V`); **(b)** the value after the key with no terminator, relying on the value never
+  beginning with `-`; **(c)** the value on the child's stdin. *Recommendation:* **(a)**. The reason
+  is the one rule 11 already gives for `--title=` and `--plan-task=`: **a value that follows `=` is
+  part of the flag's own word, and nothing that follows can be read as a flag** — but `VALUE` is a
+  **positional** argument here (`Use: "set KEY VALUE"`, **S5 #1525**
+  `internal/cli/settings_set.go:163`), so there is no `=` to hide behind and the terminator is the
+  equivalent. `settings set commit_name --layer local --yes -- -draft` sets the name `-draft`;
+  without the `--`, pflag reads `-draft` as an unknown shorthand and the edit fails — or worse, a
+  value spelled `--layer` silently retargets the write. **(b)** is the form this row must never
+  build. **(c)** is refused because S5 reads stdin for its confirmation, not for its value
+  (`confirmSettingsWrite`, **S5 #1525** `internal/cli/settings_write.go:151`), so a value on stdin
+  would have to arrive before the confirmation that the console has not shown yet. *Every word is a
+  fixed literal of the console's own, and the value is passed as an array element with `shell:
+  false`* — the property `argvFor` (`console/src/main/spawn.ts:980`) already guarantees and
+  `console/test/unit/spawn.test.ts` already pins. *On the WSL route the wrapper's own
   `distroShellUnsafe` check refuses a word with shell metacharacters, so a value containing one is
   refused there and the edit is offered as a command to copy instead (D1107's option **B**
-  behaviour, applied per word).*
+  behaviour, applied per word).* *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
-- **D1105 (OPEN, recommended: the console passes `--layer` explicitly, and only after the CLI named
-  it). Which layer does a pencil write, and who chooses?** *Options:* **(a)** the console passes no
-  `--layer` and lets S5 pick the narrowest layer the key may be set in (`settingsDefaultLayer`, **S5
-  #1525** `internal/cli/settings_set.go:263`); **(b)** the console passes `--layer` explicitly, from
-  the `target_layer` field **D1102(a)** adds, and shows it in the window; **(c)** the console offers
-  the operator a layer chooser. *Recommendation:* **(b)**, because rule 11's whole property is that
-  **what the window shows is what is spawned** — a window that says "written to the local config"
-  while the child is free to choose a different layer is showing the operator something it does not
-  know. **(a)** is the same argv with less honesty; **(c)** is a product decision this design does
-  not take, and it would put a layer the operator cannot reason about behind a control. *Cost of
-  (b):* one more field in the read (**P2**), and the console must refuse to open a window for a row
-  whose `target_layer` is empty.
+- **D1105 (ANSWERED by the owner, 2026-11-01, as recommended: the console passes `--layer`
+  explicitly, and only after the CLI named it). Which layer does a pencil write, and who chooses?**
+  *Options:* **(a)** the console passes no `--layer` and lets S5 pick the narrowest layer the key
+  may be set in (`settingsDefaultLayer`, **S5 #1525** `internal/cli/settings_set.go:263`); **(b)**
+  the console passes `--layer` explicitly, from the `target_layer` field **D1102(a)** adds, and
+  shows it in the window; **(c)** the console offers the operator a layer chooser. *Recommendation:*
+  **(b)**, because rule 11's whole property is that **what the window shows is what is spawned** — a
+  window that says "written to the local config" while the child is free to choose a different layer
+  is showing the operator something it does not know. **(a)** is the same argv with less honesty;
+  **(c)** is a product decision this design does not take, and it would put a layer the operator
+  cannot reason about behind a control. *Cost of (b):* one more field in the read (**P2**), and the
+  console must refuse to open a window for a row whose `target_layer` is empty. *Answered as
+  recommended by the owner on 2026-11-01, in [spec.md](spec.md).*
 
-- **D1106 (OPEN, recommended: a dry-run classification, `settings set|unset … --dry-run --json`).
-  How does the console know whether an edit widens?** *Options:* **(a)** a `--dry-run --json` on the
-  two write commands, printing a closed document — `{version, key, layer, path, changed, widening,
-  why, old, new, refusal}` — writing nothing and touching no backup; **(b)** the console re-derives
-  widening from the registry's key list and the old/new values; **(c)** the console performs the
-  write and reads the CLI's prompt behaviour from the exit code. *Recommendation:* **(a)**. **(b)**
-  is the option the brief forbids and the one that is wrong on the merits: widening is
-  `settingsCeilingKey` (`internal/cli/settings_set.go:503`) **and** `settingsLoosens` (`:592`)
-  **and** `settingsListSubset` (`:615`) **and** `settingsTypedWrite` (`:633`), including the
-  deliberate "a form this Fugaro does not know how to compare is treated as a loosening" rule — a
-  TypeScript re-implementation would answer *narrowing* where the CLI answers *widening*, which is
-  the one direction that must never be got wrong. **(c)** is refused because a widening's failure
-  mode is a refusal **after** the operator confirmed a dialog that could not have confirmed it. *The
-  dry run is also what gives the window its "which layer is written" and "old value" fields from one
-  place, so the window and the child cannot disagree.* *Exit codes:* `0` with a document for a
-  classification; non-zero with the CLI's own sentence for a refusal (a key the generic path does
-  not write, a layer the key may not be set in, a value the loader refuses, a sensitive key) — and
-  the console shows that sentence and **offers no pencil** for the row from then on, for this
-  session. *Cost of (a):* a new flag and a new document on two commands, and the schema entry that
-  pins it; it is **P3**.
+- **D1106 (ANSWERED by the owner, 2026-11-01, as recommended: a dry-run classification, `settings
+  set|unset … --dry-run --json`). How does the console know whether an edit widens?** *Options:*
+  **(a)** a `--dry-run --json` on the two write commands, printing a closed document — `{version,
+  key, layer, path, changed, widening, why, old, new, refusal}` — writing nothing and touching no
+  backup; **(b)** the console re-derives widening from the registry's key list and the old/new
+  values; **(c)** the console performs the write and reads the CLI's prompt behaviour from the exit
+  code. *Recommendation:* **(a)**. **(b)** is the option the brief forbids and the one that is wrong
+  on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:503`) **and**
+  `settingsLoosens` (`:592`) **and** `settingsListSubset` (`:615`) **and** `settingsTypedWrite`
+  (`:633`), including the deliberate "a form this Fugaro does not know how to compare is treated as
+  a loosening" rule — a TypeScript re-implementation would answer *narrowing* where the CLI answers
+  *widening*, which is the one direction that must never be got wrong. **(c)** is refused because a
+  widening's failure mode is a refusal **after** the operator confirmed a dialog that could not have
+  confirmed it. *The dry run is also what gives the window its "which layer is written" and "old
+  value" fields from one place, so the window and the child cannot disagree.* *Exit codes:* `0` with
+  a document for a classification; non-zero with the CLI's own sentence for a refusal (a key the
+  generic path does not write, a layer the key may not be set in, a value the loader refuses, a
+  sensitive key) — and the console shows that sentence and **offers no pencil** for the row from
+  then on, for this session. *Cost of (a):* a new flag and a new document on two commands, and the
+  schema entry that pins it; it is **P3**. *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
 - **D1107 (OPEN, recommended: option A, and it is a deliberate weakening of D846 on one path). S5's
   widening path needs the project's name typed at a terminal, and the console has no terminal. What
@@ -367,62 +375,71 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
     chooses, the console's widening dialog is the same* (**D1109**): the extra tick is the console's
     own, and it is not the typed name.
 
-- **D1108 (OPEN, recommended: the six fields below, and nothing else). What does the confirmation
-  window show?** *Recommendation:* **the key**; **the old value** (from the dry run's `old`, and the
-  read's `value` when the key is unset); **the new value**; **the layer written** (from
-  `target_layer`, D1105); **the layer that currently wins** (from the read's `wins`, F8); and **one
-  sentence, present only when the edit will not change what runs** — which is **D1114**. Plus, for a
-  widening, the CLI's own `why` sentence from the dry run (D1106) and the tick (D1109); and for
-  every edit, the exact argv, field by field, as rule 11's window does. *Why these six:* they are
-  the smallest set that answers "what am I changing, where does it land, and will it matter" — the
-  three questions a person actually has — and every one of them is a value the CLI produced rather
-  than one the console computed. *What it must not show:* a diff of the file (the CLI prints one and
-  the console does not re-render it), any other key, and any value of a sensitive row (D1111).
+- **D1108 (ANSWERED by the owner, 2026-11-01, as recommended: the six fields below, and nothing
+  else). What does the confirmation window show?** *Recommendation:* **the key**; **the old value**
+  (from the dry run's `old`, and the read's `value` when the key is unset); **the new value**; **the
+  layer written** (from `target_layer`, D1105); **the layer that currently wins** (from the read's
+  `wins`, F8); and **one sentence, present only when the edit will not change what runs** — which is
+  **D1114**. Plus, for a widening, the CLI's own `why` sentence from the dry run (D1106) and the
+  tick (D1109); and for every edit, the exact argv, field by field, as rule 11's window does. *Why
+  these six:* they are the smallest set that answers "what am I changing, where does it land, and
+  will it matter" — the three questions a person actually has — and every one of them is a value the
+  CLI produced rather than one the console computed. *What it must not show:* a diff of the file
+  (the CLI prints one and the console does not re-render it), any other key, and any part of a
+  sensitive row — which is hidden outright rather than shown empty (D1111, `sensitive`). *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
-- **D1109 (OPEN, recommended: cancel is the default; a widening needs one extra tick). How does the
-  dialog behave for a widening and for a narrowing?** *Recommendation:* one window, two shapes. **A
-  narrowing or a non-widening edit is one click**: Confirm is the default button and a single
-  deliberate click confirms. **A widening is two**: **Cancel is the default button** — so Escape,
-  Enter and the window's own close all cancel — and Confirm is **disabled until a checkbox labelled
-  "I understand this raises a limit" is ticked**, in a control with an accessible name that says
-  what is being raised. *Why a tick rather than a second dialog or a hold-to-confirm:* it is exactly
-  what the owner asked for (D1101) and it defeats the failure it exists for — a stray double-click
-  cannot both focus the window and tick a box and press Confirm, and unlike a delay it does not
-  depend on a timing constant that a fast machine defeats (the case rule 11's own
-  `CONFIRM_READY_DELAY_MS` paragraph records rather than claims away). *The tick is not a substitute
-  for `CONFIRM_READY_DELAY_MS`:* both apply, the delay as it does for the launch window, and the
-  tick resets whenever the window is re-shown or re-focused. *The console does not decide which
-  shape a window takes:* it is the dry run's `widening` field (D1106), so a rule change in S5
-  changes the dialog with no console edit. *Under D1107's option B,* a widening window draws the
-  command to copy and its Confirm button is **absent**, not disabled.
+- **D1109 (ANSWERED by the owner, 2026-11-01, as recommended: cancel is the default; a widening
+  needs one extra tick). How does the dialog behave for a widening and for a narrowing?**
+  *Recommendation:* one window, two shapes. **A narrowing or a non-widening edit is one click**:
+  Confirm is the default button and a single deliberate click confirms. **A widening is two**:
+  **Cancel is the default button** — so Escape, Enter and the window's own close all cancel — and
+  Confirm is **disabled until a checkbox labelled "I understand this raises a limit" is ticked**, in
+  a control with an accessible name that says what is being raised. *Why a tick rather than a second
+  dialog or a hold-to-confirm:* it is exactly what the owner asked for (D1101) and it defeats the
+  failure it exists for — a stray double-click cannot both focus the window and tick a box and press
+  Confirm, and unlike a delay it does not depend on a timing constant that a fast machine defeats
+  (the case rule 11's own `CONFIRM_READY_DELAY_MS` paragraph records rather than claims away). *The
+  tick is not a substitute for `CONFIRM_READY_DELAY_MS`:* both apply, the delay as it does for the
+  launch window, and the tick resets whenever the window is re-shown or re-focused. *The console
+  does not decide which shape a window takes:* it is the dry run's `widening` field (D1106), so a
+  rule change in S5 changes the dialog with no console edit. *Under D1107's option B,* a widening
+  window draws the command to copy and its Confirm button is **absent**, not disabled. *Answered as
+  recommended by the owner on 2026-11-01, in [spec.md](spec.md).*
 
-- **D1110 (OPEN, recommended: no roles are invented; "administrator" is the CLI's own permission
-  outcome). Who may edit?** *The problem:* the ask says "administrators", the console has no roles,
-  and the roles UX is not approved. *Options:* **(a)** define "can edit" as "whoever can write the
-  local config and the cloud project today", which is the CLI's own outcome — the operator on this
-  machine, editing their own files, with the cloud half decided by IAM at publish; **(b)** invent a
-  local role concept in the console; **(c)** hide every pencil until a roles design lands.
-  *Recommendation:* **(a)**. It is the settings design's own SD18 answer ("anyone may edit their own
-  file; the boundary stays IAM at publish") applied to a second surface, and it invents nothing: a
-  permission refusal is the CLI's own sentence, shown verbatim and bounded
-  (`MAX_REPLY_REASON_LENGTH`, `console/src/main/ipc.ts:150`), with the section marked `unavailable`
-  — never a console-authored "you are not an administrator", which would be a role claim the console
-  cannot make. **(b)** is refused because a role the console invents is a role the CLI does not
-  enforce, and **(c)** refuses the owner's ask. *Cost of (a):* the console's "administrator" is a
-  word in the owner's ask and not a word in any code, and the design says so rather than papering
-  over it.
+- **D1110 (ANSWERED by the owner, 2026-11-01, as recommended: no roles are invented; "administrator"
+  is the CLI's own permission outcome). Who may edit?** *The problem:* the ask says
+  "administrators", the console has no roles, and the roles UX is not approved. *Options:* **(a)**
+  define "can edit" as "whoever can write the local config and the cloud project today", which is
+  the CLI's own outcome — the operator on this machine, editing their own files, with the cloud half
+  decided by IAM at publish; **(b)** invent a local role concept in the console; **(c)** hide every
+  pencil until a roles design lands. *Recommendation:* **(a)**. It is the settings design's own SD18
+  answer ("anyone may edit their own file; the boundary stays IAM at publish") applied to a second
+  surface, and it invents nothing: a permission refusal is the CLI's own sentence, shown verbatim
+  and bounded (`MAX_REPLY_REASON_LENGTH`, `console/src/main/ipc.ts:150`), with the section marked
+  `unavailable` — never a console-authored "you are not an administrator", which would be a role
+  claim the console cannot make. **(b)** is refused because a role the console invents is a role the
+  CLI does not enforce, and **(c)** refuses the owner's ask. *Cost of (a):* the console's
+  "administrator" is a word in the owner's ask and not a word in any code, and the design says so
+  rather than papering over it. *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
-- **D1111 (OPEN, recommended: the pencil set is the CLI's `writable` answer, minus sensitive rows).
-  Which rows the console never offers, and how it knows.** *Recommendation:* **four** exclusions,
-  and every one of them is read, never decided:
+- **D1111 (ANSWERED by the owner, 2026-11-01, as recommended: the pencil set is the CLI's `writable`
+  answer, minus sensitive rows). Which rows the console never offers, and how it knows.**
+  *Recommendation:* **four** exclusions, and every one of them is read, never decided:
   1. **A row the generic path does not own** — `writable: false` in the read (D1102) — is drawn with
      **no pencil**, and the row says which command owns it, from `owner`: S5's own family names
      (`settingsFamilyCommands`, **S5 #1525** `internal/cli/settings_set.go:39`, whose values are
      `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`,
      `fugaro project`). A row with `writable: false` and an empty `owner` says the generic path does
      not write it and names nothing, which is the honest answer for an installation-plumbing key.
-  2. **A sensitive row** — `sensitive: true` (F6) — is **never offered, never drawn in a
-     confirmation and never in a diff**. The console keeps no list: the field is the CLI's.
+  2. **A sensitive row** — `sensitive: true` (F6) — is **hidden**: the row is **not drawn at all**,
+     so it carries **no key, no value and no pencil**, and it reaches no confirmation window and no
+     diff. This is the owner's ruling of 2026-11-01, and it is stronger than "drawn without its
+     value": a row the console draws is a row the console has an opinion about, and the empty cell
+     still tells a reader that a key is there. The case is pinned by
+     `a Sensitive row is absent from the rendered table` (**D1118**), which asserts the row is gone
+     rather than blank. The console keeps no list: the field is the CLI's.
   3. **A row whose `target_layer` is empty** — a key S5 would not write with no `--layer` — is
      refused a pencil for the same reason.
   4. **A managed project, and a coding agent's session**, are the two refusals the brief names, and
@@ -432,150 +449,170 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
      and nothing for it to hide. If the owner wants one, it is a change to S5 (**P1**'s commit), and
      the console's rule then becomes a fifth read field rather than a fifth console rule. *Cost:* on
      the day this ships, a managed installation sees pencils it would not see under a stricter
-     reading of the brief. That is stated here rather than discovered later.
+     reading of the brief. That is stated here rather than discovered later. *Answered as
+     recommended by the owner on 2026-11-01, in [spec.md](spec.md).*
 
-- **D1112 (OPEN, recommended: the CLI's sentence, and a "read again" control). What does a refused
-  or stale write do?** *Recommendation:* the window closes, and the section shows **the CLI's own
-  sentence** — for a stale file, "`<path>` changed since it was read: nothing was written; read it
-  again and repeat the edit" (F14) — beside a **Read again** control that re-runs the read and, when
-  the operator asks for it, re-opens the pencil against the fresh row. **The console never retries a
-  write on its own**: the compare-and-swap exists because another writer moved the file, and a
-  silent retry would replace a human's decision with the console's. *A refusal is never drawn as a
-  success:* the reply's `ok` is what the screen branches on, and a non-zero exit with no document is
-  a refusal even when its sentence is empty (in which case the section shows the exit code and the
-  command).
+- **D1112 (ANSWERED by the owner, 2026-11-01, as recommended: the CLI's sentence, and a "read again"
+  control). What does a refused or stale write do?** *Recommendation:* the window closes, and the
+  section shows **the CLI's own sentence** — for a stale file, "`<path>` changed since it was read:
+  nothing was written; read it again and repeat the edit" (F14) — beside a **Read again** control
+  that re-runs the read and, when the operator asks for it, re-opens the pencil against the fresh
+  row. **The console never retries a write on its own**: the compare-and-swap exists because another
+  writer moved the file, and a silent retry would replace a human's decision with the console's. *A
+  refusal is never drawn as a success:* the reply's `ok` is what the screen branches on, and a
+  non-zero exit with no document is a refusal even when its sentence is empty (in which case the
+  section shows the exit code and the command). *Answered as recommended by the owner on 2026-11-01,
+  in [spec.md](spec.md).*
 
-- **D1113 (OPEN, recommended: the dry run's own comparison, shown as a sentence). When does the
-  console tell the operator that the edit will not change what runs?** *The case:* a local edit
-  under a project layer that wins for that key, or a project-layer edit under a repository
-  `fugaro.yaml` that wins — the edit is written, and no run behaves differently. *Options:* **(a)**
-  the console compares the layer it is writing against the read's `wins` and shows one sentence when
-  they differ; **(b)** the console says nothing and lets the operator work it out; **(c)** the CLI's
-  dry run carries the sentence. *Recommendation:* **(a)**, with the sentence drawn in the window
-  **before** the confirm — the operator is entitled to know that the write is a record of intent
-  rather than a change of behaviour, and the comparison is between two fields the CLI printed
-  (`target_layer` and `wins`), so it is a comparison and not a rule. **(c)** would be better still
-  if P3's document carries it, and the plan says so: **if `settings set --dry-run --json` grows a
-  `shadowed` field, the console uses it and drops its own comparison.** The sentence is not a
-  refusal: the edit proceeds. *Cost of (a):* one comparison in TypeScript whose rule is "two layer
-  names are equal or they are not", which is small enough not to be a second copy of anything.
+- **D1113 (ANSWERED by the owner, 2026-11-01, as recommended: the dry run's own comparison, shown as
+  a sentence). When does the console tell the operator that the edit will not change what runs?**
+  *The case:* a local edit under a project layer that wins for that key, or a project-layer edit
+  under a repository `fugaro.yaml` that wins — the edit is written, and no run behaves differently.
+  *Options:* **(a)** the console compares the layer it is writing against the read's `wins` and
+  shows one sentence when they differ; **(b)** the console says nothing and lets the operator work
+  it out; **(c)** the CLI's dry run carries the sentence. *Recommendation:* **(a)**, with the
+  sentence drawn in the window **before** the confirm — the operator is entitled to know that the
+  write is a record of intent rather than a change of behaviour, and the comparison is between two
+  fields the CLI printed (`target_layer` and `wins`), so it is a comparison and not a rule. **(c)**
+  would be better still if P3's document carries it, and the plan says so: **if `settings set
+  --dry-run --json` grows a `shadowed` field, the console uses it and drops its own comparison.**
+  The sentence is not a refusal: the edit proceeds. *Cost of (a):* one comparison in TypeScript
+  whose rule is "two layer names are equal or they are not", which is small enough not to be a
+  second copy of anything. *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
-- **D1114 (OPEN, recommended: two new operations, `settings.read` and `settings.edit`, and the rule
-  5 count moves with them). The IPC and preload surface.** *Options:* **(a)** two operations — one
-  read that spawns `settings --json`, one write that spawns the dry run and then the write, both
-  behind the console's own confirmation window; **(b)** one operation that does both; **(c)** reuse
-  an existing operation. *Recommendation:* **(a)**. **(c)** is impossible: no existing operation's
-  argv is `settings`-shaped, and the surface is a table of exact argvs, so a read that reused
-  `budget.show` would spawn the wrong command. **(b)** is refused because the read is a section that
-  runs on tab open and the write is a confirmed window — two different lifetimes, and an operation
-  that both reads and writes cannot be reasoned about from its schema. *What moves, in one commit
-  per operation:* `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:417`) gains the entry; the rule 5
-  count goes **24 → 26** (the design paragraph's own number, which the plan's C1 and C3 each move
-  once); `NEVER_REACHABLE` (`:1051`) is unchanged for the read and **loses nothing** for the write —
-  no row moves, because `settings` is not on the never table today and the two rows are new entries
-  on rule 6's allow-list table, not promotions out of a refusal; `ALLOWED_OPERATION_FLAGS` (`:979`)
-  gains nothing (the fixed words `--json`, `--yes`, `--dry-run` and `--layer` are the rows' own
-  `words`, and `--layer` is the one to argue about below); the preload's written-out list gains the
-  two methods (`console/src/preload/index.ts`, whose duplication is closed by
-  `console/test/unit/ipc.test.ts`); and `argvFor`'s table (`console/src/main/spawn.ts:980`) gains
-  the two rows with `takesProject: true`. *The one flag that needs care:* **`--layer`.** It is a
-  fixed word of the write's row only in the sense that its **value** varies with the row — so it is
-  either (i) an argument of the operation whose value the main process computes from the row it
-  already validated, or (ii) a closed enum argument the renderer may send, checked against
-  `local`/`project`/`repo`. *Recommendation:* **(i)**, because the layer comes from the CLI's own
-  `target_layer` (D1105) and a renderer that can name a layer can name a layer the CLI did not
-  offer. If the owner prefers (ii) it is a closed three-value enum and the row is no less safe, and
-  the plan's C3 says which it built. **`--yes` is a fixed word of the row**, and the sentence that
-  makes it safe is rule 11's: the console's own window is the confirmation, and the spawn happens
-  only on a yes from that window's top frame. *Cost of (a):* two entries in the largest reviewable
-  artifact in the console, and an independent review, which is what the console rule requires.
+- **D1114 (ANSWERED by the owner, 2026-11-01, as recommended: two new operations, `settings.read`
+  and `settings.edit`, and the rule 5 count moves with them). The IPC and preload surface.**
+  *Options:* **(a)** two operations — one read that spawns `settings --json`, one write that spawns
+  the dry run and then the write, both behind the console's own confirmation window; **(b)** one
+  operation that does both; **(c)** reuse an existing operation. *Recommendation:* **(a)**. **(c)**
+  is impossible: no existing operation's argv is `settings`-shaped, and the surface is a table of
+  exact argvs, so a read that reused `budget.show` would spawn the wrong command. **(b)** is refused
+  because the read is a section that runs on tab open and the write is a confirmed window — two
+  different lifetimes, and an operation that both reads and writes cannot be reasoned about from its
+  schema. *What moves, in one commit per operation:* `CONSOLE_OPERATIONS`
+  (`console/src/main/ipc.ts:417`) gains the entry; the rule 5 count goes **24 → 26** (the design
+  paragraph's own number, which the plan's C1 and C3 each move once); `NEVER_REACHABLE` (`:1051`) is
+  unchanged for the read and **loses nothing** for the write — no row moves, because `settings` is
+  not on the never table today and the two rows are new entries on rule 6's allow-list table, not
+  promotions out of a refusal; `ALLOWED_OPERATION_FLAGS` (`:979`) gains nothing (the fixed words
+  `--json`, `--yes`, `--dry-run` and `--layer` are the rows' own `words`, and `--layer` is the one
+  to argue about below); the preload's written-out list gains the two methods
+  (`console/src/preload/index.ts`, whose duplication is closed by `console/test/unit/ipc.test.ts`);
+  and `argvFor`'s table (`console/src/main/spawn.ts:980`) gains the two rows with `takesProject:
+  true`. *The one flag that needs care:* **`--layer`.** It is a fixed word of the write's row only
+  in the sense that its **value** varies with the row — so it is either (i) an argument of the
+  operation whose value the main process computes from the row it already validated, or (ii) a
+  closed enum argument the renderer may send, checked against `local`/`project`/`repo`.
+  *Recommendation:* **(i)**, because the layer comes from the CLI's own `target_layer` (D1105) and a
+  renderer that can name a layer can name a layer the CLI did not offer. If the owner prefers (ii)
+  it is a closed three-value enum and the row is no less safe, and the plan's C3 says which it
+  built. **`--yes` is a fixed word of the row**, and the sentence that makes it safe is rule 11's:
+  the console's own window is the confirmation, and the spawn happens only on a yes from that
+  window's top frame. *Cost of (a):* two entries in the largest reviewable artifact in the console,
+  and an independent review, which is what the console rule requires. *Answered as recommended by
+  the owner on 2026-11-01, in [spec.md](spec.md).*
 
-- **D1115 (OPEN, recommended: one confirmer, two views — not a second window module). How is the
-  confirmation window built?** *Options:* **(a)** generalize `confirm.ts` so that the window is one
-  implementation and the view is a union — `ConfirmView` (the launch,
-  `console/src/main/launch.ts:291`) and a new `SettingsConfirmView` — with `LaunchConfirmer`'s seam
-  generalized to a confirmer that takes either view; **(b)** a second module `settingsconfirm.ts`
-  copying `confirm.ts`; **(c)** reuse the launch window unchanged, passing a settings-shaped payload
-  through `ConfirmView`. *Recommendation:* **(a)**. **(c)** is refused outright: `ConfirmView`'s
-  fields are the launch's, and a settings payload squeezed into them would be a window whose labels
-  lie. **(b)** is the copy that drifts — the readiness delay, the own-top-frame gate, the cancel
-  default and the parent/modal wiring are four security-relevant behaviours, and a second file is
-  four chances to get one of them subtly different, with `confirm.test.ts` covering only the first.
-  *Cost of (a):* an edit to a file the launch's own tasks own, in the same commit as the settings
-  window's, which is why the plan's shared files table names it. *What must not change:* the gate.
-  The window answers only from **its own top frame, by identity and not by URL** (`confirm.ts`'s
-  property 2), and the settings window inherits it because it is the same window.
+- **D1115 (ANSWERED by the owner, 2026-11-01, as recommended: one confirmer, two views — not a
+  second window module). How is the confirmation window built?** *Options:* **(a)** generalize
+  `confirm.ts` so that the window is one implementation and the view is a union — `ConfirmView` (the
+  launch, `console/src/main/launch.ts:291`) and a new `SettingsConfirmView` — with
+  `LaunchConfirmer`'s seam generalized to a confirmer that takes either view; **(b)** a second
+  module `settingsconfirm.ts` copying `confirm.ts`; **(c)** reuse the launch window unchanged,
+  passing a settings-shaped payload through `ConfirmView`. *Recommendation:* **(a)**. **(c)** is
+  refused outright: `ConfirmView`'s fields are the launch's, and a settings payload squeezed into
+  them would be a window whose labels lie. **(b)** is the copy that drifts — the readiness delay,
+  the own-top-frame gate, the cancel default and the parent/modal wiring are four security-relevant
+  behaviours, and a second file is four chances to get one of them subtly different, with
+  `confirm.test.ts` covering only the first. *Cost of (a):* an edit to a file the launch's own tasks
+  own, in the same commit as the settings window's, which is why the plan's shared files table names
+  it. *What must not change:* the gate. The window answers only from **its own top frame, by
+  identity and not by URL** (`confirm.ts`'s property 2), and the settings window inherits it because
+  it is the same window. *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
-- **D1116 (OPEN, recommended: a `button` with an accessible name naming the key). The pencil
-  itself.** *Recommendation:* the pencil is a real `<button>` — not a span with a click handler —
-  with `aria-label` naming the key it edits (for example "Edit `budget.per_run_iso`" — the key is
-  drawn through the sanitizer's own class, not interpolated), reachable in the tab order, and
-  **focus returns to it when the window closes**, whichever way it closed. Its state is **never by
-  colour alone**: a disabled or refused pencil carries the reason as text (and `aria-disabled`, the
-  shape `disabledWrite` already uses at `console/src/renderer/writes.ts:36` — though this pencil is
-  not one of those: it is a live control once it is offered). *Why:* the console's accessibility
-  rules are drawn from the same DOM-hook vocabulary `docs/design/console-styling.md` §2.5 pins, and
-  a keyboard reader must be able to reach every edit and hear which key it is for.
+- **D1116 (ANSWERED by the owner, 2026-11-01, as recommended: a `button` with an accessible name
+  naming the key). The pencil itself.** *Recommendation:* the pencil is a real `<button>` — not a
+  span with a click handler — with `aria-label` naming the key it edits (for example "Edit
+  `budget.per_run_iso`" — the key is drawn through the sanitizer's own class, not interpolated),
+  reachable in the tab order, and **focus returns to it when the window closes**, whichever way it
+  closed. Its state is **never by colour alone**: a disabled or refused pencil carries the reason as
+  text (and `aria-disabled`, the shape `disabledWrite` already uses at
+  `console/src/renderer/writes.ts:36` — though this pencil is not one of those: it is a live control
+  once it is offered). *Why:* the console's accessibility rules are drawn from the same DOM-hook
+  vocabulary `docs/design/console-styling.md` §2.5 pins, and a keyboard reader must be able to reach
+  every edit and hear which key it is for. *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
-- **D1117 (OPEN, recommended: a section of its own, in parallel, with a per-section sequence token).
-  Rendering, and no stale tabs.** *Recommendation:* the settings read is a **section** in the
-  Project tab, started **in parallel** with `budget show --json` and painted when it answers, so the
-  tab paints before the writable-rows read lands (F15, `.claude/rules/console.md`). A tab switch
-  mid-write **never draws on the new tab**: the window is the main process's and is closed as a
-  cancel when the tab is left or the installation changes, which is rule 11's own "an installation
-  removed or re-chosen while the window is open closes the window as a cancel" applied to the second
-  write — `LaunchConfirmer.close(runId)` (`console/src/main/launch.ts:354`) is the seam, and the
-  settings confirmer needs the same one. The section's own cache is `section.ts`'s (`resultCache`),
-  stamped `as of HH:MM`, and a view older than `CACHE_FRESH_MS` is drawn **and** re-read.
+- **D1117 (ANSWERED by the owner, 2026-11-01, as recommended: a section of its own, in parallel,
+  with a per-section sequence token). Rendering, and no stale tabs.** *Recommendation:* the settings
+  read is a **section** in the Project tab, started **in parallel** with `budget show --json` and
+  painted when it answers, so the tab paints before the writable-rows read lands (F15,
+  `.claude/rules/console.md`). A tab switch mid-write **never draws on the new tab**: the window is
+  the main process's and is closed as a cancel when the tab is left or the installation changes,
+  which is rule 11's own "an installation removed or re-chosen while the window is open closes the
+  window as a cancel" applied to the second write — `LaunchConfirmer.close(runId)`
+  (`console/src/main/launch.ts:354`) is the seam, and the settings confirmer needs the same one. The
+  section's own cache is `section.ts`'s (`resultCache`), stamped `as of HH:MM`, and a view older
+  than `CACHE_FRESH_MS` is drawn **and** re-read. *Answered as recommended by the owner on
+  2026-11-01, in [spec.md](spec.md).*
 
-- **D1118 (OPEN, recommended: the fake CLI grows two arms, and the goldens are re-recorded by the
-  owner). Testing.** *Recommendation:* the hermetic surface is — **(a)** a unit test for the argv
-  builder, asserting the **exact vector** for a narrowing, a widening, an unset and a list edit,
-  with the `--` terminator (D1104) and the fixed words in the fixed order; **(b)** a unit test for
-  the window's content, built from a fixture dry-run document, asserting the six fields, the absence
-  of a sensitive row, and the widening shape (Cancel default, Confirm disabled until the tick);
-  **(c)** an e2e spec over the **existing** fake CLI (`console/test/fixtures/bin/fugaro`, F16),
-  whose stub gains a `settings --json --project P` arm and a `settings set|unset` arm that appends
-  its argv to the **same `reads.log`** the stub already writes beside itself (its own `log` helper,
-  a `printf` per answer) — so the spec waits on the file it already waits on, and the test proves
-  the console spawned the vector it showed; **(d)** the two allow-list tests
-  (`console/test/unit/ipc.test.ts`, `spawn.test.ts`) move with the operations and the count. *The
-  goldens:* `console/test/e2e/__screenshots__/projects/{light,dark}-<platform>.png` change, because
-  the tab gains a section. **They are re-recorded by the coordinator on the owner's machine, never
-  by an agent run** (`npx playwright test projects.spec.ts --update-snapshots`), and CI skips them
-  (`FUGARO_CONSOLE_GOLDENS: skip`). *No test reaches a cloud, a real config home or the network:*
-  the stub is the CLI, and the fixture documents are files in `console/test/fixtures/`.
+- **D1118 (ANSWERED by the owner, 2026-11-01, as recommended: the fake CLI grows two arms, and the
+  goldens are re-recorded by the owner). Testing.** *Recommendation:* the hermetic surface is —
+  **(a)** a unit test for the argv builder, asserting the **exact vector** for a narrowing, a
+  widening, an unset and a list edit, with the `--` terminator (D1104) and the fixed words in the
+  fixed order; **(b)** a unit test for the window's content, built from a fixture dry-run document,
+  asserting the six fields, the widening shape (Cancel default, Confirm disabled until the tick), and
+  — its own case, named `a Sensitive row is absent from the rendered table` — that a row the read
+  marks `sensitive: true` is not in the rendered table at all, with no key, no value and no pencil
+  (**D1111**); **(c)** an e2e spec over the **existing** fake CLI
+  (`console/test/fixtures/bin/fugaro`, F16), whose stub gains a `settings --json --project P` arm
+  and a `settings set|unset` arm that appends its argv to the **same `reads.log`** the stub already
+  writes beside itself (its own `log` helper, a `printf` per answer) — so the spec waits on the file
+  it already waits on, and the test proves the console spawned the vector it showed; **(d)** the two
+  allow-list tests (`console/test/unit/ipc.test.ts`, `spawn.test.ts`) move with the operations and
+  the count. *The goldens:* `console/test/e2e/__screenshots__/projects/{light,dark}-<platform>.png`
+  change, because the tab gains a section. **They are re-recorded by the coordinator on the owner's
+  machine, never by an agent run** (`npx playwright test projects.spec.ts --update-snapshots`), and
+  CI skips them (`FUGARO_CONSOLE_GOLDENS: skip`). *No test reaches a cloud, a real config home or
+  the network:* the stub is the CLI, and the fixture documents are files in
+  `console/test/fixtures/`. *Answered as recommended by the owner on 2026-11-01, in
+  [spec.md](spec.md).*
 
-- **D1119 (OPEN, recommended: the console shows the line and never runs the command). `next: fugaro
-  update`.** *Recommendation:* every successful edit's section shows the CLI's own `next: fugaro
-  update` line (F5) as **text**, with the reason: `fugaro update` applies Terraform and republishes
-  the policy node and the layer, and it is on `NEVER_REACHABLE` as a writer (`update`, `ipc.ts`'s
-  never table). The console does not run it, does not offer to run it, and does not link it. *Cost:*
-  an operator who edits a setting and does not run `update` has written a file that changes nothing
-  yet, and the console says so in the CLI's own words rather than hiding it — which is the settings
-  design's own G1/G2 gap, unchanged by this work.
+- **D1119 (ANSWERED by the owner, 2026-11-01, as recommended: the console shows the line and never
+  runs the command). `next: fugaro update`.** *Recommendation:* every successful edit's section
+  shows the CLI's own `next: fugaro update` line (F5) as **text**, with the reason: `fugaro update`
+  applies Terraform and republishes the policy node and the layer, and it is on `NEVER_REACHABLE` as
+  a writer (`update`, `ipc.ts`'s never table). The console does not run it, does not offer to run
+  it, and does not link it. *Cost:* an operator who edits a setting and does not run `update` has
+  written a file that changes nothing yet, and the console says so in the CLI's own words rather
+  than hiding it — which is the settings design's own G1/G2 gap, unchanged by this work. *Answered
+  as recommended by the owner on 2026-11-01, in [spec.md](spec.md).*
 
-- **D1120 (OPEN, recommended: `console 0.119.0`, and no `### For operators` entry). The release
-  slot.** *Recommendation:* the console tasks land in **console 0.119.0**; the CLI prerequisites
-  land in whichever CLI release follows **S5** (#1525), and they cannot be earlier than it. **No
-  `### For operators` entry** is needed: the console edits files a person could edit with an editor,
-  the CLI prerequisites add flags and fields rather than changing a meaning, and nothing here is a
-  post-deploy step. The one thing the notes must say is in **Known limits**: launching is no longer
-  the console's only write, and the widening dialog's tick is the console's own confirmation of a
-  deliberate weakening of the CLI's typed-name rule (D1107).
+- **D1120 (ANSWERED by the owner, 2026-11-01, as recommended: `console 0.119.0`, and no `### For
+  operators` entry). The release slot.** *Recommendation:* the console tasks land in **console
+  0.119.0**; the CLI prerequisites land in whichever CLI release follows **S5** (#1525), and they
+  cannot be earlier than it. **No `### For operators` entry** is needed: the console edits files a
+  person could edit with an editor, the CLI prerequisites add flags and fields rather than changing
+  a meaning, and nothing here is a post-deploy step. The one thing the notes must say is in **Known
+  limits**: launching is no longer the console's only write, and the widening dialog's tick is the
+  console's own confirmation of a deliberate weakening of the CLI's typed-name rule (D1107).
+  *Answered as recommended by the owner on 2026-11-01, in [spec.md](spec.md).*
 
-- **D1121 (OPEN, recommended: the four documents the implementing tasks change, named now and edited
-  then).** *Recommendation:* the tasks that move a fence change the documents that state it, in the
-  same commit: **`docs/design/desktop-console.md` §5.1 rule 5** (the operation count, 24 → 26),
-  **rule 6** (the two new allow-list rows, with the exact argvs), and a **new rule 12** for the
-  second write — the settings confirmation window, its own-top-frame gate, its cancel default, its
-  widening tick, and the honest sentence that D1107's hook is a UX gate and not a boundary;
-  **`console/docs/json-contract.md` §6.15** (the settings document, including the fields **D1102**
-  adds — the section D848 reserved); **`docs/design/console-styling.md` §2.5** (the new panels, the
-  pencil's hooks and the window's own document); and **`docs/settings-commands/reconciliation.md`'s
-  D846 entry** if P4 lands, because D846 then has one path it is not true of. `docs/` tests pin
-  several of these sentences, so each task runs `go test ./internal/cli -run Docs` and, for the
-  console documents, the console's own doc tests. *None of them is edited by this design.*
+- **D1121 (ANSWERED by the owner, 2026-11-01, as recommended: the four documents the implementing
+  tasks change, named now and edited then).** *Recommendation:* the tasks that move a fence change
+  the documents that state it, in the same commit: **`docs/design/desktop-console.md` §5.1 rule 5**
+  (the operation count, 24 → 26), **rule 6** (the two new allow-list rows, with the exact argvs),
+  and a **new rule 12** for the second write — the settings confirmation window, its own-top-frame
+  gate, its cancel default, its widening tick, and the honest sentence that D1107's hook is a UX
+  gate and not a boundary; **`console/docs/json-contract.md` §6.15** (the settings document,
+  including the fields **D1102** adds — the section D848 reserved);
+  **`docs/design/console-styling.md` §2.5** (the new panels, the pencil's hooks and the window's own
+  document); and **`docs/settings-commands/reconciliation.md`'s D846 entry** if P4 lands, because
+  D846 then has one path it is not true of. `docs/` tests pin several of these sentences, so each
+  task runs `go test ./internal/cli -run Docs` and, for the console documents, the console's own doc
+  tests. *None of them is edited by this design.* *Answered as recommended by the owner on
+  2026-11-01, in [spec.md](spec.md).*
 
 ## 5. UNVERIFIED
 
@@ -605,7 +642,8 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   **not** — the pencil covers the `settings` registry's rows — and the ask's "each of those values"
   is read as "the settings of this project". **The owner should confirm this reading**; if he means
   the caps too, it is a second design and not a task here.
-- **U5. The exact CLI release the prerequisites land in.** They cannot precede #1525's merge and
+- **U5. The exact CLI release the prerequisites land in.** #1525 has merged, and
   this design does not read that pull request's own release slot (the settings design queues for CLI
-  0.15.0 and console 0.117.0, which is the console's own `package.json` version today). Named in the
-  plan as a dependency rather than a number.
+  0.15.0 and console 0.117.0, which is the console's own `package.json` version today). The
+  prerequisites can be built on this branch now; which release ships them is named in the plan as a
+  dependency rather than a number.

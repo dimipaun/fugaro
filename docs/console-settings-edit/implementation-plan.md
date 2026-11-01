@@ -1,21 +1,25 @@
 # Editing the Project tab's settings from the console: implementation plan
 
 **Nothing here is approved.** Every task below starts only when the owner approves it, and an answer
-to a decision in [reconciliation.md](reconciliation.md) is not an approval. This document adds no
+to a decision in [reconciliation.md](reconciliation.md) is not an approval. The owner answered
+**D1102–D1121 as recommended on 2026-11-01** ([spec.md](spec.md)); **D1107 is the one left `OPEN`**,
+and this plan is written so that its option **A** is P4 and its option **B** is the fallback that
+removes P4. This document adds no
 code, no schema, no console source, no fixture and no workflow: it names the files the tasks will
 touch and edits none of them.
 
-**The dependency that orders everything: S5 must merge first.** Every edit here spawns `fugaro
-settings set|unset`, which is pull request **#1525**, open in review. Nothing in this plan can be
-built, tested or even written against a CLI that does not have it, and the four prerequisites below
-are changes **to that same command**, so they land on top of it rather than beside it. If the owner
+**The dependency that orders everything: S5, which has merged.** Every edit here spawns `fugaro
+settings set|unset`, which is pull request **#1525**, merged into `main` while this design was in
+review. Nothing in this plan could be built, tested or even written against a CLI that did not have
+it — which is why the four prerequisites below are changes **to that same command** and land on top
+of it rather than beside it. With S5 on `main`, all four can be built now. If the owner
 takes **D1107**'s fallback (**B**), the widening half of C3 and C4 and all of P4 fall away and the
 rest of the plan is unchanged.
 
 ## 1. The order, and what forces it
 
 ```
-        S5 #1525 merges
+        S5 #1525 has merged
               │
    ┌──────────┼──────────┬──────────┐
    P1         P2         P3         P4          ← level 0, four independent CLI tasks
@@ -73,7 +77,7 @@ textual one.
 | `console/src/renderer/entry.ts` | the Project tab's section wiring and the pencil's event handling (C1, C2) | every screen; the file is the console's second-largest |
 | `console/src/renderer/theme/screens.css` | the new panels' class hooks and the pencil's states (C2) | every screen; `docs/design/console-styling.md` §2.5 names them |
 | `console/test/fixtures/bin/fugaro` | two new arms: `settings … --json` and `settings set\|unset …`, the second recording its argv (C4) | every console e2e |
-| `internal/cli/settings.go`, `settings_read.go`, `settings_set.go`, `settings_write.go` | P1, P2, P3, P4 — all four are changes to the command S5 lands | S5 (#1525), which owns the files until it merges |
+| `internal/cli/settings.go`, `settings_read.go`, `settings_set.go`, `settings_write.go` | P1, P2, P3, P4 — all four are changes to the command S5 landed | S5 (#1525), which has now merged and left the files on `main` |
 
 ## 3. Gates (every task)
 
@@ -235,13 +239,14 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **What the screen does with the document:** one row per setting, drawn in the panels the ask
   names; a row with `writable: true` and a non-empty `target_layer` gets a pencil; a row with
   `writable: false` gets the family name from `owner` in S5's own words and no pencil; a row with
-  `sensitive: true` is drawn **with no value at all** (the CLI omits it) and no pencil (**D1111**).
+  `sensitive: true` is **not drawn at all** — no key, no value, no pencil (**D1111**, the owner's
+  ruling of 2026-11-01: sensitive rows are never editable and never shown).
 - **Red step:** `projects.test.ts` fails while the section does not exist, and `spawn.test.ts`'s
   settings-read vector fails while the argv has no `--project`.
 - **Tests:** the two allow-list tests (`ipc.test.ts`'s count and its never-entry test;
   `spawn.test.ts`'s exact vector), `preload-surface.test.ts` (the method is in both lists),
-  `projects.test.ts` (the row set: a writable row has a pencil, an owned row names its family, a
-  sensitive row has neither a value nor a pencil), `entry-wiring.test.ts` (the section starts in
+  `projects.test.ts` (the row set: a writable row has a pencil, an owned row names its family, and
+  the case named `a Sensitive row is absent from the rendered table`), `entry-wiring.test.ts` (the section starts in
   parallel with `budget show` and paints on its own token).
 - **SEC because** it moves rule 5 and rule 6, and the two documents move in the same commit.
 - **Hermetic:** the fake CLI (C4's arms land with this task's unit fixture, so the unit test reads a
@@ -269,8 +274,9 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   while the Confirm button is enabled without the tick.
 - **Tests:** `settingsview.test.ts` — the six fields, the "will not change what runs" sentence
   present exactly when the layers differ and absent when they do not, a sensitive row **never**
-  reaching a view, the widening shape (Cancel default, Confirm disabled, enabled after the tick),
-  the narrowing shape (one click), and the argv shown matching the argv the builder produces.
+  reaching a view (the same case C1 names, `a Sensitive row is absent from the rendered table`, seen
+  from the window's side), the widening shape (Cancel default, Confirm disabled, enabled after the
+  tick), the narrowing shape (one click), and the argv shown matching the argv the builder produces.
   `projects.test.ts` — the pencil's accessible name names its key, it is reachable in the tab order,
   and focus returns to it.
 - **SEC because** the dialog is the confirmation rule 11's pattern is copied for; the review is what
@@ -373,7 +379,7 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 
 ## 6. The critical path, and what it costs
 
-**S5 (#1525) merges → P1 → C1 → C2 → C3 → C4 → C5 → C6.** P2 runs beside P1 and is needed by C1; P3
+**S5 (#1525) has merged → P1 → C1 → C2 → C3 → C4 → C5 → C6.** P2 runs beside P1 and is needed by C1; P3
 runs beside them and is needed by C3; **P4 runs beside them and is needed only by C3's widening
 path**, which is why its refusal degrades the feature rather than stopping the plan. The longest
 chain is five tasks and two of them are L.

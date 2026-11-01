@@ -3,23 +3,23 @@ package cli
 // The Project-tab settings-edit docs package, pinned.
 //
 // docs/console-settings-edit/ is a design-only folder: README.md (the index),
-// spec.md (the owner's ask, verbatim), reconciliation.md (findings F1-F16
-// against the tree and against the open settings-write pull request, and this
-// work's decisions D1100-D1121) and implementation-plan.md (the CLI
-// prerequisites P1-P4 and the console tasks C1-C6). It adds no code, and no
-// task in it is approved, so nothing here pins a command, a flag or a console
-// operation.
+// spec.md (the owner's ask, verbatim, with his rulings on the design),
+// reconciliation.md (findings F1-F16 against the tree and against the
+// settings-write command, and this work's decisions D1100-D1121) and
+// implementation-plan.md (the CLI prerequisites P1-P4 and the console tasks
+// C1-C6). It adds no code, and no task in it is approved, so nothing here pins
+// a command, a flag or a console operation.
 //
 // What it does pin is the half of these documents that rots silently: the
 // decision block, and the citations the findings rest on. A reconciliation
-// whose citations have moved is a reconciliation nobody can check, and this
-// folder cites a command that is not on `main` at all, so a drifted line is
-// exactly the failure a reader cannot see.
+// whose citations have moved is a reconciliation nobody can check, and half of
+// this folder cites a command that landed while the design was in review, so a
+// drifted line is exactly the failure a reader cannot see.
 //
 //  * TestDocsConsoleSettingsEditIsWritten -- the four files exist, the index
 //    carries the status line and the owner as the spec owner, and the plan
 //    states the dependency that orders every task in it: the settings-write
-//    pull request has to merge first.
+//    pull request, which has to be on `main` before any of them.
 //  * TestDocsConsoleSettingsEditDecisionsAreInRange -- D1100-D1121 are written,
 //    each exactly once and in order; every open one carries a recommendation and
 //    every answered one cites the ask it was answered in; and D1122-D1139, the
@@ -62,8 +62,9 @@ const (
 var cseDocs = []string{cseSpec, cseReconciled, csePlan}
 
 // The block this work holds, as the documents write it: D1100-D1121 written,
-// D1122-D1139 reserved and unused. D1100 and D1101 are answered by the owner in
-// the ask itself; the rest are open.
+// D1122-D1139 reserved and unused. The owner has answered all of D1100-D1121 --
+// D1100 and D1101 in the ask itself, the rest as recommended -- with D1107 the
+// single one left open.
 const (
 	cseBlockFirst    = 1100
 	cseBlockLast     = 1121
@@ -89,9 +90,13 @@ func TestDocsConsoleSettingsEditIsWritten(t *testing.T) {
 		"a little pencil icon to trigger an edit",
 		"**all edits, including widenings, from day one**",
 		// The block, and the reservation above it that keeps two works from
-		// taking adjacent numbers.
+		// taking adjacent numbers. The answered/open split is pinned because it
+		// is the one thing a reader takes from the index without reading the
+		// decisions: D1107 is the single one the owner left open, and an index
+		// that lost that would read as if the widening path were settled.
 		"**D1100–D1139**",
-		"**D1102–D1121 are written and every one is `OPEN`**",
+		"**D1100–D1121 are written and ANSWERED** by the owner on 2026-11-01",
+		"**except D1107, which is written and `OPEN`**",
 		"**D1122–D1139 are reserved and unused**",
 	} {
 		if !strings.Contains(readme, want) {
@@ -104,9 +109,9 @@ func TestDocsConsoleSettingsEditIsWritten(t *testing.T) {
 	plan := flattenDoc(readDoc(t, csePlan))
 	for _, want := range []string{
 		"**Nothing here is approved.**",
-		"**The dependency that orders everything: S5 must merge first.**",
+		"**The dependency that orders everything: S5, which has merged.**",
 		"pull request **#1525**",
-		"**S5 (#1525) merges → P1 → C1 → C2 → C3 → C4 → C5 → C6.**",
+		"**S5 (#1525) has merged → P1 → C1 → C2 → C3 → C4 → C5 → C6.**",
 		// The fallback, so a reader can see the cheaper shape rather than
 		// discovering it after approving the expensive one.
 		"D1107's option **B**",
@@ -198,38 +203,16 @@ var cseCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|m
 // documents' shapes fails the test instead of passing it vacuously.
 var cseCensusRE = regexp.MustCompile("`[^`\\n]*\\.(?:go|md|json|ts|tsx|css|yaml|yml|tf|tmpl)[^`\\n]*:[0-9]+`")
 
-// cseOnlyInThePullRequest are the files these documents cite that are not on
-// this branch at all. The settings write path is pull request #1525, open in
-// review, and these two files exist only on its branch: their citations are
-// checked for shape and named here, and the test asserts they are still absent,
-// so the day that pull request merges the exception goes stale loudly rather
-// than keeping two files' line numbers unchecked forever.
-var cseOnlyInThePullRequest = []string{
-	"internal/cli/settings_set.go",
-	"internal/cli/settings_write.go",
-}
-
-// cseInThePullRequest reports whether a citation names one of those files, by
-// full path or by base name.
-func cseInThePullRequest(cited string) bool {
-	for _, f := range cseOnlyInThePullRequest {
-		if cited == f || filepath.Base(cited) == filepath.Base(f) {
-			return true
-		}
-	}
-	return false
-}
-
 // TestDocsConsoleSettingsEditCitationsResolve: every file and line these
 // documents cite exists. The findings are only worth as much as the code behind
 // them, and a citation whose line moved turns a checked finding into an
 // unchecked one with no other symptom.
+//
+// Every one of them is checked, including the settings write path this folder
+// was written against while it was still an open pull request (#1525): it has
+// since merged, so there is no file left to except, and the two files that were
+// excepted here are cited by line like everything else.
 func TestDocsConsoleSettingsEditCitationsResolve(t *testing.T) {
-	for _, f := range cseOnlyInThePullRequest {
-		if _, err := os.Stat("../../" + f); err == nil {
-			t.Errorf("%s is on this branch: it is the settings write path of pull request #1525, and the exception that skips its citations is now stale -- remove it from cseOnlyInThePullRequest so the line numbers it names are checked like every other", f)
-		}
-	}
 	bare := csrBareNames(t)
 	for _, path := range cseDocs {
 		doc := readDoc(t, path)
@@ -244,9 +227,6 @@ func TestDocsConsoleSettingsEditCitationsResolve(t *testing.T) {
 				path, census, len(matches))
 		}
 		for _, m := range matches {
-			if cseInThePullRequest(m[1]) {
-				continue
-			}
 			file, ok := csrResolveCitation(m[1], bare)
 			if !ok {
 				t.Errorf("%s cites %q, which is not a file in this tree: a reconciliation whose citations have moved is a reconciliation nobody can check", path, m[1])
@@ -296,10 +276,6 @@ func TestDocsConsoleSettingsEditRelativeCitationsResolve(t *testing.T) {
 					continue
 				}
 				cut := strings.LastIndex(anchor, ":")
-				if cseInThePullRequest(anchor[:cut]) {
-					refs++
-					continue
-				}
 				file, ok := csrResolveCitation(anchor[:cut], bare)
 				if !ok {
 					t.Errorf("%s holds %s anchored to %q, which is not a file in this tree", path, block[loc[0]:loc[1]], anchor[:cut])
