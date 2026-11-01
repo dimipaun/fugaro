@@ -374,6 +374,10 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   - **Recommendation: A, with B as the recorded fallback if the owner refuses P4.** *Whichever he
     chooses, the console's widening dialog is the same* (**D1109**): the extra tick is the console's
     own, and it is not the typed name.
+  - **This is the one decision the owner's ruling of 2026-11-01 left `OPEN`** ([spec.md](spec.md)):
+    every other decision in this block was answered as recommended, and all three options above stay
+    live, so the choice between them is still his. The plan is written so that the choice changes one
+    task: option A is **P4**, and B removes it.
 
 - **D1108 (ANSWERED by the owner, 2026-11-01, as recommended: the six fields below, and nothing
   else). What does the confirmation window show?** *Recommendation:* **the key**; **the old value**
