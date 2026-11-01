@@ -312,9 +312,11 @@ const (
 //
 //   - CLISkew and RunnerSkew: the node is newer than the reader, so nothing
 //     here can read it and the release that wrote the node is newer than the
-//     one calling this. `fugaro upgrade` is the whole remedy (for the image,
-//     "refresh the runner image" — it is not the CLI's binary), and neither of
-//     the other moves is one: `fugaro update --firebase-project` deploys this release's
+//     one calling this. For the CLI the remedy is the binary the package
+//     manager installs, then the update behind it — `fugaro upgrade` moves a
+//     checkout onto the installed release and never replaces the binary it
+//     runs; for the image it is "refresh the runner image", which is not the
+//     CLI's binary. And neither of the other moves is one: `fugaro update --firebase-project` deploys this release's
 //     rules and marker, and the deploy's own plan refuses to put them over a
 //     newer Fugaro's (internal/infra's DB.Plan: a marker above this binary's
 //     RulesVersion stops the plan there — "the rules this database runs under
@@ -352,7 +354,7 @@ const (
 // at all. Each takes the found version and the understood one, in that order.
 const (
 	Skew            = "the project policy is version %d; this Fugaro understands version %d"
-	CLISkew         = Skew + "; upgrade Fugaro (fugaro upgrade)"
+	CLISkew         = Skew + "; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then fugaro update"
 	CLISkewNewer    = Skew + "; the node is older than this Fugaro: publishing refuses to overwrite a node written in another version, so remove it with 'fugaro project policy publish --delete' and publish it again from this release"
 	RunnerSkew      = Skew + "; refresh the runner image (fugaro upgrade)"
 	RunnerSkewNewer = Skew + "; the node is older than this runner image: publishing refuses to overwrite a node written in another version, so the project's owner removes it with 'fugaro project policy publish --delete' and publishes one this image understands — and the run cannot do either mid-run"

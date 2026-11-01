@@ -222,11 +222,12 @@ func TestUpdatePolicyMigrationRefusesANewerNode(t *testing.T) {
 	// Migrate answers with the shared sentence alone; the remedy is the
 	// caller's to word (projectpolicy.SkewSentence), and a refusal with no
 	// move in it leaves the operator with nothing to do.
-	for _, want := range []string{fmt.Sprint(projectpolicy.Version + 1), "upgrade Fugaro (fugaro upgrade)"} {
+	for _, want := range []string{fmt.Sprint(projectpolicy.Version + 1), "upgrade Fugaro (brew upgrade dimipaun/tap/fugaro)", "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
+	assertNamesTheBinaryUpgrade(t, err.Error())
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version+1 {
 		t.Errorf("the node moved to version %d", got)
 	}
@@ -766,11 +767,12 @@ func TestUpdatePolicyMigrationRefusesOverUnknownFields(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a node carrying a key this Fugaro does not know was written over:\n%s", out)
 	}
-	for _, want := range []string{"1 key(s) this Fugaro does not know", "fugaro upgrade", "update again"} {
+	for _, want := range []string{"1 key(s) this Fugaro does not know", "brew upgrade dimipaun/tap/fugaro", "update again"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal lacks %q: %v", want, err)
 		}
 	}
+	assertNamesTheBinaryUpgrade(t, err.Error())
 	if strings.Contains(err.Error(), "true") {
 		t.Errorf("the refusal prints a value out of the node: %v", err)
 	}
@@ -789,11 +791,12 @@ func TestPolicyPublishRefusesOverUnknownFields(t *testing.T) {
 	if err == nil {
 		t.Fatal("the publish went ahead over a node carrying a key it does not know")
 	}
-	for _, want := range []string{"1 key(s) this Fugaro does not know", "publishing would drop them", "fugaro upgrade", "fugaro update"} {
+	for _, want := range []string{"1 key(s) this Fugaro does not know", "publishing would drop them", "brew upgrade dimipaun/tap/fugaro", "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal lacks %q: %v", want, err)
 		}
 	}
+	assertNamesTheBinaryUpgrade(t, err.Error())
 }
 
 // TestUpgradePolicyStepSkipsTheDatabaseTheRulesStageSkips is the second door of

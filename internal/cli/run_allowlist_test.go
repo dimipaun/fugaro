@@ -342,8 +342,8 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 		},
 		{
 			name: "the node is newer", ve: newer,
-			want:    []string{fmt.Sprintf("version %d", projectpolicy.Version+1), understood, "upgrade Fugaro"},
-			notWant: []string{"publish --delete", "update --firebase-project"},
+			want:    []string{fmt.Sprintf("version %d", projectpolicy.Version+1), understood, "upgrade Fugaro", "brew upgrade dimipaun/tap/fugaro"},
+			notWant: []string{"publish --delete", "update --firebase-project", "(fugaro upgrade)"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -415,15 +415,15 @@ func TestPolicySkewRefusalNamesTheReleaseThatIntroducedTheVersion(t *testing.T) 
 			ve:   &projectpolicy.VersionError{Found: 2, Understood: 1},
 			want: []string{
 				"the project policy is version 2", "this Fugaro understands version 1",
-				"policy version 2 arrived in fugaro 0.8.5", "upgrade Fugaro",
+				"policy version 2 arrived in fugaro 0.8.5", "upgrade Fugaro", "brew upgrade dimipaun/tap/fugaro",
 			},
-			notWant: []string{policySince, "policy model", "publish --delete"},
+			notWant: []string{policySince, "policy model", "publish --delete", "(fugaro upgrade)"},
 		},
 		{
 			name:    "a version no row names",
 			ve:      unknown,
-			want:    []string{"the project policy is version 99", "upgrade Fugaro"},
-			notWant: []string{policySince, "policy model", "arrived in fugaro"},
+			want:    []string{"the project policy is version 99", "upgrade Fugaro", "brew upgrade dimipaun/tap/fugaro"},
+			notWant: []string{policySince, "policy model", "arrived in fugaro", "(fugaro upgrade)"},
 		},
 		{
 			// A node behind its reader where the table's row for the node's

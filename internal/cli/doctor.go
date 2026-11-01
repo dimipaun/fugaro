@@ -2081,7 +2081,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// the operator printed, and the two cannot drift.
 		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
 			Problem: "no run is bounded by the policy node: " + err.Error(),
-			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (fugaro upgrade) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
+			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro) and run 'fugaro update' if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
 	}
 	if len(p.AllowRepos) == 0 {
 		// Empty inside a *published* policy is deny-all (design §5), which is a
@@ -2961,7 +2961,7 @@ func doctorCredsUnknownState(marks map[string]creds.Mark) []doctorCheck {
 	}
 	return []doctorCheck{{ID: "creds-unknown-state", Severity: "warning",
 		Problem: fmt.Sprintf("%d credential mark(s) carry a state this Fugaro does not read, so the cascade routes no work to them and nothing this release offers clears them: %s. A newer release wrote them, or they were written by hand; this one refuses to read such a state as 'no hold', which is why they are held rather than available", len(held), strings.Join(held, ", ")),
-		Fix:     "upgrade Fugaro to the release that wrote the state ('fugaro upgrade'), which is what knows how to clear it; 'fugaro accounts ls' prints each mark's state word as it is stored"}}
+		Fix:     "upgrade Fugaro to the release that wrote the state (brew upgrade dimipaun/tap/fugaro), which is what knows how to clear it; 'fugaro accounts ls' prints each mark's state word as it is stored"}}
 }
 
 // doctorCredsRules reads the credentials family's marker beside the policy
@@ -3011,7 +3011,7 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if gen > rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's credentials rules carry: a newer Fugaro deployed them, so the deployed document is not the one this binary generates and a cascade run's writes are the newer release's to define", marker, gen, rules.CredsRulesVersion),
-			Fix:     "upgrade Fugaro ('fugaro upgrade') and re-run init with the newer binary; this release refuses to deploy its own rules over a newer marker"}}
+			Fix:     "upgrade Fugaro (brew upgrade dimipaun/tap/fugaro) and re-run init with the newer binary; this release refuses to deploy its own rules over a newer marker"}}
 	}
 	if gen < rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
