@@ -54,6 +54,21 @@ const (
 	// authenticates with a Vertex key. applyDefaults applies it, and
 	// AgentOf is the other reader of the rule.
 	DefaultAgentAuth = "vertex"
+	// DefaultMaxBudgetUSD is agent.max_budget_usd's default: a repository
+	// that names none starts under the $25 ceiling. applyDefaults applies it
+	// and the settings registry's row for the key reads this constant rather
+	// than restating the number.
+	DefaultMaxBudgetUSD = 25
+	// DefaultCPU and DefaultMemory are a workflow's resources when it names
+	// none. applyDefaults applies them and the settings registry's rows read
+	// the same two constants.
+	DefaultCPU    = 4
+	DefaultMemory = "8Gi"
+	// DefaultUpdateCheck is update_check's default: the daily update check
+	// and its stderr nag run unless the local config turns them off. The
+	// local loader reads it (Config.UpdateCheckEnabled) and the settings
+	// registry's row for the key cites it.
+	DefaultUpdateCheck = true
 	// AuthCascade is agent.auth's cascade value (docs/credentials-service,
 	// D133): the run's calls are made with whatever credential the project's
 	// credentials cascade settled on, through the gateway, instead of with a
@@ -61,6 +76,20 @@ const (
 	// every reader that places an auth places this one the same way.
 	AuthCascade = "cascade"
 )
+
+// defaultReports is the list itself; DefaultReports answers a copy.
+var defaultReports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
+
+// DefaultReports are the report globs a workflow collects when it names none,
+// the files a run's artifacts step reads back (artifact-runs.md). It is the
+// settings registry's row for workflows.*.commands.reports that reads it, so
+// the DEFAULT column and a real run cannot part company.
+//
+// A slice is the one default that cannot be a const, and it is read by two
+// packages, so it answers a copy: a caller that appends to the result changes
+// nothing for the next one (the rule PaidCommandNames and BudgetScopes follow
+// in internal/cli).
+func DefaultReports() []string { return slices.Clone(defaultReports) }
 
 // RigorBudgetStageFloorUSD is the least model spend one stage can be granted:
 // the budget gateway's own lease floor (internal/budget's minLease, $0.25).
@@ -215,7 +244,7 @@ func KnownAgentAuth(auth string) bool { return slices.Contains(AgentAuths, auth)
 // that does set one still wins, and 0 is "unset" at every layer (validate).
 func applyDefaults(c *Config) {
 	if c.Git.BaseBranch == "" {
-		c.Git.BaseBranch = "main"
+		c.Git.BaseBranch = DefaultBaseBranch
 	}
 	if c.Git.PR.EarlyDraft == nil {
 		t := true
@@ -228,17 +257,17 @@ func applyDefaults(c *Config) {
 		c.Agent.FirstLineReview = FirstLineAuto
 	}
 	if c.Agent.MaxBudgetUSD == 0 {
-		c.Agent.MaxBudgetUSD = 25
+		c.Agent.MaxBudgetUSD = DefaultMaxBudgetUSD
 	}
 	for name, w := range c.Workflows {
 		if len(w.Commands.Reports) == 0 {
-			w.Commands.Reports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
+			w.Commands.Reports = DefaultReports()
 		}
 		if w.Resources.CPU == 0 {
-			w.Resources.CPU = 4
+			w.Resources.CPU = DefaultCPU
 		}
 		if w.Resources.Memory == "" {
-			w.Resources.Memory = "8Gi"
+			w.Resources.Memory = DefaultMemory
 		}
 		if w.Checkout == "" {
 			w.Checkout = CheckoutBaked

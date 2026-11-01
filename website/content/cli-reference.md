@@ -52,6 +52,7 @@ Subcommands:
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro secrets` -- Store and list a repository's secrets in Secret Manager
+- `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
@@ -3445,6 +3446,50 @@ Flags:
 | `--project-wide` | bool | `false` | no | the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro settings`
+
+Show every setting, what decides it, and its default
+
+Show one row per setting: the key, the value a run gets, the layer that
+decided it, the built-in default, and the state of the read.
+
+A bare `fugaro settings` prints every key of the registry. Positional arguments
+are a key, a prefix or a glob; a name no key matches is refused with the nearest
+names. In a glob * is one dotted segment and ** is any number of them, so
+`budget.*_usd` names a key inside budget and `workflows.**` is every
+workflow key.
+
+The layers are read in this order, loosest first:
+
+  default < project (the project layer's defaults:) < profile < repo < flag
+  caps.defaults < caps.repo
+  the deployed ceiling < policy (the published node) < project < repo < branch
+
+The ceiling keys — budget.mode, budget.per_run_usd, budget.allowed_models,
+governance.* — tighten rather than replace: the smaller cap, the stricter mode
+and the intersection of the lists win whatever the layer order. review_floor
+and rigor.areas are unions: a lower layer only adds.
+
+Usage: `fugaro settings [KEY|GLOB ...]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all-repos` | bool | `false` | no | read every repository this machine remembers |
+| `--changed` | bool | `false` | no | show only the rows a layer decides |
+| `--grep` | string | "" | no | show only the rows whose key or a rendered column matches this regexp |
+| `-h`, `--help` | bool | `false` | no | help for settings |
+| `--json` | bool | `false` | no | print the versioned document |
+| `--layer` | stringSlice | `[]` | no | read only these layers (default, project, profile, repo, flag, local, shared, policy, caps, env) |
+| `--offline` | bool | `false` | no | read the offline layers only |
+| `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
+| `--why` | bool | `false` | no | show the winning level for each key |
 
 Subcommands:
 
