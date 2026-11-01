@@ -47,10 +47,15 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"**It is not a boundary between the repositories that share an image.**",
 		"so they contribute no fact of the key",
 		"the same class as the `image.setup` of the repository that built the key",
-		// The one empty integrity the key reads from a convention rather than
-		// from a line in the file: pnpm's bare key, whose registry `.npmrc`
-		// configures and the key never reads.
-		"**One ecosystem's empty integrity rests on a convention the file does not state.**",
+		// The empty integrities the key reads from configuration rather than from
+		// a line in the file: pnpm's bare key, whose registry `.npmrc` configures,
+		// and a requirements pin with no `--hash`, whose index pip.conf or
+		// PIP_INDEX_URL configures. Both sentences are pinned, so the document
+		// cannot go back to saying that only pnpm's is one.
+		"**Two shapes key an empty integrity from configuration the file does not state.**",
+		"**The other empty integrities are read from a line in the file**",
+		"`requirements*.txt` pin that carries no `--hash` is keyed the same way",
+		"pip's index is configuration too — `pip.conf`, `PIP_INDEX_URL`",
 		// And the other half of it: the lines it does read are read as URLs,
 		// where the host is the one the authority names and not the text before
 		// the first slash — a source stating the default registry as userinfo
@@ -66,8 +71,15 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 			t.Errorf("SECURITY.md says %q: state the model and its limits, not a claim", banned)
 		}
 	}
-	// Every environment variable it names as reaching the agent is real.
+	// Every environment variable it names as reaching the agent is real. The
+	// exception is a variable of another program's that the document names
+	// because the key rests on its configuration: `PIP_INDEX_URL` is pip's, no
+	// file in this tree sets or passes it, and there is nothing to check it
+	// against.
 	for _, v := range regexp.MustCompile("`([A-Z][A-Z0-9_]{2,})`").FindAllStringSubmatch(s, -1) {
+		if v[1] == "PIP_INDEX_URL" {
+			continue
+		}
 		if !knownEnvName(t, v[1]) {
 			t.Errorf("SECURITY.md names %s, which the code never sets or passes", v[1])
 		}
