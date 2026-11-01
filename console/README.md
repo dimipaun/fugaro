@@ -282,8 +282,10 @@ worst trade this feature could make.
 `sentry-cli`'s debug files and the main process's source maps are what turn a
 scrubbed frame into a name and a line, and `scripts/upload-sentry-symbols.mjs`
 uploads them for a packaged build (`debug-files upload`, then `sourcemaps
-inject` and `sourcemaps upload`), tagged with the console version and the
-`fugaro`/`fugaro-console` project in the EU region. It is **dormant by
+inject` and `sourcemaps upload`) to the `fugaro`/`fugaro-console` project in the
+EU region. Only the two `sourcemaps` commands carry the console version: a
+native debug file is matched by the debug id inside it, so `debug-files upload`
+takes the bundle and no release at all. It is **dormant by
 default**: with `SENTRY_AUTH_TOKEN` unset or empty it prints one constant line
 (`Sentry symbol upload skipped: no auth token configured`) and exits 0 without
 invoking the CLI at all: a checkout, a fork's CI and a release before the secret

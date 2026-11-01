@@ -149,7 +149,11 @@ describe('the symbol upload with a token', () => {
     expect(status).toBe(0)
     const mainJs = path.join(consoleRoot, 'dist', 'main')
     expect(recorded(record).filter((line) => line.startsWith('argv:'))).toEqual([
-      `argv: debug-files upload --org fugaro --project fugaro-console --release 9.9.9 ${path.join(dir, 'release', 'mac-universal')}`,
+      // No `--release` on the debug-files line: `debug-files upload` does not
+      // take one (3.8.2 refuses the argument outright, exit 2, which would stop
+      // the upload before the maps went up), and native debug files are keyed by
+      // the debug id inside them rather than by a release.
+      `argv: debug-files upload --org fugaro --project fugaro-console ${path.join(dir, 'release', 'mac-universal')}`,
       `argv: sourcemaps inject --org fugaro --project fugaro-console --release 9.9.9 ${mainJs}`,
       `argv: sourcemaps upload --org fugaro --project fugaro-console --release 9.9.9 ${mainJs}`,
     ])
@@ -189,8 +193,17 @@ describe('the symbol upload with a token', () => {
     const { env, record } = uploadEnv(dir)
     delete env.SENTRY_SYMBOLS_RELEASE
     runScript(env)
-    for (const line of recorded(record).filter((one) => one.startsWith('argv:'))) {
+    // The two commands that take a release, and the one that does not:
+    // `debug-files upload` matches by the debug id inside the files it is
+    // handed, so the version names nothing there and the CLI refuses the
+    // argument.
+    const argv = recorded(record).filter((one) => one.startsWith('argv:'))
+    expect(argv.filter((line) => line.includes('sourcemaps'))).toHaveLength(2)
+    for (const line of argv.filter((one) => one.includes('sourcemaps'))) {
       expect(line).toContain(`--release ${declared}`)
+    }
+    for (const line of argv.filter((one) => one.includes('debug-files'))) {
+      expect(line).not.toContain('--release')
     }
   })
 
@@ -202,7 +215,7 @@ describe('the symbol upload with a token', () => {
     // And it stopped there: the two commands after the failing one never ran, so
     // a release never uploads maps for a build whose debug files did not go up.
     expect(recorded(record).filter((line) => line.startsWith('argv:'))).toEqual([
-      `argv: debug-files upload --org fugaro --project fugaro-console --release 9.9.9 ${path.join(dir, 'release', 'mac-universal')}`,
+      `argv: debug-files upload --org fugaro --project fugaro-console ${path.join(dir, 'release', 'mac-universal')}`,
     ])
   })
 })

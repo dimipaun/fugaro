@@ -29,13 +29,21 @@
 // separate commands for that reason: the ids have to be in the files the
 // archive carries, not only in the copy that was sent.
 //
+// **The two halves are keyed differently.** The source maps go up under the
+// console's version -- that is what the two `sourcemaps` commands take the
+// release for. The native debug files do not: `debug-files upload` matches them
+// by the debug id inside each file, which is what a minidump's frames carry, so
+// the directory is all it needs and a release names nothing there.
+//
 // **The region, the org and the release.** The org, the project and the region
 // are constants here rather than environment: the console reports to one
 // project, and a run that could point them elsewhere is a run that could send a
 // customer's sources to somebody else's account. The release is the console's
 // own version, read from `console/package.json` -- or from
 // `SENTRY_SYMBOLS_RELEASE`, which a caller that knows the version another way
-// may set. The release job sets neither: it refuses a tag whose X.Y.Z is not
+// may set -- and it names the two `sourcemaps` commands and nothing else: the
+// debug files are matched by their debug ids. The release job sets neither
+// overrides: it refuses a tag whose X.Y.Z is not
 // `console/package.json`'s `version`, so the file on its tree is the tag's
 // version, and the file is what the app was stamped with. It is the *bare*
 // version and not
@@ -69,8 +77,9 @@ const REGION_URL = 'https://de.sentry.io/'
 /** The three overrides, each read once below. `SENTRY_SYMBOLS_CLI` is the CLI to
  * run (the pinned devDependency's own binary by default, which is also what
  * makes the script testable without a network), `SENTRY_SYMBOLS_BUNDLE` is the
- * packaged app to walk, and `SENTRY_SYMBOLS_RELEASE` is the version to tag the
- * upload with. */
+ * packaged app to walk, and `SENTRY_SYMBOLS_RELEASE` is the version the two
+ * `sourcemaps` commands upload under (the debug files are keyed by their own
+ * debug ids, so no version names them). */
 const CLI_ENV = 'SENTRY_SYMBOLS_CLI'
 const BUNDLE_ENV = 'SENTRY_SYMBOLS_BUNDLE'
 const RELEASE_ENV = 'SENTRY_SYMBOLS_RELEASE'
@@ -97,11 +106,19 @@ function packageVersion() {
 
 /** The three commands, in order, each a full argv array with the binary left
  * off. Built as data rather than written out at the call site so the unit test
- * can pin the exact arguments of all three. */
+ * can pin the exact arguments of all three.
+ *
+ * **The three do not take the same arguments.** `debug-files upload` takes the
+ * org, the project and the directory, and **no `--release`**: the pinned
+ * `@sentry/cli` 3.8.2 refuses that argument outright (exit 2, before anything
+ * is uploaded), and it
+ * has nothing to name -- a native debug file is matched by the debug id inside
+ * it, which is what a minidump's frames carry, not by a release. The two
+ * `sourcemaps` commands do take one. */
 function commands({ bundle, release }) {
   const project = ['--org', ORG, '--project', PROJECT, '--release', release]
   return [
-    ['debug-files', 'upload', ...project, bundle],
+    ['debug-files', 'upload', '--org', ORG, '--project', PROJECT, bundle],
     ['sourcemaps', 'inject', ...project, MAIN_JS_DIR],
     ['sourcemaps', 'upload', ...project, MAIN_JS_DIR],
   ]
