@@ -260,9 +260,9 @@ installation that has never had one.
   (R3) and doctor's `local-layer-file` check (R0) print must say which reading it is, because the
   recorded generation is the only thing that tells them apart: a **local edit** (the bytes differ and
   the recorded generation is still the published one — the owner's change, to publish) or a **stale
-  copy from another machine** (the published generation has moved past the recorded one — someone
-  else's publish, which this file would revert). The two need different remedies, so one word for
-  both would send the owner to the wrong one.
+  copy from another machine** (the recorded generation is not the published one — the file was
+  written from an object the bucket no longer holds, which publishing would replace). The two need
+  different remedies, so one word for both would send the owner to the wrong one.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
 - **Tests:** `TestStageOrderMatchesDependencies` (`internal/initflow/loop_test.go`: sixteen stages,
@@ -381,7 +381,7 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
   `TestRigorShowReportsTheUnpublishedLocalLayer` (the state word: `unpublished`, with both sha256s,
   the same comparison `config layer` and doctor make, **and the cause** — the recorded
   `layer_generation` against the published generation: a local edit while the two are equal, a stale
-  copy from another machine once the published one has moved past it),
+  copy from another machine while they are not),
   `TestRigorShowResolvesThroughRigorResolve` (a mode `show` prints is `rigor.Resolve`'s answer for
   the same inputs — the resolver is called, not re-implemented),
   `TestRigorShowJSONLayerNamesWhatWasRead` (spec §2's `layer` member: `published` and `local`

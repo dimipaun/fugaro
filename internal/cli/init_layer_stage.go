@@ -184,12 +184,15 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 	case bytes.Equal(p.local, p.published):
 		p.recordGen = !hasRecord || recorded != gen
 	default:
-		// Differing bytes are never the whole answer (D854): a record that is
-		// older than the published generation means another machine published
-		// after this file was written from the object, and publishing would
-		// replace it — the owner decides, and the remedy is the re-seed, not
-		// this file's bytes.
-		if hasRecord && recorded < gen {
+		// Differing bytes are never the whole answer (D854): a record that is not
+		// the generation published now means this file was written from an object
+		// the bucket no longer holds — an older one, after another machine
+		// published past it, or a newer one, after the object was deleted and
+		// re-created or the bucket was restored — so the bytes here are not what
+		// the published object descends from, and publishing would replace a
+		// layer this machine cannot account for. The owner decides, and the
+		// remedy is the re-seed, not this file's bytes.
+		if hasRecord && recorded != gen {
 			p.stale = &layerGenerationState{recorded: p.recorded, published: gen}
 			break
 		}
@@ -243,7 +246,7 @@ func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 	case p.seed:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("there is no local layer file at %s: this run seeds it from the published project layer (generation %d)", p.path, p.gen)}, nil
 	case p.stale != nil:
-		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published project layer has moved past the generation this machine's layer file was written from (%s): this run re-seeds the file, after your confirmation", p.stale.text())}, nil
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published project layer is not the generation this machine's layer file was written from (%s): this run re-seeds the file, after your confirmation", p.stale.text())}, nil
 	case p.publish:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local layer file %s is unpublished: this run publishes it, after your confirmation", p.path)}, nil
 	case p.recordGen:
@@ -386,7 +389,7 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 // generation it was written from, and the object published now — the owner
 // decides which of the two files to keep, and neither is a figure they hold.
 func (p *layerPlan) printReseedState(w interface{ Write([]byte) (int, error) }) {
-	fmt.Fprintf(w, "the published project layer has moved past the generation this machine's layer file was written from, so publishing from here would replace it with an older file: %s\n", p.stale.text())
+	fmt.Fprintf(w, "the published project layer is not the generation this machine's layer file was written from, so publishing from here would replace the published object with a file this machine cannot account for: %s\n", p.stale.text())
 	fmt.Fprintf(w, "  this machine's layer file %s (sha256 %s)\n", p.path, config.LayerSum(p.local))
 	fmt.Fprintf(w, "  the published project layer (generation %d, sha256 %s)\n", p.gen, config.LayerSum(p.published))
 	fmt.Fprintf(w, "  re-seeding writes the published object's bytes into %s instead (the file is backed up first); publishing stays yours to do afterwards\n", p.path)

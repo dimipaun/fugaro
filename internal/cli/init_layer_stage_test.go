@@ -517,8 +517,9 @@ func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
 // after the state it watches has moved, which the door cannot be.
 type layerStageRig struct {
 	*initRig
-	s   *layerStage
-	out *syncBuf
+	s    *layerStage
+	out  *syncBuf
+	runs string // the layer rig's bucket, for layerObject after a call-at-a-time run
 }
 
 // newLayerStageRig is that rig: published is the object in the runs bucket, and
@@ -541,7 +542,14 @@ func newLayerStageRig(t *testing.T, published, local, generation string) *layerS
 	cmd.SetIn(strings.NewReader(""))
 	run := &initRun{o: &initOptions{door: updateDoor.name}, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
 	run.setProject(lc)
-	return &layerStageRig{initRig: r.initRig, s: newLayerStage(&initEngine{r: run, lc: lc, path: r.cfg}), out: out}
+	return &layerStageRig{initRig: r.initRig, runs: r.runs, s: newLayerStage(&initEngine{r: run, lc: lc, path: r.cfg}), out: out}
+}
+
+// put publishes text as the project layer of this rig's bucket, as another
+// publisher would.
+func (r *layerStageRig) put(t *testing.T, text string) {
+	t.Helper()
+	layerRigFile(t, filepath.Join(r.runs, filepath.FromSlash(config.LayerKey)), text)
 }
 
 // TestUpdateLayerStageVerifiesTheRecordItWrote: with the bytes already agreeing
@@ -573,5 +581,126 @@ func TestUpdateLayerStageVerifiesTheRecordItWrote(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "records generation 5") {
 		t.Errorf("the refusal is not the record one: %v", err)
+	}
+}
+
+// TestUpdateLayerStageVerifiesThePublishItWrote: a publish's only claim is the
+// object, and the local file says the same thing whether the write landed or
+// not — so nothing but reading the object back can catch a publish that did
+// not land, or one another publisher overwrote afterwards.
+func TestUpdateLayerStageVerifiesThePublishItWrote(t *testing.T) {
+	r := newLayerStageRig(t, testProjectLayer, localEdit, "0")
+	ctx := context.Background()
+
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out.String())
+	}
+	if got, ok := layerObject(t, &layerRig{initRig: r.initRig, runs: r.runs}); !ok || got != localEdit {
+		t.Fatalf("the local layer file was not published: %q %v", got, ok)
+	}
+	if err := r.s.Verify(ctx); err != nil {
+		t.Fatalf("the publish this run wrote does not verify: %v", err)
+	}
+	// Another publisher's object, or a write that never landed: the layer file
+	// still reads as this run's own edit, so only the object can say.
+	r.put(t, testProjectLayer)
+	err := r.s.Verify(ctx)
+	if err == nil {
+		t.Fatal("an object this run did not write verified")
+	}
+	if !strings.Contains(err.Error(), "is not the local layer file") {
+		t.Errorf("the refusal is not the publish one: %v", err)
+	}
+}
+
+// TestUpdateLayerStageVerifiesTheSeedItWrote: a seed writes the local file from
+// the published object, so the file is the only write there is to read back —
+// and a file that changed after the seed is not the object this run says it
+// wrote.
+func TestUpdateLayerStageVerifiesTheSeedItWrote(t *testing.T) {
+	r := newLayerStageRig(t, testProjectLayer, "", "")
+	ctx := context.Background()
+
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out.String())
+	}
+	if data, _ := os.ReadFile(localLayerPath(t)); string(data) != testProjectLayer {
+		t.Fatalf("the seed did not write the published object to the local layer file:\n%s", data)
+	}
+	if err := r.s.Verify(ctx); err != nil {
+		t.Fatalf("the seed this run wrote does not verify: %v", err)
+	}
+	if err := os.WriteFile(localLayerPath(t), []byte(localEdit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := r.s.Verify(ctx)
+	if err == nil {
+		t.Fatal("a local file this run did not write verified")
+	}
+	if !strings.Contains(err.Error(), "is not the published project layer it was written from") {
+		t.Errorf("the refusal is not the seed one: %v", err)
+	}
+}
+
+// TestUpdateLayerStageVerifiesTheReseedItWrote: the re-seed of D854's refusal
+// writes the same local file a seed does, from an object whose generation is
+// not the recorded one, and Verify reads that file back the same way. The rig's
+// bucket is file://, so every object reports generation 0 and a record of 3 is
+// already the state the refusal exists for.
+func TestUpdateLayerStageVerifiesTheReseedItWrote(t *testing.T) {
+	r := newLayerStageRig(t, testProjectLayer, localEdit, "3")
+	ctx := context.Background()
+
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out.String())
+	}
+	if data, _ := os.ReadFile(localLayerPath(t)); string(data) != testProjectLayer {
+		t.Fatalf("the re-seed did not write the published object to the local layer file:\n%s", data)
+	}
+	if err := r.s.Verify(ctx); err != nil {
+		t.Fatalf("the re-seed this run wrote does not verify: %v", err)
+	}
+	if err := os.WriteFile(localLayerPath(t), []byte(localEdit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := r.s.Verify(ctx)
+	if err == nil {
+		t.Fatal("a local file this run did not write verified")
+	}
+	if !strings.Contains(err.Error(), "is not the published project layer it was written from") {
+		t.Errorf("the refusal is not the re-seed one: %v", err)
+	}
+}
+
+// TestUpdateLayerStageRefusesWhenTheRecordIsAheadOfThePublishedGeneration: the
+// record is not the generation published now, and which side is larger does not
+// matter — an older record is another machine's publish this file would revert,
+// a newer one is an object this file was written from that the bucket no longer
+// holds. Either way the bytes here are not what the published object descends
+// from, so the run re-seeds rather than publishing them.
+func TestUpdateLayerStageRefusesWhenTheRecordIsAheadOfThePublishedGeneration(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer)
+	path := localLayerPath(t)
+	recordLayer(t, localEdit, "9")
+	read := layerPublishedRead
+	t.Cleanup(func() { layerPublishedRead = read })
+	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+		return []byte(testProjectLayer), 7, true, nil
+	}
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
+	}
+	if got, _ := layerObject(t, r); got != testProjectLayer {
+		t.Errorf("the object was overwritten from a file written from another generation: %q", got)
+	}
+	all := out + errOut
+	if !strings.Contains(all, "generation 9 recorded for this machine's config") ||
+		!strings.Contains(all, "generation 7 published") {
+		t.Errorf("the three-way state was not shown:\n%s", all)
+	}
+	if data, _ := os.ReadFile(path); string(data) != testProjectLayer {
+		t.Errorf("the local layer file was not re-seeded from the published one:\n%s", data)
 	}
 }

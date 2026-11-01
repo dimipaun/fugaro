@@ -174,15 +174,17 @@ func localLayerState(lc *localcfg.Config, project string, pub *config.ProjectLay
 
 // layerLocalCause names which reading of `unpublished` this is. The record is
 // the generation this file's bytes were written from: still the published one
-// means the owner's own edit, an older one means the published object has
-// moved past this file (someone else's publish, which publishing would
-// revert), and none at all means no publish this machine can compare with.
+// means the owner's own edit, any other one means the object published now is
+// not the one this file was written from (an older record, after someone else's
+// publish; a newer one, after the object was deleted and re-created or the
+// bucket was restored — publishing would replace a layer this machine cannot
+// account for), and none at all means no publish this machine can compare with.
 func layerLocalCause(st layerLocalState) string {
 	recorded, err := strconv.ParseInt(st.Recorded, 10, 64)
 	switch {
 	case st.Recorded == "" || err != nil:
 		return layerLocalUnrecorded
-	case recorded < st.Generation:
+	case recorded != st.Generation:
 		return layerLocalStale
 	default:
 		return layerLocalEdit
@@ -199,7 +201,7 @@ func (s layerLocalState) unpublishedText() string {
 	const pub = "the published project layer"
 	switch s.Cause {
 	case layerLocalStale:
-		return fmt.Sprintf("unpublished: the local layer file %s (sha256 %s) differs from %s (sha256 %s): the published layer has moved past generation %s this file was written from, so this is %s — run fugaro update to re-seed it from the published one",
+		return fmt.Sprintf("unpublished: the local layer file %s (sha256 %s) differs from %s (sha256 %s), and this file was written from generation %s, which is not the published one, so it is %s — run fugaro update to re-seed it from the published one",
 			s.Path, shortSHA(s.SHA256), pub, shortSHA(s.PublishedSHA), generationText(s.Recorded), layerLocalStale)
 	case layerLocalUnrecorded:
 		return fmt.Sprintf("unpublished: the local layer file %s (sha256 %s) differs from %s (sha256 %s), and no generation is recorded for this file, so it is %s — run fugaro update to publish it",
