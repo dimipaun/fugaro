@@ -26,6 +26,12 @@ const release050 = "ghcr.io/dimipaun/fugaro-base:0.5.0"
 // launching one needs this, not release050 (recipesV07Since).
 const release070 = "ghcr.io/dimipaun/fugaro-base:0.7.0"
 
+// release0150 is a job image new enough for the catalog default itself, whose
+// adversarial step needs a runner that acts on it (adversarialSince): 0.7.0
+// is past every 0.7.0 construct and still short of that, so a test that
+// embeds default needs this one.
+const release0150 = "ghcr.io/dimipaun/fugaro-base:0.15.0"
+
 func TestRunRecipeFlagEmbedsCatalog(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release070)
@@ -394,7 +400,7 @@ func TestRunExplicitDefaultOverridesAgentRecipe(t *testing.T) {
 	f := newCloudFixture(t)
 	recipeCheckout(t, f, "  recipe: solo\n", nil)
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", release050)
+	writeBuildRecord(t, f, other, "svc", release0150)
 	out, errOut, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "default", "--json", "A task")
 	if err != nil {
 		t.Fatal(err)

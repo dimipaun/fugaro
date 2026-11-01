@@ -153,9 +153,10 @@ var rigorBudgetFloor = sync.OnceValue(func() float64 {
 // The adversarial default is the strictest row, Critical's senior rounds,
 // because this call site has no rigor mode: a floor is computed over the whole
 // catalog rather than a run's own path, and the one direction a bound may be
-// wrong in is high (recipe.StageBound). No catalog recipe carries the step, so
-// it is unchanged either way; a recipe that reaches this arithmetic with one
-// would be priced by its own max_rounds wherever it writes one.
+// wrong in is high (recipe.StageBound). The catalog default carries the step
+// since 0.15.0, so this is the row its bound is read at; a recipe that reaches
+// this arithmetic with one is priced by its own max_rounds wherever it writes
+// one.
 func smokeStages() int {
 	smallest := 0
 	for _, name := range recipe.CatalogNames() {
