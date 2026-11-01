@@ -11,6 +11,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/settings"
 )
 
+// settingsRepoRE is what --repo accepts: a repository's owner/name, which is
+// the tail of the scope the document prints and the pattern
+// schemas/settings.schema.json holds that scope to ($defs.row.scope). A name
+// this refuses would be written into a document its own reader rejects.
+var settingsRepoRE = regexp.MustCompile(`^[^\s/]+/[^\s/]+$`)
+
 // settingsOptions are the read's flags.
 type settingsOptions struct {
 	repo     string
@@ -77,6 +83,13 @@ func runSettings(cmd *cobra.Command, args []string, o settingsOptions) error {
 		if !slices.Contains(settings.Layers, l) {
 			return userErr("--layer %s: the layers are %s", l, strings.Join(settings.Layers, ", "))
 		}
+	}
+	// --repo names a repository the way a scope is spelled — `repo:owner/name`,
+	// the pattern the document's own schema holds the scope to — so a bare name
+	// is refused here rather than matched against whatever remembered checkout
+	// ends with it, which would print a row under a scope its reader refuses.
+	if o.repo != "" && !settingsRepoRE.MatchString(o.repo) {
+		return userErr("--repo %s: a repository is owner/name", o.repo)
 	}
 	var pattern *regexp.Regexp
 	if o.grep != "" {

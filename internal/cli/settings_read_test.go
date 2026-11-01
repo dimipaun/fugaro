@@ -127,6 +127,22 @@ workflows:
     commands: { test: go test ./... }
 `
 
+// settingsRepoWithTimeouts is a repository whose one workflow carries timeouts,
+// the keys whose value a run gets is a config.Duration rather than a string.
+const settingsRepoWithTimeouts = `version: 1
+project: aurora
+git:
+  provider: github
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+    timeouts:
+      total: 90m
+      stage: 30m
+`
+
 // settingsJSON runs the read and decodes the document.
 func readSettingsJSON(t *testing.T, args ...string) settingsTestDoc {
 	t.Helper()
@@ -822,6 +838,60 @@ func TestSettingsRepoScopeReportsTheKeyTheRepositorySets(t *testing.T) {
 	}
 	if proj := rowOf(t, doc, "workflows.*.commands.test", "project"); proj.Wins != "default" {
 		t.Errorf("the project scope's wins = %q, want default: no offline layer sets a workflow command", proj.Wins)
+	}
+}
+
+// TestSettingsRepoFlagNeedsOwnerAndName: --repo names a repository the way a
+// scope is spelled — `repo:owner/name`, the pattern
+// schemas/settings.schema.json holds $defs.row.scope to — so a name without an
+// owner is refused here. Matching it against the remembered checkouts instead
+// would print `repo:repo-a`, a scope the document's own reader rejects, and one
+// bare name answers for every provider's checkout of it, which are not one
+// repository.
+func TestSettingsRepoFlagNeedsOwnerAndName(t *testing.T) {
+	settingsFixture(t, "")
+	for _, arg := range []string{"repo-a", "owner/", "/repo-a", "owner/repo/a", "owner repo-a"} {
+		out, _, err := execute(t, "settings", "--repo", arg)
+		if err == nil {
+			t.Errorf("--repo %q was accepted:\n%s", arg, out)
+			continue
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("--repo %q exits %d, want %d", arg, ExitCode(err), ExitUserError)
+		}
+	}
+	// The name the help text documents still reads, checkout or no checkout:
+	// a repository this machine has not seen prints its scope as unknown rather
+	// than being refused.
+	out, _, err := execute(t, "settings", "--repo", "owner/repo-a")
+	if err != nil {
+		t.Fatalf("--repo owner/repo-a was refused: %v\n%s", err, out)
+	}
+}
+
+// TestSettingsRepoScopeRendersADurationAsItsOwnText: a timeout is a
+// config.Duration, and the read has to print it the way the config format
+// spells it (`1h30m0s`, config.Duration's own MarshalYAML) rather than as the
+// Go struct behind it — a JSON object of nanoseconds and a Set flag is not a
+// value any layer wrote, and no other reader of the field would show it.
+func TestSettingsRepoScopeRendersADurationAsItsOwnText(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoWithTimeouts)
+	doc := readSettingsJSON(t, "workflows.*.timeouts.total", "workflows.*.timeouts.stage", "--all-repos")
+	for key, want := range map[string]string{
+		"workflows.*.timeouts.total": "1h30m0s",
+		"workflows.*.timeouts.stage": "30m0s",
+	} {
+		repo := rowOf(t, doc, key, "repo:owner/repo-a")
+		if repo.State != "ok" {
+			t.Fatalf("%s state = %q, want ok: the fixture's checkout has to resolve", key, repo.State)
+		}
+		if repo.Value == nil || *repo.Value != want {
+			t.Errorf("%s = %q, wins = %q, want %q: the checkout wrote 90m/30m", key, deref(repo.Value), repo.Wins, want)
+		}
+		if repo.Wins != "repo" {
+			t.Errorf("%s wins = %q, want repo: the checkout's timeouts decide it", key, repo.Wins)
+		}
 	}
 }
 

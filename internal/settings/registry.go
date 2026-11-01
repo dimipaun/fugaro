@@ -615,9 +615,14 @@ var sensitiveKeys = map[string]bool{
 	"budget.firebase_api_key": true,
 }
 
-// sharedWithLocal are the ceiling keys a run gets from the local config as
-// well as from fugaro.yaml: the local file holds the ceiling the deployed job
-// carries, so `--layer local` reads it (spec §2.2).
+// sharedWithLocal are the keys a run gets from the local config as well as
+// from fugaro.yaml, so `--layer local` reads them (spec §2.2). The ceiling
+// keys are there because the local file holds the ceiling the deployed job
+// carries; version and gcp_project are there because both documents declare
+// them — the local file's own format version and the GCP project the
+// installation lives in, which a repository's fugaro.yaml has to name to be
+// anchored to it — and one row per key (SD6) is the only row either fact would
+// have.
 var sharedWithLocal = map[string]bool{
 	"version":               true,
 	"gcp_project":           true,

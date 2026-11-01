@@ -451,6 +451,12 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 	// holds and WINS prints (spec §2.2).
 	s.Wins = repo.res.SourceOf(path)
 	if s.Wins == settings.LayerDefault {
+		// The resolved value is dropped for the registry's own text on
+		// purpose: a key no layer sets prints the default, never a blank
+		// (spec §2.3, VALUE equal to DEFAULT), and the project scope answers
+		// the same key the same way. The two can only differ if the registry
+		// and applyDefaults part company, which
+		// TestRegistryDefaultsMatchApplyDefaults reddens.
 		s.Value = valueOrDefault(s)
 	}
 	if row.Sensitive {
@@ -636,6 +642,14 @@ func renderValue(v reflect.Value) string {
 		}
 		v = v.Elem()
 	}
+	// A value that renders itself does: config.Duration is a struct whose own
+	// string form is the one a fugaro.yaml writes and reads back and the one
+	// `fugaro config show` prints, where the fields marshalled are the two
+	// members of the wrapper (a timeout read `{"Duration":5400000000000,
+	// "Set":true}`).
+	if s, ok := v.Interface().(fmt.Stringer); ok {
+		return s.String()
+	}
 	switch v.Kind() {
 	case reflect.Slice, reflect.Array:
 		parts := make([]string, 0, v.Len())
@@ -649,9 +663,6 @@ func renderValue(v reflect.Value) string {
 			return ""
 		}
 		return string(b)
-	}
-	if s, ok := v.Interface().(fmt.Stringer); ok {
-		return s.String()
 	}
 	return fmt.Sprint(v.Interface())
 }
