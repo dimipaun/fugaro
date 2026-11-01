@@ -88,11 +88,8 @@ func newSettingsGetCmd() *cobra.Command {
 A key set at no layer prints its default row and exits 0: a state that is
 already the answer is not a failure. An unknown key exits non-zero with the
 nearest registry names.`,
-		Args: cobra.ArbitraryArgs,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return userErr("settings get takes one key")
-			}
 			return runSettings(cmd, args, o)
 		},
 	}
@@ -530,7 +527,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		return err
 	}
 	mode := "set"
-	newData, err := yamledit.SetScalar(old, target.keyPath, value)
+	var newData []byte
 	switch {
 	case o.add != "":
 		mode = "add"
@@ -538,6 +535,8 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	case o.remove != "":
 		mode = "remove"
 		newData, err = yamledit.RemoveListItem(old, target.keyPath, o.remove)
+	default:
+		newData, err = yamledit.SetScalar(old, target.keyPath, value)
 	}
 	if err != nil {
 		return userErr("%s: %v", key, err)

@@ -512,3 +512,48 @@ func TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero(t *testing.T) {
 		t.Errorf("VALUE = %q and DEFAULT = %q, want the default in both", fields[2], fields[4])
 	}
 }
+
+// TestSettingsGetShowsTheRowOfAKeyALayerSets: the same subcommand on a key a
+// layer does set prints the winning value and names the layer that decided it,
+// so `get` is the read and not a second default-printing path.
+func TestSettingsGetShowsTheRowOfAKeyALayerSets(t *testing.T) {
+	settingsWriteHome(t)
+	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	out, _, err := execute(t, "settings", "get", "commit_name")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("one key prints its header and its row, got:\n%s", out)
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < 5 || fields[0] != "commit_name" {
+		t.Fatalf("row = %q, want commit_name and its columns", lines[1])
+	}
+	if fields[2] != "person-1" {
+		t.Errorf("VALUE = %q, want the value the layer holds", fields[2])
+	}
+	if fields[3] != "local" {
+		t.Errorf("WINS = %q, want local", fields[3])
+	}
+}
+
+// TestSettingsGetRefusesAnUnknownKeyWithTheNearest: `get` refuses a name no
+// key matches the way the read does — non-zero, with the nearest registry
+// names — rather than printing an empty table a script would read as "unset".
+func TestSettingsGetRefusesAnUnknownKeyWithTheNearest(t *testing.T) {
+	settingsWriteHome(t)
+	out, _, err := execute(t, "settings", "get", "budget.per_run_uds")
+	if err == nil {
+		t.Fatalf("an unknown key is refused, got:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "budget.per_run_usd") {
+		t.Errorf("refusal = %q, want the nearest registry name", err.Error())
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit code = %d, want %d", ExitCode(err), ExitUserError)
+	}
+}
