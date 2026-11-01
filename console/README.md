@@ -286,8 +286,10 @@ inject` and `sourcemaps upload`), tagged with the console version and the
 `fugaro`/`fugaro-console` project in the EU region. It is **dormant by
 default**: with `SENTRY_AUTH_TOKEN` unset or empty it prints one constant line
 (`Sentry symbol upload skipped: no auth token configured`) and exits 0 without
-invoking the CLI at all, so a checkout, a fork's CI or this container's
-`npm ci --ignore-scripts` build uploads nothing and fails nothing. The token is
+invoking the CLI at all: a checkout, a fork's CI and a release before the secret
+exists upload nothing and fail nothing, and nothing in this repository — not
+`npm run build`, not `npm run package` — runs the script except the staged
+release step and a person. The token is
 **never read, printed, logged or passed on an argv**: it reaches `sentry-cli`
 through the inherited environment and nowhere else, and the `sentry-cli` package
 is a **devDependency** — it is not a runtime dependency and `build.files` does
