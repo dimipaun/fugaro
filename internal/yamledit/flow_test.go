@@ -116,6 +116,12 @@ func TestSetScalarInsideAFlowMapping(t *testing.T) {
 			[]string{"budget", `note"`}, "x",
 		},
 		{
+			"a member whose plain value holds a quote of its own",
+			"budget: { note: 0', per_run_usd: 5 }\n",
+			"budget: { note: 0', per_run_usd: 10 }\n",
+			[]string{"budget", "per_run_usd"}, "10",
+		},
+		{
 			"a value holding a comma inside quotes is left alone",
 			"budget: { note: 'x, y', per_run_usd: 5 }\n",
 			"budget: { note: 'x, y', per_run_usd: 10 }\n",

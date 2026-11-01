@@ -213,7 +213,7 @@ func (d *doc) flowClose(op string, start int) (int, error) {
 	depth := 0
 	for i := start; i < end; {
 		switch c := d.src[i]; {
-		case c == '"' || c == '\'':
+		case (c == '"' || c == '\'') && d.quoteStartsNode(i, start):
 			escape := c
 			if c == '"' {
 				escape = '\\'
@@ -286,6 +286,25 @@ func sameNode(a, b *yaml.Node) bool {
 	}
 	for i := range a.Content {
 		if !sameNode(a.Content[i], b.Content[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// quoteStartsNode reports whether a quote begins a quoted scalar rather than
+// sitting inside a plain one. A quote is the character it is in the middle of a
+// plain scalar — `{a: 0'}` holds the text `0'` — while after a bracket, a comma
+// or a colon it opens one, and a scan that read it the other way would take the
+// rest of the line for a quoted scalar and never find the end of the collection.
+func (d *doc) quoteStartsNode(off, start int) bool {
+	for i := off - 1; i >= start; i-- {
+		switch d.src[i] {
+		case ' ', '\t':
+			continue
+		case '{', '[', ',', ':':
+			return true
+		default:
 			return false
 		}
 	}

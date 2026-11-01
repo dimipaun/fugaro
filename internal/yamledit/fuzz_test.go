@@ -45,6 +45,8 @@ func FuzzSetScalar(f *testing.F) {
 		{"{a: 1, b: }\n", "c", "2"},
 		{"{a: 1, b:}\n", "c", "2"},
 		{"{a: 1, b:}\n", "a", "2"},
+		{"{a: 0', b: 2}\n", "b", "3"},
+		{"{a: 0',0'}\n", "a", "0"},
 		{"a: |\n  line\n", "a", "line"},
 		{"a: &anchor 1\nb: *anchor\n", "b", "2"},
 		{"base: &base\n  x: 1\nprod:\n  <<: *base\n", "prod", "2"},
