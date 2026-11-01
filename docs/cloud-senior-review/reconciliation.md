@@ -426,7 +426,7 @@ met** (§6's **E7** and D893's own entry below say exactly what is missing).
   reverted by the **runner** rather than by the agent's Bash — **restored from the bytes the runner
   read before it applied the mutant and holds in its own memory**, not by `git checkout --`, which
   would let the head's `.gitattributes` filters, `core.fsmonitor` and hooks choose what the revert
-  runs — and `internal/agent/settings.go`'s `DenyRules` gains the four rules for the rest of the
+  runs — and `internal/agent/settings.go`'s `DenyRules` gains the five rules for the rest of the
   review stage. **How egress is denied for a subprocess inside a Cloud
   Run container is UNVERIFIED** — a network namespace or `unshare` in gen2 has not been checked; that
   is **U7** in §6, **and U7 asks the `/proc` half in the same breath** (a PID namespace with its own

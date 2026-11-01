@@ -131,7 +131,7 @@ writes. Every task that touches a shared file takes it **alone**, and the others
 | `internal/runner/prompts.go` | CSR3, CSR4a, CSR4b, CSR5 | the review prompt, its template sections, and the fix brief's findings posture |
 | `internal/runner/reviewmode.go` | CSR2, CSR3, CSR4a, CSR4b | the review bootstrap and the comment path CSR2 stops taking; CSR4a's D894(a) half reads the base's `fugaro.yaml`, instructions and prompt here |
 | `internal/runner/runner.go` | CSR3, CSR4b, **only if** the hook is there — otherwise no task here | **reserved**: one writer across work streams. Every task prefers `reviewmode.go`; a task that needs the stage machine or the finalize path takes this file alone and says so (see the paragraph below) |
-| `internal/agent/settings.go` + `settings_test.go` | CSR4a, CSR4b | the one place the launch posture lives: CSR4a writes the managed-hooks-only, no-project-MCP, user-and-managed setting sources and the fresh home (D894(a)), and CSR4b adds D891(a)'s four deny rules to `DenyRules` afterwards. One task holds it at a time, and CSR4a goes first |
+| `internal/agent/settings.go` + `settings_test.go` | CSR4a, CSR4b | the one place the launch posture lives: CSR4a writes the managed-hooks-only, no-project-MCP, user-and-managed setting sources and the fresh home (D894(a)), and CSR4b adds D891(a)'s five deny rules to `DenyRules` afterwards. One task holds it at a time, and CSR4a goes first |
 | `schemas/` | CSR3, CSR4b | CSR3 **edits the existing `schemas/result.schema.json`** (O4's display-only `independent` tier) and adds `review.schema.json`; CSR4b adds its own new file. The edited schema is one writer's at a time |
 | `internal/cli/recipes_skew.go` | CSR2, CSR3, CSR6, CSR7 | one writer (CSR6) for the gate constants; CSR2/CSR3/CSR7 declare what they need |
 | `internal/infra/projectjobs.go` + `projectjobs_test.go` | CSR7 | the `ProjectJob` set the installation root deploys. CSR7 adds the review-only variant and its service account; nothing else here reads the set |
@@ -451,7 +451,7 @@ it launches only after U7's owner-run live observation has returned** (below).
   and **`internal/runner/runner.go` only if** the subprocess has to be reaped from a stage-machine
   hook rather than from `runReviewMode` (§2's one-writer rule; the task says so in its pull request if
   it takes it). **At most 10 files.** The settings posture itself is **CSR4a's**; this task only adds
-  the four rules D891(a) names.
+  the five rules D891(a) names.
 - **Interfaces:** produces the bounded, opt-in check of [spec.md](spec.md) §2 — one mutant, one
   named test, a worktree that is reverted before the stage ends, and **no push ever**
   (`gitops`'s push functions are not reachable from the path). The artefact records what was applied,
@@ -490,7 +490,7 @@ it launches only after U7's owner-run live observation has returned** (below).
   `TestReviewStageDeniesBashForTheRestOfTheStage` fails because `DenyRules` denies tools only.
   **SEC flag:** the task that runs repository code inside the reviewer, which is the one thing here
   that could look like "the reviewer edits the code" — the revert and the no-push assertions are what
-  make §2's "never pushes" a fact, and the scrub, the egress rule and the four deny rules are what
+  make §2's "never pushes" a fact, and the scrub, the egress rule and the five deny rules are what
   make D891(a) a fact rather than a sentence. The settings posture that makes it a control at all is
   **CSR4a**'s, and it ships first for exactly that reason.
 - **Commit:** `runner: the review job's mutation check, in its own worktree and never pushed`.
