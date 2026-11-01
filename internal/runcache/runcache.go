@@ -43,6 +43,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -71,6 +72,14 @@ type Cache struct {
 	dir    string
 	bucket string
 	max    int64
+
+	// mu guards total and measured. total is what the entries take as
+	// against max, so that a listing of thousands of objects does not walk
+	// the directory once per object: the walk happens when the count says
+	// the cap may be reached, and it is what decides the count again.
+	mu       sync.Mutex
+	total    int64
+	measured bool
 }
 
 // entry is one cached object: the bucket and object name it belongs to, the
@@ -145,10 +154,59 @@ func (c *Cache) Put(name string, gen int64, data []byte) {
 	if err != nil {
 		return
 	}
+	c.measure()
 	if err := c.write(name, blob); err != nil {
 		return
 	}
-	c.evict()
+	c.note(int64(len(blob)))
+}
+
+// measure takes what the entries of the cache directory take, once: it runs
+// before the first write, so what it measures is the entries that were
+// already there and what the writes since have added is counted by note.
+func (c *Cache) measure() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.measured {
+		c.total = dirSize(c.dir)
+		c.measured = true
+	}
+}
+
+// note records what the entry just written added, and evicts when that may
+// have taken the cache past its cap. The walking of the directory that says
+// whether it has is left to the eviction, so a listing that keeps the cache
+// under its cap -- the ordinary case -- never walks it.
+//
+// An entry written over another one counts as an addition rather than as the
+// difference, so the count can run ahead of the directory: that only evicts
+// sooner, and every eviction re-measures.
+func (c *Cache) note(added int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.total += added
+	if c.total <= c.max {
+		return
+	}
+	c.total = c.evict()
+}
+
+// dirSize is what the entries of dir take.
+func dirSize(dir string) int64 {
+	var total int64
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	for _, it := range items {
+		if it.IsDir() || filepath.Ext(it.Name()) != ".json" {
+			continue
+		}
+		if info, err := it.Info(); err == nil {
+			total += info.Size()
+		}
+	}
+	return total
 }
 
 // path is where name's entry lives: the digest of the bucket and the name, so
@@ -183,10 +241,10 @@ func (c *Cache) write(name string, blob []byte) error {
 	return os.Rename(tmp.Name(), c.path(name))
 }
 
-// evict drops the least recently used entries while the cache is over its cap.
-// The entry just written is the newest, so a listing that keeps reading the
-// same runs never drops what it is reading.
-func (c *Cache) evict() {
+// evict drops the least recently used entries while the cache is over its cap,
+// and answers what the entries left take. The entry just written is the newest,
+// so a listing that keeps reading the same runs never drops what it is reading.
+func (c *Cache) evict() int64 {
 	type cached struct {
 		path string
 		used time.Time
@@ -196,7 +254,7 @@ func (c *Cache) evict() {
 	var total int64
 	items, err := os.ReadDir(c.dir)
 	if err != nil {
-		return
+		return 0
 	}
 	for _, it := range items {
 		if it.IsDir() || filepath.Ext(it.Name()) != ".json" {
@@ -210,16 +268,17 @@ func (c *Cache) evict() {
 		total += info.Size()
 	}
 	if total <= c.max {
-		return
+		return total
 	}
 	slices.SortFunc(entries, func(a, b cached) int { return a.used.Compare(b.used) })
 	for _, e := range entries {
 		if total <= c.max {
-			return
+			break
 		}
 		if err := os.Remove(e.path); err != nil {
 			continue
 		}
 		total -= e.size
 	}
+	return total
 }
