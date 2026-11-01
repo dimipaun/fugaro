@@ -18,6 +18,19 @@ import (
 // so this width is most of what the pass costs.
 const factsWorkers = 32
 
+// mintSkewMargin is how far before the window's first day the run listing
+// starts. A run is listed by the mint time its ID carries and counted on the
+// day its record's started_at names, and the two stamps come from different
+// clocks — the launcher mints the ID, the container writes the record — so a
+// run that started just after midnight can carry an ID minted just before it.
+// The margin has to cover that gap, which is the launch between the two stamps
+// plus the skew of the two clocks, and it has to stay short: every minute of
+// it is a minute of the runs the window then drops, read for nothing. A
+// quarter of an hour is minutes of launch latency and NTP-synced clocks with
+// an order of magnitude to spare, where the whole previous day was a day of
+// reads thrown away.
+const mintSkewMargin = 30 * time.Minute
+
 // BucketFacts reads RunFacts from the runs bucket's result.json files (plan
 // H6): compute_usd counts only when compute_estimated, and hours are
 // started_at to finished_at. A run with no result.json yet adds nothing; one
@@ -75,8 +88,9 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 		}
 		slugs = keep
 	}
-	// A run ID is minted a little before the run starts: look a day earlier.
-	since := time.UnixMilli((from - 1) * 86_400_000).UTC()
+	// A run ID is minted a little before the run starts: look back by the gap
+	// between the two stamps and no further (mintSkewMargin).
+	since := time.UnixMilli(from*86_400_000 - int64(mintSkewMargin/time.Millisecond)).UTC()
 	type ref struct {
 		slug, id string
 		minted   time.Time

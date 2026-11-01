@@ -118,6 +118,7 @@ type factsDriver struct {
 	hold          map[string]bool // reads that wait for the pass's own cancel, as a real driver's do
 	cancelled     int             // reads the pass's cancel turned back
 	gaveUp        int             // reads that waited for a cancel that never came
+	read          int             // object reads that reached the object: what a pass pays for
 	wait          time.Duration   // how long a read holds the bucket open waiting for the declared width
 	want          int             // the width a read waits for; 0 reads without waiting
 	open          int
@@ -155,6 +156,15 @@ func (d *factsDriver) peakOpen() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.peak
+}
+
+// reads is how many object reads have reached an object so far: one per run's
+// result.json the pass read. A look-back that lists runs the window then drops
+// is read here and nowhere else.
+func (d *factsDriver) reads() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.read
 }
 
 func (d *factsDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (*driver.ListPage, error) {
@@ -221,6 +231,7 @@ func (d *factsDriver) NewRangeReader(ctx context.Context, key string, offset, le
 		size = int64(len(body))
 	}
 	d.mu.Lock()
+	d.read++
 	d.open++
 	if d.open > d.peak {
 		d.peak = d.open
@@ -571,7 +582,41 @@ func TestFactsCancelsTheReadsAFailureLeavesInFlight(t *testing.T) {
 	}
 }
 
-func TestFactsRunMintedJustBeforeMidnightCounted(t *testing.T) {
+// TestFactsLookBackIsMinutesNotADay: the pass lists a run by its mint time, so
+// how far before the window's first day it reaches back is the gap between a
+// run's mint and its record — minutes. A look-back of the whole day before the
+// window, which is what the pass did, listed every run minted that day and the
+// day filter dropped every one of them that did not start inside the window:
+// on a report that discarded a quarter of its reads.
+// Mutation caught: listing from the day before the window, which reads the
+// record minted an hour before it below.
+func TestFactsLookBackIsMinutesNotADay(t *testing.T) {
+	day := budget.Day(time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC))
+	// Minted an hour before the window's first day, started on the day before
+	// it: the old look-back read this record and the day filter dropped it.
+	far := time.Date(2026, 10, 18, 23, 0, 0, 0, time.UTC)
+	// Minted a minute before the window's first day, started ten seconds into
+	// it: this is the run the look-back exists for.
+	near := time.Date(2026, 10, 18, 23, 59, 0, 0, time.UTC)
+	farID, nearID := far.Format("20060102-150405")+"-aaaa", near.Format("20060102-150405")+"-bbbb"
+	_, d := factsBuckets(t, []factsRun{
+		{slug: "acme-app", id: farID, rec: runstore.Record{Repo: "acme/app", StartedAt: far.Add(20 * time.Minute)}},
+		{slug: "acme-app", id: nearID, rec: runstore.Record{Repo: "acme/app", StartedAt: time.Date(2026, 10, 19, 0, 0, 10, 0, time.UTC)}},
+	})
+	facts, _, err := budget.BucketFacts{Bucket: blob.NewBucket(d)}.Facts(context.Background(), day, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.reads(); got != 1 {
+		t.Errorf("the pass read %d records: the run minted an hour before the window was read only to be dropped by the day filter, so the look-back is minutes and not the day before", got)
+	}
+	want := []budget.RunFact{{Slug: "acme-app", Run: nearID, StartDay: day}}
+	if !reflect.DeepEqual(facts[day], want) {
+		t.Fatalf("facts[day] = %+v, want %+v", facts[day], want)
+	}
+}
+
+func TestFactsRunMintedJustBeforeMidnightCountedInItsDay(t *testing.T) {
 	b := blobx.Wrap(memblob.OpenBucket(nil))
 	day := budget.Day(time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC))
 	// Minted 23:59:50 the day before, started ten seconds into the day: the
