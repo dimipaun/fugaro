@@ -486,9 +486,10 @@ func TestProjectPolicyPublishRecordsTheGenerationOfItsOwnWrite(t *testing.T) {
 
 	// The operator's next edit. The node the door wrote is the generation the
 	// file is written from, so this is the publish it asks for — not the state
-	// that refuses it and hands back a re-seed of the file over the edit.
+	// that refuses it and hands back a re-seed of the file over the edit. The
+	// edit raises the ceiling, which is D846's direction, so it is typed.
 	setConfig(t, f, func(s string) string { return strings.Replace(s, "per_run_usd: 5", "per_run_usd: 7", 1) })
-	h := newMigrationRig(t, f, &initOptions{})
+	h := typedRig(t, f)
 	st, err := h.s.Check(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -496,7 +497,7 @@ func TestProjectPolicyPublishRecordsTheGenerationOfItsOwnWrite(t *testing.T) {
 	if st.State != initflow.Todo || !strings.Contains(st.Detail, "the local config states what the published policy does not carry") {
 		t.Fatalf("the edit after the door's own publish is %s %q, want the publish it asks for", st.State, st.Detail)
 	}
-	if out, err := h.apply(t, true); err != nil {
+	if out, err := h.apply(t, false); err != nil {
 		t.Fatalf("the edit after the door's own publish was refused: %v\n%s", err, out)
 	}
 	if got := nodeCeiling(t, f); got != 7 {
@@ -526,7 +527,7 @@ func reposDoorThenEdit(t *testing.T, door func(t *testing.T, f *projectFixture))
 	}
 
 	setConfig(t, f, func(s string) string { return strings.Replace(s, "per_run_usd: 5", "per_run_usd: 7", 1) })
-	h := newMigrationRig(t, f, &initOptions{})
+	h := typedRig(t, f)
 	st, err := h.s.Check(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -534,7 +535,7 @@ func reposDoorThenEdit(t *testing.T, door func(t *testing.T, f *projectFixture))
 	if st.State != initflow.Todo || !strings.Contains(st.Detail, "the local config states what the published policy does not carry") {
 		t.Fatalf("the edit after the allow-list write is %s %q, want the publish it asks for", st.State, st.Detail)
 	}
-	if out, err := h.apply(t, true); err != nil {
+	if out, err := h.apply(t, false); err != nil {
 		t.Fatalf("the edit after the allow-list write was refused: %v\n%s", err, out)
 	}
 	if got := nodeCeiling(t, f); got != 7 {
@@ -1110,10 +1111,10 @@ func looserPublishFixture(t *testing.T) *projectFixture {
 	return f
 }
 
-// typedRigWithPlan is newMigrationRig with an operator at a terminal who types
-// the project's name, which is the confirmation a loosening publish asks for and
-// --yes never stands in for.
-func typedRigWithPlan(t *testing.T, f *projectFixture) *migrationRig {
+// typedRig is newMigrationRig with an operator at a terminal who types the
+// project's name: the confirmation a publish that loosens the node asks for, and
+// the one --yes never stands in for (D846).
+func typedRig(t *testing.T, f *projectFixture) *migrationRig {
 	t.Helper()
 	typed(t)
 	h := newMigrationRig(t, f, &initOptions{})
@@ -1142,7 +1143,7 @@ func TestUpdatePublishLooserNodeNeedsTheTypedName(t *testing.T) {
 		t.Errorf("policy_generation = %q, and the refused publish recorded a generation for a file it did not write", gen)
 	}
 
-	h = typedRigWithPlan(t, f)
+	h = typedRig(t, f)
 	if out, err := h.apply(t, false); err != nil {
 		t.Fatalf("the project's name typed at a terminal did not confirm the publish: %v\n%s", err, out)
 	}
