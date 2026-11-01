@@ -318,8 +318,18 @@ func factsBuckets(t *testing.T, runs []factsRun) (*blob.Bucket, *factsDriver) {
 // sequentialFacts is Facts as it read before the reads were parallel: the same
 // loop, one result.json at a time, against the same bucket. It is the
 // reference the parallel pass has to equal, kept in the test so the comparison
-// is with what the command did and not with itself.
+// is with what the command did and not with itself. It lists a whole day back,
+// the look-back the pass had before it was trimmed to mintSkewMargin.
 func sequentialFacts(t *testing.T, b budget.BucketFacts, from, to int64) (map[int64][]budget.RunFact, map[string]string) {
+	t.Helper()
+	return sequentialFactsLookBack(t, b, from, to, 24*time.Hour)
+}
+
+// sequentialFactsLookBack is sequentialFacts with the listing's look-back
+// under the test's control, for a test that compares two of them: the pass
+// starts mintSkewMargin before the window's first day, where it used to start
+// a whole day before it.
+func sequentialFactsLookBack(t *testing.T, b budget.BucketFacts, from, to int64, lookBack time.Duration) (map[int64][]budget.RunFact, map[string]string) {
 	t.Helper()
 	ctx := context.Background()
 	out := map[int64][]budget.RunFact{}
@@ -341,7 +351,7 @@ func sequentialFacts(t *testing.T, b budget.BucketFacts, from, to int64) (map[in
 		}
 		slugs = keep
 	}
-	since := time.UnixMilli((from - 1) * 86_400_000).UTC()
+	since := time.UnixMilli(from*86_400_000 - int64(lookBack/time.Millisecond)).UTC()
 	for _, slug := range slugs {
 		ids, err := runstore.ListRunIDs(ctx, b.Bucket, slug, since)
 		if err != nil {
@@ -616,12 +626,14 @@ func TestFactsLookBackIsMinutesNotADay(t *testing.T) {
 	}
 }
 
+// TestFactsRunMintedJustBeforeMidnightCountedInItsDay: the run's own day is
+// the day its record started on, so a run minted seconds before midnight
+// belongs to the day after its ID's — and the mint-skew look-back is what
+// reaches it at all, since its ID is minted before the window opens.
 func TestFactsRunMintedJustBeforeMidnightCountedInItsDay(t *testing.T) {
 	b := blobx.Wrap(memblob.OpenBucket(nil))
 	day := budget.Day(time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC))
-	// Minted 23:59:50 the day before, started ten seconds into the day: the
-	// day it started is the day it counts on, and the look-back is what finds
-	// it at all.
+	// Minted 23:59:50 the day before, started ten seconds into the day.
 	putRecord(t, b, "acme-app", "20261018-235950-aaaa", runstore.Record{
 		Repo: "acme/app", StartedAt: time.Date(2026, 10, 19, 0, 0, 10, 0, time.UTC),
 	})
@@ -642,5 +654,121 @@ func TestFactsRunMintedJustBeforeMidnightCountedInItsDay(t *testing.T) {
 	}
 	if len(facts[day-1]) != 0 {
 		t.Errorf("facts[day-1] = %+v: the run minted the day before started on the day", facts[day-1])
+	}
+}
+
+// TestFactsRunMintedJustAfterMidnightCountedNextDay: the other side of the same
+// midnight. The window opens a day before its first live day, and the run
+// minted seconds after the next midnight — the ID's own day is the window's
+// next day — counts on that day, the day its record started on, which the
+// minutes look-back reaches without any margin at all.
+func TestFactsRunMintedJustAfterMidnightCountedNextDay(t *testing.T) {
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	day := budget.Day(time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)) // the first live day
+	// Minted ten seconds into the window's first day, started ten seconds
+	// later: the ID's day is the day it counts on.
+	putRecord(t, b, "acme-app", "20261018-000010-aaaa", runstore.Record{Repo: "acme/app",
+		StartedAt: time.Date(2026, 10, 18, 0, 0, 20, 0, time.UTC)})
+	// Minted ten seconds into the window's next day, started ten seconds
+	// later: the day the window is about, and the one the run counts on.
+	putRecord(t, b, "acme-app", "20261019-000010-bbbb", runstore.Record{Repo: "acme/app",
+		StartedAt: time.Date(2026, 10, 19, 0, 0, 20, 0, time.UTC)})
+	// Minted at the far end of the day and never started: its mint day is the
+	// day it counts on, and a day past the window is still dropped.
+	putRecord(t, b, "acme-app", "20261020-235950-cccc", runstore.Record{Repo: "acme/app"})
+
+	facts, _, err := budget.BucketFacts{Bucket: b.Bucket}.Facts(context.Background(), day-1, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range facts[day] {
+		got = append(got, f.Run)
+	}
+	if want := []string{"20261019-000010-bbbb"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("facts[day] = %v, want %v", got, want)
+	}
+	if len(facts[day-1]) != 1 || facts[day-1][0].Run != "20261018-000010-aaaa" {
+		t.Errorf("facts[day-1] = %+v: the run minted just after the window's midnight counts on the day it started, not on the day after it", facts[day-1])
+	}
+}
+
+// TestFactsSkewedRecordWithinMarginCounted: the ID is minted by the launcher's
+// clock and the record's started_at written by the container's, so the two
+// stamps disagree by the skew between them. A run whose two stamps sit on
+// either side of midnight by less than the margin is counted on the day its
+// record names, whichever side of its mint that is: attribution is the
+// record's, and the margin is what keeps the run listed.
+func TestFactsSkewedRecordWithinMarginCounted(t *testing.T) {
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	day := budget.Day(time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC))
+	// The launcher's clock ahead: the ID says the day, the record says the day
+	// before it.
+	putRecord(t, b, "acme-app", "20261019-000005-aaaa", runstore.Record{Repo: "acme/app",
+		StartedAt: time.Date(2026, 10, 18, 23, 59, 40, 0, time.UTC)})
+	// The launcher's clock behind: the ID says the day before, the record says
+	// the day.
+	putRecord(t, b, "acme-app", "20261018-235940-bbbb", runstore.Record{Repo: "acme/app",
+		StartedAt: time.Date(2026, 10, 19, 0, 0, 5, 0, time.UTC)})
+
+	facts, _, err := budget.BucketFacts{Bucket: b.Bucket}.Facts(context.Background(), day-1, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts[day-1]) != 1 || facts[day-1][0].Run != "20261019-000005-aaaa" {
+		t.Errorf("facts[day-1] = %+v, want the run whose record is on the day before, not the one whose ID is", facts[day-1])
+	}
+	if len(facts[day]) != 1 || facts[day][0].Run != "20261018-235940-bbbb" {
+		t.Errorf("facts[day] = %+v, want the run whose record is on the day", facts[day])
+	}
+}
+
+// TestFactsFinishedDaysUnchangedByTheShorterLookBack: a report's finished days
+// are the days before it, and their rows are what they were when the pass
+// listed a whole day back — the same runs, in the same order, on the same
+// days, with the same repository names. The runs minted on the day before the
+// window, which the day filter dropped then, are the reads this change
+// removes: the reference reads them and the pass does not.
+func TestFactsFinishedDaysUnchangedByTheShorterLookBack(t *testing.T) {
+	windowLast := budget.Day(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	from, to := windowLast-4, windowLast
+	var runs []factsRun
+	for d := from - 1; d <= to+1; d++ {
+		midnight := time.UnixMilli(d * 86_400_000).UTC()
+		for i := range 3 {
+			start := midnight.Add(time.Duration(8+4*i) * time.Hour)
+			minted := start.Add(-time.Duration(3+i) * time.Minute)
+			c := runstore.NewCost(1, float64(i+1)/4, runstore.BasisAPIList)
+			fin := start.Add(time.Hour)
+			runs = append(runs, factsRun{slug: "acme-app", id: minted.Format("20060102-150405") + fmt.Sprintf("-%04x", i),
+				rec: runstore.Record{Repo: "acme/app", StartedAt: start, FinishedAt: &fin, Cost: &c}})
+		}
+	}
+	// Minted seconds before the window opens and started seconds into it: the
+	// run the look-back exists for, on the one night the two rules differ.
+	boundaryMint := time.UnixMilli(from * 86_400_000).UTC().Add(-10 * time.Second)
+	runs = append(runs, factsRun{slug: "acme-app", id: boundaryMint.Format("20060102-150405") + "-fe01",
+		rec: runstore.Record{Repo: "acme/app", StartedAt: time.UnixMilli(from * 86_400_000).UTC().Add(10 * time.Second)}})
+
+	_, d := factsBuckets(t, runs)
+	// The reference is the pass as it read before this change: the same walk,
+	// listing a whole day before the window.
+	want, wantRepos := sequentialFactsLookBack(t, budget.BucketFacts{Bucket: blob.NewBucket(d)}, from, to, 24*time.Hour)
+	refReads := d.reads()
+	if len(want) != 5 || len(want[from]) != 4 {
+		t.Fatalf("the fixture put %d days of facts in the result (%d runs on the first): this test would compare too little", len(want), len(want[from]))
+	}
+	got, gotRepos, err := budget.BucketFacts{Bucket: blob.NewBucket(d)}.Facts(context.Background(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parReads := d.reads() - refReads; parReads >= refReads {
+		t.Errorf("the pass read %d records where the look-back of a whole day read %d: the day before the window was read only to be dropped", parReads, refReads)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the finished days differ from what the day-long look-back returned:\n%+v\nwant\n%+v", got, want)
+	}
+	if !reflect.DeepEqual(gotRepos, wantRepos) {
+		t.Fatalf("repos = %v, want %v", gotRepos, wantRepos)
 	}
 }
