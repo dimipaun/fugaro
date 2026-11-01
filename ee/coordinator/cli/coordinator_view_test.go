@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,12 @@ import (
 //   - TestCoordinatorStatusFromStoreNeedsNoKey: no App credential is in the
 //     environment and no provider is ever opened, and the view printed is the
 //     stored one — pull requests and all.
+//   - TestCoordinatorStatusFromStoreNamesTheProvider: the document says which
+//     host the repository is on, which is what a reader builds a pull request
+//     link from, and the human table gains no column for it.
+//   - TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone: the key
+//     is written even with nothing to put in it, so a reader can tell a
+//     repository with no provider from a document older than the field.
 //   - TestCoordinatorStatusFromStoreWithService: the same read with the
 //     installation's credentials service in the environment, where the
 //     project-wide read refuses (coordinatorAppCredential). The fixture's runs
@@ -178,6 +185,57 @@ func TestCoordinatorStatusFromStoreNeedsNoKey(t *testing.T) {
 	}
 	if got.Stale != nil {
 		t.Errorf("a repository with no marker printed %+v", got.Stale)
+	}
+}
+
+// TestCoordinatorStatusFromStoreNamesTheProvider: the document answers which
+// host the repository is on (D814), because a reader that builds a pull
+// request's link needs one and this document is the only place it can come
+// from — the URL the sweep stored is a field a job wrote, not a fact about the
+// repository. The fixture's config records provider: github for acme/app.
+func TestCoordinatorStatusFromStoreNamesTheProvider(t *testing.T) {
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	f.writeStoredView(t, storedView(), nil)
+	noStoreOpens(t)
+
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+	if got.Provider != "github" {
+		t.Errorf("provider = %q, want github, which is what the fixture's repos entry records for acme/app", got.Provider)
+	}
+
+	// The provider is a reader's field and not a person's: the table the same
+	// read draws has the columns it always had, and no host is added to them.
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if strings.Contains(out, "github") {
+		t.Errorf("the human table names the provider, and the field is one for readers:\n%s", out)
+	}
+}
+
+// TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone: the key is
+// written even when there is no provider to put in it. A repository whose
+// config records no provider and which has no checkout is refused earlier, for
+// the slug's sake (repoSlug), so the empty answer is pinned where it is made:
+// the document the command writes carries "provider": "", and a reader can
+// therefore tell "no provider" from a document older than this field, which
+// would carry no key at all.
+func TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeCoordinatorJSON(&buf, coordinator.RepoView{Repo: "acme/app"}); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("%v: %s", err, buf.String())
+	}
+	raw, ok := doc["provider"]
+	if !ok {
+		t.Fatalf("the document drops the provider key when there is no provider, so a reader cannot tell that from an older CLI: %s", buf.String())
+	}
+	if string(raw) != `""` {
+		t.Errorf("provider = %s, want \"\"", raw)
 	}
 }
 
