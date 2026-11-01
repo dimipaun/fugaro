@@ -2,7 +2,7 @@
 
 **Status: design only; nothing here is approved and no code follows from this folder.** This document
 set answers one brief: the cloud senior review ([docs/cloud-senior-review/](../cloud-senior-review/), PR
-#1472) cannot run its first slice — **E1 + R1 + R7 + R2** — because it needs a half of the credentials
+#1472) cannot run its first slice — **E1 + CSR1 + CSR7 + CSR2** — because it needs a half of the credentials
 service that does not exist and that
 [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md) lists as
 **C3.9, "Later, unscheduled"**. That half is three things and no more: the service **admitting a
@@ -14,7 +14,7 @@ those, decides them, and says in as many words what of the general C3.9 it does 
 answered**: D1062–D1071 as recommended, **D1072 as 0.16.0**, **D1063 amended** by the owner's ruling **O1**,
 and **D1073** and **D1074** added in the same review of this folder. Answering a decision is not approving a
 task: nothing here is approved to build.
-**Reconciled against** `origin/main` at `26bcf0a0` and the open pull requests of 2026-11-01.
+**Reconciled against** `origin/main` at `a38cfeec` and the open pull requests of 2026-11-01.
 
 ## What it is
 
@@ -66,7 +66,7 @@ repository rather than about taste:
 | [implementation-plan.md](implementation-plan.md) | Tasks **C3.9a–C3.9g** (at most 10 files each) with named tests, red steps, SEC flags and gates, the shared-files table, the named live check, and the release slot |
 
 **How a `:line` in this folder reads.** A citation names a file and a symbol, and the number is the
-symbol's **declaration** line as it stood at `26bcf0a0`; a line drifts the first time anyone edits the file
+symbol's **declaration** line as it stood at `a38cfeec`; a line drifts the first time anyone edits the file
 above it, so the symbol, not the number, is what a reader should search for, and every claim also states
 the fact in words.
 
@@ -89,10 +89,10 @@ the fact in words.
    at **its** merge.
 3. **Re-read the `:line` citations** against the tree being merged, under the convention above.
 
-**Before implementation, two things block, and neither is this folder's to clear by writing**: **R1** of
+**Before implementation, two things block, and neither is this folder's to clear by writing**: **CSR1** of
 [docs/cloud-senior-review/](../cloud-senior-review/) names the read-only permission set in
 `internal/gitprov/github/apptoken.go`, and the mint this design specifies **serves that set** rather than
-declaring a second spelling of it. R1 is that work stream's task; this plan depends on it and adds no task
+declaring a second spelling of it. CSR1 is that work stream's task; this plan depends on it and adds no task
 that writes the file (see [implementation-plan.md](implementation-plan.md) §"Dependencies"). Everything
 else the slice needs is in the tree: the keyless fetch path, the two-identity verifier, the mint, the audit
 line and the one bundle container. The second is **U7** of that same work stream, and it is a **hard

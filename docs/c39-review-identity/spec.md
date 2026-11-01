@@ -25,7 +25,7 @@ per-repository job's account names** — a name a per-`(profile, account)` job d
 
 1. a **third account class** — the review-only job variant, per `(profile, account)`, admitted as such
    (§2, §3);
-2. a mint that serves **R1's read-only permission set** for a review caller, scoped to the repository the
+2. a mint that serves **CSR1's read-only permission set** for a review caller, scoped to the repository the
    **run identity** names, within what the account is admitted for (§4);
 3. the **sign and verify endpoints** for the verdict digest, with a per-account key the service alone
    holds (§5, §6).
@@ -36,7 +36,7 @@ App key with live accessors, (ii) reaches the whole `runs/` prefix, and (iii) se
 once — so admitting it to the service's **model** path would put a credential of a container that runs
 untrusted code behind one shared account. The review variant is a **different job**, and the ways it
 differs are exactly what the class buys: it mounts **no** model credential and no App key, no signing key
-and no accessor on either (`docs/cloud-senior-review/implementation-plan.md` R7), and it is admitted on
+and no accessor on either (`docs/cloud-senior-review/implementation-plan.md` CSR7), and it is admitted on
 **three routes** — the mint, the sign, and the model path **for its own account** (§2.3, §4.2) — while it
 is refused the verify route and refused as a *coding* job would be. A *coding* run in a shared project job
 is refused on every route, before and after this lands (D1062, D1063).
@@ -49,7 +49,7 @@ account §3.2 resolves, and only for a repository that account is admitted to �
 a credential of a container that is not its own, which is the exposure the constraint exists to refuse. A
 review job also **ignores the published `routing.claude` switch** (§5.2): whatever that switch says, a
 review job's Claude calls go to the service, because the service is the only path its container has. If
-C3.9 slips, the fallback the ruling names is R7's token mount, and the class goes back to two routes.
+C3.9 slips, the fallback the ruling names is CSR7's token mount, and the class goes back to two routes.
 
 ---
 
@@ -82,7 +82,7 @@ the *deployment* publishes, so a caller cannot name its own class.
 (`internal/config/claude_accounts.go:115`) — the **one** function the deployer, the launcher and the
 runner already share for the job axis — and derives each account's email through the same
 `serviceAccountEmail` (`server.go:178`) over the variant's own service-account ID. The variant's
-service-account ID spelling is **R7's**, not this design's (`docs/cloud-senior-review/` R7: "same axis,
+service-account ID spelling is **CSR7's**, not this design's (`docs/cloud-senior-review/` CSR7: "same axis,
 same `gcp.ProjectJobName` shape with a review suffix"); what this design fixes is the *requirement*:
 
 - **one derivation**: the service and `internal/infra/projectjobs.go` compute the review accounts from one
@@ -133,9 +133,9 @@ header and no new token type is introduced by this design.**
 For a repository job the pairing is one comparison: `ja.Slug == id.Slug` (`server.go:476`) — the account
 names a repository and the run must be one of that repository's. A per-`(profile, account)` review job
 names **no** repository, so that comparison cannot be made, and it must not be replaced by "trust the run
-token": a run identity is verified on its own, and nothing in the two verifications pairs them
-(`docs/cloud-senior-review/reconciliation.md`, finding m2, which records the same gap for the shared
-jobs).
+token": a run identity is verified on its own, and nothing in the two verifications pairs them — which is
+the same gap the shared jobs have, and the reason the class of caller is decided from the verified email in
+the first place.
 
 **The pairing for a review caller is the account's admission**, read from what the launcher already
 publishes (O4, `docs/credentials-service/implementation-plan.md`):
@@ -145,9 +145,19 @@ publishes (O4, `docs/credentials-service/implementation-plan.md`):
 2. the slug is resolved to a canonical repository through the service's **repository table**
    (§4.1), and an unknown slug is refused;
 3. the account the call is served as (the profile triple of the **review** class row) must appear in that
-   repository's published admissions, `PolicyReader.Admissions(ctx, slug)` → `projectpolicy.RepoPolicy`'s
-   `credentials.accounts`; **a repository with no published node, or one whose node cannot be read, is
-   refused** — fail closed, the rule the model path already follows for a project with no allow-list;
+   repository's published admissions — and the admission is **the model path's own**, not a second spelling
+   of it: `admittedAccounts(ctx, slug, canonical)` (`internal/credsvc/cascade.go:87`), the O4 check the
+   cascade already makes when it offers a tier-A credential, is the pairing's third step. It is an
+   **intersection of three published facts** and not a read of one: the repository's own child node names the
+   accounts an administrator admitted it to (`PolicyReader.Admissions(ctx, slug)` →
+   `projectpolicy.RepoPolicy`'s `credentials.accounts`); the shared node defines the account
+   (`shared.accounts.<name>`); and **both** the account's `allow_repos` and the project's own `allow_repos`
+   admit the repository. Taking the whole intersection rather than the child node alone is what closes the
+   `project repos rm` gap: that command removes the repository from the project's allow-list and does not
+   touch its child, so a pairing that read `credentials.accounts` by itself would keep admitting a
+   repository the project has withdrawn. **An absent child is an empty admission and never an error**, and
+   an unreadable child or node is a refusal and not an empty set — fail closed, the rule the model path
+   already follows for a project with no allow-list;
 4. the run identity must be a **review** identity (§3.3).
 
 Both halves of the admission are the launcher's and neither is new: the account's `allow_data_to` must
@@ -181,7 +191,7 @@ So the order is fixed and the design states it rather than leaving it to be disc
 writes `review.json`, computes its digest, signs, and only then ends** — the artifact and its signature
 are written while the run is still live. A review run that has already ended cannot be signed; a job killed
 before that point leaves an **unsigned** artifact, which the coordinator must refuse
-(`docs/cloud-senior-review/` R3), and the honest remedy is re-reviewing the head, not re-signing — a
+(`docs/cloud-senior-review/` CSR3), and the honest remedy is re-reviewing the head, not re-signing — a
 re-signing path would be a way to obtain a signature for bytes a later process chose.
 
 ---
@@ -213,22 +223,22 @@ whose node is unpublished unmintable, for a name the deployment already publishe
 ### 4.2 The permission set is chosen from the verified identity
 
 The mint hard-codes the run's set (`github.RunTokenPermissions()`, `github.go:239`;
-`internal/gitprov/github/apptoken.go:91`). The review caller is served **R1's read-only set**
-(`docs/cloud-senior-review/implementation-plan.md` R1: `{contents: read, pull_requests: read, metadata:
+`internal/gitprov/github/apptoken.go:91`). The review caller is served **CSR1's read-only set**
+(`docs/cloud-senior-review/implementation-plan.md` CSR1: `{contents: read, pull_requests: read, metadata:
 read}`) — a **fifth** set, not a reuse: the package's four (`:91` the run's, `:97` an image build's, `:111` a
-challenger arm's, `:128` the coordinator's) each read something else, and R1's combination is the one a
+challenger arm's, `:128` the coordinator's) each read something else, and CSR1's combination is the one a
 review needs. The choice is made from the verified side and nothing else:
 
 | caller | run identity | set served |
 | --- | --- | --- |
-| review class | no `fb`, non-empty `fpr` | **the read-only set** (R1's) |
+| review class | no `fb`, non-empty `fpr` | **the read-only set** (CSR1's) |
 | review class | any other shape | **refused** — never the run set |
 | repository class | any | the run set, unchanged (`RunTokenPermissions`) |
 
-R1's set is **another work stream's symbol**, and it must be **a set of its own** rather than one composed
+CSR1's set is **another work stream's symbol**, and it must be **a set of its own** rather than one composed
 out of the four — the reason `shadowTokenPermissions`'s own comment gives for its own duplicate: a later
 change to one set must not silently widen the other. This design serves it and declares no second spelling of
-the permissions. If R1 has not landed, the review mint cannot land either — the dependency is recorded in
+the permissions. If CSR1 has not landed, the review mint cannot land either — the dependency is recorded in
 [implementation-plan.md](implementation-plan.md) §"Dependencies" and is a precondition, not a task here.
 
 ### 4.3 Lifetime, refresh, and what is never mounted
@@ -239,7 +249,7 @@ minted on demand and refreshed by the `Token(ctx, minValid)` contract the in-job
 its `Token`); it lives in the
 review container's memory for the run's length and is **never written down, never mounted and never handed
 in at launch** — D893 (c)'s whole point. The review variant carries the service's URL in its environment
-and nothing else about it (`docs/cloud-senior-review/` R7).
+and nothing else about it (`docs/cloud-senior-review/` CSR7).
 
 *The alternative — a shorter service-side cap — is not available: GitHub mints no shorter token, so a
 shorter lifetime would mean more refreshes and more audit lines for a lifetime nothing can shorten
@@ -278,7 +288,7 @@ discovery.
 
 **Request** (strict decode, `DisallowUnknownFields`, bounded by `maxMintRequestBytes`' 4 KiB,
 `github.go:92`): `{"digest": "<64 lowercase hex>"}` — SHA-256 over `review.json`'s exact bytes, computed
-by the artifact writer (`docs/cloud-senior-review/` R3). The **digest is not the object**: the reviewer's
+by the artifact writer (`docs/cloud-senior-review/` CSR3). The **digest is not the object**: the reviewer's
 prose never leaves the run (D892).
 
 **Admission**, in the order `ServeHTTP` already makes its decisions (§4.4): the review class (§2.1); the
@@ -312,7 +322,7 @@ refuses a request that names an algorithm of its own: the request has no algorit
 the reviewer's prose, does not check the pull request or the head, and does not know what the coordinator
 launched. What the signature therefore binds is **the exact bytes, for one run of one repository, under the
 key of one account**; which pull request and which head those bytes belong to is inside the bytes and is
-checked by the verifier against what it launched (D892's four checks, shipped by the review work's R3). The
+checked by the verifier against what it launched (D892's four checks, shipped by the review work's CSR3). The
 service's contribution to the rest is its **audit line**, which names the account, the repository slug and
 the run from the verified identity — **not the identity's pull requests**, because C3.9a's `AuditEvent` has
 no field for them and adding one is scope this design does not take — so a signature can be traced to the
@@ -346,10 +356,14 @@ distinction exists for, and it is stated here in one sentence: nothing but `{"va
 never read as a reason to re-review on its own.
 
 **The clock is the caller's, and the tolerance is not this route's to invent**: a verify request carries no
-timestamp, so there is no window to widen here — the temporal rules that apply are the ones `verifyJob` and
-`checkLive` already apply to the caller's Google ID token (expiry, not-issued-in-the-future, the skew window
-those two share) and to the run's liveness when the sign route is the caller, and this design adds no second
-tolerance of its own.
+timestamp, so there is no window to widen here, and the temporal rules that apply are exactly the two the
+service already keeps for the caller's Google ID token — `verifyJob`'s (`auth.go:423`): expiry, an `iat` not
+in the future and a `nbf` not in the future, the last two against the one shared `clockSkew` the package
+declares (`auth.go:123`, used at `:489` and `:492`) — and for the run identity, `verifyRun`'s
+(`auth.go:516`), which applies the same three against the same constant (`:547`). **`checkLive` (`auth.go:665`)
+has no tolerance of its own and reads no token's window**: it reads the run's write-once outcome, so the
+liveness rule is a fact about the run and not a clock comparison. **This design adds no third tolerance**,
+and the verifier's own token is held to the same three rules rather than to a second spelling of them.
 
 Why an endpoint at all, given the coordinator could hold the key: **because a second holder is a second
 place it can leak from** (D892). The verify call exists so the coordinator never holds a key that forges
@@ -367,7 +381,7 @@ The coordinator is not a run: it holds no run identity, so the verify route cann
 way the other routes are. It gets its own class, which is **configuration plus one small piece of code** —
 the list is what an operator writes, and the path that reads it is new:
 
-- **the route is parsed ahead of `RequestFromHTTP`.** `RequestFromHTTP` (`wire.go:152`) reads the two
+- **the route is parsed ahead of `RequestFromHTTP`.** `RequestFromHTTP` (`wire.go:842`) reads the two
   identity headers, and `Authenticator.Verify` (`auth.go:367`, reached from `server.go:457`) refuses a
   request whose run identity is missing or unverified — while `ServeHTTP` refuses an unverified request
   **before** it branches on the route (`server.go:450`–`:460`). A verifier holds no run identity, so the
@@ -409,12 +423,36 @@ does not add one (D1062).
 `email` the verifier's Google ID token verified — the same field a job's line uses for the account, and a
 legal one for any foldable address (`validAccount` → `foldEmail`, `audit.go:498`) — and `Credential` is the
 review-signing key's bundle entry name, which is the credential the answer was computed from even though the
-caller supplied no credential at all. **One rule of the field set moves for it, and the design states that
-rather than discovering it in the handler**: `checked` requires `Job` and `Caller` to be set together
-(`audit.go`), and a verifier is not a run in a job and reports no `Identity.Job`, so the verify purpose
-carries `Caller` without `Job` — exactly the shape a mint already has with the pair it does not hold
-(`PurposeMint` carries a credential and no tier, `audit.go`). The field set itself does **not** grow, and
-the plan's C3.9f names the test that holds the line to that shape.
+caller supplied no credential at all.
+
+**Three rules of `checked` (`audit.go:419`) move for these two purposes, and the design states all three
+rather than discovering them in a handler.** `checked` is written for lines whose caller holds **both**
+identities and whose credential always belongs to a tier, and neither holds for a sign or a verify line:
+
+1. **A credential with no tier is a mint's alone today** (`audit.go:448`, whose both-or-neither rule refuses
+   a line naming one without the other for every purpose except `PurposeMint`; `:442` refuses a tier on a
+   mint). **A sign line and a verify line are the second and third cases of the same shape**: each names the
+   review-signing key, and the key is a signing key and not a model credential of the cascade, so neither
+   carries a tier. The exemption grows from the one purpose to the three credential-naming purposes that
+   have no tier — and `:442`'s arm, widened the same way, keeps refusing a tier on all three, so the
+   change adds no way to record a tier the service never assigned. C3.9e names the test that holds the sign
+   line to it (`TestSignLineCarriesACredentialAndNoTier`).
+2. **`Job` and `Caller` are set together** (`audit.go:438`), because the identity is what carries both. A
+   verifier is not a run in a job and reports no `Identity.Job` at all, so the verify purpose carries
+   `Caller` without `Job`, and the rule is relaxed for **that purpose only** — a job-purpose line that
+   dropped its `Job` is still refused. C3.9f names the test
+   (`TestVerifyLineCarriesTheCallerWithoutAJob`).
+3. **A `StatusOK` line must carry `Run` and `Job`** (`audit.go:462`–`:473`), which is right for a sign line
+   — the caller is the review variant, so both are set from the verified identity — and wrong for a verify
+   line, which has **neither**: the verifier holds no run identity and is not a job of this installation, so
+   its line carries a purpose, a credential and a status and states no run. The `StatusOK` requirement is
+   relaxed for the verify purpose alone, and the run identity's own rule (a `Run` with no `Repository` is
+   refused, `:431`) is untouched. C3.9f names the test
+   (`TestVerifyAnswerIsAuditedWithoutARunOrAJob`).
+
+**The field set itself does not grow** — no field is added, and a reader of a verify line gets the same
+eight names it already reads. What grows is the set of lines three of the rules admit, by exactly the three
+cases above and no others.
 
 ### 5.6 One signature per review run (D1074)
 
@@ -422,11 +460,25 @@ the plan's C3.9f names the test that holds the line to that shape.
 ask once. When it signs, the service writes a **mark** for the run, and it takes the mark **before** it
 answers: a mark that cannot be taken is a refusal, and no signature comes back. The mark is a **create-only**
 write — `PutIfMatch` (`internal/rtdb/client.go:209`) with an **absent** ETag, the discipline `ProbeLeases`
-already uses for the probe lease (`internal/credsvc/probe.go:100`) — on one node per `(slug, run)`.
+already uses for the probe lease (`internal/credsvc/probe.go:100`) — on **one node per `(slug, run)`**:
+`creds/review-signs/<slug>/<run>`, a sibling of `creds/probes` (the probe lease's own node, `probe.go:112`)
+and the other records under the subtree, with each segment escaped the one way every node under `creds/`
+escapes one (`budget.Key`, `probe.go:182`).
 Create-only is a property of **the write** and not of the database rules, and that is deliberate: the
 service's own writes go through IAM and are not governed by the rules at all, which the rules' own header
 states ("admin writes are IAM-only", `internal/budget/rules/rules.go`), so a write-once rule would be a
 guarantee this path never consults.
+
+**No client token can read the mark or write it, and that is the subtree's rule rather than this node's**:
+`"creds": {".read": false, ".write": false}` (`internal/budget/rules/rules.json.tmpl:9`) denies **every** run
+token the whole subtree, which is the same rule that keeps a run out of the marks, the leases and the
+stickiness records (O1, C1.3). A mark under it therefore needs **no rules change to be unreachable**, and the
+test is the one the subtree's own tests already run:
+`TestRunTokenCannotReadOrWriteTheReviewSignMark` (`internal/budget/rules/creds_emulator_test.go`), which
+asserts the denial against the emulator for this path and adds it to `credsPaths()` so the two sweeps that
+walk that list (`TestCredsRunCannotReadAnything`, `TestCredsRunCannotWriteAnything`) cover the mark as well.
+The result is that a review run can neither read its own mark nor clear it to sign again — the write is the
+service's, over IAM, and the only reader of the node is the service.
 
 A second sign for the same run is **refused** and audited like every other refusal — one line, the sign's
 purpose, the wire's existing `request_refused` status, because the status set is closed and this design does
@@ -539,7 +591,7 @@ registered with the service's redaction, §5.6 and D1074).
 | Adversary | What it holds today | What this slice does |
 | --- | --- | --- |
 | the **review run itself** — a container that runs a test from the head under review by design (D885) | its account's **model credential through the service** (it holds no token of its own, ruling O1), and the read-only installation token it fetches | **closed as far as write access goes**: it can obtain only the read-only set, and only for the repository its own identity names. It **cannot** obtain a write token: the mint chooses the set from the verified claims (§4.2), and a coding run's identity is refused. It **cannot** sign twice (§5.6), and it can reach no key: the review-signing key is not in its container, not in its environment and not in the bundle it may read |
-| **a subprocess inside the review container** — the mutation check's mutant, which runs code from the head by design (D885, R4) | whatever the container's own environment holds — and, if the container's egress is not denied, a Google ID token **from the instance metadata server** for the job's own service account | **this is U7, and the sign route is not built before it is answered** (below). Egress denial including the metadata server is a **hard precondition**; the mark of §5.6 bounds what such a subprocess can obtain even then — one signature for the run, never a second |
+| **a subprocess inside the review container** — the mutation check's mutant, which runs code from the head by design (D885, CSR4b) | whatever the container's own environment holds — and, if the container's egress is not denied, a Google ID token **from the instance metadata server** for the job's own service account | **this is U7, and the sign route is not built before it is answered** (below). Egress denial including the metadata server is a **hard precondition**; the mark of §5.6 bounds what such a subprocess can obtain even then — one signature for the run, never a second |
 | **another run on the same project job set** — the D892 gap: it holds `objectUser` on `runs/`, can list, and can write under a prefix it can see | a shared project job's account | **the verdict is signed, and it holds no key**: a forged or replayed `review.json` has no signature to carry, and the key is not in any container |
 | a caller that can **reach the service's URL** but holds no admitted identity | nothing | refused before a credential is read, as today |
 | the **launcher** | minting authority for run identities, and a share of the installation's own IAM | **unchanged, and stated**: a launcher that can mint an identity for any repository, and deploy a job with an admitted account name, can obtain a read-only token for that repository and sign as that account. This is the same launcher trust the credentials-service plan already records (F29, SECURITY.md) and this slice neither widens nor closes it |
@@ -554,7 +606,7 @@ registered with the service's redaction, §5.6 and D1074).
   makes a signature valid for exactly one run of one repository, so a transplanted or replayed signature
   fails **at the service** and not only at the coordinator. **What it does not bind is the head**: the digest
   is the artifact's, so which pull request and which head those bytes describe come from the artifact's own
-  fields, checked against what the coordinator launched (R3's four checks). A head that moves between the
+  fields, checked against what the coordinator launched (CSR3's four checks). A head that moves between the
   artifact write and the merge is that work stream's check, not this signature's, and this design says so
   rather than claiming a binding it does not make.
 - **A dishonest reviewer inside its own run is not stopped by any signature.** An injected reviewer can
@@ -577,10 +629,10 @@ registered with the service's redaction, §5.6 and D1074).
 
 **The hard precondition: U7 (D1074).** Everything the sign route does rests on one assumption that this
 design cannot make from the tree, and it is **U7** of `docs/cloud-senior-review/` — the owner's live
-observation, taken before that work stream's mutation check (R4) launches, that **egress can be denied for a
+observation, taken before that work stream's mutation check (CSR4b) launches, that **egress can be denied for a
 subprocess inside a Cloud Run container** (Check 125 step 6; no network namespace and no `unshare` in
 generation 2 has been checked at the time of writing). The sign route makes that assumption load-bearing in
-a way R4 does not: the review container runs the package's own test code by design (D885), so a subprocess
+a way CSR4b does not: the review container runs the package's own test code by design (D885), so a subprocess
 that can reach the network at all can reach **the instance metadata server** and mint itself a Google ID
 token for the job's own service account — which is the identity the sign route admits. Therefore:
 
@@ -605,12 +657,12 @@ token for the job's own service account — which is the identity the sign route
 **Named here, numbered at implementation** ([README.md](README.md) §"Numbers this work holds"): the
 register's highest written section is Check 190 and open pull requests claim above it, so the task that
 writes the check takes the number free at its merge. **It is owner-run: no agent performs any step of
-it**, and it is **NOT RUN** until the tasks below ship and the review work's R7 and R2 are on `main`.
+it**, and it is **NOT RUN** until the tasks below ship and the review work's CSR7 and CSR2 are on `main`.
 
 Installation `fugaro`, sandbox checkout only, never `belong`; a sandbox repository (`owner/repo-a`) and a
 sandbox pull request.
 
-1. **The two facts `fugaro doctor` reports** (R6's): the credentials service is enabled for this
+1. **The two facts `fugaro doctor` reports** (CSR6's): the credentials service is enabled for this
    installation, and the review-only variant's account is admitted. A `warning` line instead is the
    finding, and the check stops there.
 2. **The variant holds no credential at all** (ruling O1): `gcloud run jobs describe <the review job>`
@@ -676,17 +728,17 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   words: "both of which are the credentials service's own documented steps, not new ones this design
   adds"). It is not an upgrade step: nothing breaks without it, the service keeps answering everything it
   answered before, and a sign or verify call answers a **named** refusal the operator can act on. What the
-  design does owe is that the *name* is reachable: `fugaro doctor` reports it beside the two facts R6
+  design does owe is that the *name* is reachable: `fugaro doctor` reports it beside the two facts CSR6
   already reports, and the service's refusal says which entry is missing.
-- **The review job cannot be launched before the key exists**, because R6's doctor check and R2's launcher
+- **The review job cannot be launched before the key exists**, because CSR6's doctor check and CSR2's launcher
   refuse the launch rather than shipping one the service refuses. That is the same posture E7's other half
   has, and it is why no user meets a half-configured review.
 - **A version gate, not a silent ignore**: this slice adds no `fugaro.yaml`, task or wire *field*, so
   `internal/cli/recipes_skew.go`'s `…Since` gates are not needed for it — the two routes are new paths and
   an older job image never calls them. Where the review work adds fields, E6 is that work's rule.
-- **The review variant's own environment is R7's, and this slice asks for one change in it**: under ruling
-  O1 the variant carries the service's URL (§4.3) and **no** model token, so R7 mounts nothing where it
-  would have mounted the account's Claude token. That is a change to R7's module and not to `fugaro update`:
+- **The review variant's own environment is CSR7's, and this slice asks for one change in it**: under ruling
+  O1 the variant carries the service's URL (§4.3) and **no** model token, so CSR7 mounts nothing where it
+  would have mounted the account's Claude token. That is a change to CSR7's module and not to `fugaro update`:
   no installation root's plan moves because of it, and the class is admitted the moment the service's image
   is re-pinned.
 
@@ -714,8 +766,8 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   calls it, and the `ship` → merge path that acts on a verified verdict, is the coordinator's own work
   stream (`docs/coordinator/`), and it stays blocked on this slice only in the sense that it now has a
   route to call.
-- **The reviewer's own artifact format, its four replay checks, and the mutation check.** R3 and R4 of
+- **The reviewer's own artifact format, its four replay checks, and the mutation check.** CSR3 and CSR4b of
   `docs/cloud-senior-review/`.
 - **Any per-run cap or lease for a review.** The service's per-run cap is advisory (D143); nothing here
   adds a second budget.
-- **A `fugaro review` command.** R2's, and gated on this slice rather than part of it.
+- **A `fugaro review` command.** CSR2's, and gated on this slice rather than part of it.
