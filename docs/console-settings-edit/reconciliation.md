@@ -52,7 +52,7 @@ only from **that window's own `mainFrame`** (the file's own property 2), and can
 seam is `LaunchConfirmer` (`console/src/main/launch.ts:354`), its input is `ConfirmView` (`:291`,
 built by `confirmView`, `:312`), and what it is built from is `FrozenLaunch` (`:230`) — the whole
 spawn, built once and frozen, so that **what the window shows is what is spawned**. *Consequence:*
-this design copies that pattern rather than inventing a second one, and **D1116** says how far the
+this design copies that pattern rather than inventing a second one, and **D1115** says how far the
 copy is shared code.
 
 **F3: Exists. The two allow-lists are exact, closed and mutation-proof.** `CONSOLE_OPERATIONS`
@@ -607,5 +607,5 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   the caps too, it is a second design and not a task here.
 - **U5. The exact CLI release the prerequisites land in.** They cannot precede #1525's merge and
   this design does not read that pull request's own release slot (the settings design queues for CLI
-  0.15.0 and console 0.117.0, which the console has already passed). Named in the plan as a
-  dependency rather than a number.
+  0.15.0 and console 0.117.0, which is the console's own `package.json` version today). Named in the
+  plan as a dependency rather than a number.
