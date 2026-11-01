@@ -3681,6 +3681,250 @@ span.coordinator-unread-retry {
   font-size: var(--text-xs);
 }
 
+/* ---- The action queue and the fleet's totals (console 0.118.0, K1) --------
+ *
+ * The screen's two new sections, above the panel of repositories: the action
+ * queue -- what is waiting for a person, one row per item, with the one button
+ * that answers it -- and the fleet's totals strip. Both are drawn from reads of
+ * their own (`coordinator status`, `runs ls`, `plan status`, `budget show`), and
+ * each wears its own busy mark while its reads are out, so this block adds no
+ * state of its own: `section.ts`'s mark, its dimming and the skeleton above it
+ * are the whole of "this part is still being read".
+ *
+ * **The screen is no longer read-only, and that is K1's one change here.** The
+ * queue draws the console's two doors out of this page: the launch confirmation
+ * (Retry and Launch, the form the Live screen already owns) and the Spend screen
+ * (a budget alert's Open Spend). They are real buttons, so they take the hit
+ * area and the focus ring the shared blocks give every control, and the one
+ * transition below is the pair of properties a hover moves -- the same shape
+ * `button.console-stamp-refresh` has. The queue's jobs button is the one other
+ * control here, and it is a disclosure rather than a door out of the page; the
+ * rest of the screen is text, and K1 draws no link.
+ *
+ * **No tone is the only channel here.** A kind is one of four words in a chip, a
+ * budget alert's ground is a sentence beside it (`the kill switch is on`, `this
+ * repository is killed`, `this repository has reached its daily cap`), and the
+ * blind-spot line counts what the page cannot reach in the console's own words.
+ * A rule that tinted one item's chip and not its neighbours' would be a state
+ * only a reader who sees colour can read, so there is none.
+ *
+ * **Five rules below name no tag, and the renderer is why.** The screen draws
+ * its two sections, the queue's head and the queue's jobs button through
+ * exported constants
+ * (`COORDINATOR_QUEUE_CLASS` and its neighbours), which the selector scan reads
+ * as a parameter and cannot pair with a tag, so a rule spelled
+ * `section.coordinator-queue` would be refused as a tag nothing draws. The class
+ * names are this screen's own and no other rule competes for them, so the tag
+ * would buy no specificity; `coordinator-count-alert` is written the same way
+ * for the same reason.
+ * ------------------------------------------------------------------------- */
+
+/* The two sections take the frame the redesign gives a panel
+ * (`section.coordinator-repo`): the same ground, the same hairline and the same
+ * radius, because they are the same kind of block on the same screen. */
+.coordinator-queue,
+.coordinator-totals {
+  margin-bottom: var(--section-gap);
+  padding: var(--panel-pad);
+  background: var(--surface);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-xl);
+}
+
+/* The queue's own line: the count of what is waiting, the word it counts and,
+ * for a queue that holds nothing, the console's sentence instead of a zero. It
+ * wraps rather than shrinking the figure, like every other row here. */
+.coordinator-queue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+/* The count is the page's own figure -- the items this console drew -- so it is
+ * the head's first element and reads as one: mono, tabular, and never a word. */
+span.coordinator-queue-count {
+  min-width: 3ch;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-h2);
+  font-variant-numeric: tabular-nums;
+}
+
+span.coordinator-queue-word {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* The same slot the count occupies, for the queue that holds nothing: a state
+ * and not a zero (the screen draws one or the other, never both). */
+span.coordinator-queue-empty {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+/* One read's part of the queue. It is a host and holds no state of its own --
+ * the section's mark is what says the part is still being read -- so all this
+ * gives it is the rhythm between its items. */
+ul.coordinator-queue-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One thing waiting: its facts on one line that folds, and the one button that
+ * answers it at the end of that line. The hairline below is the item's own
+ * boundary, the shape a record row already draws. */
+li.coordinator-queue-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+/* What the item is -- PR, JOB, PLAN or BUDGET -- in the console's own word, in
+ * the chip the record rows draw their state in. */
+span.coordinator-queue-kind {
+  padding: 0 var(--space-2xs);
+  color: var(--text-2);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-chip);
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The subject -- a pull request's number, a run's id, a task's id -- in the
+ * mono every key on this screen is drawn in, and the scope, the repository and
+ * the title beside it in the tones the record rows already use. */
+span.coordinator-queue-subject {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+}
+
+span.coordinator-queue-scope,
+span.coordinator-queue-repo {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+span.coordinator-queue-title {
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+/* Why it is waiting, in the console's own words: the rule the queue applied and
+ * never a claim about the work. */
+span.coordinator-queue-why {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* The item's one control: the launch confirmation for a PR, a job or a task,
+ * and the Spend screen for a budget alert. Pushed to the end of the row, so the
+ * four items are a column of buttons a reader can run down. */
+button.coordinator-queue-button {
+  min-height: var(--hit-min);
+  margin-inline-start: auto;
+  padding: 0 var(--space-md);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+button.coordinator-queue-button:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* The note a part carries instead of items when its read was not made at all: an
+ * installation that records no checkout, or the reduced mode's withheld caps.
+ * It is the console's own sentence about its own gap. */
+p.coordinator-queue-note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* The queue's one control that is not an item's: the press that reads the jobs.
+ * It stands in the jobs' part while that part holds no items, so it takes the
+ * same hit area, hairline and hover as an item's button, and none of that
+ * button's push to the end of the row -- it is alone in its own. */
+.coordinator-queue-jobs {
+  min-height: var(--hit-min);
+  padding: 0 var(--space-md);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.coordinator-queue-jobs:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* What the page cannot reach, in one line under the items: the console's own
+ * sentence and the two counts, each a cell of the same strip the repositories
+ * draw. It holds no control, which is the point of the line. */
+p.coordinator-blind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-md);
+  margin: var(--space-sm) 0 0;
+  padding-top: var(--space-2xs);
+  border-top: var(--rule-width) solid var(--line-subtle);
+  font-size: var(--text-xs);
+}
+
+span.coordinator-blind-word {
+  color: var(--text-3);
+}
+
+/* The fleet's strip: the six cells of the repository strip on the screen's own
+ * panel, one line that folds. The mark waits on its own line above them
+ * (`flex-basis: 100%`) rather than sitting beside the figures it is standing
+ * in for. */
+.coordinator-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-md);
+}
+
+/* The strip's own mark takes a line of its own, so the six figures it is
+ * reading stay on one line above it. */
+.coordinator-totals .console-busy-slot {
+  flex-basis: 100%;
+}
+
 /* ---- A section's skeleton (console 0.116.1) ------------------------------ */
 
 /* The owner, 2026-10-31: "when changing tabs in the Console we should show a

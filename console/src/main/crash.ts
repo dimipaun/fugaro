@@ -105,6 +105,55 @@ export function crashReportingDecision(input: CrashReportingInput): CrashReporti
   return { enabled: true, reason: 'enabled' }
 }
 
+/** CRASH_START_FAILED is the one line a start that threw after an open gate is
+ * worth. It names no error and no path: the failure is a library's, its text is
+ * untrusted, and what it means to the operator -- this run reports nothing -- is
+ * the same sentence whatever it was. */
+export const CRASH_START_FAILED = 'the console could not start crash reporting, so this run sends nothing'
+
+/** CrashStarter is the one thing `startCrashReportingSafely` needs of the module
+ * it loads: the function, and nothing else. It is structural so that this module
+ * -- which is importless and stays that way -- never has to name `./crash-electron`
+ * or the SDK's types to describe it. */
+export interface CrashStarter<Handle> {
+  startCrashReporting(input: { readonly optedIn: unknown; readonly appRoot: string }): Handle
+}
+
+/**
+ * startCrashReportingSafely is the gate's yes turned into a client **without
+ * costing the app its startup**: the load and the init are each a thing that can
+ * fail, and a crash reporter that cannot start is not a reason for the console to
+ * fail to open its window. Both are caught here, one line is said, and the answer
+ * is `null` -- which is what leaves the entry point's handle null, its quit path
+ * with nothing to close, and its startup running.
+ *
+ * It is here rather than in the entry point because `src/main/index.ts` cannot be
+ * imported by a unit test (it calls `app.whenReady()` at the top level), so a
+ * guard written there is a guard nothing can execute; written here, the throwing
+ * import, the rejecting import and the throwing `init` are three cases a test can
+ * hand it. The loader arrives as a function rather than as an import so that this
+ * module stays importless and so that the failure is the test's to make.
+ *
+ * It does not ask the gate: the caller has already done that, and a second ask
+ * here would be a second answer to a question whose answer is a file that can
+ * change between the two. Nothing about the failure is reported to anywhere --
+ * there is no client to report it with, and a failure in the crash reporter is
+ * the one thing that cannot be its own payload.
+ */
+export async function startCrashReportingSafely<Handle>(options: {
+  readonly load: () => Promise<CrashStarter<Handle>>
+  readonly input: { readonly optedIn: unknown; readonly appRoot: string }
+  readonly log: (line: string) => void
+}): Promise<Handle | null> {
+  try {
+    const module = await options.load()
+    return module.startCrashReporting(options.input)
+  } catch {
+    options.log(CRASH_START_FAILED)
+    return null
+  }
+}
+
 /**
  * CRASH_CLIENT_OPTIONS is what the SDK slice passes to the client's `init`
  * beside the DSN, and each entry is a decision rather than a default:

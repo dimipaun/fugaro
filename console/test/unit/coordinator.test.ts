@@ -32,29 +32,67 @@ import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
 import { SPAWN_COMMANDS, argvFor, assertSpawnSurface } from '../../src/main/spawn'
 import type { SpawnCommand } from '../../src/main/spawn'
 import { putText } from '../../src/renderer/app'
+import { capsOf } from '../../src/renderer/screens/spend'
 import {
+  COORDINATOR_BLIND_STALE_WORD,
+  COORDINATOR_BLIND_UNREAD_WORD,
+  COORDINATOR_BLIND_WORD,
   COORDINATOR_CARRIED_WORD,
   COORDINATOR_COLLISION_WORD,
   COORDINATOR_COLLISIONS_WORD,
   COORDINATOR_DRAFT_WORD,
   COORDINATOR_IN_FLIGHT_COUNT_WORD,
   COORDINATOR_IN_FLIGHT_WORD,
+  COORDINATOR_LAUNCH_WORD,
   COORDINATOR_LIST_CAP,
   COORDINATOR_NO_AGE_WORD,
   COORDINATOR_OMITTED_WORD,
+  COORDINATOR_OPEN_RUN_WORD,
+  COORDINATOR_OPEN_SPEND_WORD,
+  COORDINATOR_QUEUE_BUDGET_WORD,
+  COORDINATOR_QUEUE_CAP_WORD,
+  COORDINATOR_QUEUE_CAPS_HIDDEN_WORD,
+  COORDINATOR_QUEUE_EMPTY_WORD,
+  COORDINATOR_QUEUE_JOBS_WORD,
+  COORDINATOR_QUEUE_JOB_WHY_WORD,
+  COORDINATOR_QUEUE_JOB_WORD,
+  COORDINATOR_QUEUE_KILL_WORD,
+  COORDINATOR_QUEUE_NO_PLANS_WORD,
+  COORDINATOR_QUEUE_PLAN_WHY_WORD,
+  COORDINATOR_QUEUE_PLAN_WORD,
+  COORDINATOR_QUEUE_PR_WHY_WORD,
+  COORDINATOR_QUEUE_PR_WORD,
+  COORDINATOR_QUEUE_REPO_KILL_WORD,
+  COORDINATOR_QUEUE_WORD,
   COORDINATOR_RECORDS_WORD,
+  COORDINATOR_RETRY_WORD,
   COORDINATOR_RUNS_WORD,
   COORDINATOR_STALE_WORD,
   COORDINATOR_STORED_WORD,
+  COORDINATOR_TOTAL_CAP_WORD,
+  COORDINATOR_TOTAL_COLLISIONS_WORD,
+  COORDINATOR_TOTAL_COUNTED_WORD,
+  COORDINATOR_TOTAL_IN_FLIGHT_WORD,
+  COORDINATOR_TOTAL_PLANS_WORD,
+  COORDINATOR_TOTAL_REPOS_WORD,
   COORDINATOR_UNREAD_WORD,
+  QUEUE_SOURCES,
   buildCoordinatorModel,
+  coordinatorJobsControl,
+  queueRuns,
   renderCoordinator,
 } from '../../src/renderer/screens/coordinator'
-import type { ScreenElement, ScreenFactory } from '../../src/renderer/screens/coordinator'
+import type {
+  CoordinatorInputs,
+  CoordinatorQueueItem,
+  ScreenElement,
+  ScreenFactory,
+} from '../../src/renderer/screens/coordinator'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { PATH_PLACEHOLDER } from '../../src/shared/sanitize'
-import { decodeCoordinatorStatus } from '../../src/shared/schema'
-import type { CoordinatorStatusView } from '../../src/shared/schema'
+import { PATH_PLACEHOLDER, type TextClass } from '../../src/shared/sanitize'
+import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
+import type { CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
+import type { JSONDoc } from '../../src/source/source'
 
 // ---------------------------------------------------------------------------
 // The harness: a fake element that refuses what a screen may not do.
@@ -160,9 +198,11 @@ function decodes(raw: unknown): CoordinatorStatusView {
   return result.value
 }
 
-/** renders draws a document, as the entry point does. */
+/** renders draws a document, as the entry point does: the document's own read
+ * has landed and the other three have answered with nothing waiting, so a case
+ * about the records and collisions is not also a case about the queue. */
 function renders(raw: unknown): ScreenElement {
-  return renderCoordinator(factory, buildCoordinatorModel({ view: decodes(raw) }), 'dark')
+  return renderCoordinator(factory, buildCoordinatorModel(queueInputs({ view: decodes(raw) })), 'dark')
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +291,243 @@ const UNSTORED = {
     ],
     collisions: [],
   },
+}
+
+// ---------------------------------------------------------------------------
+// The four documents the action queue and the fleet totals are read from (K1).
+//
+// They are built here rather than read from a fixture: the queue turns on
+// states no stored view carries (a draft, a record with no run, a run whose
+// halt block is set), and the two documents beside it are read through the
+// console's own decoders -- `decodePlanStatus` and `spend.ts`'s `capsOf` --
+// so a case hands the screen exactly what the entry would.
+// ---------------------------------------------------------------------------
+
+/** aRecord is one record of the stored view: a pull request and the runs behind
+ * it, in the shape `ee/coordinator/view.go` writes. `runs: 0` is a pull request
+ * the store holds no run for, which is a fact the queue has a rule about. */
+function aRecord(options: {
+  number?: number
+  title?: string
+  draft?: boolean
+  state?: string
+  inFlight?: boolean
+  runs?: number
+}): unknown {
+  const number = options.number ?? 1458
+  const runs = options.runs ?? 1
+  return {
+    pr: {
+      number,
+      url: `https://example.invalid/owner/repo-a/pull/${String(number)}`,
+      title: options.title ?? 'a title someone wrote',
+      branch: 'feat/a-thing',
+      draft: options.draft ?? false,
+      state: options.state ?? 'open',
+    },
+    runs: Array.from({ length: runs }, (_unused, index) => ({
+      id: `20261031-101502-9f0${String(index)}`,
+      pr: number,
+      status: 'succeeded',
+      outcome: 'implemented',
+      terminal: true,
+      branch: 'feat/a-thing',
+      base_branch: 'main',
+      declared_by: 'person-1',
+      files: [],
+      files_truncated: false,
+    })),
+    branch: 'feat/a-thing',
+    release: '',
+    in_flight: options.inFlight ?? false,
+    files: [],
+    services: [],
+  }
+}
+
+/** aStore is a coordinator document: one stored repository holding the records
+ * a case hands it. */
+function aStore(records: readonly unknown[]): unknown {
+  return {
+    repos: [
+      { repo: 'owner/repo-a', stored: true, view: { repo: 'owner/repo-a', records, collisions: [] } },
+    ],
+  }
+}
+
+/** aRunRow is one row of a `runs ls --json` document. `halted` writes the block
+ * a person's halt leaves on the row, which is the first of the two grounds the
+ * queue draws a job for. */
+function aRunRow(options: {
+  run?: string
+  repo?: string
+  status?: string
+  terminal?: boolean
+  halted?: boolean
+  title?: string
+  planTask?: string
+}): unknown {
+  const run = options.run ?? '20261031-101502-9f3c'
+  const row: Record<string, unknown> = {
+    run,
+    repo: options.repo ?? 'owner/repo-a',
+    run_id: `${run}-full`,
+    status: options.status ?? 'failed',
+    terminal: options.terminal ?? true,
+    reason: options.halted === true ? 'waiting for a person' : '',
+    title: options.title ?? '',
+    plan_task: options.planTask ?? '',
+    created: '2026-10-31T10:15:02Z',
+  }
+  if (options.halted === true) {
+    row['halt'] = { by: 'person-1', at: '2026-10-31T10:41:00Z', reason: 'waiting for a person' }
+  }
+  return row
+}
+
+/** runsDocument is a `runs ls --json` document, in the CLI's own order: newest
+ * first. */
+function runsDocument(rows: readonly unknown[]): unknown {
+  return { runs: rows }
+}
+
+/** aTask is one plan task in the state a case gives it. */
+function aTask(id: string, state: string, title = 'a task somebody wrote'): unknown {
+  return { id, title, state, closed: state === 'done', level: 1, critical: false, needs: [] }
+}
+
+/** aPlanStatus is a `plan status --json` document: one plan holding the nodes a
+ * case hands it, on the checkout's own repository. */
+function aPlanStatus(nodes: readonly unknown[]): unknown {
+  return {
+    repo: 'owner/repo-a',
+    plans: [
+      {
+        id: 'p1',
+        artifact: 'console-coordinator-v2',
+        plan: 'console-coordinator-v2',
+        stream: 'v1',
+        nodes,
+        releases: [],
+        tasks: nodes.length,
+        closed: 0,
+        open: nodes.length,
+      },
+    ],
+    totals: { plans: 1, tasks: nodes.length, closed: 0, open: nodes.length },
+    streams: [],
+    warnings: [],
+  }
+}
+
+/** plans is the plan status the screen is handed, through the console's own
+ * decoder. */
+function plans(nodes: readonly unknown[]): PlanStatusView {
+  const result = decodePlanStatus(aPlanStatus(nodes))
+  if (!result.ok) throw new Error(result.skew.because)
+  return result.value
+}
+
+/** aBudget is a `budget show --json` document: the global block and one
+ * repository row, which are where the queue's alerts and the totals' money come
+ * from. The defaults are a fleet under its caps and a repository under its own,
+ * so a case that is not about an alert draws none. */
+function aBudget(options: {
+  counted?: number
+  cap?: number
+  fleetKilled?: boolean
+  repoCounted?: number
+  repoCap?: number
+  repoKilled?: boolean
+}): JSONDoc {
+  const cap = options.cap ?? 600
+  const counted = options.counted ?? 412.6
+  const repoCap = options.repoCap ?? 120
+  const repoCounted = options.repoCounted ?? 1.25
+  const global: Record<string, unknown> = {
+    daily_cap_usd: cap,
+    per_run_cap_usd: 5,
+    counted_usd: counted,
+    spent_usd: 400,
+    notional_usd: 12.6,
+    headroom_usd: cap - counted,
+  }
+  if (options.fleetKilled === true) {
+    global['kill'] = { by: 'person-1', at: '2026-10-31T10:00:00Z', reason: 'the fleet is stopped' }
+  }
+  const repo: Record<string, unknown> = {
+    slug: 'owner-repo-a',
+    repo: 'owner/repo-a',
+    counted_usd: repoCounted,
+    spent_usd: repoCounted,
+    notional_usd: 0,
+    headroom_usd: repoCap - repoCounted,
+    daily_cap_usd: repoCap,
+    daily_cap_source: 'repo',
+    per_run_cap_usd: 0,
+    per_run_cap_source: '',
+  }
+  if (options.repoKilled === true) {
+    repo['kill'] = { by: 'person-1', at: '2026-10-31T10:00:00Z', reason: 'this repository is stopped' }
+  }
+  return {
+    project: '<project>',
+    day: '2026-10-31',
+    mode: 'live',
+    max_reserve_usd: 0,
+    global,
+    defaults: {},
+    repos: [repo],
+    warnings: [],
+  }
+}
+
+/** aBudgetFor is `aBudget`'s own document with its one repository row renamed,
+ * which is where a budget alert's one document cell comes from: an alert names
+ * the repository it is about, and `repoKilled` is what makes the queue draw one
+ * for it. */
+function aBudgetFor(repo: string): JSONDoc {
+  const document = aBudget({ repoKilled: true })
+  const rows = document['repos']
+  const row = Array.isArray(rows) ? (rows[0] as Record<string, unknown> | undefined) : undefined
+  return { ...document, repos: [{ ...row, repo }] }
+}
+
+/** queueInputs is what the entry hands the model, with the four reads answered
+ * and nothing waiting: a case names the one read it is about. A read that has
+ * not answered is `null`, `checkout` is whether the installation has one at all
+ * (the condition that turns the plan read off), and `capsHidden` is the reduced
+ * mode's own withholding. */
+function queueInputs(inputs: Partial<CoordinatorInputs>): CoordinatorInputs {
+  return {
+    view: decodes(aStore([])),
+    runs: [],
+    plans: plans([]),
+    caps: capsOf(aBudget({})),
+    checkout: true,
+    capsHidden: false,
+    ...inputs,
+  }
+}
+
+/** drawsQueue draws the screen from the queue's own inputs, as the entry does
+ * when a read lands. */
+function drawsQueue(inputs: Partial<CoordinatorInputs>): ScreenElement {
+  return renderCoordinator(factory, buildCoordinatorModel(queueInputs(inputs)), 'dark')
+}
+
+/** itemTexts is one class of every queue item's cells, in the order they are
+ * drawn. */
+function itemTexts(node: ScreenElement, className: string): readonly string[] {
+  return all(node, 'coordinator-queue-item').map((item) => textOf(item, className))
+}
+
+/** figureOf is one count cell's word and its drawn figure, in the order they are
+ * drawn: the two halves are drawn by `numberCell`, so a case reads them the way
+ * a reader does -- together. */
+function figureOf(node: ScreenElement, className: string): readonly [string, string] {
+  const cell = one(node, className)
+  return [textOf(cell, 'coordinator-count-word'), textOf(cell, 'coordinator-count-value')]
 }
 
 // ---------------------------------------------------------------------------
@@ -445,9 +722,15 @@ describe('the project view screen', () => {
     // The one reading on this screen is a count the console counted off the
     // arrays it was handed, so the three counts are the arrays' lengths and the
     // run's own in-flight word is drawn from the record's flag.
+    //
+    // The body and not the whole tree: the fleet's totals strip (K1) is drawn
+    // from the same screen and counts other things -- `collisions: 0` among
+    // them -- so a case about this repository's counts reads this repository's
+    // panel. `fleet totals` below is where the strip's own figures are pinned.
     const node = renders({ repos: [STORED] })
     expect(drawn(node)).toContain(COORDINATOR_IN_FLIGHT_WORD)
-    for (const element of all(node, 'coordinator-count-value')) expect(element.textContent).toBe('1')
+    const body = one(node, 'coordinator-body')
+    for (const element of all(body, 'coordinator-count-value')) expect(element.textContent).toBe('1')
   })
 })
 
@@ -705,6 +988,374 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
     expect(age.textContent).toBe(COORDINATOR_NO_AGE_WORD)
     const panel = one(node, 'coordinator-repo')
     expect(order.indexOf(age)).toBeLessThan(order.indexOf(panel))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The action queue and the fleet totals (Coordinator v2, K1; D810, D812, D813,
+// D819).
+//
+// The page opens with what is waiting for a person: a pull request open and not
+// a draft with its runs finished, a run that halted or ended without
+// succeeding, a plan task ready to launch, and a budget alert. One item per
+// thing, one button per item, and every figure either read off one of four
+// documents or absent -- never invented, and never a zero standing in for
+// "unknown".
+//
+// What this file pins is the drawing and the model; that three of the four
+// reads are started together and the jobs are read when they are asked for, and
+// what the buttons do when they are clicked, is `entry-wiring.test.ts`'s.
+// ---------------------------------------------------------------------------
+
+/** itemOf is one kind's item, found by the word it draws for its kind rather
+ * than by its place in the list: a case that named a kind is about that kind. */
+function itemOf(node: ScreenElement, word: string): FakeScreen {
+  const found = all(node, 'coordinator-queue-item').filter(
+    (item) => textOf(item, 'coordinator-queue-kind') === word,
+  )
+  expect(found, `expected exactly one ${word} item`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`no ${word} item`)
+  return first
+}
+
+/** holdsToPutText asserts one drawn cell holds exactly what `putText` makes of
+ * the same value, in the class its wire key declares: the sanitized text, or
+ * the not-available mark with the refusal's reason in the title. It is the one
+ * assertion a cell drawn through `literal` cannot pass -- `literal` draws the
+ * string the document wrote and writes no reason -- so it is how a case tells
+ * the screen's two text paths apart. */
+function holdsToPutText(cell: ScreenElement, raw: string, textClass: TextClass, field: string): void {
+  const expected = new FakeScreen('span')
+  putText(expected, raw, textClass, field)
+  expect(
+    [cell.textContent, cell.getAttribute('title')],
+    `${field} was not drawn the way putText draws it`,
+  ).toEqual([expected.textContent, expected.getAttribute('title')])
+}
+
+describe('the action queue (K1)', () => {
+  it('draws one item per thing that is waiting, and exactly one button on each', () => {
+    // The plan's red step: a document holding one open non-draft pull request,
+    // one halted run row and one ready plan task draws **three** queue items,
+    // each with exactly one button -- the pull request, the job, the plan task,
+    // in that order.
+    const node = drawsQueue({
+      view: decodes(aStore([aRecord({})])),
+      runs: queueRuns(runsDocument([aRunRow({ halted: true })])),
+      plans: plans([aTask('C2', 'ready')]),
+    })
+    const items = all(node, 'coordinator-queue-item')
+    expect(items).toHaveLength(3)
+    for (const item of items) {
+      expect(all(item, 'coordinator-queue-button'), 'an item drew more than one button').toHaveLength(1)
+    }
+    expect(itemTexts(node, 'coordinator-queue-kind')).toEqual([
+      COORDINATOR_QUEUE_PR_WORD,
+      COORDINATOR_QUEUE_JOB_WORD,
+      COORDINATOR_QUEUE_PLAN_WORD,
+    ])
+    // The count is the console's own over the items it drew, in its own words:
+    // a figure no document carries, and one that is absent rather than zero
+    // while a read is still out (the case below).
+    expect(textOf(node, 'coordinator-queue-count')).toBe('3')
+    expect(textOf(node, 'coordinator-queue-word')).toBe(COORDINATOR_QUEUE_WORD)
+    expect(textOf(node, 'coordinator-queue-empty')).toBe('')
+  })
+
+  it('draws no item for an open draft, and says nothing is waiting', () => {
+    // The second half of the red step, and the difference between a queue and a
+    // list of everything open: a draft is not waiting for a review.
+    const node = drawsQueue({ view: decodes(aStore([aRecord({ draft: true })])) })
+    expect(all(node, 'coordinator-queue-item')).toEqual([])
+    expect(textOf(node, 'coordinator-queue-empty')).toBe(COORDINATOR_QUEUE_EMPTY_WORD)
+    expect(textOf(node, 'coordinator-queue-count')).toBe('')
+  })
+
+  it('draws no item for a pull request nobody closed, one with no run, one still running, or a task that is not ready', () => {
+    // Four records that all read "waiting for you" to a screen that only looked
+    // at `pr.state`: a merged pull request, a pull request with no run behind
+    // it (somebody opened it by hand), one whose run is still going, and a task
+    // that is blocked or already done.
+    const node = drawsQueue({
+      view: decodes(
+        aStore([
+          aRecord({ number: 1458, state: 'merged' }),
+          aRecord({ number: 1459, runs: 0 }),
+          aRecord({ number: 1460, inFlight: true }),
+        ]),
+      ),
+      runs: queueRuns(
+        runsDocument([
+          // A run that is still going, a terminal run that succeeded, and the
+          // body's own record of a halt: none of them is waiting for a person.
+          aRunRow({ run: '20261031-101502-9f3c', status: 'running', terminal: false }),
+          aRunRow({ run: '20261031-114805-c1a2', status: 'succeeded' }),
+          aRunRow({ run: '20261030-220114-77bd', status: 'succeeded', halted: true }),
+        ]),
+      ),
+      plans: plans([aTask('C2', 'running'), aTask('C3', 'blocked'), aTask('C4', 'done')]),
+    })
+    // The halted run is the one item: a halt is a person's own act on a run
+    // that then ended however it ended, so the status is not the whole ground.
+    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual(['20261030-220114-77bd'])
+    expect(itemTexts(node, 'coordinator-queue-kind')).toEqual([COORDINATOR_QUEUE_JOB_WORD])
+  })
+
+  it('gives every item the one act its own button is, and the values a launch is prefilled with', () => {
+    // Rule 11's one write is the launch, and the two buttons that reach it hand
+    // it a repository and a plan task -- nothing else, and no argv. The values
+    // are the model's, and `entry-wiring.test.ts` is where the click is.
+    const model = buildCoordinatorModel(
+      queueInputs({
+        view: decodes(aStore([aRecord({ number: 1458 })])),
+        runs: queueRuns(
+          runsDocument([aRunRow({ run: '20261030-220114-77bd', planTask: 'C9', title: 'a run title' })]),
+        ),
+        plans: plans([aTask('C2', 'ready')]),
+        caps: capsOf(aBudget({ repoCounted: 120, repoCap: 120 })),
+      }),
+    )
+    // Every part's items, in the order the queue draws them: the parts are the
+    // four reads, and `QUEUE_SOURCES` is that order.
+    const actions = QUEUE_SOURCES.flatMap(
+      (source) => model.queue[source]?.items.map((item) => item.action) ?? [],
+    )
+    expect(actions).toEqual([
+      { kind: 'openRun', repo: 'owner/repo-a', run: '20261031-101502-9f00' },
+      { kind: 'retry', repo: 'owner/repo-a', planTask: 'C9' },
+      { kind: 'launch', repo: 'owner/repo-a', planTask: 'p1/C2' },
+      { kind: 'spend' },
+    ])
+    // `Retry` and `Launch` carry exactly what rule 11's argv is given: the
+    // repository and the plan task. The run id is **main's** -- it is minted in
+    // the confirmation window, on Submit, and a renderer that carried one would
+    // be naming a run that does not exist yet -- and the title is the operator's,
+    // typed in that window. `Open run` is the one act that names a run, because
+    // opening one is what it does.
+    //
+    // The plan task is `<plan>/<task>` and never the node alone: the CLI refuses
+    // a plan task that is not shaped that way (`task.PlanTaskProblem`), and
+    // `plan status`'s `plans[].id` is the id the join uses.
+    const plan = model.queue.plans?.items[0]
+    expect(plan?.action).toEqual({ kind: 'launch', repo: 'owner/repo-a', planTask: 'p1/C2' })
+    const node = renderCoordinator(factory, model, 'dark')
+    expect(all(node, 'coordinator-queue-button').map((button) => button.textContent)).toEqual([
+      COORDINATOR_OPEN_RUN_WORD,
+      COORDINATOR_RETRY_WORD,
+      COORDINATOR_LAUNCH_WORD,
+      COORDINATOR_OPEN_SPEND_WORD,
+    ])
+    // A pull request's item names the pull request and never offers the link:
+    // the number is text, and no element anywhere carries a destination
+    // (`href` is refused by the harness, and K2 is where the link arrives).
+    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual(['#1458', '20261030-220114-77bd', 'C2', 'owner/repo-a'])
+    expect(itemTexts(node, 'coordinator-queue-why')).toEqual([
+      COORDINATOR_QUEUE_PR_WHY_WORD,
+      COORDINATOR_QUEUE_JOB_WHY_WORD,
+      COORDINATOR_QUEUE_PLAN_WHY_WORD,
+      COORDINATOR_QUEUE_CAP_WORD,
+    ])
+  })
+
+  it('reads the jobs off the runs document in the CLI’s own order, and cuts the queue at the console’s cap', () => {
+    // `runs ls` answers newest first and the console does not re-sort it; the
+    // cut is the console's own (this tree has no `runs ls --limit`), and what it
+    // did not draw is said rather than dropped silently.
+    const rows = Array.from({ length: COORDINATOR_LIST_CAP + 3 }, (_unused, index) =>
+      aRunRow({ run: `20261031-15150${String(index % 10)}-a${String(index).padStart(2, '0')}` }),
+    )
+    const model = buildCoordinatorModel(queueInputs({ runs: queueRuns(runsDocument(rows)) }))
+    expect(model.queue.runs?.items).toHaveLength(COORDINATOR_LIST_CAP)
+    expect(model.queue.runs?.items[0]?.subject).toBe('20261031-151500-a00')
+    expect(model.queue.runs?.items[COORDINATOR_LIST_CAP - 1]?.subject).toBe('20261031-151509-a19')
+    expect(model.queue.runs?.dropped).toBe(3)
+    const node = renderCoordinator(factory, model, 'dark')
+    expect(textOf(node, 'coordinator-more')).toBe('3')
+  })
+
+  it('draws the alerts a budget document carries: a killed fleet, a killed repository and a repository at its cap', () => {
+    // D812: the alert is a navigation to Spend and nothing else, and it says
+    // which of the two grounds it is -- a killed fleet refuses everything, a
+    // reached repository cap refuses that repository. The kill is the CLI's kill
+    // switch (`budget kill`), which is not the same fact as a cap being reached.
+    const fleet = drawsQueue({ caps: capsOf(aBudget({ fleetKilled: true })) })
+    expect(itemTexts(fleet, 'coordinator-queue-kind')).toEqual([COORDINATOR_QUEUE_BUDGET_WORD])
+    expect(itemTexts(fleet, 'coordinator-queue-subject')).toEqual([''])
+    expect(itemTexts(fleet, 'coordinator-queue-why')).toEqual([COORDINATOR_QUEUE_KILL_WORD])
+
+    const repo = drawsQueue({ caps: capsOf(aBudget({ repoKilled: true })) })
+    expect(itemTexts(repo, 'coordinator-queue-subject')).toEqual(['owner/repo-a'])
+    expect(itemTexts(repo, 'coordinator-queue-why')).toEqual([COORDINATOR_QUEUE_REPO_KILL_WORD])
+
+    const cap = drawsQueue({ caps: capsOf(aBudget({ repoCounted: 120, repoCap: 120 })) })
+    expect(itemTexts(cap, 'coordinator-queue-why')).toEqual([COORDINATOR_QUEUE_CAP_WORD])
+    // A repository under its cap is not an alert: the headroom the document
+    // reports is above zero and the counted dollars are below the cap.
+    expect(all(drawsQueue({}), 'coordinator-queue-item')).toEqual([])
+  })
+
+  it('says a figure it has not read rather than a zero, and says the plan tasks are not known without a checkout', () => {
+    // The rule the whole task is reviewed against: a number that is not in hand
+    // is absent. The count is the console's own over the parts it has read, and
+    // the jobs are the one read it makes only when the operator asks for them
+    // (rule 5 of §6.2's opening), so a queue whose jobs have not been asked for
+    // draws the items it has with the count of those -- and the jobs control in
+    // the part they would fill is what names the read the figure leaves out.
+    const waiting = drawsQueue({ runs: null })
+    expect(textOf(waiting, 'coordinator-queue-count')).toBe('')
+    expect(all(waiting, 'coordinator-queue-item')).toEqual([])
+
+    // The same queue holding what the three reads it does make can hold: the
+    // figure is drawn over those two items, and the sentence for a queue that
+    // holds nothing is **not** drawn beside it.
+    const floor = drawsQueue({
+      runs: null,
+      plans: plans([aTask('C2', 'ready')]),
+      caps: capsOf(aBudget({ repoKilled: true })),
+    })
+    expect(textOf(floor, 'coordinator-queue-count')).toBe('2')
+    expect(textOf(floor, 'coordinator-queue-empty')).toBe('')
+
+    const noCheckout = drawsQueue({ checkout: false, plans: null })
+    expect(textOf(noCheckout, 'coordinator-queue-count')).toBe('')
+    expect(textOf(noCheckout, 'coordinator-queue-note')).toBe(COORDINATOR_QUEUE_NO_PLANS_WORD)
+
+    const reduced = drawsQueue({ capsHidden: true, caps: null })
+    expect(textOf(reduced, 'coordinator-queue-note')).toBe(COORDINATOR_QUEUE_CAPS_HIDDEN_WORD)
+  })
+
+  it('says nothing is waiting only over a whole queue, and never over one it could not read', () => {
+    // The head's sentence is about a queue that holds nothing, and a queue whose
+    // refusals stand in for parts of it is not that: a read the console could not
+    // make is a gap in what it knows, so the head says nothing at all and the
+    // parts say why. A queue whose jobs have not been asked for is the same gap
+    // by another route -- the read is one the console chose not to make (rule 5)
+    // -- so the sentence waits for the jobs the way it waits for a refusal. The
+    // queue here holds nothing at all, which is the only way the sentence would
+    // be drawn if the condition were the count alone.
+    const refusedRuns = drawsQueue({ runs: null })
+    expect(textOf(refusedRuns, 'coordinator-queue-empty')).toBe('')
+    const noCheckout = drawsQueue({ checkout: false, plans: null })
+    expect(textOf(noCheckout, 'coordinator-queue-empty')).toBe('')
+    const reduced = drawsQueue({ capsHidden: true, caps: null })
+    expect(textOf(reduced, 'coordinator-queue-empty')).toBe('')
+
+    // And over a whole queue that holds nothing it is drawn, with no count
+    // beside it: the sentence is what a reader gets instead of a zero.
+    const quiet = drawsQueue({})
+    expect(textOf(quiet, 'coordinator-queue-empty')).toBe(COORDINATOR_QUEUE_EMPTY_WORD)
+    expect(textOf(quiet, 'coordinator-queue-count')).toBe('')
+  })
+
+  it('draws the control that asks for the jobs, and says with it whether the ask has been made', () => {
+    // The jobs are the queue's fourth read and the one the entry does not make on
+    // entry (rule 5), so the part they fill carries a button whose press is the
+    // read. It is drawn in both of the states that have no answer yet -- before
+    // the press and while the read the press made is out -- and `aria-expanded`
+    // is what tells them apart, so the press is answered where it happened.
+    const asked = coordinatorJobsControl(factory, true)
+    expect(asked.tag).toBe('button')
+    expect(asked.getAttribute('type')).toBe('button')
+    expect(asked.getAttribute('aria-expanded')).toBe('true')
+    expect(asked.textContent).toBe(COORDINATOR_QUEUE_JOBS_WORD)
+
+    const waiting = coordinatorJobsControl(factory, false)
+    expect(waiting.getAttribute('aria-expanded')).toBe('false')
+    expect(waiting.textContent).toBe(COORDINATOR_QUEUE_JOBS_WORD)
+  })
+
+  it('draws every kind’s title and subject as text, whatever the document wrote', () => {
+    // A document's strings are drawn through `putText` in the class their wire
+    // key declares, and the console's own words through `literal`. A case that
+    // read only the text would pass with either -- `literal` draws the string
+    // too -- so each cell here is held to what `putText` makes of the same
+    // value, and the three values below are the shapes that tell the two paths
+    // apart: a bidi override, which no class keeps, a newline, which no
+    // validating class accepts, and a marker-shaped string, which is the
+    // console's own placeholder drawn as though a document had written it.
+    //
+    // Two cells of the four kinds are not a document's, and neither is a gap in
+    // this case: a pull request's subject is the console's own label over its
+    // number (`recordLabel`), and a budget alert draws no title at all -- the
+    // item is about a repository, and there is no title somebody wrote. The
+    // budget alert's subject is that repository, which is the hostile value.
+    const hostile = ['a\u202Eb', 'first\nsecond', '<path>']
+
+    for (const value of hostile) {
+      const node = drawsQueue({
+        view: decodes(aStore([aRecord({ title: value })])),
+        runs: queueRuns(runsDocument([aRunRow({ halted: true, run: value, title: value })])),
+        plans: plans([aTask(value, 'ready', value)]),
+        caps: capsOf(aBudgetFor(value)),
+      })
+      const pull = itemOf(node, COORDINATOR_QUEUE_PR_WORD)
+      holdsToPutText(one(pull, 'coordinator-queue-title'), value, 'sentence', 'records[].pr.title')
+      // The subject is the console's own label, and it is the number whatever
+      // the title says.
+      expect(textOf(pull, 'coordinator-queue-subject')).toBe('#1458')
+
+      const job = itemOf(node, COORDINATOR_QUEUE_JOB_WORD)
+      holdsToPutText(one(job, 'coordinator-queue-subject'), value, 'runId', 'runs[].run')
+      holdsToPutText(one(job, 'coordinator-queue-title'), value, 'sentence', 'runs[].title')
+
+      const task = itemOf(node, COORDINATOR_QUEUE_PLAN_WORD)
+      holdsToPutText(one(task, 'coordinator-queue-subject'), value, 'label', 'plans[].nodes[].id')
+      holdsToPutText(one(task, 'coordinator-queue-title'), value, 'sentence', 'plans[].nodes[].title')
+
+      const alert = itemOf(node, COORDINATOR_QUEUE_BUDGET_WORD)
+      holdsToPutText(one(alert, 'coordinator-queue-subject'), value, 'repository', 'repos[].repo')
+      expect(all(alert, 'coordinator-queue-title')).toEqual([])
+
+      // And the bidi override is nowhere on the screen at all: the cells above
+      // are the ones a document's strings reach, and this is the whole tree
+      // saying so rather than the four kinds saying it one at a time.
+      expect(drawn(node), `${value} reached the screen as itself`).not.toContain('\u202E')
+    }
+  })
+})
+
+describe('the fleet totals and the blind spots (K1)', () => {
+  it('draws every figure off the document it comes from, and no money figure the caps read has not answered', () => {
+    const node = drawsQueue({
+      view: decodes(aStore([aRecord({}), aRecord({ number: 1459, inFlight: true })])),
+      plans: plans([aTask('C2', 'ready')]),
+      caps: capsOf(aBudget({ counted: 412.6, cap: 600 })),
+    })
+    const totals = one(node, 'coordinator-totals')
+    expect(figureOf(totals, 'coordinator-total-repos')).toEqual([COORDINATOR_TOTAL_REPOS_WORD, '1'])
+    expect(figureOf(totals, 'coordinator-total-inflight')).toEqual([COORDINATOR_TOTAL_IN_FLIGHT_WORD, '1'])
+    expect(figureOf(totals, 'coordinator-total-collisions')).toEqual([COORDINATOR_TOTAL_COLLISIONS_WORD, '0'])
+    expect(figureOf(totals, 'coordinator-total-plans')).toEqual([COORDINATOR_TOTAL_PLANS_WORD, '1'])
+    expect(figureOf(totals, 'coordinator-total-counted')).toEqual([COORDINATOR_TOTAL_COUNTED_WORD, '$412.60'])
+    expect(figureOf(totals, 'coordinator-total-cap')).toEqual([COORDINATOR_TOTAL_CAP_WORD, '$600.00'])
+
+    // The document has not answered: no counts at all, rather than a strip of
+    // zeroes standing in for a document nobody read.
+    const empty = one(drawsQueue({ view: null }), 'coordinator-totals')
+    expect(all(empty, 'coordinator-total-repos')).toEqual([])
+    expect(all(empty, 'coordinator-total-counted')).toEqual([])
+  })
+
+  it('draws the blind spots under the queue, with no button and no figure that is not in the document', () => {
+    // D813: neither can be fixed by a button on this page, so neither is a
+    // queue item -- the sweep is a scheduled job, and the console may not start
+    // it. The line says what the console cannot see.
+    const node = drawsQueue({
+      view: decodes({
+        repos: [
+          STORED,
+          { repo: 'owner/repo-b', stored: true, view: { repo: 'owner/repo-b', records: [], collisions: [] } },
+        ],
+      }),
+    })
+    const blind = one(node, 'coordinator-blind')
+    expect(textOf(node, 'coordinator-blind-word')).toBe(COORDINATOR_BLIND_WORD)
+    expect(figureOf(blind, 'coordinator-blind-stale')).toEqual([COORDINATOR_BLIND_STALE_WORD, '1'])
+    expect(figureOf(blind, 'coordinator-blind-unread')).toEqual([COORDINATOR_BLIND_UNREAD_WORD, '1'])
+    // It is a line under the queue and it is not a queue item.
+    expect(all(blind, 'coordinator-queue-item')).toEqual([])
+    expect(all(node, 'coordinator-queue-item')).toEqual([])
   })
 })
 

@@ -695,7 +695,7 @@ func TestCheckJobRefusesASharedJobsImageUntilSharedImagesShip(t *testing.T) {
 	if !errors.Is(err, ErrCheckJobShape) || u != nil {
 		t.Fatalf("plan: %v %+v, want a shape refusal", err, u)
 	}
-	for _, want := range []string{CheckoutEnv + "=" + config.CheckoutShared, config.SharedCheckoutSince} {
+	for _, want := range []string{CheckoutEnv + "=" + config.CheckoutShared, "no released fugaro builds or refreshes a shared dependency-layer image yet"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("refusal %q does not say %q", err, want)
 		}
