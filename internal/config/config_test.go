@@ -1033,9 +1033,36 @@ func TestLevelsDecodeStrict(t *testing.T) {
     l2: { none: true }
     l3: { model: claude-opus-5-5, effort: xhigh, focus: the migration and its rollback }
 `
-	_, problems := Parse([]byte(minimalYAML + levels))
+	cfg, problems := Parse([]byte(minimalYAML + levels))
 	if len(problems) > 0 {
 		t.Fatalf("a fugaro.yaml carrying agent.levels is refused: %v", problems)
+	}
+	for _, tc := range []struct {
+		name   string
+		set    *LevelSetting
+		model  string
+		effort string
+		off    bool
+		focus  string
+	}{
+		{name: "l1", set: cfg.Agent.Levels.L1, model: "claude-haiku-4-5"},
+		{name: "l2", set: cfg.Agent.Levels.L2, off: true},
+		{name: "l3", set: cfg.Agent.Levels.L3, model: "claude-opus-5-5", effort: "xhigh", focus: "the migration and its rollback"},
+	} {
+		if tc.set == nil {
+			t.Fatalf("agent.levels.%s was decoded to nil: the key was dropped rather than read", tc.name)
+		}
+		got := struct {
+			model, effort, focus string
+			off                  bool
+		}{tc.set.Model, tc.set.Effort, tc.set.Focus, tc.set.Off}
+		want := struct {
+			model, effort, focus string
+			off                  bool
+		}{tc.model, tc.effort, tc.focus, tc.off}
+		if got != want {
+			t.Errorf("agent.levels.%s = %+v, want %+v", tc.name, got, want)
+		}
 	}
 
 	for _, tc := range []struct{ name, block, want string }{
@@ -1072,13 +1099,19 @@ func TestLevelsDecodeStrict(t *testing.T) {
 // rigor mode supplies the number (rigor.AdversarialDefault), so there is no
 // DefaultAdversarialRounds constant and no value applyDefaults writes here.
 func TestAdversarialRoundsDefaultAndBounds(t *testing.T) {
-	_, problems := Parse([]byte(minimalYAML))
+	cfg, problems := Parse([]byte(minimalYAML))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
-	_, problems = Parse([]byte(minimalYAML + "agent: { adversarial_rounds: 7 }\n"))
+	if n := cfg.Agent.AdversarialRounds; n != 0 {
+		t.Errorf("unset agent.adversarial_rounds decoded to %d, want 0 (the mode supplies the number, not applyDefaults)", n)
+	}
+	cfg, problems = Parse([]byte(minimalYAML + "agent: { adversarial_rounds: 7 }\n"))
 	if len(problems) > 0 {
 		t.Fatalf("agent.adversarial_rounds: 7 is refused: %v", problems)
+	}
+	if n := cfg.Agent.AdversarialRounds; n != 7 {
+		t.Errorf("agent.adversarial_rounds: 7 decoded to %d", n)
 	}
 	for _, n := range []string{"0", "-1", "11"} {
 		t.Run(n, func(t *testing.T) {

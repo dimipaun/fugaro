@@ -773,3 +773,79 @@ defaults:
 		}
 	}
 }
+
+// TestLayerLevelsOverlay: defaults.agent.levels and agent.adversarial_rounds
+// are settable in both layers (L1.3, D722), and the merge between them is the
+// per-key deep merge of docs/design/layered-config.md §4 — not a whole-block
+// replacement. A project that pins level 1's model and turns level 3 off
+// keeps both while a repository adds level 1's focus and level 2's model; a
+// repository writing one key of a level cannot drop the project's other keys
+// of that same level, which is what would happen if agent.levels were merged
+// as one leaf.
+func TestLayerLevelsOverlay(t *testing.T) {
+	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	layer := mustLayer(t, head+`defaults:
+  git: { provider: github }
+  agent:
+    levels:
+      l1: { model: claude-haiku-4-5, effort: low }
+      l3: { none: true }
+    adversarial_rounds: 4
+`)
+	repo := minimalRepo + `agent:
+  levels:
+    l1: { focus: the migration and its rollback }
+    l2: { model: claude-opus-5-5 }
+workflows:
+  default:
+    commands: { build: make, test: make test }
+`
+	c, res, ps := Resolve([]byte(repo), layer)
+	if len(ps) > 0 {
+		t.Fatalf("resolve problems: %s", problemsText(ps))
+	}
+	levels := c.Agent.Levels
+	if levels.L1 == nil || levels.L2 == nil || levels.L3 == nil {
+		t.Fatalf("agent.levels = %+v, want all three levels", levels)
+	}
+	if levels.L1.Model != "claude-haiku-4-5" || levels.L1.Effort != "low" || levels.L1.Focus != "the migration and its rollback" {
+		t.Errorf("agent.levels.l1 = %+v, want the project's model and effort beside the repository's focus", levels.L1)
+	}
+	if levels.L2.Model != "claude-opus-5-5" || levels.L2.Effort != "" {
+		t.Errorf("agent.levels.l2 = %+v, want the repository's model alone", levels.L2)
+	}
+	if !levels.L3.Off || levels.L3.Model != "" {
+		t.Errorf("agent.levels.l3 = %+v, want the project's none", levels.L3)
+	}
+	if n := c.Agent.AdversarialRounds; n != 4 {
+		t.Errorf("agent.adversarial_rounds = %d, want the project's 4", n)
+	}
+	for path, want := range map[string]string{
+		"agent.levels.l1.model":    SourceProject,
+		"agent.levels.l1.effort":   SourceProject,
+		"agent.levels.l1.focus":    SourceRepo,
+		"agent.levels.l2.model":    SourceRepo,
+		"agent.levels.l3.none":     SourceProject,
+		"agent.adversarial_rounds": SourceProject,
+	} {
+		if got := res.SourceOf(path); got != want {
+			t.Errorf("SourceOf(%s) = %q, want %q", path, got, want)
+		}
+	}
+
+	// The layer's copy of the block is held to the same rules as the
+	// repository's: the same config.ReviewLevels.Validate, refused at the
+	// layer's own path so the launcher is told which key of which file.
+	_, ps = ParseProjectLayer([]byte(head+`defaults:
+  agent:
+    levels:
+      l2: { effort: auto }
+    adversarial_rounds: 11
+`), testAnchor)
+	if !hasProblem(ps, "defaults.agent.levels.l2", `effort "auto" must be one of low, medium, high, xhigh, max`, 0) {
+		t.Errorf("defaults.agent.levels.l2 with effort: auto: %s", problemsText(ps))
+	}
+	if !hasProblem(ps, "defaults.agent.adversarial_rounds", "must be between 1 and 10", 0) {
+		t.Errorf("defaults.agent.adversarial_rounds: 11: %s", problemsText(ps))
+	}
+}
