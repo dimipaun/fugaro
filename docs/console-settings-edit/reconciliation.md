@@ -57,11 +57,11 @@ this design copies that pattern rather than inventing a second one, and **D1115*
 copy is shared code.
 
 **F3: Exists. The two allow-lists are exact, closed and mutation-proof.** `CONSOLE_OPERATIONS`
-(`console/src/main/ipc.ts:417`) is twenty-four operations; `ALLOWED_OPERATION_FLAGS` (`:979`) admits
-four fixed flags; `NEVER_REACHABLE` (`:1051`) is the never table, with the `argv` shape that lets
-one exact `run` vector through while refusing every sibling (`NeverReachableShape`, `:1019`); and
-`assertReachableSurface` (`:2538`) refuses at startup a table that drives a never entry. The spawn
-side is `argvFor` (`console/src/main/spawn.ts:980`), the only place an argv is built, and
+(`console/src/main/ipc.ts:431`) is twenty-five operations; `ALLOWED_OPERATION_FLAGS` (`:1040`) admits
+four fixed flags; `NEVER_REACHABLE` (`:1112`) is the never table, with the `argv` shape that lets
+one exact `run` vector through while refusing every sibling (`NeverReachableShape`, `:1080`); and
+`assertReachableSurface` (`:2653`) refuses at startup a table that drives a never entry. The spawn
+side is `argvFor` (`console/src/main/spawn.ts:984`), the only place an argv is built, and
 `console/test/unit/ipc.test.ts` fails a test named for a never entry when one reaches the
 allow-list. *Consequence:* the two operations this design adds, the argv rows they drive and the
 count in rule 5 all move in **one commit each** (**D1115**), and the count is not decoration — it is
@@ -73,38 +73,38 @@ what a reader checks against the table.
 The marker list is `agentenv.Markers` (`internal/agentenv/agentenv.go:28`): `CLAUDECODE`,
 `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT`, `AI_AGENT`.
 *Consequence, and it cuts both ways:* S5's agent-session refusal (`applySettingsEdit`, **S5 #1525**
-`internal/cli/settings_write.go:72`, reading `agentMarker`) can never fire for a console spawn —
+`internal/cli/settings_write.go:76`, reading `agentMarker`) can never fire for a console spawn —
 which is correct, because the console is not a coding agent's session, and it is what makes
 **D1107**'s ruling workable: the console's `settings set … --yes` is never the session the fence
 refuses — and **the console cannot use that refusal as the reason a row has no pencil**. The human
 confirmation is the window (F2), not the marker. **F9** and **D1111** are the other half of this.
 
 **F5: Exists. The write path is one function, and its sentences are the console's to show.**
-`applySettingsEdit` (**S5 #1525** `internal/cli/settings_write.go:72`) is the one write path: the
+`applySettingsEdit` (**S5 #1525** `internal/cli/settings_write.go:76`) is the one write path: the
 line diff, the confirmation, the agent-session refusal, the compare-and-swap re-read
-(`readSettingsCurrent`, `:140`), the backup and the atomic write. Its ordinary confirmation is
-`confirmSettingsWrite` (`:151`) — `--yes` answers it — and its typed one is `confirmTypedStrict`
+(`readSettingsCurrent`, `:151`), the backup and the atomic write. Its ordinary confirmation is
+`confirmSettingsWrite` (`:162`) — `--yes` answers it — and its typed one is `confirmTypedStrict`
 (`internal/cli/budget.go:239`), which **no flag answers** as it stands: **D1107** is the owner's
 ruling that `--yes` answers that one too, outside an agent session, and the plan's **P4** is the
 task that makes it so. Every successful write ends with `next:
-fugaro update` (`runSettingsSet`, **S5 #1525** `internal/cli/settings_set.go:678`). *Consequence:*
+fugaro update` (`runSettingsSet`, **S5 #1525** `internal/cli/settings_set.go:723`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
 re-implements the diff (**D1103**).
 
 **F6: Exists. Sensitive rows are marked by the CLI, in the document the console would read.**
-`setting.Sensitive` (`internal/cli/settings_read.go:48`, on `main` since #1484) becomes
+`setting.Sensitive` (`internal/cli/settings_read.go:61`, on `main` since #1484) becomes
 `settingsJSON.Sensitive` (`internal/cli/settings_render.go:45`, `json:"sensitive,omitempty"`), and
 the write path refuses a sensitive key outright (`settingsWriteRow`, **S5 #1525**
-`internal/cli/settings_set.go:239`). The registry marks them (`Row.Sensitive`,
+`internal/cli/settings_set.go:238`). The registry marks them (`Row.Sensitive`,
 `internal/settings/registry.go:80`; `sensitiveKeys` in the same file). *Consequence:* **D1111** is
 satisfiable from the CLI's own output, and the console keeps no list of sensitive keys — which is
 the same rule as F7's.
 
 **F7: Exists. The CLI owns the allow-list of writable rows, and the registry owns the owner of
-each.** `settingsGenericKeys` (**S5 #1525** `internal/cli/settings_set.go:62`) is the exact key
+each.** `settingsGenericKeys` (**S5 #1525** `internal/cli/settings_set.go:64`) is the exact key
 allow-list, `settingsGenericPrefixes` (`:83`) the blocks handed over whole, `settingsFamilyCommands`
 (`:39`) maps a registry `Owner` to the family that writes its keys, and `settingsDefaultLayer`
-(`:263`) picks the narrowest layer a key may be set in. `Row` carries `Owner`, `Sensitive` and
+(`:262`) picks the narrowest layer a key may be set in. `Row` carries `Owner`, `Sensitive` and
 `Layers` (`internal/settings/registry.go:80`). *Consequence:* the console's row set is the CLI's
 answer, and **D1102** is about how it gets it.
 
@@ -120,7 +120,7 @@ confirmation window's content already exists; what does not is the writability h
 in S5.** The brief for this design names "agent sessions and managed projects (S5's refusals)". S5
 as it stands in #1525 has the **agent-session** refusal and nothing else: `applySettingsEdit` tests
 `agentMarker(os.Getenv)` and no managed state, and `settingsResolveTarget` (**S5 #1525**
-`internal/cli/settings_set.go:291`) resolves a file, not a project posture. The commands that do
+`internal/cli/settings_set.go:290`) resolves a file, not a project posture. The commands that do
 refuse a managed project are `fugaro managed flag` and `fugaro allow-delete`
 (`internal/cli/managed_flag.go`, `internal/cli/allow_delete.go`), and managed projects are gated off
 (`docs/design/managed-projects.md`). *Consequence:* the console's refusal set is **smaller than the
@@ -131,7 +131,7 @@ owner wants a managed-project refusal on `settings set`, it is a change to S5 an
 **F10: Missing. Nothing in `settings --json` says which rows are writable, or by whom.** The
 registry's `Owner` and the allow-list of F7 are **CLI-side facts with no reader outside
 `internal/cli`**: `settingsJSON` (F8) has no `owner`, no `writable`, no `layers` and no
-`target_layer`. `settingsWriteRow` (**S5 #1525** `internal/cli/settings_set.go:239`) prints "X is
+`target_layer`. `settingsWriteRow` (**S5 #1525** `internal/cli/settings_set.go:238`) prints "X is
 written by `fugaro rigor set`, not by the generic path" — a sentence on a **refusal**, reachable
 only by asking the CLI to write something it will not write. *Consequence:* **the console cannot
 draw the pencil from the CLI's output as S5 stands.** Either it keeps a copy of
@@ -141,10 +141,10 @@ design's own F12 exists to prevent), or the read grows the field. **D1102**, and
 
 **F11: Missing. `settings set|unset` has no machine-readable output, no dry run, and no
 classification.** The flags are `--layer`, `--repo`, `--yes`, `--add` and `--remove` and nothing
-else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:161`; `newSettingsUnsetCmd`,
-`:202`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
-`internal/cli/settings_set.go:633`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:503`),
-`settingsLoosens` (`:592`) and `settingsListSubset` (`:615`) — and is **never printed as a field**;
+else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:160`; `newSettingsUnsetCmd`,
+`:201`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
+`internal/cli/settings_set.go:678`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:502`),
+`settingsLoosens` (`:615`) and `settingsListSubset` (`:660`) — and is **never printed as a field**;
 it becomes a prompt. The only outputs are prose on stdout and `userErr`'s exit code. *Consequence:*
 the console cannot ask "is this a widening?" and must not re-derive it — the classification rules
 are S5's, and a copy in TypeScript is a second answer that will drift the day D846's set changes.
@@ -156,11 +156,11 @@ the flags it has are `--repo`, `--all-repos`, `--layer`, `--grep`, `--changed`, 
 `--offline`, `--json` (`settingsOptions`, `:21`). Both the read and the write build a
 `localcfg.SelectInput` with **`Project`, `Config` and `Checkout` all empty** (`readSettings`, **S5
 #1525** `internal/cli/settings_read.go:146`, whose `SelectInput` is at `:148`; `settingsSelection`,
-**S5 #1525** `internal/cli/settings_set.go:273`) — so `localcfg.Select`
+**S5 #1525** `internal/cli/settings_set.go:272`) — so `localcfg.Select`
 (`internal/localcfg/select.go:104`) reaches step 6, "exactly one project config", with steps 1–5 all
 unavailable. The console's child carries no `FUGARO_PROJECT` and no `FUGARO_CONFIG` (F4) and its
 working directory is the installation's checkout (`createBoundSource`, cited in `ipc.ts`'s
-`plan.status` comment at `console/src/main/ipc.ts:587`), which `Select` would consult at step 3
+`plan.status` comment at `console/src/main/ipc.ts:610`), which `Select` would consult at step 3
 **only if `Checkout` were filled — and it is not**. *Consequence, and it is the largest finding
 here:* on a machine with the owner's two installations, **every** `fugaro settings` argv the console
 could spawn is refused with "the projects are: …", and on a machine with one it silently reads
@@ -173,11 +173,11 @@ pass both.
 `--json`; the write has prose and an exit code. *Consequence:* the console's result handling for an
 edit is "exit code plus the CLI's own sentence" unless **P3** gives the write a small result
 document. **D1106** recommends one, because a refusal the console must show verbatim is exactly the
-case `MAX_REPLY_REASON_LENGTH` (`console/src/main/ipc.ts:150`) already bounds.
+case `MAX_REPLY_REASON_LENGTH` (`console/src/main/ipc.ts:151`) already bounds.
 
 **F14: Exists. The compare-and-swap refusal, and its sentence.** `applySettingsEdit` re-reads the
 file through `readSettingsCurrent` and refuses with "`%s` changed since it was read: nothing was
-written; read it again and repeat the edit" (**S5 #1525** `internal/cli/settings_write.go:72`).
+written; read it again and repeat the edit" (**S5 #1525** `internal/cli/settings_write.go:76`).
 *Consequence:* **D1113** has a sentence to show and no retry to write.
 
 **F15: Exists. The progressive-rendering rule, and the section machinery it names.**
@@ -282,10 +282,10 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   without the `--`, pflag reads `-draft` as an unknown shorthand and the edit fails — or worse, a
   value spelled `--layer` silently retargets the write. **(b)** is the form this row must never
   build. **(c)** is refused because S5 reads stdin for its confirmation, not for its value
-  (`confirmSettingsWrite`, **S5 #1525** `internal/cli/settings_write.go:151`), so a value on stdin
+  (`confirmSettingsWrite`, **S5 #1525** `internal/cli/settings_write.go:162`), so a value on stdin
   would have to arrive before the confirmation that the console has not shown yet. *Every word is a
   fixed literal of the console's own, and the value is passed as an array element with `shell:
-  false`* — the property `argvFor` (`console/src/main/spawn.ts:980`) already guarantees and
+  false`* — the property `argvFor` (`console/src/main/spawn.ts:984`) already guarantees and
   `console/test/unit/spawn.test.ts` already pins. *On the WSL route the wrapper's own
   `distroShellUnsafe` check refuses a word with shell metacharacters, so a value containing one is
   refused there and the edit is offered as a command to copy instead — the copy-the-command shape,
@@ -295,7 +295,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1105 (ANSWERED by the owner, 2026-11-01, as recommended: the console passes `--layer`
   explicitly, and only after the CLI named it). Which layer does a pencil write, and who chooses?**
   *Options:* **(a)** the console passes no `--layer` and lets S5 pick the narrowest layer the key
-  may be set in (`settingsDefaultLayer`, **S5 #1525** `internal/cli/settings_set.go:263`); **(b)**
+  may be set in (`settingsDefaultLayer`, **S5 #1525** `internal/cli/settings_set.go:262`); **(b)**
   the console passes `--layer` explicitly, from the `target_layer` field **D1102(a)** adds, and
   shows it in the window; **(c)** the console offers the operator a layer chooser. *Recommendation:*
   **(b)**, because rule 11's whole property is that **what the window shows is what is spawned** — a
@@ -313,9 +313,9 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   backup; **(b)** the console re-derives widening from the registry's key list and the old/new
   values; **(c)** the console performs the write and reads the CLI's prompt behaviour from the exit
   code. *Recommendation:* **(a)**. **(b)** is the option the brief forbids and the one that is wrong
-  on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:503`) **and**
-  `settingsLoosens` (`:592`) **and** `settingsListSubset` (`:615`) **and** `settingsTypedWrite`
-  (`:633`), including the deliberate "a form this Fugaro does not know how to compare is treated as
+  on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:502`) **and**
+  `settingsLoosens` (`:615`) **and** `settingsListSubset` (`:660`) **and** `settingsTypedWrite`
+  (`:678`), including the deliberate "a form this Fugaro does not know how to compare is treated as
   a loosening" rule — a TypeScript re-implementation would answer *narrowing* where the CLI answers
   *widening*, which is the one direction that must never be got wrong. **(c)** is refused because a
   widening's failure mode is a refusal **after** the operator confirmed a dialog that could not have
@@ -331,7 +331,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1107 (ANSWERED by the owner, 2026-11-01, and not as this design recommended: `--yes` is allowed
   for a widening, and there is no console-only hook). S5's widening path needs the project's name
   typed at a terminal, and the console has no terminal. What happens to a widening?** *The problem,
-  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:633`) marks a
+  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:678`) marks a
   loosened ceiling, a removed ceiling and a `followup.*` key turned on as the typed form;
   `applySettingsEdit` then calls `confirmTypedStrict` (`internal/cli/budget.go:239`), which requires
   a terminal (`stdinIsTerminal`) and compares the typed line against the project's name, and which
@@ -410,7 +410,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   pencil until a roles design lands. *Recommendation:* **(a)**. It is the settings design's own SD18
   answer ("anyone may edit their own file; the boundary stays IAM at publish") applied to a second
   surface, and it invents nothing: a permission refusal is the CLI's own sentence, shown verbatim
-  and bounded (`MAX_REPLY_REASON_LENGTH`, `console/src/main/ipc.ts:150`), with the section marked
+  and bounded (`MAX_REPLY_REASON_LENGTH`, `console/src/main/ipc.ts:151`), with the section marked
   `unavailable` — never a console-authored "you are not an administrator", which would be a role
   claim the console cannot make. **(b)** is refused because a role the console invents is a role the
   CLI does not enforce, and **(c)** refuses the owner's ask. *Cost of (a):* the console's
@@ -485,15 +485,15 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   because the read is a section that runs on tab open and the write is a confirmed window — two
   different lifetimes, and an operation that both reads and writes cannot be reasoned about from its
   schema. *What moves, in one commit per operation:* `CONSOLE_OPERATIONS`
-  (`console/src/main/ipc.ts:417`) gains the entry; the rule 5 count goes **24 → 26** (the design
-  paragraph's own number, which the plan's C1 and C3 each move once); `NEVER_REACHABLE` (`:1051`) is
+  (`console/src/main/ipc.ts:431`) gains the entry; the rule 5 count goes **25 → 27** (the design
+  paragraph's own number, which the plan's C1 and C3 each move once); `NEVER_REACHABLE` (`:1112`) is
   unchanged for the read and **loses nothing** for the write — no row moves, because `settings` is
   not on the never table today and the two rows are new entries on rule 6's allow-list table, not
-  promotions out of a refusal; `ALLOWED_OPERATION_FLAGS` (`:979`) gains nothing (the fixed words
+  promotions out of a refusal; `ALLOWED_OPERATION_FLAGS` (`:1040`) gains nothing (the fixed words
   `--json`, `--yes`, `--dry-run` and `--layer` are the rows' own `words`, and `--layer` is the one
   to argue about below); the preload's written-out list gains the two methods
   (`console/src/preload/index.ts`, whose duplication is closed by `console/test/unit/ipc.test.ts`);
-  and `argvFor`'s table (`console/src/main/spawn.ts:980`) gains the two rows with `takesProject:
+  and `argvFor`'s table (`console/src/main/spawn.ts:984`) gains the two rows with `takesProject:
   true`. *The one flag that needs care:* **`--layer`.** It is a fixed word of the write's row only
   in the sense that its **value** varies with the row — so it is either (i) an argument of the
   operation whose value the main process computes from the row it already validated, or (ii) a
@@ -596,7 +596,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1121 (ANSWERED by the owner, 2026-11-01, as recommended: the four documents the implementing
   tasks change, named now and edited then).** *Recommendation:* the tasks that move a fence change
   the documents that state it, in the same commit: **`docs/design/desktop-console.md` §5.1 rule 5**
-  (the operation count, 24 → 26), **rule 6** (the two new allow-list rows, with the exact argvs),
+  (the operation count, 25 → 27), **rule 6** (the two new allow-list rows, with the exact argvs),
   and a **new rule 12** for the second write — the settings confirmation window, its own-top-frame
   gate, its cancel default, and its widening tick; **`console/docs/json-contract.md` §6.15** (the
   settings document, including the fields **D1102** adds — the section D848 reserved);
@@ -611,7 +611,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 
 - **U1. Whether `--` before the value works with S5's parser as written.** `settings set` is
   `cobra.ArbitraryArgs` with `RunE` reading `args[0]`/`args[1]` (**S5 #1525**
-  `internal/cli/settings_set.go:178`), and pflag terminates flag parsing at `--`, so `set KEY
+  `internal/cli/settings_set.go:184`), and pflag terminates flag parsing at `--`, so `set KEY
   --layer local --yes -- -draft` should give `args = [KEY, -draft]`. **Not measured here** — this
   design adds no test and runs no command — and **P3's task measures it and, if it does not hold,
   changes S5's parser to `Flags().SetInterspersed(false)` or accepts the value only after `--`**,

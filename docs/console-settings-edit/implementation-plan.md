@@ -73,7 +73,7 @@ textual one.
 
 | File | What this design does to it | Who else owns it |
 | --- | --- | --- |
-| `console/src/main/ipc.ts` | `CONSOLE_OPERATIONS` gains `settings.read` (C1) and `settings.edit` (C3); §5.1 rule 5's count moves 24 → 25 → 26 in the same commits; the never table is unchanged | every console feature; the file is the console's largest reviewable artifact |
+| `console/src/main/ipc.ts` | `CONSOLE_OPERATIONS` gains `settings.read` (C1) and `settings.edit` (C3); §5.1 rule 5's count moves 25 → 26 → 27 in the same commits; the never table is unchanged | every console feature; the file is the console's largest reviewable artifact |
 | `console/src/main/spawn.ts` | `argvFor`'s table gains two rows with `takesProject: true` (C1, C3) | every console read |
 | `console/src/main/confirm.ts` | generalized from one view to a union, so the launch window and the settings window are one implementation (**D1115**, C3) | the launch (rule 11) |
 | `console/src/preload/index.ts`, `console/src/preload/confirm.ts` | the written-out method list gains the two methods (C1, C3); the confirm preload gains the tick's field (C3) | every console feature; `console/test/unit/preload-surface.test.ts` pins the duplication |
@@ -221,7 +221,7 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 ### C1. The settings section, its read, and the pencils' row set (F1, F10, F15, D1102, D1114, D1117). **SEC** — **size L**
 
 - **Files:** `console/src/main/ipc.ts` (`settings.read` in `CONSOLE_OPERATIONS`, its exact-argv row,
-  and **rule 5's count 24 → 25 in the same commit**), `console/src/main/spawn.ts` (`argvFor`'s row,
+  and **rule 5's count 25 → 26 in the same commit**), `console/src/main/spawn.ts` (`argvFor`'s row,
   `takesProject: true`), `console/src/preload/index.ts` (the method),
   `console/src/renderer/screens/projects.ts` (the model: rows, panels, the pencil's subjects),
   `console/src/renderer/entry.ts` (the section, its own token and its parallel start),
@@ -282,8 +282,8 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 
 ### C3. The write: `settings.edit`, the dry run, and the widening `--yes` (D1103, D1104, D1105, D1112, D1114, D1115). **SEC** — **size L**
 
-- **Files:** `console/src/main/ipc.ts` (`settings.edit`, its exact-argv row, **rule 5's count 25 →
-  26 in the same commit**, and the never table re-read rather than edited),
+- **Files:** `console/src/main/ipc.ts` (`settings.edit`, its exact-argv row, **rule 5's count 26 →
+  27 in the same commit**, and the never table re-read rather than edited),
   `console/src/main/spawn.ts` (the row — and **no** new key in `CHILD_ENV_KEYS`, since the ruling
   means the console passes `--yes` rather than a flag of its own: §5.1 rule 8's "nothing added"
   stands), `console/src/main/confirm.ts` (**generalized from one view to a union**, D1115, with

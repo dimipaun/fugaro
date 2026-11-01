@@ -195,7 +195,7 @@ func TestDocsConsoleSettingsEditDecisionsAreInRange(t *testing.T) {
 // cseCitationRE finds a backtick-quoted repository path with a line number. The
 // extension list carries the console's own (`ts`, `tsx`, `css`), because this
 // folder's findings are half about the console: a pattern written for `.go`
-// alone would leave the main process's `ipc.ts:417` and every citation like it
+// alone would leave the main process's `ipc.ts:431` and every citation like it
 // unchecked while still passing its own census.
 var cseCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tsx|css|yaml|yml|tf|tmpl))(:[0-9]+)`")
 
@@ -259,7 +259,7 @@ func TestDocsConsoleSettingsEditCitationsResolve(t *testing.T) {
 // TestDocsConsoleSettingsEditRelativeCitationsResolve: every `:NNN` reference
 // resolves against the nearest citation before it in its own paragraph, to a
 // line that is in that file. The findings lean on this shape -- a paragraph
-// cites `settings_set.go:633` and then `:503` -- and a reference whose anchor
+// cites `settings_set.go:678` and then `:502` -- and a reference whose anchor
 // moved sends a reader to a line of the wrong file while the paragraph still
 // reads as checked.
 func TestDocsConsoleSettingsEditRelativeCitationsResolve(t *testing.T) {
