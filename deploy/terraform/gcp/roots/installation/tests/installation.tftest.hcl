@@ -2447,7 +2447,11 @@ run "credentials_service_on" {
   # as not run, and the run further down is the image the gate keeps unnamed.
   # The number is the port the process itself falls back to when the platform's
   # PORT is unset (servePort) and Cloud Run's own default, so the name and the
-  # listener cannot point at different ports.
+  # listener cannot point at different ports. The release this run pins and the
+  # one the run below pins are the pair the module's own threshold is written
+  # from (credentials.tf's credentials_image_serves_h2c): a release that moves
+  # the first h2c-serving version moves this image, that one and the threshold
+  # together.
   assert {
     condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports) == 1 &&
       google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports[0].name == "h2c" &&
@@ -2594,11 +2598,17 @@ run "credentials_service_first_apply_has_no_audience_yet" {
 # releases whose server speaks h2c gets no port at all — Cloud Run's own
 # HTTP/1.1, which is what the service answers on today.
 #
-# It is not a hypothetical image. Only the owner-run credentials stage writes
-# credentials_service.image, and an ordinary `fugaro update` carries the
-# previous release's digest forward (infra.CarriedCredentialsService), so this
-# is exactly the pairing a 0.15.0 update leaves behind for an installation that
-# opted in earlier: 0.14.0's process with no name in front of it. An image
+# It is not a hypothetical image. The release's own image is not the only one
+# this root can be planned with: an installation whose owner is still on an
+# older CLI carries that release's reference forward
+# (infra.CarriedCredentialsService), and an operator's own tfvars may name any
+# digest they like — 0.14.0's process, before this release re-pinned anything,
+# is that shape with no name in front of it. (This release's own update
+# re-resolves and re-pins the image for an installation that opted in — the
+# credentials stage when the service is switched on, init_stages.go's
+# pinCredentialsImage on an ordinary run — so the plan it makes pairs the newer
+# image with the name in the run above; this one is the other direction, and it
+# is the one that must keep working for a plan whose image is older.) An image
 # reference the module cannot read a release out of (a hand-written digest, a
 # version that is not three numbers) reads the same way, and so does the
 # tagless image of the first-apply run above.

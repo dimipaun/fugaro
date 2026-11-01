@@ -35,17 +35,32 @@ locals {
 
   # Whether that process serves HTTP/2 cleartext, which is what the port's name
   # below is read as by Cloud Run's front end. The two MUST move together, and
-  # they do not move on their own: only the owner-run credentials stage writes
-  # credentials_service.image, and an ordinary `fugaro update` carries the
-  # previous release's digest forward (infra.CarriedCredentialsService), so a
-  # port named h2c in front of an image whose process answers HTTP/1.1 only
-  # would halt every call an opted-in installation makes — the front end reads
-  # the HTTP/2 preface as a malformed request line. So the name follows the
-  # image: the service's h2c support (internal/cli/credentials_serve.go) first
-  # ships in 0.15.0 (the release the plan puts B1.0 in), and anything at or
-  # above that release gets the name while anything below it — and anything
-  # this cannot read — keeps today's HTTP/1.1 port, so the same apply that
-  # re-pins the image is the one that renames the port.
+  # what makes them is that the image is pinned by the run that plans this root:
+  # the owner-run credentials stage when the service is switched on, and — an
+  # installation that opted in under an earlier release — an ordinary
+  # `fugaro update`, which re-resolves this release's image and re-pins its
+  # digest before planning (internal/cli/init_stages.go's
+  # pinCredentialsImage). So the apply that moves the image onto this release
+  # is the one that renames the port. The direction of the name is the other
+  # half: h2c in front of a process that answers HTTP/1.1 only serves nothing
+  # at all — the front end reads the HTTP/2 preface as a malformed request line
+  # and halts every call the installation makes — while an unnamed port in
+  # front of an HTTP/2 process is merely slower than it could be. So the name is
+  # read out of the image rather than assumed, and an image this release did not
+  # write reads as not-h2c: an older CLI's update carries the reference forward
+  # (infra.CarriedCredentialsService), and an operator's own tfvars may carry no
+  # version at all. That is why the release the h2c support first ships in
+  # (internal/cli/credentials_serve.go, 0.15.0, the release the plan puts B1.0
+  # in) is a FLOOR: at or above it the port is named, below it — and where no
+  # version can be read — today's HTTP/1.1 port stays.
+  #
+  # That release number is written in three places and they move together: this
+  # threshold, the image run "credentials_service_on" pins in
+  # roots/installation/tests/installation.tftest.hcl (asserting the port is
+  # named h2c), and the image run
+  # "credentials_service_port_follows_the_image" pins there — the release just
+  # before this one, asserting no port at all. The pair is what holds the
+  # threshold: a release that changes it changes both fixtures and this local.
   credentials_image_serves_h2c = local.credentials_image_release == "" ? false : (
     tonumber(split(".", local.credentials_image_release)[0]) > 0 ||
     tonumber(split(".", local.credentials_image_release)[1]) >= 15
