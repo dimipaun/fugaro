@@ -21,13 +21,13 @@ import (
 // about a directory the CLI owns, and a test that went through the exported
 // API alone could not see any of them.
 
-// testCache places a cache of bucket under dir, with dir as the whole cache
-// home, and returns it with the project's directory.
-func testCache(t *testing.T, dir, project, bucket string) (*Cache, string) {
+// testOpen places the cache of project's objects of bucket under the cache
+// home home.
+func testOpen(t *testing.T, home, project, bucket string) *Cache {
 	t.Helper()
 	getenv := func(k string) string {
 		if k == "XDG_CACHE_HOME" {
-			return dir
+			return home
 		}
 		return ""
 	}
@@ -35,6 +35,14 @@ func testCache(t *testing.T, dir, project, bucket string) (*Cache, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return c
+}
+
+// testCache places a cache of bucket under dir, with dir as the whole cache
+// home, and returns it with the project's directory.
+func testCache(t *testing.T, dir, project, bucket string) (*Cache, string) {
+	t.Helper()
+	c := testOpen(t, dir, project, bucket)
 	return c, c.dir
 }
 
@@ -90,6 +98,48 @@ func TestAnEntryIsAnsweredOnlyAtItsOwnGeneration(t *testing.T) {
 	other := &Cache{dir: dir, bucket: "another-bucket", max: MaxBytes}
 	if got, ok := other.Get(name, 7); ok {
 		t.Errorf("a cache of another bucket answered %q: entries are keyed by the bucket too", got)
+	}
+}
+
+// TestAnEntryOfAnotherBucketIsNotAnswered: one project's cache is read for
+// one bucket, and an entry names the bucket its bytes came from. A file at
+// the cache's own entry path that says another bucket -- a hash collision, or
+// a directory copied from one bucket to another -- is not the object that was
+// asked for, whatever its name and generation say. This is the second of the
+// two layers that keep one installation's runs out of another's read: the
+// project directory is the first (TestTwoProjectsDoNotShareACache), and this
+// one holds even inside a single project's directory.
+func TestAnEntryOfAnotherBucketIsNotAnswered(t *testing.T) {
+	c, _ := testCache(t, t.TempDir(), "aurora", "fugaro-runs")
+	name := "runs/app/20261018-090000-0000/result.json"
+	c.Put(name, 3, []byte(`{"version":1,"repo":"owner/repo-a"}`))
+
+	// The entry a cache of another bucket would have written for the same
+	// name, at the same generation, at this cache's own path.
+	foreign, err := json.Marshal(entry{Bucket: "another-bucket", Name: name, Generation: 3,
+		Data: []byte(`{"version":1,"repo":"owner/repo-b"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(c.path(name), foreign, filePerm); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := c.Get(name, 3); ok {
+		t.Errorf("an entry of bucket another-bucket answered %q: the bucket an entry came from is part of what places the object", got)
+	}
+	// The same file with this cache's own bucket in it is answered at once:
+	// what refused the entry above is the bucket it names and nothing else
+	// about it.
+	same, err := json.Marshal(entry{Bucket: c.bucket, Name: name, Generation: 3, Data: []byte(`{"version":1,"repo":"owner/repo-a"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(c.path(name), same, filePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := c.Get(name, 3); !ok || !bytes.Contains(got, []byte("owner/repo-a")) {
+		t.Errorf("the same entry naming the cache's own bucket answered %q, %v", got, ok)
 	}
 }
 
@@ -303,6 +353,33 @@ func TestOpenRefusesANameThatIsNotAProjectName(t *testing.T) {
 	none := func(string) string { return "" }
 	if c, err := Open(none, "aurora", "fugaro-runs"); err == nil && c != nil {
 		t.Errorf("Open with no cache home = %v, want no cache", c)
+	}
+}
+
+// TestTwoProjectsDoNotShareACache: the entries of two projects live in two
+// directories, so one project's listing never reads another's objects -- the
+// first of the two layers that keep them apart, the project name being what
+// places the directory (TestAnEntryOfAnotherBucketIsNotAnswered is the second,
+// inside one project's own directory).
+func TestTwoProjectsDoNotShareACache(t *testing.T) {
+	home := t.TempDir()
+	one := testOpen(t, home, "aurora", "fugaro-runs")
+	two := testOpen(t, home, "borealis", "fugaro-runs")
+	if one.dir == two.dir {
+		t.Fatalf("two projects share %s: an entry of one answers for the other", one.dir)
+	}
+	name := "runs/app/20261018-090000-0000/result.json"
+	one.Put(name, 3, []byte(`{"version":1,"repo":"owner/repo-a"}`))
+	if got, ok := two.Get(name, 3); ok {
+		t.Errorf("the other project's cache answered %q: entries are per project", got)
+	}
+	if got, ok := one.Get(name, 3); !ok || !bytes.Contains(got, []byte("owner/repo-a")) {
+		t.Errorf("the project's own cache answered %q, %v", got, ok)
+	}
+	// And the two directories are the project's name under one cache home:
+	// not siblings that happen to differ, but the same rule for both.
+	if filepath.Dir(one.dir) != filepath.Dir(two.dir) || filepath.Base(one.dir) != "aurora" || filepath.Base(two.dir) != "borealis" {
+		t.Errorf("the caches are at %s and %s, want the two project names under one directory", one.dir, two.dir)
 	}
 }
 
