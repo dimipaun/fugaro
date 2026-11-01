@@ -78,9 +78,10 @@ func (f loginFake) envSeen(t *testing.T) []string {
 }
 
 // shellEnvironment is what a POSIX shell sets for itself in an environment it
-// was handed: dash sets PWD. It is the shell's own doing and not the runner's,
-// so the comparison below allows these names and nothing else.
-var shellEnvironment = []string{"PWD"}
+// was handed: dash sets PWD, and bash (macOS /bin/sh) also sets _ and SHLVL and
+// drops OLDPWD. It is the shell's own doing and not the runner's, so the
+// comparison below allows these names and nothing else.
+var shellEnvironment = []string{"PWD", "OLDPWD", "SHLVL", "_"}
 
 // assertChildEnv holds the environment the login was handed to the owner's own
 // (spec §6(b)): every variable must be there with the value it has here — a
