@@ -86,6 +86,13 @@ const (
 	// maxCheckoutPathLen bounds a recorded path, in bytes (PATH_MAX on Linux
 	// is 4096): a longer one is not a path this machine can be in.
 	maxCheckoutPathLen = 4096
+	// checkoutMissingGrace is how long a remembered path that is gone stays
+	// remembered. A checkout is moved, renamed and cloned again all the time,
+	// and the row is what the console offers a working directory from, so a
+	// path that is gone is worth keeping for a while — the directory may come
+	// back, and a machine that comes back to work in it should not have to
+	// record it again — and worth dropping once nothing has brought it back.
+	checkoutMissingGrace = 30 * 24 * time.Hour
 )
 
 // CheckoutsFile is the state file's name, inside CheckoutsDir.
@@ -195,11 +202,18 @@ func (c *Config) RepoFor(repo string) (Repo, bool) {
 	return Repo{}, false
 }
 
-// CheckoutPath is one remembered checkout: an absolute path, and when it was
-// first recorded (the order the bound drops by).
+// CheckoutPath is one remembered checkout: an absolute path, when it was
+// first recorded (the order the bound drops by), and — while it is gone — when
+// that was first seen (the clock the prune drops by).
 type CheckoutPath struct {
 	Path       string    `json:"path"`
 	RecordedAt time.Time `json:"recorded_at"`
+	// MissingSince is when this path was first seen to be gone, absent while
+	// it is there. It is the one field a document written before it existed
+	// does not carry, and such a row is read as one seen gone for the first
+	// time: the clock starts at the first observation rather than at a moment
+	// nothing recorded.
+	MissingSince *time.Time `json:"missing_since,omitempty"`
 }
 
 // CheckoutRepo is one repository's remembered checkouts, as the document
@@ -397,6 +411,120 @@ func (c *Checkouts) ProjectCheckouts(project string) []CheckoutRepo {
 	return out
 }
 
+// tempRootsOf is the temporary directories the writer refuses a path under:
+// the caller's own list, or — a caller that names none — the machine's own
+// temporary directory, os.TempDir(), which is $TMPDIR, %TEMP% or /tmp. The
+// caller names them because the machine's temporary directories are the
+// caller's knowledge: the CLI's list is the fuller one (its own tempRoots,
+// which also covers the fixed /tmp, /private/tmp and /var/folders a TMPDIR
+// pointing elsewhere would hide), and a test's own checkout lives in the
+// temporary directory, so a test states its own.
+func tempRootsOf(tempRoots [][]string) []string {
+	if len(tempRoots) > 0 {
+		return tempRoots[0]
+	}
+	return []string{filepath.Clean(os.TempDir())}
+}
+
+// inTempRoots reports whether path is one of roots or inside one, after
+// resolving symlinks: on darwin a temporary directory is reached through one
+// (/tmp is /private/tmp, /var/folders is /private/var/folders), so a
+// comparison of the strings alone would remember a path under a temporary
+// directory reached the other way. A path that is gone is compared as it is
+// written — a symlink cannot be resolved once what it points at is gone — and
+// that is why the caller's list names the fixed temporary directories in the
+// spelling the platform writes them.
+func inTempRoots(path string, roots []string) bool {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	path = filepath.Clean(path)
+	for _, r := range roots {
+		r = filepath.Clean(r)
+		if !filepath.IsAbs(r) {
+			// "" and "." are not directories this machine is under, and a
+			// relative root would make every relative path temporary.
+			continue
+		}
+		if path == r || strings.HasPrefix(path, r+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathGone reports whether the directory a row names is not there: the same
+// test the read makes (config_list.go's validateCheckoutPath, its `missing`),
+// so a row the prune drops for age is one a listing was already reporting as
+// missing.
+func pathGone(path string) bool {
+	fi, err := os.Stat(path)
+	return err != nil || !fi.IsDir()
+}
+
+// prune drops the rows this document must not hold any more and reports
+// whether it changed anything: a row whose path is under one of roots, and a
+// row that has been gone for longer than checkoutMissingGrace. A row that is
+// there again has its missing clock cleared, and a row seen gone for the
+// first time is stamped with now.
+//
+// It runs on the write, and never on a read: `fugaro config list` re-validates
+// every path it reads and drops nothing — a stale path is still there for the
+// operator to see, and still there if the directory comes back — while the
+// state file is what the console offers working directories from, so a row
+// nothing wants any more is the writer's to remove. It is therefore the
+// writer that a temp row is dropped by, and it is dropped whatever its age and
+// whether it is still there: a scratchpad worktree an agent left behind is a
+// live checkout, and the live one is exactly the row the console would
+// otherwise offer.
+//
+// The filesystem is touched once per row, and only by the stat the `missing`
+// verdict is: the git work of a full re-validation is the reader's, so a path
+// that is a directory again but no longer a checkout of this repository keeps
+// its row until the reader says what it is.
+func (c *Checkouts) prune(now time.Time, roots []string) bool {
+	changed := false
+	for project, repos := range c.Projects {
+		for key, r := range repos {
+			kept := r.Paths[:0]
+			for _, p := range r.Paths {
+				switch {
+				case inTempRoots(p.Path, roots):
+					changed = true
+					continue
+				case pathGone(p.Path):
+					if p.MissingSince == nil {
+						since := now
+						p.MissingSince = &since
+						changed = true
+					} else if now.Sub(*p.MissingSince) > checkoutMissingGrace {
+						changed = true
+						continue
+					}
+				case p.MissingSince != nil:
+					p.MissingSince = nil
+					changed = true
+				}
+				kept = append(kept, p)
+			}
+			if len(kept) == 0 {
+				// A repository with no paths is a row a reader would print as
+				// an empty one; the state holds what this machine remembers,
+				// and it remembers nothing about it.
+				delete(repos, key)
+				changed = true
+				continue
+			}
+			r.Paths = kept
+			repos[key] = r
+		}
+		if len(repos) == 0 {
+			delete(c.Projects, project)
+		}
+	}
+	return changed
+}
+
 // RecordCheckout remembers that path is a checkout of id for project.
 //
 // It is best effort: the caller ignores the error, and a command that could
@@ -405,10 +533,22 @@ func (c *Checkouts) ProjectCheckouts(project string) []CheckoutRepo {
 // package comment above), so a refusal to record it is not worth a line on
 // anyone's stderr.
 //
+// tempRoots is the caller's list of the machine's temporary directories, and
+// it is a caller's statement rather than this package's because the machine's
+// temporary directories are the caller's knowledge (the CLI's tempRoots, the
+// list its own XDG warnings read). A path under one of them — after resolving
+// symlinks — is not recorded at all, and a row already under one is dropped
+// from the document (see prune): a checkout an agent made in a scratchpad is
+// not a checkout the operator works in, and a remembered path is what the
+// console offers as a working directory. A caller that names none gets
+// os.TempDir().
+//
 // A path already recorded for that repository is left as it is: the file is
 // written only when there is something new to write, so a command in a
-// checkout this machine already knows writes nothing at all.
-func RecordCheckout(getenv func(string) string, project string, id CheckoutIdentity, path string, now time.Time) error {
+// checkout this machine already knows writes nothing at all — unless the
+// pruning has something to write, which is a row gone for good, a row that is
+// back, or a row under a temporary directory.
+func RecordCheckout(getenv func(string) string, project string, id CheckoutIdentity, path string, now time.Time, tempRoots ...[]string) error {
 	if !config.ProjectNameRE.MatchString(project) {
 		return fmt.Errorf("%q is not a project name", project)
 	}
@@ -422,6 +562,15 @@ func RecordCheckout(getenv func(string) string, project string, id CheckoutIdent
 		// A relative path names nothing outside the process that recorded
 		// it, and a path longer than this machine can have is not one.
 		return fmt.Errorf("%q is not an absolute checkout path", path)
+	}
+	roots := tempRootsOf(tempRoots)
+	if inTempRoots(path, roots) {
+		// Not an error and not a word anywhere: the caller's command did its
+		// own work, and a path this machine must not remember is a path it
+		// does not remember. Nothing is written, so the pruning below is not
+		// reached either — a scratchpad is not a checkout this machine works
+		// in, and a command run in one changes no state at all.
+		return nil
 	}
 	c, err := LoadCheckouts(getenv)
 	if err != nil {
@@ -440,6 +589,10 @@ func RecordCheckout(getenv func(string) string, project string, id CheckoutIdent
 		// until they did.)
 		c = EmptyCheckouts()
 	}
+	// The pruning first, and whether or not this path is a new one: a machine
+	// whose operator only ever works in checkouts this file already knows is
+	// the machine whose stale rows would otherwise never be dropped.
+	pruned := c.prune(now, roots)
 	proj := c.Projects[project]
 	if proj == nil {
 		proj = map[string]CheckoutRepo{}
@@ -447,7 +600,15 @@ func RecordCheckout(getenv func(string) string, project string, id CheckoutIdent
 	key := id.Key()
 	r := proj[key]
 	if slices.ContainsFunc(r.Paths, func(p CheckoutPath) bool { return p.Path == path }) {
-		return nil
+		if !pruned {
+			return nil
+		}
+		// The path is already remembered and the write is the pruning's: the
+		// row keeps the time it was recorded at, which is the order the bound
+		// drops by, and nothing is added to it.
+		proj[key] = r
+		c.Projects[project] = proj
+		return writeCheckouts(getenv, c)
 	}
 	r.Provider, r.Repo, r.RecordedAt = id.Provider, id.Repo, now
 	r.Paths = append(r.Paths, CheckoutPath{Path: path, RecordedAt: now})
@@ -465,6 +626,13 @@ func RecordCheckout(getenv func(string) string, project string, id CheckoutIdent
 		delete(proj, oldest)
 	}
 	c.Projects[project] = proj
+	return writeCheckouts(getenv, c)
+}
+
+// writeCheckouts writes c as this machine's state file: the file of its own
+// under the config home, 0600 in a directory created 0700, written whole
+// through a rename (writeCacheFile), so a reader never sees half a document.
+func writeCheckouts(getenv func(string) string, c *Checkouts) error {
 	file, err := CheckoutsPath(getenv)
 	if err != nil {
 		return err
