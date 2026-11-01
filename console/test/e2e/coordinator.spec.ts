@@ -590,12 +590,12 @@ test.describe('the Coordinator view in the dashboard', () => {
 
   test('names every gap in the queue, and draws no figure for a read that did not answer', async () => {
     // K1, in the state this stub puts the screen in: `coordinator status` is
-    // answered from the committed document and `plan status` too, while the two
-    // reads no fixture was seeded for -- `runs ls`, which this stub does not
-    // answer at all, and `budget show` -- refuse. The installation records no
-    // checkout either, so the plan read is not made. What the queue has to do
-    // with that is say which part is which, part by part, rather than let one
-    // read's silence stand in for another's answer.
+    // answered from the committed document, while the two reads no fixture was
+    // seeded for -- `runs ls`, which this stub does not answer at all, and
+    // `budget show` -- refuse, and the installation records no checkout, so the
+    // plan read is not made at all. What the queue has to do with that is say
+    // which part is which, part by part, rather than let one read's silence
+    // stand in for another's answer.
     //
     // What this case does NOT read is what the buttons do: that is
     // `entry-wiring.test.ts`'s, where the launch confirmation's fields can be
@@ -634,12 +634,12 @@ test.describe('the Coordinator view in the dashboard', () => {
     // The blind-spot line is the console's own words with no control on it
     // (D813), and the figure it draws is a count of the document: the unread
     // pull requests it says it cannot read are the rows drawn in the panels.
-    const unread = await page.locator(`${THE_VIEW} li.coordinator-unread`).count()
-    expect(unread, 'the committed document draws no unread row to count').toBeGreaterThan(0)
     const blind = queue.locator('p.coordinator-blind')
     await expect(blind.locator('span.coordinator-blind-word')).toHaveText(COORDINATOR_BLIND_WORD)
     await expect(blind.locator('button')).toHaveCount(0)
-    await expect(blind.locator('span.coordinator-blind-unread .coordinator-count-value')).toHaveText(String(unread))
+    const unread = await blind.locator('span.coordinator-blind-unread .coordinator-count-value').textContent()
+    expect(Number(unread), 'the committed document counts no unread pull request').toBeGreaterThan(0)
+    await expect(page.locator(`${THE_VIEW} li.coordinator-unread`)).toHaveCount(Number(unread))
 
     // The fleet's strip: the three counts the stored view answered, and no word
     // or figure for the plan and money reads that did not. A `$0.00` here would
