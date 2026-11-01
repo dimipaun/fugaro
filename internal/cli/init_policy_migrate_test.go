@@ -14,7 +14,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -45,20 +44,6 @@ func newMigrationRig(t *testing.T, f *projectFixture, o *initOptions) *migration
 	if o.door == "" {
 		o.door = updateDoor.name
 	}
-	// The fixture's config records the database and not the Firebase project
-	// `--firebase-project` writes beside it (projectConfigText is shared with
-	// tests about a project that has no backend at all, and it carries no
-	// firebase_project for them), and its database carries no mark. A real
-	// installation has both: a database the flag built got the pair with it,
-	// and init marked it as this installation's. They are the two facts the
-	// ownership gate every writer holds asks (budgetDBUnadopted), and this
-	// stage is one of those writers, so the rig records them — without them the
-	// fixture is a state no door of this release produces, and what the stage
-	// does in it is not what it does for anybody.
-	setConfig(t, f, func(s string) string {
-		return strings.Replace(s, "rtdb_url: "+f.db.URL, "rtdb_url: "+f.db.URL+", firebase_project: proj-1234", 1)
-	})
-	f.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": "aurora", "gcp_project": "proj-1234"})
 	lc, err := localcfg.Load(f.path)
 	if err != nil {
 		t.Fatal(err)

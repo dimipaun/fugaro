@@ -31,6 +31,7 @@ import (
 	"github.com/spf13/cobra"
 	"rsc.io/qr"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -77,7 +78,7 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 	}
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
 		"bucket_url: file://" + runs + "\nuser: " + me + "\nmax_parallel: 2\n" +
-		"budget: { mode: observe, per_run_usd: 5, rtdb_url: " + f.db.URL + ", token_signer: " + pairSigner + ", firebase_api_key: " + pairAPIKey + " }\n" +
+		"budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + ", token_signer: " + pairSigner + ", firebase_api_key: " + pairAPIKey + " }\n" +
 		"endpoints: { no_auth: true, iam_credentials: " + f.iam.URL + "/ }\n" +
 		"terraform: { operators: [user:" + pairMe + "], launchers: [user:" + pairLauncher + "] }\n" +
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
@@ -90,6 +91,7 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	f.db.Set("fugaro/project", "aurora")
+	f.db.Set(budget.PathMark, auroraMark())
 	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})
 	if err != nil {
 		t.Fatal(err)
