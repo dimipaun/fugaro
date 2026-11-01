@@ -135,6 +135,17 @@ func waitLogin(t *testing.T, done <-chan error) error {
 	}
 }
 
+// assertSilentBeforeStopping is the refusal's other half: the announcement of
+// the resolved binary belongs to a login that will run, so a refusal that
+// printed it would tell the owner a login is starting when none is (§6(c)
+// reads in both directions).
+func assertSilentBeforeStopping(t *testing.T, printed string) {
+	t.Helper()
+	if printed != "" {
+		t.Errorf("the refusal printed %q before it stopped", printed)
+	}
+}
+
 // unsetClaudeLoginCredentials clears the two variables the login refuses on,
 // so the machine running the tests does not decide what they see: a coding
 // agent's own session exports ANTHROPIC_API_KEY.
@@ -235,6 +246,7 @@ func TestAccountsAddClaudeRefusesAnExportedCredential(t *testing.T) {
 			if _, statErr := os.Stat(fake.marker); statErr == nil {
 				t.Error("a child ran")
 			}
+			assertSilentBeforeStopping(t, tty.displayed())
 		})
 	}
 }
@@ -259,4 +271,5 @@ func TestAccountsAddClaudeRefusesWithoutATerminal(t *testing.T) {
 	if _, statErr := os.Stat(fake.marker); statErr == nil {
 		t.Error("a child ran")
 	}
+	assertSilentBeforeStopping(t, out.String())
 }
