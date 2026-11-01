@@ -206,20 +206,28 @@ func TestTheCacheEvictsWhatNothingHasReadForLongest(t *testing.T) {
 // TestTheCacheIsReadableOnlyByItsOwner: the entries hold what a run's
 // service account wrote into the runs bucket, and the directory and every
 // file in it are the user's alone.
+//
+// The modes are spelled out here rather than named by this package's own
+// constants: a test that compares a mode against the constant the code wrote
+// it with passes whatever that constant comes to say, and what has to hold is
+// the literal -- no bit for the group and none for anyone else.
 func TestTheCacheIsReadableOnlyByItsOwner(t *testing.T) {
 	c, dir := testCache(t, t.TempDir(), "aurora", "fugaro-runs")
 	c.Put("runs/app/20261018-090000-0000/task.json", 1, []byte(`{"version":1}`))
-	paths := []string{dir}
+	modes := map[string]os.FileMode{dir: 0o700}
 	for _, f := range entryFiles(t, dir) {
-		paths = append(paths, filepath.Join(dir, f))
+		modes[filepath.Join(dir, f)] = 0o600
 	}
-	for _, path := range paths {
+	if len(modes) != 2 {
+		t.Fatalf("the cache holds %d paths to check, want the directory and the one entry", len(modes))
+	}
+	for path, want := range modes {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := info.Mode().Perm(); got != dirPerm && got != filePerm {
-			t.Errorf("%s has mode %04o, want %04o for a directory and %04o for an entry", path, got, dirPerm, filePerm)
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s has mode %04o, want %04o: the user's own account and nothing else", path, got, want)
 		}
 	}
 }
