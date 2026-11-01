@@ -436,6 +436,10 @@ func TestARewrittenOriginIsNeverRecorded(t *testing.T) {
 // the worktree would be skipped for the wrong reason and the control below —
 // the main checkout, recorded by the same call — would fail. The worktree
 // relation is the only thing that can skip a path here.
+//
+// Mutation (run, restore): drop the linkedWorktree call from recordCheckout
+// (project.go) and the first assertion fails with the worktree's path in the
+// state file, beside the main checkout the control records.
 func TestRecordCheckoutSkipsLinkedWorktree(t *testing.T) {
 	dir := checkoutsFixture(t)
 	main := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
