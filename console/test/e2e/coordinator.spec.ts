@@ -228,6 +228,14 @@ const SCREEN = 'section.coordinator'
  * forced-colors case is about. */
 const RECORD = 'li.coordinator-record'
 
+/** REPO is one repository's panel, and its four step-7 parts: the head row (the
+ * name and the source line), the counter strip (three labelled cells) and the
+ * marked cell of a repository whose records collide. */
+const REPO = 'section.coordinator-repo'
+const REPO_HEAD = `${REPO} div.coordinator-repo-head`
+const COUNTS = `${REPO} div.coordinator-counts`
+const COUNT_ALERT = `${COUNTS} .coordinator-count-alert`
+
 /**
  * rowBoundary is one element's computed bottom border: the browser's own answer
  * to what the stylesheet asked for, and the thing section 4.4 rule 2 promises
@@ -291,6 +299,38 @@ test.describe('the project view in a window', () => {
     // run that has not finished. The document carries one of each.
     await expect(page.locator('span.coordinator-record-flight').first()).toHaveText('in flight')
     await expect(page.locator('span.coordinator-run-open').first()).toHaveText('in flight')
+  })
+
+  test('opens every repository panel with a head row and a counter strip', async () => {
+    // Console redesign, step 7. The head row is the panel's first element -- the
+    // repository's name and which view the node is, above every figure -- and the
+    // strip under it is three labelled cells. Both are read off the live tree,
+    // because what this case is about is the drawing and not the stylesheet.
+    const panels = await page.locator(REPO).all()
+    expect(panels.length, 'the committed document draws no repository panel').toBeGreaterThan(0)
+    for (const panel of panels) {
+      const head = panel.locator('div.coordinator-repo-head')
+      await expect(head).toHaveCount(1)
+      // `:scope >` and `:first-child` and not a descendant read: the head has to
+      // be the panel's own first child, which is what "opens with it" means.
+      await expect(panel.locator(':scope > div.coordinator-repo-head:first-child')).toHaveCount(1)
+      await expect(head.locator(':scope > h2.coordinator-repo-name:first-child')).toHaveCount(1)
+      await expect(head.locator(':scope > p.coordinator-repo-state')).toHaveCount(1)
+      await expect(panel.locator('div.coordinator-counts > span.coordinator-count')).toHaveCount(3)
+    }
+
+    // The strip is the console's own three words beside the console's own three
+    // figures, and the word is what says which count each cell is.
+    const words = await page.locator(`${COUNTS} span.coordinator-count-word`).allTextContents()
+    expect(words).toContain('records')
+    expect(words).toContain('in flight')
+    expect(words).toContain('collisions')
+
+    // The strip's one state: the committed document's first repository has a
+    // collision and the second has none, so exactly one cell is marked -- and the
+    // word `collisions` is inside it, which is what makes the tone redundant.
+    await expect(page.locator(COUNT_ALERT)).toHaveCount(1)
+    await expect(page.locator(`${COUNT_ALERT} span.coordinator-count-word`)).toHaveText('collisions')
   })
 
   test('keeps the rows’ boundary when forced colors is active', async () => {
