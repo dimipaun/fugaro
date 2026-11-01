@@ -2004,6 +2004,11 @@ export function isMarkerText(text: string): boolean {
  * "declared by n/a" names nobody either, and it is the phrase the owner asked
  * for.
  *
+ * The address test reads past leading whitespace (`trimStart`): a value has the
+ * same nothing before its `@` whatever a caller did with the space in front of
+ * it, and a bare `startsWith('@')` would call `' @ana'` a name and draw the
+ * phrase over a placeholder.
+ *
  * It is a predicate of the *string* and not of a screen: the Coordinator's
  * "declared by" and the Projects kill banner's "KILLED by" are the two sentences
  * this console writes in that shape, and both read this one rule rather than
@@ -2014,7 +2019,7 @@ export function isMarkerText(text: string): boolean {
 export function nameableText(text: string): boolean {
   if (text.trim() === '') return false
   if (isMarkerText(text)) return false
-  return !text.startsWith('@')
+  return !text.trimStart().startsWith('@')
 }
 
 // ---------------------------------------------------------------------------
