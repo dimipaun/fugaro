@@ -633,8 +633,9 @@ func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 
 // NewPaths lists the paths the checkout holds that no commit has and that a
 // commit would carry: the untracked ones git would add (`git ls-files --others
-// --exclude-standard`, ignored ones aside) and the ones already staged as added
-// against HEAD (`git diff --cached --diff-filter=A HEAD`). Both read
+// --exclude-standard`, ignored ones aside) and the ones the index holds that HEAD
+// does not (`git diff --name-only --no-renames --diff-filter=A HEAD`, the working
+// tree against HEAD, which sees a file added with `git add -N` as well). Both read
 // NUL-separated, so a path with a newline in it survives.
 //
 // The second listing is not an afterthought: a file the agent `git add`-ed and
@@ -651,7 +652,11 @@ func (r *Repo) NewPaths(ctx context.Context) ([]string, error) {
 	// Read with replacement refs ignored, as IsClean and CommitAllExcept are:
 	// what is staged is the index this checkout has, not the one a ref the
 	// agent planted makes HEAD's tree claim.
-	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--cached", "--name-only", "--diff-filter=A", "-z", "HEAD")
+	// No --cached: an intent-to-add entry (`git add -N`) is hidden from
+	// `diff --cached` and is in the index, so neither listing would name it, and
+	// --no-renames keeps a new file that merely resembles a deleted tracked one
+	// an addition rather than a rename the filter drops.
+	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", "HEAD")
 	if err != nil {
 		return nil, err
 	}

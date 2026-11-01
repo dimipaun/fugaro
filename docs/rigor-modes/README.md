@@ -97,8 +97,8 @@ there is no file to file.
 
 Two things this ruling does not change: the [spec](spec.md) stays verbatim, and
 the answers are written in the reconciliation rather than in the spec. What it
-does change is where a deferred leftover is written down: a run files an item into **its own repository and
-its own branch**, because that is the one repository its installation token reaches
+does change is where a deferred leftover is written down: a leftover goes into **its own repository and
+its own branch** (filed by hand with `fugaro backlog add`: the runner no longer files items), because that is the one repository its installation token reaches
 and the one it can push (F43, F44), and the designated project repository holds the
 items filed in it — which is why D29 is a decision for the owner rather than a
 setting this folder picks.
@@ -125,8 +125,8 @@ operators` section:
   default, runs at Pro, and Pro's per-run budget default is **0.85 of the
   deployed per-run cap** (D16, plan T6.1). A repository that wants the whole cap
   and today's readiness rule pins `rigor: { default: critical }`.
-- **Backlog items are filed by hand** (the owner's ruling of 2026-10-24, after
-  the runner stopped filing): no run writes an item under `docs/backlog/` — a
+- **Backlog items are filed by hand** (the runner stops filing items in this
+  release; the owner's ruling of 2026-10-24 made filing opt-in): no run writes an item under `docs/backlog/` — a
   run's own record and its pull request's status section carry what it left
   open — and `fugaro backlog add` is what files one, in every repository, whether
   or not its `fugaro.yaml` has a `rigor:` block.

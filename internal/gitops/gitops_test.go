@@ -2258,3 +2258,49 @@ func TestPrefetchFetchesTheBranchsOwnCommits(t *testing.T) {
 		}
 	}
 }
+
+// TestNewPathsSeesAnIntentToAddFile: `git add -N` puts a path in the index
+// without its content. It is absent from `ls-files --others` (it is in the
+// index) and `diff --cached` hides it, so a listing built from those two names
+// neither, while `git add -A` at finalize would commit the file.
+func TestNewPathsSeesAnIntentToAddFile(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"x.bin": "\x7fELF\x00\x00"})
+	testutil.Git(t, repo.Dir, "add", "-N", "x.bin")
+	got, err := repo.NewPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "x.bin") {
+		t.Fatalf("NewPaths = %q; want the intent-to-add x.bin listed", got)
+	}
+}
+
+// TestNewPathsSeesANewFileThatLooksLikeARenameOfATrackedOne: delete a tracked
+// file and stage a new one with nearly the same bytes, and git reports a rename,
+// not an addition, so a listing filtered to additions would drop the new path.
+// The new file is new all the same and is what a commit would carry.
+func TestNewPathsSeesANewFileThatLooksLikeARenameOfATrackedOne(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	body := "\x7fELF\x00\x00" + strings.Repeat("same bytes\n", 40)
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"tracked.bin": body})
+	if _, err := repo.CommitAll(ctx, "base"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "rm", "-q", "tracked.bin")
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"out.o": body + "one more line\n"})
+	testutil.Git(t, repo.Dir, "add", "out.o")
+	got, err := repo.NewPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "out.o") {
+		t.Fatalf("NewPaths = %q; want out.o listed although git sees a rename", got)
+	}
+}

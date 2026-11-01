@@ -138,6 +138,37 @@ func TestFinalizeRefusesAStagedBinary(t *testing.T) {
 	}
 }
 
+// intentToAddBinary is the staged artifact in its least visible form: `git add
+// -N` records the path in the index without its content, which `git diff
+// --cached` hides and `ls-files --others` skips, while `git add -A` at finalize
+// commits the file.
+func intentToAddBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -N "+name)
+}
+
+// TestFinalizeRefusesAnIntentToAddBinary: `git add -N` is not a way past the
+// rule either: the artifact is named in the reason and the branch does not carry it.
+func TestFinalizeRefusesAnIntentToAddBinary(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implementLeaving("test_dup_case2", intentToAddBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeDraft || rec.Status != runstore.StatusFailed {
+		t.Fatalf("record = %+v; want a draft: the run left an intent-to-add file finalize must not commit", rec)
+	}
+	if !strings.Contains(rec.Reason, "test_dup_case2") {
+		t.Errorf("reason = %q; want it to name the file that was refused", rec.Reason)
+	}
+	for _, f := range branchFiles(t, h, rec.Branch) {
+		if f == "test_dup_case2" {
+			t.Errorf("the branch carries the artifact finalize refused")
+		}
+	}
+}
+
 // TestFinalizeCommitsAnUntrackedScript: what the rule deliberately leaves
 // alone. A file the run left executable and forgot to commit is a script
 // someone wrote — text, which a reviewer can read — and the leftover commit is
