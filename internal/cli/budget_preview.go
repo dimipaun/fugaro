@@ -465,7 +465,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		project = previewProjectRigor(ctx, lc)
 	}
 	knobs := previewKnobsOf(cfg, project)
-	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds)
+	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds, rigor.AdversarialDefault(knobs.mode))
 	doc := &previewDoc{Project: lc.Name, GCPProject: lc.GCPProject, Repo: repo, Slug: slug,
 		Recipe: rr.Name, Source: string(rr.Source), Runs: o.runs, Stages: stages,
 		KnobsFrom: knobs.from, PerRunCapSource: []string{}, Notes: []string{}}
@@ -725,7 +725,7 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 // design's "with fewer than 5 runs, the line is omitted" and a recipe that
 // runs no agent stage at all are silent: there is nothing to explain.
 func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config, knobs previewKnobs) (usd float64, stages int, missing, model string) {
-	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds)
+	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds, knobs.mode)
 	for _, n := range counts {
 		stages += n
 	}
@@ -787,39 +787,61 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // one round of each loop — the design's typical run, and the count the
 // history mean is multiplied by. It mirrors the runner's loop: an implement,
 // then a first line of review_first and its fix, then a senior review, its
-// fix, and, with bounce, one more cheap pair. A mode: review recipe runs the
-// senior review alone, and a digest recipe has no implement stage at all:
+// fix, and, with bounce, one more cheap pair; an adversarial step adds level
+// 3's round and its fix, and, with bounce, one more cheap pair of its own (one
+// round here too, however many its own cap allows). A mode:
+// review recipe runs the senior review alone, and a digest recipe has no
+// implement stage at all:
 // its first step is the runner's own work, which writes the run reports with
 // no model call (run-digest).
 //
 // first and rounds are the checkout's first_line_rounds and review_rounds (a
 // step's own max_rounds overriding its knob, as recipe.StageBound takes
 // them), each read as at most one round: a loop the knobs leave at 0 never
-// runs, so its stages are not counted -- the sum here is StageBound(rp, f, n)
-// for the same f and n, which the tests pin for every catalog recipe.
-func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
+// runs, so its stages are not counted -- the sum here is StageBound(rp, f, n,
+// n3) for the same f, n and n3, which the tests pin for every catalog recipe.
+//
+// mode is the rigor mode the preview resolved, and it supplies the one number
+// this recipe has no knob for: an adversarial step that writes no max_rounds
+// takes the mode's senior row (rigor.AdversarialDefault, the number the senior
+// review starts from), where StageBound -- which has no mode to read -- takes
+// the strictest row instead. Both are one round in a typical run, so the
+// figures here are the same either way; it is the ceiling above that differs.
+func previewTypicalCounts(rp *recipe.Recipe, first, rounds int, mode rigor.Mode) map[string]int {
 	if rp.Mode == recipe.ModeReview {
 		return map[string]int{"review": 1}
 	}
 	f, n, bounce := 0, 0, false
+	adv, advBounce := 0, false
 	for _, s := range rp.Steps {
 		switch s.Kind {
 		case recipe.StepFirstLine:
 			f = roundCount(first, s.MaxRounds)
 		case recipe.StepReview:
 			n, bounce = roundCount(rounds, s.MaxRounds), s.Bounce
+		case recipe.StepAdversarial:
+			// The level-3 rounds have no agent.* knob yet, so the step's own
+			// max_rounds or the mode's senior row is what a typical run spends
+			// one of (L1.3/L4.4 add the knob and this read moves to it).
+			adv, advBounce = roundCount(rigor.AdversarialDefault(mode), s.MaxRounds), s.Bounce
 		}
 	}
 	cheap := 0
 	if bounce && f > 0 && n > 0 {
 		cheap = f // the senior review sent it back to the cheap loop once
 	}
-	// The fix after the first line and the fix after the senior review are one
-	// kind in result.json ("fix"), so they share one mean and one count here.
+	// Level 3 bounces to the same cheap loop, under the same rule.
+	advCheap := 0
+	if advBounce && f > 0 && adv > 0 {
+		advCheap = f
+	}
+	// The fix after the first line and the fix after each review are one kind
+	// in result.json ("fix"), so they share one mean and one count here, and
+	// every review is the "review" kind however deep the level.
 	counts := map[string]int{
-		"review_first": f + cheap,     // the first line, and its bounce-back
-		"review":       n,             // one senior round
-		"fix":          f + n + cheap, // each review's demands answered
+		"review_first": f + cheap + advCheap,           // the first line, and its bounce-backs
+		"review":       n + adv,                        // the senior round and level 3's
+		"fix":          f + n + adv + cheap + advCheap, // each review's demands answered
 	}
 	if !recipe.UsesDigest(rp) {
 		counts["implement"] = 1 // the first_line step's first stage

@@ -2563,6 +2563,44 @@ func TestRecipeSchemaDigestStepsMatchGo(t *testing.T) {
 	}
 }
 
+// TestRecipeSchemaAdversarialStepsMatchGo pins the schema's step shape for
+// the adversarial step (review level 3, D720) against recipe.Parse, shape by
+// shape: the step comes after the review and last of all, so the schema has
+// to accept it exactly where the parser does — with or without a first_line
+// step before the pair, with or without the leading check, and with the
+// bounce only where a first_line step exists to bounce to. A schema wider
+// than the parser accepts a recipe file the CLI would refuse, and one that is
+// narrower refuses a recipe that runs.
+func TestRecipeSchemaAdversarialStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	for _, tc := range []struct{ name, text string }{
+		{"review then adversarial", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: {}\n"},
+		{"first line then the pair", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: {}\n"},
+		{"check before the pair", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - review: {}\n  - adversarial: {}\n"},
+		{"check before all three", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - first_line: {}\n  - review: {}\n  - adversarial: {}\n"},
+		{"both bounce", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - adversarial: { bounce: first_line }\n"},
+		{"only the adversarial bounces", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: { bounce: first_line }\n"},
+		{"rounds on both", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: { max_rounds: 3 }\n  - adversarial: { max_rounds: 10 }\n"},
+		{"adversarial before the review", "version: 1\nname: a\nsteps:\n  - adversarial: {}\n  - review: {}\n"},
+		{"adversarial without a review", "version: 1\nname: a\nsteps:\n  - adversarial: {}\n"},
+		{"adversarial twice", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: {}\n  - adversarial: {}\n"},
+		{"a step after the adversarial", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: {}\n  - first_line: {}\n"},
+		{"adversarial bounce with no first line", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: { bounce: first_line }\n"},
+		{"adversarial bounce on the wrong target", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: { bounce: review }\n"},
+		{"adversarial rounds over the maximum", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: { max_rounds: 11 }\n"},
+		{"adversarial with an unknown knob", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: { rounds: 2 }\n"},
+		{"adversarial in a mode review recipe", "version: 1\nname: a\nmode: review\nsteps:\n  - review: {}\n  - adversarial: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
+	}
+}
+
 func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for _, f := range globAll(t, "../testdata/config/layered/valid/*.yaml") {

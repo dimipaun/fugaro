@@ -149,6 +149,13 @@ var rigorBudgetFloor = sync.OnceValue(func() float64 {
 // smokeStages is the model stages the smallest run the built-in recipe
 // catalog ships can start, at the knobs' defaults: the smallest
 // recipe.StageBound over the catalog.
+//
+// The adversarial default is the strictest row, Critical's senior rounds,
+// because this call site has no rigor mode: a floor is computed over the whole
+// catalog rather than a run's own path, and the one direction a bound may be
+// wrong in is high (recipe.StageBound). No catalog recipe carries the step, so
+// it is unchanged either way; a recipe that reaches this arithmetic with one
+// would be priced by its own max_rounds wherever it writes one.
 func smokeStages() int {
 	smallest := 0
 	for _, name := range recipe.CatalogNames() {
@@ -160,7 +167,7 @@ func smokeStages() int {
 		if len(ps) > 0 {
 			continue
 		}
-		if n := recipe.StageBound(r, rigorBudgetFloorFirstRounds, rigorBudgetFloorReviewRounds); smallest == 0 || n < smallest {
+		if n := recipe.StageBound(r, rigorBudgetFloorFirstRounds, rigorBudgetFloorReviewRounds, rigor.AdversarialDefault(rigor.Critical)); smallest == 0 || n < smallest {
 			smallest = n
 		}
 	}

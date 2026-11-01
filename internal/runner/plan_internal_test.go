@@ -247,8 +247,9 @@ func TestPlanBounceCarriesFirstRounds(t *testing.T) {
 }
 
 func TestCheckPlan(t *testing.T) {
+	plain := parseRecipe(t, "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: {}\n")
 	ok := []planStep{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepReview, Rounds: 1}}
-	if err := checkPlan(ok); err != nil {
+	if err := checkPlan(plain, ok); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range [][]planStep{
@@ -257,8 +258,15 @@ func TestCheckPlan(t *testing.T) {
 		{{Kind: recipe.StepReview, Rounds: 1}, {Kind: recipe.StepFirstLine, Rounds: 1}},
 		{{Kind: recipe.StepReview, Rounds: 0}},
 	} {
-		if err := checkPlan(bad); err == nil || !strings.Contains(err.Error(), "no trailing review step") {
+		if err := checkPlan(plain, bad); err == nil || !strings.Contains(err.Error(), "no trailing review step") {
 			t.Errorf("checkPlan(%v) = %v", bad, err)
 		}
+	}
+	// A recipe carrying review level 3 is refused rather than planned without
+	// it: planOf has no arm for the step, so the ordinary plan below would run
+	// and the pull request would open with level 3 never run.
+	level3 := parseRecipe(t, "version: 1\nname: level3\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: {}\n")
+	if err := checkPlan(level3, ok); err == nil || !strings.Contains(err.Error(), "adversarial step is not run") {
+		t.Errorf("checkPlan(level 3) = %v, want the step refused", err)
 	}
 }

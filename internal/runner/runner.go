@@ -2028,7 +2028,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 			planAgent.Models.Coder = r.championCoder
 		}
 		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor())
-		if err := checkPlan(plan); err != nil {
+		if err := checkPlan(rcp, plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
 		r.plan = plan
@@ -2647,7 +2647,9 @@ func (r *run) agentLoop(ctx context.Context) {
 				return
 			}
 		case recipe.StepReview:
-			// The last step (recipe.Parse refuses any other order).
+			// The last step: recipe.Parse allows only the adversarial step
+			// after review, planOf has no arm for it and checkPlan refuses a
+			// recipe carrying one, so the review is what the plan ends with.
 			r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID)
 			return
 		}
