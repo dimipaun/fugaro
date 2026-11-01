@@ -79,7 +79,8 @@ read-only sets exist but none is this one: `buildTokenPermissions` (`{contents: 
 read}`, exported as `BuildTokenPermissions`, used by `internal/cli/gitcred.go` and
 `internal/cli/imagecheck.go`); the challenger arm's `shadowTokenPermissions` (`{contents: read,
 metadata: read}`, `apptoken.go:111`); and the coordinator's `coordinatorTokenPermissions`, exported as
-`CoordinatorTokenPermissions` (`internal/gitprov/github/apptoken.go:128` — **in code, not in a design
+`CoordinatorTokenPermissions` (`internal/gitprov/github/apptoken.go:128` is the map, `:142` the
+exported accessor that clones it — **in code, not in a design
 document**, which an earlier draft of this finding got wrong by citing
 `docs/coordinator/reconciliation.md`). §2's set is a fourth, and new work.
 
@@ -388,7 +389,16 @@ missing).
   artifact writer (R3) computes an HMAC over `review.json`'s bytes as it writes them and stores it
   beside them, and the coordinator recomputes it from the object's own bytes before it acts, so a
   concurrent job that can write under the prefix cannot produce a verdict the coordinator accepts,
-  because it cannot read that secret. **The refusal is tested, not asserted:** R3 ships the signer and
+  because it cannot read that secret. **The algorithm is the design's, not the implementation's:**
+  **HMAC-SHA-256**, lowercase hex, over the exact bytes of the stored object — named here so the
+  coordinator's verifier, which is a different work stream's code, cannot pick a weaker one or
+  disagree with the writer without an error on either side; the constant is R3's, and the coordinator
+  consumes it. **Rotation:** the secret has **versions** (Secret Manager's own), rotation is a new
+  version plus the variant's `secret_env` following the alias, and for the rotation window the
+  verifier accepts the **current version and the one before it and nothing older** — an artifact
+  signed under a retired version stops verifying, and the honest remedy is **re-reviewing the head**,
+  not trusting the old object. There is no escrow and no re-signing; R6's `validate` note is where an
+  operator sees the key's age. **The refusal is tested, not asserted:** R3 ships the signer and
   the verifier as one pair of functions in `internal/runner/reviewartifact.go`, and
   `TestVerifyRefusesAForgedArtifact`, `TestVerifyRefusesAnUnsignedArtifact` and
   `TestReviewArtifactIsSignedWithTheAccountsKey` are its tests; the coordinator calls the same
@@ -412,7 +422,8 @@ missing).
   an execution object. The design recommended (a); the owner took (c), which is the stronger channel
   where it works and carries a **precondition the reviewer cannot ship without** (below).
   **How it works, on the code that is already there.** The keyless path exists and is wired:
-  `internal/gitprov/github.ServiceTokens` (`apptoken.go:377` onward) is the `gitprov.TokenSource` a
+  `internal/gitprov/github.ServiceTokens` (`apptoken.go:381`, the type; its doc comment sits above
+  it) is the `gitprov.TokenSource` a
   provider installs when the job's environment carries `FUGARO_CREDENTIALS_SERVICE_URL` — the fact
   `internal/cli/run.go`'s `credentialsServiceLaunchEnv` puts on an opted-in installation's execution —
   and `ServiceTokens.mint` makes one `POST /v1/github/installation-token` carrying the App ID and
@@ -434,7 +445,7 @@ missing).
   on demand and refreshed by the same `Token(ctx, minValid)` contract the in-job source holds; it
   lives in the process's memory for the run's length, is never mounted and never written down.
   **What the service has to grow, and it is not built:** the mint hard-codes the run's own set
-  (`RunTokenPermissions`, `credsvc/github.go:263`), so a review identity must be served **R1's fourth,
+  (`RunTokenPermissions`, `internal/credsvc/github.go:263`), so a review identity must be served **R1's fourth,
   read-only set**, and the choice must be made from the verified identity's own claims (no `fb` → a
   run that pushes nothing) rather than from any field a caller could send. **The precondition, said
   plainly:** the cloud senior reviewer **requires the credentials service to be enabled for the

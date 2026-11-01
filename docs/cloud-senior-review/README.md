@@ -1,9 +1,11 @@
 # The independent senior review as a cloud job
 
 **Status: design only, nothing approved.** This is a draft pull request for the owner to read. It adds
-no code, no schema, no command and no recipe; it changes no existing file, and no task in
-[implementation-plan.md](implementation-plan.md) may start before the owner answers the decisions in
-[reconciliation.md](reconciliation.md) §4.
+no code, no schema, no command and no recipe; it changes no existing file. The owner has **answered**
+the decisions in [reconciliation.md](reconciliation.md) §4 — D892 with option (a) and D893 with option
+(c) last — but **an answer is not an approval**: no task in
+[implementation-plan.md](implementation-plan.md) may start before the owner approves it, and two of
+them wait on gates outside this design (E7 and U7, below).
 
 **Asked by:** the owner, 2026-10-31, as priority ONE right after the CLI 0.14.1 and console 0.116.1
 releases: the **independent review** run today on the owner's own machine — a local session with the
@@ -21,7 +23,7 @@ first, or reject. The job is **read-only on the forge**: it can fetch the head a
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The design: what exists today for a reviewer on an OAuth account, how a cloud review of a pushed branch runs, the output contract, how it differs from the in-job reviewer, the trigger, what the coordinator does with the verdict, the threat model, and the owner-run live check |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E6**, and the owner decisions **D880–D893** (D880–D891 answered, D892 and D893 open). **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E7** (**E7** — the credentials service enabled and admitting a project-scoped job — is a hard precondition, not a task: it blocks R7, R2 and the coordinator's `ship` → merge path), and the owner decisions **D880–D893**, **all answered** — D880–D891, then **D892 with option (a)** (the review job signs its verdict) and **D893 with option (c)** (the read-only token comes from the credentials service, by name), with **D894–D899 reserved and unused**. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The tasks **R1–R7** (at most 12 files each), the shared-files table, the first slice and the release slot. **Nothing in it is approved** |
 
 ## The shape in one paragraph

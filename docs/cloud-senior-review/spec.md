@@ -144,8 +144,8 @@ token today asks for `{contents: write, pull_requests: write, issues: read, meta
 because a run pushes its branch and opens its pull request. Three narrower read-only sets are already
 in this tree: the image build's `{contents: read, metadata: read}`
 (`buildTokenPermissions`/`BuildTokenPermissions`, used by `internal/cli/gitcred.go` and
-`internal/cli/imagecheck.go`), the coordinator's (`coordinatorTokenPermissions`, exported as
-`CoordinatorTokenPermissions`, `apptoken.go:128`), and the challenger arm's
+`internal/cli/imagecheck.go`), the coordinator's (`coordinatorTokenPermissions` at
+`apptoken.go:128`, exported as `CoordinatorTokenPermissions` at `:142`), and the challenger arm's
 `shadowTokenPermissions` (`{contents: read, metadata: read}`, `apptoken.go:111`).
 
 The review job's set is a fourth: **`{contents: read, pull_requests: read, metadata: read}`** — read
@@ -183,7 +183,7 @@ is handed in at all** ([reconciliation.md](reconciliation.md) §4). There is no 
 no value in an execution object, because there is no hand-in to design: the review job's variant
 carries the installation's `FUGARO_CREDENTIALS_SERVICE_URL` like any other job of an opted-in
 installation, and the keyless path already in the tree does the rest — `internal/gitprov/github`'s
-`ServiceTokens` (`apptoken.go:377` onward) makes one `POST /v1/github/installation-token` that carries
+`ServiceTokens` (`apptoken.go:381`, its doc comment above it) makes one `POST /v1/github/installation-token` that carries
 the App ID and nothing else, and the **service** decides the repository (the one the calling account is
 bound to, `internal/credsvc/github.go:245`) and the permissions. The job authenticates with the two
 identities the service already verifies on every call: the **job service account's Google ID token**
@@ -259,6 +259,7 @@ bucket layout, the name sanitisation and the record's own artifact list are the 
 {
   "schema_version": 1,
   "review_run": "20261031-210911-718a",
+  "created_at": "2026-10-31T21:14:07Z",
   "pr": 1470,
   "head_sha": "<40 hex>",
   "base": "main",
@@ -309,6 +310,31 @@ reader that finds the file moved knows which commit the line meant. `fix` is a s
 patch the reviewer applied. **The four sections the in-job template has become fields rather than
 prose** (`security`, `performance`, `test_coverage`, plus `overview` and `strengths`), so a
 coordinator can route on them without parsing English.
+
+**`created_at` is the artifact's own clock, not a lookup.** It is the review job's own timestamp,
+**RFC 3339 in UTC**, written by the artifact's writer at the moment it writes the object, so a reader
+holding only `review.json` can still say when the review was performed. **Why it is a field and not
+"read the run record":** the record and the artifact are two objects, and the artifact is the one that
+travels — it is copied into a fix round's brief (R5), may be pasted into a comment or a chat, and may
+outlive the run's own listing in a later audit — while the record does not travel with it. §6's
+ordering argument is about *when the review happened*, and that is a claim the artifact should be able
+to make about itself. `created_at` is the **writer's** claim and is not trusted on its own: the
+coordinator reads it **beside** the run record's own timestamps (§6), and the signature (D892(a)) is
+what binds the whole object, this field included, to the key the review job holds. So a forged
+`created_at` is a forged artifact and fails verification; an honest one makes the artifact
+self-describing.
+
+**`mutation_checks[].observed` is a closed four-word vocabulary: `pass`, `fail`, `error`, `timeout`.**
+The example above shows `fail` because that is the *good* outcome — the mutant was killed. A
+coordinator routes on this word without parsing prose: `pass` means the mutant **survived**, which is
+the finding worth reporting; `fail` means the test killed it; `error` means the test or the harness
+did not run to a verdict; `timeout` means the bounded run expired. **A fifth word is refused**, for
+the same reason §3's verdict refuses a fourth: a reader that compares against the four would take
+anything else for one of them. `reverted` is the runner's own statement that the worktree was put
+back, and `applied` is the mutation's description — neither is a claim by the reviewer's prose.
+**R3's `TestMutationAppliesRunsRevertsAndPushesNothing` pins this vocabulary** (every `observed`
+value the task can write is one of the four, and a fifth is refused), and R4's own tests assert the
+`error` and `timeout` cases rather than leaving them to the writer's discretion.
 
 **The verdict vocabulary is this artifact's own: `ship`, `fix first`, `reject`.** It is **not** the
 in-run verdict's vocabulary. `internal/runner/verdict.go` decodes exactly two words, `ship` and
@@ -485,9 +511,14 @@ wrote. Either way the coordinator sees a run that did not produce a verdict and 
 (§7). What makes that true, honestly: the review run's id is minted by the launcher **after** the
 coding run's job has ended, so *that* coder would have had to write a path under an id that did not
 exist yet; and the artifact's provenance is the review run's own record — its id, its account and its
-timestamps — which the coordinator reads beside the object. This is a real property of the ordering
-and **not** a signature: nothing in the object is cryptographically bound to the review job, and the
-job's bucket condition reaches every run's prefix (F15).
+timestamps — which the coordinator reads beside the object. **The artifact also carries its own
+`created_at` (§3), so the object is self-describing**: a reader holding only `review.json` — a copy in
+a fix round's brief, in a comment, or in a later audit — can say when the review was performed
+without the record travelling with it. The record stays the authority the coordinator checks that
+timestamp against; the artifact's own field is what makes the claim portable. This is a real property
+of the ordering and, on its own, **not** a signature: nothing in the object is cryptographically bound
+to the review job, and the job's bucket condition reaches every run's prefix (F15) — which is the gap
+D892(a), below, closes.
 
 **The ordering argument covers the reviewed pull request's own coder and stops there.** It says
 nothing about **another run executing at the same time on the same shared job**: that job's account
@@ -516,10 +547,25 @@ job, not the coder's job, not the coding run's account. **What is signed, and wh
 the artifact writer computes an HMAC over `review.json`'s bytes as it writes them and stores it beside
 them; the coordinator recomputes it from the object's own bytes before it acts, so a concurrent job
 that can write under the prefix cannot produce a verdict the coordinator accepts, because it cannot
-read that secret. **A verdict that does not verify is not a `ship`** — it is treated exactly like an
-unreadable artifact, an infra fault the coordinator reports — and the verifier is one function pair
-shipped with the artifact (`internal/runner/reviewartifact.go`, R3), which the coordinator calls
-rather than re-implementing. **Honest about what this does and does not close:** it stops **another
+read that secret. **The algorithm is fixed by this design, not left to the implementation: HMAC with
+SHA-256, the digest rendered as lowercase hex, over the exact bytes of the stored object** — the
+coordinator's verifier is a different work stream's code, and a design that named no algorithm would
+let the writer and the verifier disagree, or let the verifier pick a weaker one, with no error on
+either side. R3 writes both halves of the pair, so the constant lives in one place; the coordinator
+consumes it rather than choosing. **A verdict that does not verify is not a `ship`** — it is treated
+exactly like an unreadable artifact, an infra fault the coordinator reports — and the verifier is one
+function pair shipped with the artifact (`internal/runner/reviewartifact.go`, R3), which the
+coordinator calls rather than re-implementing. **Rotating the key, and what rotation costs.** The
+secret is a Secret Manager secret with **versions**, so rotation is a new version added and the
+variant's `secret_env` following the alias; the honest window is the one Secret Manager already
+gives: for the length of it the coordinator's verifier accepts **the current version and the one
+before it**, and nothing older. **An artifact signed under a retired version stops verifying**, and
+the design says so plainly rather than pretending otherwise: the remedy is not to trust the old
+object but to **re-review the head**, which is cheap next to merging on an unverifiable verdict. What
+rotation never does is invalidate the *decision* — the coordinator acts on a verdict once, at the
+time it verifies it, and a merge already made is not re-litigated. There is no key escrow and no
+re-signing path: a lost key means the artifacts it signed are refused, and R6's `validate` note is
+where an operator sees that the key's age is worth a rotation before it is lost. **Honest about what this does and does not close:** it stops **another
 job** forging a verdict; it does not stop an injected *reviewer* from writing a dishonest one inside
 its own run, which is §7's residual and which no signature reaches. That residual is why the verdict
 is still advice, the CI still runs and the owner's own look is still the last step.

@@ -220,17 +220,22 @@ cap that is already deployed — R3 consumes it, it does not address it. **Depen
   than in `runReviewMode` (§2's one-writer rule; the task says so in its pull request if it takes it).
   **At most 9 files.**
 - **Interfaces:** produces the versioned artifact of [spec.md](spec.md) §3 — `schema_version`,
-  `review_run`, `pr`, `head_sha`, `base`, `reviewer{account, model, effort}`, `verdict` ∈ {`ship`,
-  `fix first`, `reject`}, `overview`, `strengths[]`, `issues[]` (`severity`, `class`, `file`, `line`,
-  `summary`, `fix`, `evidence`; the three anchored axes when D884's sub-question says carry them),
-  `security`, `performance`, `test_coverage`, `mutation_checks[]` — written through the existing
-  artifact stage/upload path, plus `review.md` rendered from it. **The stage's own request carries
-  this schema, not `runner.VerdictSchema` (D890, F23)**: the review mode's stage call and its
-  `ParseVerdict` are made conditional on the mode being a review *job*, so the coding run's `review`
-  stage is byte-for-byte what it is today.
+  `review_run`, **`created_at`** (RFC 3339 UTC, the writer's own clock, so the object is
+  self-describing without the run record), `pr`, `head_sha`, `base`, `reviewer{account, model,
+  effort}`, `verdict` ∈ {`ship`, `fix first`, `reject`}, `overview`, `strengths[]`, `issues[]`
+  (`severity`, `class`, `file`, `line`, `summary`, `fix`, `evidence`; the three anchored axes when
+  D884's sub-question says carry them), `security`, `performance`, `test_coverage`,
+  `mutation_checks[]` (`observed` ∈ {`pass`, `fail`, `error`, `timeout`}, a closed set §3 names) —
+  written through the existing artifact stage/upload path, plus `review.md` rendered from it. **The
+  stage's own request carries this schema, not `runner.VerdictSchema` (D890, F23)**: the review
+  mode's stage call and its `ParseVerdict` are made conditional on the mode being a review *job*, so
+  the coding run's `review` stage is byte-for-byte what it is today.
 - **The signature, in this task (D892(a)).** `reviewartifact.go` carries the **signer/verifier pair**
-  as well as the writer: a per-account HMAC key, read from the review job's own environment — the
-  value R7 mounts from Secret Manager as its second `secret_env` entry (see R7) — signs the bytes of
+  as well as the writer: a per-account **HMAC-SHA-256** key — the algorithm fixed by the design
+  ([spec.md](spec.md) §6), lowercase hex over the object's exact bytes, because the coordinator's
+  verifier is a different work stream's code and a design that named no algorithm would let the two
+  disagree with no error on either side — read from the review job's own environment, the value R7
+  mounts from Secret Manager as its second `secret_env` entry (see R7). It signs the bytes of
   `review.json` as it is written, and the same function **recomputes the signature from an object's
   bytes and refuses a mismatch or an absent signature**. The coordinator calls that same verifier
   before it acts; a verdict that does not verify is **never a `ship`** (spec §6). The pair is
@@ -246,7 +251,8 @@ cap that is already deployed — R3 consumes it, it does not address it. **Depen
   `TestReviewArtifactIsSignedWithTheAccountsKey` (the written object verifies under the key it was
   signed with, and under no other), `TestVerifyRefusesAForgedArtifact` (a byte changed in the object
   is refused) and `TestVerifyRefusesAnUnsignedArtifact` (an object with no signature is refused, not
-  accepted by default), and two for F23:
+  accepted by default), `TestReviewArtifactCarriesItsOwnClock` (`created_at` is written, RFC 3339 in
+  UTC, and the object round-trips it), and two for F23:
   `TestReviewJobStageIsNotParsedAsAnInRunVerdict` (the review job's result is decoded by the artifact's
   reader and never reaches `ParseVerdict` — and, the other way round, the coding run's `review` stage
   still passes `VerdictSchema`) and `TestUnreadableReviewArtifactEndsTheRunInvalid` (a result with no
@@ -299,7 +305,11 @@ it launches only after U7's owner-run live observation has returned** (below).
 - **Tests:** `TestMutationAppliesRunsRevertsAndPushesNothing` (the git fake records no push),
   `TestMutationRefusesMoreThanOneMutant`, `TestMutationRevertsOnFailure` (a test that errors still
   leaves the worktree clean), `TestMutationAbsentUnlessAskedFor`,
-  `TestMutationSubprocessCarriesNoTokenInItsEnvironment`, and
+  `TestMutationSubprocessCarriesNoTokenInItsEnvironment`,
+  `TestMutationObservedVocabularyIsClosed` (**§3's four words and no fifth**: every value the check
+  can write is one of `pass`, `fail`, `error`, `timeout`, and a fifth is refused — the vocabulary a
+  coordinator routes on cannot be a free-form string, and the `error` and `timeout` arms are the ones
+  a writer would otherwise leave to prose), and
   `TestReviewStageDeniesBashForTheRestOfTheStage` (D891(a)'s own red test).
 - **Red step:** `TestMutationAppliesRunsRevertsAndPushesNothing` fails on an unknown task field, and
   `TestReviewStageDeniesBashForTheRestOfTheStage` fails because `DenyRules` denies tools only.
@@ -357,7 +367,10 @@ it launches only after U7's owner-run live observation has returned** (below).
 - **Tests:** `TestRecipesSkewRefusesReviewJobOnAnOldImage`,
   `TestValidateNotesTheArtifactOutputCap`, `TestValidateNotesTheCredentialsServicePrecondition`
   (both halves, named separately — the service off, and the service refusing the review job's
-  account), and the existing docs tests for whichever documents this
+  account), `TestValidateNotesTheSigningKeyAge` (D892(a)'s rotation: the note is what tells an
+  operator the key is worth rotating **before** it is lost, since an artifact signed under a retired
+  version stops verifying and the remedy is a re-review — [spec.md](spec.md) §6), and the existing
+  docs tests for whichever documents this
   task edits (`GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`).
 - **Red step:** `TestRecipesSkewRefusesReviewJobOnAnOldImage` fails until the constant and the
   refusal exist. **SEC flag:** no.
@@ -399,11 +412,13 @@ installation *and* admits a project-scoped job.**
   `github-app-key`**, and **no `secretAccessor` on that key** — deployed by `fugaro update` with the
   rest of the job set, and recognised by the census. The signing key is the variant's **own second
   `secret_env` entry**, with its own `secretAccessor` grant on that one secret and none on the App
-  key: the review job can read the key it signs with, and nothing else.
+  key: the review job can read the key it signs with, and nothing else. It is a **versioned** Secret
+  Manager secret, so D892(a)'s rotation is a new version the alias follows — not a new secret — and
+  the variant mounts the alias rather than pinning a version ([spec.md](spec.md) §6).
 - **The read-only token, fetched and never handed in (D893 (c)).** The variant carries the
   credentials-service URL in its environment (`FUGARO_CREDENTIALS_SERVICE_URL`, the same variable
   `internal/cli/run.go`'s `credentialsServiceLaunchEnv` sets today), and the job's git provider is
-  installed from `github.ServiceTokens` (`internal/gitprov/github/apptoken.go:377`) — the keyless
+  installed from `github.ServiceTokens` (`internal/gitprov/github/apptoken.go:381`) — the keyless
   source already in the tree — so the token is **fetched by name from the service at the moment it is
   needed and refreshed by the `Token(ctx, minValid)` contract**. Nothing is handed in: no per-launch
   secret is created, and the execution environment carries no token value. The request carries the
