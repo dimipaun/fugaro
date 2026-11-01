@@ -590,10 +590,12 @@ assigns it, so the last write wins and the record names the account the run *las
 `stages.review.claude_account` set, or with an `auto` failover (§11.3), it therefore **cannot say which
 account served which stage** — and that is precisely what **D876** (§11.5) answered: the record gains an
 **additive `stage_accounts`** map, the stage name to the account that served it, written where the
-stage's account is chosen. `oauth_account` itself does not move and gains no second meaning: it stays the
-account the run used *last*, which is what `fugaro diagnose`'s `row.oauth_account` reports, while a
-per-stage key or an `auto` failover is read from `stage_accounts` and the failover log line names the
-move as it happens (§11.3).
+stage's account is chosen, and the failover log line names the move as it happens (§11.3). `oauth_account`
+itself does not move and gains no second meaning: it stays the account the run used *last*, which is what
+`fugaro diagnose`'s `row.oauth_account` reports today, while the per-stage answer is **recorded** in
+`stage_accounts`. **Nothing reads that field yet**: §11.5 keeps it to the run record and its schema, and
+surfacing it in `diagnose`, `watch` and the console is a later task
+([implementation-plan.md](implementation-plan.md) §Later).
 
 A follow-up (`--pr`) keeps its previous run's account unless `--token` is given, exactly as it does
 today: the keys decide a *first* run, and an explicit flag decides a follow-up.
@@ -642,8 +644,10 @@ one — `TestAutoReviewStageWalksOnlyReviewClassAccounts`.
   that took over, **and writes the account that took over into the record's `stage_accounts` field**
   (§11.5, D876's answer). The line and the field are the per-stage record together, and each covers what
   the other cannot: the line is what a run's log shows as it happens, without asking the owner, and the
-  field is what `fugaro diagnose` reads afterwards, from a record whose log may be gone. The record's own
-  `oauth_account` stays a single scalar for the whole run that cannot carry a stage's account (§11.2).
+  field is what the record keeps afterwards, so a run whose log is gone still has its per-stage accounts.
+  Neither is read back yet — **surfacing `stage_accounts` is a later task**
+  ([implementation-plan.md](implementation-plan.md) §Later) — and the record's own `oauth_account` stays a
+  single scalar for the whole run that cannot carry a stage's account (§11.2).
 - **Not "most headroom".** Choosing the account with the most usage left would rest on a number Fugaro
   cannot obtain — OAuth usage is not known to be readable — so the pick would be a guess nothing could
   contradict, and a non-deterministic one, which a record can only report after the fact.
@@ -678,29 +682,36 @@ failover of §11.3, each writing the account that served the stage into the same
 ([implementation-plan.md](implementation-plan.md) §A2, §A7).
 
 `runstore.Record.StageAccounts` is `map[string]string` with `json:"stage_accounts,omitempty"`, and
-`schemas/result.schema.json` declares it beside `oauth_account`. Being **additive** it bumps no format
-version and breaks no reader: a record written before the field decodes unchanged, and a record that
-carries it is still a valid `result.json` — the schema's `additionalProperties: false` is satisfied
-because the field is declared there, and a decoder that does not know it ignores a key it does not name
-(the CLI's own compatibility rule: JSON only grows). The readers of the record are a closed set, and each
-is a place the field is added to or checked against: `internal/runstore`'s `Record` and its `ReadRecord`,
-`internal/runview`'s `Row` and `internal/watch`'s `JSONRun` — what `fugaro runs ls`, `fugaro watch
---json` and `fugaro diagnose`'s `row` are built from — and on the console side
-`console/src/shared/schema.ts` (the record decoder, whose `RECORD_KEYS` is pinned to `runview.Row` by
-`console/test/unit/schema.test.ts`) and `console/src/source/redact.ts`, whose field-name list classifies
-`oauth_account` as person-shaped and so is where the new field's account names would have to be
-classified the same way. **`shared/`, `mobile/` and `ee/` name no `oauth_account` reader today**, so
-none of them has a decoder to extend.
+`schemas/result.schema.json` declares it beside `oauth_account`. **The field lives in the run record and
+in that schema and nowhere else.** Being **additive** it bumps no format version and breaks no
+reader: a record written before the field decodes unchanged, and a record that carries it is still a
+valid `result.json` — the schema's `additionalProperties: false` is satisfied because the field is
+declared there.
+
+**Nothing reads it, and no read surface is touched.** `internal/runview`'s `Row`, `internal/watch`'s
+`JSONRun`, the console's record decoder and the console's redactor are not A2's files and not A7's, so
+`fugaro runs ls`, `fugaro watch --json`, `fugaro diagnose` and the console show exactly what they show
+today: the record carries a stage's account, and no screen and no row prints it. A renderer that never
+names the key is unaffected by it, which is the other half of why the addition costs no version.
+
+**Surfacing it is a later task, and it takes no release slot of ours**: `diagnose`, `watch` and the
+console — its decoder, whose `RECORD_KEYS` is pinned to `runview.Row` by
+`console/test/unit/schema.test.ts`, and `redact.ts`, whose field-name list classifies `oauth_account` as
+person-shaped and must decide how a **map** of account names is classified — are that task's. Its console
+half is security-sensitive, because it puts account names on a screen and through a redactor, so it is a
+task of its own rather than a line in A2 or A7
+([implementation-plan.md](implementation-plan.md) §Later).
 
 **`oauth_account` keeps exactly the meaning it has**, so no reader draws a wrong figure: it stays the
 account the run used *last* — the scalar §11.2 describes and `fugaro diagnose`'s `row.oauth_account`
-reports — and the per-stage answer is read from `stage_accounts` instead. **Reusing `oauth_account` for a
-stage's account is refused**, and would be refused by the repository's own rule: a field a reader outside
-the binary consumes never changes meaning, and one record has several stages, so a reused name would need
-a second shape as well. The other alternatives are refused too: **adding nothing and letting the failover
-log line be the record** leaves a per-stage account no command can read and none at all once a run's log
-is gone, and **a per-stage entry inside the record's existing stage list** retypes an entry a reader
-already consumes — the same rule the reuse breaks.
+reports — and the per-stage answer is **recorded** in `stage_accounts` instead, where the later task
+above is what shows it. **Reusing `oauth_account` for a stage's account is refused**, and would be
+refused by the repository's own rule: a field a reader outside the binary consumes never changes meaning,
+and one record has several stages, so a reused name would need a second shape as well. The other
+alternatives are refused too: **adding nothing and letting the failover log line be the record** leaves a
+per-stage account no command can read and none at all once a run's log is gone, and **a per-stage entry
+inside the record's existing stage list** retypes an entry a reader already consumes — the same rule the
+reuse breaks.
 
 ## 12. Release placement
 
