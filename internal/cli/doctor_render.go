@@ -784,8 +784,7 @@ var doctorShorts = map[string]doctorShort{
 	// release that understands the node is not installed yet, so the upgrade
 	// comes first, and the update behind it is what brings the installation and
 	// the checkout to that release.
-	"policy-newer-than-binary": {"the published policy is newer than this Fugaro, so no run reads it.",
-		"upgrade Fugaro (`brew upgrade fugaro`), then run `fugaro update`"},
+	"policy-newer-than-binary":          {"the published policy is newer than this Fugaro, so no run reads it.", "upgrade Fugaro (`brew upgrade fugaro`), then run `fugaro update`"},
 	"policy-unknown-keys":               {"an unknown key in the published policy stops every reader from reading it.", "remove the key `fugaro project policy show` prints"},
 	"allow-list-empty":                  {"the published policy admits no repository, so every run stops before it starts.", "run `fugaro project repos add owner/name`"},
 	"project-secret-stored":             {"a secret this checkout's jobs mount has no stored version.", "run `fugaro secrets set NAME`"},
