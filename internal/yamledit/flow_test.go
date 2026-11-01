@@ -340,7 +340,9 @@ func TestFlowEditKeepsCommentsAndQuoting(t *testing.T) {
 }
 
 // TestFlowEditRefusesNestedFlow pins what a flow mapping this package will not
-// edit looks like: a collection written across lines, one holding a comment, a
+// edit looks like: a collection written across lines, one holding a comment — a
+// brace inside a comment is text, and a measurement that took it for the
+// mapping's close would splice against bytes that are not the collection's — a
 // member whose own value is a collection, and an empty mapping, whose shape
 // writing the first member would decide.
 func TestFlowEditRefusesNestedFlow(t *testing.T) {
@@ -388,6 +390,21 @@ func TestFlowEditRefusesNestedFlow(t *testing.T) {
 			"a collection holding a comment",
 			"a: {b: 1 # note\n}\n",
 			func(d []byte) ([]byte, error) { return yamledit.SetScalar(d, []string{"a", "b"}, "2") },
+		},
+		{
+			"a value set in a mapping whose comment holds a brace",
+			"budget: { mode: enforce, # c }\n  per_run_usd: 5 }\n",
+			func(d []byte) ([]byte, error) { return yamledit.SetScalar(d, []string{"budget", "mode"}, "observe") },
+		},
+		{
+			"a member added to a mapping whose comment holds a brace",
+			"budget: { mode: enforce, # c }\n  per_run_usd: 5 }\n",
+			func(d []byte) ([]byte, error) { return yamledit.SetScalar(d, []string{"budget", "z"}, "1") },
+		},
+		{
+			"a member removed from a mapping whose comment holds a brace",
+			"budget: { mode: enforce, # c }\n  per_run_usd: 5 }\n",
+			func(d []byte) ([]byte, error) { return yamledit.RemoveKey(d, []string{"budget", "mode"}) },
 		},
 		{
 			"the first member of an empty mapping",
