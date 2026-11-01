@@ -525,10 +525,15 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         'the layout key of one of the two lists the inspector draws, built the same way a card\'s own key is -- ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key` and never drawn; the text beside it is the task\'s `Sanitized` title',
     },
-    value: {
+    'key.state': {
       within: 'legendItem',
       reason:
-        'the value of one legend line\'s `data-state` or `data-edge`: a word of `GRAPH_LEGEND_WORDS` (the model\'s own `STATE_WORDS`, less `stuck`) or one of the two literal kinds this file\'s `legend` passes -- the console\'s own vocabulary either way, and never a document string',
+        'one legend line\'s `data-state`: a word of `GRAPH_LEGEND_WORDS` (the model\'s own `STATE_WORDS`, less `stuck`), so the swatch is drawn for a state the model can actually name',
+    },
+    'key.edge': {
+      within: 'legendItem',
+      reason:
+        'one legend line\'s `data-edge`: one of the two literal kinds this file\'s `legend` passes (a dependency and the critical path), the console\'s own vocabulary and never a document string',
     },
     'group.stream': {
       within: 'chips',

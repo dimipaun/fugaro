@@ -26,7 +26,7 @@
 //      forced-colors pass and not a stylesheet pretending.
 //   4. **the keyboard walks the graph.** A roving `tabindex` is a claim about
 //      the *tab order*, which a fake DOM cannot have: Tab has to reach the
-//      tablist and a task (a group whose every door is out of the tab order is a
+//      stream filter and a task (a group whose every door is out of the tab order is a
 //      picture no keyboard can enter), the arrows have to move the tab, and a
 //      redraw has to put the focus back in the tree it drew rather than on
 //      `<body>`.
@@ -385,7 +385,7 @@ async function active(
   return page.evaluate(() => {
     const element = document.activeElement
     const attributes: Record<string, string> = {}
-    for (const name of ['data-tab', 'data-key', 'data-selected', 'aria-selected']) {
+    for (const name of ['data-tab', 'data-key', 'data-selected', 'aria-pressed']) {
       const value = element?.getAttribute(name)
       if (value !== null && value !== undefined) attributes[name] = value
     }
@@ -479,7 +479,7 @@ test.describe('the graph view in a window', () => {
     expect(reached.attributes['data-selected']).toBe('false')
 
     // One door in the tab order, and it is the first the drawing draws: the
-    // roving rule is the tablist's own, one stop and not a second walk through
+    // roving rule is the stream filter's own, one stop and not a second walk through
     // every card.
     const stops = await page.evaluate(() =>
       [...document.querySelectorAll('g.graph-node, li.graph-row')].filter(
@@ -807,13 +807,13 @@ test.describe('the graph view in a window', () => {
   })
 
   test('walks the graph from the keyboard, and the focus comes back after a redraw', async () => {
-    // The tablist's roving `tabindex` is a claim about the tab order, so this
-    // walks it: one tab of the graph's tablist is in the order, and Tab reaches
-    // it from wherever the keyboard is.
-    expect(await pressTabUntil(page, 'graph-tab'), 'the tab order never reached the graph’s tablist').toBe(true)
+    // The stream filter's roving `tabindex` is a claim about the tab order, so
+    // this walks it: one segment of the graph's filter is in the order, and Tab
+    // reaches it from wherever the keyboard is.
+    expect(await pressTabUntil(page, 'graph-tab'), 'the tab order never reached the graph’s stream filter').toBe(true)
     const first = await active(page)
     expect(first.classes).toContain('graph-tab')
-    expect(first.attributes['aria-selected']).toBe('true')
+    expect(first.attributes['aria-pressed']).toBe('true')
     const firstTab = first.attributes['data-tab'] ?? ''
     expect(firstTab, 'the first tab carries no data-tab: the polls below would be vacuous').not.toBe('')
 
@@ -821,7 +821,7 @@ test.describe('the graph view in a window', () => {
     // it lands on is the one the screen drew as selected: a tab is a different
     // graph, so the redraw lands a worker's answer later. The poll answers a
     // value only while a **focused** tab other than the first is showing, so the
-    // old tab's `aria-selected` (which is still `true` until the redraw lands)
+    // old segment's `aria-pressed` (which is still `true` until the redraw lands)
     // and `<body>` both keep it waiting rather than passing it.
     await page.keyboard.press('ArrowRight')
     await expect
@@ -833,7 +833,7 @@ test.describe('the graph view in a window', () => {
       .not.toBe('')
     const moved = await active(page)
     expect(moved.classes).toContain('graph-tab')
-    expect(moved.attributes['aria-selected']).toBe('true')
+    expect(moved.attributes['aria-pressed']).toBe('true')
     expect(moved.attributes['data-tab'] ?? '').not.toBe(firstTab)
 
     // And a redraw puts the focus back in the tree it drew. A click selects the
@@ -1063,10 +1063,10 @@ const THE_PANEL = 'div.console-panel'
  * taken in. */
 const THE_GRAPH = `${THE_PANEL} section.graph`
 
-/** SELECTED_TAB is the tab the screen drew as the one showing. The tab that is
- * showing carries no listener (the entry wires the doors it does not draw as
- * current), so what a case about presses can read is which one it is. */
-const SELECTED_TAB = `${THE_GRAPH} nav.graph-tabs button.graph-tab[aria-selected="true"]`
+/** SELECTED_TAB is the segment the screen drew as the chosen one. The chosen
+ * segment carries no listener (the entry wires the segments it does not draw as
+ * pressed), so what a case about presses can read is which one it is. */
+const SELECTED_TAB = `${THE_GRAPH} div.graph-filter button.graph-tab[aria-pressed="true"]`
 
 test.describe('the Graph view’s stream filter', () => {
   test.describe.configure({ mode: 'serial' })
@@ -1104,7 +1104,7 @@ test.describe('the Graph view’s stream filter', () => {
     // be pressed from here, which is what this case needs -- the third is the one
     // showing.
     await expect(page.locator(SELECTED_TAB)).toHaveAttribute('data-tab', 'all')
-    await expect(page.locator(`${THE_GRAPH} nav.graph-tabs button.graph-tab`)).toHaveCount(3)
+    await expect(page.locator(`${THE_GRAPH} div.graph-filter button.graph-tab`)).toHaveCount(3)
 
     // **Two presses in one turn of the event loop.** Each is a layout of its own
     // graph rather than a redraw of the same picture, and the answer that must
@@ -1112,7 +1112,7 @@ test.describe('the Graph view’s stream filter', () => {
     const inTheFrame = await page.evaluate((scope) => {
       const root = (): Element | null => document.querySelector(scope)
       const press = (key: string): void => {
-        const button = root()?.querySelector<HTMLElement>(`nav.graph-tabs button.graph-tab[data-tab="${key}"]`)
+        const button = root()?.querySelector<HTMLElement>(`div.graph-filter button.graph-tab[data-tab="${key}"]`)
         button?.click()
       }
       press('stream:example')

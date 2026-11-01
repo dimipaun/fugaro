@@ -1249,7 +1249,7 @@ function fact(facts: ScreenElement, factory: ScreenFactory, label: string): Scre
  * console's own word when the plan gives it none. */
 function needsOf(facts: ScreenElement, factory: ScreenFactory, plan: GraphPlan, node: GraphNode): void {
   const tasks = node.needs.map((id) => nodeOf(plan, id)).filter((each): each is GraphNode => each !== null)
-  related(facts, factory, plan, GRAPH_DEPENDS_ON, 'graph-inspector-needs', 'graph-inspector-need', tasks)
+  related(facts, factory, plan, GRAPH_DEPENDS_ON, 'needs', tasks)
 }
 
 /** unblocksOf draws what waits on the selected task -- the same edges read the
@@ -1257,17 +1257,24 @@ function needsOf(facts: ScreenElement, factory: ScreenFactory, plan: GraphPlan, 
  * list, so the plan is walked once and every task that names this one is drawn. */
 function unblocksOf(facts: ScreenElement, factory: ScreenFactory, plan: GraphPlan, node: GraphNode): void {
   const tasks = plan.nodes.filter((each) => each.needs.includes(node.id))
-  related(facts, factory, plan, GRAPH_UNBLOCKS, 'graph-inspector-unblocks', 'graph-inspector-unblock', tasks)
+  related(facts, factory, plan, GRAPH_UNBLOCKS, 'unblocks', tasks)
 }
 
-/** related draws one of those two lists under its own label. */
+/** RelatedSide is which end of a dependency a list draws: what the task waits
+ * on, or what waits on it. The two are the same edges read the other way round,
+ * and they differ only in their words and their hooks. */
+type RelatedSide = 'needs' | 'unblocks'
+
+/** related draws one of those two lists under its own label. The hooks are
+ * chosen here as literals rather than handed in, so a reader of this file -- and
+ * the scan that pairs every rule with the element it draws -- sees the class a
+ * list and its buttons carry. */
 function related(
   facts: ScreenElement,
   factory: ScreenFactory,
   plan: GraphPlan,
   label: string,
-  listClass: string,
-  buttonClass: string,
+  side: RelatedSide,
   tasks: readonly GraphNode[],
 ): void {
   const value = fact(facts, factory, label)
@@ -1275,9 +1282,15 @@ function related(
     literal(cell(value, factory, 'span', 'graph-inspector-none'), GRAPH_INSPECTOR_NONE)
     return
   }
-  const list = cell(value, factory, 'ul', listClass)
+  const waiting = side === 'needs'
+  const list = cell(value, factory, 'ul', waiting ? 'graph-inspector-needs' : 'graph-inspector-unblocks')
   for (const task of tasks) {
-    const button = cell(cell(list, factory, 'li'), factory, 'button', buttonClass)
+    const button = cell(
+      cell(list, factory, 'li'),
+      factory,
+      'button',
+      waiting ? 'graph-inspector-need' : 'graph-inspector-unblock',
+    )
     button.setAttribute('type', 'button')
     button.setAttribute('data-key', nodeKey(plan.id, task.id))
     drawn(button, factory, 'span', task.title, 'graph-inspector-task-title')
@@ -1322,26 +1335,36 @@ function legend(factory: ScreenFactory): ScreenElement {
   const element = make(factory, 'div', 'graph-legend')
   literal(cell(element, factory, 'h2', 'graph-legend-title'), GRAPH_LEGEND_TITLE)
   const list = cell(element, factory, 'ul', 'graph-legend-list')
-  for (const word of GRAPH_LEGEND_WORDS) legendItem(factory, list, word, 'data-state', word)
-  legendItem(factory, list, GRAPH_DEPENDS_ON, 'data-edge', 'dependency')
-  legendItem(factory, list, GRAPH_CRITICAL_PATH, 'data-edge', 'critical')
+  for (const word of GRAPH_LEGEND_WORDS) legendItem(factory, list, word, { state: word })
+  legendItem(factory, list, GRAPH_DEPENDS_ON, { edge: 'dependency' })
+  legendItem(factory, list, GRAPH_CRITICAL_PATH, { edge: 'critical' })
   return element
 }
 
+/** LegendKey is which kind of mark a line of the legend stands for: a state a
+ * card can carry, or one of the two kinds of edge. */
+type LegendKey = { readonly state: StateWord } | { readonly edge: string }
+
 /** legendItem is one line of it: the swatch, then the word it stands for. The
  * word is the line and the swatch is `aria-hidden`, or a reader who hears the
- * legend hears every state twice. */
+ * legend hears every state twice.
+ *
+ * **The swatch's attribute is written by name and not from the key.** A state's
+ * swatch and an edge's are two different facts under two different attributes,
+ * and the stylesheet draws them differently (a boundary and a line); a name
+ * assembled from a parameter would be a name a reader of this file -- and the
+ * scan that reads every attribute a screen writes -- cannot see. */
 function legendItem(
   factory: ScreenFactory,
   list: ScreenElement,
   spelling: string,
-  attribute: 'data-state' | 'data-edge',
-  value: string,
+  key: LegendKey,
 ): void {
   const item = cell(list, factory, 'li', 'graph-legend-item')
   const swatch = cell(item, factory, 'span', 'graph-legend-swatch')
   swatch.setAttribute('aria-hidden', 'true')
-  swatch.setAttribute(attribute, value)
+  if ('state' in key) swatch.setAttribute('data-state', key.state)
+  else swatch.setAttribute('data-edge', key.edge)
   literal(cell(item, factory, 'span', 'graph-legend-word'), spelling)
 }
 
