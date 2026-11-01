@@ -451,10 +451,11 @@ for**. **Findings:** F13, **F24**. **Depends on:** CSR3. **Unblocked:** the answ
   written, with U7's caveats as requirements on it:** the mutant/test child **starts from an explicit
   environment** (`env -i` plus an allow-list) and never inherits the runner's, because the namespace
   stops it reading the parent's `/proc` and not the variables it was handed (caveat 1 — the same
-  requirement on #1514's **C3.9e**'s sandbox, which is the other place a child is started); **only the
+  requirement on #1514's **C3.9e**'s sandbox, which is the other place a child is started); the
+  "parent environ denied" half is partly an artifact (`$PPID` reads 0 in there) and the evidence is
+  the drop in visible PIDs (caveat 2); **only the
   tool or test child is fenced and never the agent**, because `unshare -rn` removes the loopback the
-  agent's model calls need (caveat 3); the "parent environ denied" half is partly an artifact (`$PPID`
-  reads 0 in there) and the evidence is the drop in visible PIDs (caveat 2); and because the probe ran
+  agent's model calls need (caveat 3); and because the probe ran
   under the agent's shell in an ordinary coding job, **if CSR7's review-only variant runs in a
   different execution environment, Check 125's step 7 confirms again** (caveat 4). Caveat 5 is the
   reason all of this is a requirement rather than hardening: the unfenced baseline exposure is real.
