@@ -32,7 +32,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  CONNECTION_REASONS, INVENTED_CONNECTION_REASON, INVENTED_LEASE_USD, TIME_SHIFT_RANGE_MS,
+  CONNECTION_REASONS, INVENTED_CONNECTION_REASON, INVENTED_LEASE_USD, INVENTED_MAX_PARALLEL, TIME_SHIFT_RANGE_MS,
   VERIFY_CLIP_RUNES, VOCAB, isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument,
   timeShiftFromDraw,
 } from '../../tools/scrub-fixture/scrub'
@@ -430,6 +430,36 @@ describe('the scrub: the nullable Go fields', () => {
     const doc = raw()
     at(doc, 'total')['leased_usd'] = 'many'
     expect(() => scrubDocument(doc, 0)).toThrow(/not a number at \$\.total\.leased_usd/)
+  })
+
+  it('replaces a total max_parallel with the invented cap, and keeps a null one', () => {
+    // `max_parallel` -- the concurrent-run cap a launch is checked against --
+    // is a key `JSONTotal` gained after the released consoles and the committed
+    // fixtures, so until the scrub names it every recording the new CLI writes
+    // is refused **whole**, as `an unknown key at $.total.max_parallel`. The
+    // amount is the operator's own configuration, so it is invented like the
+    // daily cap rather than copied through.
+    const doc = raw()
+    at(doc, 'total')['max_parallel'] = 3
+    const out = scrubDocument(doc, 0)
+    expect(at(out, 'total')['max_parallel']).toBe(INVENTED_MAX_PARALLEL)
+    expect(JSON.stringify(out)).not.toContain('"max_parallel":3')
+    // `null` is the field's own "no cap could be read" (`*int` with no
+    // `omitempty`), so it is a value to keep, not a fault.
+    at(doc, 'total')['max_parallel'] = null
+    expect(at(scrubDocument(doc, 0), 'total')['max_parallel']).toBeNull()
+    // Anything else is refused where it sits, like the other pointers.
+    at(doc, 'total')['max_parallel'] = 'many'
+    expect(() => scrubDocument(doc, 0)).toThrow(/not a number at \$\.total\.max_parallel/)
+  })
+
+  it('still refuses a max_parallel on a repos[] entry, which no CLI writes', () => {
+    // A cap bounds the *project's* concurrent launches, so `JSONRepo` carries
+    // no such key: the rule is the total's own, and a repository that grew one
+    // is a document this reader does not know.
+    const doc = raw()
+    at(doc, 'repos', 0)['max_parallel'] = 3
+    expect(() => scrubDocument(doc, 0)).toThrow(/an unknown key at \$\.repos\[0\]\.max_parallel/)
   })
 })
 
