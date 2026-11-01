@@ -259,6 +259,8 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   'nocheckout.ts': {
     'drawn.ok ? drawn.text : REFUSAL_UNREADABLE':
       'the CLI\'s refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string, **through `sanitizeRefusal`** -- the same text and the same treatment `degraded.ts` gives it (design section 6.3 requires the remedy verbatim, a token a child echoed is still redacted), with `REFUSAL_UNREADABLE` for a sentence the sanitizer refuses, so the disclosure is never empty',
+    '`${NO_CHECKOUT_AUTO_SENTENCE} ${checkoutLabel(only)}`':
+      'this file\'s own sentence and **`checkoutLabel` of one entry of `row.checkoutChoices`**: that function\'s answer is a sanitizer\'s own result for the CLI\'s repository identity and directory (or this console\'s marker for a string it refused), which is the one document-shaped string a drawer may write -- the `launch.ts` `refusalText(recorded)` entry is the same case. The label names the directory the Graph is reading, which a bare "one checkout" would leave the operator to look up',
   },
   // The launch control (V2.5.1b) is the one screen that writes a string it was
   // also handed by a document -- the repository identities main recorded -- and
@@ -1410,6 +1412,7 @@ describe('no module under src/renderer writes an inline style', () => {
     // the walk has nothing to find there.
     expect([...RENDERER_FILES]).toEqual([
       'app.ts',
+      'checkout.ts',
       'confirm.ts',
       'entry.ts',
       'graph/layout-client.ts',
