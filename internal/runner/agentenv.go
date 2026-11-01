@@ -103,7 +103,16 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 	for k, v := range pins {
 		vars[k] = v
 	}
-	if err := agent.WriteManagedSettings(r.managedPath(), vars, agent.DenyRules(true, config.IsReviewStage(stage))); err != nil {
+	write := agent.WriteManagedSettings
+	if r.review {
+		// A review-mode run's stage reads a pull request's own head, so the
+		// settings it is launched under are the review posture (D894(a)):
+		// managed hooks only, no project MCP server, and setting sources
+		// from the user and managed levels alone. A coding run's own stages
+		// — its in-loop review rounds included — keep the file they had.
+		write = agent.WriteReviewManagedSettings
+	}
+	if err := write(r.managedPath(), vars, agent.DenyRules(true, config.IsReviewStage(stage))); err != nil {
 		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 	}
 	r.mu.Lock()

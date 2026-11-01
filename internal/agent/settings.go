@@ -71,11 +71,59 @@ func DenyRules(denyWeb, review bool) []string {
 	return deny
 }
 
+// ReviewHomeName is the directory, under the run's state directory, that a
+// review stage's session uses as HOME.
+const ReviewHomeName = "review-home"
+
+// reviewSettingSources are the settings levels a review stage's session
+// reads: the user's (which ReviewHome makes an empty directory of its own)
+// and the managed file. The project level is the reviewed pull request's own
+// checkout, which is exactly what the reviewer must not be configured by.
+var reviewSettingSources = []string{"user", "managed"}
+
 type managedSettings struct {
 	Env         map[string]string `json:"env"`
 	Permissions *struct {
 		Deny []string `json:"deny"`
 	} `json:"permissions,omitempty"`
+	// The review stage's posture, below, and absent from every other
+	// stage's file: pointers, so a stage that sets none of them writes no
+	// such key and "false" is a value rather than an omission.
+	DisableAllHooks            *bool    `json:"disableAllHooks,omitempty"`
+	AllowManagedHooksOnly      *bool    `json:"allowManagedHooksOnly,omitempty"`
+	EnableAllProjectMcpServers *bool    `json:"enableAllProjectMcpServers,omitempty"`
+	SettingSources             []string `json:"settingSources,omitempty"`
+}
+
+// reviewPosture turns on the review stage's posture (D894(a)). The review
+// stage's working directory is the pull request's head, so a hook, an MCP
+// server or a settings file that reaches that checkout must not run: a hook
+// is a shell command Claude Code itself starts, with the job's environment
+// and its ordinary egress, which no deny rule on the agent's own tools
+// reaches. The strip (the runner's stripClaudeConfig) is one deletion from
+// one code path, so the launch is the boundary as well: hooks from the
+// managed file alone (and that file declares none, so none run at all), no
+// project MCP server, and setting sources from the user and managed levels —
+// never the project's.
+func (s *managedSettings) reviewPosture() {
+	no, yes := false, true
+	s.DisableAllHooks, s.AllowManagedHooksOnly = &yes, &yes
+	s.EnableAllProjectMcpServers = &no
+	s.SettingSources = reviewSettingSources
+}
+
+// ReviewHome returns the directory a review stage's session runs with as
+// HOME, creating it 0700 under stateDir (D894(a)). The image's own home is
+// the user level of Claude Code's settings, so a settings file baked into
+// the image would contribute a rule to a session that reads a pull request
+// it must not trust; a fresh, empty directory is what leaves that level with
+// nothing in it.
+func ReviewHome(stateDir string) (string, error) {
+	home := filepath.Join(stateDir, ReviewHomeName)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return "", fmt.Errorf("creating the review stage's home: %w", err)
+	}
+	return home, nil
 }
 
 // WriteManagedSettings replaces path with {"env": env} and, when deny is not
@@ -84,6 +132,20 @@ type managedSettings struct {
 // a file that isn't regular at path. deny is DenyRules' answer for the stage
 // about to run.
 func WriteManagedSettings(path string, env map[string]string, deny []string) error {
+	return writeManagedSettings(path, env, deny, false)
+}
+
+// WriteReviewManagedSettings is WriteManagedSettings for the review stage a
+// review-mode run launches: the same file with the review posture added
+// (D894(a)). It is a function of its own rather than a flag on
+// WriteManagedSettings so that every other caller keeps writing exactly the
+// file it wrote before, which is the promise D894(a) makes the coding run's
+// own review rounds.
+func WriteReviewManagedSettings(path string, env map[string]string, deny []string) error {
+	return writeManagedSettings(path, env, deny, true)
+}
+
+func writeManagedSettings(path string, env map[string]string, deny []string, review bool) error {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file (%s); refusing to replace it", path, fi.Mode().Type())
@@ -94,6 +156,9 @@ func WriteManagedSettings(path string, env map[string]string, deny []string) err
 	s := managedSettings{Env: env}
 	if s.Env == nil {
 		s.Env = map[string]string{}
+	}
+	if review {
+		s.reviewPosture()
 	}
 	if len(deny) > 0 {
 		s.Permissions = &struct {
