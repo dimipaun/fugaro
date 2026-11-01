@@ -463,6 +463,10 @@ gate; §2.6). The account job also mounts the profile's GitHub App key (`interna
 - `claude_accounts`, `profiles` and `project_secrets` stay local-config-only: not `fugaro.yaml`, not
   the project layer, so neither a reviewed repository nor a published layer can add an account. This
   design changes none of that.
+- The three account-choice keys of §11.1 (`default_claude_account`, `stages.<stage>.claude_account`,
+  `claude_account_auto`) are local-config-only for the same reason, and `claude_account_auto` is a
+  sensitive direction: the choice of *which* admitted account a stage uses is the owner's, on the
+  owner's machine, and never a published or reviewed document's.
 - The command is a **local** act on the owner's machine. It writes the cloud only through the stages
   §2.5 names, which are the same stages `fugaro update` runs.
 - No new cloud call is introduced: Secret Manager (the store), the Realtime Database (the node and the
@@ -517,7 +521,112 @@ own account field (`fugaro watch --json`, `runstore.Record`), which this design 
 console's crash reporter is named in §6(d) as a leak path that is already closed, and nothing here
 reopens it.
 
-## 11. Release placement
+## 11. How a run chooses among several accounts (D873–D875)
+
+An installation may define several accounts (`claude_accounts`) and a profile may list several of them
+(F1), and until now the choice was made once, for the whole run: the flag, else the committed
+`fugaro.yaml`'s `agent.oauth_token`, else the unsuffixed `default`. The owner's rulings of 2026-11-01 —
+**D873, D874, D875** — settle the rest: an explicit choice always wins, `auto` means ordered failover,
+and `auto` ships dormant. **No command is added.** The keys are registry keys written by
+`fugaro settings set` (§4.2 of [the settings spec](../settings-commands/spec.md)) through the one write
+helper that path and every dedicated family share (S5, E3), and the account a run used is read where it
+already is.
+
+### 11.1 The keys (D873)
+
+| Key | Type | What it is |
+| --- | --- | --- |
+| `default_claude_account` | an account name | The project's default: the account every stage uses when nothing more specific does |
+| `stages.<stage>.claude_account` | an account name | The account one stage uses instead — `stages.review.claude_account` is "the reviewer uses account B" |
+| `claude_account_auto` | bool, default `false` | Whether `auto` (§11.3) may choose at all. Off, and dormant (§11.4) |
+
+All three are **local-config-only** (`--layer local`), on the boundary §7 already draws for
+`claude_accounts` and `profiles`: neither a reviewed repository nor a published layer may pick an
+account, and a key that could would be a way around `claude_accounts`'s own allow-list. Their registry
+rows name the generic path as their `Owner` (a scalar key is the generic path's, §4.4 of the settings
+spec), and `claude_account_auto` is marked a **sensitive direction**, so turning it on asks for the
+typed project name the way turning a `followup.*` key on does (D846): a write that spreads one project
+across several accounts is not one a script should be able to make.
+
+The names follow the registry's conventions. `default_claude_account` sits beside `default_profile`,
+the local config's other "which one by default" pointer, and `stages.<stage>.claude_account` has the
+shape of `repos.<r>.base_branch` — a wildcard segment and a leaf. `<stage>` is one of the **run's own
+stage names**, the ones `result.json` records (`implement`, `review_first`, `review`, `fix`, and the
+other stages a run spends a model call on), and a segment that is not a stage is refused rather than
+silently never applying. The alternative — one key per **role** (`coder`, `reviewer`,
+`config.StageRole`) — is a smaller surface over a closed set, and it is refused here for the reason
+D873 was asked at all: `StageRole` folds every stage but `review` into the coder role, so
+`review_first` could not use an account `implement` does not.
+
+### 11.2 What wins (D873)
+
+**Explicit choice always wins.** The chain `claudeAccountFor` (`internal/cli/run.go`) already walks
+gains two rungs under the flag and keeps every rung it has:
+
+| # | The source | Where it comes from |
+| --- | --- | --- |
+| 1 | `fugaro run --token NAME` | the flag: the run's own explicit act, and it beats everything below |
+| 2 | `stages.<stage>.claude_account` | the stage's own explicit choice (**new**) |
+| 3 | `agent.oauth_token` | the committed `fugaro.yaml` at the ref the run checks out (unchanged) |
+| 4 | `default_claude_account` | the project's default (**new**) |
+| 5 | the unsuffixed `default` | `config.DefaultClaudeAccount` — and with `auto` on, the walk of §11.3 in its place (unchanged when `auto` is off) |
+
+Two properties do not move. **Every name is checked before any launch**, whatever rung it came from:
+`claudeAccountAllowed` still holds the winner to `claude_accounts`'s own allow-list for the repository,
+so a key can only ever name an account the owner has already admitted there. And **the run record names
+the account used** in the field it already has — `runstore.Record.OAuthAccount`, written by the runner
+as `result.json`'s `oauth_account` and already read back by `fugaro diagnose` as `row.oauth_account`.
+Nothing here adds a field or changes one's meaning.
+
+A follow-up (`--pr`) keeps its previous run's account unless `--token` is given, exactly as it does
+today: the keys decide a *first* run, and an explicit flag decides a follow-up.
+
+**The corner this section does not settle: which job a stage is served by.** A project job is deployed
+per `(profile, provider, account)` and mounts that one account's token (`config.ProjectJobAccounts`;
+LC4), so a stage runs *as* the account of the job it runs in, and the chain above decides which account
+a stage **asks for**. For the stages that share the run's own job, the answer is that job's account for
+the whole run; for a stage that runs in a job of its own — the cloud reviewer is one, in the
+cloud-senior-review design (**#1472**, open, D880–D899) — the key is what picks that job. A stage that
+asks for an account its job does not hold is a **refusal**, not a silent fallback to the job's own
+account. That refusal, and the job each stage is served by, are A7's and the cloud-senior-review work's
+to settle; this design fixes the keys and the precedence, and nothing else.
+
+### 11.3 `auto` is ordered failover (D874)
+
+`claude_account_auto: true` is the only thing that lets Fugaro choose an account for the owner. It
+replaces rung 5 of §11.2 and walks the owner's accounts **in the order `fugaro accounts ls` prints
+them** — the first; on a rate limit or a rejection, the next; never mid-stage; always logged — and it
+walks only the accounts **allowed for the stage it is choosing for**, so the cloud reviewer only ever
+sees a review-scoped account.
+
+- **Never mid-stage.** A stage's transcript, its cost and its verdict belong to one account, and a
+  switch inside a stage would leave a run whose own record cannot say which account produced which
+  half. A rate limit or a rejection that arrives mid-stage ends that attempt as it does today, and the
+  next attempt starts on the next account.
+- **Always logged.** A failover writes a line naming the account that refused and the one that took
+  over, beside the record's own `oauth_account` for that stage, so a run that spread across accounts is
+  readable afterwards without asking the owner.
+- **Not "most headroom".** Choosing the account with the most usage left would rest on a number Fugaro
+  cannot obtain — OAuth usage is not known to be readable — so the pick would be a guess nothing could
+  contradict, and a non-deterministic one, which a record can only report after the fact.
+
+The order is the read's own order and not a second list: `fugaro accounts ls` prints
+`config.AllowedClaudeAccounts`, which is the unsuffixed `default` first and the rest sorted. So `auto`
+walks exactly the list the owner already reads, no second order exists to keep in step with it, and the
+walk begins where the explicit chain's floor already was.
+
+### 11.4 `auto` ships dormant (D875)
+
+`claude_account_auto` is **off by default**, and off is **explicit-only**: the keys of §11.1 decide and
+nothing chooses for the owner. Turning it on is the owner's own act, and it is the act D875 waits for —
+the owner (or counsel) confirming that the subscription terms allow one project to spread across several
+accounts. That is why the switch is also a sensitive direction (§11.1): the confirmation is a typed
+project name, not a flag a script sets.
+
+The switch exists so that the answer, when it comes, is one setting rather than another design: `auto`
+is written down here, built by A7 behind the switch, and off.
+
+## 12. Release placement
 
 **0.15.0.** The reasoning, and why 0.14.2 cannot carry it, is in
 [implementation-plan.md](implementation-plan.md) §Release.

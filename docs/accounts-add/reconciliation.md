@@ -7,6 +7,11 @@ Read against `origin/main` at `802ae65eb` — which now carries #1464 (the setti
 Citations name a file and a symbol, never a line number: a line number is stale the moment anything above
 it changes, and the pin this document serves is about the code's shape, not its layout.
 
+The three decisions of §4's tail — **D873, D874 and D875** — were taken on **2026-11-01** and their
+numbers were re-checked that day against `origin/main` and against the pull requests open then, none of
+which reached D873. Nothing else in this document moved for them: they are about the account a *run*
+uses, and every finding below is about the command that defines an account.
+
 ## 1. What exists
 
 **F1: Exists. The account model itself, end to end.** A named account is a name in the local config
@@ -195,7 +200,7 @@ this document wins where it disagrees with [spec.md](spec.md).
 project layer, and this work writes no project-layer key: `claude_accounts` and `profiles` are
 local-config-only by construction (spec §7). The only thing the two designs share is E1, the editor.
 
-## 4. Decisions D860–D872
+## 4. Decisions D860–D875
 
 **Every decision is answered (2026-10-31).** D860, D861, D864, D865, D866, D867, D869 and D870 are
 answered as recommended; **D862** is answered with the design's alternative (a) and **D868** against
@@ -203,6 +208,11 @@ the recommendation (`--yes` covers everything); **D863, D871 and D872 are moot**
 answer removes the pty and the capture they were about. Each row's recommendation comes first, then
 the alternative's cost, then the answer. The plan in [implementation-plan.md](implementation-plan.md)
 is written to the answers.
+
+**D873, D874 and D875 were answered by the owner on 2026-11-01**, the day after the rest, and they are
+not about `accounts add` at all: they are about **which account a run uses when the project holds
+several** — the question the owner's brief did not ask. All three are answered as
+recommended, and spec §11 is written to them.
 
 | D | Question | Recommendation | The alternative, and its cost | Answer |
 | --- | --- | --- | --- | --- |
@@ -220,4 +230,8 @@ is written to the answers.
 | **D871** | The login's output holds more than one distinct token-shaped run — what does the capture store? | **Nothing: two or more distinct candidates is a refusal**, and the command falls back to the hidden prompt (§3.3), saying how many it saw. One candidate is the common case; the rule costs a paste only where the guard is genuinely unsure | "The last one wins": the login's output is a stream nobody has seen, so the last run can be a progress line, the child's echo of something the owner pasted, or a decoy from a hostile binary (§6(c)) — and it becomes the stored credential with no way to tell. The first-wins spelling has the same hole with the opposite bias. Either way the failure is silent until a run uses the token | **MOOT (2026-10-31).** D862's answer (a) removes the capture: the command stores only what the owner pastes at the hidden prompt, so there are no candidates to count and this rule governs nothing. |
 | **D872** | A line containing `://` carries runs of 40+ characters from the token alphabet (the PKCE `code_challenge` is 43, `state` is another) — are they candidates? | **Never candidates, and nothing on such a line is withheld.** The cost is the opposite error: a token printed *on* a `://` line is not captured, and the command falls back to the paste with nothing stored. **LC1 settles the premise**: if it shows the token printed inside a URL, the exemption narrows to the login's own authorize URL rather than every `://` line | Offering them to the capture (the first draft of §3.2) means the command can **store the `code_challenge` as the account's token**: a value that is not a credential, that the store accepts, and that fails only when a run tries to use it — and the failure surfaces as an auth error on someone's run, not as a refusal at the terminal | **MOOT (2026-10-31).** This is a rule about which *captured* runs are candidates, and D862's answer (a) removes the capture — no run of the login's output is ever read, so a `code_challenge` can no longer be stored as a token. The hole closes with the mechanism, not with a narrower rule. |
 
-**D873–D879 are reserved and unused.**
+| **D873** | Which account does a stage use, and what wins? | **The explicit chain, plus two local-config keys** (spec §11.1–§11.2): a project default `default_claude_account` and a per-stage override `stages.<stage>.claude_account`, both written by `fugaro settings set` at `--layer local` through S5's write helper. The flag stays on top, `agent.oauth_token` keeps its rung, every name is still held to `claude_accounts` before any launch (`claudeAccountAllowed`), and the run record names the account used in the field it already has (`runstore.Record.OAuthAccount` → `result.json`'s `oauth_account` → `fugaro diagnose`'s `row.oauth_account`) | (a) **No new keys**: the owner names the account in each repository's committed `fugaro.yaml` (`agent.oauth_token`), which named-oauth-tokens T2 makes the only place an account may be named. Cost: an account is then a repository fact, so a machine-wide default has nowhere to live, and "the reviewer uses account B" repeats the edit in every repository that wants it. (b) **Per-role keys** (`coder`/`reviewer`, `config.StageRole`): fewer keys over a closed set, but `StageRole` folds every stage but `review` into the coder role, so `review_first` and `implement` could not differ — which is the per-stage ruling itself. (c) **A keyed map** (`claude_accounts.stages`): a map-valued key is a family's and not the generic path's (§4.4 of the settings spec), so three scalars would grow a second family command to write them | **Answered 2026-11-01: the recommendation.** A project default and an optional per-stage override, local-config-only, written by `fugaro settings set`. *Why:* the owner's own machine is where the account was already admitted (`claude_accounts`), so the choice belongs beside it; and "explicit choice always wins" is the whole rule — a value the owner set is never second-guessed, and `auto` is the only thing that ever chooses for them. **What the ruling does not settle**, and spec §11.2 says so: a project job mounts one account's token (LC4), so which job serves a stage whose account is not the run's own is A7's and the cloud-senior-review work's — this decision fixes the keys and the precedence, not the job set. |
+| **D874** | What does `auto` mean, when it is on? | **Ordered failover over the owner's listed accounts**: the list `fugaro accounts ls` prints, first to last — the first; on a rate limit or a rejection, the next; never mid-stage; always logged; and only among the accounts allowed for that stage (spec §11.3) | **"Most headroom"**: the account with the most usage left. Cost: OAuth usage is not known to be readable, so the rule would rest on a number Fugaro cannot obtain and no check could contradict; and it makes the pick non-deterministic, which a run record can only report after the fact | **Answered 2026-11-01: the recommendation.** Ordered failover, in the read's own order, never mid-stage, always logged, stage-scoped. *Why:* every account the walk can reach is one the owner already admitted for that repository, and the order is one the owner can already read — so `auto` adds no new admission rule and no second list to keep in step. |
+| **D875** | Does `auto` ship? | **Dormant**: `claude_account_auto` is off by default and off means explicit-only; turning it on is the owner's own act, taken once the subscription terms are confirmed to allow one project to spread across several accounts, and it asks for the typed project name (D846's sensitive direction, like turning a `followup.*` key on) (spec §11.4) | (a) **Ship it on**: the arrangement a subscription's terms may forbid is then what Fugaro does by default, unattended, on a machine nobody is watching. (b) **A second gate**: the switch exists and turning it on is refused with the terms sentence until a later release removes the refusal. Cost: that later release is an act nobody has scheduled, and until then a documented setting does nothing at all | **Answered 2026-11-01: the recommendation.** Dormant, off by default, and the switch is itself the confirmation. *Why:* the answer to the terms question is the owner's, and the switch is where they give it; a second gate would ship a setting that lies about what it does. |
+
+**D876–D879 are reserved and unused.**

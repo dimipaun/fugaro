@@ -1,10 +1,10 @@
 # `fugaro accounts add`: the implementation plan
 
-**The decisions are answered (2026-10-31); nothing here is built yet.** Every task is written to the
-owner's answers in [reconciliation.md](reconciliation.md) §4 — D860–D872, with **D862 answered as the
-alternative (a)** and **D868 answered `--yes` covers everything** — and a decision answered the other
-way changes the task, not just a sentence. Where this plan and [spec.md](spec.md) disagree,
-[reconciliation.md](reconciliation.md) wins.
+**The decisions are answered (2026-10-31, and D873–D875 on 2026-11-01); nothing here is built yet.**
+Every task is written to the owner's answers in [reconciliation.md](reconciliation.md) §4 —
+D860–D875, with **D862 answered as the alternative (a)** and **D868 answered `--yes` covers
+everything** — and a decision answered the other way changes the task, not just a sentence. Where this
+plan and [spec.md](spec.md) disagree, [reconciliation.md](reconciliation.md) wins.
 
 Every task states its files (at most 12), the tests that name it, the **red step** that has to fail
 first, and whether it carries a **SEC** flag — a flag that means the change needs an independent review
@@ -23,6 +23,7 @@ recorded length and alphabet, never a plausible credential in the source.
 | 3 | **A2** the converge half, and the test that says the command is one command | A1, **E2 landed** |
 | 4 | **A3** `--claude` | A1; what the login prints and asks from LC1–LC2 |
 | 4 | **A4** `accounts rm` | A2 |
+| 4 | **A7** `auto`, dormant (D874, D875) — its section is last, its level is not | A2 |
 | 5 | **A5** the page becomes short | A1–A4 (the page names a command that must exist) |
 | 5 | **A6** the surfaces that name the old pair, and the handoffs | A1–A4 |
 
@@ -68,16 +69,32 @@ default, the subset-rule check **before any write**, the comment-preserving edit
 `claude_accounts.<name>.allow_data_to` and `profiles.<p>.claude_accounts`, the diff, the confirmation,
 and the refusals.
 
-*Files (≤5):* `internal/cli/accounts_add.go`, `internal/cli/accounts.go` (the parent's `AddCommand` —
+**D873's keys land here too** (spec §11.1): `default_claude_account`,
+`stages.<stage>.claude_account` and `claude_account_auto` are three rows in
+`internal/settings/registry.go` and one block in `internal/localcfg`'s strict decode, and no command
+can write a key the registry does not carry. They belong to this task rather than a fourth one because
+they are the *same local config file* the command already edits, through the same editor (E1) and the
+same write helper (E3): the block is declared once, where the file's other account blocks are, and a
+second task would declare a second copy of it. `claude_account_auto` is marked a **sensitive direction**
+in its row, so turning it on goes through `confirmTypedStrict` like turning a `followup.*` key on
+(D846).
+
+*Files (≤7):* `internal/cli/accounts_add.go`, `internal/cli/accounts.go` (the parent's `AddCommand` —
 **not** `internal/cli/root.go`, see F19), `internal/cli/accounts_add_test.go`,
-`internal/cli/accounts_add_refuse_test.go`.
+`internal/cli/accounts_add_refuse_test.go`, `internal/settings/registry.go` (the three rows, a file
+**S0 creates**, #1464), `internal/localcfg/localcfg.go` (the block and its strict decode),
+`internal/localcfg/localcfg_test.go`.
 *Named tests:* `TestAccountsAddWritesTheDeclarationAndTheProfile`,
 `TestAccountsAddKeepsCommentsAndOrder` (**the red step**),
 `TestAccountsAddRefusesInAnAgentSession`, `TestAccountsAddRefusesAName` (a table over
 `ClaudeAccountNameRE`'s edges, `default`'s own spelling, and `bitbucket-token`),
 `TestAccountsAddRefusesASubsetViolation` (the profile's exact `allow_repos` is the intersection, not the
 union), `TestAccountsAddSubsetRuleIsCheckedBeforeAnyWrite` (a refusal leaves the file byte-identical),
-`TestAccountsAddWithoutACheckoutRequiresRepos`, `TestAccountsAddPrintsNoValueShape`.
+`TestAccountsAddWithoutACheckoutRequiresRepos`, `TestAccountsAddPrintsNoValueShape`,
+`TestSettingsWritesTheAccountChoiceKeys` (the three keys resolve, are `--layer local` only, and a
+layer or a value they refuse leaves the file byte-identical),
+`TestLocalcfgDecodesTheAccountChoiceBlockStrictly` (an unknown field inside the block is an error, like
+every other block's).
 *Red step:* `TestAccountsAddKeepsCommentsAndOrder` is written against a project config carrying comments,
 a hand-written key order and a `claude_accounts` entry the owner added by hand. It fails until the write
 goes through `internal/yamledit` (E1) instead of `yaml.Marshal` — which is the whole reason F11 and F12
@@ -94,6 +111,14 @@ would review half a rule.
 `Policy`, `Installation` and running-checkout `Repository` stages in-process through `initStages`, read
 back with `accounts ls`, and end on the line that names a `fugaro run`.
 
+**D873's publish and the run record's account land here** (spec §11.2). The `Policy` stage this task
+invokes is the one that builds the node from the local config, so the node gains the choice keys of A1
+beside `accounts.<name>.allow_repos` — published by that stage and by no second writer, exactly as
+`accounts.<name>.allow_repos` already is. And the account a run used is *named*: the record's
+`OAuthAccount` (the runner's own field, `result.json`'s `oauth_account`, `fugaro diagnose`'s
+`row.oauth_account`), which this task asserts rather than adds — no field is new, and none changes
+meaning.
+
 *Files (≤5):* `internal/cli/accounts_add.go`, `internal/cli/accounts_add_converge.go`,
 `internal/cli/accounts_add_converge_test.go`, `internal/cli/accounts_add_converge_fake_test.go`.
 *Named tests:* `TestAccountsAddLeavesNothingToRun` (**the red step**: after the command returns, the
@@ -108,7 +133,12 @@ and absent from `main`, F14),
 a repository-scoped intent is refused **before** the value is read),
 `TestAccountsAddReplacesTheTokenOnRerun` (re-running is rotation: version 2, one secret, one job),
 `TestAccountsAddClearsTheBrokenMark`, `TestAccountsAddNamesTheRepositoriesItCouldNotConverge` (D865's
-corner: a `--repos` repository with no recorded checkout is printed, not silently skipped).
+corner: a `--repos` repository with no recorded checkout is printed, not silently skipped),
+`TestAccountsAddPublishesTheAccountChoiceKeys` (the node the converge publishes carries the keys A1
+wrote, through the `Policy` stage and no other writer),
+`TestRunRecordNamesTheAccountTheRunUsed` (the record's `OAuthAccount` is the account the launch
+resolved, and `fugaro diagnose` prints it as `row.oauth_account` — D873's read-back, asserted rather
+than added).
 *Red step:* `TestAccountsAddLeavesNothingToRun`, written before the converge exists, fails at the
 published node — which is precisely what would happen to the owner if the converge were dropped, and
 what F18 records that nothing in the tree notices today.
@@ -209,6 +239,41 @@ skill's own lint expects it).
 reserved by the 2026-10-30 rulings; if the coverage tests demand another plugin edit, this task stops and
 reports it rather than editing a reserved file.
 
+## A7 — `auto`, dormant (D874, D875)
+
+**SEC.** Goal: spec §11.3 and §11.4. The runner's **stage-start account choice**: with
+`claude_account_auto` on, a stage with no explicit account walks the accounts allowed for that stage, in
+the order `fugaro accounts ls` prints them — the first; on a rate limit or a rejection, the next; never
+mid-stage; always logged. With the switch off nothing changes at all: explicit-only, which is what
+§11.2's chain already gives, and which is the shipped behaviour. It comes after A2 because the keys (A1)
+and the node that carries them (A2) have to exist before there is a list to walk.
+
+*Files (≤4):* `internal/runner/accountchoice.go`, `internal/runner/accountchoice_test.go`,
+`internal/runner/runner.go` (the stage-start hook — **the one writer across both 0.15.0 planners**, so
+this task keeps the edit to that file as small as it can and says so in its PR), and the task's own
+`internal/runner/accountchoice_fake_test.go` if the walk needs a fake node.
+*Named tests:* `TestAutoWalksTheAccountsInTheListOrder` (**the red step**: with `auto` on, a stage whose
+first account rate-limits makes its next attempt on the second, and the failover line names both),
+`TestAutoNeverChoosesADisallowedAccount` (an account the repository is not admitted to is never chosen,
+whatever the list says — the negative half, and the reason `claudeAccountAllowed` is asked at stage
+start and not only at launch), `TestAutoOffMeansExplicitOnly` (with the switch off the walk never runs,
+the account is the chain's own, and the record names one account), `TestAutoNeverSwitchesMidStage` (a
+rate limit inside a stage ends that attempt: the stage's transcript, its cost and its verdict are one
+account's), `TestAutoLogsEveryFailover`.
+*Red step:* `TestAutoWalksTheAccountsInTheListOrder` is written first and fails against a first cut with
+no walk at all — the account is the launch's single account and the second is never reached, which is
+exactly the behaviour D875 makes the default.
+*SEC:* yes. This is the only code in the design that chooses a credential for the owner, and the
+negative test is the point: a walk that could reach an account the repository is not admitted to would
+be a way around `claude_accounts`.
+*What this task settles rather than inherits:* two things spec §11.2 leaves open. **Where the walk reads
+its candidate list** — the expected source is the published node A2 writes, since the run's own side
+already reads that node at bootstrap (`internal/runner/projectpolicy.go`'s `readPolicy`), and a task that
+cannot reach it there says so rather than inventing a second source for the same list. And **which job
+serves a stage whose account differs from the job's own**: a project job mounts one account's token
+(LC4), so the mismatch is a refusal and not a silent fallback, and this task is where that refusal is
+written (with the cloud-senior-review work, which owns the reviewer's own job).
+
 ### Handoffs (this work reports them; it does not write them)
 
 | What | Where it goes | By whom |
@@ -224,6 +289,7 @@ reports it rather than editing a reserved file.
 | --- | --- | --- | --- |
 | `internal/yamledit/**` | **#1467** (E1) | `SetScalar`, `AddListItem`/`RemoveListItem`, `UpsertSeqItemByKey`, `Changed`, and refusals that never echo document bytes | Call it. A second splice is what the settings design's shared-files table forbids, and it is the one thing A1's red step would otherwise let through |
 | `internal/cli/settings_write.go` | **#1464's S5** (E3; the design merged, the file has not) | the diff, the confirmation, the agent refusal, `backupFile`, `writeFileAtomic` | Call it, do not copy it |
+| `internal/settings/registry.go` | **#1464's S0** creates it (the design merged, the file has not); S6–S9 and the `rigor` design's R4/R5 add rows to it | the three rows of spec §11.1 (D873), added by A1 | Add rows to it. A key with no row is a key no command can write, and a second registry is the thing #1464 forbids |
 | `internal/cli/init_policy_migrate.go` | **#1464's S3** (design merged, stage unchanged), **#1460** (E2, F14) | a `Policy` stage that publishes from the local config and reaches the node through `policyMigrationFor` | Do not edit it here, and do not write a second publisher |
 | `internal/cli/init_stages.go` | the update-door streams | the stage list A2 invokes | Read it. Registering a new stage here is not this work's edit |
 | `internal/cli/accounts.go` | nobody | the `accounts` parent, which already owns its `AddCommand` (F19) | This work's file; `internal/cli/root.go` stays closed |
@@ -243,7 +309,7 @@ Every task, before its PR:
 - If any doc changed: `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 40m`.
 - `go build ./... && gofmt -l . && go vet ./...` (gofmt prints nothing) and
   `GOFLAGS=-p=2 go test ./internal/eeboundary/... -count=1`.
-- **SEC tasks (A0–A4) additionally:** an independent review before merge, and a PR body section that
+- **SEC tasks (A0–A4, A7) additionally:** an independent review before merge, and a PR body section that
   names the threat model entries the change touches (spec §6), what it does **not** close, and the
   negative test that stands for each closed entry.
 - **Never** `internal/cli` or `internal/runner` whole, and never without `GOFLAGS=-p=2`.
