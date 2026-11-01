@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -303,9 +304,10 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "model_costs") || !strings.Contains(c.Problem, projectpolicy.PathShared()) {
 			t.Errorf("the check does not name the key and the node: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro upgrade") {
-			t.Errorf("the check does not name the upgrade the readers' refusal names: %+v", c)
-		}
+		// The move is a newer binary the operator installs, the same one the
+		// readers' refusal names: doctor cannot offer `fugaro upgrade`, which
+		// never upgrades the binary it runs.
+		assertNamesTheBinaryUpgrade(t, c.Fix)
 		// The other side: a node whose keys this Fugaro all knows is not
 		// warned about, so the check is about the keys and not about doctor
 		// always having something to say.
@@ -900,17 +902,29 @@ func TestDoctorRoutingCheckNamesTheLiveQuestion(t *testing.T) {
 		t.Fatalf("no policy published: routing-resolution = %+v (present %v), want an info check saying unresolved", c, ok)
 	}
 	// The cost question beside it is in the same state, and it has to read as
-	// one: every path to this branch is a node doctor could not read (no
-	// backend, an unreachable database, a marker or version error, a read
-	// error), and "no Claude ID is routed through a provider by this policy" is
-	// a reading of a node nobody read — the second info line contradicting the
-	// first.
+	// one: "no Claude ID is routed through a provider by this policy" is a
+	// reading of a switch that is not in force, and the second info line would
+	// contradict the first. This is also the state that made the sentence before
+	// it false: doctor read the node, found none published, and the line then
+	// said "the policy node was not read" — a claim about a read that happened.
 	cm, ok = doctorChecksByID(t)["routing-cache-markers"]
-	if !ok || !strings.Contains(cm.Problem, "not read") {
-		t.Fatalf("an unread node: routing-cache-markers = %+v (present %v), want it to say the node was not read", cm, ok)
+	if !ok || !strings.Contains(cm.Problem, "no routing switch is in force here") {
+		t.Fatalf("no policy published: routing-cache-markers = %+v (present %v), want it to say no switch is in force", cm, ok)
 	}
-	if strings.Contains(cm.Problem, "no Claude ID is routed") {
-		t.Errorf("doctor reports a reading of a node it did not read: %+v", cm)
+	if strings.Contains(cm.Problem, "not read") || strings.Contains(cm.Problem, "no Claude ID is routed") {
+		t.Errorf("doctor reports a reading of a switch that is not in force: %+v", cm)
+	}
+	// The other path where "not read" was false, and the one furthest from it: a
+	// node that IS published, that doctor read and decoded, and that no run
+	// applies because its version predates the model the migrators read. What is
+	// missing is the switch being in force, not the read.
+	doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = 1 }), "")
+	cm, ok = doctorChecksByID(t)["routing-cache-markers"]
+	if !ok || !strings.Contains(cm.Problem, "no routing switch is in force here") {
+		t.Fatalf("a policy no run applies: routing-cache-markers = %+v (present %v), want it to say no switch is in force", cm, ok)
+	}
+	if strings.Contains(cm.Problem, "not read") {
+		t.Errorf("a node doctor read and decoded is reported as one it did not read: %+v", cm)
 	}
 }
 
@@ -1463,6 +1477,75 @@ func TestDoctorRefusesAnotherProjectsDatabase(t *testing.T) {
 	}
 }
 
+// TestDoctorBudgetDatabaseWithoutCredentials: newBudgetClient's error branch,
+// the one shape an installation can reach. budget.rtdb_url is validated when
+// the config is read, with the same rule and the same no_auth flag the client
+// validates it with again (rtdb.ValidateURL), so a URL the client would refuse
+// never gets this far, and a loopback one is only legal where no token is sent
+// at all — which is also what skips the token source. What is left is the
+// operator's own Application Default Credentials, missing on a machine that
+// has the project config but has not logged in.
+//
+// The policy half of doctor hangs off this one client, so every check it would
+// have made has to survive the failure: the note doctor gives a read that did
+// not answer, naming the remedy this failure has (a login, not the URL), and
+// never the claim the branch is not: that the project has no backend. The
+// emitter is driven directly rather than through the command because the
+// command's first cloud clients (CRM, billing) fail on the same missing
+// credentials and end the run before the policy checks are reached.
+func TestDoctorBudgetDatabaseWithoutCredentials(t *testing.T) {
+	r := newDoctorRig(t)
+	// A credential file that is not there: the token source fails at once,
+	// with no network call and no home directory in play.
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "absent.json"))
+	// no_auth is the fakes' switch, and it is also what skips the token source,
+	// so the rig's own config cannot reach the branch: this one keeps the rig's
+	// endpoints and adds an installation's budget, whose database is never
+	// opened.
+	cfg := strings.Replace(r.cfg, "no_auth: true", "no_auth: false", 1) +
+		"budget: { mode: enforce, per_run_usd: 5, rtdb_url: https://aurora-default-rtdb.firebaseio.com }\n"
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Read back through the real reader: a config the checks are handed has
+	// been through it, so the test cannot pass on one an installation could not
+	// have.
+	lc, err := localcfg.Load(r.cfgPath)
+	if err != nil {
+		t.Fatalf("the config this test writes is not one an installation could have: %v", err)
+	}
+
+	found := false
+	for _, c := range classifyDoctorChecks(doctorPolicyChecks(context.Background(), lc, doctorRoutingLayer{})) {
+		if c.ID != "policy-published" {
+			continue
+		}
+		found = true
+		if c.Severity != "info" {
+			t.Errorf("severity = %q, want info (a client that could not be built is not a finding about the installation)", c.Severity)
+		}
+		for _, want := range []string{"could not be checked", "no Google credentials to reach the budget database", "gcloud auth application-default login"} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("problem does not carry %q: %q", want, c.Problem)
+			}
+		}
+		if strings.Contains(c.Problem, "no Firebase budget backend") {
+			t.Errorf("problem reports this project as having no backend, which is not the state it is in: %q", c.Problem)
+		}
+		if c.Fix == "" {
+			t.Error("fix is empty: doctor's shape for a read that did not answer is a note with a remedy")
+		}
+		// Counted, not a passing measurement: this is the read the security
+		// sweep exists for, and the whole policy half is unknown behind it.
+		if !c.unread || !doctorIsFinding(c) || c.Class != doctorClassAudit {
+			t.Errorf("the check is not counted as a finding (unread=%v class=%q): %+v", c.unread, c.Class, c)
+		}
+	}
+	if !found {
+		t.Fatal("the emitter reported nothing for a budget database it could not open: the policy checks would vanish with it")
+	}
+}
+
 // TestDoctorReportsAMarkStateItDoesNotRead: the marks subtree is shared with
 // every other release of Fugaro and with whatever writes it by hand, so it can
 // carry a state this one does not read — `quota_hold` here, the shape a newer
@@ -1495,6 +1578,7 @@ func TestDoctorReportsAMarkStateItDoesNotRead(t *testing.T) {
 	if c.Fix == "" {
 		t.Error("fix is empty: doctor's shape for a finding is a note with a remedy")
 	}
+	assertNamesTheBinaryUpgrade(t, c.Fix)
 	// The same read answers creds-broken, and the two must not be confused:
 	// quota_hold is not a 401, so the broken finding stays away.
 	if b, ok := checks["creds-broken"]; ok {
@@ -1603,6 +1687,7 @@ func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
 	if !ok || !strings.Contains(c.Fix, "upgrade") {
 		t.Fatalf("a marker above this release's generation: %+v (ok=%v), want a warning whose fix is to upgrade", c, ok)
 	}
+	assertNamesTheBinaryUpgrade(t, c.Fix)
 
 	// A marker below this release's generation: the deployed document
 	// predates the credentials family, and the remedy is this Fugaro's own

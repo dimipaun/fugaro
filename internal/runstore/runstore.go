@@ -748,23 +748,24 @@ type Record struct {
 	// Backlog is the ids of the backlog items this run filed for what it
 	// left open, in the order it filed them: the `<YYYYMMDD-NN>` names
 	// their files under docs/backlog/ are known by (docs/rigor-modes/
-	// implementation-plan.md T4.5, D9, D26). Nothing reads it yet — no
+	// implementation-plan.md T4.5, D9, D26). The runner files none any more:
+	// an item was committed after the suite's last run, on a commit that
+	// suite never saw, so a test pinning a fact about the tree passed on the
+	// commit the run tested and failed on the one it pushed. What a run
+	// leaves open is in Reviews and Tolerated instead (runner.go, finalize).
+	// The field stays, absent for every run now as it was for a run that
+	// filed nothing before — a record written earlier carries its ids, and a
+	// field never changes meaning. Nothing reads it yet either: no
 	// `Diagnosis` field carries it and `runview.Row`, which the console's
-	// record keys are derived from, has no backlog key; the items
-	// themselves are on the run's branch and in its pull request, and
-	// `fugaro backlog list` is how they are read today. It is written
-	// because the record is what survives the run, and the ids are the one
-	// part of the filing nothing else on the record names. Absent — never
-	// an empty list — for a run that filed none, which is every record
-	// written before this field existed.
+	// record keys are derived from, has no backlog key.
 	Backlog []string `json:"backlog,omitempty"`
 	// BacklogClosed is the ids of the backlog items this run closed as the
 	// follow-up whose review shipped the round an earlier run on its pull
 	// request left open (D31, plan T4.7), in the order it closed them, the
-	// same `<YYYYMMDD-NN>` names as Backlog. Nothing reads it yet either; it
-	// is written so the record says what the run answered as well as what it
-	// left. At most MaxBacklogClosed, and absent — never an empty list — for
-	// a run that closed none.
+	// same `<YYYYMMDD-NN>` names as Backlog — and, like Backlog, no longer
+	// written by the runner, which closes nothing now that it files nothing.
+	// At most MaxBacklogClosed, and absent — never an empty list — for a run
+	// that closed none.
 	BacklogClosed []string `json:"backlog_closed,omitempty"`
 	// ReviewScope is the comparison between the paths implement changed and
 	// the paths the review range covers, taken right after implement

@@ -408,6 +408,15 @@ func validateRebuild(p string, r Rebuild) []Problem {
 // write is the value the resolver can use, so a mode outside the vocabulary
 // or a glob no matcher can read is refused where it is written rather than
 // silently never firing at resolution time.
+//
+// Two rules of one list may not carry the same glob (F14). They would match
+// exactly the same paths, and only the strictest matched rule decides (D20c),
+// so the second one is named in the run's record for nothing the first does
+// not already cover — a layer saying the same thing twice is a mistake its
+// writer cannot see. The rule is per layer: the two area lists are a union
+// rather than a replacement (D20c), and a repository's rule for the project
+// layer's glob is a rule of its own, which this function never sees because
+// each layer is validated on its own.
 func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 	var ps []Problem
 	if mode != "" && !rigor.Known(mode) {
@@ -416,10 +425,20 @@ func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 	if len(areas) > rigor.MaxAreas {
 		ps = append(ps, Problem{Path: p + ".areas", Message: fmt.Sprintf("must hold at most %d rules", rigor.MaxAreas)})
 	}
+	// A rule already refused for its own shape is not also called a repeat:
+	// it can never reach the resolver for the glob to matter, and the first
+	// reason is the one its writer has to fix.
+	seen := make(map[string]int, len(areas))
 	for i, a := range areas {
 		if msg := a.Validate(); msg != "" {
 			ps = append(ps, Problem{Path: fmt.Sprintf("%s.areas[%d]", p, i), Message: msg})
+			continue
 		}
+		if j, dup := seen[a.Match]; dup {
+			ps = append(ps, Problem{Path: fmt.Sprintf("%s.areas[%d]", p, i), Message: fmt.Sprintf("repeats the glob %q of areas[%d]: two rules that match the same paths leave only the strictest of them deciding, and the other is named for nothing", a.Match, j)})
+			continue
+		}
+		seen[a.Match] = i
 	}
 	return ps
 }

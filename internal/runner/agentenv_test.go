@@ -59,7 +59,7 @@ func idle(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, e
 
 func TestStagePinsPerRole(t *testing.T) {
 	h := newGW(t, pinnedConfig(t), "observe", "").harness
-	if _, err := h.run(t, implement("feature"), review("revise", 1), idle, review("ship", 0)); err != nil {
+	if _, err := h.run(t, implement("feature"), review("changes", 1), idle, review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.agent.calls) != 4 {
@@ -122,7 +122,7 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 			return inner(t, ctx, req)
 		}
 	}
-	if _, err := h.run(t, read(implement("feature")), read(review("revise", 1)), read(idle), read(review("ship", 0))); err != nil {
+	if _, err := h.run(t, read(implement("feature")), read(review("changes", 1)), read(idle), read(review("ship", 0))); err != nil {
 		t.Fatal(err)
 	}
 	if len(seen) != 4 {

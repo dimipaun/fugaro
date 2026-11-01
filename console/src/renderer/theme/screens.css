@@ -120,7 +120,6 @@ p.spend-person-note,
 p.spend-notice,
 p.projects-because,
 p.projects-note,
-p.projects-jobs-note,
 p.projects-accounts-note,
 p.projects-warning,
 p.run-warning,
@@ -240,16 +239,10 @@ span.live-review-repo,
 span.live-review-number,
 span.live-review-url,
 span.live-repo-name,
-td.projects-job-repo,
-td.projects-job-run,
-td.projects-job-workflow,
-td.projects-job-created,
-li.projects-only-seen-repo,
-li.projects-only-enrolled-repo,
+li.projects-repo-enrolled,
 span.projects-secret-name,
 span.projects-accounts-repo,
 span.projects-kill-repo,
-td.projects-job-model,
 span.spend-key,
 td.spend-model,
 span.spend-person-user,
@@ -667,17 +660,12 @@ span.projects-source,
 span.projects-count,
 span.projects-cap-source,
 span.projects-kill-scope,
-span.projects-jobs-total-of,
 span.projects-secret-scope,
 span.projects-secret-latest,
 span.projects-secret-label,
 span.projects-secret-label-key,
 span.projects-secret-label-value,
 span.projects-secret-allowed,
-td.projects-job-status,
-td.projects-job-stage,
-td.projects-job-by,
-td.projects-job-started-by,
 span.projects-accounts-repo,
 span.projects-kill-repo {
   color: var(--text-muted);
@@ -690,8 +678,7 @@ span.projects-kill-repo {
  * and the paragraphs of sections 2.3 and 2.5 are the decision. A rule that painted `POC` one way
  * and `Hotfix` another would be inventing a meaning, and section 3.5's table has
  * no mark to pair it with. */
-span.live-run-mode,
-span.projects-job-mode {
+span.live-run-mode {
   padding: 0 var(--space-2xs);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -733,9 +720,9 @@ section.projects-panel[data-state='read'] {
  * `div.projects-kill` (console redesign, step 5). The rule that stood here
  * selected the row through `:has()` because the banner was the only element
  * carrying the attribute; the row carries it itself now, so the selector names
- * the row. `span.projects-kill-none` and the two `p.projects-only-*` sentences
- * are gone with the markup that drew them: a live row says `live` in its state
- * cell, and each repository list is one of the three cards. */
+ * the row. `span.projects-kill-none` and the `p.projects-only-*` sentences are
+ * gone with the markup that drew them: a live row says `live` in its state
+ * cell, and the repository list is one card. */
 
 /* ---- Run detail -----------------------------------------------------------
  *
@@ -1929,9 +1916,7 @@ span.coordinator-unread-retry {
   table.live-table,
   tr.spend-row,
   tr.projects-cap,
-  tr.projects-job,
   table.projects-cap-table,
-  table.projects-job-table,
   article.projects-repo-card,
   li.degraded-run,
   li.run-stage,
@@ -2000,7 +1985,6 @@ span.coordinator-unread-retry {
   span.live-run-auth,
   span.live-run-contradiction,
   span.live-run-mode,
-  span.projects-job-mode,
   div.run-rigor,
   span.run-rigor-word,
   span.run-rigor-mode,
@@ -2052,7 +2036,6 @@ span.coordinator-unread-retry {
   span.projects-kill-state,
   span.projects-state,
   span.projects-reserve-word,
-  span.projects-jobs-total-of,
   span.projects-secret-scope,
   span.projects-secret-latest,
   span.projects-secret-label,
@@ -2060,14 +2043,9 @@ span.coordinator-unread-retry {
   span.projects-secret-label-value,
   span.projects-secret-allowed,
   span.projects-secret-bound-word,
-  td.projects-job-status,
-  td.projects-job-stage,
-  td.projects-job-by,
-  td.projects-job-started-by,
   span.projects-accounts-repo,
   span.projects-kill-repo,
   p.projects-repo-card-none,
-  p.projects-repo-card-note,
   p.projects-account-none,
   p.projects-secrets-managed,
   span.spend-persons-state,
@@ -2082,7 +2060,6 @@ span.coordinator-unread-retry {
   p.spend-notice,
   p.projects-because,
   p.projects-note,
-  p.projects-jobs-note,
   p.projects-accounts-note,
   p.projects-warning,
   p.run-warning,
@@ -2169,16 +2146,13 @@ span.coordinator-unread-retry {
   tr.live-run,
   tr.spend-row,
   tr.projects-cap,
-  tr.projects-job,
   li.spend-person,
   li.projects-secret,
   li.projects-account,
   li.projects-kill-row,
   article.projects-repo-card,
   table.projects-cap-table,
-  table.projects-job-table,
   button.projects-kill-action,
-  button.projects-repo-add,
   li.degraded-run,
   li.run-stage,
   li.run-spend-stage,
@@ -2199,7 +2173,6 @@ span.coordinator-unread-retry {
   /* The rigor chips are boundaries and nothing else, so the boundary is what
    * has to survive the author's colours going away. */
   span.live-run-mode,
-  span.projects-job-mode,
   span.run-rigor-area,
   section.projects-panel[data-state='read'],
   section.projects-panel[data-state='unavailable'],

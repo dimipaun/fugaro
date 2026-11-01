@@ -449,9 +449,10 @@ func TestReviewRoundsExhausted(t *testing.T) {
 // repository opted in with a rigor: block and runs at Startup, whose floor is
 // above the finding the reviewer scored, so the round the run left open is
 // tolerated: the pull request is opened ready rather than as a draft, the
-// record's reason names the mode and the count, and the round is filed as an
-// item of its own (D7, D9, D30). The unscored findings the other cases use are
-// deliberately not this: an unscored finding blocks in every mode (D4).
+// record's reason names the mode and the count, and what the mode let through
+// is in the record and the pull request's status section — nothing is filed
+// (D7, D9, D30). The unscored findings the other cases use are deliberately
+// not this: an unscored finding blocks in every mode (D4).
 func TestDecideToleratedRoundOpensAReadyPR(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
@@ -471,8 +472,8 @@ func TestDecideToleratedRoundOpensAReadyPR(t *testing.T) {
 	if rec.Reason != "review round 2 left 1 finding, tolerated at startup" {
 		t.Errorf("reason = %q; want the mode and the count the round was tolerated at (D7)", rec.Reason)
 	}
-	if len(rec.Backlog) != 1 {
-		t.Errorf("the record's items = %v; want the item the tolerated round was filed as (D9)", rec.Backlog)
+	if len(rec.Backlog) != 0 || branchBacklogItems(t, h, rec.Branch) != "" {
+		t.Errorf("the run filed %v; want nothing written into the repository: what it left open is in the record and the status section", rec.Backlog)
 	}
 	// And the record keeps the finding itself, with the count and the
 	// reviewer's own words for it, so what the mode let through is readable
@@ -484,18 +485,24 @@ func TestDecideToleratedRoundOpensAReadyPR(t *testing.T) {
 		got.Likelihood != 2 || got.Impact != 2 || got.FixCost != 1 || got.Class != rigor.Correctness {
 		t.Errorf("tolerated finding = %+v; want the reviewer's finding, scored, labelled and with the mode that tolerated it", got)
 	}
-	if pr := onlyPR(t, h.provider); pr.Draft {
+	pr := onlyPR(t, h.provider)
+	if pr.Draft {
 		t.Errorf("the pull request is a draft: %+v", pr)
+	}
+	// The status section is where a reader of the pull request sees what the
+	// mode let through, now that nothing is written into the tree.
+	if !strings.Contains(pr.Body, "tolerated at startup") {
+		t.Errorf("the status section does not name the tolerated round:\n%s", pr.Body)
 	}
 }
 
-// TestDecideToleratedHotfixRoundFilesBothItems: Hotfix is the one mode whose
-// rigor.Files row is both Tolerated and Deferred (D30), so the tolerated round
-// this change newly allows is a ready run that owes two items rather than one:
-// the proper fix the expedient one deferred, and the round it left open. The
-// deferral leads the record's ids (fileOpenItems), and both are written into
-// the run's own branch — the ready pull request carries them.
-func TestDecideToleratedHotfixRoundFilesBothItems(t *testing.T) {
+// TestDecideToleratedHotfixRoundFilesNothing: Hotfix's row is the one that
+// tolerates and defers (D30), so this is the run that used to write two items.
+// It writes none: the round it left open is in the record's tolerated findings
+// and the mode is in the status section, and the deferred proper fix — which no
+// line of the record carried — is not written anywhere, because a commit made
+// after the suite ran is exactly what a tree-pinned test cannot survive.
+func TestDecideToleratedHotfixRoundFilesNothing(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: hotfix\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
@@ -517,28 +524,18 @@ func TestDecideToleratedHotfixRoundFilesBothItems(t *testing.T) {
 	if rec.Reason != "review round 2 left 1 finding, tolerated at hotfix" {
 		t.Errorf("reason = %q; want the mode and the count the round was tolerated at (D7)", rec.Reason)
 	}
-	if len(rec.Backlog) != 2 {
-		t.Fatalf("the record's items = %v; want the deferral and the tolerated round (D30)", rec.Backlog)
+	if len(rec.Backlog) != 0 || branchBacklogItems(t, h, rec.Branch) != "" {
+		t.Fatalf("the run filed %v; want nothing written into the repository", rec.Backlog)
 	}
-	items, err := backlog.LoadDir(h.deps.WorkDir)
-	if err != nil {
-		t.Fatal(err)
+	if rec.Tolerated == nil || rec.Tolerated.Total != 1 {
+		t.Errorf("the record's tolerated findings = %+v; want the round's own finding", rec.Tolerated)
 	}
-	var deferral, round bool
-	for _, it := range items {
-		if it.ID == rec.Backlog[0] && strings.Contains(it.Title, "revisit this hotfix") {
-			deferral = true
-		}
-		if it.ID == rec.Backlog[1] && strings.Contains(it.Title, "review round 2") {
-			round = true
-		}
-	}
-	if !deferral || !round {
-		t.Errorf("the branch holds %+v; want the deferral %s first and the round %s second (fileOpenItems)",
-			items, rec.Backlog[0], rec.Backlog[1])
-	}
-	if pr := onlyPR(t, h.provider); pr.Draft {
+	pr := onlyPR(t, h.provider)
+	if pr.Draft {
 		t.Errorf("the pull request is a draft: %+v", pr)
+	}
+	if !strings.Contains(pr.Body, "rigor: hotfix (repo)") {
+		t.Errorf("the status section does not name the mode the run was held to:\n%s", pr.Body)
 	}
 }
 
@@ -687,59 +684,51 @@ func TestReviewRoundsTheModesRowDoesNotLowerASetNumber(t *testing.T) {
 	}
 }
 
-// TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite: a run that left a
-// round open files its item at finalize, on finalize's context, which the
-// finalize reserve bounds. Filing only ever follows a round that did not ship,
-// so the run cannot be ready whatever the suite says on the filing commit:
-// running the suite again there buys nothing and, on a suite slower than the
-// reserve, spends the context the push needs. The suite here sleeps past the
-// reserve once the last review has run; the branch, the item and the review's
-// own reason must still reach the remote.
-func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "slow")
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "test: sh test.sh", "test: sh slow.sh", 1)
-	cfg = strings.Replace(cfg, "finalize_reserve: 30s", "finalize_reserve: 3s", 1)
-	// Filing is opt-in: the repository writes a rigor: block, or its run
-	// files nothing and the case has no filing commit to measure.
-	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: pro\nagent:\n", 1)
-	slow := "#!/bin/sh\nif [ -f '" + marker + "' ]; then sleep 10; fi\nexec sh test.sh \"$@\"\n"
-	h := newHarnessFiles(t, cfg, nil, map[string]string{"slow.sh": slow})
+// TestTheRunPushesTheCommitItsSuitePassed: the run's own last commit is the one
+// the suite ran on, so nothing finalize writes can break a test the run passed.
+// A test that pins a fact about the tree — this repository's own census of
+// docs/backlog/ is the one that bit — is read again by a later run against the
+// commit the branch carries, and a commit made after the suite's last run moved
+// the tree under it. The mode here is one whose row tolerates, so the run this
+// case is about is exactly the one that used to write such a commit.
+func TestTheRunPushesTheCommitItsSuitePassed(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: pro\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Try again'")
 		verifyTest(t, ctx, req)
 		return agent.Result{}, nil
 	}
-	lastReview := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		if err := os.WriteFile(marker, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return review("changes", 1)(t, ctx, req)
-	}
-	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, lastReview)
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1))
 	if err != nil {
-		t.Fatalf("finalize lost the run's push: %v", err)
+		t.Fatal(err)
 	}
-	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" || len(rec.Backlog) != 1 {
-		t.Fatalf("record = %+v", rec)
+	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" {
+		t.Fatalf("record = %+v; want the draft a finding the mode blocks leaves", rec)
 	}
 	if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/fugaro/"+runID); got != rec.HeadSHA {
-		t.Fatalf("remote branch %s != record head %s: the filing commit was not pushed", got, rec.HeadSHA)
+		t.Fatalf("the remote branch is %s, the record's head is %s: the run pushed a commit it did not test", got, rec.HeadSHA)
 	}
-	// The report's tests line names the commit the suite ran on — the filing
-	// commit's parent — and says the filing commit only writes items, rather
-	// than reporting no test run because the head moved (owner ruling R3).
-	tested := strings.TrimSpace(testutil.Git(t, h.remote, "rev-parse", rec.HeadSHA+"^"))
+	last := rec.Verify[len(rec.Verify)-1]
+	if last.Kind != verify.KindTest || !last.Passed || !last.CleanTree || last.HeadSHA != rec.HeadSHA {
+		t.Fatalf("the last verify record = %+v; want a passing test run on the clean commit the run pushed", last)
+	}
+	if items := branchBacklogItems(t, h, rec.Branch); items != "" {
+		t.Errorf("the branch carries %s; want nothing the suite did not count", items)
+	}
+	// The report names that commit as the tested one, rather than reporting
+	// that no test ran because a later commit moved the head (R3).
 	report := onlyPR(t, h.provider).Comments[0]
-	want := fmt.Sprintf("**Tests:** passed on %s (", tested[:7])
-	if !strings.Contains(report, want) {
-		t.Errorf("the report's tests line does not name the tested commit %s:\n%s", tested[:7], report)
+	if want := fmt.Sprintf("**Tests:** passed on %s (", rec.HeadSHA[:7]); !strings.Contains(report, want) {
+		t.Errorf("the report does not name the tested commit %s:\n%s", rec.HeadSHA[:7], report)
 	}
-	if !strings.Contains(report, fmt.Sprintf("the final commit %s only writes backlog items", rec.HeadSHA[:7])) {
-		t.Errorf("the report's tests line does not say the filing commit only writes items:\n%s", report)
-	}
-	if strings.Contains(report, "no recorded test run") {
-		t.Errorf("the report says no test ran, though the suite ran on the commit before the filing:\n%s", report)
-	}
+}
+
+// branchBacklogItems lists the backlog item files the run's branch carries,
+// read from the remote the run pushed to.
+func branchBacklogItems(t *testing.T, h *harness, branch string) string {
+	t.Helper()
+	return strings.TrimSpace(testutil.Git(t, h.remote, "ls-tree", "-r", "--name-only", branch, backlog.Dir+"/"))
 }
 
 func TestUncommittedWorkIsCommittedButNotVerified(t *testing.T) {
