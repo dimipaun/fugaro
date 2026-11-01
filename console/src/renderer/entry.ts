@@ -4796,24 +4796,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     /**
-     * paintQueue fills the action queue: its own count and words, one part per
-     * read, and the blind-spot line under them.
-     *
-     * Every part is drawn from the model as it stands, so a part whose read has
-     * not answered is empty -- under the section's mark, which is what says the
-     * queue is still being read -- and a part whose read refused draws that
-     * refusal in its own place. The head's own cells are rewritten every time
-     * (they are text, and rewritten text is the same text), and the parts are
-     * hosts this file empties: a second landing would otherwise draw a second
-     * copy of the rows.
-     *
-     * **The jobs part is the one that is not a read in flight but a read not
-     * made**: until the operator asks for it, its host carries the control that
-     * asks (`askForJobs`) rather than the empty part a pending read leaves, so
-     * the queue never looks like a screen that is still coming when it is
-     * waiting on a press.
-     */
-    /**
      * bindPulls makes every number the screen drew as a button a press, and the
      * press is the operation with **the triple the screen formed** and nothing
      * else: no URL is built here, and no part of the model is read back out of
@@ -4837,6 +4819,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       }
     }
 
+    /**
+     * paintQueue fills the action queue: its own count and words, one part per
+     * read, and the blind-spot line under them.
+     *
+     * Every part is drawn from the model as it stands, so a part whose read has
+     * not answered is empty -- under the section's mark, which is what says the
+     * queue is still being read -- and a part whose read refused draws that
+     * refusal in its own place. The head's own cells are rewritten every time
+     * (they are text, and rewritten text is the same text), and the parts are
+     * hosts this file empties: a second landing would otherwise draw a second
+     * copy of the rows.
+     *
+     * **The jobs part is the one that is not a read in flight but a read not
+     * made**: until the operator asks for it, its host carries the control that
+     * asks (`askForJobs`) rather than the empty part a pending read leaves, so
+     * the queue never looks like a screen that is still coming when it is
+     * waiting on a press.
+     */
     const paintQueue = (): void => {
       const drawn = mount(false)
       const panel = model()
