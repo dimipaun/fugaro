@@ -347,10 +347,20 @@ function aRecord(options: {
 
 /** aStore is a coordinator document: one stored repository holding the records
  * a case hands it. */
-function aStore(records: readonly unknown[]): unknown {
+function aStore(records: readonly unknown[], options: { provider?: string; repo?: string } = {}): unknown {
+  const repo = options.repo ?? 'owner/repo-a'
   return {
     repos: [
-      { repo: 'owner/repo-a', stored: true, view: { repo: 'owner/repo-a', records, collisions: [] } },
+      {
+        repo,
+        // `provider` is C1's field on the node (D814). A store without it is
+        // what a CLI older than C1 answers, which is the node K2 draws its
+        // numbers as text on -- so a case that wants a button writes one, and
+        // every case that does not stays a case about the older CLI.
+        ...(options.provider === undefined ? {} : { provider: options.provider }),
+        stored: true,
+        view: { repo, records, collisions: [] },
+      },
     ],
   }
 }
@@ -914,7 +924,7 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
     const node = renders({ repos: [STORED] })
     const row = one(node, 'coordinator-record')
     const head = one(row, 'coordinator-record-head')
-    expect(head.nodes[0], 'the number does not open the row').toBe(one(head, 'coordinator-record-label'))
+    expect(head.nodes[0], 'the number leads the row').toBe(one(head, 'coordinator-record-label'))
     expect(textOf(head, 'coordinator-record-label')).toBe('#7')
     expect(textOf(head, 'coordinator-record-title')).toBe('a title someone wrote')
     expect(textOf(head, 'coordinator-record-branch')).toBe('feat/a-thing')
@@ -1312,6 +1322,82 @@ describe('the action queue (K1)', () => {
       // saying so rather than the four kinds saying it one at a time.
       expect(drawn(node), `${value} reached the screen as itself`).not.toContain('\u202E')
     }
+  })
+})
+
+describe('the numbers that open a pull request (K2)', () => {
+  /** A_GOOD_NODE is the one node K2 draws a button for: a provider the console
+   * has a route for, and the `owner/name` the store's own key is. Everything
+   * below is that node with one thing taken away. */
+  const A_GOOD_NODE = { provider: 'github' }
+
+  it('draws the number as a button when the node can form a triple, and as text when it cannot', () => {
+    // The tag is the whole of the rule: a number the console can form a
+    // `(provider, owner/name, number)` for is a button the entry binds to the
+    // operation that opens it, and a number it cannot is the text K1 drew --
+    // never a button that would do nothing, which is a control a reader is owed
+    // an explanation for and cannot get from a press that never happens.
+    const buttoned = drawsQueue({ view: decodes(aStore([aRecord({})], A_GOOD_NODE)) })
+    const subject = one(itemOf(buttoned, COORDINATOR_QUEUE_PR_WORD), 'coordinator-queue-subject')
+    expect(subject.tag).toBe('button')
+    expect(subject.getAttribute('type')).toBe('button')
+    expect(subject.textContent).toBe('#1458')
+    const label = one(buttoned, 'coordinator-record-label')
+    expect(label.tag).toBe('button')
+    expect(label.getAttribute('type')).toBe('button')
+    expect(label.textContent).toBe('#1458')
+
+    // The four shapes a triple cannot be formed from: no provider at all (a CLI
+    // older than C1), the empty provider the decoder answers for the absent key,
+    // a provider this console has no route for, and a repository that is not
+    // `owner/name` -- which is where a value that would become part of a URL has
+    // to be stopped, because a document writes it.
+    const textOnly: readonly (readonly [string, { provider?: string; repo?: string }])[] = [
+      ['no provider at all', {}],
+      ['the empty provider', { provider: '' }],
+      ['a provider with no route', { provider: 'gitlab' }],
+      ['a repository with no owner', { provider: 'github', repo: 'owner' }],
+      ['a repository with a traversal', { provider: 'github', repo: 'owner/../evil' }],
+      ['a repository with a space', { provider: 'github', repo: 'owner/repo a' }],
+      ['a repository with a query', { provider: 'github', repo: 'owner/repo?x=1' }],
+    ]
+    for (const [because, options] of textOnly) {
+      const plain = drawsQueue({ view: decodes(aStore([aRecord({})], options)) })
+      const drawnSubject = one(itemOf(plain, COORDINATOR_QUEUE_PR_WORD), 'coordinator-queue-subject')
+      expect([drawnSubject.tag, drawnSubject.textContent], because).toEqual(['span', '#1458'])
+      expect(one(plain, 'coordinator-record-label').tag, because).toBe('span')
+    }
+  })
+
+  it('names the button with the pull request and the repository, and puts no destination on it', () => {
+    // A number that is the same in two repositories is two different things to
+    // open, so the name carries both halves -- and it is an `aria-label` rather
+    // than more text, because the row is already dense.
+    const node = drawsQueue({ view: decodes(aStore([aRecord({})], A_GOOD_NODE)) })
+    const name = 'open pull request #1458 in owner/repo-a'
+    expect(one(itemOf(node, COORDINATOR_QUEUE_PR_WORD), 'coordinator-queue-subject').getAttribute('aria-label')).toBe(
+      name,
+    )
+    expect(one(node, 'coordinator-record-label').getAttribute('aria-label')).toBe(name)
+
+    // The pull request's own `url` is in the document `aRecord` builds, and it
+    // is nowhere on the screen: not as text, and -- because `FakeScreen` refuses
+    // `href`, `src` and the rest outright -- not as a destination either. The
+    // entry hands the operation the triple and never a URL.
+    expect(drawn(node)).not.toContain('example.invalid')
+  })
+
+  it('takes the name\u2019s repository from the sanitizer, so a value the row refuses is refused in the name too', () => {
+    // The repository a name carries is the repository a cell carries: one
+    // sanitizer answers both, so a value the cell refused to draw -- here one
+    // past the class's own bound -- is `n/a` in the name rather than the raw
+    // string, and the value itself is on the screen nowhere.
+    const long = `${'a'.repeat(150)}/${'b'.repeat(150)}`
+    const node = drawsQueue({ view: decodes(aStore([aRecord({})], { provider: 'github', repo: long })) })
+    const label = one(node, 'coordinator-record-label')
+    expect(label.tag).toBe('button')
+    expect(label.getAttribute('aria-label')).toBe('open pull request #1458 in n/a')
+    expect(drawn(node)).not.toContain(long)
   })
 })
 
