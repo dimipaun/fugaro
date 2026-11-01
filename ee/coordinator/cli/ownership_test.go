@@ -13,10 +13,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 
-	"github.com/dimipaun/fugaro/ee/coordinator"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 )
 
@@ -196,30 +194,25 @@ func TestDeclareRefusesAnotherInstallationsDatabase(t *testing.T) {
 // TestDeclareAsksNothingWhenTheCoordinatorIsOff: the launch's own switch, and
 // the reason the gate above is asked where it is. A project with no
 // budget.rtdb_url has no coordinator to declare to, and the launch must not pay
-// for the question or fail on it: no store is opened (which is what the opener
-// below makes visible), nothing is declared, and the launch goes on. The gate
-// sits behind the store's own refusal for that reason — a launch that asked it
-// first would answer "the project config records no shared Firebase budget
-// backend" instead of declaring nothing, which is a warning line on every
-// launch of a project that never adopted a budget backend.
+// for the question or fail on it — the gate sits behind the switch for that
+// reason.
+//
+// The claim is carried by the nil error, and it is the fixture's shape that
+// carries it: the config records budget.firebase_project (proj-1234) and no
+// budget.rtdb_url, so the ownership question refuses it whichever half it is
+// answered from — the config's own ("records a Firebase project … and no
+// database URL"), and the client the gate builds before that cannot even name a
+// URL. A Declare that asked the gate ahead of its switch therefore returns a
+// refusal instead of declaring nothing, which is a warning line on every launch
+// of a project that never adopted a backend, and this test goes red.
 func TestDeclareAsksNothingWhenTheCoordinatorIsOff(t *testing.T) {
 	f := &coordinatorReportFixture{cloudFixture: newCloudFixture(t), db: gcpfake.NewRTDB(t)}
 	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234 }\n")
-	prev := openCoordinatorStore
-	opened := false
-	openCoordinatorStore = func(context.Context, *localcfg.Config) (*coordinator.Store, error) {
-		opened = true
-		return nil, fcli.UserErr("the store was opened")
-	}
-	t.Cleanup(func() { openCoordinatorStore = prev })
 
 	err := Declare(context.Background(), openFromConfig(t, f.cloudFixture), appSlug,
 		&task.Spec{Version: 1, RunID: "20261024-120000-abcd", RequestedBy: "someone@example.com", Branch: "fugaro/x"})
 	if err != nil {
 		t.Fatalf("a declaration for a project with no database = %v, want nothing declared and no error", err)
-	}
-	if opened {
-		t.Error("the declaration opened the database of a project that has none")
 	}
 	if v := f.db.Value(coordpath.PathRoot); v != nil {
 		t.Errorf("the declaration wrote under /%s: %v", coordpath.PathRoot, v)
