@@ -20,10 +20,10 @@ import (
 // from a key file to these facts is the caller's (§2.3): this file takes
 // the reduced set and hashes it.
 
-// KeyVersion is the reduction's version, the canonical form's `key v1`
+// KeyVersion is the reduction's version, the canonical form's `key v2`
 // line (§2.4). A change to the reduction's rules starts a new key universe
 // instead of silently reusing images built under the old ones.
-const KeyVersion = 1
+const KeyVersion = 2
 
 // Resolved is one repository's dependency set, already reduced per
 // ecosystem (§2.3): the packages its key files name, at the versions they
@@ -35,10 +35,14 @@ type Resolved struct {
 	// record's BaseRef and BaseDigest hold it.
 	BaseRef    string
 	BaseDigest string
-	// Packages and Tools are "name@version": the name and the version as
-	// the file states them, after the ecosystem's own canonicalisation
-	// where it defines one (PyPI's PEP 503 normalisation, the Go module
-	// path as written). Dev-only dependencies are not exempt (§2.3).
+	// Packages are one package per fact, as its name, version and integrity
+	// written as three quoted string literals (reduce.go's factOf), and Tools
+	// are "tool@version": the names and versions as the file states them, after
+	// the ecosystem's own canonicalisation where it defines one (PyPI's PEP 503
+	// normalisation, the Go module path as written), and the integrity or
+	// checksum the file states for that version's artifact — an empty literal
+	// when the file states none for that package (D618). Dev-only dependencies
+	// are not exempt (§2.3).
 	Packages []string
 	Tools    []string
 }
