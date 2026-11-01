@@ -422,7 +422,7 @@ it launches only after U7's owner-run live observation has returned** (below).
   **standalone**: a one-off execution of the deployed job image whose entrypoint forks a child that
   tries to reach the network and is fenced with a network namespace (`unshare -n` where the image has
   it), recording whether the fence is available and whether it holds. **Check 125's step 7 is the
-  confirmation afterwards**, on the mutation path that actually uses the fence. **CSR4 does not start
+  confirmation afterwards**, on the mutation path that actually uses the fence. **CSR4b does not start
   until step 6 has returned**, and **the answer decides the task**: if a child can be fenced, the rest
   of this task proceeds as written; **if it cannot, the task stops and the owner is asked again** —
   the fallbacks are D891's **(b)** (no mutation check in the reviewer at all) or **(c)** (the check in
