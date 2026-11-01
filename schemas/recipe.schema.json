@@ -124,7 +124,7 @@
     "adversarialNoBounce": {
       "type": "object", "additionalProperties": false, "required": ["adversarial"],
       "properties": { "adversarial": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "type": "integer", "minimum": 1, "maximum": 10 } } } },
-      "description": "Review level 3's step (recipe.StepAdversarial): at most once, only after the review step, and last. Absent max_rounds means 2 (recipe.DefaultAdversarialRounds). This is the shape for a recipe with no first_line step, where a bounce has nothing to bounce back to."
+      "description": "Review level 3's step (recipe.StepAdversarial): at most once, only after the review step, and last. Absent max_rounds means the rigor mode's senior row (rigor.AdversarialDefault): 1 at poc and hotfix, 2 at startup, 3 at pro, 5 at critical. This is the shape for a recipe with no first_line step, where a bounce has nothing to bounce back to."
     },
     "adversarialBounce": {
       "type": "object", "additionalProperties": false, "required": ["adversarial"],

@@ -50,7 +50,9 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 		// planStep. A digest step has no arm here either: it is the runner's
 		// own work, dispatched in agentLoop in place of implement
 		// (digest.go), so no plan is ever built with the step silently
-		// dropped.
+		// dropped. The adversarial step has no arm here either, and unlike
+		// those three it is dispatched nowhere else: checkPlan refuses a
+		// recipe carrying one until the release whose runner runs level 3.
 		switch s.Kind {
 		case recipe.StepFirstLine:
 			if derived && !a.FirstLineOn(providers) {
