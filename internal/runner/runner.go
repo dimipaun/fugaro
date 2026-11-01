@@ -2666,11 +2666,12 @@ func (r *run) agentLoop(ctx context.Context) {
 //
 // A round whose answer carries no parseable verdict is asked once more
 // (seniorRound) and, failing that, recorded as the `none` a skipped review is
-// recorded as and let through: a reviewer that answered nothing asked for
-// nothing, so it is not a finding, and no fix round and no phantom blocker are
-// spent on it (D4's rule is about a round that names what it wants). The run
-// then carries on to finalize, where the record and the pull request status say
-// what happened (Decide, reviewsPart).
+// recorded as: a reviewer that answered nothing asked for nothing, so it is not
+// a finding, and no fix round and no phantom blocker are spent on it (D4's rule
+// is about a round that names what it wants). The run then carries on to
+// finalize, where the record and the pull request's status say what happened
+// and the run ends a draft — a round with no verdict is not a review the run
+// can be called ready on (Decide, reviewsPart).
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
 	for round := 1; ; round++ {
 		v, parsed, ok := r.seniorRound(ctx, round, reviewPrompt)
@@ -2681,7 +2682,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.lastSenior = seniorRound{Round: round}
 			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none"})
 			r.save(ctx)
-			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on without one", "round", round)
+			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
 			return
 		}
 		// The round is kept whole as well as counted: the mode's threshold

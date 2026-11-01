@@ -26,7 +26,7 @@ func TestUnparseableReviewIsRetriedOnce(t *testing.T) {
 	h := newHarness(t, "", nil)
 	rec, err := h.run(t, implement("feature"), proseReview, proseReview)
 	if err != nil {
-		t.Fatalf("the run failed: %v; a round with no parseable verdict is retried and then tolerated, never failed", err)
+		t.Fatalf("the run failed: %v; a round with no parseable verdict is retried once and then recorded, never a blocker", err)
 	}
 	if got := countStage(rec, "review"); got != 2 {
 		t.Fatalf("review stages = %d, want 2: the round, and its one retry", got)
@@ -42,29 +42,31 @@ func TestUnparseableReviewIsRetriedOnce(t *testing.T) {
 	}
 }
 
-// TestUnparseableReviewIsToleratedNotABlocker: a run whose review round never
-// produced a verdict is otherwise complete, so it ships: the outcome is ready
-// rather than a draft over a blocker nobody wrote, the record's reason says the
-// round was tolerated, and the pull request's status section says which round
-// and why (reviewsPart, Decide).
-func TestUnparseableReviewIsToleratedNotABlocker(t *testing.T) {
+// TestNoVerdictReviewLeavesADraftNotReady: a round that never produced a
+// verdict is not a blocker and costs no fix round, but it is not a review
+// either — the answer it did not give is the only thing that would have shown
+// someone read the diff — so the run ends a draft rather than ready. The reason
+// and the pull request's status section both name the round (Decide,
+// reviewsPart).
+func TestNoVerdictReviewLeavesADraftNotReady(t *testing.T) {
 	h := newHarness(t, "", nil)
 	rec, err := h.run(t, implement("feature"), proseReview, proseReview)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Outcome != runstore.OutcomeReady || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("record = %+v; want a ready run: a review with no verdict is not a finding", rec)
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = %+v; want a draft: a review with no verdict is not one the run was read by", rec)
 	}
-	if !strings.Contains(rec.Reason, "tolerated") || !strings.Contains(rec.Reason, "no parseable verdict") {
-		t.Errorf("reason = %q; want it to name the round with no verdict and that the run tolerated it", rec.Reason)
+	want := "review round 1 returned no parseable verdict after a retry"
+	if rec.Reason != want {
+		t.Errorf("reason = %q; want %q", rec.Reason, want)
 	}
 	pr := onlyPR(t, h.provider)
-	if !strings.Contains(pr.Body, "review round 1 returned no parseable verdict: tolerated") {
-		t.Errorf("the status section does not say the round was tolerated:\n%s", pr.Body)
+	if !pr.Draft {
+		t.Errorf("the pull request is ready: %+v", pr)
 	}
-	if pr.Draft {
-		t.Errorf("the pull request is a draft: %+v", pr)
+	if !strings.Contains(pr.Body, want) {
+		t.Errorf("the status section does not name the round with no verdict:\n%s", pr.Body)
 	}
 }
 
