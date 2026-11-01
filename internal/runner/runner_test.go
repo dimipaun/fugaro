@@ -590,43 +590,21 @@ func seniorRounds(rec *runstore.Record) int {
 	return n
 }
 
-// TestReviewRoundsTheModeRaisedBetweenRoundsBounds: T3.2's ceiling is read
-// under F6's precedence and read again on every round, so a mode a run raises
-// between rounds buys the rounds that remain and never reaches back to the ones
-// already spent (D22). The repository asks for four rounds and starts at
-// Startup, whose ceiling is two: without the raise the loop would stop after
-// round 2, and the diff round 1's fix writes matches the Critical area, so the
-// run spends the four rounds the precedence asked for.
-func TestReviewRoundsTheModeRaisedBetweenRoundsBounds(t *testing.T) {
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 4", 1)
+// TestReviewRoundsTheModeRaisedBetweenRoundsSuppliesMore: with nothing setting
+// the number, the senior loop's rounds are the reached mode's own row, read
+// again on every round rather than fixed with the plan (reviewRounds): a run
+// that starts at Startup spends two, and the Critical area its own diff then
+// matches makes the rounds that remain five — the raise buys the ones still to
+// come and never reaches back to the ones already spent (D22, and the owner's
+// ruling of 2026-10-31 for the numbers).
+func TestReviewRoundsTheModeRaisedBetweenRoundsSuppliesMore(t *testing.T) {
+	base := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := strings.Replace(base, "  review_rounds: 2\n", "", 1)
+	if cfg == base {
+		t.Fatal("the fixture has no review_rounds: 2 to drop, so the mode would not be the one supplying the number")
+	}
 	cfg = strings.Replace(cfg, "agent:\n",
 		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
-	h := newHarness(t, cfg, nil)
-	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
-		verifyTest(t, ctx, req)
-		return agent.Result{}, nil
-	}
-	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := seniorRounds(rec); got != 4 {
-		t.Fatalf("the run spent %d senior rounds; want 4 — Startup's ceiling must not stop the rounds the raised mode bought (D22)", got)
-	}
-	if rec.Rigor == nil || rec.Rigor.Mode != rigor.Critical {
-		t.Fatalf("the record's mode = %+v; want critical, or the case proves nothing", rec.Rigor)
-	}
-}
-
-// TestReviewRoundsUnconfiguredRepositoryIsUnchanged: the mode's ceiling is read
-// only where the repository opted in (reviewRoundCeiling), the gate the
-// findings policy reads too. A repository that configures no rigor keeps the
-// rounds F6 gives it, whatever mode it resolved for its budget (D19's ruling):
-// it asks for five and spends five, though the Pro it resolves has a lower
-// ceiling.
-func TestReviewRoundsUnconfiguredRepositoryIsUnchanged(t *testing.T) {
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 5", 1)
 	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
@@ -638,19 +616,50 @@ func TestReviewRoundsUnconfiguredRepositoryIsUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := seniorRounds(rec); got != 5 {
-		t.Fatalf("the run spent %d senior rounds; want the five the repository asked for, unlowered by the mode it resolved", got)
+		t.Fatalf("the run spent %d senior rounds; want Critical's five — Startup's two must not be what the rest of the run is held to (D22)", got)
+	}
+	if rec.Rigor == nil || rec.Rigor.Mode != rigor.Critical {
+		t.Fatalf("the record's mode = %+v; want critical, or the case proves nothing", rec.Rigor)
+	}
+}
+
+// TestReviewRoundsAnUnconfiguredRepositoryTakesPros: a repository that writes
+// no rigor: block and sets no review_rounds resolves Pro (D19), and Pro's row
+// is what its senior loop spends — three rounds, where the fixed default used
+// to be two. It is the one behaviour the ruling changes for a repository that
+// opted into nothing, and it is the same reading D19 already gives Pro's
+// threshold table.
+func TestReviewRoundsAnUnconfiguredRepositoryTakesPros(t *testing.T) {
+	base := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := strings.Replace(base, "  review_rounds: 2\n", "", 1)
+	if cfg == base {
+		t.Fatal("the fixture has no review_rounds: 2 to drop, so the mode would not be the one supplying the number")
+	}
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seniorRounds(rec); got != 3 {
+		t.Fatalf("the run spent %d senior rounds; want Pro's three", got)
 	}
 	if rec.Rigor == nil || rec.Rigor.Mode != rigor.Default {
 		t.Fatalf("the record's mode = %+v; want the default, or the case proves nothing", rec.Rigor)
 	}
 }
 
-// TestReviewRoundsTheModesCeilingLowers: T3.2's ceiling lowers the rounds F6
-// agrees on, and it lowers them where it acts — in the loop's own bound, not
-// only in the plan the loop no longer reads for its exit. The repository opted
-// in and runs at POC, whose ceiling is two, and asks for three: the run spends
-// two senior rounds, one fewer than the precedence gave it.
-func TestReviewRoundsTheModesCeilingLowers(t *testing.T) {
+// TestReviewRoundsTheModesRowDoesNotLowerASetNumber: the mode supplies the
+// number where nothing else did, and lowers nothing where a layer set one
+// (the owner's ruling of 2026-10-31, which answers O3). The repository opted in
+// and runs at POC, whose row is one round, and asks for three: the run spends
+// the three it asked for — the ceiling that used to cut them to two is gone,
+// and the recipe's own bound (1-10) is what holds the number.
+func TestReviewRoundsTheModesRowDoesNotLowerASetNumber(t *testing.T) {
 	base := testutil.FixtureFiles(t)["fugaro.yaml"]
 	cfg := strings.Replace(base, "review_rounds: 2", "review_rounds: 3", 1)
 	if cfg == base {
@@ -660,8 +669,7 @@ func TestReviewRoundsTheModesCeilingLowers(t *testing.T) {
 	if withRigor == cfg {
 		t.Fatal("the fixture has no agent: block to put rigor: before, so the repository would not opt in")
 	}
-	cfg = withRigor
-	h := newHarness(t, cfg, nil)
+	h := newHarness(t, withRigor, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
 		verifyTest(t, ctx, req)
@@ -671,11 +679,11 @@ func TestReviewRoundsTheModesCeilingLowers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := seniorRounds(rec); got != 2 {
-		t.Fatalf("the run spent %d senior rounds; want 2 — POC's ceiling lowers the three the repository asked for (D7b)", got)
+	if got := seniorRounds(rec); got != 3 {
+		t.Fatalf("the run spent %d senior rounds; want the three the repository asked for — POC's row is a default, not a ceiling", got)
 	}
 	if rec.Outcome != runstore.OutcomeDraft {
-		t.Fatalf("outcome = %q; want a draft: the run stopped on the ceiling with a finding open", rec.Outcome)
+		t.Fatalf("outcome = %q; want a draft: the run stopped on its own round with a finding open", rec.Outcome)
 	}
 }
 
