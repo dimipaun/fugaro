@@ -289,6 +289,82 @@ func TestTheCacheEvictsWhatNothingHasReadForLongest(t *testing.T) {
 	}
 }
 
+// backdate moves an entry's last use back by age, which is what nothing
+// having read it for that long looks like to the cache: the time of a file
+// is the only record of when it was last wanted.
+func backdate(t *testing.T, path string, age time.Duration) {
+	t.Helper()
+	at := time.Now().Add(-age)
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAnEntryNothingHasReadForAWeekIsGone: what this cache holds is a run's
+// object bytes, the task text among them, and nothing keeps a copy on the
+// machine for good. An entry nothing has read for MaxAge is not an answer but
+// a miss, and the miss removes it -- so the copy leaves the machine then, not
+// whenever the size cap happens to reach it -- and an entry inside the age is
+// answered as before.
+func TestAnEntryNothingHasReadForAWeekIsGone(t *testing.T) {
+	c, dir := testCache(t, t.TempDir(), "aurora", "fugaro-runs")
+	old := "runs/app/20261018-090000-0000/task.json"
+	young := "runs/app/20261018-090100-0001/task.json"
+	c.Put(old, 3, []byte(`{"prompt":"the old task"}`))
+	c.Put(young, 4, []byte(`{"prompt":"the new task"}`))
+	backdate(t, c.path(old), MaxAge+time.Hour)
+
+	if got, ok := c.Get(old, 3); ok {
+		t.Errorf("an entry nothing read for %s answered %q: a copy that old is not a copy of the bucket any more", MaxAge, got)
+	}
+	if _, err := os.Stat(c.path(old)); !os.IsNotExist(err) {
+		t.Errorf("the expired entry is still at %s (%v): the miss that refuses it is also what removes it", c.path(old), err)
+	}
+	if got, ok := c.Get(young, 4); !ok || string(got) != `{"prompt":"the new task"}` {
+		t.Fatalf("the entry inside the age answered %q, %v; want the cached bytes", got, ok)
+	}
+	// The age is the age of the bytes, and the read that answered them is
+	// what makes them young again: the next command does not drop an entry
+	// this one just used.
+	if info, err := os.Stat(c.path(young)); err != nil {
+		t.Fatal(err)
+	} else if time.Since(info.ModTime()) > time.Minute {
+		t.Errorf("the entry read a moment ago was last used %s ago: a read is a use", time.Since(info.ModTime()))
+	}
+	if files := entryFiles(t, dir); len(files) != 1 {
+		t.Errorf("the cache holds %v, want the one entry nothing has expired", files)
+	}
+}
+
+// TestOpenDropsWhatNobodyHasReadForAWeek: the age is a bound on the machine
+// and not only on what a listing answers, so it is Open that keeps it. An
+// entry past MaxAge goes even when nothing asks for it again -- the run a
+// person stopped listing -- because the walk Open makes of the directory is
+// the one the first write would otherwise have made. Neither the missing
+// directory nor the command that never ran is a failure: the cache is speed,
+// and a sweep of a directory that is not there is nothing to sweep.
+func TestOpenDropsWhatNobodyHasReadForAWeek(t *testing.T) {
+	home := t.TempDir()
+	c := testOpen(t, home, "aurora", "fugaro-runs")
+	old, young := "runs/app/20261018-090000-0000/task.json", "runs/app/20261018-090100-0001/task.json"
+	c.Put(old, 3, []byte(`{"prompt":"the old task"}`))
+	c.Put(young, 4, []byte(`{"prompt":"the new task"}`))
+	backdate(t, c.path(old), MaxAge+time.Hour)
+
+	// The next command opens the cache and never reads either entry.
+	again := testOpen(t, home, "aurora", "fugaro-runs")
+	if _, err := os.Stat(again.path(old)); !os.IsNotExist(err) {
+		t.Errorf("the entry past %s is still at %s (%v): opening the cache is what drops what nothing reads", MaxAge, again.path(old), err)
+	}
+	if got, ok := again.Get(young, 4); !ok || string(got) != `{"prompt":"the new task"}` {
+		t.Errorf("the entry inside the age answered %q, %v after the sweep", got, ok)
+	}
+	// And a first open of a cache that was never written is not a failure.
+	if fresh := testOpen(t, t.TempDir(), "borealis", "fugaro-runs"); fresh == nil {
+		t.Fatal("a project with no cache directory opened as no cache")
+	}
+}
+
 // TestTheCacheIsReadableOnlyByItsOwner: the entries hold what a run's
 // service account wrote into the runs bucket, and the directory and every
 // file in it are the user's alone.

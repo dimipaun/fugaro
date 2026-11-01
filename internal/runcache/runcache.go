@@ -28,6 +28,12 @@
 // the cache changes only speed, so a cache that cannot be placed, written or
 // read is no cache, never a failure of the command.
 //
+// A copy does not stay. An entry is dropped past MaxAge (a week) whether or
+// not anything reads it again, so a run's task text -- the object this cache
+// is most worth keeping out of reach -- cannot outlive the bucket's own
+// retention on the machine, and the size cap (MaxBytes) drops what nothing
+// has read for longest before that.
+//
 // No secret is ever cached. The three objects carry none -- task.json's
 // oauth_token is a named account, not a token -- and an entry holds one
 // object's own bytes and nothing else: no environment, no credential and no
@@ -72,6 +78,14 @@ const (
 	// from exhausting the operator's memory.
 	maxObject = runstore.MaxRecordBytes
 
+	// MaxAge is how long a copy of an object is kept. A read is what makes an
+	// entry young again (Get touches it), so this is the age of the bytes and
+	// not the age of the directory: a run's task text, which is what a task's
+	// prompt is, is gone from the machine a week after the last time a
+	// listing wanted it -- whichever comes first, the bucket's own retention
+	// or this, and never the machine's disk.
+	MaxAge = 7 * 24 * time.Hour
+
 	// maxEntry is the largest file an entry within maxObject can be. The
 	// object's bytes are base64 in the JSON envelope, so the file is a third
 	// larger than the object, and the rest is the fixed fields that place it.
@@ -114,7 +128,10 @@ type entry struct {
 // under the user's cache directory: $XDG_CACHE_HOME/fugaro/runs/<project>/,
 // else under ~/.cache. getenv is the environment reader (os.Getenv in the
 // CLI). The directory is created by the first write, so a command that caches
-// nothing leaves nothing behind.
+// nothing leaves nothing behind -- and the one thing Open does to a directory
+// that is already there is drop what no one has read for MaxAge, which is
+// what makes the age of a cached object a bound rather than an accident of
+// which entries a listing happens to ask for again.
 //
 // A project name that is not one, a machine that names no usable cache
 // directory: a nil cache and the error that says why. Callers treat that as no
@@ -128,7 +145,9 @@ func Open(getenv func(string) string, project, bucket string) (*Cache, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w, so the run cache can't be written", err)
 	}
-	return &Cache{dir: filepath.Join(dir, "fugaro", "runs", project), bucket: bucket, max: MaxBytes}, nil
+	c := &Cache{dir: filepath.Join(dir, "fugaro", "runs", project), bucket: bucket, max: MaxBytes}
+	c.sweep()
+	return c, nil
 }
 
 // Get answers the bytes of the object name at generation gen, when the cache
@@ -141,11 +160,14 @@ func Open(getenv func(string) string, project, bucket string) (*Cache, error) {
 // bucket answers the object: with a read of the bucket, never with bytes no
 // read of the bucket would have handed out.
 //
-// The size is the one the filesystem reports, read before the file is: a
-// file too large to be an entry is refused without being read into memory,
-// which is the bound the bucket keeps on its own reads. What the file holds
-// is what decides the entry, so the object inside is measured again once it
-// has been read.
+// The size and the age are the ones the filesystem reports, read before the
+// file is: a file too large to be an entry is refused without being read into
+// memory, which is the bound the bucket keeps on its own reads, and an entry
+// nothing has read for MaxAge is refused and removed, so the bytes of a run
+// nothing looks at any more leave the machine while it is running and not
+// only when the next listing happens to want them (Open's sweep is the other
+// half of that). What the file holds is what decides the entry, so the object
+// inside is measured again once it has been read.
 func (c *Cache) Get(name string, gen int64) ([]byte, bool) {
 	if c == nil {
 		return nil, false
@@ -153,6 +175,10 @@ func (c *Cache) Get(name string, gen int64) ([]byte, bool) {
 	path := c.path(name)
 	info, err := os.Stat(path)
 	if err != nil || info.Size() > maxEntry {
+		return nil, false
+	}
+	if time.Since(info.ModTime()) > MaxAge {
+		c.expire(path, info.Size())
 		return nil, false
 	}
 	data, err := os.ReadFile(path)
@@ -185,22 +211,58 @@ func (c *Cache) Put(name string, gen int64, data []byte) {
 	if err != nil {
 		return
 	}
-	c.measure()
 	if err := c.write(name, blob); err != nil {
 		return
 	}
 	c.note(int64(len(blob)))
 }
 
-// measure takes what the entries of the cache directory take, once: it runs
-// before the first write, so what it measures is the entries that were
-// already there and what the writes since have added is counted by note.
-func (c *Cache) measure() {
+// sweep drops the entries past MaxAge and takes what the ones left hold, once
+// per cache. It is Open's own walk of the directory, which is what makes the
+// age a bound: an entry nothing ever asks for again still leaves the machine,
+// and not only the entries a later listing happens to read. What it counts is
+// also what the first write of this command would otherwise have walked the
+// directory for (note).
+//
+// Every failure here is a cache that holds a little more than it should: the
+// entries it could not read are counted and left, and the ones it could not
+// remove are counted again by the eviction that passes over them.
+func (c *Cache) sweep() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.measured {
-		c.total = dirSize(c.dir)
-		c.measured = true
+	c.total, c.measured = 0, true
+	items, err := os.ReadDir(c.dir)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, it := range items {
+		if it.IsDir() || filepath.Ext(it.Name()) != ".json" {
+			continue
+		}
+		info, err := it.Info()
+		if err != nil {
+			continue
+		}
+		if now.Sub(info.ModTime()) > MaxAge && os.Remove(filepath.Join(c.dir, it.Name())) == nil {
+			continue
+		}
+		c.total += info.Size()
+	}
+}
+
+// expire drops the entry a read found past MaxAge and takes what it held off
+// the count, so that the size the cache measures itself by stays the size of
+// the directory. A removal that fails leaves the entry counted, which is what
+// it is: still on the machine.
+func (c *Cache) expire(path string, size int64) {
+	if os.Remove(path) != nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.measured && c.total >= size {
+		c.total -= size
 	}
 }
 
@@ -220,24 +282,6 @@ func (c *Cache) note(added int64) {
 		return
 	}
 	c.total = c.evict()
-}
-
-// dirSize is what the entries of dir take.
-func dirSize(dir string) int64 {
-	var total int64
-	items, err := os.ReadDir(dir)
-	if err != nil {
-		return 0
-	}
-	for _, it := range items {
-		if it.IsDir() || filepath.Ext(it.Name()) != ".json" {
-			continue
-		}
-		if info, err := it.Info(); err == nil {
-			total += info.Size()
-		}
-	}
-	return total
 }
 
 // path is where name's entry lives: the digest of the bucket and the name, so
