@@ -866,7 +866,7 @@ test.describe('the renderer entry, in the real window', () => {
       // own refusal naming its own command -- and no busy mark outlives them.
       await expect(panel.locator('h1.run-id')).toHaveText('20261015-120000-aa01')
       await expect(panel.locator('div.console-busy')).toHaveCount(0)
-      await expect(panel.locator('div.run-main .unavailable-operation')).toHaveText('run.diagnose')
+      await expect(panel.locator('div.run-main > div.console-busy-slot .unavailable-operation')).toHaveText('run.diagnose')
       await expect(panel.locator('section.run-logs .unavailable-operation')).toHaveText('run.logs')
     } finally {
       await close(launched)
