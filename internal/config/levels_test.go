@@ -740,3 +740,54 @@ func TestResolveLevelsRefusesEffortOutsideTheSet(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveLevelsEmptyTaskBlockLeavesTheConfigsNone pins the one rule the
+// resolver shares with L1.3's layer merge: a block that writes no key says
+// nothing, so it leaves the layer below it to answer. A repository's empty
+// l2: {} does not clear a project's none (writesAKey, resolve.go), and a
+// task's review_levels: {l2: {}} must not clear it either — the launcher
+// writes the task, and reading the block's mere presence as "the level is on"
+// would make an empty block the way to undo the owner's or the repository's
+// `none`. Both halves are resolved here through their real decoders.
+func TestResolveLevelsEmptyTaskBlockLeavesTheConfigsNone(t *testing.T) {
+	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	layer := mustLayer(t, head+`defaults:
+  git: { provider: github }
+  agent:
+    levels:
+      l2: { none: true }
+`)
+	repo := minimalRepo + `agent:
+  levels:
+    l2: {}
+workflows:
+  default:
+    commands: { build: make, test: make test }
+`
+	cfg, _, ps := Resolve([]byte(repo), layer)
+	if len(ps) > 0 {
+		t.Fatalf("resolve problems: %s", problemsText(ps))
+	}
+	if cfg.Agent.Levels.L2 == nil || !cfg.Agent.Levels.L2.Off {
+		t.Fatalf("agent.levels.l2 = %+v; want the project's none: the repository's block writes no key", cfg.Agent.Levels.L2)
+	}
+
+	task, err := ParseReviewLevelsYAML([]byte("l2: {}\n"))
+	if err != nil {
+		t.Fatalf("the task's review_levels: %v", err)
+	}
+	if task.L2 == nil || *task.L2 != (LevelSetting{}) {
+		t.Fatalf("review_levels.l2 = %+v; want the empty block, not a nil one", task.L2)
+	}
+
+	got, _, err := ResolveLevels(LevelInputs{
+		Config: cfg, Mode: rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+		Task: task,
+	})
+	if err != nil {
+		t.Fatalf("ResolveLevels with an empty task block: %v", err)
+	}
+	if got.L2.On {
+		t.Errorf("l2 = %+v; want it off: the task's block writes no key, so the configuration's none stands", got.L2)
+	}
+}

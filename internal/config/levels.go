@@ -89,7 +89,10 @@ type LevelInputs struct {
 	Floor []policy.Level
 	// Task is the task's own review_levels block, nil for none. It is
 	// written by the launcher, so it is the layer the resolver trusts
-	// least: a `none` in it is what the floor exists to refuse.
+	// least: a `none` in it is what the floor exists to refuse. A level's
+	// block in it that writes no key at all says nothing about that level
+	// and leaves it to the configuration, exactly as an empty block does in
+	// the merge between the two configuration layers (writesLevel).
 	Task *ReviewLevels
 	// Recipe is the recipe the run follows, nil when the caller has none.
 	// It decides which levels already have a step and which a layer's
@@ -260,7 +263,7 @@ func (r *resolver) reviewOnlyLevel(s levelSpec) {
 		return
 	}
 	for _, l := range []*LevelSetting{s.task, s.cfg} {
-		if l == nil {
+		if !writesLevel(l) {
 			continue
 		}
 		if !l.Off {
@@ -272,13 +275,14 @@ func (r *resolver) reviewOnlyLevel(s levelSpec) {
 
 // layerAnswer is the level's on/off as the layers below the floor give it:
 // the task's block, else the merged configuration's, else the mode's row, and
-// otherwise fallback. wroteNone reports whether the layer that decided it
-// wrote `none` rather than merely leaving the level off.
+// otherwise fallback — skipping a block that writes no key, which says nothing
+// rather than turning the level on (writesLevel). wroteNone reports whether the
+// layer that decided it wrote `none` rather than merely leaving the level off.
 func (r *resolver) layerAnswer(s levelSpec, fallback bool) (on, wroteNone bool) {
 	switch {
-	case s.task != nil:
+	case writesLevel(s.task):
 		return !s.task.Off, s.task.Off
-	case s.cfg != nil:
+	case writesLevel(s.cfg):
 		return !s.cfg.Off, s.cfg.Off
 	}
 	switch s.row {
@@ -288,6 +292,20 @@ func (r *resolver) layerAnswer(s levelSpec, fallback bool) (on, wroteNone bool) 
 		return false, false
 	}
 	return fallback, false
+}
+
+// writesLevel is whether a layer's block says anything about the level at all.
+// An absent block and a block that carries no key (`review_levels: {l2: {}}`)
+// both say nothing, so the level is left to the layer below — the rule the
+// layer merge follows (writesAKey, resolve.go), where an empty block is what
+// leaves an inherited none: true in place rather than clearing it, and the two
+// rules have to agree: a task's empty block must not turn a level back on that
+// the configuration turned off. `none: false` is the zero Off and reads as an
+// unwritten key here, which is the same setting it is everywhere else
+// (LevelSetting.Off): a block that writes one, and so is really turning the
+// level back on, is the one a task cannot tell apart from an empty one.
+func writesLevel(l *LevelSetting) bool {
+	return l != nil && (l.Off || l.Model != "" || l.Effort != "" || l.Focus != "")
 }
 
 // firstLineDefault is level 1's answer when no layer names it. Level 1 is not
