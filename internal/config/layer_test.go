@@ -912,8 +912,8 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 			if src := res.SourceOf(tc.repoSource); src != SourceRepo {
 				t.Errorf("SourceOf(%s) = %q, want %q", tc.repoSource, src, SourceRepo)
 			}
-			if src := res.SourceOf(tc.goneSource); src != "" {
-				t.Errorf("SourceOf(%s) = %q, want no source: the key did not survive the merge", tc.goneSource, src)
+			if src := res.SourceOf(tc.goneSource); src != SourceDefault {
+				t.Errorf("SourceOf(%s) = %q, want %q: no layer set it, the key did not survive the merge", tc.goneSource, src, SourceDefault)
 			}
 		})
 	}
