@@ -63,7 +63,7 @@ The rule behind the list, so a later command is decided rather than argued: **a 
 
 ## 4. The gate's rules, per command, from the plan (D1012)
 
-### 4.1 The rules every command shares
+### 4.1 The nine rules every command shares
 
 **What "the plan" is** (D1022): the document the command already produces before it writes — a saved Terraform plan for the Terraform commands, the parsed layer for `config publish`, the parsed policy node for `policy publish`, the per-build list for `image refresh`, the diff the `set` commands already print. The gate **hashes the exact bytes it read** and §6 records the digest, so the document that was judged and the document that was applied are provably one artifact and not two that happened to agree.
 
@@ -71,7 +71,7 @@ Read over that document, before the write, fail-closed — an unreadable plan, a
 
 1. **Additive converge only.** Creates and in-place updates. A **delete** or a **replace** is refused unless an entry of the owner's own list (`fugaro/allow-delete.json`, D74) names the exact address *and* the identity of the object the change removes — `tf.Approves`' rule, matched byte for byte. The list is never an argument of the command.
 2. **A change is judged on what it produces, not on its action name.** A resource the plan *changes* is judged on its `after` view by the same rules as a resource the plan creates, and a resource the plan did not create must carry the managed identity the rules below require *and* be in this project. An action set of `["update"]` whose before/after differ in the resource's own identity (a bucket's name, a job's name, a secret's id) is refused as a replace.
-3. **No deletes of data, buckets or databases.** Beyond rule 1: the runs bucket, the installation's state bucket and D77's managed state bucket are refused **by name** before any prefix is read; a bucket or an object whose retention is locked is refused whatever the list says, because a lock can never be undone.
+3. **No deletes of data, buckets or databases, and the name check is not the whole rule.** The heading is the rule and rule 1 is its mechanism: a plan that removes a bucket, an object, a database or anything holding data is refused, and the owner's list is the only thing that can admit it. Three buckets are refused **by name, before any prefix is read, whatever the list says and whatever their names look like** — the runs bucket, the installation's state bucket and D77's managed state bucket — because for those three the answer is never yes, and a name check that ran after the prefix would be a check a managed-name collision could pass. A bucket or an object whose retention is **locked** is likewise refused whatever the list says, because a lock can never be undone. Every other bucket, object or database is governed by rule 1: refused unless the owner's list names the exact address *and* identity, which is a stricter bar than the three by-name cases and not a looser one.
 4. **No IAM change beyond the installation's own service accounts.** A project-level IAM member is refused outright (the managed list drops `google_project_iam_member` and `google_project_iam_custom_role` entirely); a grant on a resource is admitted only on a resource this plan's own rules admit, only to a member the review listed or a managed account, and only with the role spelled out.
 5. **No widening of an allow list.** A change whose effect is to admit more traffic, more callers, more repositories or more data than before is refused: an invoker or object grant that adds a member, a routing row that adds a destination, `project policy publish --seed-repos`, `--remove-routing`, and a layer change that adds a repository to a profile's scope.
 6. **No increase of a budget cap, and no write to one.** Caps and kill switches live in the Realtime Database and are the owner's. A command that would raise a cap is refused, whichever command it is.
@@ -97,7 +97,7 @@ Read over that document, before the write, fail-closed — an unreadable plan, a
 
 **`fugaro settings set|unset`.** Admitted only for a key the registry knows, at a scope inside the project (never `--layer local` writing outside it), where the new value does not lower a floor or widen a ceiling (which the designs give the typed project name and no agent answer) and the target is not one of the reserved keys above.
 
-**`fugaro rigor set`.** Admitted only for a mode that ranks at or above the resolved mode, never `hotfix` (D834's refusal stands), with no duplicate area glob (D838), and only through the layer write the same run's `update` publishes (F18's HARD RULE).
+**`fugaro rigor set`.** Admitted only for a mode that ranks at or above the resolved mode, never `hotfix` (D834's refusal stands), with no duplicate area glob (D838), and only through the layer write the same run's `update` publishes (the HARD RULE, F14).
 
 **`fugaro accounts add|rm`.** `add` is admitted only for a name that is not reserved and a definition whose `allow_data_to` does not widen; `rm` only when no profile and no repository still references the account. No token value is ever written by either.
 
