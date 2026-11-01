@@ -5,7 +5,10 @@ no code, no schema, no command and no recipe; it changes no existing file. The o
 the decisions in [reconciliation.md](reconciliation.md) §4 — D892 with option (a) and D893 with option
 (c) last — but **an answer is not an approval**: no task in
 [implementation-plan.md](implementation-plan.md) may start before the owner approves it, and two of
-them wait on gates outside this design (E7 and U7, below).
+them wait on gates outside this design (E7 and U7, below). **D894 is written and open**, raised after
+those answers: the reviewer reads a branch it must not trust, and the design has to say which
+configuration its Claude session loads (reconciliation §4, option (a) recommended, the owner answers
+in the morning).
 
 **Asked by:** the owner, 2026-10-31, as priority ONE right after the CLI 0.14.1 and console 0.116.1
 releases: the **independent review** run today on the owner's own machine — a local session with the
@@ -23,7 +26,7 @@ first, or reject. The job is **read-only on the forge**: it can fetch the head a
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The design: what exists today for a reviewer on an OAuth account, how a cloud review of a pushed branch runs, the output contract, how it differs from the in-job reviewer, the trigger, what the coordinator does with the verdict, the threat model, and the owner-run live check |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E7** (**E7** — the credentials service enabled and admitting a project-scoped job — is a hard precondition, not a task: it blocks R7, R2 and the coordinator's `ship` → merge path), and the owner decisions **D880–D893**, **all answered** — D880–D891, then **D892 with option (a)** (the credentials service signs the verdict) and **D893 with option (c)** (the read-only token comes from the credentials service, by name), with **D894–D899 reserved and unused**. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E7** (**E7** — the credentials service enabled and admitting a project-scoped job — is a hard precondition, not a task: it blocks R7, R2 and the coordinator's `ship` → merge path), and the owner decisions **D880–D894** — **D880–D893 answered, D894 open** — D880–D891, then **D892 with option (a)** (the credentials service signs the verdict) and **D893 with option (c)** (the read-only token comes from the credentials service, by name), and **D894, written and open**, asks which configuration the reviewer's Claude session loads (option (a) recommended, the answer coming in the morning), with **D895–D899 reserved and unused**. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The tasks **R1–R7** (at most 12 files each), the shared-files table, the first slice and the release slot. **Nothing in it is approved** |
 
 ## The shape in one paragraph
@@ -53,7 +56,7 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
 
 | Block | State |
 | --- | --- |
-| **D880–D899** | **this work's block: D880–D893 written and answered — D891 by the owner with option (a), D892 with option (a) (the credentials service signs the verdict) and D893 with option (c) (the read-only token comes from the credentials service, by name) — with D894–D899 reserved and unused.** D892 and D893 were raised by the review of this branch's fix round; the owner has since answered both. **D893(c) is a precondition of the whole design, not a channel**, so it is the block's own open edge rather than a settled question: see [spec.md](spec.md) §2 and **E7** in [reconciliation.md](reconciliation.md) §5. Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
+| **D880–D899** | **this work's block: D880–D894 written — D880–D893 answered (D891 by the owner with option (a), D892 with option (a) (the credentials service signs the verdict) and D893 with option (c) (the read-only token comes from the credentials service, by name)) and D894 open, recommended (a), the owner answering in the morning — with D895–D899 reserved and unused.** D892 and D893 were raised by the review of this branch's fix round, and the owner answered both; **D894 was raised after them**, by the review of the round that answered them, and is **open**. **D893(c) is a precondition of the whole design, not a channel**, so it is the block's own open edge rather than a settled question: see [spec.md](spec.md) §2 and **E7** in [reconciliation.md](reconciliation.md) §5. Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
 | **Check 125** | **claimed here, and not written in the register.** The register's own sentence is *"Check 124 is the Cloud Batch backend's own, and it is the next number free above 123"*: it reads **124 as a number the Cloud Batch backend took**, in four written parts (**124a–124d**), not as one still free — so the highest number in use is **124**, and the number free above it, which this work claims for the owner-run live check in [spec.md](spec.md) §8, is **125**. The register's own file is another work stream's (`docs/gcp-live-checklist.md` is not this task's to touch), so the row and the `## Check 125` section are written by the task that implements the check, under the number free at **that** merge — the register's rule that whichever of two open claims merges second renumbers itself. A reserved number is never reused and never renumbered |
 
 ## What this design does not do
@@ -108,6 +111,14 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   6; **C3.9**, unscheduled, is the task that lifts it). **No `fugaro update` can supply that half**,
   so **R7, R2 and the coordinator's `ship` → merge path stay blocked** until it lands; the check that
   says so is R6's, and **E7** records the dependency.
+- **The first slice cannot run until another work stream lands, and that is the critical path.** The
+  first slice is **E1 + R1 + R7 + R2** — `fugaro accounts add` plus the review job and the command
+  that launches it — and **every part of it needs credentials-service C3.9**: the service admitting a
+  **project-scoped review identity**, the **read-only set** its mint must serve for that identity, and
+  **D892(a)'s sign and verify endpoints**. C3.9 is Slice 3 of another work stream and is
+  **unscheduled**. Until it lands, **0.15.0 ships the command and the job variant and neither can
+  run**: the launch is refused by the service, and **no `fugaro update` and no local step shortens
+  the wait** (E7; spec §2, §5).
 
 ## Related
 

@@ -311,12 +311,18 @@ overview, strengths, issues to flag, security, performance, test coverage, verdi
 reader never has to read JSON to understand a review, and so a comment or a PR description can be
 the markdown verbatim.
 
-**Nothing of it leaves the run unredacted.** `review.md` is reviewer prose generated from an
-untrusted diff, and the coordinator (or a person) may paste it into a comment, a pull request
-description or a chat — so it passes through `internal/agent/redact.go` before it is published
-anywhere, exactly as the transcript does (§7). Today that pass covers what is published *from agent
-output*; this design names the artifact as one of those things, and R3 is the task that has to make
-it true rather than assume it.
+**Nothing of it leaves the run unredacted — and the redaction happens before the signature, not at
+publish time.** Both artifacts are reviewer prose generated from an untrusted diff: `review.md` is
+what a coordinator (or a person) may paste into a comment, a pull request description or a chat, and
+`review.json` carries the same prose in its `overview`, `strengths`, `issues[]`, `security`,
+`performance` and `test_coverage` fields. **So the writer redacts both, in the run, before the digest
+is taken.** The order is a rule rather than a preference: D892(a)'s signature covers the artifact's
+exact bytes (§6), and a redaction applied later, at publish time, would change those bytes and break
+every signature over them — the redacted bytes are the signed bytes. Both pass through
+`internal/agent/redact.go`, exactly as the transcript does (§7). Today that pass covers what is
+published *from agent output*; this design names the artifact as one of those things, and R3 is the
+task that has to make it true rather than assume it. **Redaction is a literal-value match, and §7
+states what it does not reach.**
 
 **The fields, and where they come from.** `severity` is the vocabulary the runner already reads
 (`blocker`/`major`/`minor` — the in-job spec's §6; `runstore.Finding` keeps `Severity` free-form and
@@ -386,11 +392,16 @@ should have looked at.
 **The review stage's own result *is* this artifact — it is not an in-run verdict.** The review job
 runs the same `review` stage review mode runs, and that stage today passes `runner.VerdictSchema` as
 its `--json-schema` and reads the result with `runner.ParseVerdict`
-(`internal/runner/reviewmode.go:444` and `:465`; `internal/runner/runner.go:2674`,
-`:2752`). Two words and `required: ["verdict", "findings"]`. **A review job that emitted its findings
+(`internal/runner/reviewmode.go:444` and `:465`). **The coding run's review rounds are no longer this
+reader:** `seniorLoop` (`internal/runner/runner.go:2675`) runs its rounds through `seniorRound`
+(`:2728`), which reads with **`TryVerdict`** (`:2746`, `:2810`), asks once more when an answer carries
+no parseable verdict (`noVerdictRetries`, `:2715`) and then lets the round through — so review mode
+and diagnose (`internal/cli/diagnose.go:246`) are `ParseVerdict`'s only callers, and review mode is
+the one that must have an answer. Two words and `required: ["verdict", "findings"]`. **A review job
+that emitted its findings
 only into the file would hand that reader a result with no verdict in it**, and `ParseVerdict` would
 answer with a finding of its own — *"review produced no parseable verdict: nothing in the result was a
-verdict"*, severity `blocker` (`internal/runner/verdict.go:58` is the literal, `:93` the `why` text) —
+verdict"*, severity `blocker` (`internal/runner/verdict.go:64` is the literal, `:99` the `why` text) —
 so a complete, careful review would be recorded as an unreadable one, and in review mode the run's outcome would be decided by a sentence
 about the parser rather than by anything the reviewer found. **So the review job passes
 `schemas/review.schema.json` as its `--json-schema` and decodes with the artifact's own reader**; the
@@ -410,12 +421,20 @@ name (`CLAUDE.md`'s "a field never changes meaning"). The JSON Schema lands in `
 task that first writes the artifact, and the console and the coordinator read the version rather
 than the field list.
 
-**What the review job contributes to the run record.** The record already carries `reviews[]` with a
-`verdict` and a `findings` count, and `runstore.Cost`. A review job's record is a run record like
-any other: mode `review`, the PR's number and SHA, the account it ran as (`runs ls`'s `ACCOUNT`
-column and `fugaro diagnose`'s `Account:` line already exist), and its cost as **notional** — the
-subscription's calls are not gateway-priced. The artifact is the review's substance; the record is
-its provenance.
+**What the review job contributes to the run record.** The record already carries `reviews[]`
+(`runstore.ReviewSummary`: `round`, `verdict`, `findings` and the head the verdict read) and
+`runstore.Cost`. A review job's record is a run record like any other: mode `review`, the PR's number
+and SHA **as the record's own `pr` link** (`runstore.PRRef`), the account it ran as (`runs ls`'s
+`ACCOUNT` column and `fugaro diagnose`'s `Account:` line already exist), and its cost as **notional**
+— the subscription's calls are not gateway-priced. **Two of those are not provenance but the cap:**
+the **PR link** is what makes the review job a member of the pull request's chain, and the record
+carries **exactly one `reviews[]` entry** — the round, the verdict and the findings count — because
+the chain counts its rounds as the `reviews[]` entries the runner writes (D1058,
+[docs/run-limit-carry-over/](../run-limit-carry-over/spec.md) §8: a review job on PR N joins the PR's
+chain, and the chain's `--max-review-rounds` counts senior-review iterations, which is what bounds the
+fix ↔ review loop). A review job that wrote its verdict nowhere the chain can read would be an
+iteration the cap never sees. The artifact is the review's substance; the record is its provenance
+**and its place in the chain**.
 
 ---
 
@@ -504,9 +523,9 @@ nothing).
 forge write permission (§2), so a verdict cannot merge anything. The **coordinator** reads the
 artifact by the review run's id and does one of three things.
 
-**`ship` → the coordinator merges** (or tells the owner to), having done what it always does: the
-pull request's CI, the readiness rule the run already computed, and the human's own look. The
-verdict is advice and the merge is the coordinator's act; the artifact's `head_sha` is the commit the
+**`ship` → the coordinator merges** (or tells the owner to). **The verdict is advice and the merge is
+the coordinator's act, taken after the pull request's CI, the readiness rule the run already computed
+and a person's own look**; the artifact's `head_sha` is the commit the
 advice is about, and a pull request whose head has moved since gets no merge on that verdict. **The
 signature comes first** (D892(a), below): the coordinator verifies it before it reads the verdict at
 all, and a verdict that does not verify is never a `ship`.
@@ -641,8 +660,9 @@ every verdict of that account until the rotation**: that is the cost of the one-
 it is why the key is kept out of the container that reads an untrusted diff. **Honest about what this
 does and does not close:** it stops **another job** forging a verdict; it does not stop an injected
 *reviewer* from writing a dishonest one inside its own run, which is §7's residual and which no
-signature reaches. That residual is why the verdict is still advice, the CI still runs and the
-owner's own look is still the last step.
+signature reaches. That residual is why **the verdict is still advice and the merge is still the
+coordinator's act, taken after the pull request's CI, the readiness rule the run already computed and
+a person's own look**.
 
 ---
 
@@ -730,10 +750,21 @@ reviewer must read it — that is its job — so the injection surface is not re
 - **everything the reviewer says is treated as data downstream.** The artifact is read and rendered,
   never executed; the findings that become a fix round's brief are quoted and bounded (§6);
 - **what this does not close, stated plainly:** an injected reviewer can put anything it likes into
-  its verdict, including a dishonest `ship`. The mitigation for that is not technical — it is that
-  the verdict is advice, the coordinator decides, the CI still runs, and the owner's own look is
-  still the last step. That is the same posture `SECURITY.md` takes on a review verdict elsewhere:
-  advice, not evidence.
+  its verdict, including a dishonest `ship` — and, because the artifact is text the run writes,
+  **it can also encode a secret it can read into `review.json` or `review.md`** rather than say it
+  aloud. **Redaction does not close that, and the design says why:** `internal/agent/redact.go`
+  replaces the **literal values** it has registered (a secret's raw form, its JSON-escaped form, a
+  multi-line secret's own lines, and the encodings `encodedForms` lists) — so a token the reviewer
+  splits, reorders, truncates, hex- or gzip-encodes or embeds mid-stream in wrapped base64 is not
+  matched, and neither is a secret it never had registered at all. The artifact is redacted **before
+  it is signed** (§3), which makes the signature cover what the redactor left, not what it should
+  have caught. **What that costs:** a verdict artifact can carry a secret-shaped payload out of the
+  run even with every scrub in this design working, which is one more reason the verdict is advice
+  and the artifact is read by the coordinator rather than published. The mitigation for the dishonest
+  verdict itself is not technical — it is that **the verdict is advice and the merge is the
+  coordinator's act, taken after the pull request's CI, the readiness rule the run already computed
+  and a person's own look**. That is the same posture `SECURITY.md` takes on a review verdict
+  elsewhere: advice, not evidence.
 
 **The verdict artifact's integrity.** Covered in §6, and **D892 is answered — option (a)**. The
 ordering (the review run's id does not exist while the coder runs) remains a real property **for that
@@ -748,12 +779,21 @@ writing a dishonest verdict inside its own run: that is the residual this sectio
 already states, and it is why a verdict is advice rather than evidence.
 
 **Cost runaway, which a subscription hides.** A review job is not priced by the gateway (§1), so none
-of the dollar caps is a bound on it, and the loop this design is meant to serve has **no cap at all**:
+of the dollar caps is a bound on it — **the loop's bound is the pull request's chain instead**:
 
-- **the fix ↔ review loop is unbounded by design here.** `fix first` launches a fix round (§6) and the
-  coordinator then asks for another review of the new head; nothing in this design counts the rounds,
-  and the plan defers the counting to the coordinator, where the owner's `max_rounds`/budget policy
-  can see it. A design that looped until `ship` would loop until a person noticed;
+- **the fix ↔ review loop is bounded by the chain's rounds, and only when a chain is set.** `fix
+  first` launches a fix round (§6) and the coordinator then asks for another review of the new head;
+  **the review job joins the pull request's chain by its PR link**, and the chain's
+  **`--max-review-rounds`** counts senior-review iterations, so the loop is capped where the rounds are
+  counted rather than in this design (D1058,
+  [docs/run-limit-carry-over/](../run-limit-carry-over/spec.md) §8 and its reconciliation F16; the
+  record the chain reads is §3's). **Three honest limits on that answer:** the cap is **opt-in** — a
+  launch that sets no chain limit gets no chain, so nothing but the wall clock below bounds the loop —
+  it is a **rounds** cap, never a money one, because a subscription's calls do not reach the
+  chain's money ledger at all, and that design's §4 calls the round count **advisory**: it is read off
+  the run records and no database rule enforces it, so this bound is one an honest coordinator honours
+  rather than one a rule stops it at. A design that looped until `ship` with no chain set would loop
+  until a person noticed;
 - **the run's own bound is a wall clock, not a cost.** A review job inherits a task timeout (the
   profile's `timeout_class` → the deployed job's `task_timeout_s` → Cloud Run's task timeout, plus
   `backend.TaskTimeoutSlack`, `internal/config/config.go`), and the launch sets the execution's own
@@ -767,8 +807,9 @@ of the dollar caps is a bound on it, and the loop this design is meant to serve 
   *same* account: an expensive review does not cost dollars, it costs the owner their session. That
   is the bound the owner actually feels, and the design states it rather than leaving it implicit.
 
-The live check observes the accounting (§8's step 5); nothing here enforces a figure, and the design
-does not pretend to.
+The live check observes the accounting (§8's step 5); nothing here enforces a figure — the one bound on
+the loop is the chain's own rounds cap, and it is the chain's, and advisory there — and the design does not
+pretend to.
 
 **The crash reporter and the logs never capture the token.** The rules exist and this design reuses
 rather than invents them: `internal/agent/redact.go` redacts anything published from agent output;

@@ -2,15 +2,20 @@
 
 **Nothing here is approved.** This plan exists so that the work is ordered and reviewable.
 [reconciliation.md](reconciliation.md) §4's decisions **are now answered** — D891, D892 and D893 with
-the options named in the header below — but an answered decision is not an approval to start: **every
-task still carries its own gate**, and two of them are hard. **E7** (the credentials service enabled
-and admitting a project-scoped job) blocks R7, R2 and the coordinator's merge path, and **U7** (an
-owner-run live observation) gates R4's launch. A task starts only when the decisions and the gates it
-names are satisfied.
+the options named in the header below — **except D894, which is written and open** (the reviewer reads
+a branch it must not trust, and the design has to say which configuration its Claude session loads;
+option (a) is recommended and the owner answers in the morning). An answered decision is not an
+approval to start: **every task still carries its own gate**, and two of them are hard. **E7** (the
+credentials service enabled and admitting a project-scoped job) blocks R7, R2 and the coordinator's
+merge path, and **U7** (an owner-run live observation) gates R4's launch. A task starts only when the
+decisions and the gates it names are satisfied. **R4 carries D894(a)'s machinery and therefore does
+not start until D894 is answered** — the plan writes what option (a) would cost, and a different
+answer rewrites that part of R4 rather than this plan guessing.
 
 **Written to:** [spec.md](spec.md) and [reconciliation.md](reconciliation.md). **Where they
 disagree, the reconciliation wins.** The findings (**F1–F27**), the dependencies (**E1–E7**) and the
-decisions (**D880–D893**, all answered — D891 by the owner with option (a), **D892 with option (a)**
+decisions (**D880–D894** — D880–D893 answered and **D894 written and open** — D891 by the owner with
+option (a), **D892 with option (a)**
 (the verdict is signed, by the **credentials service**, and the coordinator verifies it before it
 acts — the signer moved there on the owner's ruling of 2026-11-01, so the key never enters a
 container that runs untrusted code) and **D893
@@ -51,7 +56,7 @@ E3 (publish stages)          ─┴─▶ R1 (read-only token) ─▶ R7 (the jo
                                           E7 (credentials service, │                              └─▶ R5 (findings→brief)
                                           enabled + admitting a    │
                                           project-scoped job) ─────┘
-                        R3 (the artifact, runner-side) ─▶ R4 (mutation)      R6 (gates, docs, release) last
+                        R3 (the artifact, runner-side) ─▶ R4 (mutation + stage config)   R6 (gates, docs, release) last
 ```
 
 **R1 before R7 before R2**, because a command that launches a job must be able to say what that job
@@ -65,7 +70,10 @@ subprocess with egress denied, and Bash denied for the rest of the stage), **on 
 answer assumes a fence nobody has measured, so U7 is an owner-run live observation taken before R4
 launches — not the task's first step, because it cannot be measured hermetically and this plan's rule
 is hermetic tests only** — and **R4 does not start until that observation has returned**; if the fence
-is not there the owner is asked again and the fallbacks are D891's (b) or (c) (see R4). **R6 carries
+is not there the owner is asked again and the fallbacks are D891's (b) or (c) (see R4). **R4 also
+carries D894(a)'s configuration posture**, which is open: the reviewer's Claude session must load no
+configuration from the head it reviews, and if the owner answers (b) or (c) instead, that part of R4 is
+rewritten rather than built. **R6 carries
 the gates and cannot be split**: a field that lands without its gate is a field an older image
 silently ignores.
 
@@ -107,7 +115,7 @@ writes. Every task that touches a shared file takes it **alone**, and the others
 | --- | --- | --- |
 | `internal/cli/run.go` | R2, R5 | the launch path. R2 adds a sibling command that reuses `claudeAccountFor`/`claudeAccountAllowed` and the job placement; R5 adds the findings brief. One task holds it at a time |
 | `internal/runner/prompts.go` | R3, R4, R5 | the review prompt, its template sections, and the fix brief's findings posture |
-| `internal/runner/reviewmode.go` | R2, R3 | the review bootstrap and the comment path R2 stops taking |
+| `internal/runner/reviewmode.go` | R2, R3, R4 | the review bootstrap and the comment path R2 stops taking; R4's D894(a) half reads the base's `fugaro.yaml`, instructions and prompt here |
 | `internal/runner/runner.go` | R3, R4, **only if** the hook is there — otherwise no task here | **reserved**: one writer across work streams. Every task prefers `reviewmode.go`; a task that needs the stage machine or the finalize path takes this file alone and says so (see the paragraph below) |
 | `schemas/` (new files only) | R3, R4 | each schema's own new file; no shared edit |
 | `internal/cli/recipes_skew.go` | R2, R3, R6, R7 | one writer (R6) for the gate constants; R2/R3/R7 declare what they need |
@@ -291,12 +299,14 @@ is an ordering on a file and not a dependency on the launch.
   this task's security surface — and see R4, whose data this shape carries.
 - **Commit:** `runner: the independent review's versioned verdict artifact`.
 
-### R4. The mutation check
+### R4. The mutation check and the stage's configuration posture
 
-**Decision:** D885, and **D891 — answered by the owner with option (a), which this task is the
-machinery for**. **Findings:** F13, F19, **F24**. **Depends on:** R3. **Unblocked:** the answer is
+**Decision:** D885, **D891 — answered by the owner with option (a), which this task is the machinery
+for**, and **D894 — written and open, option (a) recommended**, whose machinery this task carries if
+the owner answers (a). **Findings:** F13, F19, **F24**. **Depends on:** R3. **Unblocked:** the answer is
 (a), so the task is neither dropped nor reduced, and it carries the posture in its own files — **but
-it launches only after U7's owner-run live observation has returned** (below).
+it launches only after U7's owner-run live observation has returned** (below), **and its D894 half only
+if D894 is answered (a)**.
 
 - **The gate before this task launches — U7, a standalone owner-run probe, not a test R4 can write.**
   D891(a) assumes egress can be denied for a child process inside the container, and **no network
@@ -317,13 +327,32 @@ it launches only after U7's owner-run live observation has returned** (below).
   the fallbacks are D891's **(b)** (no mutation check in the reviewer at all) or **(c)** (the check in
   a separate execution), both of which are a different task, and the design does not quietly fall back
   to `denyWeb`. **Nothing in this task's Files is opened before that probe returns.**
+- **The head's own configuration never loads (D894, open).** The review stage's working directory is
+  the pull request's head, and `claude -p` would otherwise read that head's `.claude/settings.json`
+  (hooks and permission allows), its `.mcp.json`, its `CLAUDE.md`, its `.claude/rules` and its skills.
+  Some of that is already closed in the tree — `stripClaudeConfig` removes a reviewed head's
+  `.claude/`, `.claude-plugin/`, `.mcp.json` and `CLAUDE.local.md` before the review stage
+  ([reconciliation.md](reconciliation.md) §4, D894) — but `CLAUDE.md` is deliberately left as untrusted
+  prompt text, and nothing sets a settings-level posture. **Option (a), recommended:** the review
+  stage's managed settings **allow managed hooks only**, **enable no project MCP**, and take **setting
+  sources from user and managed only**; the head's `CLAUDE.md`, `.claude/` and skills are diff content
+  and never configuration; **`fugaro.yaml`, the instructions and the review prompt are read from the
+  base**, which is what `docs/design/v1.md` already does for follow-ups. **Red test:** a head that adds
+  a hook and an `.mcp.json` — the stage runs neither. If the owner answers **(b)** (replace `.claude/`,
+  `CLAUDE.md` and `.mcp.json` in the checkout with the base's copies) or **(c)** (accept and record
+  it), this bullet is rewritten and D891(a) is no longer a control in (c)'s case, which §7 then has to
+  say.
 - **Files:** `internal/runner/mutation.go` (new), `internal/runner/mutation_test.go` (new),
   `internal/runner/reviewartifact.go` (the `mutation_checks` field it fills),
   `internal/runner/prompts.go`, **`internal/agent/settings.go`** + `settings_test.go` (D891(a): the
-  review stage's `DenyRules` gains **Bash** for the rest of the stage), `schemas/review.schema.json`,
+  review stage's `DenyRules` gains **Bash** for the rest of the stage; D894(a): the managed-hooks-only,
+  no-project-MCP, user-and-managed setting sources posture),
+  **`internal/runner/reviewmode.go`** + `reviewmode_test.go` (D894(a): the head's `CLAUDE.md` stops
+  being prompt text, and the base supplies `fugaro.yaml`, the instructions and the prompt),
+  `schemas/review.schema.json`,
   and **`internal/runner/runner.go` only if** the subprocess has to be reaped from a stage-machine
   hook rather than from `runReviewMode` (§2's one-writer rule; the task says so in its pull request if
-  it takes it). **At most 8 files.**
+  it takes it). **At most 10 files.**
 - **Interfaces:** produces the bounded, opt-in check of [spec.md](spec.md) §2 — one mutant, one
   named test, a worktree that is reverted before the stage ends, and **no push ever**
   (`gitops`'s push functions are not reachable from the path). The artefact records what was applied,
@@ -342,13 +371,17 @@ it launches only after U7's owner-run live observation has returned** (below).
   can write is one of `pass`, `fail`, `error`, `timeout`, and a fifth is refused — the vocabulary a
   coordinator routes on cannot be a free-form string, and the `error` and `timeout` arms are the ones
   a writer would otherwise leave to prose), and
-  `TestReviewStageDeniesBashForTheRestOfTheStage` (D891(a)'s own red test).
-- **Red step:** `TestMutationAppliesRunsRevertsAndPushesNothing` fails on an unknown task field, and
-  `TestReviewStageDeniesBashForTheRestOfTheStage` fails because `DenyRules` denies tools only.
+  `TestReviewStageDeniesBashForTheRestOfTheStage` (D891(a)'s own red test), and
+  `TestReviewStageRunsNoHeadHookAndNoHeadMCP` (D894(a)'s own red test: a head that adds a hook and an
+  `.mcp.json` runs neither).
+- **Red step:** `TestMutationAppliesRunsRevertsAndPushesNothing` fails on an unknown task field,
+  `TestReviewStageDeniesBashForTheRestOfTheStage` fails because `DenyRules` denies tools only, and
+  `TestReviewStageRunsNoHeadHookAndNoHeadMCP` fails because the stage loads the head's configuration.
   **SEC flag:** the task that runs repository code inside the reviewer, which is the one thing here
   that could look like "the reviewer edits the code" — the revert and the no-push assertions are what
-  make §2's "never pushes" a fact, and the scrub, the egress rule and the Bash denial are what make
-  D891(a) a fact rather than a sentence.
+  make §2's "never pushes" a fact, the scrub, the egress rule and the Bash denial are what make
+  D891(a) a fact rather than a sentence, and the settings posture is what makes D894(a)'s "the head's
+  configuration is never configuration" one.
 - **Commit:** `runner: the review job's mutation check, in its own worktree and never pushed`.
 
 ### R5. The findings reach the fix round's brief, by run id
@@ -524,8 +557,14 @@ installation *and* admits a project-scoped job.**
   and a **Bash denial for the rest of the stage**, not a firewall around the job. A whole-job egress
   rule is a bigger change (it is the job's VPC/egress posture, shared with every other tenant of the
   same image), and it is not what the owner answered.
-- **A cap on the fix ↔ review loop (F27).** The counting lives with the coordinator, which is the
-  only party that can see rounds across runs; a counter inside one job could not see the loop.
+- **A cap on the fix ↔ review loop (F27), because the cap now exists elsewhere.** The counting lives
+  with the **chain**, not with this design: a review job on PR N joins the pull request's chain by its
+  PR link, and the chain's `--max-review-rounds` counts senior-review iterations (D1058,
+  [docs/run-limit-carry-over/](../run-limit-carry-over/spec.md) §8, merged as #1485; the count is
+  **advisory** there — read off the records, no rule behind it — which §7 of the spec states). What
+  this plan owes that cap is **R3's record** — the PR link and exactly one `reviews[]` entry, which is
+  what the chain counts — and nothing else: a counter inside one job could not see the loop, and a
+  design that added one would be a second copy of the chain's.
 
 ## 5. Release slot
 

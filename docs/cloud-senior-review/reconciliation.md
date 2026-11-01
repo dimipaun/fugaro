@@ -279,12 +279,22 @@ in its own pull request rather than hand-editing the file (**E4**).
 **F23. `Exists` — the `review` stage's result is parsed by the in-run reader, so a review that writes
 only an artifact has no verdict at all.** `internal/runner/reviewmode.go:444` passes
 `runner.VerdictSchema` as the stage's `--json-schema` and `:465` reads the result with
-`runner.ParseVerdict`, which is also the coding run's path (`internal/runner/runner.go:2674`, `:2752`).
+`runner.ParseVerdict`. **The coding run's review rounds are no longer that path, and the earlier
+draft's citation of `internal/runner/runner.go:2674`/`:2752` for them was wrong twice over — the lines moved and the
+reader changed:** `seniorLoop` (`internal/runner/runner.go:2675`) runs its rounds through
+`seniorRound` (`:2728`), which reads with **`TryVerdict`** (`:2746`, and the fix-line retry at
+`:2810`) — a round whose answer carries no parseable verdict is **asked once more**
+(`noVerdictRetries`, `:2715`) and then **let through**, so a reviewer that answers nothing does not
+fail a coding run (the reader's own comment, `internal/runner/verdict.go:56`, says which callers are
+left). **Review mode is what is left**, and that is why F23 holds: `reviewmode.go:465` and diagnose
+(`internal/cli/diagnose.go:246`) are `ParseVerdict`'s only callers, and review mode is the one that
+must have an answer.
 `VerdictSchema`'s `verdict` enum is `ship|changes` and its `required` is `["verdict","findings"]`
 (`internal/runner/verdict.go:18`), and `ParseVerdict` answers a result it cannot read with a finding of
 its own — `severity: "blocker"`, `summary: "review produced no parseable verdict: " + why`, the last
-`why` being *"nothing in the result was a verdict"* (`:58` is the `blocker` literal, `:93` the `why`
-text; an earlier draft cited `:53`/`:46`, the two function headers). **Consequence:** `spec.md` §3's
+`why` being *"nothing in the result was a verdict"* (`:64` is the `blocker` literal, `:99` the `why`
+text; an earlier draft cited `:58`/`:93`, which two later edits moved, and before that `:53`/`:46`,
+the two function headers). **Consequence:** `spec.md` §3's
 review job writes `review.json`, and if its stage result carried the findings only in the file, the
 stage's reader would find no verdict and the run's outcome would be decided by a sentence about the
 parser — a *blocker* finding nobody wrote, stored beside real ones, for a review that may have been
@@ -309,9 +319,16 @@ scrubbed and egress denied, and Bash is denied for the rest of the review stage,
 redaction rule covers the transcript, not it.** `internal/agent/redact.go` redacts what is published
 from agent output, and the transcript artifact rides that rule (F18); §3 lets a coordinator or a
 person paste `review.md` into a comment or a description. Reviewer prose generated from an untrusted
-diff is exactly the sort of text the redaction exists for. **Consequence:** §3 names the artifact as
-something that passes through the same pass before it is published anywhere, and R3 has to make that
-true rather than assume it.
+diff is exactly the sort of text the redaction exists for — and **`review.json` carries the same
+prose** (`overview`, `strengths`, `issues[].summary`/`.fix`/`.evidence`, `security`, `performance`,
+`test_coverage`), so it is not only the markdown. **Consequence:** §3 names **both** artifacts as
+something the writer passes through the same pass **before the digest is taken**, and R3 has to make
+that true rather than assume it. **The order is a rule, not a preference:** D892(a) signs the
+artifact's exact bytes, so a redaction applied at publish time would change the bytes that were signed
+and break every signature over them; the redacted bytes are the signed bytes. **And redaction is a
+literal-value match** (`internal/agent/redact.go`'s registered forms: the raw value, its JSON-escaped
+form, a multi-line secret's own lines, and the encodings `encodedForms` lists) — §7 states what that
+does not reach.
 
 **F26. `Rule` — `accounts rm` is not revocation. It said so in this pull request's *first* draft, and
 the current spec.md no longer does.** What
@@ -326,26 +343,39 @@ correction is not undone by a later edit, and so the *reason* it was wrong is on
 **Consequence for the design:** §7 says the token's blast radius is one person's subscription until
 *they* rotate it, and names rotation as the only remedy the design has.
 
-**F27. `Gap` — nothing bounds the fix ↔ review loop, and a subscription hides the cost.**
-`agent.max_budget_usd` reaches Claude Code as `--max-budget-usd` and is an estimate
+**F27. `Gap` — a subscription hides the cost of the fix ↔ review loop, and until #1485 nothing bounded
+it.** `agent.max_budget_usd` reaches Claude Code as `--max-budget-usd` and is an estimate
 ([docs/multi-model.md](../multi-model.md)), not enforcement; a review job is not gateway-priced at all
 (F9); what bounds a run is a wall clock (the profile's `timeout_class` → the job's `task_timeout_s`,
 and the launch's `Overrides.Timeout` from `timeouts.total`). §6's "the coordinator then asks for
-another review" is a loop with **no counter in this design** — the plan defers the counting to the
-coordinator, where the owner's policy can see it. **Consequence:** §7 states the three bounds it has,
-the one it does not, and the one the owner actually feels: a named account's weekly and five-hour
-usage windows are shared with the owner's own interactive work.
+another review" is a loop, and this design still has **no counter of its own** — but **the counter now
+exists outside it, and this design joins it: #1485 is merged (D1058), so a review job on PR N joins
+the pull request's chain by its PR link and the chain's `--max-review-rounds` counts senior-review
+iterations** ([docs/run-limit-carry-over/](../run-limit-carry-over/spec.md) §8, its reconciliation
+F16). What that costs this design is §3's rule that the review job's record carries the **PR link** and
+**exactly one `reviews[]` entry**, because a chain counts rounds as the `reviews[]` entries the runner
+writes (`internal/runstore/runstore.go:653`, the struct at `:145`). **Consequence, and it is now
+narrower than the finding's first form:** §7 states the bounds it has — the chain's rounds **when a
+chain is set at all**, which is opt-in, the wall clock, and the owner's own weekly and five-hour
+windows, which a named account shares with their interactive work — and the one it does not: the
+**money**. A subscription's calls never reach the chain's ledger, so `--max-usd` does not bound a
+review job; the rounds cap is what does, and it is a **count read off the run records** that the
+carry-over design's own §4 calls **advisory** (no rule enforces it, chain-scoped or per run), so it is
+a bound an honest coordinator honours rather than one the database stops it at.
 
 ## 4. Owner decisions
 
-Recommendation first in each, with the cost of the alternative. **D880–D893 are this work's block;
-D894–D899 are reserved and unused.** **D880–D893 are all answered now.** D891 was answered first, with
+Recommendation first in each, with the cost of the alternative. **D880–D894 are this work's block;
+D895–D899 are reserved and unused.** **D880–D893 are answered, and D894 is open.** The owner answers
+D894 in the morning, with option (a) recommended. D891 was answered first, with
 option (a); the review of this branch's fix round then raised **D892** and **D893** — whether a
 coordinator may **act** on a verdict at all, and how the review job's read-only token reaches it — and
 the owner has answered both: **D892 with option (a)** — the verdict is signed, and the owner's ruling
 of 2026-11-01 moved **who signs**: the **credentials service** produces the signature, so the signing
 key never enters a container that runs untrusted code — and **D893 with option (c)** (the token comes
-from the credentials service, by name — not the per-launch secret this design recommended). **R4 is
+from the credentials service, by name — not the per-launch secret this design recommended). **D894 was
+raised after them**, by the review of the round that answered them: the cloud reviewer reads a branch
+it must not trust, and the design had never said which configuration its Claude session loads. **R4 is
 unblocked, subject to
 U7's owner-run live observation**, and the plan carries the machinery D891(a) names. **D893(c) makes
 the credentials service a hard precondition of the whole design**, and because that service ships
@@ -406,9 +436,10 @@ missing).
   service**, for the same reason, because a second holder is a second place it can leak from. **A
   leaked key forges every verdict of that account until rotation**, which is the price of the
   one-holder design and the reason the key is kept out of the container that reads an untrusted diff.
-  **The artifact is redacted on the way out regardless** (F25): the signature does not make reviewer
-  prose safe to publish, and `review.md` still passes through `internal/agent/redact.go` before it is
-  pasted anywhere. **Replay, and what the verifier refuses:** the digest covers the object's exact
+  **Both artifacts are redacted by the writer, before the digest** (F25): the signature does not make
+  reviewer prose safe to publish, and a redaction applied at publish time would change the bytes that
+  were signed. So `review.json` and `review.md` both pass through `internal/agent/redact.go` **in the
+  run, before R3 takes the digest**, and the signature covers the redacted bytes. **Replay, and what the verifier refuses:** the digest covers the object's exact
   bytes, so `repository`, `pr`, `head_sha` and `review_run` are bound by the signature — and a valid
   artifact of an *earlier* review of the same pull request is still a valid signature over a valid
   object, so the verifier additionally refuses unless **`review_run` equals the run the coordinator
@@ -431,15 +462,16 @@ missing).
   `TestVerifyRefusesAReplayedArtifact` are its tests; the coordinator calls the same checks rather
   than writing a second set. **Honest about what it does and does not do:** it stops **another job**
   forging a verdict; it does not stop an injected *reviewer* from writing a dishonest one inside its
-  own run, which is the §7 residual no signature closes, and which is why the verdict is still advice,
-  the CI still runs and the owner's own look is still the last step. *The
+  own run, which is the §7 residual no signature closes, and which is why **the verdict is advice and
+  the merge is the coordinator's act, taken after the pull request's CI, the readiness rule the run
+  already computed and a person's own look** (spec §6). *The
   alternatives the owner did not take, kept for the record* — **(b) narrow the bucket so only the
   review job's account can write a review run's prefix**: the strongest answer and no key material,
   and it is a bucket-layout change with an IAM migration, which the owner's 2026-10-17 ruling accepted
   the opposite of (**F15**) and which belongs to the project-job work, not here; **(c) accept it and
   make it the coordinator's rule that a verdict never merges on its own**: no machinery at all, and the
   design would then have to say that its "the coordinator merges on `ship`" path is not a path — every
-  merge keeps the owner's own look, which is what happens today by hand.
+  merge keeps a person's own look as its last step, which is what happens today by hand.
 - **D893 (ANSWERED by the owner, option (c)). How does the read-only installation token reach the
   review job?** This is the question **UNVERIFIED-2** used to hold, and the review of this branch's
   fix round was right that it is a credential-handling decision rather than an implementation detail:
@@ -512,6 +544,58 @@ missing).
   (`internal/backend/gcp/run.go:169`, `ContainerOverrides[].Env`): the simplest channel, and the token
   is a **plain value in the execution object**, readable by anyone in the project who can read that
   execution.
+
+- **D894 (OPEN, recommended option (a)). Which configuration does the cloud reviewer's Claude session
+  load, given that it reads a branch it must not trust?** *The gap, stated against the code:* the
+  review job's working directory is the **PR head**, so `claude -p` loads **that head's** Claude Code
+  configuration. **Part of that is already closed on `main`, and the design never said so:** review
+  mode's checkout **removes** the head's `.claude/`, `.claude-plugin/`, `.mcp.json` and
+  `CLAUDE.local.md` at any depth before the stage ever starts (`stripClaudeConfig`,
+  `internal/runner/reviewmode.go:253`, called from `checkoutReviewHeads` at `:202`/`:212`; its test is
+  `TestReviewModeStripsClaudeConfig`, `internal/runner/reviewmode_test.go:1598`), and `fugaro.yaml`
+  and `agent.review` are read from the **base** (`readBaseConfig`, `internal/runner/followup.go:88`;
+  `readReviewCommandFromBase`, `internal/runner/reviewmode.go:351`), so a head cannot name the review
+  prompt it is reviewed by. **What is left open is the rest of it, and it is not small.**
+  `CLAUDE.md` is the one file `stripClaudeConfig` deliberately **leaves in place**, everywhere it
+  appears (`reviewmode.go:238`), on the reasoning that it is untrusted *prompt text* rather than
+  configuration Claude Code *runs* — but it is still **instructions the session loads**, and the
+  head's `CLAUDE.md` can tell the reviewer to `ship`; and there is **no settings-level posture at all**:
+  nothing in `internal/agent` sets `disableAllHooks`, `allowManagedHooksOnly` or `--setting-sources`,
+  so the protection is one runner-side deletion on one code path rather than a property of the launch
+  the agent is started under. A hook that survived or was re-created after the strip — by a later
+  stage, by a command the recipe runs, or by a path that does not go through `checkoutReviewHeads` —
+  is **a shell command run by Claude Code itself**, with `CLAUDE_CODE_OAUTH_TOKEN` in the environment
+  and the job's ordinary egress, and **D891(a)'s scrub, Bash denial and egress fence are on the
+  agent's own shell and the mutation subprocess, not on Claude Code's hook runner**, so none of them
+  stops it. `docs/design/v1.md:866` already records exactly this shape for a follow-up (the
+  configuration is the base's, the working tree is the PR's) and calls it a residual risk of the same
+  trust as write access to the branch; this design never carried that sentence across, and a cloud
+  reviewer is a *worse* place for it than a follow-up, because the whole point of the job is that its
+  verdict is independent of the branch it reads. *Recommended:* **(a) the head is diff content, never
+  configuration.** Keep `stripClaudeConfig` as it is and **extend it to `CLAUDE.md`** — the head's
+  `CLAUDE.md`, at every depth, is **removed like the rest** (it stays in the diff the reviewer is
+  given, which is where a change to it belongs and where a security review should see it), and the
+  stage's **managed settings** are tightened so that the launch itself is the boundary: **managed
+  hooks only**, **no project MCP**, and **setting sources from user and managed only** — so a hook or
+  an MCP server that reaches the checkout by any other route still does not run. `fugaro.yaml`, the
+  instructions and the review prompt stay the base's, as they already are. This becomes **part of R4
+  (SEC)** with a red test: a head that adds a hook, an `.mcp.json` **and a `CLAUDE.md`** — the stage
+  runs neither the hook nor the MCP server, and the instructions it follows are the base's.
+  (`TestReviewModeStripsClaudeConfig` already holds the hook and `.mcp.json` halves; R4's new red test
+  is the `CLAUDE.md` half plus the settings posture, and it fails today on both.) *Cost:* the head's
+  own configuration is not honoured at all, so a repository that legitimately configures its review
+  through `.claude/` or `CLAUDE.md` gets the base's configuration instead — which is the correct
+  default for a reviewer that must not be steered by the thing it reviews, and the cost is one
+  paragraph in `docs/recipes.md` rather than a behaviour anybody relies on today. *Cost of the
+  alternatives:* **(b) replace the checkout's `.claude/`, `CLAUDE.md` and `.mcp.json` with the base's
+  copies before the stage** — close to what `stripClaudeConfig` already does, and **cruder in the one
+  way that matters: it hides the diff's own changes to those files from the reviewer**, so a hook the
+  pull request *adds* — which is exactly the change a security review should flag — becomes invisible
+  instead of a finding; **(c) accept it and record it** — nothing to build, and it costs the design
+  its containment claim: with a project hook running under the job's environment, **D891(a) is not a
+  control at all** (one `SessionStart` hook bypasses the scrub, the Bash denial and the egress fence
+  in a single line), so §7 has to say that plainly and what is left of the reviewer's isolation is
+  the `/proc` residual and the read-only token scope, not the mutation posture.
 
 - **D880. The trigger is a new command, `fugaro review --pr N`.** *Recommended:* a command, because
   the review job is a different job with a different account and a different token scope, and only a
