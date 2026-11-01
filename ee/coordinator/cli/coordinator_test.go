@@ -2081,3 +2081,100 @@ func TestCoordinatorSweepIsHidden(t *testing.T) {
 		}
 	}
 }
+
+// TestCoordinatorShowPrintsNoEscapeFromTheHostsText: the description and the
+// title are `coordinator show`'s two fields carrying a stranger's bytes, and
+// the text output is the surface that draws them for a person. The fixture's
+// title and body each carry a screen-clear (ESC [ 2J) and an OSC-8 hyperlink
+// (ESC ] 8 ; ; … BEL) — a sequence a terminal acts on and a reader cannot see —
+// so what this holds is the sanitiser's contract at the point it is reached: no
+// ESC and no BEL anywhere in the output, and the host's readable words still
+// there. The second half is why: a command that printed nothing would satisfy
+// the first on its own, and a reader that sanitised the document instead of the
+// line would satisfy it by inventing a field (§6.15 — the document is the
+// host's own answer).
+func TestCoordinatorShowPrintsNoEscapeFromTheHostsText(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_show_hostile.json"))
+	realOpen := showFixtureEnv(t, srv.URL)
+
+	newCoordinatorFixture(t, nil)
+	setCoordinatorHost(t, realOpen)
+
+	out, errOut, err := execute(t, "coordinator", "show", "--repo", "acme/app", "--pr", "1458")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	for _, bad := range []struct {
+		name string
+		r    rune
+	}{{"ESC", 0x1b}, {"BEL", 0x07}} {
+		if i := strings.IndexRune(out, bad.r); i >= 0 {
+			t.Errorf("the text output carries %s at byte %d, so the host's own bytes reached the terminal:\n%q", bad.name, i, out)
+		}
+	}
+	for _, want := range []string{"Add search", "Adds a search box to the header.", "Closes #1200."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the text output does not carry %q, so the sanitiser dropped the host's words and not only its escapes:\n%q", want, out)
+		}
+	}
+	if strings.Contains(out, "ghs_fixture") {
+		t.Errorf("the text output carries the installation token:\n%q", out)
+	}
+
+	// The document is the other half of the boundary: it is the host's answer
+	// as data, and the escapes are still in it. A decoder at the far edge
+	// sanitises for its own surface; the CLI's text renderer is the one that
+	// does it here, and a rewrite of the field would be a field this read
+	// invented.
+	srv = httpfixture.Serve(t, filepath.Join("testdata", "coordinator_show_hostile.json"))
+	setCoordinatorHost(t, showFixtureEnv(t, srv.URL))
+	docOut, _, err := execute(t, "coordinator", "show", "--repo", "acme/app", "--pr", "1458", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(docOut), &doc); err != nil {
+		t.Fatalf("the document is not JSON (%v):\n%s", err, docOut)
+	}
+	for _, field := range []struct{ name, value string }{{"title", doc.Title}, {"body", doc.Body}} {
+		if !strings.ContainsRune(field.value, 0x1b) || !strings.ContainsRune(field.value, 0x07) {
+			t.Errorf("the document's %s = %q, want the host's own bytes: the read sanitised the data rather than the line", field.name, field.value)
+		}
+	}
+}
+
+// TestCoordinatorShowNeverPrintsTheTokenTheHostEchoed: the failure path of the
+// single read, end to end. The fixture's host answers the pull-request read
+// with a 500 whose body quotes the Authorization header back — the shape a
+// proxy or a debugging host really produces — so the text the provider hands
+// the reader carries the installation token. The reader holds that token in its
+// own cache (Project.minted) and not in the opener's secrets, which is the half
+// a redactor built from the opener alone would miss, so this asserts the
+// command's whole output and the failure it reports: the token in neither, the
+// marker in the failure, and the host's status as the exit code.
+func TestCoordinatorShowNeverPrintsTheTokenTheHostEchoed(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_show_echo.json"))
+	realOpen := showFixtureEnv(t, srv.URL)
+
+	newCoordinatorFixture(t, nil)
+	setCoordinatorHost(t, realOpen)
+
+	out, errOut, err := execute(t, "coordinator", "show", "--repo", "acme/app", "--pr", "1458", "--json")
+	if err == nil {
+		t.Fatalf("the host answered 500 and the command printed a document: %s", out)
+	}
+	for _, got := range []string{out, errOut, err.Error()} {
+		if strings.Contains(got, "ghs_fixture") {
+			t.Errorf("the installation token the host echoed reached the output: %q", got)
+		}
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Errorf("the failure is %v, want the token redacted in it", err)
+	}
+	if fcli.ExitCode(err) != fcli.ExitRemoteError {
+		t.Errorf("exit %d, want %d: the host refused the read, and that is the host's failure", fcli.ExitCode(err), fcli.ExitRemoteError)
+	}
+}
