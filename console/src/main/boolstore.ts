@@ -211,7 +211,17 @@ export function readBoolSwitch(directory: string, spec: BoolStoreSpec, fs: BoolS
  * The write itself is **atomic** -- a fresh temporary file in the same directory
  * (mode 0600, `wx` so it cannot follow an existing file), then a rename over the
  * target -- so a crash between the two leaves the previous value intact rather
- * than a half-written one. */
+ * than a half-written one.
+ *
+ * **Two writers cannot be refused by each other.** The temporary file's name
+ * carries fresh random bytes on every call and the value is published by a
+ * `rename` over the target, so there is no name for a second writer to collide
+ * with: `wx` guards the temporary name and never the target, the `mkdir` above
+ * it is idempotent (`recursive` on a directory that exists is a no-op, which is
+ * what makes it safe beside the installation list's own writes), and a second
+ * writer's rename is simply the value that is in force afterwards. The
+ * read-then-compare at the top is what makes a second write of the same value no
+ * write at all; it is not, and does not need to be, a lock. */
 export function writeBoolSwitch(
   directory: string,
   on: boolean,

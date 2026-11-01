@@ -124,9 +124,15 @@ export function createCrashSettings(options: {
         writeCrashSwitch(options.directory, on, fs)
       } catch {
         console.error(CRASH_SWITCH_UNWRITTEN)
-        return readCrashSwitch(options.directory, fs)
       }
-      return on
+      // **The answer is always the file's, on both paths.** A write that threw
+      // is one line and the file is where it was; a write that returned is a
+      // rename this process was told about and cannot confirm, since a directory
+      // that went away between the write and the rename is a failure the
+      // filesystem reports as success, and the value asked for is then not the
+      // value in force. What the menu redraws from is this, so it is the file
+      // that is asked and never the argument.
+      return readCrashSwitch(options.directory, fs)
     },
   }
 }

@@ -124,11 +124,18 @@ export function createUpdateSettings(options: {
         console.error(UPDATES_SWITCH_UNWRITTEN)
         return readUpdateSwitch(options.directory, fs)
       }
+      // And on the path that did not throw, the answer is the file's too: a
+      // rename this process was told about is not a value it can confirm, so the
+      // value asked for is not necessarily the value in force. The controller
+      // follows the file for the same reason `start()` reads the gate from it --
+      // a controller running over a switch that says off is a check the next
+      // read refuses, and the menu would draw a checkbox the file contradicts.
+      const landed = readUpdateSwitch(options.directory, fs)
       const controller = options.controller()
-      if (controller === null) return on
-      if (on) void controller.start()
+      if (controller === null) return landed
+      if (landed) void controller.start()
       else controller.stop()
-      return on
+      return landed
     },
     checkNow(): void {
       void options.controller()?.checkNow()

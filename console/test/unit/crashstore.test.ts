@@ -388,6 +388,49 @@ describe('the switch the menu moves', () => {
     expect(working.setSend(false)).toBe(false)
     expect(readCrashSwitch(directory)).toBe(false)
     expect(working.send).toBe(false)
+
+    // A write that did **not** throw and did not land is answered the same way,
+    // which is the case the answer cannot be the argument for: the rename here
+    // returns without publishing anything -- a directory that went away between
+    // the write and the rename is a failure the filesystem reports as success --
+    // so a menu drawn from the argument would draw a tick over a file that still
+    // says off, and the report would be refused at the next launch.
+    const unpublishing = createCrashSettings({
+      directory,
+      fs: { ...nodeCrashFs, rename: () => undefined },
+    })
+    expect(unpublishing.send).toBe(false)
+    expect(unpublishing.setSend(true)).toBe(false)
+    expect(readCrashSwitch(directory)).toBe(false)
+  })
+
+  it('names its temporary file freshly on every write, so two writers cannot collide', () => {
+    // The atomic write is a temporary file and a rename, and the name carries
+    // fresh random bytes per call. That is what makes the `wx` on the temporary
+    // file safe beside anything else writing in this directory (the installation
+    // list's own store among them): `wx` refuses a name that already exists, and
+    // the only name this call can be surprised by is its own, which it made a
+    // moment ago. A fixed temporary name would turn a second writer into an
+    // `EEXIST` thrown out of a menu click -- Electron's uncaught-error dialog
+    // over a running app -- which is the failure this pins away.
+    const directory = freshDirectory()
+    const temporaries: string[] = []
+    const fs = (): CrashFs => {
+      const inner = recordingFs()
+      return {
+        ...inner,
+        writeFile: (path, data, options) => {
+          temporaries.push(basename(path))
+          inner.writeFile(path, data, options)
+        },
+      }
+    }
+    writeCrashSwitch(directory, true, fs())
+    writeCrashSwitch(directory, false, fs())
+    expect(temporaries).toHaveLength(2)
+    expect(new Set(temporaries).size).toBe(2)
+    for (const name of temporaries) expect(name).toMatch(/^crash\.json\.[0-9a-f]{12}\.tmp$/)
+    expect(readCrashSwitch(directory)).toBe(false)
   })
 })
 

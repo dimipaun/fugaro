@@ -1502,6 +1502,31 @@ describe('the picker’s window', () => {
     expect(appMenuItems(menu()).find((entry) => entry.label === CRASH_SEND_ITEM_LABEL)?.checked).toBe(true)
   })
 
+  it('reads the crash switch once, and hands the menu a value rather than the getter (run 2)', () => {
+    // `crashSettings.send` is a getter over the file, and the template is not the
+    // place for one: it is handed to Electron's `buildFromTemplate`, which reads
+    // and sorts it in place and may read a property as often as it likes, so a
+    // live getter in there would be an unknowable number of reads of a file
+    // another process can move between them, and a checkbox drawn from a value
+    // the file no longer holds. What is handed over instead is one boolean, read
+    // once when the picker is built; every install after that draws the local the
+    // store's own answers keep in step (which is what the redraw case above
+    // reads).
+    let reads = 0
+    const { picker } = pickerOver({
+      crashMenu: {
+        get send(): boolean {
+          reads += 1
+          return false
+        },
+        setSend: () => false,
+      },
+    })
+    picker.installMenu()
+    picker.installMenu()
+    expect(reads).toBe(1)
+  })
+
   it('redraws the crash checkbox from the value in force when the write behind a click fails', () => {
     // The same rule U4b has, and for the same reason: the box has already moved
     // itself, a write that did not land leaves the file saying `true`, and the
