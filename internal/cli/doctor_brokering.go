@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -577,9 +578,23 @@ func doctorBitbucketTokenValid(ctx context.Context, lc *localcfg.Config, repos [
 // point FUGARO_BITBUCKET_API_URL somewhere lists that root here, and a
 // variable nothing lists is a host the owner never allowed, which no read of a
 // credential may be pointed at.
+//
+// A listed root is held to the node's own rule (projectpolicy.
+// ValidBitbucketAPIRoots) before it is asked, because this file is not where a
+// root is validated: the publish that builds the node is. One the rule refuses
+// — http, which would send the token in clear, or userinfo, which is a
+// credential in the file — is a host no read of the bundle's token may be
+// pointed at, so it is dropped, and a repository whose every listed root was
+// dropped is left unanswered rather than refused: nothing was asked.
 func bitbucketTokenRoots(lc *localcfg.Config) []string {
 	if lc != nil && len(lc.BitbucketAPIRoots) > 0 {
-		return lc.BitbucketAPIRoots
+		out := make([]string, 0, len(lc.BitbucketAPIRoots))
+		for _, root := range lc.BitbucketAPIRoots {
+			if projectpolicy.ValidBitbucketAPIRoots([]string{root}) == nil {
+				out = append(out, root)
+			}
+		}
+		return out
 	}
 	return []string{bitbucketAPIURL}
 }

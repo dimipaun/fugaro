@@ -87,8 +87,9 @@ var doctorShownSecurityIDs = map[string]bool{
 //
 //   - plugin-install: what differs is the plugin Claude Code installed, and
 //     the converge's plugin stage rewrites the checkout's pin, not the
-//     installation: `fugaro upgrade --local` (or the marketplace command in
-//     Claude Code) is what installs it.
+//     installation: `fugaro update` writes that pin, and Claude Code installs
+//     the plugin from it (the marketplace command in Claude Code being the
+//     same move by hand).
 //
 // policy-older-than-binary is here since the policy stage carries the
 // migration: a node in a version the chain reaches is what that stage rewrites
@@ -762,23 +763,29 @@ var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
 	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
 	// The plugin Claude Code installed is not the checkout's pin, and the
-	// converge's plugin stage writes the pin: installing is the upgrade's own
-	// step (its refusal text and pluginwire.Fix both name it).
+	// converge's plugin stage writes the pin: `fugaro update` is the command
+	// the line names (CLAUDE.md's hard rule), and the install that follows the
+	// pin is Claude Code's own.
 	"plugin-install": {"the installed Claude Code plugin is not the pinned one.",
-		"run `fugaro upgrade --local`, or install it in Claude Code"},
+		"run `fugaro update`, or install it in Claude Code"},
 	"base-image": {"no Fugaro base image is recorded, so image builds start from whatever the repository names.", ""},
 	// The published policy node is older than this binary. The command that
 	// migrates it is the class's own (`fugaro update`, the policy stage), so
 	// this entry carries no fix of its own: the delete-then-publish that does
 	// the same job by hand rebuilds the node from the config, and a line that
 	// offered it would be the lossy move in place of the one the update makes.
-	"policy-older-than-binary":          {"the published policy is older than this Fugaro, and no run applies it.", ""},
-	"policy-rules-skew":                 {"the deployed budget rules are older than the policy generation, so a published policy cannot be read.", ""},
-	"policy-vs-jobs":                    {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
-	"installation":                      {"no Fugaro installation is configured.", "run `fugaro setup`"},
-	"fugaro-yaml":                       {"this checkout's fugaro.yaml is not valid.", "fix what `fugaro validate` prints"},
-	"gcp-project-line":                  {"this checkout's fugaro.yaml has no gcp_project: line, so a run cannot tell which project it belongs to.", "run `fugaro update --anchor`"},
-	"policy-newer-than-binary":          {"the published policy is newer than this Fugaro, so no run reads it.", "run `fugaro upgrade`"},
+	"policy-older-than-binary": {"the published policy is older than this Fugaro, and no run applies it.", ""},
+	"policy-rules-skew":        {"the deployed budget rules are older than the policy generation, so a published policy cannot be read.", ""},
+	"policy-vs-jobs":           {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
+	"installation":             {"no Fugaro installation is configured.", "run `fugaro setup`"},
+	"fugaro-yaml":              {"this checkout's fugaro.yaml is not valid.", "fix what `fugaro validate` prints"},
+	"gcp-project-line":         {"this checkout's fugaro.yaml has no gcp_project: line, so a run cannot tell which project it belongs to.", "run `fugaro update --anchor`"},
+	// The node is newer than this binary, and the move is two of them: the
+	// release that understands the node is not installed yet, so the upgrade
+	// comes first, and the update behind it is what brings the installation and
+	// the checkout to that release.
+	"policy-newer-than-binary": {"the published policy is newer than this Fugaro, so no run reads it.",
+		"upgrade Fugaro (`brew upgrade fugaro`), then run `fugaro update`"},
 	"policy-unknown-keys":               {"an unknown key in the published policy stops every reader from reading it.", "remove the key `fugaro project policy show` prints"},
 	"allow-list-empty":                  {"the published policy admits no repository, so every run stops before it starts.", "run `fugaro project repos add owner/name`"},
 	"project-secret-stored":             {"a secret this checkout's jobs mount has no stored version.", "run `fugaro secrets set NAME`"},
