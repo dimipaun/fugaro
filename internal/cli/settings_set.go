@@ -77,9 +77,12 @@ var settingsGenericKeys = map[string]bool{
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
 // whole. A prefix covers the block's scalars and string lists; a key with a
 // varying segment is still refused below, so no entry here can reach a map.
+// `credentials.` and `clone_urls.` are §4.4's own names for the blocks §5.6's
+// family adds: they are listed now so the generic path does not refuse a name
+// the spec hands it once that family lands.
 var settingsGenericPrefixes = []string{
 	"agent.", "git.", "followup.", "governance.", "watch.",
-	"defaults.", "layer.defaults.", "layer.governance.",
+	"layer.defaults.", "layer.governance.",
 	"credentials.", "clone_urls.",
 }
 
