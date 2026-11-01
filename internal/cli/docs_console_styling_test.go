@@ -107,20 +107,31 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	// reading at all — `data-segments` is a bare attribute, not a reading. Each
 	// row below is pinned to what the source says, so putting the old claim back
 	// is a failing test.
+	// The screen carried three note hooks until the jobs panel left it (console
+	// 0.117.0, the owner's report of 2026-10-31): `projects-jobs-note` was the
+	// jobs panel's "runs not drawn:" line, and the run list that fed the panel is
+	// gone. Two hooks remain, one per panel that still carries a note, and the
+	// count in the row has to move with them.
 	notes := mdRow(t, path, mdBetween(t, path, doc, "### 2.5 Projects", "### 2.6 Run detail"), "| Notes |")
-	for _, hook := range []string{"`projects-note`", "`projects-jobs-note`", "`projects-accounts-note`"} {
+	for _, hook := range []string{"`projects-note`", "`projects-accounts-note`"} {
 		if !strings.Contains(notes, hook) {
-			t.Errorf("%s: §2.5's notes row does not name %s; that screen carries three note hooks, one per panel, and no single one of them reaches all three", path, hook)
+			t.Errorf("%s: §2.5's notes row does not name %s; that screen carries two note hooks, one per panel, and no single one of them reaches both", path, hook)
 		}
+	}
+	if strings.Contains(notes, "`projects-jobs-note`") {
+		t.Errorf("%s: §2.5's notes row still names `projects-jobs-note`; the jobs panel and its note left the screen with the run list (console 0.117.0), so the class is emitted by nothing", path)
 	}
 	if live := mdFlat(mdBetween(t, path, doc, "### 2.3 Live", "### 2.4 Spend")); !strings.Contains(live, "never writes `data-state=\"notional\"`") {
 		t.Errorf("%s: §2.3 claims Live's notional state without saying the attribute is not its own; Live's `data-state` is a bar's percent reading, which is measured, unavailable or gap", path)
 	}
 	prose := mdRow(t, path, mdBetween(t, path, doc, "### 3.7 Typography", "### 3.8 Spacing"), "| Screen prose (")
-	for _, hook := range []string{"`projects-note`", "`projects-jobs-note`", "`projects-accounts-note`"} {
+	for _, hook := range []string{"`projects-note`", "`projects-accounts-note`"} {
 		if !strings.Contains(prose, hook) {
 			t.Errorf("%s: §3.7's screen-prose rule does not name %s, so the Projects note that carries it falls outside the rule", path, hook)
 		}
+	}
+	if strings.Contains(prose, "`projects-jobs-note`") {
+		t.Errorf("%s: §3.7's screen-prose rule still names `projects-jobs-note`; the jobs panel left the Projects screen with the run list (console 0.117.0), so no element carries that class", path)
 	}
 	// §2.5's third note hook carries no second class: the `'note'` in that call
 	// is the wire field `textCell` writes, not a class, and a rule written

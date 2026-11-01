@@ -620,6 +620,15 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	if n := strings.Count(err.Error(), projectpolicy.PathShared()); n != 1 {
 		t.Errorf("the refusal names %s %d times, want once: %v", projectpolicy.PathShared(), n, err)
 	}
+	// The newer release is a binary the operator installs, and `fugaro
+	// upgrade` never replaces the binary it runs: the refusal names the
+	// package manager's command, with the update that follows it.
+	if !strings.Contains(err.Error(), "brew upgrade dimipaun/tap/fugaro") {
+		t.Errorf("the refusal does not name the binary upgrade: %v", err)
+	}
+	if strings.Contains(err.Error(), "fugaro upgrade") {
+		t.Errorf("the refusal sends the operator to fugaro upgrade, which never upgrades fugaro itself: %v", err)
+	}
 	if launchedAny(f) {
 		t.Fatal("the run was launched with a policy this Fugaro does not understand")
 	}

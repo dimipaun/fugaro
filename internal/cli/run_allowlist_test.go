@@ -241,7 +241,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 	}
 	for _, want := range []string{
 		"the project policy is version 99", "this Fugaro understands version " + strconv.Itoa(projectpolicy.Version),
-		"fugaro upgrade",
+		"brew upgrade dimipaun/tap/fugaro",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
@@ -342,8 +342,8 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 		},
 		{
 			name: "the node is newer", ve: newer,
-			want:    []string{fmt.Sprintf("version %d", projectpolicy.Version+1), understood, "upgrade Fugaro"},
-			notWant: []string{"publish --delete", "update --firebase-project"},
+			want:    []string{fmt.Sprintf("version %d", projectpolicy.Version+1), understood, "upgrade Fugaro", "brew upgrade dimipaun/tap/fugaro"},
+			notWant: []string{"publish --delete", "update --firebase-project", "(fugaro upgrade)"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -415,15 +415,15 @@ func TestPolicySkewRefusalNamesTheReleaseThatIntroducedTheVersion(t *testing.T) 
 			ve:   &projectpolicy.VersionError{Found: 2, Understood: 1},
 			want: []string{
 				"the project policy is version 2", "this Fugaro understands version 1",
-				"policy version 2 arrived in fugaro 0.8.5", "upgrade Fugaro",
+				"policy version 2 arrived in fugaro 0.8.5", "upgrade Fugaro", "brew upgrade dimipaun/tap/fugaro",
 			},
-			notWant: []string{policySince, "policy model", "publish --delete"},
+			notWant: []string{policySince, "policy model", "publish --delete", "(fugaro upgrade)"},
 		},
 		{
 			name:    "a version no row names",
 			ve:      unknown,
-			want:    []string{"the project policy is version 99", "upgrade Fugaro"},
-			notWant: []string{policySince, "policy model", "arrived in fugaro"},
+			want:    []string{"the project policy is version 99", "upgrade Fugaro", "brew upgrade dimipaun/tap/fugaro"},
+			notWant: []string{policySince, "policy model", "arrived in fugaro", "(fugaro upgrade)"},
 		},
 		{
 			// A node behind its reader where the table's row for the node's
@@ -504,7 +504,7 @@ func TestPolicySinceGateIsNotOnTheRunnerPath(t *testing.T) {
 	publishPolicy(t, f, `{"version":99,"allow_repos":["*"]}`)
 
 	// Through fugaro run: refused, and nothing was created.
-	if _, _, err := runBudget(t); err == nil || !strings.Contains(err.Error(), "fugaro upgrade") {
+	if _, _, err := runBudget(t); err == nil || !strings.Contains(err.Error(), "brew upgrade dimipaun/tap/fugaro") {
 		t.Fatalf("err = %v, want the gate's refusal", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {

@@ -59,6 +59,16 @@ type Config struct {
 	// again, as on a first run). The config the installation's apply writes
 	// clears it.
 	SetupPending string `yaml:"setup_pending,omitempty"`
+	// PolicyGeneration is the published policy node's generation as of the last
+	// publish that wrote this file's policy keys, or the publish this file was
+	// seeded from: the ETag the node was read at, which is the same value the
+	// write is conditional on (rtdb.PutIfMatch). A file carrying none was never
+	// written from a published node — every installation before the first
+	// `fugaro update` of this release — and the next run ADOPTS the generation
+	// it reads rather than refusing (D854: refusing once would ask a question
+	// with no information in it, since the machine has no baseline to compare
+	// against). An installation that writes no policy node carries none.
+	PolicyGeneration string `yaml:"policy_generation,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind
