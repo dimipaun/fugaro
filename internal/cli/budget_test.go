@@ -41,7 +41,10 @@ func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 	f := &budgetFixture{db: gcpfake.NewRTDB(t), dir: dir}
 	path := isolateProjects(t, dir)
 	if budgetYAML == "" {
-		budgetYAML = "budget: { mode: observe, per_run_usd: 5, rtdb_url: " + f.db.URL + " }\n"
+		// The ordinary installation's budget block: the database and the
+		// Firebase project it belongs to, which here is the installation's own
+		// GCP project (budget.firebase_project == gcp_project).
+		budgetYAML = "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + " }\n"
 	}
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
 		"bucket_url: file://" + filepath.Join(dir, "runs") + "\nuser: someone@example.com\nmax_parallel: 2\n" +
@@ -52,6 +55,7 @@ func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	f.db.Set("fugaro/project", "aurora")
+	f.db.Set(budget.PathMark, auroraMark())
 	// The installation names its project in the runs bucket, as its
 	// Terraform does (mirrors cloudFixture.writeMarker): watch's queued-run
 	// lookup checks it before trusting the bucket.

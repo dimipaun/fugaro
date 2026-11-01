@@ -379,40 +379,44 @@ async function readWith(console: Wired, controls: SpendControls) {
 // ---------------------------------------------------------------------------
 
 describe('the spend controls', () => {
-  it('starts on `report`’s own defaults, with the person view off', () => {
-    // The screen opens on the read `report` itself would have made (`--since
-    // 30d`, `--by day`) rather than on a window of the console's invention, and
-    // the person view is off (D15).
-    expect(SPEND_DEFAULT_CONTROLS).toEqual({ since: '30d', until: null, by: 'day', persons: false })
+  it('opens on the recent week by day, with the person view off', () => {
+    // The owner's choice for console 0.118.0: the screen opens on `--since 7d`
+    // rather than on the 30 days `report`'s own `--since` defaults to, because
+    // the recent week is what an operator looking at spend today is asking
+    // about. The read itself is still `report`'s, built from these controls and
+    // carrying no flag `report` does not take, and the person view is off (D15).
+    expect(SPEND_DEFAULT_CONTROLS).toEqual({ since: '7d', until: null, by: 'day', persons: false })
     // `until` is left to the CLI on purpose: it defaults to today in UTC, and
     // this console does not know what today is -- a date it invented would be a
     // day nobody measured.
     expect(spendArguments(SPEND_DEFAULT_CONTROLS)).toEqual({
       ok: true,
-      args: { by: 'day', since: '30d' },
+      args: { by: 'day', since: '7d' },
     })
-    // Every window the picker offers is one `report --since` itself accepts.
+    // Every window the picker offers is one `report --since` itself accepts --
+    // the windows the opening one moved past included: the default moved, the
+    // picker did not.
     for (const window of SPEND_PICKER_WINDOWS) {
       expect(validateArguments('spend.report', { since: window }).ok).toBe(true)
     }
-    expect(SPEND_PICKER_WINDOWS).toContain('30d')
+    expect(SPEND_PICKER_WINDOWS).toEqual(['7d', '30d', '90d', '12w'])
   })
 
   it('sends the picker’s range as --since and --until, and changes nothing else', async () => {
     const console = await wired()
     await read(console, SPEND_DEFAULT_CONTROLS)
-    await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '7d', until: '2026-10-11' })
+    await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '30d', until: '2026-10-11' })
 
     const [first, second] = reportSpawns(console.logPath)
     expect(first).toBeDefined()
     expect(second).toBeDefined()
     if (first === undefined || second === undefined) return
 
-    expect(flagsOf(first.argv)).toEqual({ '--json': null, '--by': 'day', '--since': '30d', '--project': PROJECT })
+    expect(flagsOf(first.argv)).toEqual({ '--json': null, '--by': 'day', '--since': '7d', '--project': PROJECT })
     expect(flagsOf(second.argv)).toEqual({
       '--json': null,
       '--by': 'day',
-      '--since': '7d',
+      '--since': '30d',
       '--until': '2026-10-11',
       '--project': PROJECT,
     })
@@ -447,7 +451,7 @@ describe('the spend controls', () => {
 
   it('re-reads from the new document, and a day the history does not hold is a gap', async () => {
     const console = await wired()
-    const outcome = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '7d' })
+    const outcome = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '30d' })
     // The series is the *document's* range: seven days, four of them with no
     // row. A day before the window the history keeps is a gap and never a row
     // of zeros -- the console does not know those days were free.
@@ -483,7 +487,7 @@ describe('the spend controls', () => {
   it('never adds ~$ to a real total, on the first read or after a re-read', async () => {
     const console = await wired()
     const first = await read(console, SPEND_DEFAULT_CONTROLS)
-    const second = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '7d' })
+    const second = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '30d' })
 
     for (const outcome of [first, second]) {
       // The document's own three totals, drawn as three readings: 2.45 billed,
@@ -503,7 +507,7 @@ describe('the spend controls', () => {
     // The re-read is a second spawn, and the model it produced is the second
     // document's: the controls re-read rather than reusing the first screen.
     expect(reportSpawns(console.logPath)).toHaveLength(2)
-    expect(second.args).toEqual({ by: 'day', since: '7d' })
+    expect(second.args).toEqual({ by: 'day', since: '30d' })
   })
 
   // -------------------------------------------------------------------------
@@ -527,7 +531,7 @@ describe('the spend controls', () => {
     // document that answers it is the one whose rows are drawn.
     console.stub.write({ commands: { report: { stdout: json(PERSON_DOCUMENT) } } })
     const on = await read(console, personView(SPEND_DEFAULT_CONTROLS, true))
-    expect(on.args).toEqual({ by: 'person', since: '30d' })
+    expect(on.args).toEqual({ by: 'person', since: '7d' })
     expect(on.model.persons).toEqual({ enabled: true, withheld: false })
     expect(drawnRows(on.model).map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
 
@@ -542,7 +546,7 @@ describe('the spend controls', () => {
     const back = personView(personView(SPEND_DEFAULT_CONTROLS, true), false)
     expect(back.persons).toBe(false)
     expect(back.by).toBe('day')
-    expect(spendArguments(back)).toEqual({ ok: true, args: { by: 'day', since: '30d' } })
+    expect(spendArguments(back)).toEqual({ ok: true, args: { by: 'day', since: '7d' } })
   })
 
   it('refuses a person read the knob did not ask for, before any spawn', async () => {
@@ -593,7 +597,7 @@ describe('the spend controls', () => {
     // The command words, then exactly the two flags this console may send:
     // `--json`, and `--since` from the picker's own window.
     expect(spawn.argv.slice(1, 4)).toEqual(['runs', 'stats', '--json'])
-    expect(flagsOf(spawn.argv)).toEqual({ '--json': null, '--since': '30d', '--project': PROJECT })
+    expect(flagsOf(spawn.argv)).toEqual({ '--json': null, '--since': '7d', '--project': PROJECT })
     // **The flags this console must never be able to build.** `--all-users` is
     // the one that would make "who may see whose rows" this window's decision
     // rather than the CLI's; the rest are the flags design section 5.1 rule 6
@@ -731,13 +735,13 @@ describe('the spend controls', () => {
   it('marks the picker’s current window, and marks a day range as a day range', () => {
     const off = renderSpend(factory, buildSpendModel(WEEK_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
     expect(texts(off, 'spend-window')).toEqual(['7d', '30d', '90d', '12w'])
-    expect(marked(off, 'spend-window')).toEqual(['30d'])
+    expect(marked(off, 'spend-window')).toEqual(['7d'])
     // Every window is a real button, and `aria-pressed` is the state a reader
     // who cannot see the pressed style is told.
     expect(all(off, 'spend-window').map((one) => one.tag)).toEqual(['button', 'button', 'button', 'button'])
     expect(all(off, 'spend-window').map((one) => one.getAttribute('aria-pressed'))).toEqual([
-      'false',
       'true',
+      'false',
       'false',
       'false',
     ])
