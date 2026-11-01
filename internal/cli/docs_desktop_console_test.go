@@ -4714,8 +4714,11 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	// D768/D770 answers of 2026-10-30 (auto-update U5): C8's wording stays, as
 	// the earlier amendment, and the newer one sits beside it.
 	design := readDoc(t, "docs/design/desktop-console.md")
-	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file and `updates.json`, and nothing else.**") {
-		t.Error("design section 5.1 rule 10 was not amended to name the app's three writes (C8's second, D768's third)")
+	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file, `updates.json` and `crash.json`, and nothing else.**") {
+		t.Error("design section 5.1 rule 10 was not amended to name the app's four writes (C8's second, D768's third, the crash switch's fourth)")
+	}
+	if !strings.Contains(design, "Amended 2026-11-01: the crash-reporting switch is a fourth file, `crash.json`") {
+		t.Error("design section 5.1 rule 10 lost the 2026-11-01 amendment: the crash-reporting switch is the fourth write, and a later amendment sits beside the earlier ones rather than replacing them")
 	}
 	if !strings.Contains(design, "(Amended 2026-10-18 by the owner's C8 answer") {
 		t.Error("design section 5.1 rule 10 lost the 2026-10-18 C8 amendment: a later amendment sits beside the earlier one rather than replacing it")
@@ -4723,8 +4726,16 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	if !strings.Contains(design, "Amended 2026-10-30 by the owner's D768 and D770 answers") {
 		t.Error("design section 5.1 rule 10 lost the 2026-10-30 D768/D770 amendment")
 	}
-	if !strings.Contains(design, "**The app writes three things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers)") {
-		t.Error("design section 7.4 was not amended to D768/D770's wording")
+	if !strings.Contains(design, "**The app writes four things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers and 2026-11-01 by his ruling of 2026-10-31)") {
+		t.Error("design section 7.4 was not amended to D768/D770's wording and the 2026-11-01 crash-switch amendment")
+	}
+	if !strings.Contains(design, "**No telemetry, no analytics, no update check that carries an identifier, and crash reporting only ever by the user's own opt-in.**") {
+		t.Error("design section 7.4's promise sentence was not amended: the console reports crashes to Sentry after the person turns the switch on, so the paragraph states that flow rather than promising no crash reporting")
+	}
+	for _, want := range []string{"hosted in the European Union", "**no message, no path, no user name, no environment and no host name**", "`console/src/main/crash-dsn.ts`", "the per-user switch is the only gate"} {
+		if !strings.Contains(design, want) {
+			t.Errorf("design section 7.4 no longer states %q: the crash reporter's disclosure is the sentence the website and the console's README repeat, and it names the one gate, the scrubbing, and the DSN's one embedded constant", want)
+		}
 	}
 	if !strings.Contains(design, "never a credential") {
 		t.Error("design section 5.1 rule 10's installations paragraph does not say the file holds no credential")
@@ -6411,6 +6422,13 @@ const (
 	// after that the text it produced is the one that runs, and it is read from
 	// appliedConsoleReleasePath.
 	consoleReleaseFeedWorkflowPath = "docs/pending-workflows/console-release-feed.yml"
+	// consoleReleaseSymbolsWorkflowPath is the staged replacement of
+	// consoleReleaseWorkflowPath with the crash reporter's symbol upload added
+	// after the build (the owner's ruling of 2026-11-01; design section 7.4). Its
+	// copy-in copies it over the staged console-release.yml and into
+	// .github/workflows/, then removes it, exactly as the two supersessions
+	// before it do.
+	consoleReleaseSymbolsWorkflowPath = "docs/pending-workflows/console-release-symbols.yml"
 	// consoleLinuxJobName is the job's key AND its display name: a job name
 	// with an expression in it is a check name nobody can match, which is the
 	// reason console-tests.yml's own comment gives for its static `console`.
@@ -7641,6 +7659,138 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 	}
 }
 
+// consoleReleaseSymbolsStep is the step the symbol-upload supersession adds to
+// the macOS `release` job, by name, and consoleReleaseSymbolsScript is what that
+// step runs -- the script whose own unit test pins the three `sentry-cli`
+// commands it makes, their arguments, and that the token never reaches an argv.
+const (
+	consoleReleaseSymbolsStep   = "Upload the crash reporter's symbols, when a token is configured"
+	consoleReleaseSymbolsScript = "node scripts/upload-sentry-symbols.mjs"
+)
+
+// consoleReleaseSymbolsSecret is the repository secret the step reads -- the
+// console-release environment's seventh, beside the six the signing step reads
+// -- and consoleReleaseSymbolsRefCount is how many `secrets.NAME` references the
+// file carries: one more than the file it supersedes (whose own seven include
+// the one the header's rule about them is written with), and the whole of the
+// difference between them.
+const (
+	consoleReleaseSymbolsSecret   = "SENTRY_AUTH_TOKEN"
+	consoleReleaseSymbolsRefCount = 8
+)
+
+// consoleSymbolsText is the console signing workflow's text as this tree holds
+// the symbol-upload change: the staged supersession while it is staged, and
+// console-release.yml once the owner's copy-in has written it over that file and
+// removed it. It goes through consoleReleaseEffectiveText first, so the
+// byte-identity clause between the two copies of console-release.yml stays live
+// in every state the copy-in passes through.
+func consoleSymbolsText(t *testing.T) (string, string) {
+	t.Helper()
+	file, path := consoleReleaseEffectiveText(t)
+	if docExists(t, consoleReleaseSymbolsWorkflowPath) {
+		return readDoc(t, consoleReleaseSymbolsWorkflowPath), consoleReleaseSymbolsWorkflowPath
+	}
+	return file, path
+}
+
+// TestDocsConsoleReleaseSymbolsIsStagedAndPinned holds the staged symbol upload
+// to what it claims to be (the owner's ruling of 2026-11-01; design section
+// 7.4): one step in the macOS `release` job, after the artifacts have been
+// verified and before they leave the job, running
+// `console/scripts/upload-sentry-symbols.mjs` with **the file's second secret in
+// its environment and nowhere else** -- the token is never an operand of
+// anything, because an argv is readable by every process of the same user on the
+// runner. Everything that makes the file safe to run is what runs today: the
+// pins, the trigger, the permissions, the protected environment and the six
+// secrets the signing step already reads.
+//
+// It reads the file the way this family reads a supersede file: from
+// docs/pending-workflows/console-release-symbols.yml while it is staged, and
+// from console-release.yml once the owner's copy-in has written it over that
+// file and removed it, so the same suite is green on both sides of the copy-in.
+// The mutation that proves the first half: the same test against a tree with
+// docs/pending-workflows/console-release-symbols.yml deleted, where the applied
+// file carries no step of that name and the reader's Fatalf names it.
+func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
+	text, path := consoleSymbolsText(t)
+
+	wf := consoleReleaseShape(t, path, text)
+	release, ok := wf.Jobs["release"]
+	if !ok {
+		t.Fatalf("%s has no release job: the symbols are uploaded from the build the release job has just verified, and there is nowhere else they could come from", path)
+	}
+	index, step := consoleStepNamed(t, release, "release", consoleReleaseSymbolsStep)
+	if step.Uses != "" {
+		t.Errorf("%s's %q step runs the action %q: the upload is a command in this file's own shell, not a marketplace action -- a `uses:` line is a third party's code inside the job that holds the release's signing material, and it would need a pin this file does not have", path, consoleReleaseSymbolsStep, step.Uses)
+	}
+	if step.WorkingDirectory != "console" {
+		t.Errorf("%s's %q step runs in %q, not `console`: the script is resolved from there, as every other step of this job that runs console code does", path, consoleReleaseSymbolsStep, step.WorkingDirectory)
+	}
+	if !strings.Contains(step.Run, "set -euo pipefail") || !strings.Contains(step.Run, consoleReleaseSymbolsScript) {
+		t.Errorf("%s's %q step runs %q: it has to run the pinned script with the same fail-closed shell every other step of this job uses -- a step that swallowed a failure would leave a release whose crashes cannot be read", path, consoleReleaseSymbolsStep, step.Run)
+	}
+	// The environment: the token, and nothing else. The org, the project, the
+	// region and the release are constants inside the script, where no run of
+	// this workflow can point them at somebody else's account.
+	if got, want := len(step.Env), 1; got != want {
+		t.Errorf("%s's %q step's env names %d variables (%v), want the token alone: the script takes the org, the project, the region and the release as its own constants and reads the token from the environment it inherits", path, consoleReleaseSymbolsStep, got, step.Env)
+	}
+	if got, want := step.Env[consoleReleaseSymbolsSecret], "${{ secrets."+consoleReleaseSymbolsSecret+" }}"; got != want {
+		t.Errorf("%s's %q step's %s is %q, want %q", path, consoleReleaseSymbolsStep, consoleReleaseSymbolsSecret, got, want)
+	}
+	if got := strings.Count(text, "secrets."+consoleReleaseSymbolsSecret); got != 1 {
+		t.Errorf("%s names secrets.%s %d times: the token belongs to one step, and a second mention is a second place a change can put it on a command line", path, consoleReleaseSymbolsSecret, got)
+	}
+	if got := len(consoleSecretRefRE.FindAllString(text, -1)); got != consoleReleaseSymbolsRefCount {
+		t.Errorf("%s names %d secrets, want %d: the console-release environment's six plus this change's one, and a secret this file does not need is a secret the release job can read for no reason", path, got, consoleReleaseSymbolsRefCount)
+	}
+
+	// Where the step is: the app's debug files and its source maps have to
+	// describe the bytes that ship, so the upload runs after the step that
+	// verifies the shipped artifacts and before they leave the job as an
+	// artifact.
+	verifyIndex, _ := consoleStepNamed(t, release, "release", consoleReleaseVerifyStep)
+	if index < verifyIndex {
+		t.Errorf("%s runs the symbol upload at step %d and verifies the shipped artifacts at step %d: the symbols have to come from the bundle that has just been verified -- an upload before it describes bytes nobody has checked", path, index, verifyIndex)
+	}
+	artifact := -1
+	for i, other := range release.Steps {
+		if strings.HasPrefix(other.Uses, "actions/upload-artifact@") {
+			artifact = i
+		}
+	}
+	if artifact < 0 {
+		t.Fatalf("%s's release job uploads no artifact: this test reads the step order around it, and a file that stopped uploading the verified assets is a change of its own", path)
+	}
+	if index > artifact {
+		t.Errorf("%s runs the symbol upload at step %d, after the verified assets have left the job at step %d: the step would be reading a bundle the job no longer has, and a symbols upload that silently found nothing is a release whose reports cannot be read", path, index, artifact)
+	}
+
+	if !docExists(t, consoleReleaseSymbolsWorkflowPath) {
+		return
+	}
+	// The both-states half: while it is staged it has to be a change to the file
+	// it supersedes, and a change to nothing else -- the one secret reference
+	// aside, which is the change.
+	base, basePath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
+	if text == base {
+		t.Errorf("%s is byte-identical to %s: then it is not a change, and its copy-in commands are instructions to do nothing", consoleReleaseSymbolsWorkflowPath, basePath)
+		return
+	}
+	got := strings.ReplaceAll(consoleOtherwiseIdentical(t, text), "secrets."+consoleReleaseSymbolsSecret+"\n", "")
+	if want := consoleOtherwiseIdentical(t, base); got != want {
+		t.Errorf("%s and %s differ outside the symbol step: the action pins, the trigger, the permissions, every job's environment and every other `secrets.` reference have to be identical, because this change adds an upload and touches nothing that decides who may run it or what it may read.\nsymbols:\n%s\n%s:\n%s", consoleReleaseSymbolsWorkflowPath, basePath, got, basePath, want)
+	}
+	for _, line := range consoleLinesDropped(base, text) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		t.Errorf("%s drops %q, which %s carries: the symbol change adds one step and a paragraph of header, and rewrites nothing else", consoleReleaseSymbolsWorkflowPath, trimmed, basePath)
+	}
+}
+
 // TestStagedLinuxFilesSurviveTheCopyIn is the proof of the property every test
 // in this family is written for: **the copy-in the owner does by hand does not
 // turn `main` red.** The tests above read the two Linux files through
@@ -7790,7 +7940,7 @@ const consoleCopyInRunPattern = `Console|Docs|Lint`
 // It is a regular expression with word boundaries rather than a list of
 // substrings: `pendingWorkflows` is a helper here and `pendingWorkflowsReadmePath`
 // is a constant in another file, and a substring search cannot tell them apart.
-var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|console-release-feed\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseFeedWorkflowPath|consoleFeedText|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
+var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|console-release-feed\.yml|console-release-symbols\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseFeedWorkflowPath|consoleReleaseSymbolsWorkflowPath|consoleFeedText|consoleSymbolsText|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
 
 // consoleCopyInUncoveredTests is every test in this package whose source
 // mentions what a copy-in changes and which consoleCopyInRunPattern does not
