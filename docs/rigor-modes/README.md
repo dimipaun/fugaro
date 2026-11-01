@@ -125,11 +125,11 @@ operators` section:
   default, runs at Pro, and Pro's per-run budget default is **0.85 of the
   deployed per-run cap** (D16, plan T6.1). A repository that wants the whole cap
   and today's readiness rule pins `rigor: { default: critical }`.
-- **Backlog filing is opt-in per repository** (the owner's ruling of
-  2026-10-24): a run files items under `docs/backlog/` only for a repository
-  whose `fugaro.yaml` has a `rigor:` block, even an empty one, or whose project
-  layer sets a rigor default. An unconfigured repository's runs file nothing, and
-  `fugaro backlog add` works everywhere.
+- **Backlog items are filed by hand** (the owner's ruling of 2026-10-24, after
+  the runner stopped filing): no run writes an item under `docs/backlog/` — a
+  run's own record and its pull request's status section carry what it left
+  open — and `fugaro backlog add` is what files one, in every repository, whether
+  or not its `fugaro.yaml` has a `rigor:` block.
 - **An older CLI is unaffected**: its runs use the runner image it deploys,
   which has no modes, so nothing changes until the CLI is upgraded.
 
