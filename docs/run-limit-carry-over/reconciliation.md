@@ -199,14 +199,15 @@ chain's **membership and its limit** live in exactly those records (D1046) — s
 **honest** orchestrator's runaway spend and not on a hostile launcher, and the only hard bounds are the
 per-run and daily caps, which are the database's rules (spec §4, §9, T2/T4/T5; U2).
 
-**F22: Missing, and the answer is an edit rather than a mechanism.** Every cap in the system today is either
-the owner's (the database, `fugaro budget set`) or the launcher's (a launch argument), and a chain limit is a
+**F22: Conflicts. Raising an exhausted chain is an edit of a record, not a mechanism this work must add.**
+Every cap in the system today is either the
+owner's (the database, `fugaro budget set`) or the launcher's (a launch argument), and a chain limit is a
 **launcher's** number (D1045). Because that number lives in the **root launch's `task.json`** (D1046), raising
 an exhausted chain is a **rewrite of that stored task**, carrying the reason for the raise — no new command,
 no new node and no operator-only write path. *What that costs, said plainly because the alternative is a claim
 the tree does not support:* the launcher holds `objectUser` on `runs/` (F21) and can rewrite that task exactly
 as an operator can, so this is a **convention the installation states**, not a bound the platform enforces —
-an honest launcher raises through the operator path and records why, and the per-run and daily caps stay hard
+an honest launcher raises by that path and records why, and the per-run and daily caps stay hard
 either way (spec §4, §6; D1061).
 
 ## 2. What is missing, and what conflicts

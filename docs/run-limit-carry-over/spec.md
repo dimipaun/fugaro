@@ -16,8 +16,9 @@ Two consequences the brief names follow from that, and this design keeps both:
   orchestrator — may ask for *less* than the policy allows and for nothing more. The engine resolves the
   effective policy at bootstrap and merges the launch's request under it (D1044).
 - **The engine reads what was already spent.** A restart's remaining budget is `limit − used`, where
-  `used` is read by the engine and never supplied by the caller (D1047, D1048). A caller that could state
-  its own usage could state zero.
+  `used` is read by the engine — by the **launcher** from the chain's ledgers, and by the **runner** for its
+  own run (§3, §4) — and never supplied by the caller (D1047, D1048). A caller that could state its own usage
+  could state zero.
 
 ## 2. Explicit per-launch limits
 

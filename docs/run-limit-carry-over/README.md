@@ -85,5 +85,5 @@ had: nothing here is approved to build.
   the daily counters stay exactly where they are: this work **reads** the ledger the rules already keep and
   adds no node, no rule and no field to it. What it does *not* claim is enforcement: a chain's membership and
   limit are run records, so only the per-run and daily caps are hard bounds (spec §4, §9).
-- **Not a licence to weaken a refusal.** Where this design refuses (a loosening value, an unreadable
-  ledger), it refuses; nothing here turns a refusal into a warning.
+- **Not a licence to weaken a refusal.** Where this design refuses (a loosening value, a `--used-*` below what
+  the engine read), it refuses; nothing here turns a refusal into a warning.
