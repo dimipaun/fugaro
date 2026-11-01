@@ -18,6 +18,7 @@ import (
 	"gocloud.dev/blob/memblob"
 	"gocloud.dev/gcerrors"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -319,7 +320,7 @@ func factsBuckets(t *testing.T, runs []factsRun) (*blob.Bucket, *factsDriver) {
 // loop, one result.json at a time, against the same bucket. It is the
 // reference the parallel pass has to equal, kept in the test so the comparison
 // is with what the command did and not with itself. It lists a whole day back,
-// the look-back the pass had before it was trimmed to mintSkewMargin.
+// the look-back the pass had before it followed the backend.
 func sequentialFacts(t *testing.T, b budget.BucketFacts, from, to int64) (map[int64][]budget.RunFact, map[string]string) {
 	t.Helper()
 	return sequentialFactsLookBack(t, b, from, to, 24*time.Hour)
@@ -327,8 +328,8 @@ func sequentialFacts(t *testing.T, b budget.BucketFacts, from, to int64) (map[in
 
 // sequentialFactsLookBack is sequentialFacts with the listing's look-back
 // under the test's control, for a test that compares two of them: the pass
-// starts mintSkewMargin before the window's first day, where it used to start
-// a whole day before it.
+// starts the backend's own margin before the window's first day, where it used
+// to start a whole day before it.
 func sequentialFactsLookBack(t *testing.T, b budget.BucketFacts, from, to int64, lookBack time.Duration) (map[int64][]budget.RunFact, map[string]string) {
 	t.Helper()
 	ctx := context.Background()
@@ -594,10 +595,10 @@ func TestFactsCancelsTheReadsAFailureLeavesInFlight(t *testing.T) {
 
 // TestFactsLookBackIsMinutesNotADay: the pass lists a run by its mint time, so
 // how far before the window's first day it reaches back is the gap between a
-// run's mint and its record — minutes. A look-back of the whole day before the
-// window, which is what the pass did, listed every run minted that day and the
-// day filter dropped every one of them that did not start inside the window:
-// on a report that discarded a quarter of its reads.
+// run's mint and its record — which on Cloud Run is minutes. A look-back of the
+// whole day before the window, which is what the pass did, listed every run
+// minted that day and the day filter dropped every one of them that did not
+// start inside the window: on a report that discarded a quarter of its reads.
 // Mutation caught: listing from the day before the window, which reads the
 // record minted an hour before it below.
 func TestFactsLookBackIsMinutesNotADay(t *testing.T) {
@@ -613,7 +614,7 @@ func TestFactsLookBackIsMinutesNotADay(t *testing.T) {
 		{slug: "acme-app", id: farID, rec: runstore.Record{Repo: "acme/app", StartedAt: far.Add(20 * time.Minute)}},
 		{slug: "acme-app", id: nearID, rec: runstore.Record{Repo: "acme/app", StartedAt: time.Date(2026, 10, 19, 0, 0, 10, 0, time.UTC)}},
 	})
-	facts, _, err := budget.BucketFacts{Bucket: blob.NewBucket(d)}.Facts(context.Background(), day, day)
+	facts, _, err := budget.BucketFacts{Bucket: blob.NewBucket(d), Backend: backend.CloudRun}.Facts(context.Background(), day, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,12 +724,70 @@ func TestFactsSkewedRecordWithinMarginCounted(t *testing.T) {
 	}
 }
 
+// queuedBatchRun is the launch of a Cloud Batch run that sat in the region's
+// queue across the midnight the window [from, ...] opens on: minted at 21:00
+// the evening before that midnight, started six hours later — at 03:00 on
+// `from`, so the run is one the window counts — while the ID's own mint time
+// stands three hours outside the window. Cloud Run starts a container in
+// minutes, so this gap is a queue wait and not a clock skew: only a look-back
+// of the backend's own length lists it, and it is the run that a margin of
+// thirty minutes for every backend leaves out.
+func queuedBatchRun(from int64) (string, runstore.Record) {
+	minted := time.UnixMilli((from - 1) * 86_400_000).UTC().Add(21 * time.Hour)
+	return minted.Format("20060102-150405") + "-aaaa",
+		runstore.Record{Repo: "acme/app", StartedAt: time.UnixMilli(from * 86_400_000).UTC().Add(3 * time.Hour)}
+}
+
+// TestFactsBatchQueueWaitIsListed: how long a run waits between the mint of its
+// ID and the started_at of its record is the backend's fact, so the look-back
+// is the backend's too. A Batch job sits QUEUED until the region has capacity,
+// and the run below — minted hours before the window, started inside it — is
+// listed by Batch's queue deadline and counted on its start day; Cloud Run's
+// gap is minutes, so that rule reads nothing here; and a caller that cannot
+// name the backend takes the longer of the two rather than leave the run out of
+// a day it writes.
+// Mutation caught: the thirty minutes of Cloud Run for every backend, which
+// drops this run from every window that opens on its start day.
+func TestFactsBatchQueueWaitIsListed(t *testing.T) {
+	from := budget.Day(time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC))
+	id, rec := queuedBatchRun(from)
+	for _, tc := range []struct {
+		name    string
+		backend string
+		listed  bool
+	}{
+		{"cloud-batch", backend.CloudBatch, true},
+		{"cloud-run", backend.CloudRun, false},
+		{"the backend unnamed", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, d := factsBuckets(t, []factsRun{{slug: "acme-app", id: id, rec: rec}})
+			facts, _, err := budget.BucketFacts{Bucket: blob.NewBucket(d), Backend: tc.backend}.Facts(context.Background(), from, from)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.listed {
+				if len(facts[from]) != 0 || d.reads() != 0 {
+					t.Fatalf("facts[from] = %+v after %d reads: the gap Cloud Run leaves for itself is minutes, and the hours this run spent on the queue are not one of them", facts[from], d.reads())
+				}
+				return
+			}
+			want := []budget.RunFact{{Slug: "acme-app", Run: id, StartDay: from}}
+			if !reflect.DeepEqual(facts[from], want) || d.reads() != 1 {
+				t.Fatalf("facts[from] = %+v after %d reads, want %+v after one: a run queued across the window's midnight is listed by the backend's own look-back", facts[from], d.reads(), want)
+			}
+		})
+	}
+}
+
 // TestFactsFinishedDaysUnchangedByTheShorterLookBack: a report's finished days
 // are the days before it, and their rows are what they were when the pass
 // listed a whole day back — the same runs, in the same order, on the same
 // days, with the same repository names. The runs minted on the day before the
 // window, which the day filter dropped then, are the reads this change
-// removes: the reference reads them and the pass does not.
+// removes: the reference reads them and the pass does not. It is the Cloud Run
+// rule that is trimmed; a Batch pass keeps the day-long bound (see
+// TestFactsBatchQueueWaitIsListed).
 func TestFactsFinishedDaysUnchangedByTheShorterLookBack(t *testing.T) {
 	windowLast := budget.Day(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	from, to := windowLast-4, windowLast
@@ -758,17 +817,19 @@ func TestFactsFinishedDaysUnchangedByTheShorterLookBack(t *testing.T) {
 	if len(want) != 5 || len(want[from]) != 4 {
 		t.Fatalf("the fixture put %d days of facts in the result (%d runs on the first): this test would compare too little", len(want), len(want[from]))
 	}
-	got, gotRepos, err := budget.BucketFacts{Bucket: blob.NewBucket(d)}.Facts(context.Background(), from, to)
+	got, gotRepos, err := budget.BucketFacts{Bucket: blob.NewBucket(d), Backend: backend.CloudRun}.Facts(context.Background(), from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parReads := d.reads() - refReads; parReads >= refReads {
-		t.Errorf("the pass read %d records where the look-back of a whole day read %d: the day before the window was read only to be dropped", parReads, refReads)
-	}
+	// What the trim must not have changed comes first: a margin widened back to
+	// the whole day turns the count below red and leaves these green.
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("the finished days differ from what the day-long look-back returned:\n%+v\nwant\n%+v", got, want)
 	}
 	if !reflect.DeepEqual(gotRepos, wantRepos) {
 		t.Fatalf("repos = %v, want %v", gotRepos, wantRepos)
+	}
+	if parReads := d.reads() - refReads; parReads >= refReads {
+		t.Errorf("the pass read %d records where the look-back of a whole day read %d: the day before the window was read only to be dropped", parReads, refReads)
 	}
 }

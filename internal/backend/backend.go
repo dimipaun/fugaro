@@ -43,6 +43,48 @@ const TaskTimeoutSlack = 2 * time.Minute
 // cannot import internal/cli.
 const MaxRunTime = 24 * time.Hour
 
+// cloudRunMintSkew is how long before a run starts the run's ID may have been
+// minted on Cloud Run: the platform starts the container as soon as the
+// execution is created, so the two stamps are apart by that launch plus the
+// skew between the launcher's clock and the container's. Half an hour is that
+// with room to spare, and every minute of it a reader lists and then drops is a
+// round trip paid for nothing.
+const cloudRunMintSkew = 30 * time.Minute
+
+// batchMintSkew is the same bound on Cloud Batch, and there it is a queue wait
+// rather than a clock skew: Launch returns as soon as Batch accepts the job and
+// the job sits QUEUED until the region has capacity (internal/backend/batch),
+// which is what the reaper's queue deadline bounds -- max(the longest
+// workflow timeout, MaxRunTime) plus TaskTimeoutSlack
+// (internal/backend/batch/reap.go). Naming the backend is all a caller here
+// has: the installation's own longest workflow timeout is a platform read. So
+// this is that deadline's floor, which every Batch installation's is at least
+// as long as, and it is the look-back the pass had before it followed the
+// backend at all.
+const batchMintSkew = MaxRunTime + TaskTimeoutSlack
+
+// MintSkewMargin is how far before the first day of a facts window a pass has
+// to list runs to see every run that started inside that window. Runs are
+// listed by the mint time their IDs carry and counted on the day the
+// started_at of their record names, and the two stamps are apart by as much as
+// the backend takes to start the run -- the launch, or the queue behind it -- so
+// the margin is the backend's own bound and not the longest of them all: a run
+// listed and then dropped by the day filter is a round trip that bought
+// nothing, which is what a report is made of.
+//
+// A name that is not Cloud Run takes the Batch bound, and so does a caller that
+// cannot name the backend: the history job runs in Terraform's environment,
+// with no config file to read the name from, and it is the pass that WRITES the
+// budget. There a run that is not listed is a day whose compute and hours are
+// missing, so reading longer than it needs to is the only direction that is
+// safe.
+func MintSkewMargin(name string) time.Duration {
+	if name == CloudRun {
+		return cloudRunMintSkew
+	}
+	return batchMintSkew
+}
+
 // State is an execution's lifecycle state as the platform reports it.
 type State string
 
