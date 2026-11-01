@@ -42,22 +42,30 @@ import { PLAN_STATUS_MIN_INTERVAL_MS } from '../../src/source/cli'
 import type { PlanStatusView, RunView } from '../../src/shared/schema'
 import { GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
 import type { WorkerLike } from '../../src/renderer/graph/layout-client'
-import { GRAPH_MAX_TITLE_CODE_POINTS, buildGraphModel } from '../../src/renderer/graph/model'
+import { GRAPH_MAX_TITLE_CODE_POINTS, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
+import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
 import {
   GRAPH_BAND_HEAD,
   GRAPH_COMPONENT_OPTION,
+  GRAPH_FILTER_LABEL,
   GRAPH_INITIAL_STATE,
+  GRAPH_INSPECTOR_NONE,
   GRAPH_LAYER_GAP,
   GRAPH_LAYER_OPTION,
+  GRAPH_CRITICAL_PATH,
+  GRAPH_DEPENDS_ON,
   GRAPH_NO_CANVAS,
+  GRAPH_NO_PLANS,
+  GRAPH_NO_RUN,
   GRAPH_NODE_OPTION,
   GRAPH_NODE_TITLE_LINES,
   GRAPH_NODE_TITLE_LINE_CODE_POINTS,
-  GRAPH_NO_PLANS,
   GRAPH_NOT_SHOWN_SINGULAR,
+  GRAPH_OPEN_RUN_LABEL,
   GRAPH_PAD,
+  GRAPH_PAUSE_LABEL,
   GRAPH_PR_NO_LINK_REASON,
   GRAPH_REFRESH_MS,
   GRAPH_RELEASE_HEAD,
@@ -1356,17 +1364,20 @@ describe('the graph screen and its list view', () => {
 // ---------------------------------------------------------------------------
 
 describe('the graph screen and its navigation', () => {
-  it('offers one tab per stream and All, with the chosen one selected and alone in the tab order', async () => {
+  it('offers one segment per stream and All, with the chosen one pressed and alone in the tab order', async () => {
     const { screen } = screenWith()
     await screen.load(DOCUMENT, RUNS)
     const element = screen.redraw()
     if (element === null) throw new Error('no drawing')
-    const tabs = everyNode(mounted(element)).filter((each) => each.getAttribute('role') === 'tab')
-    expect(tabs.map((each) => each.getAttribute('data-tab'))).toEqual(['stream:example', 'stream:', 'all'])
-    expect(tabs.map((each) => each.getAttribute('aria-selected'))).toEqual(['false', 'false', 'true'])
-    // The roving tabindex the design's §4.3 gives a tablist: one tab is in the
-    // tab order and the rest are not.
-    expect(tabs.map((each) => each.getAttribute('tabindex'))).toEqual(['-1', '-1', '0'])
+    const segments = classedIn(mounted(element), 'graph-tab')
+    expect(segments.map((each) => each.getAttribute('data-tab'))).toEqual(['stream:example', 'stream:', 'all'])
+    expect(segments.map((each) => each.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'true'])
+    // The roving tabindex the design's §4.3 gives a group of buttons: one is in
+    // the tab order and the rest are not.
+    expect(segments.map((each) => each.getAttribute('tabindex'))).toEqual(['-1', '-1', '0'])
+    // A segment says it is pressed and no more: `aria-selected` is a tab's, and
+    // this filter is a segmented control rather than a tablist (step 6b).
+    expect(segments.map((each) => each.getAttribute('aria-selected'))).toEqual([null, null, null])
   })
 
   it('puts the first task in the tab order while nothing is selected, and the selected one after that', async () => {
@@ -1490,5 +1501,210 @@ describe('the graph screen and its navigation', () => {
     const element = screen.redraw()
     if (element === null) throw new Error('no drawing')
     expect(keys(mounted(element))).toContain(nodeKey(SECOND, 'second-one'))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The toolbar, the inspector and the legend (console redesign, step 6b)
+// ---------------------------------------------------------------------------
+
+/** classedIn is every element of one exact class under a node, in document
+ * order, and the root itself when it carries the class. */
+function classedIn(root: FakeNode, name: string): readonly FakeNode[] {
+  return everyNode(root).filter((each) => (each.getAttribute('class') ?? '').split(/\s+/).includes(name))
+}
+
+/** inspectorIn is the panel a drawing draws beside the canvas, or `null` while
+ * no task is selected. */
+function inspectorIn(root: FakeNode): FakeNode | null {
+  return classedIn(root, 'graph-inspector')[0] ?? null
+}
+
+/** inspectorOf is the panel of one selected task, over a fresh screen: the case
+ * that reads a panel says as little as it can about how it got there. */
+async function inspectorOf(key: string): Promise<FakeNode> {
+  const { screen } = screenWith()
+  await screen.load(DOCUMENT, RUNS)
+  const element = screen.change({ selected: key })
+  if (element === null) throw new Error('no drawing')
+  const panel = inspectorIn(mounted(element))
+  if (panel === null) throw new Error('the drawing drew no inspector for the task it selected')
+  return panel
+}
+
+/** related is the tasks one of the panel's two lists names, as the layout keys
+ * its buttons carry. */
+function related(panel: FakeNode, name: string): readonly string[] {
+  return classedIn(panel, name).map((each) => each.getAttribute('data-key') ?? '')
+}
+
+/** LEGEND_WORDS is the words the legend names: every state a card can carry.
+ * `stuck` is a word of the model's own list that no reading reaches, and a
+ * legend entry for a word no card draws would be a word about nothing. */
+const LEGEND_WORDS: readonly string[] = Object.freeze(STATE_WORDS.filter((word) => word !== 'stuck'))
+
+describe('the graph screen and its toolbar', () => {
+  it('draws the stream filter and the three controls as one toolbar', async () => {
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const element = screen.redraw()
+    if (element === null) throw new Error('no drawing')
+    const drawn = mounted(element)
+    const toolbar = classedIn(drawn, 'graph-toolbar')[0]
+    if (toolbar === undefined) throw new Error('the graph drew no toolbar')
+    // One toolbar, and the four controls are in it: the filter, and the three
+    // buttons beside it.
+    const inside = everyNode(toolbar).map((each) => each.getAttribute('class') ?? '')
+    for (const name of ['graph-filter', 'graph-actions', 'graph-view', 'graph-refresh', 'graph-fit']) {
+      expect(inside, `the toolbar does not hold ${name}`).toContain(name)
+    }
+    // The filter is a group of ordinary buttons rather than a tablist: nothing
+    // here is a tab, and a group is what carries the one name the whole set has.
+    const filter = classedIn(toolbar, 'graph-filter')[0]
+    expect(filter?.getAttribute('role')).toBe('group')
+    expect(filter?.getAttribute('aria-label')).toBe(GRAPH_FILTER_LABEL)
+    expect(classedIn(drawn, 'graph-tab').every((each) => each.getAttribute('role') === null)).toBe(true)
+    // The title block is the header's own and stays outside the toolbar.
+    expect(classedIn(toolbar, 'graph-title')).toHaveLength(0)
+  })
+
+  it('lays out only the stream the filter chose, and draws no band for the others', async () => {
+    // **The filter is applied to the model and not to the drawing.** The engine
+    // is handed one stream's nodes and edges, so the picture has one row in it;
+    // hiding the other streams' cards at the drawing would leave the rows their
+    // layout took standing empty under the picture -- which is what the review of
+    // step 6a saw and what this case exists for.
+    const { screen, worker } = screenWith()
+    await screen.narrow('example')
+    await screen.load(DOCUMENT, RUNS)
+    expect(worker.placements, 'the engine was asked for a picture of every stream').toBe(1)
+    const element = screen.redraw()
+    if (element === null) throw new Error('no drawing')
+    const drawn = mounted(element)
+    expect(bandsIn(drawn).map((band) => band.stream)).toEqual(['example'])
+    expect(screen.lastModel?.columns.map((column) => column.stream)).toEqual(['example'])
+    // And nothing of the other plan is drawn: not a card, not a release box.
+    expect(keys(drawn).filter((key) => key.includes('example-second'))).toEqual([])
+  })
+})
+
+describe('the graph screen and the inspector', () => {
+  const SELECTED = nodeKey(PLAN, 'task-two')
+
+  it('draws no inspector while no task is selected', async () => {
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const element = screen.redraw()
+    if (element === null) throw new Error('no drawing')
+    const drawn = mounted(element)
+    expect(inspectorIn(drawn)).toBeNull()
+    // The picture is where it has always been: the panel is drawn *beside* the
+    // canvas and never instead of it.
+    expect(classedIn(drawn, 'graph-canvas')).toHaveLength(1)
+  })
+
+  it('draws the selected task’s own facts: its words, its stream, its run and what it waits on', async () => {
+    const panel = await inspectorOf(SELECTED)
+    // The words are the card's own, and they are text: state is never a tone
+    // alone, and the panel is the one place the whole state is spelled.
+    expect(drawnWords(panel).map(([word]) => word)).toEqual(['implementing', 'critical'])
+    expect(textOf(panel)).toContain('The second task of the example plan')
+    // Its stream, and the run suffix its card carries.
+    expect(textOf(panel)).toContain('example')
+    expect(textOf(panel)).toContain('aa02')
+    // What it waits on, and what it unblocks: one button per task, carrying the
+    // card's own key, because a press on one is a selection of that card.
+    expect(related(panel, 'graph-inspector-need')).toEqual([nodeKey(PLAN, 'task-one')])
+    expect(related(panel, 'graph-inspector-unblock')).toEqual([nodeKey(PLAN, 'task-five')])
+    // The button draws the task it names: a task id is a key this screen joins
+    // on and never spells (the model's own rule), so the name a reader reads is
+    // the title the model already sanitized for the card.
+    expect(classedIn(panel, 'graph-inspector-task-title').map((each) => each.textContent)).toEqual([
+      'The first task of the example plan',
+      'A task waiting on a dependency',
+    ])
+    // And the door: the run the button opens is the one the console's own run
+    // list answered for this task's suffix.
+    const open = classedIn(panel, 'graph-inspector-open')[0]
+    expect(open?.getAttribute('data-run-id')).toBe('20261025-121805-aa02')
+    expect(open?.textContent).toBe(GRAPH_OPEN_RUN_LABEL)
+  })
+
+  it('says what a task with nothing to wait on and nothing to unblock is', async () => {
+    const panel = await inspectorOf(nodeKey(PLAN, 'task-one'))
+    expect(related(panel, 'graph-inspector-unblock')).toEqual([nodeKey(PLAN, 'task-two')])
+    expect(related(panel, 'graph-inspector-need')).toEqual([])
+    // An empty list is said in words: a heading with nothing under it is a
+    // reader wondering whether the panel failed to draw.
+    expect(classedIn(panel, 'graph-inspector-none').map((each) => each.textContent)).toEqual([GRAPH_INSPECTOR_NONE])
+  })
+
+  it('says a task has no run, and draws no Open run for it', async () => {
+    const panel = await inspectorOf(nodeKey(PLAN, 'task-three'))
+    expect(classedIn(panel, 'graph-inspector-open')).toHaveLength(0)
+    expect(textOf(panel)).toContain(GRAPH_NO_RUN)
+  })
+
+  it('offers Pause as a write this release does not make', async () => {
+    // The panel is read-only in 0.118.0: the console writes nothing but the
+    // operations its allow-lists name, and pausing a task is not one of them. The
+    // control is drawn so the shape of the panel is the one the design asks for,
+    // and it is drawn disabled -- `aria-disabled`, the console's own sentence in
+    // `title`, and no listener at all (the entry never wires it).
+    const panel = await inspectorOf(SELECTED)
+    const pause = classedIn(panel, 'graph-inspector-pause')[0]
+    if (pause === undefined) throw new Error('the inspector drew no Pause control')
+    expect(pause.getAttribute('aria-disabled')).toBe('true')
+    expect(pause.getAttribute('title')).toBe(WRITE_UNAVAILABLE)
+    // `disabledWrite`'s own label is the control's name and the refusal in one
+    // sentence, which is what a screen reader reads out.
+    expect(pause.getAttribute('aria-label')).toBe(`${GRAPH_PAUSE_LABEL}: ${WRITE_UNAVAILABLE.toLowerCase()}`)
+    expect(textOf(pause)).toContain(GRAPH_PAUSE_LABEL)
+  })
+
+  it('keeps the panel beside the canvas it belongs to', async () => {
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const element = screen.change({ selected: SELECTED })
+    if (element === null) throw new Error('no drawing')
+    const drawn = mounted(element)
+    const stage = classedIn(drawn, 'graph-stage')[0]
+    if (stage === undefined) throw new Error('the drawing put no stage around the picture')
+    expect(classedIn(stage, 'graph-canvas')).toHaveLength(1)
+    expect(classedIn(stage, 'graph-inspector')).toHaveLength(1)
+  })
+})
+
+describe('the graph screen and its legend', () => {
+  it('names every state a card can carry, and the two kinds of edge, under the canvas', async () => {
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const element = screen.redraw()
+    if (element === null) throw new Error('no drawing')
+    const drawn = mounted(element)
+    const legend = classedIn(drawn, 'graph-legend')[0]
+    if (legend === undefined) throw new Error('the graph drew no legend')
+    // Under the canvas, in the tree and on the panel: the legend explains the
+    // picture, so it is read after it.
+    const order = everyNode(drawn).map((each) => each.getAttribute('class') ?? '')
+    expect(order.indexOf('graph-canvas')).toBeLessThan(order.indexOf('graph-legend'))
+    // Every state the cards draw, and each of them words as well as a swatch:
+    // the border style is the second channel and the word is the first.
+    const swatches = classedIn(legend, 'graph-legend-swatch')
+    expect(swatches.map((each) => each.getAttribute('data-state')).filter((each) => each !== null)).toEqual(LEGEND_WORDS)
+    expect(classedIn(legend, 'graph-legend-word').map((each) => each.textContent)).toEqual([
+      ...LEGEND_WORDS,
+      GRAPH_DEPENDS_ON,
+      GRAPH_CRITICAL_PATH,
+    ])
+    // And the two kinds of line the canvas draws: a dependency, and the critical
+    // path through it.
+    expect(swatches.map((each) => each.getAttribute('data-edge')).filter((each) => each !== null)).toEqual([
+      'dependency',
+      'critical',
+    ])
+    // Every swatch is a drawing and never a sentence: the word beside it is the
+    // sentence, and a reader who hears the panel hears each word once.
+    expect(swatches.every((each) => each.getAttribute('aria-hidden') === 'true')).toBe(true)
   })
 })
