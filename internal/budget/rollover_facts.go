@@ -20,15 +20,14 @@ const factsWorkers = 32
 
 // mintSkewMargin is how far before the window's first day the run listing
 // starts. A run is listed by the mint time its ID carries and counted on the
-// day its record's started_at names, and the two stamps come from different
-// clocks — the launcher mints the ID, the container writes the record — so a
-// run that started just after midnight can carry an ID minted just before it.
-// The margin has to cover that gap, which is the launch between the two stamps
-// plus the skew of the two clocks, and it has to stay short: every minute of
-// it is a minute of the runs the window then drops, read for nothing. A
-// quarter of an hour is minutes of launch latency and NTP-synced clocks with
-// an order of magnitude to spare, where the whole previous day was a day of
-// reads thrown away.
+// day its record's started_at names, and the two stamps come from two clocks —
+// the launcher mints the ID, the container writes the record — so a run that
+// started just after midnight can carry an ID minted just before it. That gap
+// is the launch between the stamps plus the skew of the two clocks, and the
+// listing reaches back by it and no further: every minute of margin is a
+// minute of runs the window then drops, read for nothing. Half an hour is the
+// gap with room to spare; a container that starts later than that after its
+// launch is the one run this look-back can miss.
 const mintSkewMargin = 30 * time.Minute
 
 // BucketFacts reads RunFacts from the runs bucket's result.json files (plan
