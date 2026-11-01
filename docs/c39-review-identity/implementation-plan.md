@@ -530,7 +530,8 @@ C3.9g1's half on the CLI side, and the documents. It lands with C3.9g1, for the 
   every name it holds (`credentialsServiceConfig`, `:281`–`:285`) — and an absent or empty value is an
   **empty verifier list**, which is the state §5.4 already designs for: the route answers every caller with
   the class's typed refusal and the service starts. `credentialsServiceEnvNames` therefore stays the seven
-  required names, and the comments that count them (`:54`, `:168`, `:208`, `:275`) stay true for that list;
+  required names, and the comments that count them (`:54`, `:168`, `:208`, `:275`) stay true for that list —
+  they describe the names this command **requires**, which are still the seven `credentials.tf` always sets;
   the comment that says an empty variable is "a deployment that is wrong rather than a deployment with a
   default" (`:277`–`:279`) gains the one sentence it now needs, that the verifier list is the name the
   service reads as optional and the rest are not. Three tests hold it: `TestCredentialsServeStartsWithoutTheVerifierList`
