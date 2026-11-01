@@ -46,7 +46,7 @@ alternative.
 
 **F5: Conflicts. The mint's permission set is hard-coded, and the set a review needs is a fifth one that
 does not exist.** `mint` passes `github.RunTokenPermissions()` (`github.go:239`;
-`internal/gitprov/github/apptoken.go:91`, whose exported copy is `:152`), and
+`internal/gitprov/github/apptoken.go:152`, the exported spelling of the run's set), and
 `github.MintInstallationToken` takes one set for one repository. The package holds **four** sets already —
 the run's (`:91`), an image build's (`:97`), a challenger arm's (`:111`) and the coordinator's (`:128`) — and
 none of them is CSR1's: build and shadow read `contents` and `metadata` and no pull request, the coordinator

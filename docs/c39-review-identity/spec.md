@@ -223,7 +223,7 @@ whose node is unpublished unmintable, for a name the deployment already publishe
 ### 4.2 The permission set is chosen from the verified identity
 
 The mint hard-codes the run's set (`github.RunTokenPermissions()`, `github.go:239`;
-`internal/gitprov/github/apptoken.go:91`). The review caller is served **CSR1's read-only set**
+`internal/gitprov/github/apptoken.go:152`). The review caller is served **CSR1's read-only set**
 (`docs/cloud-senior-review/implementation-plan.md` CSR1: `{contents: read, pull_requests: read, metadata:
 read}`) — a **fifth** set, not a reuse: the package's four (`:91` the run's, `:97` an image build's, `:111` a
 challenger arm's, `:128` the coordinator's) each read something else, and CSR1's combination is the one a

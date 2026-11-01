@@ -11,8 +11,9 @@ task touches at most 10 files, names its tests, starts with a red step, and ends
 
 ## Dependencies
 
-Five things this plan does **not** own. **CSR1 and U7 are the two that block a task** — CSR1 blocks C3.9b,
-U7 blocks C3.9e (D1074) — and the other three are facts the tasks are written to. **The `CSR` ids are
+Six things this plan does **not** own. **CSR1, U7 and D1075 are the three that block a task** — CSR1 blocks
+C3.9b, U7 blocks C3.9e (D1074), and D1075 blocks C3.9g1 and C3.9g2 — and the other three are facts the tasks
+are written to, not gates in front of them. **The `CSR` ids are
 `docs/cloud-senior-review/`'s own task ids**, spelled as that work stream spells them (CSR1–CSR7, with its
 former R4 split into **CSR4a**, the settings posture, and **CSR4b**, the mutation check); this folder cites
 them and renames none of them.
@@ -43,6 +44,15 @@ them and renames none of them.
 - **The coordinator** (`docs/coordinator/`): the verify route is built and its caller class configured
   empty. The component that calls it, and the merge path that acts on a verified verdict, is that work
   stream's, and no task below adds one (X1).
+- **D1075, what writes the verifier list's value** ([reconciliation.md](reconciliation.md) §3, **OPEN**):
+  C3.9g1's field on `CredentialsServiceSpec` (`internal/infra/tfvars.go:180`) and the `Credentials()`
+  writer that fills it (`:289`), and C3.9g2's optional read, cannot be finished without it — the field has
+  to be filled from *something*, and the source is what D1075 asks for. The recommendation is the
+  configuration `fugaro update` already holds and publishes as the project policy, which is why no task
+  here invents a second local format; the answer still belongs to the implementing pull request, because
+  the recommendation costs a **field on a published format** and the field's spelling is that pull
+  request's to settle. The two tasks land with their variable, their read **and** that answer, or they do
+  not land: a `CredentialsServiceSpec` field with no source is the shape this dependency exists to refuse.
 - **Naming a file that other work owns.** `internal/gitprov/github/apptoken.go` (CSR1),
   `internal/infra/projectjobs.go` and the module that deploys the variant (CSR7), and everything under
   `ee/`, `console/`, `mobile/`, `website/`, `plugin/` are **read, not changed** by this plan.
@@ -55,7 +65,7 @@ them and renames none of them.
 | 1 | C3.9b | C3.9a, and **CSR1 merged** (the set it serves) |
 | 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074) |
 | 3 | C3.9f | C3.9a, C3.9c, C3.9e (the frame the verify route recomputes) |
-| 4 | C3.9g1, C3.9g2 | C3.9e, C3.9f; the two are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
+| 4 | C3.9g1, C3.9g2 | C3.9e, C3.9f **and D1075 answered** (the verifier list's field has to be filled from a named source); the two are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
 
 ## Where each decision lands
 
@@ -612,6 +622,7 @@ different reason has taken a wrong turn.
 | `internal/credsvc/audit.go` | C3.9e, C3.9f | one purpose each, `ValidPurpose` in the first of the two, and the credential-without-tier exemption of `checked` (`:442`, `:448`) grown to the sign purpose and, by f, once more to the verify purpose; f carries the verify purpose's other two relaxations as well — `Caller` without `Job` (`:438`) and a `StatusOK` line with no `Run` and no `Job` (`:462`–`:473`) |
 | `internal/credsvc/bundle.go` | C3.9c, read by C3.9e/C3.9f | c: the kind, the key set, the accessor; the routes only call the accessor |
 | `internal/cli/credentials_serve.go` | C3.9a, C3.9e, C3.9g2 | a: the review set and the repository table; e: the create-only writer's wiring; g2: the verifier list's **optional** read and the config field, outside `credentialsServiceEnvNames`, which stays the seven required names |
+| `internal/cli/creds.go` | C3.9c, C3.9d | c: `creds ls` names the review-signing entry and its kind, and never a value; d: the `--generate` flag, the bytes generated in the process, the two-entry write and `creds set`'s help text. Different subcommands and different regions of the file, so the two edits do not collide — the row is here because a reader checking who owns a change in this file should not have to open both tasks |
 | `internal/credsvc/*_test.go` | many | each task adds its own file where it can; the four existing files it extends (`auth_test.go`, `sharedjobs_test.go`, `forward_test.go`, `bundle_test.go`) are named in the task |
 
 ## Live checks
