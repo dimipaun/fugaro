@@ -145,7 +145,7 @@ The one command in the set whose cost is not in a plan (reconciliation F16), and
 
 ## M9. Documentation, the handoff sentence and the release notes
 
-- **This folder's status line** changes from "unanswered" to what the owner answered. **No decision's text is edited by this task** — a changed decision is a rewritten design, in its own pull request.
+- **This folder's status lines** already record what the owner answered on 2026-11-01, in all four documents; M9 re-reads them rather than rewording them. **No decision's text is edited by this task** — a changed decision is a rewritten design, in its own pull request.
 - **The handoff sentence** for the settings, rigor and accounts designs (§2), written as a note in this folder for their owners rather than into their files.
 - **`docs/releases/v0.15.0.md`'s `### For operators`**: *"run `fugaro update`"* plus what it will ask. The one thing an owner of a managed project must know — that `fugaro managed flag` now records a build bound and an existing marker does not — belongs there, and a release that carries M5 and not M4's bound says nothing about a bound that cannot be reached.
 - **The skill's paragraph** (`plugin/skills/setup/reference/managed.md`, which says *"never write that label yourself"*) is **reserved by the 2026-10-30 rulings**: M9 writes the paragraph as a **handoff** in this folder and does not edit the file.

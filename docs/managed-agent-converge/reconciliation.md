@@ -1,6 +1,6 @@
 # Reconciliation: every claim of the spec against the code, and the decisions this design needs
 
-**Status: a design, and nothing is built.** The decisions are **D1011–D1026** (§3), each with a recommendation and the cost of every alternative. The owner has answered none of them. **Where this file and [spec.md](spec.md) disagree, this file wins.**
+**Status: a design, and nothing is built.** The decisions are **D1011–D1026** (§3), each with a recommendation and the cost of every alternative. **The owner answered D1011 and D1012 on 2026-11-01** — every converge and publish command, run by the agent itself with no prompt, behind a fixed deterministic gate over the plan with no judgment calls by the agent; [README.md](README.md) records the answers verbatim. **D1013–D1026 are unanswered.** **Where this file and [spec.md](spec.md) disagree, this file wins.**
 
 Reconciled against `origin/main` at **`15f4d8ab`**, on 2026-11-01, by reading the files rather than the designs that describe them. Line numbers are the head this branch was cut from.
 
@@ -230,7 +230,7 @@ Each row: the question, the recommendation, and what each alternative costs. **D
 
 Read on **2026-11-01**, above every `D<number>` **on `main` and in every open work stream**, by fetching each branch and reading it rather than trusting a neighbouring design's table.
 
-**The evidence is the branch, not the pull-request number.** This environment cannot map a head branch to a pull request without the GitHub API, so the table names the **branch** — which is what was read and what a reader can fetch — and gives the pull-request number only where the branch's own README named it. A reader re-checking this does not need the pull-request list at all:
+**The evidence is the branch, not the pull-request number.** This environment cannot map a head branch to a pull request without the GitHub API, so the table names the **branch** — which is what was read and what a reader can fetch — and gives the pull-request number only where the branch's own README named it. The numbers in parentheses below are therefore a cross-reference a reader can follow, not a mapping this environment made. A reader re-checking this does not need the pull-request list at all:
 
 ```sh
 git ls-remote --heads origin | awk '{print $2}' | sed 's#refs/heads/##' | grep -E 'fugaro/2026(1031|11)'
