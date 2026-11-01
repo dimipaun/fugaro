@@ -1981,13 +1981,15 @@ describe('the spend read’s arguments', () => {
  * coordinator's stored view -- the first operation here whose document the CLI
  * serves from a store rather than from a live walk) and left the other
  * twenty-two exactly where they were. **The console v2 plan's V2.5.1a added the
- * twenty-fifth** (`link.openPullRequest` / `openPullRequest`, K2a: the pull
- * request link, built from three fields and never read out of a document; the
- * twenty-fourth is `run.launch` / `launchRun`, the console's one write and the
+ * twenty-fourth** (`run.launch` / `launchRun`, the console's one write and the
  * only operation here that is not a read, rule 11) and left the other twenty-
- * three exactly where they were. V2.5.1a's part 2b-3b-1 then built the
- * confirmation window into the entry point, so that row's spawn happens on a yes
- * from the window's own top frame and on nothing else.
+ * three exactly where they were; its part 2b-3b-1 then built the confirmation
+ * window into the entry point, so that row's spawn happens on a yes from the
+ * window's own top frame and on nothing else. **The coordinator-v2 plan's K2a
+ * added the twenty-fifth** (`link.openPullRequest` / `openPullRequest`: the pull
+ * request link, built in the main process from three fields and never read out
+ * of a document's `url`, D814/D815) and left the other twenty-four exactly where
+ * they were.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],

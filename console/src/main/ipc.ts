@@ -5,14 +5,13 @@
 //
 // The console has no IPC bridge. It has a fixed table of named operations --
 // one per read the console performs, the CLI reads among them for the documents
-// the dashboard draws out of design section 2.1, plus the two links -- the one
+// the dashboard draws out of design section 2.1, plus the two links (the one
 // validated URL the console is handed, and the pull request link it builds from
-// three fields of a document (K2a, D815)
-// (that section's list holds a thirteenth row, the picker's own `fugaro config
-// list --json`; it belongs to the installations picker window and is not an
-// operation of this table -- `src/preload/installations.ts` is its surface) --
-// and three
-// prohibitions that are the whole of the rule:
+// three fields of a document, K2a, D815) -- and three prohibitions that are the
+// whole of the rule. (That section's list holds a thirteenth row, the picker's
+// own `fugaro config list --json`; it belongs to the installations picker window
+// and is not an operation of this table -- `src/preload/installations.ts` is its
+// surface.)
 //
 //   - **no `invoke(channel, ...)`**: nothing anywhere in the console takes a
 //     channel from a caller. `channelForOperation` derives a channel from a name
@@ -230,15 +229,14 @@ export const REPORT_MAX_WEEKS = 522
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
  *   - `link` -- the one URL, and it must pass `validateExternalUrl`;
- *   - `gitProvider` -- `coordinator status`'s provider field, the closed set of
- *     two words the coordinator stores a repository's host as (`github`,
- *     `bitbucket`: `PULL_REQUEST_PROVIDERS`, `src/main/window.ts`). It is read
- *     from the builder's own table rather than spelled again here, so a
- *     provider the schema admits is one `pullRequestUrl` has a host for. Unlike
- *     every kind above it, it is **not** a value a CLI flag takes: it is the
- *     one kind whose value is a document field, and it exists because the link
- *     is built from the document's own fields rather than read out of one
- *     (D814, D815);
+ *   - `gitProvider` -- the closed set of two words the coordinator stores a
+ *     repository's host as, in the stored view's own `provider` field
+ *     (`github`, `bitbucket`: `PULL_REQUEST_PROVIDERS`, `src/main/window.ts`).
+ *     It is read from the builder's own table rather than spelled again here,
+ *     so a provider the schema admits is one `pullRequestUrl` has a host for.
+ *     It is the one kind whose value is a document field rather than a CLI
+ *     flag's, and it exists because the pull request link is **built** from
+ *     that field instead of read out of the document's `url` (D814, D815);
  *   - `installationName` -- one installation's project name, the handle the CLI
  *     itself printed for it (`isProjectName`, `src/main/installations.ts`): not
  *     empty, at most `MAX_INSTALLATION_NAME_LENGTH`, no whitespace, no control
