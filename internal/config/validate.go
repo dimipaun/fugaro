@@ -130,8 +130,10 @@ func Validate(c *Config) []Problem {
 	}
 	// 0 is unset, and an unset knob takes the rigor mode's own default
 	// (internal/rigor's DefaultRounds): the value is resolved where the mode
-	// is, which this package does not read. Every layer treats a written 0 as
-	// unset already (layer.go), so this is the same reading one layer down.
+	// is, which this package does not read. Unset is not "fall through to the
+	// layer below": a layer's scalars replace whole (resolve.go), so a
+	// repository's written 0 replaces the project layer's number, and the
+	// mode's row is what supplies the gap.
 	if c.Agent.ReviewRounds < 0 || c.Agent.ReviewRounds > 10 {
 		add("agent.review_rounds", "must be between 1 and 10, or 0 (unset: the mode's default supplies it)")
 	}

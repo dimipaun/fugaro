@@ -66,8 +66,6 @@ func TestPlanRoundsPrecedence(t *testing.T) {
 		a        config.Agent
 		override *int
 		mode     rigor.Mode
-		in       int
-		senior   int
 		wantIn   int
 		wantSen  int
 	}{
