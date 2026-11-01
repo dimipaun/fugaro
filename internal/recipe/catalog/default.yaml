@@ -1,6 +1,7 @@
 version: 1
 name: default
-description: Today's loop. A first-line review when agent.first_line_review turns it on, for agent.first_line_rounds rounds, then the senior review for agent.review_rounds rounds.
+description: Today's loop. A first-line review when agent.first_line_review turns it on, then the senior review, then the adversarial review where the mode's levels run it.
 steps:
   - first_line: {}
   - review: {}
+  - adversarial: {}

@@ -506,13 +506,13 @@ func TestBudgetPreviewTypicalJSONSubscription(t *testing.T) {
 // way the round knobs can leave a loop out: the mirror of the runner's loop
 // and StageBound must never drift apart.
 //
-// The adversarial default is the mode's senior row on both sides, read from
-// the one source (rigor.AdversarialDefault): the preview resolves a mode and
-// the bound has no mode to read, so the count takes the mode's row directly
-// where the bound takes it as an argument. No catalog recipe carries the step
-// today, so the mode here changes nothing; passing the strictest mode is what
-// keeps a recipe that gains one from reading higher on one side than the
-// other.
+// Level 3 is the third loop, and the bound is asked for one round of it for
+// the same reason the two knobs below are 0 or 1 and not the mode's numbers:
+// this is the count at one round of each loop. The catalog's `default`
+// carries the step since 0.15.0 and writes no max_rounds of its own, so
+// asking the bound for the mode's row here (rigor.AdversarialDefault) would
+// measure the ceiling — which errs high on purpose — against a typical run,
+// not the mirror this test is.
 func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
 	const mode = rigor.Critical
 	for _, name := range recipe.CatalogNames() {
@@ -531,7 +531,7 @@ func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
 					for _, c := range previewTypicalCounts(rp, f, n, mode) {
 						sum += c
 					}
-					if want := recipe.StageBound(rp, f, n, rigor.AdversarialDefault(mode)); sum != want {
+					if want := recipe.StageBound(rp, f, n, 1); sum != want {
 						t.Errorf("first_line_rounds %d, review_rounds %d: the typical shape has %d stages, the bound has %d", f, n, sum, want)
 					}
 				}
@@ -573,8 +573,10 @@ func TestBudgetPreviewDigestCountsNoImplementStage(t *testing.T) {
 // TestBudgetPreviewAdversarialStages: the level-3 step is a review round of
 // its own, so a recipe holding it prices one more review and its fix, plus --
 // when the step bounces, as the senior review's does -- one more pair of cheap
-// stages. No catalog recipe carries the step, so the catalog-wide pin above
-// never reaches this arm; these shapes are its own. The mirror is the bound
+// stages. The catalog's `default` carries the step since 0.15.0, so the
+// catalog-wide pin above reaches this arm through it; the shapes here are the
+// ones no catalog recipe has, a step that caps itself or that names a mode.
+// The mirror is the bound
 // where the step caps itself at the one round a typical run spends, which is
 // where that pin reads it too; a step that writes no max_rounds takes the
 // mode's senior row on the bound's side and is still one round on the typical

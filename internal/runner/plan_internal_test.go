@@ -176,18 +176,28 @@ func parseRecipe(t *testing.T, text string) *recipe.Recipe {
 	return r
 }
 
+// TestPlanDefaultFollowsAgent: the catalog default is derived from agent.*
+// and, since 0.15.0, from the mode's levels — Critical runs review level 3, so
+// its adversarial step is in the plan here whatever the recipe's other steps
+// do (TestDefaultRecipeSkipsALevelWhoseConditionIsOff is where the level
+// itself is read). Critical is also the mode whose ceiling is the whole scale:
+// the case is about F6's own precedence, so the mode's ceiling must not bite
+// (T3.2).
 func TestPlanDefaultFollowsAgent(t *testing.T) {
-	// Critical, whose ceiling is the whole scale: the case is about F6's own
-	// precedence, so the mode's ceiling must not bite (T3.2).
 	def := catalogRecipe(t, recipe.DefaultName)
 	a := config.Agent{ReviewRounds: 4, FirstLineReview: config.FirstLineOff, FirstLineRounds: 2}
-	if got := planOf(def, true, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 4, Precedence: 4}}) {
+	level3 := planStep{Kind: recipe.StepAdversarial, Rounds: rigor.AdversarialDefault(rigor.Critical)}
+	if got := planOf(def, true, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
+		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4}, level3,
+	}) {
 		t.Fatalf("off: %v", got)
 	}
 	a.FirstLineReview = config.FirstLineOn
+	level3.FirstRounds = 2
 	if got := planOf(def, true, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
+		level3,
 	}) {
 		t.Fatalf("on: %v", got)
 	}
@@ -197,6 +207,7 @@ func TestPlanDefaultFollowsAgent(t *testing.T) {
 	if got := planOf(def, false, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
+		level3,
 	}) {
 		t.Fatalf("not derived: %v", got)
 	}
@@ -247,9 +258,14 @@ func TestPlanBounceCarriesFirstRounds(t *testing.T) {
 }
 
 func TestCheckPlan(t *testing.T) {
-	plain := parseRecipe(t, "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: {}\n")
 	ok := []planStep{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepReview, Rounds: 1}}
-	if err := checkPlan(plain, ok); err != nil {
+	if err := checkPlan(ok); err != nil {
+		t.Fatal(err)
+	}
+	// Level 3's step ends a plan the same way the senior review does: it is a
+	// review round, and the round readiness reads when it ran.
+	level3 := []planStep{{Kind: recipe.StepReview, Rounds: 1}, {Kind: recipe.StepAdversarial, Rounds: 2}}
+	if err := checkPlan(level3); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range [][]planStep{
@@ -257,16 +273,11 @@ func TestCheckPlan(t *testing.T) {
 		{{Kind: recipe.StepFirstLine, Rounds: 2}},
 		{{Kind: recipe.StepReview, Rounds: 1}, {Kind: recipe.StepFirstLine, Rounds: 1}},
 		{{Kind: recipe.StepReview, Rounds: 0}},
+		{{Kind: recipe.StepAdversarial, Rounds: 2}},
+		{{Kind: recipe.StepReview, Rounds: 1}, {Kind: recipe.StepAdversarial, Rounds: 0}},
 	} {
-		if err := checkPlan(plain, bad); err == nil || !strings.Contains(err.Error(), "no trailing review step") {
+		if err := checkPlan(bad); err == nil || !strings.Contains(err.Error(), "no trailing review step") {
 			t.Errorf("checkPlan(%v) = %v", bad, err)
 		}
-	}
-	// A recipe carrying review level 3 is refused rather than planned without
-	// it: planOf has no arm for the step, so the ordinary plan below would run
-	// and the pull request would open with level 3 never run.
-	level3 := parseRecipe(t, "version: 1\nname: level3\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: {}\n")
-	if err := checkPlan(level3, ok); err == nil || !strings.Contains(err.Error(), "adversarial step is not run") {
-		t.Errorf("checkPlan(level 3) = %v, want the step refused", err)
 	}
 }

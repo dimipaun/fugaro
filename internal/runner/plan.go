@@ -2,6 +2,7 @@ package runner
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -35,8 +36,9 @@ type planStep struct {
 
 // planOf turns a recipe into the run's plan (docs/design/recipes.md §6).
 // derived marks the catalog default, whose first_line step runs only when
-// agent.first_line_review turns it on. Rounds come from the task's override,
-// else the step's max_rounds, else agent.*, else the mode's own row
+// agent.first_line_review turns it on and whose adversarial step runs only
+// where the mode's levels run review level 3. Rounds come from the task's
+// override, else the step's max_rounds, else agent.*, else the mode's own row
 // (rigor.DefaultRounds) — a default the four layers above it set another
 // number against, up or down, within the recipe's bounds (the owner's ruling
 // of 2026-10-31, which answers O3).
@@ -50,9 +52,8 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 		// planStep. A digest step has no arm here either: it is the runner's
 		// own work, dispatched in agentLoop in place of implement
 		// (digest.go), so no plan is ever built with the step silently
-		// dropped. The adversarial step has no arm here either, and unlike
-		// those three it is dispatched nowhere else: checkPlan refuses a
-		// recipe carrying one until the release whose runner runs level 3.
+		// dropped. Every other step the parser accepts is planned here, so
+		// the loop runs exactly what checkPlan has just read.
 		switch s.Kind {
 		case recipe.StepFirstLine:
 			if derived && !a.FirstLineOn(providers) {
@@ -74,9 +75,38 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 				set = *reviewOverride
 			}
 			out = append(out, planStep{Kind: s.Kind, Rounds: setRounds(set, defaults.Senior, recipe.MaxReviewRounds), Precedence: set, Bounce: s.Bounce, FirstRounds: firstRounds})
+		case recipe.StepAdversarial:
+			// Level 3 has no agent.* knob of its own yet (L1.3/L4.4 add one),
+			// so the step's own max_rounds or the mode's senior row is what it
+			// spends (rigor.AdversarialDefault). Only the derived default
+			// follows the level: a recipe that writes the step is taken as
+			// written, exactly as a recipe's own first_line step is, and the
+			// catalog default carries it for every mode that runs it.
+			if derived && !adversarialLevelOn(mode) {
+				continue
+			}
+			set := s.MaxRounds
+			out = append(out, planStep{Kind: s.Kind, Rounds: setRounds(set, rigor.AdversarialDefault(mode), recipe.MaxReviewRounds), Precedence: set, Bounce: s.Bounce, FirstRounds: firstRounds})
 		}
 	}
 	return out
+}
+
+// adversarialLevelOn reports whether review level 3 is on for mode m, which is
+// what the derived default's adversarial step follows: the mode's own row of
+// the levels table (rigor.DefaultLevels) — Critical runs it, every other mode
+// leaves it off. The layers above that row (the task's review_levels, the
+// owner's floor) are the level resolver's, L3.1, and the runner acts on the
+// whole resolution in L4.2 (docs/review-levels-ab-jobmax/implementation-plan.md);
+// this is the row below them, and it is the one a repository that configured
+// no level at all gets.
+//
+// A mode outside the table runs the level rather than dropping it: the runner
+// resolves a mode through rigor.Resolve, which answers only known ones, and a
+// level this code cannot place must not be the one silently skipped.
+func adversarialLevelOn(mode rigor.Mode) bool {
+	ls, err := rigor.DefaultLevels(mode)
+	return err != nil || ls.L3 == rigor.LevelOn
 }
 
 // setRounds is one step's rounds: the number a layer above the mode set, or
@@ -102,24 +132,21 @@ func (r *run) reviewRounds(st planStep) int {
 	return setRounds(st.Precedence, rigor.DefaultRounds(r.reachedRigor()).Senior, recipe.MaxReviewRounds)
 }
 
-// checkPlan refuses a plan that does not end with a review step: a run
-// never skips the senior review, whatever the recipe says.
+// checkPlan refuses a plan that does not end with a review step: the senior
+// review, or level 3's adversarial pass after it (recipe.Parse allows no other
+// order). A run never skips the senior review, whatever the recipe says.
 //
-// It refuses the adversarial step too, and that refusal is load-bearing
-// rather than a guard: planOf has no arm for the step, so a recipe carrying
-// one would otherwise be planned without it and the run would open an
-// ordinary pull request with review level 3 never run — the outcome the
-// launcher's adversarialSince gate promises cannot happen. The step is
-// level 3's, and the runner that runs it is a later release's; until then
-// the only way one reaches this runner is a task written by hand or
-// replayed, and the run ends here instead (L4.2 replaces this with the step
-// itself).
-func checkPlan(rcp *recipe.Recipe, plan []planStep) error {
-	if n := len(plan); n == 0 || plan[n-1].Kind != recipe.StepReview || plan[n-1].Rounds < 1 {
+// It reads the plan and not the recipe, because the plan is what the loop
+// runs: the derived default carries the adversarial step at every mode and
+// plans it only where the mode's levels run it, so a recipe that has the step
+// and a plan that leaves it out is a run of the levels the mode resolved
+// rather than a step silently dropped.
+func checkPlan(plan []planStep) error {
+	senior := slices.ContainsFunc(plan, func(st planStep) bool { return st.Kind == recipe.StepReview && st.Rounds >= 1 })
+	n := len(plan)
+	if n == 0 || !senior || plan[n-1].Rounds < 1 ||
+		(plan[n-1].Kind != recipe.StepReview && plan[n-1].Kind != recipe.StepAdversarial) {
 		return errors.New("the plan has no trailing review step, so the run would skip the senior review")
-	}
-	if recipe.UsesAdversarial(rcp) {
-		return errors.New("the adversarial step is not run by this runner (review level 3 ships in a newer fugaro), so the run would skip it")
 	}
 	return nil
 }
