@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1288,4 +1289,147 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 	if r.resolveCalls != 1 {
 		t.Errorf("resolve calls %d, want 1: one update is one resolve, and it is the release's own signed image the run pins", r.resolveCalls)
 	}
+}
+
+// The re-pin fails, and the opt-in survives it (the review's finding 1). The
+// resolve reaches cosign and the registry, so it fails for reasons that have
+// nothing to do with the installation: no cosign on PATH, a wrong-identity
+// signature, a registry blip. What must NOT happen is the trap the workdir
+// order sets: PrepareWorkdir rebuilds the installation's tree (deleting the
+// tfvars) before the installation stage runs, so a run that errors between
+// that rebuild and prepare's rewrite leaves NO tfvars file at all — and the
+// next run reads that as "never opted in", plans the service, its account, its
+// grant and its bundle away, and the bundle container's prevent_destroy
+// refuses the plan. The installation could then never be updated again without
+// --provision-credentials: a transient registry failure would have cost the
+// owner an operator step, and CLAUDE.md's hard rule says the upgrade leaves
+// none.
+//
+// The refusal is the other half of the same finding, and the reason this test
+// exists rather than a softer one: the resolve failing must FAIL the run, not
+// be swallowed into "the image did not move, carry on" (a silent return nil
+// here applies the installation with the previous release's image and reports
+// the service as moved), and never a digest nothing verified.
+func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	r.resolveErr = errors.New("the signature of dimipaun/fugaro-credentials:1.2.3-pinned did not verify")
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("an update whose credentials image could not be resolved reported success: the installation is applied on the previous release's image while the run says it moved the service\n%s", s)
+	}
+	if !strings.Contains(err.Error(), "did not verify") {
+		t.Errorf("the run failed with %v, want the resolve's own refusal — an update that cannot reach the registry cannot report the service as moved either\n%s", err, s)
+	}
+	// The opt-in is where it was, image and all: the run wrote the document
+	// the carry is about to use back before it resolved, so the file the next
+	// run reads carries the service.
+	doc := credentialsVarsOnDisk(t, r)
+	if doc == nil {
+		t.Fatalf("the failed update left the installation with no tfvars at all: the next run carries no credentials_service forward, plans the service's removal, and the bundle container's prevent_destroy refuses that plan — the installation is stuck until --provision-credentials\n%s", s)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		t.Fatalf("the failed update left tfvars carrying no credentials_service: the next run reads that as never having opted in\n%s", s)
+	}
+	if svc["image"] != oldCredentialsRef("1.2.2") {
+		t.Errorf("credentials_service.image = %v, want the previous pin %s kept: nothing was applied, so nothing may say the service moved", svc["image"], oldCredentialsRef("1.2.2"))
+	}
+
+	// The next update, this time with the registry reachable, still finds the
+	// opt-in and converges — the whole point: one transient failure costs one
+	// retry and not an operator step.
+	r.resolveErr = nil
+	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("the update after the failed re-pin did not converge: %v\n%s%s", err, out, errOut)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("credentials_service.image = %v after the retry, want %s: the opt-in the failed run kept is what the retry re-pinned", got, r.credentialsRef())
+	}
+}
+
+// An installation whose recorded image names a release NEWER than this CLI's is
+// left alone (the review's finding 2). Two machines of one installation are
+// upgraded at different times, so the older CLI meets a service that a newer
+// release's update already moved: the release in the reference is this
+// release's future, and re-pinning it "down" to the version the older binary
+// knows would put the previous process back — and the two machines would flip
+// the service back and forth on every update, each one undoing the other. It
+// is the base image's own rule (init_images.go's baseIsCurrent, which compares
+// with newer and never moves a pin back).
+func TestUpdateKeepsANewerRecordedCredentialsImage(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	ahead := oldCredentialsRef("1.2.4")
+	seedCredentialsService(t, r, ahead)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an update whose installation already runs a later release's image failed: %v\n%s", err, s)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != ahead {
+		t.Errorf("credentials_service.image = %v, want %s untouched: a CLI older than the release the installation runs must not pin the service back to its own\n%s", got, ahead, s)
+	}
+	if r.resolveCalls != 0 || r.arCalls != 0 {
+		t.Errorf("the update resolved %d image(s) and read %d back, want none: there is nothing to move when the recorded release is ahead of this binary's", r.resolveCalls, r.arCalls)
+	}
+}
+
+// A coding agent's session pins nothing (the review's finding 3). The engine
+// stages are PLANNED in such a session rather than skipped, so an ordinary
+// `fugaro update` from one does reach the installation stage — and without
+// this the re-pin there would run cosign and the registry with the operator's
+// own ADC and write the resolved image into the workdir's tfvars. That is the
+// resolve and the write the credentials stage's own agent refusal exists to
+// keep out of a session (TestInitCredentialsStageRefusedInAgent: "no digest
+// resolved, no tfvars written"), and a plan-only run that did them would have
+// the operator's credentials spent on a registry read the owner never asked
+// for.
+//
+// The installation stage really ran: the tfvars this test reads are the ones
+// prepare wrote, which no earlier stage of an agent's run reaches.
+func TestUpdateInAnAgentSessionPinsNoCredentialsImage(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	t.Setenv("CLAUDECODE", "1")
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil && !strings.Contains(s, "left for you") {
+		t.Fatalf("an ordinary update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
+	}
+	if r.resolveCalls != 0 || r.arCalls != 0 {
+		t.Errorf("an agent's session resolved %d image(s) and read %d back: the session plans the installation, so a re-pin there spends the operator's ADC on cosign and the registry for a run that applies nothing", r.resolveCalls, r.arCalls)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != oldCredentialsRef("1.2.2") {
+		t.Errorf("credentials_service.image = %v, want the recorded %s: nothing of the re-pin may run in an agent's session\n%s", got, oldCredentialsRef("1.2.2"), s)
+	}
+}
+
+// credentialsVarsOnDisk is the installation root's tfvars as the workdir
+// holds them now, or nil when the workdir holds none — the difference the
+// failed re-pin turns on, which is why this read is not init_test.go's
+// tfvars (that one fails the test when the file is missing).
+func credentialsVarsOnDisk(t *testing.T, r *imagesRig) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("the workdir's %s is not a document: %v\n%s", infra.VarsFile, err, b)
+	}
+	return doc
 }

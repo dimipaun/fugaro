@@ -427,21 +427,40 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 // digest nothing verified is never written, and a resolve that fails returns
 // the error rather than leaving the installation on an older image silently —
 // an update that cannot reach the registry cannot report the service as moved
-// either.
+// either. (A run that does not apply — a plan-only run, or one whose
+// confirmation the owner declines — leaves the tfvars naming this release's
+// image while the deployed service is still the previous one. That is
+// prepare's own plan-time write, unchanged by this: the tfvars ARE the desired
+// state, and the next run that applies converges the service on them.)
 //
-// Three things it deliberately does not do:
+// Four things it deliberately does not do:
 //
 //   - It leaves an installation that never opted in alone, whole. No
 //     credentials_service entry in the tfvars is no service to move, and it
 //     reports that without a registry call at all, so the overwhelming majority
 //     of updates are byte-for-byte the run they were.
-//   - It resolves nothing for an installation already on this release's image.
-//     The re-pin is needed once per release, and a run that finds the release
-//     in the reference has nothing to ask the registry.
+//   - It moves the reference forward only. A CLI older than the release the
+//     recorded image names — two machines of one installation upgraded at
+//     different times — finds the recorded release newer than its own and
+//     leaves it alone (newer, init_images.go: the rule the base image's own pin
+//     follows). Re-pinning DOWN would put the previous release's process back,
+//     and those two machines would flip the service on every update. A
+//     reference naming no release at all — an operator's hand-written digest,
+//     which the module's validation admits — has nothing to compare and is
+//     replaced by the release's image, which is the upgrade's own direction.
+//   - It runs nothing in a coding agent's session. The engine stages are
+//     PLANNED there rather than skipped, so a plan-only run would reach cosign
+//     and the registry with the operator's ADC and write the resolved image
+//     into the workdir's tfvars: the same resolve and the same write the
+//     credentials stage's own agent refusal keeps out of such a session
+//     (TestInitCredentialsStageRefusedInAgent).
 //   - It makes no database call. The budget backend's ownership gate is the
 //     credentials stage's (requireCredsRules), and only a run that TURNS THE
 //     SERVICE ON has to answer for it.
 func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
+	if m := agentMarker(os.Getenv); m != "" {
+		return nil
+	}
 	ver := releaseVersion()
 	if ver == "" {
 		// A development build resolves no released image (resolveCredentialsImage
@@ -456,7 +475,21 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 	if doc == nil { // no credentials_service in the installation's tfvars: nothing opted in
 		return nil
 	}
-	if infra.CredentialsServiceImageRelease(image) == ver {
+	// The document goes back on disk BEFORE anything that can fail. prepare
+	// (init.go) is what rewrites the installation's tfvars from this run's spec
+	// and carries the opt-in forward, and it is steps away: PrepareWorkdir has
+	// already deleted the file, so a failure in between — the resolve below,
+	// which reaches for cosign and for the registry and can fail for either —
+	// would leave an installation whose tfvars hold no opt-in at all. The next
+	// run reads that as "never opted in", plans the service's removal, and the
+	// bundle container's prevent_destroy refuses the plan, and no later update
+	// moves the installation again without --provision-credentials. Putting the
+	// document the carry is about to use back closes the window this resolve
+	// opened, and costs one write of a file prepare rewrites in a moment.
+	if err := e.wd.WriteVars(doc); err != nil {
+		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
+	}
+	if !newer(ver, infra.CredentialsServiceImageRelease(image)) {
 		return nil
 	}
 	pinned, err := resolveCredentialsImage(ctx, e)
