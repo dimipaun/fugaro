@@ -72,8 +72,13 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   the signing key in the **credentials service**, so no signing key and no App key goes on the
   variant. The read-only installation token it works with is the **credentials service's** to mint,
   and it is fetched rather than mounted.
-- It changes no existing behaviour: an installation that launches no review job sees the tree it has
-  today.
+- It changes no existing behaviour, **with the one exception D894(a) names**: an installation that
+  launches no review job sees the tree it has today, but R4's configuration posture tightens the
+  `review` stage itself, so `fugaro run --pr N` — review mode, which exists today — also stops loading
+  the reviewed head's `CLAUDE.md`, and the stage is launched under a settings posture that refuses
+  project hooks and project MCP servers outright instead of relying on the checkout strip alone. That
+  is the same untrusted-head threat the strip already answers for `.claude/` and `.mcp.json`, applied
+  to the file it left behind (reconciliation §4, D894).
 - It writes no pull request and no comment of its own on any path: the review job's verdict is an
   artifact, and the coordinator decides what to say.
 - **It does not claim the review job is contained.** The reviewer's mutation check runs repository

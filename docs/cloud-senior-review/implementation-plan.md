@@ -337,8 +337,12 @@ if D894 is answered (a)**.
   stage's managed settings **allow managed hooks only**, **enable no project MCP**, and take **setting
   sources from user and managed only**; the head's `CLAUDE.md`, `.claude/` and skills are diff content
   and never configuration; **`fugaro.yaml`, the instructions and the review prompt are read from the
-  base**, which is what `docs/design/v1.md` already does for follow-ups. **Red test:** a head that adds
-  a hook and an `.mcp.json` — the stage runs neither. If the owner answers **(b)** (replace `.claude/`,
+  base**, which is what `docs/design/v1.md` already does for follow-ups. **Red test, and it is two
+  halves because only one of them is red:** a head that adds a hook and an `.mcp.json` is **already**
+  neutralised by `stripClaudeConfig`, so a test that only planted those would pass today and would not
+  be a red step at all — what is red is (i) the **settings posture** the stage is launched under, which
+  carries no `disableAllHooks`/`allowManagedHooksOnly`/setting-sources keys today, and (ii) the head's
+  **`CLAUDE.md`**, which today survives the strip by design. If the owner answers **(b)** (replace `.claude/`,
   `CLAUDE.md` and `.mcp.json` in the checkout with the base's copies) or **(c)** (accept and record
   it), this bullet is rewritten and D891(a) is no longer a control in (c)'s case, which §7 then has to
   say.
@@ -371,12 +375,18 @@ if D894 is answered (a)**.
   can write is one of `pass`, `fail`, `error`, `timeout`, and a fifth is refused — the vocabulary a
   coordinator routes on cannot be a free-form string, and the `error` and `timeout` arms are the ones
   a writer would otherwise leave to prose), and
-  `TestReviewStageDeniesBashForTheRestOfTheStage` (D891(a)'s own red test), and
-  `TestReviewStageRunsNoHeadHookAndNoHeadMCP` (D894(a)'s own red test: a head that adds a hook and an
-  `.mcp.json` runs neither).
+  `TestReviewStageDeniesBashForTheRestOfTheStage` (D891(a)'s own red test),
+  `TestReviewStageRefusesProjectHooksAndMCP` (D894(a), first half: the settings the stage is launched
+  under allow managed hooks only, enable no project MCP and take setting sources from user and managed
+  only) and `TestReviewStageStripsTheHeadsClaudeMd` (D894(a), second half: the head's `CLAUDE.md`, at
+  every depth, does not survive the review checkout).
 - **Red step:** `TestMutationAppliesRunsRevertsAndPushesNothing` fails on an unknown task field,
-  `TestReviewStageDeniesBashForTheRestOfTheStage` fails because `DenyRules` denies tools only, and
-  `TestReviewStageRunsNoHeadHookAndNoHeadMCP` fails because the stage loads the head's configuration.
+  `TestReviewStageDeniesBashForTheRestOfTheStage` fails because `DenyRules` denies tools only,
+  `TestReviewStageRefusesProjectHooksAndMCP` fails because the stage's managed settings carry none of
+  those keys today, and `TestReviewStageStripsTheHeadsClaudeMd` fails because `stripClaudeConfig`
+  leaves `CLAUDE.md` in place deliberately (`internal/runner/reviewmode.go:238`). **A test that only
+  planted a hook and an `.mcp.json` in the head would pass today** — `stripClaudeConfig` already
+  removes both — so it is not one of the red steps and is not written as one.
   **SEC flag:** the task that runs repository code inside the reviewer, which is the one thing here
   that could look like "the reviewer edits the code" — the revert and the no-push assertions are what
   make §2's "never pushes" a fact, the scrub, the egress rule and the Bash denial are what make

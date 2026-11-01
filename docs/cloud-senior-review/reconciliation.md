@@ -579,10 +579,12 @@ missing).
   hooks only**, **no project MCP**, and **setting sources from user and managed only** — so a hook or
   an MCP server that reaches the checkout by any other route still does not run. `fugaro.yaml`, the
   instructions and the review prompt stay the base's, as they already are. This becomes **part of R4
-  (SEC)** with a red test: a head that adds a hook, an `.mcp.json` **and a `CLAUDE.md`** — the stage
-  runs neither the hook nor the MCP server, and the instructions it follows are the base's.
-  (`TestReviewModeStripsClaudeConfig` already holds the hook and `.mcp.json` halves; R4's new red test
-  is the `CLAUDE.md` half plus the settings posture, and it fails today on both.) *Cost:* the head's
+  (SEC)**, and its red test is **two halves, because only one of them is red**:
+  `TestReviewModeStripsClaudeConfig` **already** removes a planted hook and `.mcp.json`, so a test
+  that only planted those would pass today and would be no red step at all — the red halves are the
+  **settings posture** the stage is launched under (which carries no
+  `disableAllHooks`/`allowManagedHooksOnly`/setting-sources keys today) and the head's **`CLAUDE.md`**
+  (which survives the strip by design). *Cost:* the head's
   own configuration is not honoured at all, so a repository that legitimately configures its review
   through `.claude/` or `CLAUDE.md` gets the base's configuration instead — which is the correct
   default for a reviewer that must not be steered by the thing it reviews, and the cost is one

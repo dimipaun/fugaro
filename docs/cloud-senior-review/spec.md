@@ -422,9 +422,10 @@ task that first writes the artifact, and the console and the coordinator read th
 than the field list.
 
 **What the review job contributes to the run record.** The record already carries `reviews[]`
-(`runstore.ReviewSummary`: `round`, `verdict`, `findings` and the head the verdict read) and
+(`runstore.ReviewSummary`: `round`, `tier`, `verdict`, `findings` and the head the verdict read) and
 `runstore.Cost`. A review job's record is a run record like any other: mode `review`, the PR's number
-and SHA **as the record's own `pr` link** (`runstore.PRRef`), the account it ran as (`runs ls`'s
+**as the record's own `pr` link** (`runstore.PRRef`) beside the head it read in the record's own
+`head_sha` (`internal/runstore/runstore.go:648`), the account it ran as (`runs ls`'s
 `ACCOUNT` column and `fugaro diagnose`'s `Account:` line already exist), and its cost as **notional**
 — the subscription's calls are not gateway-priced. **Two of those are not provenance but the cap:**
 the **PR link** is what makes the review job a member of the pull request's chain, and the record
@@ -754,9 +755,12 @@ reviewer must read it — that is its job — so the injection surface is not re
   **it can also encode a secret it can read into `review.json` or `review.md`** rather than say it
   aloud. **Redaction does not close that, and the design says why:** `internal/agent/redact.go`
   replaces the **literal values** it has registered (a secret's raw form, its JSON-escaped form, a
-  multi-line secret's own lines, and the encodings `encodedForms` lists) — so a token the reviewer
-  splits, reorders, truncates, hex- or gzip-encodes or embeds mid-stream in wrapped base64 is not
-  matched, and neither is a secret it never had registered at all. The artifact is redacted **before
+  multi-line secret's own lines, and the encodings `encodedForms` lists), and what it does not reach
+  is stated rather than glossed: the encodings it lists are the four base64 alphabets (including the
+  alignment-independent cores, so a secret embedded in a longer encoded header or env dump is caught),
+  the URL escapes and the wrapped line pieces — **so an encoding it does not list (hex, gzip, an
+  encryption), a value the reviewer splits, reorders or truncates across the text, or a secret that
+  was never registered at all is not matched.** The artifact is redacted **before
   it is signed** (§3), which makes the signature cover what the redactor left, not what it should
   have caught. **What that costs:** a verdict artifact can carry a secret-shaped payload out of the
   run even with every scrub in this design working, which is one more reason the verdict is advice
