@@ -49,13 +49,17 @@ import {
   COORDINATOR_OMITTED_WORD,
   COORDINATOR_OPEN_RUN_WORD,
   COORDINATOR_OPEN_SPEND_WORD,
+  COORDINATOR_QUEUE_BUDGET_WORD,
   COORDINATOR_QUEUE_CAP_WORD,
   COORDINATOR_QUEUE_CAPS_HIDDEN_WORD,
   COORDINATOR_QUEUE_EMPTY_WORD,
+  COORDINATOR_QUEUE_JOB_WHY_WORD,
   COORDINATOR_QUEUE_JOB_WORD,
   COORDINATOR_QUEUE_KILL_WORD,
   COORDINATOR_QUEUE_NO_PLANS_WORD,
+  COORDINATOR_QUEUE_PLAN_WHY_WORD,
   COORDINATOR_QUEUE_PLAN_WORD,
+  COORDINATOR_QUEUE_PR_WHY_WORD,
   COORDINATOR_QUEUE_PR_WORD,
   COORDINATOR_QUEUE_REPO_KILL_WORD,
   COORDINATOR_QUEUE_WORD,
@@ -71,6 +75,7 @@ import {
   COORDINATOR_TOTAL_PLANS_WORD,
   COORDINATOR_TOTAL_REPOS_WORD,
   COORDINATOR_UNREAD_WORD,
+  QUEUE_SOURCES,
   buildCoordinatorModel,
   queueRuns,
   renderCoordinator,
@@ -85,6 +90,7 @@ import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { PATH_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
 import type { CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
+import type { JSONDoc } from '../../src/source/source'
 
 // ---------------------------------------------------------------------------
 // The harness: a fake element that refuses what a screen may not do.
@@ -431,7 +437,7 @@ function aBudget(options: {
   repoCounted?: number
   repoCap?: number
   repoKilled?: boolean
-}): unknown {
+}): JSONDoc {
   const cap = options.cap ?? 600
   const counted = options.counted ?? 412.6
   const repoCap = options.repoCap ?? 120
@@ -703,9 +709,15 @@ describe('the project view screen', () => {
     // The one reading on this screen is a count the console counted off the
     // arrays it was handed, so the three counts are the arrays' lengths and the
     // run's own in-flight word is drawn from the record's flag.
+    //
+    // The body and not the whole tree: the fleet's totals strip (K1) is drawn
+    // from the same screen and counts other things -- `collisions: 0` among
+    // them -- so a case about this repository's counts reads this repository's
+    // panel. `fleet totals` below is where the strip's own figures are pinned.
     const node = renders({ repos: [STORED] })
     expect(drawn(node)).toContain(COORDINATOR_IN_FLIGHT_WORD)
-    for (const element of all(node, 'coordinator-count-value')) expect(element.textContent).toBe('1')
+    const body = one(node, 'coordinator-body')
+    for (const element of all(body, 'coordinator-count-value')) expect(element.textContent).toBe('1')
   })
 })
 
@@ -1064,12 +1076,29 @@ describe('the action queue (K1)', () => {
         caps: capsOf(aBudget({ repoCounted: 120, repoCap: 120 })),
       }),
     )
-    expect(model.queue.document?.items.map((item) => item.action)).toEqual([
+    // Every part's items, in the order the queue draws them: the parts are the
+    // four reads, and `QUEUE_SOURCES` is that order.
+    const actions = QUEUE_SOURCES.flatMap(
+      (source) => model.queue[source]?.items.map((item) => item.action) ?? [],
+    )
+    expect(actions).toEqual([
       { kind: 'openRun', repo: 'owner/repo-a', run: '20261031-101502-9f00' },
-      { kind: 'retry', repo: 'owner/repo-a', run: '20261030-220114-77bd', planTask: 'C9', title: 'a run title' },
-      { kind: 'launch', repo: 'owner/repo-a', planTask: 'C2', title: 'a task somebody wrote' },
+      { kind: 'retry', repo: 'owner/repo-a', planTask: 'C9' },
+      { kind: 'launch', repo: 'owner/repo-a', planTask: 'p1/C2' },
       { kind: 'spend' },
     ])
+    // `Retry` and `Launch` carry exactly what rule 11's argv is given: the
+    // repository and the plan task. The run id is **main's** -- it is minted in
+    // the confirmation window, on Submit, and a renderer that carried one would
+    // be naming a run that does not exist yet -- and the title is the operator's,
+    // typed in that window. `Open run` is the one act that names a run, because
+    // opening one is what it does.
+    //
+    // The plan task is `<plan>/<task>` and never the node alone: the CLI refuses
+    // a plan task that is not shaped that way (`task.PlanTaskProblem`), and
+    // `plan status`'s `plans[].id` is the id the join uses.
+    const plan = model.queue.plans?.items[0]
+    expect(plan?.action).toEqual({ kind: 'launch', repo: 'owner/repo-a', planTask: 'p1/C2' })
     const node = renderCoordinator(factory, model, 'dark')
     expect(all(node, 'coordinator-queue-button').map((button) => button.textContent)).toEqual([
       COORDINATOR_OPEN_RUN_WORD,

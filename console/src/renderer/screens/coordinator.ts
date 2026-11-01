@@ -40,10 +40,23 @@
 //
 // A refusal is not this screen's: the entry point draws the CLI's own sentence
 // through `refusedScreen` (`src/renderer/entry.ts`), and `renderCoordinator` is
-// only ever handed a document. That is why the model's `view` is not nullable.
+// only ever handed a document. That is why the body's `repos` is nullable in the
+// model rather than the model being absent -- the screen's sections above it are
+// drawn from three other reads.
+//
+// **The action queue and the fleet totals (console coordinator v2, K1)** are the
+// two sections above that body, and they are what this screen exists to answer
+// first: what is waiting for a person, and what the fleet holds. They are built
+// from four reads the entry starts together -- the stored view above,
+// `runs ls --json --since 24h`, `plan status --json --all` and
+// `budget show --json` -- and each part is drawn the moment **its own** read
+// answers (the owner's progressive-rendering rule of 2026-10-31). Nothing here
+// invents a figure: an item is drawn only for a state a document carries, a
+// count is drawn only over the items the console itself drew, and a read that
+// has not answered is absent rather than zero (D819).
 
 import { measured } from '../../shared/availability'
-import type { Reading } from '../../shared/availability'
+import type { Reading, Unit } from '../../shared/availability'
 import { nameableText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import { BUSY_SLOT_CLASS } from '../section'
@@ -51,7 +64,10 @@ import type {
   CoordinatorRecord,
   CoordinatorRepoView,
   CoordinatorStatusView,
+  PlanStatusView,
 } from '../../shared/schema'
+import { capsAtCap } from './spend'
+import type { SpendCaps } from './spend'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
 
@@ -174,6 +190,123 @@ export type CoordinatorTheme = (typeof COORDINATOR_THEMES)[number]
 export const COORDINATOR_LIST_CAP = 20
 
 // ---------------------------------------------------------------------------
+// The action queue's own words (K1).
+// ---------------------------------------------------------------------------
+
+/** COORDINATOR_QUEUE_WORD is what the count beside the queue's head counts: the
+ * items the console drew, which is a figure of the console's own and never one a
+ * document carries. It is drawn only when every one of the queue's four reads has
+ * answered -- a console does not count a queue it is still reading, and a count
+ * drawn while a read is out would be a figure the operator cannot check. */
+export const COORDINATOR_QUEUE_WORD = 'items need you'
+
+/** COORDINATOR_QUEUE_EMPTY_WORD is the head's answer when every read answered and
+ * none of them is holding anything. It is a state and not a zero: `0` beside
+ * `items need you` would be the same words a queue nobody finished reading
+ * cannot say. */
+export const COORDINATOR_QUEUE_EMPTY_WORD = 'nothing is waiting for you'
+
+/** COORDINATOR_QUEUE_PR_WORD, COORDINATOR_QUEUE_JOB_WORD,
+ * COORDINATOR_QUEUE_PLAN_WORD and COORDINATOR_QUEUE_BUDGET_WORD are the four
+ * kinds of item, in the order the queue draws them -- the order of its four
+ * reads. Each is the console's own name for the kind: no document says `JOB`,
+ * and one that printed a document's word here would be drawing a vocabulary it
+ * does not control. */
+export const COORDINATOR_QUEUE_PR_WORD = 'PR'
+export const COORDINATOR_QUEUE_JOB_WORD = 'JOB'
+export const COORDINATOR_QUEUE_PLAN_WORD = 'PLAN'
+export const COORDINATOR_QUEUE_BUDGET_WORD = 'BUDGET'
+
+/** COORDINATOR_QUEUE_PR_WHY_WORD, COORDINATOR_QUEUE_JOB_WHY_WORD and
+ * COORDINATOR_QUEUE_PLAN_WHY_WORD are why an item of that kind is waiting, in
+ * the console's own words. Each states the rule the queue applied and not a
+ * claim about the work: nothing in any document says a pull request is *ready to
+ * merge*, and a queue that said so would be inventing a review result. */
+export const COORDINATOR_QUEUE_PR_WHY_WORD = 'open, not a draft, and no run behind it is still going'
+export const COORDINATOR_QUEUE_JOB_WHY_WORD = 'this run ended without succeeding'
+export const COORDINATOR_QUEUE_PLAN_WHY_WORD = 'ready to launch: no run has joined it and everything it needs is done'
+
+/** COORDINATOR_QUEUE_KILL_WORD, COORDINATOR_QUEUE_REPO_KILL_WORD and
+ * COORDINATOR_QUEUE_CAP_WORD are the three grounds a budget alert states, and
+ * the alert says which one it is: the fleet's kill switch refuses every run, a
+ * repository's own kill refuses that repository, and a reached daily cap refuses
+ * new runs until the day rolls. They are three facts and not one, which is why
+ * one word does not cover them (D812). */
+export const COORDINATOR_QUEUE_KILL_WORD = 'the kill switch is on: the fleet refuses every new run'
+export const COORDINATOR_QUEUE_REPO_KILL_WORD = 'this repository is killed: it refuses new runs until it is resumed'
+export const COORDINATOR_QUEUE_CAP_WORD = 'this repository has reached its daily cap: it refuses new runs'
+
+/** COORDINATOR_QUEUE_NO_PLANS_WORD and COORDINATOR_QUEUE_CAPS_HIDDEN_WORD are
+ * the two notes the queue draws where a read it would need was not made. They
+ * are the console's own sentences about its own gap, and they are what stands in
+ * place of a part of the queue: an installation that records no checkout gets no
+ * `plan status` read at all (the command walks a checkout), and the reduced mode
+ * withholds the caps. */
+export const COORDINATOR_QUEUE_NO_PLANS_WORD =
+  'this installation records no checkout, so the plan tasks are not known'
+export const COORDINATOR_QUEUE_CAPS_HIDDEN_WORD =
+  'the caps are withheld for the installation this console is driving'
+
+/** COORDINATOR_OPEN_RUN_WORD, COORDINATOR_RETRY_WORD, COORDINATOR_LAUNCH_WORD and
+ * COORDINATOR_OPEN_SPEND_WORD are the four buttons: one per kind of item, and
+ * **one per item**, which is the queue's own rule (spec section 2.2). Retry and
+ * Launch lead to the launch confirmation the console already has -- rule 11's
+ * window and rule 11's argv, with the item's repository and plan task filled in
+ * -- so they are not a second way to start a run (D811). Open Spend is a
+ * navigation: the queue never calls `budget kill` or `budget resume`. */
+export const COORDINATOR_OPEN_RUN_WORD = 'Open run'
+export const COORDINATOR_RETRY_WORD = 'Retry'
+export const COORDINATOR_LAUNCH_WORD = 'Launch'
+export const COORDINATOR_OPEN_SPEND_WORD = 'Open Spend'
+
+/** COORDINATOR_BLIND_WORD introduces the line under the queue, and
+ * COORDINATOR_BLIND_STALE_WORD and COORDINATOR_BLIND_UNREAD_WORD are the two
+ * things it counts: repositories the sweep has marked stale, and pull requests a
+ * sweep could not read. Neither is a queue item, because no button on this page
+ * can fix either -- the sweep is a scheduled job and the console may not start
+ * it -- and a disabled button would be a control that exists to explain itself
+ * (D813). */
+export const COORDINATOR_BLIND_WORD = 'what this page cannot reach, and offers no button for:'
+export const COORDINATOR_BLIND_STALE_WORD = 'repositories the sweep has not reconciled since'
+export const COORDINATOR_BLIND_UNREAD_WORD = 'pull requests a sweep could not read'
+
+/** The fleet strip's six words. The first three are counted off the stored view,
+ * the fourth off `plan status`' own total, and the last two are `budget show`'s
+ * global block -- the same read the rail draws its one figure from (D819).
+ * `report` is not read for any of them: it is the money read that breaks spend
+ * down, and it is roughly thirteen seconds of a first paint. */
+export const COORDINATOR_TOTAL_REPOS_WORD = 'repositories'
+export const COORDINATOR_TOTAL_IN_FLIGHT_WORD = 'records in flight'
+export const COORDINATOR_TOTAL_COLLISIONS_WORD = 'file collisions'
+export const COORDINATOR_TOTAL_PLANS_WORD = 'plans'
+export const COORDINATOR_TOTAL_COUNTED_WORD = 'counted today'
+export const COORDINATOR_TOTAL_CAP_WORD = 'daily cap'
+
+/** COORDINATOR_QUEUE_BUSY and COORDINATOR_TOTALS_BUSY are what the two sections'
+ * own marks say while their reads are out: the queue's four are started
+ * together, and the totals wait on three of them. */
+export const COORDINATOR_QUEUE_BUSY = 'Reading the queue…'
+export const COORDINATOR_TOTALS_BUSY = 'Reading the fleet’s totals…'
+
+/** COORDINATOR_QUEUE_CLASS and COORDINATOR_TOTALS_CLASS are the two sections'
+ * hooks: the element each of the entry's marks is put on, and what a test reads
+ * to say which section is still out. */
+export const COORDINATOR_QUEUE_CLASS = 'coordinator-queue'
+export const COORDINATOR_TOTALS_CLASS = 'coordinator-totals'
+
+/** COORDINATOR_QUEUE_HEAD_CLASS holds the queue's own line -- what is waiting,
+ * and the sentence that says when nothing is -- and COORDINATOR_QUEUE_PART_CLASS
+ * is one of the four parts under it, one per read that contributes to the queue
+ * (`QUEUE_SOURCES`). COORDINATOR_BLIND_HOST_CLASS is the blind-spot line.
+ *
+ * The parts are hosts and not content: a read that has not answered leaves its
+ * own part empty, so "this read is still out" is a part with nothing in it,
+ * beside three that are filled. */
+export const COORDINATOR_QUEUE_HEAD_CLASS = 'coordinator-queue-head'
+export const COORDINATOR_QUEUE_PART_CLASS = 'coordinator-queue-part'
+export const COORDINATOR_BLIND_HOST_CLASS = 'coordinator-blind-host'
+
+// ---------------------------------------------------------------------------
 // The elements.
 // ---------------------------------------------------------------------------
 
@@ -284,16 +417,221 @@ export interface CoordinatorRepoPanel {
   readonly omittedCollisions: Reading | null
 }
 
-/** CoordinatorModel is what the screen draws. */
-export interface CoordinatorModel {
-  readonly source: string
-  readonly repos: readonly CoordinatorRepoPanel[]
+/**
+ * CoordinatorQueueSource names the four reads the action queue is built from,
+ * and it is also the name of the part of the queue each one fills: the queue
+ * paints in the part whose read answered, so the part is what the entry needs a
+ * handle on and what a test reads to tell a waiting part from an answered one.
+ */
+export type CoordinatorQueueSource = 'document' | 'runs' | 'plans' | 'budget'
+
+/** CoordinatorQueueKind is the four kinds of item, in the order the queue draws
+ * them: a pull request waiting for review or merge, a job that ended without
+ * succeeding, a plan task ready to launch, and a budget alert. */
+export type CoordinatorQueueKind = 'pullRequest' | 'job' | 'plan' | 'budget'
+
+/**
+ * CoordinatorQueueAction is the **one** act an item's one button performs, and
+ * it carries the values that act needs and nothing else.
+ *
+ * `openRun` moves to the Run screen and needs the run it opens. `retry` and
+ * `launch` lead to the launch confirmation the console already has (rule 11's
+ * window), and what they carry is exactly what rule 11's argv is given: the
+ * repository, and the plan task when the item knows one. **Neither carries a run
+ * id and neither carries a title**: the id a launch runs under is the main
+ * process's own, drawn fresh per confirmation (`src/main/launch.ts`), so a Retry
+ * is a new launch through the approved argv rather than a replay of the failed
+ * run (D811), and the title is the operator's to write in the form. `spend` is a
+ * navigation to the Spend screen and nothing else (D812).
+ */
+export type CoordinatorQueueAction =
+  | { readonly kind: 'openRun'; readonly repo: string; readonly run: string }
+  | { readonly kind: 'retry'; readonly repo: string; readonly planTask: string }
+  | { readonly kind: 'launch'; readonly repo: string; readonly planTask: string }
+  | { readonly kind: 'spend' }
+
+/**
+ * CoordinatorQueueItem is one thing waiting for a person. Every field is off a
+ * document or is the console's own sentence about the rule it applied:
+ *
+ *   - `subject` is the id the document gave the thing (a pull request's number as
+ *     the console labels a record, a run's id, a task's id, a repository's slug),
+ *     empty for an alert about the whole fleet;
+ *   - `scope` is where the subject sits -- the branch behind a pull request, the
+ *     plan task a run recorded, the plan a task belongs to -- and is empty when
+ *     the document says nothing;
+ *   - `title` is the untrusted text whoever wrote the thing wrote, drawn as text;
+ *   - `ground` is which of the two budget grounds an alert stands on, and is
+ *     `null` for every other kind. It is a closed word rather than a sentence so
+ *     the sentence itself is drawn from this file's constants, beside the words
+ *     it belongs to.
+ */
+export interface CoordinatorQueueItem {
+  readonly kind: CoordinatorQueueKind
+  readonly subject: string
+  readonly scope: string
+  readonly repo: string
+  readonly title: string
+  readonly ground: 'kill' | 'repoKill' | 'cap' | null
+  readonly action: CoordinatorQueueAction
 }
 
-/** CoordinatorInputs is what the entry point hands the model: the decoded
- * document. */
+/**
+ * CoordinatorQueueNote is the gap a part of the queue can have instead of
+ * items: the installation records no checkout, so `plan status` was not read and
+ * the plan tasks are unknown rather than absent, or the reduced mode withholds
+ * the caps, so `budget show` was not read.
+ *
+ * It is a closed word rather than a sentence, for the reason
+ * `CoordinatorQueueItem.ground` is: the sentence is drawn from this file's own
+ * constant at the moment the note is drawn, so no string the model composed
+ * reaches the sink.
+ */
+export type CoordinatorQueueNote = 'noPlans' | 'capsHidden'
+
+/** CoordinatorQueuePart is one source's part of the queue: the items it holds,
+ * how many were left off by the console's own cap, and -- where a read that part
+ * would need was not made -- the console's own note about that gap. `null` is a
+ * part whose read has not answered yet, which the entry draws as a wait. */
+export interface CoordinatorQueuePart {
+  readonly items: readonly CoordinatorQueueItem[]
+  readonly dropped: number
+  readonly note: CoordinatorQueueNote | null
+}
+
+/** CoordinatorQueueParts is the queue: one part per read, in the order they are
+ * drawn, each independently absent while its read is out. */
+export interface CoordinatorQueueParts {
+  readonly document: CoordinatorQueuePart | null
+  readonly runs: CoordinatorQueuePart | null
+  readonly plans: CoordinatorQueuePart | null
+  readonly budget: CoordinatorQueuePart | null
+}
+
+/**
+ * CoordinatorRunRow is one row of `runs ls --json` the queue draws a job for: a
+ * row whose run was halted by a person, or one that is terminal and did not
+ * succeed (D810). `halted` is the first of the two grounds and is kept apart
+ * from `status` because a halt is somebody's own act on a run that then ended
+ * however it ended -- a halted run that reports `succeeded` is still a run that
+ * stopped for a person.
+ */
+export interface CoordinatorRunRow {
+  readonly repo: string
+  readonly run: string
+  readonly status: string
+  readonly title: string
+  readonly planTask: string
+  readonly halted: boolean
+}
+
+/** CoordinatorBlindSpot is the line under the queue: the console's own words for
+ * what it cannot reach, and the two counts, each a reading so neither can be
+ * drawn as a bare figure (D813). */
+export interface CoordinatorBlindSpot {
+  readonly stale: Reading
+  readonly unread: Reading
+}
+
+/**
+ * CoordinatorTotals is the fleet strip. Every figure is a count **off a
+ * document** and never a sum over the rows this page happens to have drawn, and
+ * each is absent (`null`) rather than zero while the read it comes from has not
+ * answered -- a strip of zeroes is a claim about a fleet nobody read (D819).
+ *
+ * The strip is only drawn at all with the stored view in hand: the three figures
+ * at its head are that document's, and the money beside them would be a fleet
+ * total of a fleet the console cannot count.
+ */
+export interface CoordinatorTotals {
+  readonly repos: Reading
+  readonly inFlight: Reading
+  readonly collisions: Reading
+  readonly plans: Reading | null
+  readonly counted: Reading | null
+  readonly cap: Reading | null
+}
+
+/** CoordinatorModel is what the screen draws. `repos` is the body's summary and
+ * is `null` while the stored view has not answered -- the queue and the totals
+ * are drawn from reads of their own either way. */
+export interface CoordinatorModel {
+  readonly source: string
+  readonly queue: CoordinatorQueueParts
+  /** the console's own count of the items it drew, drawn only when all four
+   * reads have answered; `null` is "not known", which is drawn as nothing */
+  readonly queueCount: Reading | null
+  readonly blind: CoordinatorBlindSpot | null
+  readonly totals: CoordinatorTotals | null
+  readonly repos: readonly CoordinatorRepoPanel[] | null
+}
+
+/**
+ * CoordinatorInputs is what the entry point hands the model: the four documents
+ * the screen draws, in the shape each read answered with. A read that has not
+ * answered is `null`, and `checkout`/`capsHidden` are the two conditions under
+ * which a read is not made at all -- the installation records no checkout (the
+ * `plan status` read is scoped to one), or the reduced mode withholds the caps.
+ */
 export interface CoordinatorInputs {
-  readonly view: CoordinatorStatusView
+  readonly view: CoordinatorStatusView | null
+  readonly runs: readonly CoordinatorRunRow[] | null
+  readonly plans: PlanStatusView | null
+  readonly caps: SpendCaps | null
+  readonly checkout: boolean
+  readonly capsHidden: boolean
+}
+
+/** objectAt is a value that is a JSON object, or null. */
+function objectAt(raw: unknown): Record<string, unknown> | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return raw as Record<string, unknown>
+}
+
+/** textAt is a value that is a JSON string, or null. */
+function textAt(raw: unknown): string | null {
+  return typeof raw === 'string' ? raw : null
+}
+
+/**
+ * queueRuns reads the jobs out of a `runs ls --json` document: one row per run
+ * that ended without succeeding, or that a person halted -- the two grounds D810
+ * names. It is the same shape of reader as `rigor.ts`'s `rigorIndex`, and for
+ * the same reason: the document is handed in as it arrived and this is the one
+ * place a row becomes the console's own.
+ *
+ * **The CLI's order is kept.** `runs ls` answers newest first, and a queue that
+ * re-sorted it would be a second opinion about which run is the newest -- the
+ * order is the document's, and the cap below cuts the oldest off rather than
+ * reordering anything. A row that names no run is dropped: there is no id to
+ * draw and none to open.
+ *
+ * It reads the **whole** document, so the caller can hand the rows to the model
+ * and to nothing else: the queue is not the job list (spec section 2.6), and no
+ * row this function drops reaches any drawing.
+ */
+export function queueRuns(document: unknown): readonly CoordinatorRunRow[] {
+  const rows = objectAt(document)?.['runs']
+  if (!Array.isArray(rows)) return []
+  const waiting: CoordinatorRunRow[] = []
+  for (const row of rows) {
+    const record = objectAt(row)
+    if (record === null) continue
+    const halted = objectAt(record['halt']) !== null
+    const status = textAt(record['status']) ?? ''
+    if (!halted && !(record['terminal'] === true && status !== 'succeeded')) continue
+    const run = textAt(record['run']) ?? textAt(record['run_id']) ?? ''
+    if (run === '') continue
+    waiting.push({
+      repo: textAt(record['repo']) ?? '',
+      run,
+      status,
+      title: textAt(record['title']) ?? '',
+      planTask: textAt(record['plan_task']) ?? '',
+      halted,
+    })
+  }
+  return waiting
 }
 
 /**
@@ -380,14 +718,236 @@ function repoPanel(repo: CoordinatorRepoView): CoordinatorRepoPanel {
 }
 
 /**
- * buildCoordinatorModel turns the decoded document into the panels the screen
+ * documentQueuePart reads the pull requests that are waiting for a person.
+ *
+ * **All three conditions are the document's own fields** (spec section 2.2):
+ * the host says the pull request is open and not a draft, no run behind it is
+ * still going, and there is at least one run behind it at all -- a pull request
+ * the store holds no run for is one somebody opened by hand, and the queue has
+ * no run to offer it. Nothing here guesses at a review, a CI result or a moved
+ * base: no document the console reads carries them, so the queue says the pull
+ * request is open and stops there.
+ */
+function documentQueuePart(document: CoordinatorStatusView): CoordinatorQueuePart {
+  const items: CoordinatorQueueItem[] = []
+  for (const repo of document.repos) {
+    for (const record of repo.view.records) {
+      const pr = record.pr
+      if (pr === null || pr.state !== 'open' || pr.draft) continue
+      if (record.inFlight) continue
+      const newest = record.runs[0]
+      if (newest === undefined) continue
+      items.push({
+        kind: 'pullRequest',
+        subject: recordLabel(record),
+        scope: record.branch,
+        repo: repo.repo,
+        title: pr.title,
+        ground: null,
+        action: { kind: 'openRun', repo: repo.repo, run: newest.id },
+      })
+    }
+  }
+  const capped = cut(items)
+  return { items: capped.drawn, dropped: capped.dropped, note: null }
+}
+
+/** runsQueuePart is the jobs: one item per row `queueRuns` kept, in the CLI's
+ * own order. Retry offers the run's own repository and the plan task the launch
+ * recorded for it, both as stored -- the console rewrites neither, and a plan
+ * task the CLI would refuse is refused by main's own check rather than by a
+ * second copy of that rule here. */
+function runsQueuePart(rows: readonly CoordinatorRunRow[]): CoordinatorQueuePart {
+  const items = rows.map(
+    (row): CoordinatorQueueItem => ({
+      kind: 'job',
+      subject: row.run,
+      scope: row.planTask,
+      repo: row.repo,
+      title: row.title,
+      ground: null,
+      action: { kind: 'retry', repo: row.repo, planTask: row.planTask },
+    }),
+  )
+  const capped = cut(items)
+  return { items: capped.drawn, dropped: capped.dropped, note: null }
+}
+
+/**
+ * plansQueuePart is the tasks that are ready to launch: `plan status`' own
+ * `state == "ready"`, which is the CLI's answer to "no run has joined it and
+ * everything it needs is done" -- the console applies no rule of its own here,
+ * because a screen that recomputed readiness from the edges could disagree with
+ * the CLI about the same task.
+ *
+ * The plan task a launch is given is the pair the CLI stores, `<plan>/<task>`
+ * (`run --plan-task`'s own help, and `planIDFromPath` for the plan's half): the
+ * item id alone is a value main refuses, and a queue whose Launch could never
+ * open a window would be a button that only looked like one. Both halves are the
+ * document's -- the plan's own `id` and the task's own `id` -- and the join is
+ * the flag's spelling and not a new fact.
+ */
+function plansQueuePart(document: PlanStatusView): CoordinatorQueuePart {
+  const items: CoordinatorQueueItem[] = []
+  for (const plan of document.plans) {
+    for (const node of plan.nodes) {
+      if (node.state !== 'ready') continue
+      items.push({
+        kind: 'plan',
+        subject: node.id,
+        scope: plan.id,
+        repo: document.repo,
+        title: node.title,
+        ground: null,
+        action: { kind: 'launch', repo: document.repo, planTask: `${plan.id}/${node.id}` },
+      })
+    }
+  }
+  const capped = cut(items)
+  return { items: capped.drawn, dropped: capped.dropped, note: null }
+}
+
+/**
+ * budgetQueuePart is the alerts `budget show --json` carries. The fleet's kill
+ * switch is one item and stands for the fleet: with it on, every repository's
+ * own state is a fact nobody can act on until the fleet is resumed, and a queue
+ * that listed a repository at its cap underneath a fleet that refuses
+ * everything would be drawing two cases of one blockage.
+ *
+ * Without it, each repository the document reports as killed, or as at its cap,
+ * is an item of its own. `capsAtCap` is Spend's own reading of that row -- the
+ * headroom the document reports, or the counted dollars against the cap -- so
+ * the two screens cannot disagree about the same repository.
+ *
+ * The one act is a navigation to Spend (D812). Nothing here calls `budget kill`
+ * or `budget resume`: those are the CLI's, behind a typed confirmation, and they
+ * are on the never-reachable list.
+ */
+function budgetQueuePart(caps: SpendCaps): CoordinatorQueuePart {
+  const global = caps.global
+  // A document with no `global` block is a read that answered with no fleet
+  // figures -- not a read that is still out: the part is drawn, and it holds
+  // nothing rather than wearing a wait it is not in.
+  if (global === null) return { items: [], dropped: 0, note: null }
+  if (global.kill !== null) {
+    return {
+      items: [
+        {
+          kind: 'budget',
+          subject: '',
+          scope: '',
+          repo: '',
+          title: '',
+          ground: 'kill',
+          action: { kind: 'spend' },
+        },
+      ],
+      dropped: 0,
+      note: null,
+    }
+  }
+  const items: CoordinatorQueueItem[] = []
+  for (const row of caps.repos) {
+    const killed = row.kill !== null
+    if (!killed && !capsAtCap(row)) continue
+    items.push({
+      kind: 'budget',
+      subject: row.repo,
+      scope: '',
+      repo: '',
+      title: '',
+      ground: killed ? 'repoKill' : 'cap',
+      action: { kind: 'spend' },
+    })
+  }
+  const capped = cut(items)
+  return { items: capped.drawn, dropped: capped.dropped, note: null }
+}
+
+/** blindSpotOf counts the two things this page cannot reach, off the stored
+ * view: the repositories the sweep marked stale, and the pull requests a sweep
+ * could not read. It is `null` when there is nothing to say -- with no document,
+ * and with both counts at zero, the line would be a line about nothing. */
+function blindSpotOf(document: CoordinatorStatusView): CoordinatorBlindSpot | null {
+  let stale = 0
+  let unread = 0
+  for (const repo of document.repos) {
+    if (repo.stale !== null) stale += 1
+    unread += repo.view.unread.length
+  }
+  if (stale === 0 && unread === 0) return null
+  return {
+    stale: measured(stale),
+    unread: measured(unread),
+  }
+}
+
+/**
+ * buildCoordinatorModel turns the decoded documents into the panels the screen
  * draws. Every string it composes itself goes to the screen through `literal`
  * (module constants, and the record labels and numbers the console made); every
  * string the *document* carried goes through `putText`, with the class its wire
  * key declares.
+ *
+ * **The queue's count is the console's own and is drawn only over a whole
+ * queue.** It counts the items this page drew -- not what the documents hold:
+ * the queue is what a person can act on here and now -- and it is `null` unless
+ * all four of its reads have answered, because a count over three parts of a
+ * queue is a figure the operator has no way to check. Where the plans or the
+ * caps are not read at all (`checkout`, `capsHidden`), the head stays empty and
+ * the part says why.
  */
 export function buildCoordinatorModel(inputs: CoordinatorInputs): CoordinatorModel {
-  return { source: COORDINATOR_SOURCE_LINE, repos: inputs.view.repos.map((repo) => repoPanel(repo)) }
+  const document = inputs.view
+  const plans = inputs.plans
+  const caps = inputs.caps
+  const queue: CoordinatorQueueParts = {
+    document: document === null ? null : documentQueuePart(document),
+    runs: inputs.runs === null ? null : runsQueuePart(inputs.runs),
+    plans:
+      plans === null
+        ? inputs.checkout
+          ? null
+          : { items: [], dropped: 0, note: 'noPlans' }
+        : plansQueuePart(plans),
+    budget:
+      caps === null
+        ? inputs.capsHidden
+          ? { items: [], dropped: 0, note: 'capsHidden' }
+          : null
+        : budgetQueuePart(caps),
+  }
+  const whole =
+    document !== null && inputs.runs !== null && plans !== null && caps !== null
+  const drawn = (['document', 'runs', 'plans', 'budget'] as const).reduce(
+    (total, source) => total + (queue[source]?.items.length ?? 0),
+    0,
+  )
+  return {
+    source: COORDINATOR_SOURCE_LINE,
+    queue,
+    queueCount: whole ? measured(drawn) : null,
+    blind: document === null ? null : blindSpotOf(document),
+    totals:
+      document === null
+        ? null
+        : {
+            repos: measured(document.repos.length),
+            inFlight: measured(
+              document.repos.reduce(
+                (total, repo) => total + repo.view.records.filter((record) => record.inFlight).length,
+                0,
+              ),
+            ),
+            collisions: measured(
+              document.repos.reduce((total, repo) => total + repo.view.collisions.length, 0),
+            ),
+            plans: plans === null ? null : plans.totals.plans,
+            counted: caps?.global?.counted ?? null,
+            cap: caps?.global?.dailyCap ?? null,
+          },
+    repos: document === null ? null : document.repos.map((repo) => repoPanel(repo)),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -433,17 +993,22 @@ function textCell(
 
 /** numberCell is `cell` with a reading written through `putReading`, so no
  * number can be drawn without its state. Its word is the console's own, so it
- * goes through `literal`. */
+ * goes through `literal`. `unit` is the reading's, and it is a parameter rather
+ * than a second helper because the cell is the same cell: the fleet strip draws
+ * a count and a sum of dollars through this one shape, and a `usdCell` beside it
+ * would be a second place this markup is written -- and two cells that can drift
+ * apart about what a figure looks like. */
 function numberCell(
   parent: ScreenElement,
   factory: ScreenFactory,
   word: string,
   reading: Reading,
+  unit: Unit,
   ...classes: string[]
 ): ScreenElement {
   const element = cell(parent, factory, 'span', 'coordinator-count', ...classes)
   literal(cell(element, factory, 'span', 'coordinator-count-word'), word)
-  putReading(cell(element, factory, 'span', 'coordinator-count-value'), reading, 'count')
+  putReading(cell(element, factory, 'span', 'coordinator-count-value'), reading, unit)
   return element
 }
 
@@ -473,6 +1038,269 @@ function countCell(
   const element = cell(parent, factory, 'span', ...classes)
   putReading(element, reading, 'count')
   return element
+}
+
+// ---------------------------------------------------------------------------
+// The action queue and the fleet totals (K1).
+// ---------------------------------------------------------------------------
+
+/** QUEUE_SOURCES is the queue's four reads, in the order the queue draws their
+ * items: the stored view's pull requests, `runs ls`'s jobs, `plan status`'s
+ * ready tasks and `budget show`'s alerts. The entry iterates it, and the model
+ * keys its parts by it. */
+export const QUEUE_SOURCES: readonly CoordinatorQueueSource[] = Object.freeze([
+  'document',
+  'runs',
+  'plans',
+  'budget',
+])
+
+/** TOTALS_SOURCES is the three reads the fleet strip's figures come from. The
+ * run list is not one of them: **this page draws no figure from `runs ls`**
+ * (D819), and a strip that waited for a read it does not use would be waiting
+ * for nothing. */
+export const TOTALS_SOURCES: readonly CoordinatorQueueSource[] = Object.freeze([
+  'document',
+  'plans',
+  'budget',
+])
+
+/** QueueText is one cell of an item: the class the sanitizer draws its value in
+ * (`TEXT_CLASSES`) and the wire path a refusal about it would name. Neither is a
+ * value -- the values go through `putText` -- so the table holds no string a
+ * document chose. */
+interface QueueText {
+  readonly textClass: TextClass
+  readonly field: string
+}
+
+/** QueueCells is one kind of item's four document cells, in the order the item
+ * draws them. */
+interface QueueCells {
+  readonly subject: QueueText
+  readonly scope: QueueText
+  readonly repo: QueueText
+  readonly title: QueueText
+}
+
+/**
+ * QUEUE_CELLS says how each kind's document values are drawn, one row per kind.
+ *
+ * The subject names the thing the item is about, the scope where it sits, the
+ * repository it is in and the title whoever wrote it wrote -- and each is the
+ * wire key it came from, so the class and the field are the document's own shape
+ * rather than this screen's opinion about it. A pull request's title is the
+ * host's text (`records[].pr.title`), a job's is the launch's (`runs[].title`)
+ * and a plan task's is the planner's (`plans[].nodes[].title`), which is why the
+ * table is per kind and not one class for all four.
+ */
+const QUEUE_CELLS: Readonly<Record<CoordinatorQueueKind, QueueCells>> = Object.freeze({
+  pullRequest: {
+    subject: { textClass: 'label', field: 'records[].pr.number' },
+    scope: { textClass: 'branch', field: 'records[].branch' },
+    repo: { textClass: 'repository', field: 'repos[].repo' },
+    title: { textClass: 'sentence', field: 'records[].pr.title' },
+  },
+  job: {
+    subject: { textClass: 'runId', field: 'runs[].run' },
+    scope: { textClass: 'label', field: 'runs[].plan_task' },
+    repo: { textClass: 'repository', field: 'runs[].repo' },
+    title: { textClass: 'sentence', field: 'runs[].title' },
+  },
+  plan: {
+    subject: { textClass: 'label', field: 'plans[].nodes[].id' },
+    scope: { textClass: 'label', field: 'plans[].id' },
+    repo: { textClass: 'repository', field: 'repo' },
+    title: { textClass: 'sentence', field: 'plans[].nodes[].title' },
+  },
+  budget: {
+    subject: { textClass: 'repository', field: 'repos[].repo' },
+    scope: { textClass: 'label', field: 'repos[].repo' },
+    repo: { textClass: 'repository', field: 'repos[].repo' },
+    title: { textClass: 'sentence', field: 'repos[].repo' },
+  },
+})
+
+/**
+ * queueItemCell draws one item: what it is, what it is about, where that sits,
+ * the repository it is in, the title whoever wrote it wrote, why it is waiting,
+ * and **one** button.
+ *
+ * The kind's word, the reason it is waiting and the button's word are this
+ * console's own and go through `literal`; every value a document carried goes
+ * through `putText` in the class its wire key declares. **The reason is drawn
+ * from the item's own `kind` and `ground`** rather than carried as a sentence:
+ * the words are then written beside the constants they belong to, and no string
+ * the model composed can reach the text sink. A budget alert's ground is one of
+ * three -- the fleet's kill switch, a repository's own kill, or a cap reached --
+ * because the two are different facts about different things and a reader who is
+ * meant to go and resume something is owed the difference (D812).
+ */
+function queueItemCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  item: CoordinatorQueueItem,
+): ScreenElement {
+  const row = cell(parent, factory, 'li', 'coordinator-queue-item')
+  const kind = cell(row, factory, 'span', 'coordinator-queue-kind')
+  if (item.kind === 'pullRequest') literal(kind, COORDINATOR_QUEUE_PR_WORD)
+  else if (item.kind === 'job') literal(kind, COORDINATOR_QUEUE_JOB_WORD)
+  else if (item.kind === 'plan') literal(kind, COORDINATOR_QUEUE_PLAN_WORD)
+  else literal(kind, COORDINATOR_QUEUE_BUDGET_WORD)
+  const cells = QUEUE_CELLS[item.kind]
+  const subject = cell(row, factory, 'span', 'coordinator-queue-subject')
+  // An item with nothing as its subject draws the cell empty and says why in
+  // its own words: the fleet's alert is about every repository at once, so it
+  // has none -- and `putText` on an empty string would draw the console's
+  // not-available mark, which claims a figure could not be read. That is a
+  // different fact from "there is no such figure", and a false one.
+  if (item.subject === '') literal(subject, '')
+  else putText(subject, item.subject, cells.subject.textClass, cells.subject.field)
+  if (item.scope !== '') {
+    textCell(row, factory, 'span', item.scope, cells.scope.textClass, cells.scope.field, 'coordinator-queue-scope')
+  }
+  if (item.repo !== '') {
+    textCell(row, factory, 'span', item.repo, cells.repo.textClass, cells.repo.field, 'coordinator-queue-repo')
+  }
+  if (item.title !== '') {
+    textCell(row, factory, 'span', item.title, cells.title.textClass, cells.title.field, 'coordinator-queue-title')
+  }
+  const why = cell(row, factory, 'span', 'coordinator-queue-why', 'sentence')
+  if (item.kind === 'pullRequest') literal(why, COORDINATOR_QUEUE_PR_WHY_WORD)
+  else if (item.kind === 'job') literal(why, COORDINATOR_QUEUE_JOB_WHY_WORD)
+  else if (item.kind === 'plan') literal(why, COORDINATOR_QUEUE_PLAN_WHY_WORD)
+  else if (item.ground === 'kill') literal(why, COORDINATOR_QUEUE_KILL_WORD)
+  else if (item.ground === 'repoKill') literal(why, COORDINATOR_QUEUE_REPO_KILL_WORD)
+  else literal(why, COORDINATOR_QUEUE_CAP_WORD)
+  // One button, and it is the only control the item draws: the pull request's
+  // own number is text (no link in K1), and the button is a button and never an
+  // anchor, so the renderer never builds a destination out of wire text.
+  const button = cell(row, factory, 'button', 'coordinator-queue-button')
+  button.setAttribute('type', 'button')
+  if (item.action.kind === 'openRun') literal(button, COORDINATOR_OPEN_RUN_WORD)
+  else if (item.action.kind === 'retry') literal(button, COORDINATOR_RETRY_WORD)
+  else if (item.action.kind === 'launch') literal(button, COORDINATOR_LAUNCH_WORD)
+  else literal(button, COORDINATOR_OPEN_SPEND_WORD)
+  return row
+}
+
+/**
+ * fillCoordinatorQueuePart draws one source's part of the queue into the host
+ * the frame drew for it: its items, how many the console's cap left off, or the
+ * note saying the read behind it was not made at all.
+ *
+ * It is the function the entry calls **when that part's own read answers**, and
+ * it decides nothing about waiting: a part whose read is still out is `null` in
+ * the model and is drawn as nothing at all, under the section's own busy mark.
+ */
+export function fillCoordinatorQueuePart(
+  factory: ScreenFactory,
+  model: CoordinatorModel,
+  source: CoordinatorQueueSource,
+  host: ScreenElement,
+): void {
+  const part = model.queue[source]
+  if (part === null) return
+  if (part.note === 'noPlans') {
+    literal(cell(host, factory, 'p', 'coordinator-queue-note'), COORDINATOR_QUEUE_NO_PLANS_WORD)
+    return
+  }
+  if (part.note === 'capsHidden') {
+    literal(cell(host, factory, 'p', 'coordinator-queue-note'), COORDINATOR_QUEUE_CAPS_HIDDEN_WORD)
+    return
+  }
+  if (part.items.length === 0) return
+  const list = cell(host, factory, 'ul', 'coordinator-queue-items')
+  for (const item of part.items) queueItemCell(list, factory, item)
+  if (part.dropped > 0) {
+    // A list holds list items, so the count is one of them: the console's own
+    // figure for what it did not draw, said rather than dropped.
+    putReading(cell(list, factory, 'li', 'coordinator-more'), measured(part.dropped), 'count')
+  }
+}
+
+/**
+ * fillCoordinatorHead writes the queue's own count: **the console's own count of
+ * the items it drew**, with the words beside it.
+ *
+ * A count of `0` is drawn as nothing rather than as a figure, because the
+ * sentence for an empty queue (`nothing is waiting for you`) is what says it: a
+ * `0` and an empty sentence say the same thing twice, and the `0` would be the
+ * one a reader mistakes for a figure off a document. The count is absent
+ * altogether while a read is still out or refused, which is the whole rule --
+ * the model only answers a count over a whole queue.
+ */
+export function fillCoordinatorHead(model: CoordinatorModel, frame: DrawnCoordinatorFrame): void {
+  const count = model.queueCount
+  const empty = count === null || (count.value ?? 0) <= 0
+  if (empty) literal(frame.queueCount, '')
+  else putReading(frame.queueCount, count, 'count')
+  literal(frame.queueEmpty, empty ? COORDINATOR_QUEUE_EMPTY_WORD : '')
+}
+/**
+ * fillCoordinatorBlind draws the line under the queue: what this page cannot
+ * reach, with **no button** (D813). The sweep is a scheduled job and the
+ * unread pull requests are a fact about the sweep, so neither is something this
+ * console may act on -- and where there is no such fact the line is not drawn at
+ * all, because a line of two zeroes is a line about nothing.
+ */
+export function fillCoordinatorBlind(
+  factory: ScreenFactory,
+  model: CoordinatorModel,
+  host: ScreenElement,
+): void {
+  const blind = model.blind
+  if (blind === null) return
+  const line = cell(host, factory, 'p', 'coordinator-blind')
+  literal(cell(line, factory, 'span', 'coordinator-blind-word'), COORDINATOR_BLIND_WORD)
+  numberCell(line, factory, COORDINATOR_BLIND_STALE_WORD, blind.stale, 'count', 'coordinator-blind-stale')
+  numberCell(line, factory, COORDINATOR_BLIND_UNREAD_WORD, blind.unread, 'count', 'coordinator-blind-unread')
+}
+
+/**
+ * fillCoordinatorTotals draws the fleet's strip: what the four documents the
+ * page read say about the fleet as a whole.
+ *
+ * Every figure is a count the console computed from an array a document carried
+ * or a reading that document held, and **the money is `budget show`'s own** --
+ * the same readings the Spend screen draws, so the two screens cannot disagree
+ * about a fleet (D819). The strip is drawn only when the stored view answered:
+ * the three counts at its head are that document's, and a strip of money without
+ * them would be dollars about a fleet the console cannot count.
+ */
+export function fillCoordinatorTotals(
+  factory: ScreenFactory,
+  model: CoordinatorModel,
+  host: ScreenElement,
+): void {
+  const totals = model.totals
+  if (totals === null) return
+  numberCell(host, factory, COORDINATOR_TOTAL_REPOS_WORD, totals.repos, 'count', 'coordinator-total-repos')
+  numberCell(
+    host,
+    factory,
+    COORDINATOR_TOTAL_IN_FLIGHT_WORD,
+    totals.inFlight,
+    'count',
+    'coordinator-total-inflight',
+  )
+  numberCell(
+    host,
+    factory,
+    COORDINATOR_TOTAL_COLLISIONS_WORD,
+    totals.collisions,
+    'count',
+    'coordinator-total-collisions',
+  )
+  if (totals.plans !== null) {
+    numberCell(host, factory, COORDINATOR_TOTAL_PLANS_WORD, totals.plans, 'count', 'coordinator-total-plans')
+  }
+  if (totals.counted !== null) {
+    numberCell(host, factory, COORDINATOR_TOTAL_COUNTED_WORD, totals.counted, 'usd', 'coordinator-total-counted')
+  }
+  if (totals.cap !== null) {
+    numberCell(host, factory, COORDINATOR_TOTAL_CAP_WORD, totals.cap, 'usd', 'coordinator-total-cap')
+  }
 }
 
 function runCell(parent: ScreenElement, factory: ScreenFactory, run: CoordinatorRunPanel): void {
@@ -605,19 +1433,20 @@ function repoSummary(
     textCell(stale, factory, 'span', panel.stale.reason, 'sentence', 'stale.reason', 'coordinator-stale-reason')
   }
   const counts = cell(section, factory, 'div', 'coordinator-counts')
-  numberCell(counts, factory, COORDINATOR_RECORDS_WORD, panel.recordCount, 'coordinator-count-records')
+  numberCell(counts, factory, COORDINATOR_RECORDS_WORD, panel.recordCount, 'count', 'coordinator-count-records')
   numberCell(
     counts,
     factory,
     COORDINATOR_IN_FLIGHT_COUNT_WORD,
     panel.inFlightCount,
+    'count',
     'coordinator-count-inflight',
   )
   // The cell's own word is what carries the state; the class only says which
   // cell it is, so a reader who loses the tone still reads `collisions 2`.
   const countClasses = ['coordinator-count-collisions']
   if (panel.hasCollisions) countClasses.push('coordinator-count-alert')
-  numberCell(counts, factory, COORDINATOR_COLLISIONS_WORD, panel.collisionCount, ...countClasses)
+  numberCell(counts, factory, COORDINATOR_COLLISIONS_WORD, panel.collisionCount, 'count', ...countClasses)
   if (panel.omitted !== null || panel.omittedCollisions !== null) {
     const omitted = cell(section, factory, 'p', 'coordinator-omitted')
     literal(cell(omitted, factory, 'span', 'coordinator-omitted-word'), COORDINATOR_OMITTED_WORD)
@@ -659,27 +1488,44 @@ export interface CoordinatorDetail {
   readonly host: ScreenElement
 }
 
-/** DrawnCoordinatorFrame is the screen's shell: the root, the body the summary
- * and the details are filled into, and the slot the busy mark goes in. */
+/** DrawnCoordinatorFrame is the screen's shell: the three sections the entry
+ * fills as their reads land, and the hosts each one paints into.
+ *
+ * `queue`, `totals` and the body are the three **sections** -- each with its own
+ * busies and its own sequence token in the entry -- and `queueSlot`, `totalsSlot`
+ * and `slot` are where their marks go. The queue's head cells and its four part
+ * hosts are drawn here rather than by the model, because they are the same
+ * elements whatever the reads answer with: a part's contents change, the part
+ * does not.
+ */
 export interface DrawnCoordinatorFrame {
   readonly root: ScreenElement
   readonly body: ScreenElement
   readonly slot: ScreenElement
+  readonly queue: ScreenElement
+  readonly queueSlot: ScreenElement
+  readonly queueCount: ScreenElement
+  readonly queueEmpty: ScreenElement
+  readonly parts: Readonly<Record<CoordinatorQueueSource, ScreenElement>>
+  readonly blindHost: ScreenElement
+  readonly totals: ScreenElement
+  readonly totalsSlot: ScreenElement
 }
 
 /**
- * renderCoordinatorFrame draws everything the screen can say before the read
+ * renderCoordinatorFrame draws everything the screen can say before any read
  * answers: the section stamped with its theme, the read's own source line (which
- * is a constant of the console's) and the console's sentence about the view's
- * missing age.
+ * is a constant of the console's), the console's sentence about the view's
+ * missing age, and the **three empty sections** the reads fill -- the action
+ * queue with its head and its four part hosts, the fleet strip, and the body.
  *
  * **It is drawn in the frame the tab was opened in.** The read behind it is
  * `coordinator status --from-store --all --json`, a document of about 724 KB on
- * the owner's installation and the longest read of any tab, so a screen that
- * waited for it before drawing anything was a tab that answered a click with
- * nothing at all -- the owner's complaint of 2026-10-31. What it draws is what
- * is true before the answer: which command the panel is reading, and that the
- * console claims no age for the view.
+ * the owner's installation and the longest read of any tab; beside it the screen
+ * reads `runs ls`, `plan status` and `budget show`, and each of the four paints
+ * its own part the moment it lands (the owner's rule of 2026-10-31). What it
+ * draws is what is true before the answers: which commands the queue is reading,
+ * and that the console claims no age for the view.
  *
  * The body is empty but for the slot the busy mark is put in, so the entry can
  * fill it -- summary first, each repository's detail after -- without taking
@@ -693,9 +1539,22 @@ export function renderCoordinatorFrame(
   root.setAttribute('data-theme', theme)
   literal(cell(root, factory, 'p', 'coordinator-source'), COORDINATOR_SOURCE_LINE)
   literal(cell(root, factory, 'p', 'coordinator-age'), COORDINATOR_NO_AGE_WORD)
+  const queue = cell(root, factory, 'section', COORDINATOR_QUEUE_CLASS)
+  const head = cell(queue, factory, 'div', COORDINATOR_QUEUE_HEAD_CLASS)
+  const queueCount = cell(head, factory, 'span', 'coordinator-queue-count')
+  literal(cell(head, factory, 'span', 'coordinator-queue-word'), COORDINATOR_QUEUE_WORD)
+  const queueEmpty = cell(head, factory, 'span', 'coordinator-queue-empty')
+  const queueSlot = cell(head, factory, 'div', BUSY_SLOT_CLASS)
+  const parts = {} as Record<CoordinatorQueueSource, ScreenElement>
+  for (const source of QUEUE_SOURCES) {
+    parts[source] = cell(queue, factory, 'div', COORDINATOR_QUEUE_PART_CLASS)
+  }
+  const blindHost = cell(queue, factory, 'div', COORDINATOR_BLIND_HOST_CLASS)
+  const totals = cell(root, factory, 'section', COORDINATOR_TOTALS_CLASS)
+  const totalsSlot = cell(totals, factory, 'div', BUSY_SLOT_CLASS)
   const body = cell(root, factory, 'div', COORDINATOR_BODY_CLASS)
   const slot = cell(body, factory, 'div', BUSY_SLOT_CLASS)
-  return { root, body, slot }
+  return { root, body, slot, queue, queueSlot, queueCount, queueEmpty, parts, blindHost, totals, totalsSlot }
 }
 
 /**
@@ -715,12 +1574,19 @@ export function renderCoordinatorFrame(
  * (`coordinatorRepos`' `userErr`), so what this branch draws is a state the
  * console cannot read rather than one it can, and a screen that drew nothing for
  * it would be indistinguishable from a read that failed.
+ *
+ * **`repos: null` is not that state**: it is the document not having answered
+ * yet, and a body that said "the installation lists no repository" while the
+ * read is still out would be the screen inventing a fact about the owner's
+ * installation. Nothing is drawn, and the section's own busy mark -- which the
+ * entry put up when the read started -- is what says why.
  */
 export function fillCoordinatorSummary(
   factory: ScreenFactory,
   model: CoordinatorModel,
   host: ScreenElement,
 ): readonly CoordinatorDetail[] {
+  if (model.repos === null) return []
   if (model.repos.length === 0) {
     literal(cell(host, factory, 'p', 'coordinator-empty'), COORDINATOR_EMPTY_WORD)
     return []
@@ -729,15 +1595,16 @@ export function fillCoordinatorSummary(
 }
 
 /**
- * renderCoordinator draws the whole screen at once: the frame, the summary and
- * every repository's detail.
+ * renderCoordinator draws the whole screen at once: the frame, the queue, the
+ * blind-spot line, the fleet's totals, the summary and every repository's
+ * detail.
  *
- * It is what a caller that has the document in hand draws -- the goldens'
- * mount, and the cases that assert on the tree -- and the entry does **not**
- * use it: the entry draws the frame first and fills the two halves as they
- * arrive, which is the owner's rule of 2026-10-31. Both paths draw the same
- * elements in the same order, so what a case asserts about this function is
- * true of the screen on an operator's display.
+ * It is what a caller that has every document in hand draws -- the goldens'
+ * mount, and the cases that assert on the tree -- and the entry does **not** use
+ * it: the entry draws the frame first and fills each section as its own read
+ * lands, which is the owner's rule of 2026-10-31. Both paths draw the same
+ * elements in the same order, so what a case asserts about this function is true
+ * of the screen on an operator's display.
  */
 export function renderCoordinator(
   factory: ScreenFactory,
@@ -745,6 +1612,12 @@ export function renderCoordinator(
   theme: CoordinatorTheme,
 ): ScreenElement {
   const frame = renderCoordinatorFrame(factory, theme)
+  fillCoordinatorHead(model, frame)
+  for (const source of QUEUE_SOURCES) {
+    fillCoordinatorQueuePart(factory, model, source, frame.parts[source])
+  }
+  fillCoordinatorBlind(factory, model, frame.blindHost)
+  fillCoordinatorTotals(factory, model, frame.totals)
   for (const detail of fillCoordinatorSummary(factory, model, frame.body)) {
     repoDetail(detail.host, factory, detail.panel)
   }
