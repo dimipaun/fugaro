@@ -217,10 +217,29 @@ func accountsAddProfiles(names []string) string {
 // naming what it is missing — silently widening the account is the one thing
 // this rule exists to prevent.
 func accountsAddSubsetRule(after *localcfg.Config, name, profile string) error {
-	if profile == "" || !after.Profiles[profile].AllowReposWritten() {
+	if profile == "" {
 		return nil
 	}
 	allow := after.Profiles[profile].AllowRepos
+	// The rule's own precondition, and the reason it is checked here rather
+	// than left to the publish: a profile that lists accounts writes its own
+	// list, exactly. An absent one means the project's enrollment, which no
+	// account is required to cover, so which repositories the profile admits
+	// would be undecidable against the accounts it serves; and a wildcard
+	// makes the same question undecidable repository by repository. Both are
+	// states `project policy publish` refuses (projectpolicy.validProfileAccounts),
+	// and this command would otherwise write a config the owner's very next
+	// publish refuses.
+	if len(allow) == 0 {
+		return userErr("profiles.%s.claude_accounts: a profile that lists accounts must write its own allow_repos, and this one writes none: an absent list means the project's enrollment, which no account is required to cover, so which repositories the profile admits is undecidable — add allow_repos to profiles.%s, naming the repositories it admits, then run this again; nothing was written",
+			pluginwire.Printable(profile), pluginwire.Printable(profile))
+	}
+	for _, pattern := range allow {
+		if strings.Contains(pattern, "*") {
+			return userErr("profiles.%s.allow_repos carries the wildcard %s, and a profile that lists accounts must name exact repositories: whether an account covers this profile is decided repository by repository, and a wildcard makes that undecidable — write the repositories themselves, then run this again; nothing was written",
+				pluginwire.Printable(profile), pluginwire.Printable(pattern))
+		}
+	}
 	for _, listed := range after.Profiles[profile].ClaudeAccounts {
 		missing := []string{}
 		for _, r := range allow {

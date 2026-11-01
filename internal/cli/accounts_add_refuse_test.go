@@ -96,6 +96,74 @@ func TestAccountsAddSubsetRuleIsCheckedBeforeAnyWrite(t *testing.T) {
 	}
 }
 
+// accountsAddLocalNoAllowRepos is the profile the subset rule cannot be asked
+// about: it would list an account and it writes no allow_repos of its own, so
+// the repositories it admits are the project's enrollment and no account is
+// required to cover them.
+const accountsAddLocalNoAllowRepos = `version: 1
+name: aurora
+gcp_project: aurora-gcp
+region: us-east5
+runs_bucket: fugaro-runs-aurora-gcp
+
+profiles:
+  standard:
+    provider: github
+`
+
+// accountsAddLocalWildcard is the same profile with the wildcard instead of a
+// list, which leaves the same question undecidable one repository at a time.
+const accountsAddLocalWildcard = `version: 1
+name: aurora
+gcp_project: aurora-gcp
+region: us-east5
+runs_bucket: fugaro-runs-aurora-gcp
+
+profiles:
+  standard:
+    provider: github
+    allow_repos:
+      - "*"
+`
+
+// TestAccountsAddRefusesAProfileTheRuleCannotBeAskedAbout: the subset rule is
+// decided repository by repository, so a profile that lists accounts must write
+// its own exact list (D3, projectpolicy.validProfileAccounts). Both states that
+// make that impossible are refused here, before the file is touched, rather
+// than written and refused by the owner's next publish.
+func TestAccountsAddRefusesAProfileTheRuleCannotBeAskedAbout(t *testing.T) {
+	cases := []struct {
+		name  string
+		local string
+		want  string
+	}{
+		{"no allow_repos", accountsAddLocalNoAllowRepos, "must write its own allow_repos"},
+		{"a wildcard", accountsAddLocalWildcard, "wildcard"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := accountsAddFixture(t, tc.local)
+			before := readFileString(t, path)
+
+			_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--profile", "standard", "--yes")
+			if err == nil {
+				t.Fatal("an account was added to a profile the rule cannot be asked about")
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			for _, want := range []string{tc.want, "profiles.standard", "nothing was written"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if after := readFileString(t, path); after != before {
+				t.Errorf("a refused profile wrote the file:\n%s", after)
+			}
+		})
+	}
+}
+
 // TestAccountsAddWithoutACheckoutRequiresRepos: with no --repos and no origin
 // remote to take the default from, the command refuses and names --repos and
 // the field it fills, rather than declaring an account no policy can bound
