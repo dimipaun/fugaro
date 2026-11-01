@@ -132,8 +132,9 @@ each is fixed where it was made rather than only here:
   the repository slug and the run. C3.9a does **not** grow `AuditEvent` a field for it — adding a field is
   new scope, and the four replay checks of R3 do not read one.
 - **The refusal order is the code's.** `ServeHTTP` (`server.go:440`) hands the request to `RequestFromHTTP`
-  (`wire.go:152`), then `Verify` (`:456`), then reads the route's act (`:476`), and only then checks the
-  binding — `ja, bound := s.jobs[id.JobAccount]` at `:477` — **before** the stop flag at `:492`. The first
+  (`wire.go:152`), then `Verify` (`:457`), then reads the route's act (`:475`), and only then checks the
+  binding — `ja, bound := s.jobs[id.JobAccount]`, whose `ja.Slug != id.Slug` arm is `:477` — **before** the
+  stop flag at `:492`. The first
   draft listed the stop flag before the pairing. §4.4 of [spec.md](spec.md) and C3.9b's refusal order now
   name pairing first, which is what the caller reads and what the audit line records.
 - **The verify route cannot sit behind `RequestFromHTTP`.** That function parses the request's identity

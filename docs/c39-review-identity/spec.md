@@ -1,8 +1,10 @@
 # The review identity, the read-only mint and the signed verdict
 
 This is the design. Where it and [reconciliation.md](reconciliation.md) disagree, **the reconciliation
-wins**. The owner decisions it is written to are **D1062–D1072**, each with the cost of its alternative,
-in [reconciliation.md](reconciliation.md) §3.
+wins**. The owner decisions it is written to are **D1062–D1074**, each with the cost of its alternative,
+in [reconciliation.md](reconciliation.md) §3; the owner answered them all on **2026-11-01** — D1062–D1071
+as recommended, D1072 as 0.16.0, D1063 as amended by the same day's ruling **O1**, and D1073/D1074 as the
+review added them.
 
 ---
 
@@ -12,7 +14,7 @@ in [reconciliation.md](reconciliation.md) §3.
 two identities on every call: the calling job's Google ID token, whose `email` claim
 `verifyJob` (`:423`) matches against the installation's job accounts, and the run's Firebase identity,
 checked by `verifyRun` (`:516`). One rule is decided from the verified email and never from the caller's
-header: **Global Constraint 6**'s shared-job gate (`:460`), which refuses every account in
+header: **Global Constraint 6**'s shared-job gate (`:469`), which refuses every account in
 `Authenticator.sharedAccounts` — `SharedJobAccountsFor`'s derivation over the published policy
 (`internal/credsvc/server.go:154`). The review variant is one of those accounts the moment
 `internal/infra/projectjobs.go` deploys it, so **today the service refuses the review job whole**, and the
@@ -32,12 +34,22 @@ per-repository job's account names** — a name a per-`(profile, account)` job d
 was written for**. Its reason is that a shared project job's account (i) mounts the provider keys and the
 App key with live accessors, (ii) reaches the whole `runs/` prefix, and (iii) serves many repositories at
 once — so admitting it to the service's **model** path would put a credential of a container that runs
-untrusted code behind one shared account. The review variant is a **different job**: it mounts the
-account's Claude token and nothing else, with no App key, no signing key and no accessor on either
-(`docs/cloud-senior-review/implementation-plan.md` R7), and it is admitted on **two routes** — the mint
-and the sign — and **refused on the model routes with the sentence the service already answers**. A
-*coding* run in a shared project job is refused on every route, before and after this lands (D1062,
-D1063).
+untrusted code behind one shared account. The review variant is a **different job**, and the ways it
+differs are exactly what the class buys: it mounts **no** model credential and no App key, no signing key
+and no accessor on either (`docs/cloud-senior-review/implementation-plan.md` R7), and it is admitted on
+**three routes** — the mint, the sign, and the model path **for its own account** (§2.3, §4.2) — while it
+is refused the verify route and refused as a *coding* job would be. A *coding* run in a shared project job
+is refused on every route, before and after this lands (D1062, D1063).
+
+**The model path is part of the class, and that is the owner's ruling O1 of 2026-11-01.** The reviewer's
+model calls route **through the service** rather than around it, so the review container holds no
+`CLAUDE_CODE_OAUTH_TOKEN` and §2.3's "reads no model credential" is not this design's shape. What keeps
+Global Constraint 6's *reason* intact is the pairing: a review caller is served **tier A only** — the one
+account §3.2 resolves, and only for a repository that account is admitted to — so a review job cannot reach
+a credential of a container that is not its own, which is the exposure the constraint exists to refuse. A
+review job also **ignores the published `routing.claude` switch** (§5.2): whatever that switch says, a
+review job's Claude calls go to the service, because the service is the only path its container has. If
+C3.9 slips, the fallback the ruling names is R7's token mount, and the class goes back to two routes.
 
 ---
 
@@ -52,7 +64,7 @@ gains a **class** — the same answer the rest of the call branches on:
 | --- | --- | --- | --- |
 | **repository** | a workflow job of one repository (`gcp.ServiceAccountID(slug, workflow)`) | `JobAccountsFor` (`server.go:110`), which binds email → `{Slug, Repo}` | everything the service does today: the model routes, the mint (the run set), the stop flag |
 | **shared** | a *coding* shared project job (`gcp.ProjectServiceAccountID(profile, provider, account)` over `config.ProjectJobAccounts`) | `SharedJobAccountsFor` (`:154`) | **nothing** — refused whole, exactly as today |
-| **review** | the review-only variant, per `(profile, account)` | new, `ReviewJobAccountsFor` (§2.2) | the **mint** (the read-only set) and the **sign**. Refused on `/v1/messages` and `/v1/messages/count_tokens`, and refused the verify route |
+| **review** | the review-only variant, per `(profile, account)` | new, `ReviewJobAccountsFor` (§2.2) | the **mint** (the read-only set), the **sign**, and the **model path** (`/v1/messages` and its `count_tokens` sibling) **for its own account only** — tier A, resolved by the pairing, and never the cascade's other tiers. Refused the verify route |
 
 An account is in exactly one class, and an account that a deployment's input puts in two is refused rather
 than admitted — the rule the shared gate already applies (`auth.go:469`: "an account that is in both sets
@@ -89,11 +101,17 @@ same `gcp.ProjectJobName` shape with a review suffix"); what this design fixes i
 
 ### 2.3 What a review account never gets
 
-The class buys two routes and no privileges beyond them. In particular a review account:
+The class buys three routes and no privileges beyond them. In particular a review account:
 
-- reads **no model credential** from the service: the model routes refuse it with the Global Constraint 6
-  sentence, so the service's model path keeps its per-repository-only property and the review job's model
-  call is the one R7 wires (its mounted `CLAUDE_CODE_OAUTH_TOKEN`);
+- reads **no other account's model credential**: on the model path the pairing (§3.2) resolves the one
+  account the call is served by, that account's credential is the only tier A candidate, and the cascade's
+  other tiers are **never** offered to it — a request cannot name an account (§5.2), a caller that fails the
+  pairing is refused before any credential is chosen, and a review caller is admitted on `/v1/messages` only
+  as the account the pairing resolved;
+- reads **no key of its own and no token of its own**: no App key, no signing key, no Secret Manager
+  accessor, and — under the owner's ruling O1 — no model token either, because its Claude calls go to the
+  service. The signing key stays in the service and nowhere else (§6), and the review container's only
+  credential is the read-only installation token it fetches per run (§4);
 - cannot be given more by a request: the class is not a field of any request (§5.2), and the repository a
   mint is scoped to is the run identity's (§4.1).
 
@@ -231,10 +249,15 @@ shorter lifetime would mean more refreshes and more audit lines for a lifetime n
 
 The refusals are the existing ones plus §3's, and the order matters because it is the order the
 service's "no credential is read until the caller is admitted" property is stated in
-(`ServeHTTP`, `server.go:440`): unverified identities → class not admitted to this route → the stop flag
-(`Kills.Stop`) → the pairing and the claim rule of §3 → the bundle → the mint itself. The **bundle is not
-read** and the **App key is not touched** for a call refused before it, which is the property the audit
-line's purpose and credential fields already record (`routeAct`, `server.go:59`).
+(`ServeHTTP`, `server.go:440`): unverified identities (`RequestFromHTTP` `:450`, `Verify` `:457`) → the
+class not admitted to this route → **the pairing and the claim rule of §3** (the binding check,
+`ja, bound := s.jobs[id.JobAccount]` `:476`, whose shape the class decides) → **the stop flag**
+(`Kills.Stop` `:492`) → the bundle → the mint itself. **The pairing comes before the stop flag because that
+is what the code does**, and stating it the other way round was a mistake of this document's first draft: a
+caller whose two identities are not paired is refused before the operator's switch is read, and either
+refusal is recorded as the act the route asked for (`routeAct`, `server.go:59`). The **bundle is not read**
+and the **App key is not touched** for a call refused before it, which is the property the audit line's
+purpose and credential fields already record.
 
 ---
 
@@ -242,12 +265,14 @@ line's purpose and credential fields already record (`routeAct`, `server.go:59`)
 
 ### 5.1 Two routes, and the property the third-route refusal already has
 
-`ServeHTTP` refuses every path but `MessagesPath`, `CountTokensPath` and `MintPath`
-(`server.go:33`), and its comment is explicit that this is how D143's "no admin endpoint" is kept — by
-there being nothing to reach rather than by a check inside a handler. Two routes join that set:
+`ServeHTTP` refuses every path but `MessagesPath`, `CountTokensPath` and `MintPath` (`server.go:442`, the
+paths spelled at `:33`), and its comment is explicit that this is how D143's "no admin endpoint" is kept —
+by there being nothing to reach rather than by a check inside a handler. Two routes join that set:
 **`SignPath = "/v1/review/sign"`** and **`VerifyPath = "/v1/review/verify"`**, both `POST`. The
-`TestServiceHasNoAdminRoutes` guard is extended to name the five, so a sixth route is a test failure and
-not a discovery.
+`TestServiceHasNoAdminRoutes` guard (`internal/credsvc/forward_test.go:341`) drives a list of method-and-path
+pairs that must all be refused — three of them the served paths themselves, with a wrong method or a
+trailing slash — and the two new routes join that list, so a sixth route is a test failure and not a
+discovery.
 
 ### 5.2 The sign route
 
@@ -257,36 +282,74 @@ by the artifact writer (`docs/cloud-senior-review/` R3). The **digest is not the
 prose never leaves the run (D892).
 
 **Admission**, in the order `ServeHTTP` already makes its decisions (§4.4): the review class (§2.1); the
-stop flag; the pairing (§3.2); the review claim rule (§3.3); the run live, already checked by `verifyRun`
-(§3.4).
+pairing (§3.2) and the review claim rule (§3.3); the stop flag; the run live, already checked by `verifyRun`
+(§3.4); and, last, the mark of §5.6, which is what makes the answer the run's first and only signature.
 
-**Answer**: `{"alg":"HMAC-SHA-256","signature":"<64 lowercase hex>"}`, the HMAC-SHA-256 of the digest's 32
-bytes under **that account's review-signing key** (§6), rendered lowercase hex. The algorithm is named in
-the answer so that neither end can quietly accept a weaker construction (D892), and the service refuses a
-request that names an algorithm of its own: the request has no algorithm field at all.
+**The message that is signed is framed, not the bare digest (D1073, the owner's answer of 2026-11-01)**:
+
+```
+v1\n<repository slug>\n<review run>\n<digest>
+```
+
+— three newline-separated fields after the version tag, where the slug and the run are the **verified**
+identity's own `fs` and `fr` (§3.1) and the digest is the request's, lowercase hex. Every field is
+length- and charset-bounded before the message is built (the slug and the run by `token.ValidSegment`, the
+rule the identity itself was read with at `auth.go:219`, and the digest by its 64-hex shape), so two
+different triples cannot frame to the same bytes — a framing that could
+be padded into ambiguity would be worse than no framing at all. The **request does not name the slug or the
+run**: a request field the caller could write is the one thing the frame exists to exclude, so the two
+fields come from the identity the service verified and from nowhere else. The frame is why **a signature
+made for one review run of one repository cannot be presented as another's**, and it is what makes the
+verify route able to refuse a cross-run replay by itself rather than leaving that to the coordinator's four
+checks (§5.3).
+
+**Answer**: `{"alg":"HMAC-SHA-256","signature":"<64 lowercase hex>"}`, the HMAC-SHA-256 of the framed
+message's bytes under **that account's review-signing key** (§6), rendered lowercase hex. The algorithm is
+named in the answer so that neither end can quietly accept a weaker construction (D892), and the service
+refuses a request that names an algorithm of its own: the request has no algorithm field at all.
 
 **What the service does not do at sign time, said plainly**: it does not read the artifact, does not see
 the reviewer's prose, does not check the pull request or the head, and does not know what the coordinator
-launched. What the signature therefore binds is **the exact bytes, under the key of one account**; which
-repository, pull request, head and review run those bytes belong to is inside the bytes and is checked by
-the verifier against what it launched (D892's four checks, shipped by the review work's R3). The service's
-contribution to that binding is its **audit line**, which names the account, the repository slug, the run
-and the pull requests from the verified identity — so a signature can be traced to the run that asked for
-it even though the signature itself says only "this account". **The residual is recorded at its true size
-in §7.**
+launched. What the signature therefore binds is **the exact bytes, for one run of one repository, under the
+key of one account**; which pull request and which head those bytes belong to is inside the bytes and is
+checked by the verifier against what it launched (D892's four checks, shipped by the review work's R3). The
+service's contribution to the rest is its **audit line**, which names the account, the repository slug and
+the run from the verified identity — **not the identity's pull requests**, because C3.9a's `AuditEvent` has
+no field for them and adding one is scope this design does not take — so a signature can be traced to the
+run that asked for it. **What used to be a residual here is closed by D1073**: the signature now says
+"this run of this repository" and not only "this account", and §7 states what is left at its true size.
+
+**A review job ignores the published `routing.claude` switch** (the owner's ruling O1): that switch decides
+whether a run's Claude calls are sent to the service, and a review job has no other path — its container
+holds no token — so the switch has nothing to decide for it. What the review job's model call needs from the
+service instead is §2.3's admission: the pairing, and the account's own tier A credential.
 
 ### 5.3 The verify route
 
-**Request**: `{"account": "<the review's account name>", "digest": "...", "signature": "..."}` — the same
-64-hex shapes, the account name held to the bundle's credential-name rule.
+**Request**: `{"account": "<the review's account name>", "digest": "...", "signature": "...", "run": "...",
+"repository": "..."}` — the 64-hex shapes as at sign time, the account name held to the bundle's
+credential-name rule, and the last two held to `token.ValidSegment`. **The run and the repository are in the
+request because the frame is recomputed** (D1073): a verifier holds no run identity, so the two fields the
+signature was made over have to be named — and naming them cannot make a signature valid that was not made
+for them, because the HMAC is taken over the frame those fields build: a caller that names the wrong run gets
+`valid:false` and not a match.
 
-**Answer**: `200 {"valid": true}` when the signature equals the HMAC the service recomputes, and
-`200 {"valid": false}` when it does not — **one refusal bit and nothing else**, no reason, no key id, no
-account echo, and no distinguisher between "wrong key" and "wrong bytes". Every case where the service
-cannot answer the question at all is a **typed refusal** instead (`state_unavailable` for an unreadable
-key, `unverified_job_identity`/`unverified_run_identity` for the caller, `request_refused` for a body this
-contract does not read), so a caller can always separate "the artifact is not this account's" from "your
-call was bad" — which a bare `valid:false` would conflate.
+**Answer**: `200 {"valid": true}` when the signature equals the HMAC the service recomputes **over the
+frame**, and `200 {"valid": false}` when it does not — **one refusal bit and nothing else**, no reason, no
+key id, no account echo, and no distinguisher between "wrong key" and "wrong bytes". Every case where the
+service cannot answer the question at all is a **typed refusal** instead (`state_unavailable` for an
+unreadable key, `unverified_job_identity`/`unverified_run_identity` for the caller, `request_refused` for a
+body this contract does not read), so a caller can always separate "the artifact is not this account's" from
+"your call was bad" — which a bare `valid:false` would conflate. **The coordinator's rule is the one this
+distinction exists for, and it is stated here in one sentence: nothing but `{"valid":true}` ships.** A
+`valid:false` and every typed refusal mean the same thing to the merge path — *not ship* — and a refusal is
+never read as a reason to re-review on its own.
+
+**The clock is the caller's, and the tolerance is not this route's to invent**: a verify request carries no
+timestamp, so there is no window to widen here — the temporal rules that apply are the ones `verifyJob` and
+`checkLive` already apply to the caller's Google ID token (expiry, not-issued-in-the-future, the skew window
+those two share) and to the run's liveness when the sign route is the caller, and this design adds no second
+tolerance of its own.
 
 Why an endpoint at all, given the coordinator could hold the key: **because a second holder is a second
 place it can leak from** (D892). The verify call exists so the coordinator never holds a key that forges
@@ -301,12 +364,23 @@ under another account of the same installation would then verify.*
 ### 5.4 The caller class for verify, which the service does not have today
 
 The coordinator is not a run: it holds no run identity, so the verify route cannot be authenticated the
-way the other routes are. It gets its own class, and it is **configuration, not code**:
+way the other routes are. It gets its own class, which is **configuration plus one small piece of code** —
+the list is what an operator writes, and the path that reads it is new:
 
+- **the route is parsed ahead of `RequestFromHTTP`.** `RequestFromHTTP` (`wire.go:152`) reads the two
+  identity headers, and `Authenticator.Verify` (`auth.go:367`, reached from `server.go:457`) refuses a
+  request whose run identity is missing or unverified — while `ServeHTTP` refuses an unverified request
+  **before** it branches on the route (`server.go:450`–`:460`). A verifier holds no run identity, so the
+  verify path must be answered **before** the shared parse: the path is recognised first, the one Google ID
+  token the verifier carries is verified on its own, and the refusal it gets is the verifier class's own
+  refusal with **its own audit line**. Left behind the shared parse, the route would refuse every verifier
+  before the class were ever consulted, and the whole route would be dead configuration. This is the one
+  place this design changes `ServeHTTP`'s shape rather than adding a row to it;
 - the request must carry a **Google ID token** whose `email` claim is in the service's configured
-  **verifier list** (`AuthConfig.VerifierAccounts`), verified by the same code path `verifyJob` uses —
-  audience, issuer, `email_verified`, expiry, not-issued-in-the-future, ASCII fold — with **one**
-  difference, stated rather than implied: the shared-job gate does not apply to a verifier, because a
+  **verifier list** (`AuthConfig.VerifierAccounts`), verified by the same **token check** `verifyJob` uses —
+  audience, issuer, `email_verified`, expiry, not-issued-in-the-future, ASCII fold — with **two**
+  differences, stated rather than implied: the address is matched against the verifier list rather than
+  against the installation's job accounts, and the shared-job gate does not apply to a verifier, because a
   verifier is not a job of this installation's job set at all;
 - the list is **empty by default**, and an empty list means the route answers every call with the caller
   class's refusal — an installation with no coordinator does not carry a route anybody can reach;
@@ -318,17 +392,57 @@ way the other routes are. It gets its own class, and it is **configuration, not 
 ### 5.5 What the audit line says
 
 C1.13's audit line carries a closed field set and a closed purpose vocabulary (`internal/credsvc/audit.go`:
-`PurposeForward` `:90`, `PurposeProbe` `:95`, `PurposeMint` `:104`, `ValidPurpose` `:107`). Two purposes
+`PurposeForward` `:90`, `PurposeProbe` `:95`, `PurposeMint` `:104`, `ValidPurpose` `:109`). Two purposes
 join it — **`review_sign`** and **`review_verify`** — and `routeAct` (`server.go:59`) gains the two
 routes, so a refusal is recorded as the act the run asked for and not as the branch it was answered in.
 The credential a sign line names is the **review-signing key's bundle entry name** (§6), the way a mint's
 line names the App key; a verify line names the same key, because that is the credential the answer was
-computed with, and its issuer is the service itself rather than the caller.
+computed with.
 
-The line carries the account, the repository slug, the run and (for a sign) the identity's pull requests —
-all of them from the **verified** side — and **never the digest**: the digest is not a secret, but a field
-that is a caller's bytes is exactly the free-form text this file exists to keep out, and a signature line
-that carried it would invite one to carry the signature.
+**A sign line carries** the account, the repository slug and the run — all three from the **verified**
+side — and **never the digest**: the digest is not a secret, but a field that is a caller's bytes is exactly
+the free-form text this file exists to keep out, and a signature line that carried it would invite one to
+carry the signature. It carries **no pull requests**: `AuditEvent` has no field for them, and this design
+does not add one (D1062).
+
+**A verify line carries the verifier as its caller and the key as its credential**: `Caller` is the
+`email` the verifier's Google ID token verified — the same field a job's line uses for the account, and a
+legal one for any foldable address (`validAccount` → `foldEmail`, `audit.go:498`) — and `Credential` is the
+review-signing key's bundle entry name, which is the credential the answer was computed from even though the
+caller supplied no credential at all. **One rule of the field set moves for it, and the design states that
+rather than discovering it in the handler**: `checked` requires `Job` and `Caller` to be set together
+(`audit.go`), and a verifier is not a run in a job and reports no `Identity.Job`, so the verify purpose
+carries `Caller` without `Job` — exactly the shape a mint already has with the pair it does not hold
+(`PurposeMint` carries a credential and no tier, `audit.go`). The field set itself does **not** grow, and
+the plan's C3.9f names the test that holds the line to that shape.
+
+### 5.6 One signature per review run (D1074)
+
+**A review run gets exactly one signature**, and the service enforces that rather than trusting the caller to
+ask once. When it signs, the service writes a **mark** for the run, and it takes the mark **before** it
+answers: a mark that cannot be taken is a refusal, and no signature comes back. The mark is a **create-only**
+write — `PutIfMatch` (`internal/rtdb/client.go:209`) with an **absent** ETag, the discipline `ProbeLeases`
+already uses for the probe lease (`internal/credsvc/probe.go:100`) — on one node per `(slug, run)`.
+Create-only is a property of **the write** and not of the database rules, and that is deliberate: the
+service's own writes go through IAM and are not governed by the rules at all, which the rules' own header
+states ("admin writes are IAM-only", `internal/budget/rules/rules.go`), so a write-once rule would be a
+guarantee this path never consults.
+
+A second sign for the same run is **refused** and audited like every other refusal — one line, the sign's
+purpose, the wire's existing `request_refused` status, because the status set is closed and this design does
+not grow it — and the service writes a warning to its own log beside it, so what an operator's alerting
+selects is a line they can name today rather than a field added for one. **A refused second sign is a
+security event**, and the design says which of its two readings it takes: a stage re-run is the honest case
+and the run's own end-of-run ordering (§3.4) already makes it unlikely, while something *inside* the
+container asking is the case this rule and **U7** (§7) exist for. The mark is what bounds the *how often*
+that F11's write-once outcome leaves open — that outcome bounds *when* signing may happen, and this is the
+second half.
+
+**What the mark costs, said plainly.** If the mark is taken and the answer never reaches the run — a dropped
+connection, a process that dies between the two — then the run has no signature and **cannot ask again**:
+the review is unsigned, and the remedy is re-reviewing the head (§3.4), never a second signature. That is
+the direction this failure is allowed to go, and it is the opposite of the one §6.4 picks for an unreadable
+key.
 
 ---
 
@@ -390,6 +504,17 @@ D892's rotation shape, expressed in the bundle's terms:
   (`internal/credsvc/bundle.go`, the loader's own comment), so a botched rotation is a service that
   refuses to sign rather than one that signs under a key the operator believes they retired.
 
+**The revoke mode is two consecutive generates, and the design says so rather than adding a mode (D1069).**
+One `fugaro creds set --generate <name>` moves the current entry to `…-previous` and writes a new one; run
+**twice**, the value that was current before the first run is pushed out of the accepted pair entirely, so
+the service accepts neither signature nor verification under it. That is the whole of the revoke: the
+accepted set is the current entry and the previous one and **nothing older** (§6.3's first bullet), so the
+second generate is what retires a key whose bytes may have been exposed. The alternative — a `--revoke`
+flag that writes a document with no current entry — is a third state on a two-state rotation, and it leaves
+an account that can neither sign nor verify, which is not a state an operator should be able to reach except
+by deleting the entry on purpose. The plan's C3.9d names the test that holds the two-run behaviour
+(`TestCredsSetGenerateTwiceRevokesTheOriginalKey`).
+
 ### 6.4 Fail closed, always
 
 A missing entry, an entry that is not a usable key, an unreadable bundle: the sign route **refuses**
@@ -402,15 +527,19 @@ re-reviews and one that quietly drops a verdict it could not check.
 
 ## 7. The threat model
 
-**Assets.** The App key (never on the review variant, never in its container); the account's Claude token
-(mounted on the variant, unchanged by this slice); the per-account review-signing key (the service's
-alone); the minted installation token (in-job memory, one hour, one repository).
+**Assets.** The App key (never on the review variant, never in its container); the account's **model
+credential** (the bundle's tier A entry, reachable for a review caller through the service's model path and
+for **its own account only** — ruling O1); the per-account review-signing key (the service's alone, §6); the
+minted installation token (in-job memory, one hour, one repository); the run's **two identity tokens** (the
+job's Google ID token and the run's Firebase ID token, which travel in the request's headers and are
+registered with the service's redaction, §5.6 and D1074).
 
 **Adversaries, and what each gets.**
 
 | Adversary | What it holds today | What this slice does |
 | --- | --- | --- |
-| the **review run itself** — a container that runs a test from the head under review by design (D885) | its account's Claude token, the read-only token it fetches | **closed as far as write access goes**: it can obtain only the read-only set, and only for the repository its own identity names. It **cannot** obtain a write token: the mint chooses the set from the verified claims (§4.2), and a coding run's identity is refused |
+| the **review run itself** — a container that runs a test from the head under review by design (D885) | its account's **model credential through the service** (it holds no token of its own, ruling O1), and the read-only installation token it fetches | **closed as far as write access goes**: it can obtain only the read-only set, and only for the repository its own identity names. It **cannot** obtain a write token: the mint chooses the set from the verified claims (§4.2), and a coding run's identity is refused. It **cannot** sign twice (§5.6), and it can reach no key: the review-signing key is not in its container, not in its environment and not in the bundle it may read |
+| **a subprocess inside the review container** — the mutation check's mutant, which runs code from the head by design (D885, R4) | whatever the container's own environment holds — and, if the container's egress is not denied, a Google ID token **from the instance metadata server** for the job's own service account | **this is U7, and the sign route is not built before it is answered** (below). Egress denial including the metadata server is a **hard precondition**; the mark of §5.6 bounds what such a subprocess can obtain even then — one signature for the run, never a second |
 | **another run on the same project job set** — the D892 gap: it holds `objectUser` on `runs/`, can list, and can write under a prefix it can see | a shared project job's account | **the verdict is signed, and it holds no key**: a forged or replayed `review.json` has no signature to carry, and the key is not in any container |
 | a caller that can **reach the service's URL** but holds no admitted identity | nothing | refused before a credential is read, as today |
 | the **launcher** | minting authority for run identities, and a share of the installation's own IAM | **unchanged, and stated**: a launcher that can mint an identity for any repository, and deploy a job with an admitted account name, can obtain a read-only token for that repository and sign as that account. This is the same launcher trust the credentials-service plan already records (F29, SECURITY.md) and this slice neither widens nor closes it |
@@ -421,14 +550,13 @@ alone); the minted installation token (in-job memory, one hour, one repository).
 - **A leaked signing key forges every verdict of that account until rotation.** That is the price of the
   one-holder design and the reason the key stays out of the container that reads an untrusted diff
   (D892). No escrow: an artifact signed under a retired key stops verifying.
-- **The signature binds bytes, not run or repository.** With the digest alone MAC'd (D892's answered
-  algorithm), a signature says "an admitted review run of account A asked for a signature over these
-  bytes" — the *which* run and *which* repository come from the artifact's own fields, checked by the
-  coordinator against what it launched. The service's audit line is what makes the binding *findable* after
-  the fact. A stronger construction, MAC'ing a framed message that includes the verified run and
-  repository, is recorded as an open item (X3, [reconciliation.md](reconciliation.md) §4) rather than
-  invented here, because D892 answers the algorithm and this design does not re-decide an answered
-  question.
+- **The signature binds the run and the repository, and that is D1073's answer.** The framed message (§5.2)
+  makes a signature valid for exactly one run of one repository, so a transplanted or replayed signature
+  fails **at the service** and not only at the coordinator. **What it does not bind is the head**: the digest
+  is the artifact's, so which pull request and which head those bytes describe come from the artifact's own
+  fields, checked against what the coordinator launched (R3's four checks). A head that moves between the
+  artifact write and the merge is that work stream's check, not this signature's, and this design says so
+  rather than claiming a binding it does not make.
 - **A dishonest reviewer inside its own run is not stopped by any signature.** An injected reviewer can
   write a dishonest verdict and have it signed; the signature stops *another job* forging one. The verdict
   stays advice, CI still runs, and the owner's own look is still the last step (§7 of
@@ -440,8 +568,35 @@ alone); the minted installation token (in-job memory, one hour, one repository).
   whole repository the identity names, not only the pull request's diff. It is the repository under
   review, which the run's own worktree already holds, so this adds nothing a review run did not already
   have; it is stated because "read-only" is a permission word and not a scope word.
-- **Nothing here makes the review job's model call safe.** That call is R7's wiring (the mounted token);
-  this slice is about the forge credential and the verdict's provenance.
+- **The review job's model call is this slice's to admit, and the pairing is what makes it safe.** Under
+  ruling O1 the review job holds no token and its Claude calls come to the service; the argument is §2.3's —
+  the pairing resolves **one** account, tier A only, and a review caller that fails it is refused before a
+  credential is chosen. The model path's own machinery (the circuit, the cap, the audit line) is unchanged.
+  Nothing here makes an untrusted diff safe to review: the reviewer is still a program reading a hostile
+  diff, which is D885's problem and not a credential's.
+
+**The hard precondition: U7 (D1074).** Everything the sign route does rests on one assumption that this
+design cannot make from the tree, and it is **U7** of `docs/cloud-senior-review/` — the owner's live
+observation, taken before that work stream's mutation check (R4) launches, that **egress can be denied for a
+subprocess inside a Cloud Run container** (Check 125 step 6; no network namespace and no `unshare` in
+generation 2 has been checked at the time of writing). The sign route makes that assumption load-bearing in
+a way R4 does not: the review container runs the package's own test code by design (D885), so a subprocess
+that can reach the network at all can reach **the instance metadata server** and mint itself a Google ID
+token for the job's own service account — which is the identity the sign route admits. Therefore:
+
+- **the sign route is not built before U7 has returned**, and the plan's C3.9e says so in its own
+  preconditions rather than in a footnote;
+- **the egress denial must cover the metadata server explicitly** — a denial that leaves the metadata
+  endpoint reachable leaves the route open, so the observation is about that endpoint and not only about the
+  internet at large;
+- **if a child cannot be fenced, the route is not built**: U7's own rule applies unchanged — D891 (a) is
+  amended and the owner is asked again, with no quiet fallback to a weaker denial;
+- **the live check tries it**: §8's steps include an attempt to sign from inside a mutant subprocess, and an
+  attempt to reach the metadata server from one, both of which must fail. A check that only reads
+  configuration would not observe the property that matters;
+- **and §5.6's mark is the second line of defence**, for the case where the assumption holds at build time
+  and a later image or platform changes it: even a subprocess that reaches the service gets at most the run's
+  one signature, and the second attempt is the security event an operator can alert on.
 
 ---
 
@@ -458,29 +613,49 @@ sandbox pull request.
 1. **The two facts `fugaro doctor` reports** (R6's): the credentials service is enabled for this
    installation, and the review-only variant's account is admitted. A `warning` line instead is the
    finding, and the check stops there.
-2. **The variant holds no key**: `gcloud run jobs describe <the review job>` shows exactly one secret —
-   the account's Claude token, at `latest`, never as a plain value — and the variant's service account's
-   IAM shows **no** `secretAccessor` on the App key, on the bundle, or on anything else.
+2. **The variant holds no credential at all** (ruling O1): `gcloud run jobs describe <the review job>`
+   shows **no** secret mounted — not the account's Claude token, which the review job no longer needs
+   because its model calls come to the service, and never the App key — and the variant's service
+   account's IAM shows **no** `secretAccessor` on the App key, on the bundle, or on anything else.
 3. **A review launches and runs**: `fugaro review --pr <N>` on the sandbox completes, and its log names
    **no** token value (the run's own evidence, read by eye).
 4. **The token is read-only, and it is one repository's**: a throwaway execution of the variant mints a
    token for the reviewed repository and a **push** with it is refused by GitHub (403); a second
    hand-made call naming a *different* repository the account is admitted for is refused by the
    **service** — the repository is not the caller's to name.
-5. **The verdict is signed**: `runs/<slug>/<review-run>/artifacts/review.json.sig` exists, is one line of
-   lowercase hex, and the coordinator's verify path (or a hand-made verify call, step 7) answers valid
-   for it.
-6. **A tampered artifact does not verify**: one byte changed in a copy of `review.json` (never the stored
+5. **The model call goes to the service, for the account's own tier only**: the run's model traffic is the
+   service's (the gateway's own log names it, and the variant mounts no token, step 2), the service's
+   **audit line for that call names the account's own tier A credential and no other**, and a hand-made
+   call as the review account naming a model that only another tier serves is **not** served by another
+   account's credential.
+6. **The verdict is signed**: `runs/<slug>/<review-run>/artifacts/review.json.sig` exists, is one line of
+   lowercase hex, and the coordinator's verify path (or a hand-made verify call, step 8) answers valid
+   for it. The **sign line** names the account, the repository slug and the run, and carries **no** pull
+   requests — the field set has nowhere to put them.
+7. **A tampered artifact does not verify**: one byte changed in a copy of `review.json` (never the stored
    object) and the signature no longer verifies; a copy of a valid signature pasted under a *different*
-   review run is refused by the verifier's four checks; an artifact with **no** sidecar is refused.
-7. **The verify route's caller class**: with the owner's own identity in the verifier list, a hand-made
-   `POST /v1/review/verify` with the owner's ID token answers `{"valid":true}` for the real pair and
-   `{"valid":false}` for the tampered one; the same call **without** a token is a typed refusal; the
-   service's log shows the line naming the account, the repository and the run.
-8. **The gate still holds where it was written**: the same call from a *coding* shared project job's
-   account is refused, and so is the review account on `/v1/messages` — the refusal's own sentence is what
-   the owner reads. Then the check's own cost: the review run's spend, the artifact kept, and nothing
-   created, enabled or deleted outside the sandbox.
+   review run is refused **by the service itself** — the framed message (§5.2) is not the one that was
+   signed, so the answer is `{"valid":false}` before any coordinator check runs — and an artifact with
+   **no** sidecar is refused.
+8. **The verify route's caller class, and what its line carries**: with the owner's own identity in the
+   verifier list, a hand-made `POST /v1/review/verify` with the owner's ID token answers `{"valid":true}`
+   for the real pair and `{"valid":false}` for the tampered one; the same call **without** a token is a
+   typed refusal; and the service's log shows the line — the **verifier's email as its caller field** and
+   the **review-signing key's entry name as its credential**, with no run and no job on it, because a
+   verifier is not a run.
+9. **A subprocess inside the container can reach nothing — U7, observed after the route exists
+   (D1074)**: from inside a mutant subprocess of the mutation check, a `POST /v1/review/sign` **fails**
+   (no egress) and a request to the **instance metadata server** fails too. Both are the property the sign
+   route was built on, and the owner re-runs this observation against the shipped image rather than
+   trusting the pre-build one.
+10. **The second sign is refused, and it is the security event**: with the run's own identity (minted by
+    the owner as the launcher would), a second `POST /v1/review/sign` for the run that already signed is
+    refused with `request_refused`, **no** second signature exists, and the warning the service wrote is
+    the line an operator's alerting would select.
+11. **The gate still holds where it was written**: a call from a *coding* shared project job's account is
+    refused on every route, and the **review account is refused the verify route**; the refusal's own
+    sentence is what the owner reads. Then the check's own cost: the review run's spend, the artifact
+    kept, and nothing created, enabled or deleted outside the sandbox.
 
 ---
 
@@ -509,6 +684,11 @@ is *another command*. This slice's reading of it, stated because a reviewer must
 - **A version gate, not a silent ignore**: this slice adds no `fugaro.yaml`, task or wire *field*, so
   `internal/cli/recipes_skew.go`'s `…Since` gates are not needed for it — the two routes are new paths and
   an older job image never calls them. Where the review work adds fields, E6 is that work's rule.
+- **The review variant's own environment is R7's, and this slice asks for one change in it**: under ruling
+  O1 the variant carries the service's URL (§4.3) and **no** model token, so R7 mounts nothing where it
+  would have mounted the account's Claude token. That is a change to R7's module and not to `fugaro update`:
+  no installation root's plan moves because of it, and the class is admitted the moment the service's image
+  is re-pinned.
 
 ---
 
@@ -521,11 +701,15 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   name them as what the shared-job work grows into. This slice reads **O4's published admissions** — which
   is the source the model path already uses — and builds no registry.
 - **The model-credential move for shared jobs.** `--provision-credentials` still does not reach
-  `modules/project`; the shared job keeps its provider keys and its `CLAUDE_CODE_OAUTH_TOKEN`
-  (`internal/cli/init_credentials.go:21`), and the review variant mounts its own.
-- **A model route for the review class.** The review job's model call is its mounted token. Admitting the
-  review class to `/v1/messages` would mean serving a *tier* and an *admission* to a job with no
-  repository of its own — the exact widening Global Constraint 6 exists to refuse.
+  `modules/project`; the **coding** shared job keeps its provider keys and its `CLAUDE_CODE_OAUTH_TOKEN`
+  (`internal/cli/init_credentials.go:21`). The **review** variant is the one job that mounts nothing, under
+  ruling O1, and that is this slice's whole difference from it.
+- **The cascade for a review caller.** The review class **is** admitted to the model path (ruling O1), and
+  what it is not admitted to is the *cascade*: it is served tier A only — the account the pairing resolves,
+  for a repository that account is admitted to — so no tier registry, no `fallback` ladder and no bucket
+  narrowing is exercised for a review caller, and D131/O4's registry stays unbuilt. Serving a review caller
+  another account's credential would be the widening Global Constraint 6 exists to refuse, and it is what
+  §2.3's pairing rules out.
 - **The coordinator and its merge path.** The verify endpoint is built and configured; the component that
   calls it, and the `ship` → merge path that acts on a verified verdict, is the coordinator's own work
   stream (`docs/coordinator/`), and it stays blocked on this slice only in the sense that it now has a

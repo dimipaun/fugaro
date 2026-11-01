@@ -1,8 +1,9 @@
 # C3.9's review half: implementation plan
 
-**Nothing here is approved to build, and no decision is answered.** This plan is written to the
-*recommended* answer of each decision in [reconciliation.md](reconciliation.md) §3 (D1062–D1072); a decision
-the owner answers the other way changes the tasks that cite it and the spec paragraph they implement. Each
+**Nothing here is approved to build, and every decision is answered.** The owner answered
+[reconciliation.md](reconciliation.md) §3's **D1062–D1074** on 2026-11-01 — D1062–D1071 as recommended,
+D1072 as 0.16.0, D1063 as amended by that day's ruling O1, and D1073/D1074 as the review added them — so
+each task below is written to an answer and not to a recommendation. Each
 task touches at most 10 files, names its tests, starts with a red step, and ends at the gates below.
 [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md) keeps
 **C3.9** for the general case; this plan is the review half of it and carries the scope amendment in
@@ -10,19 +11,29 @@ task touches at most 10 files, names its tests, starts with a red step, and ends
 
 ## Dependencies
 
-Four things this plan does **not** own. **R1 is the one that blocks a task**; the other three are facts the
-tasks are written to.
+Five things this plan does **not** own. **R1 and U7 are the two that block a task** — R1 blocks C3.9b, U7
+blocks C3.9e (D1074) — and the other three are facts the tasks are written to.
 
 - **R1, the read-only permission set** (`docs/cloud-senior-review/`, `internal/gitprov/github/apptoken.go`):
   C3.9b **serves** that set and does not declare a second spelling of it. This is the one blocking
   dependency, and it is another work stream's.
+- **U7, the egress observation** (`docs/cloud-senior-review/`, Check 125 step 6): the owner's live probe that
+  a subprocess inside a Cloud Run container cannot reach the network — **the instance metadata server
+  included** — and it is the **hard precondition of C3.9e** (D1074, [spec.md](spec.md) §7). The reader should
+  read the dependency in the direction the ruling wrote it: the sign route is what makes U7 load-bearing,
+  because a review container runs the package's own test code by design (D885) and the metadata server is
+  where a Google ID token for the job's own account comes from. If a child cannot be fenced, **C3.9e does not
+  start**: D891 (a) is amended and the owner is asked again, with no quiet fallback to a weaker denial.
 - **R7, the review-only job variant**: its account's ID spelling is R7's, and C3.9a computes the service's
   review set **through the same helper the deployer uses for it**
   (`docs/cloud-senior-review/implementation-plan.md` R7; [spec.md](spec.md) §2.2). Two requirements this
   plan depends on and does not write: the variant has its **own** service account — not the coding job's,
   which would put one email in two classes and leave the class rule with nothing to decide — and the
   variant's environment carries `FUGARO_CREDENTIALS_SERVICE_URL` (finding **F14**; `internal/cli/run.go`'s
-  `credentialsServiceLaunchEnv` deliberately does not reach a shared job).
+  `credentialsServiceLaunchEnv` at `:2958` deliberately does not reach a shared job). **Ruling O1 adds a
+  third**: the variant mounts **no** model token, where R7 would have mounted the account's Claude token,
+  because a review job's model calls come to the service ([spec.md](spec.md) §1). That is R7's module to
+  change and no task here touches it.
 - **E7, the service enabled for the installation**: `fugaro update --provision-credentials`, the App key in
   the bundle, and the review variant deployed. C3.9a–C3.9g change nothing about that deployment; they make
   the service **admit** what E7 deploys.
@@ -39,8 +50,8 @@ tasks are written to.
 | --- | --- | --- |
 | 0 | C3.9a, C3.9c | nothing (each reads a derivation another work stream owns) |
 | 1 | C3.9b | C3.9a, and **R1 merged** (the set it serves) |
-| 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a |
-| 3 | C3.9f | C3.9a, C3.9c |
+| 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074) |
+| 3 | C3.9f | C3.9a, C3.9c, C3.9e (the frame the verify route recomputes) |
 | 4 | C3.9g | C3.9e, C3.9f; the live check it names is not run until **R7 and R2** are on `main` |
 
 ## Where each decision lands
@@ -52,7 +63,8 @@ tasks are written to.
 | D1064 the pairing for a project-scoped caller | C3.9a | D1070 what the slice does not do | §"The amendment the implementing pull request carries" (its second edit), and nothing in the code |
 | D1065 which token set | C3.9b | D1071 who generates the bytes | C3.9d |
 | D1066 the repository, and the table | C3.9a (the table), C3.9b (the mint's use) | D1072 the release slot | §"Release slot" |
-| D1067 what is signed | C3.9e | | |
+| D1067 what is signed | C3.9e | D1073 the framed message | C3.9e (built), C3.9f (recomputed) |
+| D1074 one signature per run, and U7 | C3.9e | | |
 
 ## Where each finding lands
 
@@ -133,12 +145,14 @@ repository caller, and a refusal for any other shape).
   (the set chooser, beside the class it reads), `internal/credsvc/github_test.go`,
   `internal/credsvc/review_test.go`. **Read, not changed:** `github.MintInstallationToken` and,
   once R1 lands, the exported read-only set in `internal/gitprov/github/apptoken.go`.
-- **The refusal order is part of the contract**, because it decides what an audit line says and which
-  refusal a caller reads first: unverified identities → class not admitted to the mint → the stop flag →
-  pairing → the claim rule → the bundle. The stop flag is where it is because `ServeHTTP` already reads it
-  before it branches on the route (`server.go:440`), and the order is not rearranged to suit the new class.
-  A review caller that fails the pairing or the claim rule is refused **before** the bundle is read, so a
-  mis-shaped identity never touches key material.
+- **The refusal order is part of the contract, and it is the code's rather than this plan's to choose**:
+  unverified identities (`RequestFromHTTP`, `wire.go:152`; `Verify`, `server.go:457`) → class not admitted to
+  the mint → **the pairing** (`ja, bound := s.jobs[id.JobAccount]`, `server.go:476`, whose shape the class
+  decides) → **the stop flag** (`Kills.Stop`, `server.go:492`) → the claim rule → the bundle. **The pairing
+  comes before the stop flag because that is where `ServeHTTP` makes it**, and this plan's first draft had
+  the two the other way round; the order is not rearranged to suit the new class, and the spec says the same
+  in §4.4. A review caller that fails the pairing or the claim rule is refused **before** the bundle is read,
+  so a mis-shaped identity never touches key material.
 - **No new request field and no new answer field.** `MintRequest` stays the App ID alone, and the answer's
   existing `Repository` field carries the resolved canonical name — so a review run learns which repository
   its token is for from the answer, not from a request it wrote (D893 (c)).
@@ -198,6 +212,11 @@ already exist rather than new ones.
   name and the replaced value under the `…-previous` name, in the same version, so there is no instant in
   which the service holds neither. The service signs with the current entry and verifies against the current
   and the previous one, and against nothing older.
+- **The revoke mode is two consecutive generates, and the task writes no mode for it** (D1069, §6.3 of
+  [spec.md](spec.md)): the second run pushes the once-current value out of the accepted pair, which is
+  exactly the revoke. `TestCredsSetGenerateTwiceRevokesTheOriginalKey` is the test that holds it — it asserts
+  that a value signed with the original key no longer verifies after two generates — and the help text says
+  so in one sentence, so an operator does not have to infer it.
 - **Files (4):** `internal/cli/creds.go` (the flag, the generation, the two-entry write, the help text),
   `internal/cli/creds_test.go`, `internal/cli/creds_pty_test.go` (the terminal path, which is the one an
   owner actually uses), and the doc that quotes `creds set`'s help — `docs/credentials-service/`'s bundle
@@ -209,58 +228,113 @@ already exist rather than new ones.
 - **Tests:** `TestCredsSetGenerateWritesAFreshValueAndNeverPrintsIt`,
   `TestCredsSetGenerateWritesALegalBundleKey` (the value is one the service's loader accepts),
   `TestCredsSetGenerateTwiceRotatesAndKeepsThePreviousEntry`,
+  `TestCredsSetGenerateTwiceRevokesTheOriginalKey` (the two-run revoke, §6.3),
   `TestCredsSetGenerateKeepsEveryOtherEntryByteForByte`,
   `TestCredsSetGenerateIsRefusedInACodingAgentsSession` (the existing refusal, honoured by the new mode),
   `TestCredsSetGenerateRefusesANameOutsideTheReviewSigningFamily` (the mode is not a general generator).
 
-## C3.9e. The sign route (D1067, F7, F11). **SEC**
+## C3.9e. The sign route, the frame and the one-signature mark (D1067, D1073, D1074, F7, F11). **SEC**
 
-`POST /v1/review/sign` takes a digest and answers the HMAC of its 32 bytes under the account's key,
-lowercase hex, with the algorithm named in the answer. What it deliberately does not do is in
-[spec.md](spec.md) §5.2, and the design's honesty about the binding (`D1067`, X3) is repeated in the
-handler's own comment.
+**Precondition: U7 has returned, and it must cover the metadata server** (D1074, §7 of [spec.md](spec.md)).
+This task does not start before the owner's live observation says a subprocess inside the review container
+cannot reach the network — the instance metadata server included — because the review container runs the
+package's own test code by design (D885) and the metadata server is where a Google ID token for the job's own
+service account comes from. If a child cannot be fenced, the task stops and the owner is asked again; there
+is no weaker fallback and no `denyWeb`-shaped substitute.
 
-- **Files (6):** `internal/credsvc/verdict.go` (new: `SignPath`'s handler, the strict 4 KiB body decode,
-  the answer, the key read through C3.9c's accessor, the HMAC and its hex rendering),
-  `internal/credsvc/server.go` (`SignPath` beside the three paths at `:33`, `routeAct`'s row), 
-  `internal/credsvc/audit.go` (`PurposeReviewSign`), `internal/credsvc/verdict_test.go` (new),
-  `internal/credsvc/forward_test.go` (`TestServiceHasNoAdminRoutes` `:319` naming **five** paths, so a sixth
-  is a test failure and not a discovery), `internal/credsvc/audit_test.go`.
-- **The line carries the verified side and never the digest** (§5.5): the account, the repository slug, the
-  run and the pull requests come from the identity the service verified; the digest, the signature and the
-  key's bytes reach no field, because a field that is a caller's bytes is what the closed field set exists
-  to keep out.
+`POST /v1/review/sign` takes a digest and answers the HMAC-SHA-256 of the **framed message** under the
+account's key, lowercase hex, with the algorithm named in the answer. The frame is `v1\n<slug>\n<run>\n<digest>`
+over the identity's own verified `fs` and `fr` (D1073) — the request never names either field — and the task
+writes the frame in one place so the verify route (C3.9f) recomputes the same bytes rather than a second
+spelling of them. What the route deliberately does not do is in [spec.md](spec.md) §5.2.
+
+- **Files (8):** `internal/credsvc/verdict.go` (new: the frame builder, `SignPath`'s handler, the strict
+  4 KiB body decode, the answer, the key read through C3.9c's accessor, the HMAC and its hex rendering, the
+  mark), `internal/credsvc/server.go` (`SignPath` beside the three paths at `:33`, `routeAct`'s row, the
+  create-only writer on `Config`), `internal/credsvc/audit.go` (`PurposeReviewSign`),
+  `internal/credsvc/verdict_test.go` (new), `internal/credsvc/forward_test.go`
+  (`TestServiceHasNoAdminRoutes`, `:341`, whose list the new route joins), `internal/credsvc/audit_test.go`,
+  `internal/cli/credentials_serve.go` (the writer wired from the database client the service already holds),
+  `internal/cli/credentials_serve_test.go`.
+- **One signature per run, and the mark is taken before the answer** (D1074, §5.6 of [spec.md](spec.md)):
+  a **create-only** write — `PutIfMatch` with an absent ETag (`internal/rtdb/client.go:209`), the discipline
+  `ProbeLeases` uses for the probe lease (`internal/credsvc/probe.go:100`) — on one node per `(slug, run)`.
+  The property is the write's and not the rules': the service's own writes go through IAM and bypass the
+  rules (the rules' own header says so). The order is mark-then-answer, so a mark that cannot be taken is a
+  refusal and never a signature; a second sign is refused with the wire's existing `request_refused` status
+  (the status set is closed) and logged, and a run marked but unanswered is an unsigned review and a
+  re-review — the direction §5.6 chooses on purpose.
+- **Both identity tokens are registered with the redaction** (D1074): the job's Google ID token and the run's
+  Firebase ID token are the two header values this route verifies, and the auditor the service already arms
+  with the bundle loader's scrub (`WithAuditScrub`) carries them for the call, so neither can reach a line,
+  a log line or an error even if a refusal renders the request. `TestReviewRoutesNeverPrintEitherIdentityToken`
+  drives the route with fixture values and asserts the line and the error carry neither.
+- **The line carries the verified side and never the digest** (§5.5): the account, the repository slug and
+  the run come from the identity the service verified, and the digest, the signature and the key's bytes
+  reach no field, because a field that is a caller's bytes is what the closed field set exists to keep out.
+  The line does **not** name pull requests: `AuditEvent` has no field for them (D1062).
 - **Signing is an end-of-run act** (F11): `checkLive` already refuses a run whose outcome is written, and
   the handler does not weaken it. A killed run leaves an unsigned artifact and no re-signing path exists.
-- **Red step:** `TestSignRouteAnswersAnHMACOfTheDigestUnderTheAccountsKey` fails while the route is a 404:
-  the path is not in `ServeHTTP`'s set, which is how D143's "no admin endpoint" is kept.
-- **Tests:** `TestSignRouteAnswersAnHMACOfTheDigestUnderTheAccountsKey`,
+- **Red step:** `TestSignRouteAnswersAnHMACOfTheFramedMessageUnderTheAccountsKey` fails while the route is a
+  404: the path is not in `ServeHTTP`'s set, which is how D143's "no admin endpoint" is kept.
+- **Tests:** `TestSignRouteAnswersAnHMACOfTheFramedMessageUnderTheAccountsKey`,
   `TestSignAnswerNamesTheAlgorithmAndIsLowercaseHex` (D892's answer shape),
+  `TestFrameBindsTheVerifiedSlugAndRunAndNotARequestField` (D1073: a request carrying `run` or `repository`
+  is refused as an unknown field, and two runs' frames differ),
   `TestSignRouteRefusesADigestThatIsNotThirtyTwoBytesOfLowercaseHex`,
   `TestSignRouteRefusesAnUnknownFieldAndAnOversizeBody`,
   `TestSignRouteRefusesARunThatHasEnded` (F11), `TestSignRouteRefusesAReviewAccountWithNoKeyYet` (fail
   closed, `state_unavailable`, never a signature under something else),
   `TestSignRouteRefusesACodingCallerAndAnUnadmittedClass`,
+  `TestSignRouteSignsOnceAndRefusesTheSecondTime` (D1074, `request_refused`, and no second signature),
+  `TestSecondSignIsLoggedWhereAnOperatorCanAlertOnIt` (D1074's security event),
+  `TestSignRouteRefusesWhenTheMarkCannotBeTaken` (the service does not sign what it cannot mark),
+  `TestReviewRoutesNeverPrintEitherIdentityToken` (D1074's redaction),
   `TestSignRouteAuditsTheActAndNeverTheDigest`,
   `TestServiceHasNoAdminRoutes` (extended), `TestValidPurposeNamesTheReviewSignPurpose`.
 
 ## C3.9f. The verify route and its caller class (D1068, F7, F12). **SEC**
 
-`POST /v1/review/verify` takes `{account, digest, signature}` and answers `200 {"valid":true|false}`, or a
-**typed refusal** when the service cannot answer at all — the distinction the design insists on, because a
-bare `false` tells a coordinator that a verdict is not ours when the truth is that we could not tell.
+`POST /v1/review/verify` takes `{account, digest, signature, run, repository}` and answers
+`200 {"valid":true|false}`, or a **typed refusal** when the service cannot answer at all — the distinction
+the design insists on, because a bare `false` tells a coordinator that a verdict is not ours when the truth
+is that we could not tell. The `run` and `repository` fields are the frame's (D1073): the caller names them
+because the service recomputes the HMAC over them, and naming them cannot make a signature valid that was
+not made for them.
 
+- **The route is answered ahead of `RequestFromHTTP`, and that is the one place this task changes
+  `ServeHTTP`'s shape rather than adding a row to it.** `RequestFromHTTP` (`wire.go:152`) parses the two
+  identity headers and `Verify` (`auth.go:367`) refuses a request with no run identity, **before**
+  `ServeHTTP` ever branches on the route (`server.go:450`–`:460`) — and a verifier holds no run identity.
+  So the verify path is recognised **first**, the one Google ID token it carries is verified on its own, and
+  its refusal is the verifier class's own refusal with **its own audit line**.
+  `TestVerifyRouteIsAnsweredAheadOfTheSharedParse` is the test that holds the ordering, and a route left
+  behind the shared parse is a route no verifier can reach.
 - **The caller class is configuration and it is empty by default** (D1068, F12): the request carries a
-  Google ID token whose verified `email` is in `AuthConfig.VerifierAccounts`, checked by the same code path
-  as a job token minus the shared-job gate (a verifier is not a job of this installation's job set at all).
-  The list is empty until someone is put in it, so an installation with no coordinator has no reachable
-  route; the coordinator's own account joins it when that work stream deploys.
-- **Files (6):** `internal/credsvc/verdict.go` (the handler, the request and answer shapes, the recompute),
-  `internal/credsvc/auth.go` (`AuthConfig.VerifierAccounts`, the verifier branch in `verifyJob` — one branch,
-  not a second verifier), `internal/credsvc/server.go` (`VerifyPath`, `routeAct`'s row),
-  `internal/credsvc/audit.go` (`PurposeReviewVerify`), `internal/credsvc/verdict_test.go`,
-  `internal/credsvc/auth_test.go`. The list itself is **configured** — C3.9g wires the variable — and this
-  task's tests build the config directly, so nothing here needs Terraform.
+  Google ID token whose verified `email` is in `AuthConfig.VerifierAccounts`, checked by the same **token
+  check** as a job token — audience, issuer, `email_verified`, expiry, not-issued-in-the-future, ASCII fold
+  — minus the shared-job gate (a verifier is not a job of this installation's job set at all). The list is
+  empty until someone is put in it, so an installation with no coordinator has no reachable route; the
+  coordinator's own account joins it when that work stream deploys.
+- **The comparison is constant-time**: the recomputed HMAC is compared with the presented one through
+  `hmac.Equal` (`crypto/hmac`), never `==` on the hex strings — the signature is an attacker-supplied value
+  and its rejection must not leak a prefix through timing. `TestVerifyComparesTheSignatureInConstantTime` is
+  the test that names the rule (it asserts the comparison helper is reached with equal-length inputs, and
+  that a same-length wrong signature is a plain `valid:false`).
+- **The verify line carries the verifier as its caller and the key as its credential** (§5.5): `Caller` is
+  the verified `email`, `Credential` is the review-signing key's bundle entry name, and the line has **no**
+  `Job` — the field set's "job and caller together" rule carries `Caller` without `Job` for this purpose
+  only, exactly as a mint carries a credential without a tier (`audit.go`).
+  `TestVerifyLineCarriesTheCallerWithoutAJob` holds it.
+- **Files (8):** `internal/credsvc/verdict.go` (the handler, the request and answer shapes, the frame
+  recompute through C3.9e's builder, the constant-time compare), `internal/credsvc/server.go` (`VerifyPath`,
+  `routeAct`'s row, the path answered ahead of `RequestFromHTTP`), `internal/credsvc/wire.go` (the request's
+  two new fields and their bounded shapes), `internal/credsvc/auth.go` (`AuthConfig.VerifierAccounts`, the
+  verifier branch — one branch, not a second verifier), `internal/credsvc/audit.go`
+  (`PurposeReviewVerify` and the caller-without-job rule), `internal/credsvc/verdict_test.go`,
+  `internal/credsvc/auth_test.go`, `internal/credsvc/audit_test.go`. The list itself is **configured** —
+  C3.9g wires the variable — and this task's tests build the config directly, so nothing here needs
+  Terraform.
 - **Red step:** `TestVerifyRouteAnswersValidForTheRealPairAndFalseForTheTamperedOne` fails while the route
   is a 404; `TestVerifyRouteRefusesAnEmptyVerifierList` fails while an unconfigured installation still
   answers a caller at all.
@@ -268,9 +342,15 @@ bare `false` tells a coordinator that a verdict is not ours when the truth is th
   `TestVerifyRouteAnswersATypedRefusalWhenTheKeyIsUnreadable` (never `valid:false`),
   `TestVerifyRouteRefusesAnAccountTheCallerMayNotAskAbout` (the account name is held to the bundle's
   credential-name rule), `TestVerifyRouteDoesNotEchoTheAccountOrAKeyID`,
+  `TestVerifyRouteRefusesASignatureMadeForAnotherRunOrRepository` (D1073: the frame, refused by the service
+  with `valid:false` and no coordinator check),
+  `TestVerifyRouteIsAnsweredAheadOfTheSharedParse`,
+  `TestVerifyComparesTheSignatureInConstantTime` (F7's constant-time rule),
+  `TestVerifyLineCarriesTheCallerWithoutAJob` (§5.5's field-set rule),
   `TestVerifyRouteRefusesACallerOutsideTheVerifierList`,
   `TestVerifierIsNotGatedByTheSharedJobRule` (a verifier is not a job),
   `TestReviewAccountCannotUseTheVerifyRoute`, `TestVerifyRouteRefusesAnUnknownFieldAndAnOversizeBody`,
+  `TestReviewRoutesNeverPrintEitherIdentityToken` (shared with C3.9e),
   `TestVerifyRouteAuditsTheActAndNeverTheDigestOrTheSignature`.
 
 ## C3.9g. The verifier list's deployment, the amendment, the docs, and the named live check (D1063, D1070, F2)
@@ -286,7 +366,7 @@ Two halves: the one place this plan changes a deployment, and the documents.
   plan is regenerated with `scripts/gen-golden-plans.sh` rather than hand-edited. It defaults to **null**, so
   an installation that never sets it is byte-for-byte unchanged and `fugaro update` converges it with no
   operator step — which is what §9 of [spec.md](spec.md) claims, and what
-  `TestCredentialsServeRefusesWithoutItsEnvironment` (`internal/cli/credentials_serve_test.go:95`) plus the
+  `TestCredentialsServeRefusesWithoutItsEnvironment` (`internal/cli/credentials_serve_test.go:100`) plus the
   golden test must keep true.
 - **Files (9):** `internal/cli/credentials_serve.go` (the variable), `internal/cli/credentials_serve_test.go`,
   `internal/infra/tf/cover.go` (the allow-list), `internal/infra/tf/credentials_golden_test.go`,
@@ -301,7 +381,8 @@ Two halves: the one place this plan changes a deployment, and the documents.
   installation that never sets it is untouched; whoever wants the verify route reachable sets it and runs the
   one command, which is the HARD RULE's shape.
 - **The live-check register row is not this task's if the ruling stands.** `docs/gcp-live-checklist.md` is on
-  the 0.15.0 do-not-touch list, so the check is written in this folder and the register row is a merge-day act
+  the do-not-touch list of the release window in flight (0.15.0's while this was written, and 0.16.0's now
+  that D1072 answers the slot), so the check is written in this folder and the register row is a merge-day act
   or a follow-up run's; many `internal/cli/docs_*_test.go` pins read that file, so moving the row is not a
   one-line edit.
 - **Red step:** the plan amendment has no red test of its own — it is prose in a file whose facts
@@ -321,8 +402,10 @@ same pull request, by C3.9g, and the amendment is **two edits and no more**:
 
 1. **Global Constraint 6** (`docs/credentials-service/implementation-plan.md:111`) keeps its sentence for
    the jobs it was written for — "per-repository jobs only until the phase-3 shared-job rules are on `main`"
-   — and gains the scope: the **review** class is admitted on the mint and the sign and refused on the model
-   routes, while a **coding** run in a shared project job is refused exactly as it is today.
+   — and gains the scope: the **review** class is admitted on the **mint**, the **sign** and the **model
+   path for its own account only** (ruling O1's amendment to D1063: the pairing resolves one account, tier A
+   only, and the review variant mounts no model token), while a **coding** run in a shared project job is
+   refused exactly as it is today.
 2. **C3.9** (`:674`) gains one sentence naming this folder as the review half that shipped and the general
    half that did not (D1070, [spec.md](spec.md) §10), so a reader who follows C3.9's own line learns what is
    done and what is still owed.
@@ -339,13 +422,14 @@ different reason has taken a wrong turn.
 
 | File | Tasks | What each writes |
 | --- | --- | --- |
-| `internal/credsvc/server.go` | C3.9a, C3.9e, C3.9f | a: `Config.ReviewAccounts`, `Config.Repos` and the pairing at `:476`; e: `SignPath` and `routeAct`; f: `VerifyPath` and `routeAct` |
+| `internal/credsvc/server.go` | C3.9a, C3.9e, C3.9f | a: `Config.ReviewAccounts`, `Config.Repos` and the pairing at `:476`; e: `SignPath`, `routeAct`'s row, the create-only writer on `Config`; f: `VerifyPath`, `routeAct`'s row, and the path answered ahead of `RequestFromHTTP` |
 | `internal/credsvc/auth.go` | C3.9a, C3.9f | a: the class on `Identity`, `AuthConfig.ReviewJobAccounts`, `verifyJob`'s answer; f: `AuthConfig.VerifierAccounts` and the verifier branch |
+| `internal/credsvc/wire.go` | C3.9f | the verify request's `run` and `repository` fields and their bounded shapes |
 | `internal/credsvc/review.go` | C3.9a, C3.9b | a: creates it — the class, the table, the claim rule; b: the set chooser beside the class |
-| `internal/credsvc/verdict.go` | C3.9e, C3.9f | e: the sign handler; f: the verify handler and the caller class's own shape checks |
-| `internal/credsvc/audit.go` | C3.9e, C3.9f | one purpose each, and `ValidPurpose` in the first of the two |
+| `internal/credsvc/verdict.go` | C3.9e, C3.9f | e: creates it — the frame builder, the sign handler and the mark; f: the verify handler, the constant-time compare and the caller class's own shape checks |
+| `internal/credsvc/audit.go` | C3.9e, C3.9f | one purpose each, and `ValidPurpose` in the first of the two; f also carries the caller-without-job rule for the verify purpose |
 | `internal/credsvc/bundle.go` | C3.9c, read by C3.9e/C3.9f | c: the kind, the key set, the accessor; the routes only call the accessor |
-| `internal/cli/credentials_serve.go` | C3.9a, C3.9f | a: the review set and the repository table; f: the verifier list variable |
+| `internal/cli/credentials_serve.go` | C3.9a, C3.9e, C3.9f | a: the review set and the repository table; e: the create-only writer's wiring; f: the verifier list variable |
 | `internal/credsvc/*_test.go` | many | each task adds its own file where it can; the three existing files it extends (`auth_test.go`, `sharedjobs_test.go`, `forward_test.go`, `bundle_test.go`) are named in the task |
 
 ## Live checks
@@ -354,20 +438,24 @@ One, and it is **named and not numbered** — the shape [docs/run-limit-carry-ov
 chose on 2026-11-01: the register's highest **written** section is **Check 190**, open pull requests claim
 above it, and the register's own rule is that a claim above the highest written section is settled at its
 merge. So the task that writes this check (C3.9g) takes the number free at **its** merge. The check is
-[spec.md](spec.md) §8: eight steps, owner-run, **no agent performs any step of it**, and **NOT RUN** until
-C3.9a–C3.9g ship and the review work's **R7** and **R2** are on `main` — because step 3 launches a review
-with `fugaro review --pr N`, which is R2, on the variant R7 deploys.
+[spec.md](spec.md) §8: **eleven steps**, owner-run, **no agent performs any step of it**, and **NOT RUN**
+until C3.9a–C3.9g ship and the review work's **R7** and **R2** are on `main` — because step 3 launches a
+review with `fugaro review --pr N`, which is R2, on the variant R7 deploys.
 
-Step 7 is the one that needs a configuration act rather than a fact, and the check says so: the owner's own
+Step 8 is the one that needs a configuration act rather than a fact, and the check says so: the owner's own
 identity is put in the verifier list (C3.9f's variable) and the installation is converged by the one
-documented command, which is what makes the hand-made verify call possible. Cost: one sandbox review run's
-spend, the artifact kept, and nothing created, enabled or deleted outside the sandbox.
+documented command, which is what makes the hand-made verify call possible. **Step 9 is U7's property,
+observed after the route exists** (D1074): a sign attempt and a metadata-server request from inside a mutant
+subprocess must both fail, and the check says the owner re-runs the pre-build observation against the
+shipped image rather than trusting it. Cost: one sandbox review run's spend, the artifact kept, and nothing
+created, enabled or deleted outside the sandbox.
 
 ## Release slot
 
 - **This design** merges whenever the owner answers it; it carries no code and nothing depends on it merging
   early except the plan's own review.
-- **Implementation is recommended for 0.15.0, and before R7 and R2 in the same window** (D1072). R7 is the
+- **Implementation is 0.16.0, and before R7 and R2 in the same window** (D1072; the recommendation was
+  0.15.0 and the owner moved it). R7 is the
   variant whose account C3.9a admits, R2 is the command that launches it, and this work is what makes the
   launch possible: a release that shipped R7 with **no** service admission would ship exactly the failure
   E7 and D893 (c) exist to prevent. The order inside the window is C3.9a–C3.9f, then R7 and R2.
