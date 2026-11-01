@@ -702,3 +702,29 @@ func TestReviewFloorNotInLayer(t *testing.T) {
 		t.Errorf("fugaro.yaml refused the file with %q, want a problem naming review_floor", got)
 	}
 }
+
+// TestLayerRefusesDuplicateAreaGlob is the project layer's half of F14: the
+// rule validateRigor states for a repository's own rigor.areas holds for
+// defaults.rigor.areas too, and it is the layer's own list that is judged —
+// the repository's rules are a different list, in effect at the same time
+// (D20c), so a glob repeated across the two layers is not a repeat.
+func TestLayerRefusesDuplicateAreaGlob(t *testing.T) {
+	const text = `version: 1
+project: acme
+gcp_project: acme-fugaro
+defaults:
+  rigor:
+    areas:
+      - { name: payments, match: "payments/**", mode: hotfix }
+      - { name: payments-again, match: "payments/**", mode: pro }
+`
+	_, ps := ParseProjectLayer([]byte(text), testAnchor)
+	if len(ps) != 1 || ps[0].Path != "defaults.rigor.areas[1]" {
+		t.Fatalf("problems = %s", problemsText(ps))
+	}
+	for _, want := range []string{`"payments/**"`, "areas[0]"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the refusal of defaults.rigor.areas[1] does not carry %q: %q", want, ps[0].Message)
+		}
+	}
+}

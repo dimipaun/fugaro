@@ -59,6 +59,16 @@ type Config struct {
 	// again, as on a first run). The config the installation's apply writes
 	// clears it.
 	SetupPending string `yaml:"setup_pending,omitempty"`
+	// PolicyGeneration is the published policy node's generation as of the last
+	// publish that wrote this file's policy keys, or the publish this file was
+	// seeded from: the ETag the node was read at, which is the same value the
+	// write is conditional on (rtdb.PutIfMatch). A file carrying none was never
+	// written from a published node — every installation before the first
+	// `fugaro update` of this release — and the next run ADOPTS the generation
+	// it reads rather than refusing (D854: refusing once would ask a question
+	// with no information in it, since the machine has no baseline to compare
+	// against). An installation that writes no policy node carries none.
+	PolicyGeneration string `yaml:"policy_generation,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind
@@ -153,7 +163,7 @@ type Config struct {
 	// able to widen where a credential is sent.
 	//
 	// It is a copy and not a derivation, and it is held to the node's rule
-	// alone (projectpolicy.validBitbucketAPIRoots): an https root that reaches
+	// alone (projectpolicy.ValidBitbucketAPIRoots): an https root that reaches
 	// one host, without a query, a fragment or userinfo. There is no second
 	// copy of that rule here on purpose — a root that the node would refuse is
 	// refused by the publish that builds the node, before anything is written,
@@ -212,6 +222,30 @@ type Config struct {
 	// would go out without the variable while the installation has the service
 	// on.
 	CredentialsService *CredentialsService `yaml:"credentials_service,omitempty"`
+	// SecretRotationDays is how often the operator means the installation's
+	// stored credentials to be rotated, in days (plan B1.9, D503c): doctor's
+	// secret-rotation-age check warns once a container's newest enabled
+	// version is older than this. Zero, or absent, is no period at all —
+	// doctor then says nothing, because the operator has not said how often
+	// these are meant to change, and no Secret Manager call is made on their
+	// behalf.
+	//
+	// Operator-only, like update_check: it is one person's reminder about
+	// credentials only they can rotate, and a launcher writing it into the
+	// runs bucket would be choosing when everyone else is told their
+	// installation is overdue.
+	SecretRotationDays int `yaml:"secret_rotation_days,omitempty"`
+	// SecretExpires is the expiry date the operator recorded per secret name
+	// (plan B1.9, D503c), as YYYY-MM-DD (SecretExpiryLayout): doctor warns
+	// when a named secret's date is near or past. It exists because nothing
+	// Fugaro can read tells it when a stored credential expires — Bitbucket
+	// shows an access token's expiry in its UI and its API does not expose it
+	// (U3, F19) — so the operator's own record is the only source there is,
+	// and the key is the secret's logical name (the label a container
+	// carries), not a container ID.
+	//
+	// Operator-only, for SecretRotationDays' reason.
+	SecretExpires map[string]string `yaml:"secret_expires,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
 	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
@@ -626,6 +660,12 @@ const PriceSource = "local override"
 // MaxPriceUSD bounds a per-second price: list prices are around 1e-5, so
 // anything above 1e-3 is a unit mistake (per hour, per month).
 const MaxPriceUSD = 0.001
+
+// SecretExpiryLayout is how an operator writes a date in secret_expires. The
+// date is a day rather than an instant on purpose: it is what the provider's
+// own page for a token says, and a time of day would be an invention of this
+// file's that the check would then warn about.
+const SecretExpiryLayout = "2006-01-02"
 
 // Batch is the Cloud Batch backend's installation configuration: the facts a
 // run's VM and job are built and placed from (design
@@ -1229,6 +1269,21 @@ func (c *Config) validate() error {
 	}
 	if c.RegistryHost != "" && !registryHostRE.MatchString(c.RegistryHost) {
 		bad("registry_host %q is not <region>-docker.pkg.dev/<project>", c.RegistryHost)
+	}
+	// The operator's rotation record is refused here rather than at doctor:
+	// doctor is a reading on a bad day, and a period or a date it cannot use
+	// would turn into a check that silently says nothing.
+	if c.SecretRotationDays < 0 {
+		bad("secret_rotation_days must be zero or more days")
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.SecretExpires)) {
+		if name == "" {
+			bad("secret_expires has an entry with no secret name")
+			continue
+		}
+		if _, err := time.Parse(SecretExpiryLayout, c.SecretExpires[name]); err != nil {
+			bad("secret_expires.%s %q is not a date (YYYY-MM-DD)", name, c.SecretExpires[name])
+		}
 	}
 	// Profile names, and the one value rule only this document can apply: what
 	// a profile holds is otherwise refused where it is used and published

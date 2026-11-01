@@ -378,6 +378,12 @@ func (r *Repo) gitCommit(ctx context.Context, args ...string) (string, error) {
 		env = StampEnv(stamp, r.CommitHooks, env)
 	}
 	var stdout bytes.Buffer
+	// The commit is made against the branch's own HEAD, not against one a ref
+	// the agent planted under refs/replace substitutes: every read this package
+	// makes is replacement-blind for that reason, and the commit is a read too —
+	// git decides from it what the commit carries, and whether there is anything
+	// to commit at all.
+	args = append([]string{"--no-replace-objects"}, args...)
 	err := r.gitRun(ctx, env, prefix, nil, &stdout, args...)
 	return strings.TrimSpace(stdout.String()), err
 }
@@ -622,6 +628,90 @@ func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 		return false, err
 	}
 	_, err := r.gitCommit(ctx, "commit", "--quiet", "--no-verify", "-m", msg)
+	return err == nil, err
+}
+
+// NewPaths lists the paths the checkout holds that no commit has and that a
+// commit would carry: the untracked ones git would add (`git ls-files --others
+// --exclude-standard`, ignored ones aside) and the ones the index holds that HEAD
+// does not (`git diff --name-only --no-renames --diff-filter=A HEAD`, the working
+// tree against HEAD, which sees a file added with `git add -N` as well). Both read
+// NUL-separated, so a path with a newline in it survives.
+//
+// The second listing is not an afterthought: a file the agent `git add`-ed and
+// never committed is new all the same, is absent from `--others` because it is
+// in the index, and is exactly what a commit would carry first. A path in
+// neither listing is one the base commit already holds — the run's own, however
+// much it changed — or one git ignores, which `git add -A` skips the same way,
+// so a path this call does not return cannot reach the commit either.
+func (r *Repo) NewPaths(ctx context.Context) ([]string, error) {
+	untracked, err := r.gitRaw(ctx, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	// Read with replacement refs ignored, as IsClean and CommitAllExcept are:
+	// what is staged is the index this checkout has, not the one a ref the
+	// agent planted makes HEAD's tree claim.
+	// No --cached: an intent-to-add entry (`git add -N`) is hidden from
+	// `diff --cached` and is in the index, so neither listing would name it, and
+	// --no-renames keeps a new file that merely resembles a deleted tracked one
+	// an addition rather than a rename the filter drops.
+	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return append(nulPaths(untracked), nulPaths(staged)...), nil
+}
+
+// nulPaths splits one NUL-separated git listing into paths.
+func nulPaths(out []byte) []string {
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// CommitAllExcept is CommitAll with the named paths held back: everything is
+// staged as usual — including them, since that is the only way to see whether
+// anything is left to commit — and they are then taken out of the index
+// again, so the commit never carries them and they stay untracked in the tree
+// where whoever reads the run can find them.
+//
+// The paths are literals (--literal-pathspecs): a file's own name is data, and
+// one beginning with a colon or holding a wildcard would otherwise be read as
+// a pathspec's magic (the review diff passes its paths the same way,
+// reviewinput.go). They must be relative to the repository root, as NewPaths
+// returns them, and the commit is stamped like CommitAll's.
+func (r *Repo) CommitAllExcept(ctx context.Context, msg string, except []string) (bool, error) {
+	if len(except) == 0 {
+		return r.CommitAll(ctx, msg)
+	}
+	if _, err := r.git(ctx, "add", "-A"); err != nil {
+		return false, err
+	}
+	// The reset is replacement-blind too: `git reset -- <path>` takes the entry
+	// it writes back into the index from HEAD's tree, so with a planted ref in
+	// place it would put the very path being held back into the index again.
+	unstaged := append([]string{"--no-replace-objects", "--literal-pathspecs", "reset", "-q", "--"}, except...)
+	if _, err := r.git(ctx, unstaged...); err != nil {
+		return false, err
+	}
+	// Read with replacement refs ignored, as IsClean is: what is committed is
+	// the index this checkout has, not the one a ref the agent planted makes
+	// HEAD's tree claim. The listing is NUL-separated like NewPaths': the
+	// question here is only whether it is empty, and a path with a newline in
+	// it must not decide that answer.
+	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--cached", "--name-only", "-z")
+	if err != nil {
+		return false, err
+	}
+	if len(nulPaths(staged)) == 0 {
+		return false, nil
+	}
+	_, err = r.gitCommit(ctx, "commit", "--quiet", "--no-verify", "-m", msg)
 	return err == nil, err
 }
 
@@ -915,13 +1005,7 @@ func (r *Repo) TrackedPaths(ctx context.Context, dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var paths []string
-	for _, p := range strings.Split(string(out), "\x00") {
-		if p != "" {
-			paths = append(paths, p)
-		}
-	}
-	return paths, nil
+	return nulPaths(out), nil
 }
 
 // BlobSize returns the size in bytes of the file at path in revision rev

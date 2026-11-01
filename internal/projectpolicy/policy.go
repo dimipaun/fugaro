@@ -891,7 +891,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		if err := json.Unmarshal(rraw, &p.BitbucketAPIRoots); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: bitbucket_api_roots: %w", err)
 		}
-		if err := validBitbucketAPIRoots(p.BitbucketAPIRoots); err != nil {
+		if err := ValidBitbucketAPIRoots(p.BitbucketAPIRoots); err != nil {
 			return nil, true, err
 		}
 	}

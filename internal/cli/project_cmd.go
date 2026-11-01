@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -151,31 +153,45 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 }
 
 // openProjectBudget is openBudget that keeps the selection: the publisher
-// reads the operator's own config file (its providers block), and the
-// selection is what names that file.
-func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, error) {
+// reads the operator's own config file (its providers block), the selection is
+// what names that file, and the path comes back with it because the generation
+// a publish records goes into that file rather than into the one this package
+// would derive from the project's name alone (a `--config` run's file is not the
+// project's own, and a baseline recorded in the other file is one that file's
+// business, not this run's).
+func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, string, error) {
 	sel, lc, err := selectProject(ctx, o)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	// The shared config has no file, so it carries no providers: a publish
 	// from it would write a policy with none.
 	if err := refuseSharedWrite(sel); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-	return lc, db, nil
+	return lc, db, sel.Path, nil
 }
 
 func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
-	lc, db, err := openProjectBudget(ctx, o.cloud)
+	// SD8: this command writes the node every run of the project is admitted by
+	// — and, beside it, the per-repository admissions — so it is a person's write
+	// and not a coding agent's, the same refusal `fugaro config publish`,
+	// `fugaro recipes publish` and the credential commands carry. It holds for
+	// --delete too: taking the policy away changes what every run is admitted by
+	// exactly as much as publishing one does, and it is not an agent's to do on
+	// its own.
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("nothing was written: fugaro project policy publish writes the policy every run of the project is admitted by: %s", initflow.AgentRefusal(m))
+	}
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
@@ -208,19 +224,13 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
-		allow, sources, err := publishAllowRepos(ctx, lc, old, o.seedRepos)
+		// The one build both doors take (policyNodeForPublish): `fugaro update`'s
+		// policy stage writes the node the local config states from the same
+		// flags, and two builds of one node from one config is a node that
+		// depends on which door the operator came through
+		// (TestUpdateStageAndTheExplicitDoorBuildTheSameNode).
+		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting)
 		if err != nil {
-			return publishFailure(err, narrowedSoFar)
-		}
-		pol, keepRouting, err := buildProjectPolicy(lc, allow, old, o.removeRouting)
-		if err != nil {
-			return publishFailure(err, narrowedSoFar)
-		}
-		body, err := policyNodeBytes(pol, raw, exists, keepRouting)
-		if err != nil {
-			return publishFailure(err, narrowedSoFar)
-		}
-		if err := checkPolicyBytes(body); err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
 		// The per-repository admissions (O4) and the shared node are two writes,
@@ -277,6 +287,16 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// operator reading a change that did not happen.
 			printPolicyDiff(out, old, pol, sources)
 			fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
+			// The generation this write moved the node to is recorded in the file
+			// it was built from, the same record the policy stage keeps (D854): the
+			// two doors write one node, so both of them have to leave the file
+			// saying which generation it is written from. A door that recorded
+			// nothing would leave the operator's next config edit refused against
+			// the node this very command just wrote, with a re-seed offered as the
+			// way out that would revert the edit.
+			if err := recordPublishedGeneration(ctx, out, db, lc, configPath, body); err != nil {
+				return err
+			}
 			return nil
 		case errors.Is(err, rtdb.ErrPrecondition):
 			fmt.Fprintln(out, "changed by someone else meanwhile; reading it again")
@@ -478,7 +498,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		// that works, and for the owner's rule of 2026-10-30 it is two
 		// commands: a newer Fugaro knows the keys, and `fugaro update` is
 		// what carries the node over without a deletion.
-		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (fugaro upgrade), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
+		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
 			projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, nil
@@ -756,7 +776,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	//
 	// bitbucket_api_roots is the operator's own allow-list (D474) and the node
 	// is where the run reads it. It is copied rather than derived, and it is
-	// held to the node's rule (projectpolicy.validBitbucketAPIRoots, applied by
+	// held to the node's rule (projectpolicy.ValidBitbucketAPIRoots, applied by
 	// that same decode) rather than to a copy of it here: one rule, at the one
 	// point a root can be written.
 	token, err := projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)
@@ -2798,7 +2818,7 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 	if p == nil || len(p.UnknownKeys) == 0 {
 		return nil
 	}
-	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
+	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update'",
 		projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 }
 
