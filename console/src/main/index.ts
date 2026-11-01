@@ -1001,7 +1001,7 @@ async function main(): Promise<void> {
   // the startup above read: the menu item writes it and answers with what the
   // file says afterwards, and the next launch's read is what the change applies
   // to. Nothing is started or stopped here -- the reporter is created once, in
-  // `main`, and this is the setting that decides whether it is. */
+  // `main`, and this is the setting that decides whether it is.
   const crashSettings = createCrashSettings({ directory: app.getPath('userData') })
   updates = startUpdates({
     isLaunchFlowIdle: () => launchRunner.isIdle(),
