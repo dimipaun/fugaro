@@ -1,31 +1,42 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The Projects screen: the design's screen 3, drawn from `budget show --json`,
-// `runs ls --json`, `accounts ls --json` and `secrets ls --json`
-// (desktop-console plan Task 2.3; design section 6.2 screen 3).
+// `accounts ls --json` and `secrets ls --json` (desktop-console plan Task 2.3;
+// design section 6.2 screen 3).
 //
 // The design's rule for this screen, and the one this file is shaped around:
 //
 //   **"Every panel names its source, and where there is no source the panel
 //   says so rather than drawing an empty box."**
 //
-// So the model is *eight panels*, each with a source line, a state
+// So the model is *seven panels*, each with a source line, a state
 // (`read`, `unavailable`, `not-built`) and -- when the state is not `read` --
 // the sentence that says why. A panel has a count only when a document was read
 // (`count === null` means no measurement exists), which is what makes "not built"
 // impossible to draw as a zero: there is no number for a screen to draw. Two of
-// the eight have no command behind them on this tree at all:
+// the seven have no command behind them on this tree at all:
 //
 //   - **the policy object** -- `fugaro project show --json` ships with
 //     project-centric phase 1 (PR #390), which is not in this tree, so the panel
 //     draws the *not readable with this CLI* state the design asks for **from
 //     its first commit** rather than waiting for the command to exist;
-//   - **the enrollment allow-list** -- project-centric phase 1 and 4. The
-//     repositories drawn instead are the ones the CLI reports: enrolled (the
-//     cap document's own `repos`, which is the closest thing to the project's
-//     repository set the CLI has today) and seen (the repositories the run list
-//     has rows for), with the difference between the two named. A repository
-//     with runs and no cap row is a cap nobody set, and that is worth a line.
+//   - **the enrollment allow-list** -- project-centric phase 1 and 4.
+//
+// **The run list is gone, and the panels derived from it went with it.** The
+// jobs table and the two repository claims that needed `runs ls` (the
+// enrolled-and-seen split, and the "seen, not enrolled" case) are removed. The
+// owner's report of 2026-10-31: the jobs list "is slow and serves no purpose
+// there" -- `runs ls --json` is about 248 KB and six seconds for a day of runs,
+// and it was this screen's second read, started before the caps it sits beside
+// could be drawn. Waiting on it made the whole tab about twenty seconds with no
+// feedback. The repositories panel now draws the cap document's own `repos` --
+// the closest thing to the project's repository set the CLI has today -- and
+// makes no claim about which of them have run: that claim needs a document this
+// screen no longer reads, and a repository listed with no run is not the same
+// fact as a repository running with no cap row (`repositoriesBecause`).
+//
+// **`budget show` is the screen's only read**, about a second on the owner's
+// installation, and the entry draws the whole panel from it.
 //
 // **The secrets inventory, and a fact about this build's reader.** The document
 // `secrets ls --json` prints is a **bare JSON array** (`console/docs/
@@ -61,15 +72,13 @@
 import { UNAVAILABLE_MARK, measured, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
-import { launcherCell } from '../../shared/launcher'
-import { RIGOR_ABSENT, readRigor, rigorModeWord } from '../../shared/rigor'
-import type { RigorView } from '../../shared/rigor'
 import type { KillView } from '../../shared/schema'
 import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
+import { BUSY_SLOT_CLASS } from '../section'
 import { disabledWrite } from '../writes'
 
 // ---------------------------------------------------------------------------
@@ -85,7 +94,6 @@ import { disabledWrite } from '../writes'
  */
 export const PROJECTS_SOURCE_LINES: Readonly<Record<string, string>> = Object.freeze({
   'budget.show': 'fugaro budget show --json',
-  'runs.list': 'fugaro runs ls --json',
   'accounts.inventory': 'fugaro accounts ls --json',
   'secrets.inventory': 'fugaro secrets ls --json',
 })
@@ -103,12 +111,12 @@ export const POLICY_SOURCE_LINE = 'fugaro project show --json'
 export const ENROLLMENT_SOURCE_LINE = 'no command on this tree (project-centric phase 1 and 4)'
 
 /**
- * REPOSITORIES_SOURCE_LINE names **both** documents the repositories panel
- * reads: the enrolled set is the cap document's and the seen set is the run
- * list's. It is the one panel with two sources, and naming only one of them
- * would be a claim about where the other list came from.
+ * REPOSITORIES_SOURCE_LINE names the one document the repositories panel reads.
+ * It was two -- the cap document's enrolled set and the run list's seen set --
+ * and it is one now that the run list is gone: the panel draws the cap
+ * document's own `repos` and nothing else.
  */
-export const REPOSITORIES_SOURCE_LINE = `${PROJECTS_SOURCE_LINES['budget.show'] as string} + ${PROJECTS_SOURCE_LINES['runs.list'] as string}`
+export const REPOSITORIES_SOURCE_LINE = PROJECTS_SOURCE_LINES['budget.show'] as string
 
 /**
  * SECRETS_ARRAY_NOTE is the console's own sentence about the one document whose
@@ -119,17 +127,11 @@ export const REPOSITORIES_SOURCE_LINE = `${PROJECTS_SOURCE_LINES['budget.show'] 
 export const SECRETS_ARRAY_NOTE =
   'the CLI prints `secrets ls --json` as a bare JSON array; this build reads a line that is not a JSON object as a notice (json-contract section 10.13 rule 1), so the panel draws entries only when a source hands it the parsed array'
 
-/** PROJECT_JOB_CAP bounds the job list, like the log panel's cap: a project
- * with ten thousand runs is a project whose screen is not a list of ten
- * thousand rows, and the count of what was not drawn is drawn instead. */
-export const PROJECT_JOB_CAP = 50
-
-/** ProjectsPanelKey is the eight panels, in the order they are drawn. */
+/** ProjectsPanelKey is the seven panels, in the order they are drawn. */
 export type ProjectsPanelKey =
   | 'caps'
   | 'kill'
   | 'repositories'
-  | 'jobs'
   | 'accounts'
   | 'secrets'
   | 'policy'
@@ -141,7 +143,6 @@ export const PROJECT_PANEL_KEYS: readonly ProjectsPanelKey[] = Object.freeze([
   'caps',
   'kill',
   'repositories',
-  'jobs',
   'accounts',
   'secrets',
   'policy',
@@ -244,52 +245,14 @@ export interface ProjectKillRow {
   readonly kill: KillView | null
 }
 
-/** ProjectJobCost is one job row's ledger: the three accounts, apart. */
-export interface ProjectJobCost {
-  readonly model: Reading
-  readonly compute: Reading
-  readonly total: Reading
-}
-
-/** ProjectJob is one `runview.Row` of the run list, as this screen draws it. */
-export interface ProjectJob {
-  readonly run: string
-  readonly repo: string | null
-  readonly workflow: string | null
-  readonly status: string
-  readonly stage: string | null
-  readonly requestedBy: string | null
-  /** the row's whole recorded launcher (`launched_by`), `null` when the record
-   * carries none; the cell draws `launcherShort` of it (`shared/launcher.ts`) */
-  readonly launchedBy: string | null
-  readonly branch: string | null
-  readonly created: string | null
-  readonly cost: ProjectJobCost
-  /** the row's rigor block, or `null` for a record that carries none this
-   * reader can show (`shared/rigor.ts`). The MODE column draws it, and it is
-   * drawn **only when some listed run carries one** -- the conditional column
-   * `runs ls` itself writes (`internal/cli/runs.go`'s `showMode`) */
-  readonly rigor: RigorView | null
-}
-
-/** ProjectJobs is the job list, its bound, and what the bound left out. */
-export interface ProjectJobs {
-  readonly rows: readonly ProjectJob[]
-  readonly total: Reading
-  readonly dropped: Reading
-}
-
-/** ProjectRepositories is the two lists and the difference between them. */
+/** ProjectRepositories is the cap document's own repository set: the entries
+ * the project has cap rows for, which is the closest thing to an enrollment
+ * this CLI has until project-centric phase 1 ships one. **It is one list and
+ * not a pair**: the run list is gone from this screen, so the panel makes no
+ * claim about which of these repositories have run. */
 export interface ProjectRepositories {
   readonly enrolled: readonly RepoEntry[]
-  readonly seen: readonly RepoEntry[]
-  /** a repository the cap document knows and the run list has no row for */
-  readonly onlyEnrolled: readonly string[]
-  /** a repository the run list has rows for and the cap document does not: the
-   * case where a repository is running with no cap the project set for it */
-  readonly onlySeen: readonly string[]
   readonly enrolledCount: Reading
-  readonly seenCount: Reading
 }
 
 /** ProjectAccounts is `accounts ls --json`: the names, and whether the project
@@ -339,7 +302,6 @@ export interface ProjectSecrets {
  */
 export interface ProjectsInputs {
   readonly budget: unknown
-  readonly runs: unknown
   readonly accounts: unknown
   readonly secrets: unknown
   readonly sentences?: Partial<Record<OperationName, string>> | undefined
@@ -355,7 +317,6 @@ export interface ProjectsModel {
   readonly maxReserve: Reading
   readonly kill: { readonly global: KillView | null; readonly rows: readonly ProjectKillRow[] }
   readonly repositories: ProjectRepositories
-  readonly jobs: ProjectJobs
   readonly accounts: ProjectAccounts
   readonly secrets: ProjectSecrets
   readonly warnings: readonly string[]
@@ -428,76 +389,6 @@ function repoEntryOf(raw: unknown): RepoEntry | null {
   if (slug === null && repo === null) return null
   return { slug: slug ?? repo ?? '', repo }
 }
-
-/** modelReading is this screen's model figure: the row's model dollars as
- * **money** (C1.16, P12/D140), because `model_usd` is the whole model figure
- * -- the money and the subscription's list price together -- and
- * `model_notional_usd` is the part of it the plan paid. The billed dollars are
- * the difference; the basis alone cannot make that split, since a mixed cascade
- * run's basis is `api-list` for the whole run while part of its figure is the
- * plan's. A row written before C1.16 carries no `model_notional_usd`, and then
- * the subscription basis is the fallback: such a row's whole figure is the
- * plan's, and that is the notional account.
- *
- * The state follows the figure: the money part when the row has one, and
- * otherwise the notional figure marked notional -- the same figure and the same
- * mark a subscription row drew before the key existed. The Run detail screen
- * declares its own copy of this rule for its own document (`modelReading` in
- * `run.ts`): the four screens are siblings and neither imports the other, so
- * the two are held equal by their tests rather than by a shared module. */
-function modelReading(model: Reading, notional: Reading, basis: string | null): Reading {
-  if (model.value === null) return model
-  const plan = notional.value ?? (basis === 'subscription' ? model.value : 0)
-  const money = Math.max(0, model.value - plan)
-  if (money > 0) return { ...model, value: money }
-  if (plan > 0 || basis === 'subscription') return { ...model, value: plan, state: 'notional' }
-  return model
-}
-
-/** costOf reads `runstore.Cost`'s fields the console draws, with the model
- * figure split into what was billed and what the plan paid (`modelReading`). */
-function costOf(raw: unknown, where: string): ProjectJobCost {
-  const cost = objectAt(raw) ?? {}
-  const basis = textAt(cost['model_basis'])
-  const model = readNumber(cost['model_usd'], `${where}.model_usd`)
-  const notional = readNumber(cost['model_notional_usd'], `${where}.model_notional_usd`)
-  return {
-    model: modelReading(model, notional, basis),
-    compute: computeReading(cost, `${where}.compute_usd`),
-    total: readNumber(cost['total_usd'], `${where}.total_usd`),
-  }
-}
-
-/**
- * computeReading is compute, which the flag decides and not the number
- * (`runstore.Cost`): `ComputeEstimated` "is true only when prices and resources
- * were known; **when false, ComputeUSD is 0 and means 'not estimated', not
- * free**" (`internal/runstore/cost.go:15`). So the flag off is **not** a
- * measured `$0.00` -- that reads as free, which is the one thing the design's
- * section 10.1 forbids -- and it is not a zero-hiding `n/a` either: it is
- * unavailable, with the CLI's own sentence, which is what `runs ls` prints
- * ("compute not estimated") and what the report's `compute_not_estimated` count
- * is about.
- *
- * A figure that is present with the flag off is not a shape the CLI writes; the
- * number is still the number, and hiding it would be the worse error of the
- * two, so it is drawn as the measurement it is.
- */
-function computeReading(cost: Record<string, unknown>, field: string): Reading {
-  const reading = readNumber(cost['compute_usd'], field)
-  if (cost['compute_estimated'] === true) {
-    return reading.value === null ? reading : { ...reading, state: 'estimated' }
-  }
-  if (reading.value === null || reading.value === 0) return unavailable(COMPUTE_NOT_ESTIMATED)
-  return reading
-}
-
-/** COMPUTE_NOT_ESTIMATED is that sentence. The Run detail screen declares its
- * own copy rather than importing this one: the four screens are siblings and
- * none owns another, and a constant shared across two of them would be the first
- * thread of a dependency the file layouts deliberately do not have. */
-const COMPUTE_NOT_ESTIMATED =
-  'compute is not estimated for this run: the price table or the run\'s resources were unknown, and a `compute_usd` of 0 with `compute_estimated` false means "not estimated", not free'
 
 /** capRow is one row of the caps panel, from either of the three shapes the
  * document uses (the project's own block, the defaults block, a repository
@@ -627,47 +518,32 @@ function absent(operation: OperationName, sentences: ProjectsInputs['sentences']
 
 /**
  * repositoriesBecause is why the repositories panel has nothing to draw. **Its
- * two lists come from two documents** -- the enrolled set from the cap document
- * and the seen set from the run list -- so either one missing leaves the panel
- * unable to make either claim, and it says which is missing rather than drawing
- * the half it has:
- *
- *   - without the cap document, every repository the run list knows would be
- *     drawn as **running with no cap row**, which is a false statement about a
- *     project whose caps nobody read;
- *   - without the run list, the enrolled set would be drawn as having **no runs
- *     at all**, `seen 0`, which is a fabricated zero of the same kind.
+ * one list comes from the cap document**, so the document missing leaves the
+ * panel unable to say anything about the project's repository set, and it says
+ * the read is missing rather than drawing an empty list -- which would read as
+ * "this project has no repository", a different fact from "the console could not
+ * ask" (Global Constraint 5).
  *
  * The reason carries the CLI's own sentence for the refused read when it printed
  * one (`absent`), and the console's account of what the absence means otherwise.
  */
-function repositoriesBecause(
-  budgetMissing: boolean,
-  runsMissing: boolean,
-  sentences: ProjectsInputs['sentences'],
-): string {
-  const parts: string[] = []
-  if (budgetMissing) {
-    parts.push(`the enrolled repositories are unknown: ${absent('budget.show', sentences)}`)
-  }
-  if (runsMissing) {
-    parts.push(`the repositories with a recorded run are unknown: ${absent('runs.list', sentences)}`)
-  }
-  return parts.join('; ')
+function repositoriesBecause(budgetMissing: boolean, sentences: ProjectsInputs['sentences']): string {
+  if (!budgetMissing) return ''
+  return `the enrolled repositories are unknown: ${absent('budget.show', sentences)}`
 }
 
 /**
- * buildProjectsModel turns the four documents into the eight panels. It touches
- * no element, so every rule below -- the not-built states, the enrolled/seen
- * split, the cap the document does not carry -- is testable in plain Node.
+ * buildProjectsModel turns the three documents into the seven panels. It touches
+ * no element, so every rule below -- the not-built states, the repository set
+ * the cap document carries, the cap the document does not carry -- is testable
+ * in plain Node.
  */
 export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
   const budget = objectAt(inputs.budget)
-  const runs = objectAt(inputs.runs)
   const accounts = objectAt(inputs.accounts)
   const secretList = arrayAt(inputs.secrets)
 
-  const warnings = [...textsAt(budget?.['warnings']), ...textsAt(runs?.['warnings'])]
+  const warnings = textsAt(budget?.['warnings'])
 
   // The caps: the project's own block, the defaults every repository inherits,
   // and one row per repository. The global block is `showGlobal`, whose two caps
@@ -706,64 +582,19 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     killRows.push({ slug: entry.slug, repo: entry.repo, kill: killAt(objectAt(block)?.['kill']) })
   }
 
-  // The two repository lists. Enrolled is the cap document's own set -- the
-  // repositories the project has cap rows for, which is the closest thing to an
-  // enrollment this CLI has until phase 1 ships one -- and seen is the run
-  // list's, by `repo` (the row carries no slug).
+  // The repository set: the cap document's own `repos`. It is one list now that
+  // the run list is gone -- there is no second set to difference it against, so
+  // the panel draws these and claims nothing about which have run.
   const enrolled = repoBlocks
     .map((block) => repoEntryOf(block))
     .filter((entry): entry is RepoEntry => entry !== null)
-  const seenRuns = (arrayAt(runs?.['runs']) ?? []).map((row) => objectAt(row)).filter((row): row is Record<string, unknown> => row !== null)
-  const seen: RepoEntry[] = []
-  for (const row of seenRuns) {
-    const repo = textAt(row['repo'])
-    if (repo === null) continue
-    if (!seen.some((entry) => entry.repo === repo || entry.slug === repo)) seen.push({ slug: repo, repo })
-  }
-  const enrolledKeys = new Set(enrolled.flatMap((entry) => [entry.slug, entry.repo ?? entry.slug]))
-  const seenKeys = new Set(seen.flatMap((entry) => [entry.slug, entry.repo ?? entry.slug]))
-  // A difference needs **both** sides. With one document missing the list that
-  // would have come from it is empty, and every entry of the other list would
-  // read as the difference -- "running with no cap row" for a project whose caps
-  // nobody read. So neither difference is computed until both documents are
-  // here, and neither count is a zero: it is the reading the missing document
-  // owes (`Reading.because` says which).
-  const bothKnown = budget !== null && runs !== null
   const repositories: ProjectRepositories = {
     enrolled,
-    seen,
-    onlyEnrolled: bothKnown
-      ? enrolled.filter((entry) => !seenKeys.has(entry.slug) && !seenKeys.has(entry.repo ?? '')).map(labelOf)
-      : [],
-    onlySeen: bothKnown
-      ? seen.filter((entry) => !enrolledKeys.has(entry.slug) && !enrolledKeys.has(entry.repo ?? '')).map(labelOf)
-      : [],
     enrolledCount:
       budget === null
         ? unavailable('the cap document did not arrive: how many repositories are enrolled is unknown')
         : measured(enrolled.length),
-    seenCount:
-      runs === null
-        ? unavailable('the run list did not arrive: how many repositories have a run is unknown')
-        : measured(seen.length),
   }
-
-  // The jobs: `runs ls --json`'s rows, capped. The newest are the ones a person
-  // is looking for, so the cap keeps the head of the list the CLI wrote (which
-  // is newest-first, `runs.go`) and counts the rest.
-  const jobs: ProjectJob[] = seenRuns.slice(0, PROJECT_JOB_CAP).map((row) => ({
-    run: textAt(row['run']) ?? textAt(row['run_id']) ?? '',
-    repo: textAt(row['repo']),
-    workflow: textAt(row['workflow']),
-    status: textAt(row['status']) ?? '',
-    stage: textAt(row['stage']),
-    requestedBy: textAt(row['requested_by']),
-    launchedBy: textAt(row['launched_by']),
-    branch: textAt(row['branch']),
-    created: textAt(row['created']),
-    cost: costOf(row['cost'], 'runs[].cost'),
-    rigor: readRigor(row['rigor']),
-  }))
 
   // The accounts: `accountsListDoc`. `complete: false` means the project config
   // could not be selected, which the contract says is `unavailable` **and never
@@ -808,21 +639,19 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     budget === null
       ? unavailablePanel('kill', 'kill switches', 'budget.show', absent('budget.show', inputs.sentences))
       : readPanel('kill', 'kill switches', 'budget.show', killRows.filter((row) => row.kill !== null).length),
-    // Read only when **both** documents arrived: the panel's two lists are one
-    // from each, and a panel drawn from half a pair makes claims about the other
-    // half out of nothing (`repositoriesBecause`).
-    budget === null || runs === null
+    // Read from the cap document alone, and it draws no list when that document
+    // did not arrive: a repository set drawn from nothing would read as "this
+    // project has no repository", which is a different fact from "the console
+    // could not ask" (`repositoriesBecause`).
+    budget === null
       ? unavailablePanel(
           'repositories',
           'repositories',
-          budget === null ? 'budget.show' : 'runs.list',
-          repositoriesBecause(budget === null, runs === null, inputs.sentences),
+          'budget.show',
+          repositoriesBecause(budget === null, inputs.sentences),
           REPOSITORIES_SOURCE_LINE,
         )
       : readPanel('repositories', 'repositories', 'budget.show', enrolled.length, REPOSITORIES_SOURCE_LINE),
-    runs === null
-      ? unavailablePanel('jobs', 'jobs', 'runs.list', absent('runs.list', inputs.sentences))
-      : readPanel('jobs', 'jobs', 'runs.list', jobs.length),
     accounts === null
       ? unavailablePanel('accounts', 'Claude accounts', 'accounts.inventory', absent('accounts.inventory', inputs.sentences))
       : complete
@@ -845,7 +674,7 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
   ]
 
   return {
-    project: textAt(budget?.['project']) ?? textAt(runs?.['project']),
+    project: textAt(budget?.['project']),
     mode: textAt(budget?.['mode']),
     day: textAt(budget?.['day']),
     panels,
@@ -853,11 +682,6 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     maxReserve: readNumber(budget?.['max_reserve_usd'], 'max_reserve_usd'),
     kill: { global: killAt(objectAt(budget?.['global'])?.['kill']), rows: killRows },
     repositories,
-    jobs: {
-      rows: jobs,
-      total: measured(seenRuns.length),
-      dropped: measured(Math.max(0, seenRuns.length - jobs.length)),
-    },
     accounts: projectAccounts,
     secrets: { entries: secretEntries, note: SECRETS_ARRAY_NOTE },
     warnings,
@@ -968,27 +792,6 @@ function numberCell(
   const element = cell(parent, factory, tag, 'projects-number', ...classes)
   putReading(element, reading, unit)
   return element
-}
-
-/**
- * rigorCell is one row's MODE cell: the mode's own word for the five modes this
- * build knows, the **raw value through `putText`** for one it does not, and
- * `RIGOR_ABSENT` for a run whose record carries no block.
- *
- * The third case is the reason this is a function rather than a lookup: a mode
- * string this build has never heard of is job-written text, so it takes the
- * text path -- bounded, escaped, and `n/a` with the reason in the `title` when
- * the sanitizer refuses it -- and never the console's own `literal` writer. A
- * cell that wrote it as vocabulary would be putting a value no reader can check
- * into the document under the console's own name.
- */
-function rigorCell(parent: ScreenElement, factory: ScreenFactory, view: RigorView | null): ScreenElement {
-  const drawn = cell(parent, factory, 'span', 'projects-job-mode')
-  if (view === null) return literal(drawn, RIGOR_ABSENT)
-  const word = rigorModeWord(view.mode)
-  if (word !== null) return literal(drawn, word)
-  putText(drawn, view.mode, 'label', 'runs[].rigor.mode')
-  return drawn
 }
 
 /** sanitizedKey is a document string bound for an **attribute value** rather
@@ -1174,69 +977,32 @@ function killPanel(factory: ScreenFactory, model: ProjectsModel): ScreenElement 
   return element
 }
 
-/** repositoriesPanel is the repositories as three cards: the ones the cap
- * document knows **and** the run list has seen, the ones with a cap row and no
- * run yet, and the ones running with no cap row at all. The third is the case
- * the screen exists for -- a repository spending under a cap nobody set -- so it
- * is drawn amber and carries the write that would fix it, drawn disabled like
- * every other write this release does not perform.
+/** repositoriesPanel is the repository set the cap document carries: one card,
+ * one entry per repository the project has a cap row for.
  *
- * **A card with no repository draws the console's own `none` and never an empty
- * list.** The difference between "the document names no repository" and "no
- * list arrived" is the whole reason this panel has a state: the second draws no
- * card at all, and the panel's own sentence says which of its two documents is
- * missing (`repositoriesBecause`). Each card is built in place rather than by a
- * helper taking a class name, so every class and every `data-kind` is a literal
- * at the call site. */
+ * **It is one card and not three.** The three were the enrolled-and-seen split
+ * -- the repositories with a cap row and a run, the ones with a cap row and no
+ * run yet, and the ones running with no cap row -- and every one of them needed
+ * `runs ls` to say anything. The run list is gone from this screen (see the
+ * header), so the panel draws the one set the cap document itself reports and
+ * makes no claim about which of these repositories have run. A card with no
+ * repository draws the console's own `none` and never an empty list; a panel
+ * whose document never arrived draws no card at all and its own sentence says
+ * so (`repositoriesBecause`). */
 function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): ScreenElement {
   const element = make(factory, 'div', 'projects-repos')
-  // `onlyEnrolled` names the enrolled entries with no run; everything else in
-  // `enrolled` has been seen. With both documents here -- and the panel draws no
-  // body otherwise -- the two differences are complete, so the first card is the
-  // enrolled set minus the first difference, by the label each list uses.
-  const onlyEnrolled = new Set(model.onlyEnrolled)
-  const both = model.enrolled.filter((entry) => !onlyEnrolled.has(labelOf(entry))).map(labelOf)
-
-  const seen = make(factory, 'article', 'projects-repo-card')
-  seen.setAttribute('data-kind', 'both')
-  literal(cell(seen, factory, 'h3', 'projects-repo-card-title'), 'enrolled and seen')
-  if (both.length === 0) {
-    literal(cell(seen, factory, 'p', 'projects-repo-card-none'), 'none')
+  const card = make(factory, 'article', 'projects-repo-card')
+  card.setAttribute('data-kind', 'enrolled')
+  literal(cell(card, factory, 'h3', 'projects-repo-card-title'), 'enrolled')
+  if (model.enrolled.length === 0) {
+    literal(cell(card, factory, 'p', 'projects-repo-card-none'), 'none')
   } else {
-    const list = cell(seen, factory, 'ul', 'projects-repo-list')
-    for (const entry of both) textCell(list, factory, 'li', entry, labelClass(entry), 'repo', 'projects-repo-both')
-  }
-
-  const waiting = make(factory, 'article', 'projects-repo-card')
-  waiting.setAttribute('data-kind', 'enrolled')
-  literal(cell(waiting, factory, 'h3', 'projects-repo-card-title'), 'enrolled, no run yet')
-  if (model.onlyEnrolled.length === 0) {
-    literal(cell(waiting, factory, 'p', 'projects-repo-card-none'), 'none')
-  } else {
-    literal(cell(waiting, factory, 'p', 'projects-repo-card-note'), 'Cap row, no run yet.')
-    const list = cell(waiting, factory, 'ul', 'projects-repo-list')
-    for (const entry of model.onlyEnrolled) {
-      textCell(list, factory, 'li', entry, labelClass(entry), 'repo', 'projects-only-enrolled-repo')
+    const list = cell(card, factory, 'ul', 'projects-repo-list')
+    for (const entry of model.enrolled) {
+      textCell(list, factory, 'li', labelOf(entry), labelClass(labelOf(entry)), 'repo', 'projects-repo-enrolled')
     }
   }
-
-  const uncapped = make(factory, 'article', 'projects-repo-card')
-  uncapped.setAttribute('data-kind', 'seen')
-  literal(cell(uncapped, factory, 'h3', 'projects-repo-card-title'), 'seen, not enrolled')
-  if (model.onlySeen.length === 0) {
-    literal(cell(uncapped, factory, 'p', 'projects-repo-card-none'), 'none')
-  } else {
-    literal(cell(uncapped, factory, 'p', 'projects-repo-card-note'), 'Running with no cap row.')
-    const list = cell(uncapped, factory, 'ul', 'projects-repo-list')
-    for (const entry of model.onlySeen) {
-      textCell(list, factory, 'li', entry, labelClass(entry), 'repo', 'projects-only-seen-repo')
-    }
-    uncapped.append(disabledWrite(factory, 'projects-repo-add', 'Add cap'))
-  }
-
-  element.append(seen)
-  element.append(waiting)
-  element.append(uncapped)
+  element.append(card)
   return element
 }
 
@@ -1244,103 +1010,6 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
  * module constant so the sink scan reads a string this file declares rather
  * than a value it imported. */
 const ABSENT_MARK = UNAVAILABLE_MARK
-
-/** putMaybe writes one column a record may leave out -- the repository, the
- * workflow, the stage, the two actors, the timestamp -- into the cell the caller
- * has already drawn: the record's own value through `putText` when it carries
- * one, and **the console's `n/a`** when it does not.
- *
- * The cell is drawn by the caller rather than here, because the selector scan
- * reads a column's tag at the emitter call site and a tag handed to a helper as
- * a parameter is one no stylesheet rule may qualify (`run.ts`'s `putMaybe` and
- * `live.ts`'s `putActor` take the element for the same reason).
- *
- * A table cell is never omitted: one row drawn with a cell fewer shifts every
- * column after it, so the absent case draws the mark rather than nothing.
- * Nothing is invented either way, and the raw value never reaches the mark's
- * path: the document's string goes through `putText`, and a refused one is
- * `putText`'s own `n/a` with the refusal in the `title`. */
-function putMaybe(element: ScreenElement, raw: string | null, textClass: TextClass, field: string): void {
-  if (raw === null || raw === '') {
-    literal(element, ABSENT_MARK)
-    return
-  }
-  putText(element, raw, textClass, field)
-}
-
-/** jobHead is one column header of the jobs table. */
-function jobHead(parent: ScreenElement, factory: ScreenFactory): ScreenElement {
-  const element = cell(parent, factory, 'th', 'projects-job-head')
-  element.setAttribute('scope', 'col')
-  return element
-}
-
-/**
- * jobsPanel is the project's runs as a table: one row per run, the columns the
- * run list carries, and **the three cost accounts in three cells** -- a
- * subscription's model dollars are notional, its compute dollars are billed and
- * the two are never added into one figure (`docs/design/console-styling.md`
- * section 2.10). The row is a `tr` so the figures line up down the column: a
- * project's runs are read by comparing them, which a wrapped row of spans does
- * not let anyone do.
- *
- * **The MODE column appears only when some listed run carries a block.** It is
- * the conditional column `runs ls` writes (`internal/cli/runs.go`'s `showMode`):
- * a run from before the field, or one that died before bootstrap, has no block
- * and does not widen every other run's row for it -- and a project whose runs
- * are all older than the field draws the table it always drew. Once one row
- * carries a block the column is on every row, and the rows without one say so
- * with `RIGOR_ABSENT` rather than with a blank.
- */
-function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
-  const element = make(factory, 'div', 'projects-jobs')
-  const showMode = model.rows.some((job) => job.rigor !== null)
-  const table = cell(element, factory, 'table', 'projects-job-table')
-  const head = cell(table, factory, 'thead')
-  const headRow = cell(head, factory, 'tr')
-  literal(jobHead(headRow, factory), 'run')
-  literal(jobHead(headRow, factory), 'repository')
-  literal(jobHead(headRow, factory), 'workflow')
-  literal(jobHead(headRow, factory), 'status')
-  literal(jobHead(headRow, factory), 'stage')
-  literal(jobHead(headRow, factory), 'requested by')
-  literal(jobHead(headRow, factory), 'started by')
-  literal(jobHead(headRow, factory), 'created')
-  if (showMode) literal(jobHead(headRow, factory), 'mode')
-  literal(jobHead(headRow, factory), 'model')
-  literal(jobHead(headRow, factory), 'compute')
-  literal(jobHead(headRow, factory), 'total')
-  const body = cell(table, factory, 'tbody')
-  for (const job of model.rows) {
-    const line = cell(body, factory, 'tr', 'projects-job')
-    textCell(line, factory, 'td', job.run, 'runId', 'runs[].run', 'projects-job-run')
-    putMaybe(cell(line, factory, 'td', 'projects-job-repo'), job.repo, 'repository', 'runs[].repo')
-    putMaybe(cell(line, factory, 'td', 'projects-job-workflow'), job.workflow, 'label', 'runs[].workflow')
-    // `status` is a string from the run record, so it goes through `putText`
-    // like every other one: a value a document chose is not vocabulary the
-    // console may write into the document unwatched.
-    textCell(line, factory, 'td', job.status, 'label', 'runs[].status', 'projects-job-status')
-    putMaybe(cell(line, factory, 'td', 'projects-job-stage'), job.stage, 'label', 'runs[].stage')
-    putMaybe(cell(line, factory, 'td', 'projects-job-by'), job.requestedBy, 'person', 'runs[].requested_by')
-    // Who started the job, beside who asked for it: the short form of
-    // `launched_by`, drawn as a `label` (`shared/launcher.ts` says why not
-    // `person`), and the mark for a row the record does not name.
-    putMaybe(cell(line, factory, 'td', 'projects-job-started-by'), launcherCell(job.launchedBy), 'label', 'runs[].launched_by')
-    putMaybe(cell(line, factory, 'td', 'projects-job-created'), job.created, 'label', 'runs[].created')
-    if (showMode) rigorCell(cell(line, factory, 'td', 'projects-job-mode-cell'), factory, job.rigor)
-    numberCell(line, factory, 'td', job.cost.model, 'usd', 'projects-job-model')
-    numberCell(line, factory, 'td', job.cost.compute, 'usd', 'projects-job-compute')
-    numberCell(line, factory, 'td', job.cost.total, 'usd', 'projects-job-total')
-  }
-  if (model.dropped.value !== null && model.dropped.value > 0) {
-    const line = cell(element, factory, 'p', 'projects-jobs-note')
-    literal(line, 'runs not drawn:')
-    numberCell(line, factory, 'span', model.dropped, 'count', 'projects-jobs-dropped')
-    literal(cell(line, factory, 'span', 'projects-jobs-total-of'), 'of')
-    numberCell(line, factory, 'span', model.total, 'count', 'projects-jobs-total')
-  }
-  return element
-}
 
 /** accountsPanel is the Claude accounts: the repository the document was read
  * for, one row per account, and the document's own sentence when it could not
@@ -1422,7 +1091,6 @@ const PANEL_BODIES: Readonly<Record<ProjectsPanelKey, (factory: ScreenFactory, m
     caps: (factory, model) => capsPanel(factory, model),
     kill: (factory, model) => killPanel(factory, model),
     repositories: (factory, model) => repositoriesPanel(factory, model.repositories),
-    jobs: (factory, model) => jobsPanel(factory, model.jobs),
     accounts: (factory, model) => accountsPanel(factory, model.accounts),
     secrets: (factory, model) => secretsPanel(factory, model.secrets),
     // The two not-built panels draw nothing but their frame: no body, no list,
@@ -1441,11 +1109,64 @@ export const PROJECTS_THEMES = Object.freeze(['light', 'dark'] as const)
 /** ProjectsTheme is one of them. */
 export type ProjectsTheme = (typeof PROJECTS_THEMES)[number]
 
-/** renderProjects walks the model through Task 2.0's writers. */
-export function renderProjects(factory: ScreenFactory, model: ProjectsModel, theme: ProjectsTheme): ScreenElement {
+/** PROJECTS_BUSY is what the screen's section mark says it is reading. The
+ * screen reads one document and the mark names it, so a section that is busy
+ * never says only "reading". */
+export const PROJECTS_BUSY = 'Reading the project’s budget…'
+
+/** PROJECTS_BODY_CLASS is the section the model is drawn into, and it is the
+ * element the entry's busy mark belongs to: the screen's one read is the whole
+ * of its content, so the section and the screen are the same box. */
+export const PROJECTS_BODY_CLASS = 'projects-body'
+
+/** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
+ * read fills, and the slot the entry's busy mark goes in. */
+export interface DrawnProjectsFrame {
+  readonly root: ScreenElement
+  readonly body: ScreenElement
+  readonly slot: ScreenElement
+}
+
+/**
+ * renderProjectsFrame draws the Projects shell: the root and one empty section,
+ * and no figure at all.
+ *
+ * **It is what makes the screen's one read answer in the frame it started in**,
+ * on the owner's rule of 2026-10-31: the entry mounts this the moment the tab is
+ * opened, puts the busy mark and the skeleton of the screen's shape in the
+ * section, and `fillProjects` replaces the slot's contents when `budget show`
+ * answers. Nothing here is drawn from a document, and the header is deliberately
+ * **not** here -- the project, the mode and the day are the document's, and a
+ * header drawn from nothing would name a project the console has not read.
+ *
+ * The root carries no `data-busy` of its own: the section does, so the
+ * stylesheet dims the section's children and leaves the mark and the header
+ * around it alone.
+ */
+export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme): DrawnProjectsFrame {
   const root = make(factory, 'section', 'projects')
   root.setAttribute('data-theme', theme)
-  root.append(header(factory, model))
+  const body = make(factory, 'div', PROJECTS_BODY_CLASS)
+  const slot = cell(body, factory, 'div', BUSY_SLOT_CLASS)
+  root.append(body)
+  return { root, body, slot }
+}
+
+/**
+ * fillProjects draws the whole model into the frame's section: the header, the
+ * seven panels and the document's warnings.
+ *
+ * It appends to the **section** rather than to the slot, and the slot is left
+ * where it is: the mark lives in the slot, and the dimming rule is written
+ * against the section's own children, so a figure drawn into the slot would be
+ * a figure exempt from the very rule that says the section is being re-read.
+ */
+export function fillProjects(
+  factory: ScreenFactory,
+  model: ProjectsModel,
+  host: ScreenElement,
+): void {
+  host.append(header(factory, model))
   for (const panel of model.panels) {
     const element = panelShell(factory, panel)
     // A body is drawn only for a panel that **read a document**: the body is the
@@ -1460,10 +1181,18 @@ export function renderProjects(factory: ScreenFactory, model: ProjectsModel, the
     // looking at an empty secrets inventory is owed the reason it is empty, and
     // that reason is as true of a refused read as of an arrived one.
     if (panel.key === 'secrets') note(element, factory, model.secrets.note)
-    root.append(element)
+    host.append(element)
   }
   for (const warning of model.warnings) {
-    textCell(root, factory, 'p', warning, 'sentence', 'warnings[]', 'projects-warning')
+    textCell(host, factory, 'p', warning, 'sentence', 'warnings[]', 'projects-warning')
   }
-  return root
+}
+
+/** renderProjects walks the model through Task 2.0's writers: the frame with its
+ * section filled. It is what the tests and the spec draw, because both want the
+ * screen an operator sees rather than the shell the entry mounts first. */
+export function renderProjects(factory: ScreenFactory, model: ProjectsModel, theme: ProjectsTheme): ScreenElement {
+  const frame = renderProjectsFrame(factory, theme)
+  fillProjects(factory, model, frame.body)
+  return frame.root
 }

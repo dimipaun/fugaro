@@ -104,9 +104,10 @@ import type {
   SpendReader,
 } from './screens/spend'
 import { CACHE_FRESH_MS, CACHE_LIMIT, cacheKey, renderStamp, resultCache, sectionRead } from './section'
-import { SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE } from './skeleton'
+import { PROJECTS_SHAPE, SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE } from './skeleton'
 import { buildCoordinatorModel, renderCoordinator } from './screens/coordinator'
-import { buildProjectsModel, renderProjects } from './screens/projects'
+import { PROJECTS_BUSY, buildProjectsModel, fillProjects, renderProjectsFrame } from './screens/projects'
+import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
 import { READING_STILL_MS, renderReading } from './screens/reading'
@@ -2688,6 +2689,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * know. */
   let leaveSpend: () => void = () => undefined
 
+  /** leaveProjects is the same door for the Projects screen's one section:
+   * `showProjects` sets it. */
+  let leaveProjects: () => void = () => undefined
+
   /** show switches the panel to one view. The Live screen is not re-read here --
    * its model is the one the last poll drew, which is the point of a live
    * screen -- and the other three read on entry. The Live screen's **rigor join**
@@ -2709,6 +2714,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // operator is on: leaving Spend ends both, so nothing that was armed for a
     // screen nobody is looking at is left armed.
     if (id !== 'spend') leaveSpend()
+    if (id !== 'projects') leaveProjects()
     if (id === 'live') {
       maybeRefreshRigor()
       // A console that opened on an issue has made no Live read yet.
@@ -3440,6 +3446,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
   }
 
+  // ---- Section fillers --------------------------------------------------
+
+  /** clearSection empties one section down to its own slot -- the mark of the
+   * read that has just landed, and the view it replaces. The slot stays, because
+   * it is where the next read's mark goes, and it is put back as the section's
+   * only child so the fillers below can append the content beside it.
+   *
+   * It is shared by every screen whose sections fill as their own reads land
+   * (Spend's two and Projects'), because the rule it keeps is the same one: a
+   * section is emptied to its slot and never to nothing. */
+  const clearSection = (host: Drawn, slot: Drawn): void => {
+    const node = surface.nodeOf(slot)
+    node.replaceChildren()
+    surface.nodeOf(host).replaceChildren(node)
+  }
+
+  /** appendTo puts one of the entry's own drawings into a section a screen made.
+   * The screens' `append` takes a child of their own declared type and a refusal
+   * screen or a cache stamp is not one of those: they are this file's, drawn
+   * into a host the screen drew. */
+  const appendTo = (host: Drawn, child: SkewElement): void => {
+    host.append(child)
+  }
+
   // ---- Spend ------------------------------------------------------------
 
   /** spendBudget and spendCapsSentence are what `budget show` last answered for
@@ -3578,23 +3608,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         )
       }
       return drawn
-    }
-
-    /** clearSection empties one section down to its own slot -- the mark of the
-     * read that has just landed, and the view it replaces. The slot stays,
-     * because it is where the next read's mark goes. */
-    const clearSection = (host: Drawn, slot: Drawn): void => {
-      const node = surface.nodeOf(slot)
-      node.replaceChildren()
-      surface.nodeOf(host).replaceChildren(node)
-    }
-
-    /** appendTo puts one of the entry's own drawings into a section a screen
-     * made. The screens' `append` takes a child of their own declared type and a
-     * refusal screen or a cache stamp is not one of those: they are this file's,
-     * drawn into a host the screen drew. */
-    const appendTo = (host: Drawn, child: SkewElement): void => {
-      host.append(child)
     }
 
     /** paintCaps draws the caps section from what `budget show` answered. It is
@@ -3845,39 +3858,133 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   // ---- Projects ---------------------------------------------------------
 
+  /** projectsViews is what this session already read for the Projects screen:
+   * one entry per installation, keyed by the open installation's project. It is
+   * memory and nothing else, and `forgetLive` empties it with the rest of the
+   * installation's state, so a view read for one installation is never drawn
+   * under another. */
+  const projectsViews = resultCache<ProjectsModel>(CACHE_LIMIT)
+
+  /** projectsRead is the screen's own read lifecycle. The read is one
+   * (`budget show`), so the section is the screen and there is one of each: one
+   * busy mark, one sequence token, one refusal. */
+  const projectsRead = sectionRead({ factory, theme })
+
+  /** leaveProjects ends that section's busy state when the operator moves to
+   * another tab: nothing is in flight for a screen nobody is looking at. */
+  leaveProjects = () => {
+    projectsRead.end()
+  }
+
   /**
-   * showProjects reads the two documents this console can read for it and hands
-   * each one's refusal -- when there is one -- to the screen's own `sentences`,
-   * so a panel that has nothing says *why* in the CLI's words rather than in a
-   * default this file invented.
+   * showProjects draws the Projects screen from its **one** read.
    *
-   * The two repository-scoped reads are **not made**: `accounts ls` and
-   * `secrets ls` both need a repository, and this console has none to name (the
-   * installation's project is not a repository). Their panels say so through the
-   * screen's own absent sentence, which is the truth about a read the console
-   * did not make -- and is not a zero.
+   * **The jobs list is gone** (owner's report of 2026-10-31: it "is slow and
+   * serves no purpose there"). `runs ls --json` is about 248 KB and six seconds
+   * for a day of runs on the owner's installation, and this screen started it
+   * before the caps -- the panel's whole content -- could be drawn: the tab took
+   * about twenty seconds with nothing on screen. The read is `budget show` now,
+   * about a second, and the panels derived from the run list went with it
+   * (`buildProjectsModel`'s own note).
+   *
+   * **The shell is mounted the moment the tab is opened**, and the section's
+   * busy mark and skeleton go up in that same frame: the header, the caps and the
+   * rest of the panels are all that read's, so a screen that waited for it would
+   * be the placeholder under another name. The mark names the read, the previous
+   * visit's figures stay under it (dimmed, never blanked), and after fifteen
+   * seconds it says so.
+   *
+   * **What this session already read is drawn instantly**, stamped `as of
+   * HH:MM` with a Refresh control, and a view older than `CACHE_FRESH_MS` is
+   * read again at once rather than served silently.
    */
   const showProjects = async (): Promise<void> => {
     const mine = claim()
-    placeReading('projects', mine)
-    const sentences: Record<string, string> = {}
-    const read = async (operation: string, go: () => Promise<unknown>): Promise<unknown> => {
-      const answer = documentOf(await go())
-      if (!answer.ok) sentences[operation] = answer.sentence
-      return answer.ok ? answer.data : null
+    const project = railNow.find((row) => row.open)?.project ?? ''
+    const key = cacheKey([project, 'projects'])
+    const held = projectsViews.get(key)
+    let frame: DrawnProjectsFrame | null = null
+    let token = 0
+
+    /** mount draws the shell if it is not up yet, and answers it. The mark of a
+     * read that is still out goes up here, which is the only moment it can be
+     * drawn: the panel held another view's content until this call. */
+    const mount = (busy: boolean): DrawnProjectsFrame => {
+      if (frame !== null) return frame
+      const drawn = renderProjectsFrame(factory, theme)
+      frame = drawn
+      replace(drawn.root)
+      if (busy) projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY, PROJECTS_SHAPE)
+      return drawn
     }
-    const budget = await read('budget.show', () => bridge.showBudget({}))
-    // The Projects view makes the same budget read, and the rail's spend is that
-    // read's too: one read serves the panel and the rail.
-    if (budget !== null) {
-      rail.setSpend(railSpend(budget))
-      setGauge(gaugeFromBudget(budget))
+
+    /** paint fills the section from what `budget show` answered. `cached` is
+     * whether this view came out of the session cache rather than out of a read
+     * made now: a cached view carries the console clock it was read at and the
+     * one control that reads it again. */
+    const paint = (model: ProjectsModel, at: number, cached: boolean): void => {
+      const drawn = mount(false)
+      clearSection(drawn.body, drawn.slot)
+      fillProjects(factory, model, drawn.body)
+      if (cached) {
+        const stamp = renderStamp(factory, at)
+        appendTo(drawn.body, stamp.root)
+        surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+          start()
+        })
+      }
     }
-    const runs = await read('runs.list', () => bridge.listRuns({}))
-    // Both reads are in, and the operator may have moved on while they were.
-    if (stale(mine)) return
-    const model = buildProjectsModel({ budget, runs, accounts: null, secrets: null, sentences })
-    replace(renderProjects(factory, model, theme))
+
+    /** load makes the one read and draws it when it is still the latest. */
+    const load = async (readToken: number): Promise<void> => {
+      const answer = documentOf(await bridge.showBudget({}))
+      // The rail's spend and the fleet gauge are this read's too (design section
+      // 4.1): they are filled before the staleness check, because the spend is a
+      // fact about the installation rather than about the panel the operator is
+      // on, and a read that landed after they moved on still fills them.
+      if (answer.ok) {
+        rail.setSpend(railSpend(answer.data))
+        setGauge(gaugeFromBudget(answer.data))
+      }
+      // The token is checked before anything is taken down, so a read from an
+      // earlier visit cannot end the *current* visit's mark.
+      if (!projectsRead.settle(readToken)) return
+      if (stale(mine)) return
+      if (!answer.ok) {
+        const drawn = mount(false)
+        clearSection(drawn.body, drawn.slot)
+        appendTo(drawn.body, refusedScreen(factory, 'budget.show', answer.sentence, theme))
+        return
+      }
+      const model = buildProjectsModel({
+        budget: answer.data,
+        accounts: null,
+        secrets: null,
+        sentences: {},
+      })
+      const at = Date.now()
+      projectsViews.put(key, model, at)
+      paint(model, at, false)
+    }
+
+    /** start takes the sequence token for one read, puts the mark up in the
+     * frame's own section when the shell is already drawn, and makes the read. */
+    const start = (): void => {
+      token = projectsRead.start()
+      if (frame === null) mount(true)
+      else projectsRead.mark(token, frame.body, frame.slot, PROJECTS_BUSY)
+      void load(token)
+    }
+
+    // The view this screen opens on, if this session has already read it, is
+    // drawn before anything is awaited -- which is the whole point of the cache.
+    // A view older than `CACHE_FRESH_MS` is stamped **and** read again at once
+    // rather than served silently.
+    if (held === null) start()
+    else {
+      paint(held.value, held.at, true)
+      if (Date.now() - held.at >= CACHE_FRESH_MS) start()
+    }
   }
 
   // ---- Coordinator ------------------------------------------------------
@@ -4151,6 +4258,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     spendBudget = null
     spendCapsSentence = null
     spendViews.clear()
+    // The Projects screen's view is the same kind of fact: it is this
+    // installation's caps, and a cached one carries its figures.
+    projectsViews.clear()
     // The graph is a picture of **one installation's** plan, laid out by a worker
     // this console started for it: both are dropped here, so the next
     // installation is drawn from its own document by its own engine rather than
