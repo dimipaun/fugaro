@@ -5,7 +5,8 @@ package cli
 // docs/cloud-senior-review/ is a design-only folder: README.md (the index),
 // spec.md (the design), reconciliation.md (every claim of the spec against the
 // code on `main`, and the owner's decisions) and implementation-plan.md (the
-// tasks R1-R7). It adds no code, and the whole folder is a draft pull request
+// tasks CSR1-CSR7, with CSR4a and CSR4b where the old CSR4 split). It adds no
+// code, and the whole folder is a draft pull request
 // the owner has not approved, so nothing here pins a command or a flag.
 //
 // What it does pin is the half of these documents that is a claim about the
@@ -24,12 +25,12 @@ package cli
 //    index's status, that an answer is not an approval, the owner's block of
 //    decision numbers and the check number claimed, and the plan's own "nothing
 //    here is approved" with the two gates outside this design named.
-//  * TestDocsCloudSeniorReviewDecisionsAreAnswered -- D880-D893 are written and
-//    answered, D894-D899 reserved and unused, and the three the later review
-//    raised (D891, D892, D893) each carry the option the owner took, in the
-//    section's own marker. The index's numbers row says the same thing, so the
-//    table and the section cannot drift apart -- which is the defect this round
-//    fixed in the table.
+//  * TestDocsCloudSeniorReviewDecisionsAreAnswered -- D880-D894 are written and
+//    answered, D895-D899 reserved and unused, and the four the later rounds
+//    raised (D891, D892, D893, D894) each carry the option the owner took, in
+//    the section's own marker. The index's numbers row says the same thing, so
+//    the table and the section cannot drift apart -- which is the defect an
+//    earlier round fixed in the table.
 //  * TestDocsCloudSeniorReviewCitationsResolve -- every `path:line` citation in
 //    all three documents resolves to a file that exists and a line that is in
 //    it, measured against an independent census so a regexp that stops matching
@@ -64,7 +65,11 @@ package cli
 //	TestDocsCloudSeniorReviewDecisionsAreAnswered
 //	  put the index's numbers row back to "D892 and D893 open" -> fails: the row
 //	  and the reconciliation's §4 are one claim, and a row that disagrees with
-//	  the section is exactly the defect this round fixed in the table.
+//	  the section is exactly the defect an earlier round fixed in the table;
+//	  put D894's entry back to "- **D894 (OPEN, recommended option (a))." while
+//	  the row and the section's own summary still call the block answered ->
+//	  fails, naming the heading: an answer the owner gave cannot drift back into
+//	  the open tail without the test saying so.
 //
 // The counts in the log lines are a reading of the documents at the commit that
 // last edited this comment, not a constant: anyone re-running a mutation should
@@ -98,8 +103,10 @@ var csrDocs = []string{csrSpec, csrReconciled, csrPlan}
 // The upper end is the last written number and the reserved tail is named
 // separately, because "D880-D894 written, D895-D899 reserved" is the claim --
 // a block that quietly grew past D894 would be a decision number taken without
-// the owner giving one. D894 is written and OPEN (the head's configuration,
-// raised after D892 and D893 were answered); D880-D893 are answered.
+// the owner giving one. D894 is written and ANSWERED, with option (a) (the
+// head's configuration, raised after D892 and D893 were answered and answered
+// last); D880-D893 are answered too, and the owner's seven rulings of
+// 2026-11-01 (O1-O7) amend the decisions they touch without taking a number.
 const (
 	csrBlockLow      = 880
 	csrBlockHigh     = 894
@@ -120,12 +127,12 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 	readme := flattenDoc(readDoc(t, csrReadme))
 	for _, want := range []string{
 		"**Status: design only, nothing approved.**",
-		// The claim this round had to restore: the table's own row said two
-		// decisions were still open while the header and the reconciliation
-		// recorded them answered, so a reader of the table alone would have
-		// believed D892 and D893 unsettled. The round after it wrote D894, so
-		// the row now separates the answered block from the open number.
-		"**D880–D893 answered, D894 open**",
+		// The claim two rounds had to restore: the table's own row said a
+		// decision was still open while the header and the reconciliation
+		// recorded it answered, so a reader of the table alone would have
+		// believed D892, D893 or D894 unsettled. The round that answered D894
+		// moved the whole block into the answered half, and the row says so.
+		"D880–D894 written and answered",
 		"**D895–D899 reserved and unused**",
 		"**D893(c) is a precondition of the whole design, not a channel**",
 		"**Check 125**",
@@ -151,13 +158,17 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 		}
 	}
 	// The plan carries the same status in its own words, plus the two gates
-	// that are not decisions at all: E7 blocks R7, R2 and the coordinator's
-	// merge path, and U7 gates R4's launch. Both are outside this design.
+	// that are not decisions at all: E7 blocks CSR7, CSR2 and the coordinator's
+	// merge path, and U7 gates CSR4b's launch. Both are outside this design, and
+	// the task ids are the CSR-prefixed ones the plan settled on.
 	plan := flattenDoc(readDoc(t, csrPlan))
 	for _, want := range []string{
 		"**Nothing here is approved.**",
-		"**E7** (the credentials service enabled and admitting a project-scoped job) blocks R7, R2 and the coordinator's merge path",
-		"**U7** (an owner-run live observation) gates R4's launch",
+		"**The task ids are prefixed `CSR`, and that is deliberate.**",
+		"**E7** (the credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's merge path",
+		"**U7** (an owner-run live observation) gates CSR4b's launch",
+		"**CSR4a carries D894(a)'s configuration posture and waits on nothing**",
+		"**CSR4b carries D885's mutation machinery and does not start until U7's probe has returned**",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s no longer says %q", csrPlan, want)
@@ -166,39 +177,44 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 }
 
 // TestDocsCloudSeniorReviewDecisionsAreAnswered: this work's decision block is
-// written, its answered part is answered, D894 is open rather than answered,
-// and the block does not run past the numbers the owner gave it.
+// written, all of it is answered, and the block does not run past the numbers
+// the owner gave it.
 //
-// The three decisions the later review raised are pinned individually, because
+// The four decisions the later rounds raised are pinned individually, because
 // each answer is a claim a reader acts on and the option letter is the whole of
-// it: D891(a) is the mutation machinery R4 carries, D892(a) is the signature the
-// coordinator verifies before a `ship`, and D893(c) is the credentials service
-// -- not the per-launch secret this design recommended, which is exactly the
-// answer a document could drift back to without any other symptom. D894 is
-// pinned the other way round: it is written and OPEN, and a later edit that
-// quietly moved it into the answered tail would be the same defect in reverse.
+// it: D891(a) is the mutation machinery CSR4b carries, D892(a) is the signature
+// the coordinator verifies before a `ship` (over O3's frame), D893(c) is the
+// credentials service -- not the per-launch secret this design recommended,
+// which is exactly the answer a document could drift back to without any other
+// symptom -- and D894(a) is the posture of the review stage's own session. All
+// four are answered, so a later edit that moved one of them back into an open
+// tail would be a row-and-section disagreement in reverse: the test pins the
+// answered markers themselves, and the reserved range below them.
 func TestDocsCloudSeniorReviewDecisionsAreAnswered(t *testing.T) {
 	reconciled := flattenDoc(readDoc(t, csrReconciled))
 	for _, want := range []string{
 		"**D880–D894 are this work's block;",
 		"D895–D899 are reserved and unused.**",
-		"**D880–D893 are answered, and D894 is open.**",
+		"**All of them are answered, and the last of them is D894.**",
 		"- **D891 (ANSWERED by the owner, option (a)).",
 		"- **D892 (ANSWERED by the owner, option (a)).",
 		"- **D893 (ANSWERED by the owner, option (c)).",
-		// D894 was raised after those three and is not answered: a reader must
-		// not take the block's answered tail for a settled question.
-		"- **D894 (OPEN, recommended option (a)).",
+		// D894 was raised after those three and answered last, so a reader must
+		// not find it waiting on the owner while the block around it is settled.
+		"- **D894 (ANSWERED by the owner, option (a)).",
+		// The rulings of 2026-11-01 amend the decisions above and take no
+		// number of their own, which is what keeps the reserved tail true.
+		"**The seven rulings of 2026-11-01 (O1–O7) take no decision number.**",
 		// The precondition D893(c) turned the answer into, and what it blocks.
 		"**D893(c) makes the credentials service a hard precondition of the whole design**",
-		"**R7, R2 and the coordinator's `ship` → merge path stay blocked until it is met**",
+		"**CSR7, CSR2 and the coordinator's `ship` → merge path stay blocked until it is met**",
 	} {
 		if !strings.Contains(reconciled, want) {
-			t.Errorf("%s lacks %q: this work's block is D880–D894, D880–D893 answered and D894 open, and the answer to D893 is a precondition rather than a channel", csrReconciled, want)
+			t.Errorf("%s lacks %q: this work's block is D880–D894, all of it answered, and the answer to D893 is a precondition rather than a channel", csrReconciled, want)
 		}
 	}
 	// No decision number past the block is written as one. A heading or a bullet
-	// for D894-D899 would be a number taken without the owner giving it, which
+	// for D895-D899 would be a number taken without the owner giving it, which
 	// is the failure the reserved tail exists to make visible.
 	raw := readDoc(t, csrReconciled)
 	for n := csrReservedFirst; n <= csrReservedLast; n++ {
@@ -209,15 +225,18 @@ func TestDocsCloudSeniorReviewDecisionsAreAnswered(t *testing.T) {
 		}
 	}
 	// The index's numbers row is a reading of the same block, and the two are
-	// one claim: this round found them disagreeing -- the row still called D892
-	// and D893 open while the section recorded them answered -- so the row's own
-	// sentence is pinned beside the section's.
+	// one claim: an earlier round found them disagreeing -- the row still called
+	// D892 and D893 open while the section recorded them answered -- so the
+	// row's own sentence is pinned beside the section's, option letter and all.
 	readme := flattenDoc(readDoc(t, csrReadme))
 	for _, want := range []string{
 		"**this work's block: D880–D894 written",
 		"**D892 with option (a)**",
 		"**D893 with option (c)**",
+		"**D894 with option (a)**",
 		"with D895–D899 reserved and unused",
+		// The rulings the block's answers rest on, named in the row beside it.
+		"the owner's rulings **O1–O7** of 2026-11-01",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s' numbers row lacks %q: the row and the reconciliation's §4 are one claim about one block, and a row that disagrees with the section is how this round's defect read", csrReadme, want)
@@ -440,7 +459,7 @@ func TestDocsCloudSeniorReviewTreeClaimsHold(t *testing.T) {
 		{
 			"internal/agent/settings.go",
 			"func DenyRules(denyWeb, review bool) []string {",
-			"R4's Bash denial is a change to this function's contract, and the design names it",
+			"CSR4b's Bash denial is a change to this function's contract, and the design names it",
 		},
 		{
 			"internal/gitprov/github/apptoken.go",
