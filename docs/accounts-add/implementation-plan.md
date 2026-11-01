@@ -1,10 +1,12 @@
 # `fugaro accounts add`: the implementation plan
 
-**The decisions are answered (2026-10-31, and D873–D875 on 2026-11-01); nothing here is built yet.**
-Every task is written to the owner's answers in [reconciliation.md](reconciliation.md) §4 —
-D860–D875, with **D862 answered as the alternative (a)** and **D868 answered `--yes` covers
-everything** — and a decision answered the other way changes the task, not just a sentence. Where this
-plan and [spec.md](spec.md) disagree, [reconciliation.md](reconciliation.md) wins.
+**The decisions are answered (2026-10-31, and D873–D875 on 2026-11-01), except D876, which is open;
+nothing here is built yet.** Every task is written to the owner's answers in
+[reconciliation.md](reconciliation.md) §4 — D860–D875, with **D862 answered as the alternative (a)** and
+**D868 answered `--yes` covers everything** — and a decision answered the other way changes the task, not
+just a sentence. **D876** (the run record's one account cannot name a stage's account, spec §11.5) is
+**open**: it is carried as a named follow-up on A2 and A7 and nothing is built on it. Where this plan and
+[spec.md](spec.md) disagree, [reconciliation.md](reconciliation.md) wins.
 
 Every task states its files (at most 12), the tests that name it, the **red step** that has to fail
 first, and whether it carries a **SEC** flag — a flag that means the change needs an independent review
@@ -117,7 +119,13 @@ beside `accounts.<name>.allow_repos` — published by that stage and by no secon
 `accounts.<name>.allow_repos` already is. And the account a run used is *named*: the record's
 `OAuthAccount` (the runner's own field, `result.json`'s `oauth_account`, `fugaro diagnose`'s
 `row.oauth_account`), which this task asserts rather than adds — no field is new, and none changes
-meaning.
+meaning. **The limit that assertion runs into is D876, and this task carries it rather than closing it**
+(spec §11.2, §11.5): `OAuthAccount` is one scalar, assigned by `recordCredential`
+(`internal/runner/runner.go:775`), so a run that used a per-stage key or that failed over under `auto`
+records only the account it used last. **The recommendation is a new additive `stage_accounts` field**,
+and if the owner rules it in, it lands here — where the record's account is already asserted — or in A7,
+where a stage's account is chosen at all. **Until then this task adds no field**: it asserts the
+existing one, and its test asserts what that field can actually say.
 
 *Files (≤5):* `internal/cli/accounts_add.go`, `internal/cli/accounts_add_converge.go`,
 `internal/cli/accounts_add_converge_test.go`, `internal/cli/accounts_add_converge_fake_test.go`.
@@ -138,7 +146,8 @@ corner: a `--repos` repository with no recorded checkout is printed, not silentl
 wrote, through the `Policy` stage and no other writer),
 `TestRunRecordNamesTheAccountTheRunUsed` (the record's `OAuthAccount` is the account the launch
 resolved, and `fugaro diagnose` prints it as `row.oauth_account` — D873's read-back, asserted rather
-than added).
+than added; **it asserts the scalar's own limit too**, that a run which used a per-stage key records the
+account it used last and not a stage's, which is D876's stated limit rather than a wish).
 *Red step:* `TestAccountsAddLeavesNothingToRun`, written before the converge exists, fails at the
 published node — which is precisely what would happen to the owner if the converge were dropped, and
 what F18 records that nothing in the tree notices today.
@@ -244,7 +253,12 @@ reports it rather than editing a reserved file.
 **SEC.** Goal: spec §11.3 and §11.4. The runner's **stage-start account choice**: with
 `claude_account_auto` on, a stage with no explicit account walks the accounts allowed for that stage, in
 the order `fugaro accounts ls` prints them — the first; on a rate limit or a rejection, the next; never
-mid-stage; always logged. With the switch off nothing changes at all: explicit-only, which is what
+mid-stage; always logged. **"Allowed for that stage" is two rules and not one** (spec §11.3): the
+repository's admission (`claudeAccountAllowed`, the list `accounts ls` prints), and the narrower stage
+scope — a stage is served only by the accounts its own job exists for, so a `review` stage's walk is the
+**review-class** accounts the cloud-senior-review design's review job variant is built for
+([cloud-senior-review](../cloud-senior-review/spec.md) §2; the class is the routing design **#1514**'s
+**D1062**, open). With the switch off nothing changes at all: explicit-only, which is what
 §11.2's chain already gives, and which is the shipped behaviour. It comes after A2 because the keys (A1)
 and the node that carries them (A2) have to exist before there is a list to walk.
 
@@ -256,7 +270,11 @@ this task keeps the edit to that file as small as it can and says so in its PR),
 first account rate-limits makes its next attempt on the second, and the failover line names both),
 `TestAutoNeverChoosesADisallowedAccount` (an account the repository is not admitted to is never chosen,
 whatever the list says — the negative half, and the reason `claudeAccountAllowed` is asked at stage
-start and not only at launch), `TestAutoOffMeansExplicitOnly` (with the switch off the walk never runs,
+start and not only at launch), `TestAutoReviewStageWalksOnlyReviewClassAccounts` (spec §11.3's **stage
+scope**, the second rule: an account that is admitted for the repository but is **not of the review
+class** — no review job variant of the cloud-senior-review design is built for it — is never chosen for
+the `review` stage, whatever the list says; the sibling of the test above, and the one that keeps stage
+scope from collapsing back into the repository's allow-list), `TestAutoOffMeansExplicitOnly` (with the switch off the walk never runs,
 the account is the chain's own, and the record names one account), `TestAutoNeverSwitchesMidStage` (a
 rate limit inside a stage ends that attempt: the stage's transcript, its cost and its verdict are one
 account's), `TestAutoLogsEveryFailover`.
@@ -266,13 +284,19 @@ exactly the behaviour D875 makes the default.
 *SEC:* yes. This is the only code in the design that chooses a credential for the owner, and the
 negative test is the point: a walk that could reach an account the repository is not admitted to would
 be a way around `claude_accounts`.
-*What this task settles rather than inherits:* two things spec §11.2 leaves open. **Where the walk reads
-its candidate list** — the expected source is the published node A2 writes, since the run's own side
-already reads that node at bootstrap (`internal/runner/projectpolicy.go`'s `readPolicy`), and a task that
-cannot reach it there says so rather than inventing a second source for the same list. And **which job
-serves a stage whose account differs from the job's own**: a project job mounts one account's token
-(LC4), so the mismatch is a refusal and not a silent fallback, and this task is where that refusal is
-written (with the cloud-senior-review work, which owns the reviewer's own job).
+*What this task settles rather than inherits:* three things spec §11.2 and §11.3 leave open. **Where the
+walk reads its candidate list** — the expected source is the published node A2 writes, since the run's
+own side already reads that node at bootstrap (`internal/runner/projectpolicy.go`'s `readPolicy`), and a
+task that cannot reach it there says so rather than inventing a second source for the same list. **Where
+stage scope's review-class list comes from** — the review job variants the installation has, which the
+cloud-senior-review work deploys per `(profile, account)`
+([cloud-senior-review](../cloud-senior-review/spec.md) §2); this task reads that set and does not invent
+a second one, and it says so if the set is not reachable where the walk runs. And **which job serves a
+stage whose account differs from the job's own**: a project job mounts one account's token (LC4), so the
+mismatch is a refusal and not a silent fallback, and this task is where that refusal is written (with the
+cloud-senior-review work, which owns the reviewer's own job). **D876 is not this task's to settle**: if
+the owner rules the recommended `stage_accounts` field in, it lands here or in A2, and until then this
+task writes the failover log line and no record field.
 
 ### Handoffs (this work reports them; it does not write them)
 

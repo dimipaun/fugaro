@@ -11,7 +11,9 @@ coding agent's session, never worked around), and the confirmation `--yes` stand
 and the capture they were about. The spec and the plan are written to the answers; the tasks may
 start. On 2026-11-01 the owner answered the three the brief had not asked — **D873,
 D874 and D875**, which account a run uses when the project holds several — and they are written in
-[spec.md](spec.md) §11 and in §4's last three rows.
+[spec.md](spec.md) §11 and in §4's last rows. Answering them exposed a fourth question the owner has not
+ruled on — **D876**, that the run record names one account for the whole run and so cannot say which
+account served which stage — and it is written as **open** in [spec.md](spec.md) §11.5.
 
 **Asked by:** the owner, 2026-10-31: the named-Claude-token flow on
 [docs/project-claude-accounts.md](../project-claude-accounts.md) is **seven steps** — two hand edits of
@@ -61,16 +63,16 @@ hand edit stands between the owner and a run.
 
 | File | Role |
 | --- | --- |
-| [spec.md](spec.md) | The command, its flags, the order of its work, the `--claude` login path, the inverse, what each existing command becomes, the threat model, and how a run chooses among several accounts (§11, D873–D875) |
+| [spec.md](spec.md) | The command, its flags, the order of its work, the `--claude` login path, the inverse, what each existing command becomes, the threat model, and how a run chooses among several accounts (§11, D873–D876 — §11.5 is **D876, open**) |
 | [reconciliation.md](reconciliation.md) | Every spec claim against the code on `main` and against the open pull requests: what exists, what is missing, what conflicts (findings F1–F19), the
-dependencies E1–E5, and the owner decisions D860–D875. **Where it disagrees with `spec.md`, it wins** |
+dependencies E1–E5, and the owner decisions D860–D876 (D876 open). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks A0–A7 (at most 12 files each), the shared-files table and the level order. **Nothing in it is approved** |
 
 ## Numbers this work holds
 
 | Block | Use |
 | --- | --- |
-| **D860–D879** | this work's block: **D860–D875** written (D871 and D872 are the guard's, added in the fix round, and **moot** with D862's answer: there is no capture for them to govern; **D873–D875 are the run's own account choice**, answered by the owner on 2026-11-01 and written in [spec.md](spec.md) §11), **D876–D879** reserved and unused. Taken above every number on `main`, whose highest is now **D859** — the `settings` design merged as **#1464** with **D840–D859**, so the earlier reading of the tree (`D829`, the tail of `docs/console-coordinator-v2`'s D810–D829) is one merge behind. Below this block: the `rigor` design (#1463, merged) holds **D830–D839**, the console auto-update plan (#1458, merged; it replaced the closed #1377) holds **D760–D772**, and the models block (**D780–D799**) sits below all of them. Above it: **D880–D899** belong to a later 0.15.0 plan — the cloud-senior-review design, **#1472** (open). This work's ceiling is unchanged: it takes nothing above **D879**, and **D873–D875 were re-checked on 2026-11-01** against `origin/main` and against the pull requests open that day — no decision on `main` and none in an open pull request used D873–D879, so the block took its next three numbers and nothing had to be renumbered. The token `D800` in `docs/` is the false positive `docs/models-commands/README.md` records (`U+D800` in #715's diff), not a decision |
+| **D860–D879** | this work's block: **D860–D875** written (D871 and D872 are the guard's, added in the fix round, and **moot** with D862's answer: there is no capture for them to govern; **D873–D875 are the run's own account choice**, answered by the owner on 2026-11-01 and written in [spec.md](spec.md) §11), **D876** the open question their answer exposed (spec §11.5: the run record's one `oauth_account` cannot name a stage's account), **D877–D879** reserved and unused. Taken above every number on `main`, whose highest is now **D859** — the `settings` design merged as **#1464** with **D840–D859**, so the earlier reading of the tree (`D829`, the tail of `docs/console-coordinator-v2`'s D810–D829) is one merge behind. Below this block: the `rigor` design (#1463, merged) holds **D830–D839**, the console auto-update plan (#1458, merged; it replaced the closed #1377) holds **D760–D772**, and the models block (**D780–D799**) sits below all of them. Above it: **D880–D899** belong to the cloud-senior-review design, **merged** as **#1472** — **D880–D894** written, **D895–D899** reserved. This work's ceiling is unchanged: it takes nothing above **D879**, and **D873–D875 were re-checked on 2026-11-01** against `origin/main` and against the pull requests open that day — no decision on `main` and none in an open pull request used D873–D879, so the block took its next three numbers and nothing had to be renumbered — and **D876 was re-checked the same day, when the fix round raised it**, on the same reading: still free, so it is taken rather than reserved. The token `D800` in `docs/` is the false positive `docs/models-commands/README.md` records (`U+D800` in #715's diff), not a decision |
 | **Checks** | none taken here. The `--claude` login needs a live check, and `docs/gcp-live-checklist.md` is another work stream's file (`docs/accounts-add` may not edit it), so the check is written in [spec.md](spec.md) §9 as **LC1–LC4** and the task that implements the flag moves it into the checklist under the number free at that merge. Its second half is [Check 35](../gcp-live-checklist.md) (**U2**), written and **never run** |
 
 ## What this design does not do

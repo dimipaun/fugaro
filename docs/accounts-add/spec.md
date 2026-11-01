@@ -456,7 +456,8 @@ the repository", and the page's own §1 — and a launcher that may start a run 
 that run print the token (design D2). Widening `allow_data_to` therefore widens who may
 reach that token's account, and the confirmation's own text names it, with what it means (D868,
 answered: `--yes` covers everything, so the warning is carried by the sentence rather than by a typed
-gate; §2.6). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see #1472, F3).
+gate; §2.6). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see the cloud-senior-review
+design's **F3**, [docs/cloud-senior-review/](../cloud-senior-review/reconciliation.md)).
 
 ## 7. Owner-only boundaries
 
@@ -583,7 +584,7 @@ Two properties do not move. **Every name is checked before any launch**, whateve
 so a key can only ever name an account the owner has already admitted there. And **the run record's
 account is the field it already has** — `runstore.Record.OAuthAccount`, written by the runner as
 `result.json`'s `oauth_account` and already read back by `fugaro diagnose` as `row.oauth_account` — but
-that field is **one scalar for the whole run** — `recordCredential` (`internal/runner/runner.go:775`)
+that field is **one scalar for the whole run**: `recordCredential` (`internal/runner/runner.go:775`)
 assigns it, so the last write wins and the record names the account the run *last* used. With
 `stages.review.claude_account` set, or with an `auto` failover (§11.3), it therefore **cannot say which
 account served which stage**. Nothing here adds a field, and nothing here gives `oauth_account` a second
@@ -598,7 +599,8 @@ per `(profile, provider, account)` and mounts that one account's token (`config.
 LC4), so a stage runs *as* the account of the job it runs in, and the chain above decides which account
 a stage **asks for**. For the stages that share the run's own job, the answer is that job's account for
 the whole run; for a stage that runs in a job of its own — the cloud reviewer is one, in the
-cloud-senior-review design (**#1472**, open, D880–D899) — the key is what picks that job. A stage that
+cloud-senior-review design (**merged** as #1472, D880–D894,
+[docs/cloud-senior-review/](../cloud-senior-review/spec.md)) — the key is what picks that job. A stage that
 asks for an account its job does not hold is a **refusal**, not a silent fallback to the job's own
 account. That refusal, and the job each stage is served by, are A7's and the cloud-senior-review work's
 to settle; this design fixes the keys and the precedence, and nothing else.
