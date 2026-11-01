@@ -1198,22 +1198,29 @@ func TestBudgetPreviewStageShapes(t *testing.T) {
 // counted every repository at one flat 1/2; the stage figures below are the
 // same standard recipe at each row, so a reader sees both the numbers and the
 // mode they came from.
+//
+// One case has no checkout at all (--repo alone, as fugaro run --repo does):
+// there the project layer is still read — it is the installation's own, which
+// is the layer a run without a checkout resolves (embedProjectLayer) — so the
+// mode, and the stage count that follows from it, is the run's.
 func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 	// standard is a first_line loop under a bouncing review: the bound moves
 	// with both knobs at once.
 	const standard = "at most %d stages (mode %s, agent.first_line_rounds %d, agent.review_rounds %d)"
 	for _, tc := range []struct {
-		name      string
-		layer     string
-		repoRigor string
-		mode      string
-		first     int
-		rounds    int
-		stages    int
+		name       string
+		layer      string
+		repoRigor  string
+		noCheckout bool
+		mode       string
+		first      int
+		rounds     int
+		stages     int
 	}{
 		{name: "no layer and no repository value: pro", mode: "pro", first: 3, rounds: 3, stages: 31},
 		{name: "the repository's own rigor default", repoRigor: "rigor: { default: poc }\n", mode: "poc", first: 1, rounds: 1, stages: 7},
 		{name: "the project layer's default", layer: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
+		{name: "no checkout: the project layer's default", layer: "startup", noCheckout: true, mode: "startup", first: 2, rounds: 2, stages: 17},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBudgetFixture(t, "")
@@ -1223,18 +1230,27 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 				f.DefaultRunsBucket(t)
 				testutil.WriteFiles(t, f.runsDir(), map[string]string{config.LayerKey: previewLayer(tc.layer)})
 			}
+			args := []string{"budget", "preview", "--recipe", "standard", "--runs", "1"}
 			agent := "  max_budget_usd: 0.5\n"
 			if tc.repoRigor != "" {
 				agent += tc.repoRigor
 			}
-			f.Checkout(t, agent)
-			if tc.layer != "" {
-				// A layer is read for a repository whose file is anchored:
-				// the project's own name and GCP project, which Checkout's
-				// fugaro.yaml does not carry (minimalAnchored's shape).
-				testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": previewCheckoutYAML(agent)})
+			if tc.noCheckout {
+				// No checkout of acme/app anywhere: the file that would
+				// anchor the layer is not here, so the layer the project
+				// published under its own name is the one that applies.
+				t.Chdir(t.TempDir())
+				args = append(args, "--repo", "acme/app")
+			} else {
+				f.Checkout(t, agent)
+				if tc.layer != "" {
+					// A layer is read for a repository whose file is anchored:
+					// the project's own name and GCP project, which Checkout's
+					// fugaro.yaml does not carry (minimalAnchored's shape).
+					testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": previewCheckoutYAML(agent)})
+				}
 			}
-			out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "1")
+			out, _, err := execute(t, args...)
 			if err != nil {
 				t.Fatal(err)
 			}

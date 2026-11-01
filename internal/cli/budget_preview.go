@@ -156,8 +156,14 @@ type previewKnobs struct {
 // the run agree on the number; what the preview cannot know is an area rule
 // (the paths a run turns out to touch) or a task's own override, so a run of a
 // repository whose areas are stricter spends more than this said.
-func previewKnobsOf(cfg *config.Config) previewKnobs {
-	k := previewKnobs{from: "defaults", mode: rigor.Default}
+//
+// project is the project layer's half of that resolution, which the caller
+// reads itself (previewProjectRigor) when there is no checkout to read the
+// repository's file from: with no cfg at all the layer is the only layer there
+// is, and leaving it out resolved every such preview at rigor.Default (pro)
+// whatever the project had published.
+func previewKnobsOf(cfg *config.Config, project rigor.Config) previewKnobs {
+	k := previewKnobs{from: "defaults", mode: rigor.Resolve(project, rigor.Request{}).Mode}
 	if cfg != nil {
 		k = previewKnobs{from: "checkout", mode: rigor.Resolve(cfg.RigorConfig(), rigor.Request{}).Mode,
 			first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds, maxStageUSD: cfg.Agent.MaxBudgetUSD}
@@ -170,6 +176,33 @@ func previewKnobsOf(cfg *config.Config) previewKnobs {
 		k.rounds = defaults.Senior
 	}
 	return k
+}
+
+// previewProjectRigor is the project layer's rigor half, for a preview that
+// has no checkout to resolve one from: cfg is nil there, so the pair of
+// layers a run would resolve stops at the project layer. It is the layer
+// embedProjectLayer embeds for a launch from outside a checkout (decision
+// L8): the installation's own project and GCP project are the anchor, since
+// the file that would anchor it (a checkout's fugaro.yaml) is not here, and
+// the layer the bucket holds under that anchor is the one every such launch
+// carries.
+//
+// Lenient, like every read that is not a launch, and a read that fails leaves
+// rigor.Default standing rather than failing an estimate that worked before:
+// the preview prints the mode it used, and its own note already says the
+// numbers are the mode's defaults. A layer that is there but invalid parses
+// under neither mode (findLayer), so this reports none rather than a wrong
+// one.
+func previewProjectRigor(ctx context.Context, lc *localcfg.Config) rigor.Config {
+	if lc == nil || lc.Name == "" || lc.GCPProject == "" {
+		return rigor.Config{}
+	}
+	anchor := []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", lc.Name, lc.GCPProject))
+	fl, err := findLayer(ctx, getenvOS, anchor, lc, layerOptions{Lenient: true}, time.Now())
+	if err != nil || fl.Layer == nil {
+		return rigor.Config{}
+	}
+	return (&config.Config{Layer: fl.Layer}).ProjectRigor()
 }
 
 // previewCompute is one workflow's compute ceiling: what a run of it can bill
@@ -423,7 +456,11 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		return err
 	}
 
-	knobs := previewKnobsOf(cfg)
+	var project rigor.Config
+	if cfg == nil {
+		project = previewProjectRigor(ctx, lc)
+	}
+	knobs := previewKnobsOf(cfg, project)
 	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds)
 	doc := &previewDoc{Project: lc.Name, GCPProject: lc.GCPProject, Repo: repo, Slug: slug,
 		Recipe: rr.Name, Source: string(rr.Source), Runs: o.runs, Stages: stages,
@@ -500,7 +537,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	doc.Bounded, doc.PerRunUSD, doc.CeilingUSD = ceiling != nil, used, ceiling
 	doc.Verdict = previewVerdict(ceiling, repoHR, globalHR)
 
-	previewAddTypical(ctx, doc, env, lc, cfg, rr.Recipe, repo, slug)
+	previewAddTypical(ctx, doc, env, lc, cfg, knobs, rr.Recipe, repo, slug)
 
 	if o.json {
 		return writeJSON(cmd.OutOrStdout(), doc)
@@ -516,7 +553,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 // or a project layer that is not read), open it here, and read no further
 // than a note if that fails: a Viewer without the bucket's read still gets
 // the ceiling.
-func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *localcfg.Config, cfg *config.Config, rp *recipe.Recipe, repo, slug string) {
+func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *localcfg.Config, cfg *config.Config, knobs previewKnobs, rp *recipe.Recipe, repo, slug string) {
 	bucket := env.bucket
 	if bucket == nil {
 		opened, err := openCloudFor(ctx, lc)
@@ -548,7 +585,7 @@ func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *
 		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days recorded no cost for any stage (a result.json from before the runner kept one, or stages that all cost nothing); they are not counted",
 			h.unpriced, total, repo))
 	}
-	usd, stages, missing, model := h.typical(rp, cfg)
+	usd, stages, missing, model := h.typical(rp, cfg, knobs)
 	if missing != "" {
 		on := ""
 		if model != "" {
@@ -673,7 +710,9 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 // that kind's recorded stages on the model the checkout pins for it, with
 // the recipe's roles mapping applied as the runner applies it. A stages of 0
 // means there is no figure to print; missing names the kind whose stages the
-// window recorded no cost for on that model, and is "" otherwise.
+// window recorded no cost for on that model, and is "" otherwise. knobs is
+// the caller's, the same ones the ceiling's stage bound uses, so the two
+// figures on one line are counted the same way.
 //
 // Only the pinned model's own stages are averaged: a kind the window holds no
 // cost for on that model has no figure rather than another model's mean,
@@ -681,8 +720,7 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 // (the help's promise, and the rule a missing kind already follows). The
 // design's "with fewer than 5 runs, the line is omitted" and a recipe that
 // runs no agent stage at all are silent: there is nothing to explain.
-func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd float64, stages int, missing, model string) {
-	knobs := previewKnobsOf(cfg) // the same knobs the ceiling's stage bound uses
+func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config, knobs previewKnobs) (usd float64, stages int, missing, model string) {
 	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds)
 	for _, n := range counts {
 		stages += n
