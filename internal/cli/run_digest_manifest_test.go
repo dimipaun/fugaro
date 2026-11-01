@@ -509,6 +509,11 @@ func TestDigestRepoRecipeImageGate(t *testing.T) {
 // that wrote one would refuse its own task at launch.
 func TestDigestManifestOnlyForReportRuns(t *testing.T) {
 	f := digestFixture(t)
+	// The launch below is the catalog default, which carries the adversarial
+	// step since 0.15.0, so the digest fixture's 0.13.0 image is too old for
+	// it: the image gate is not what this test is about, and it names its own
+	// release when it refuses.
+	writeBuildRecord(t, f, appSlug, "web", release0150)
 	now := time.Now()
 	seedManifestRun(t, f, "acme/app", appSlug, manifestRunID(now.Add(-time.Hour)), manifestRunID(now.Add(-2*time.Hour)))
 
