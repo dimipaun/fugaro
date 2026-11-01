@@ -11,7 +11,7 @@ disagrees with `spec.md`, `reconciliation.md` wins.**
 | --- | --- |
 | [spec.md](spec.md) | The behaviour: which launch reaches this decision, where the document comes from, at which ref, what it is trusted for, the failure modes and their messages, the console's contract, `--retry` and `--pr`, and the threat model |
 | [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F12), then the decisions D901–D919 |
-| [implementation-plan.md](implementation-plan.md) | Tasks A1–A7 and D1–D2, the files each owns, its tests, its red step and its commit, the shared-files table, and the slot this work takes |
+| [implementation-plan.md](implementation-plan.md) | Tasks A1–A4, B1–B2, C1 and D1, the files each owns, its tests, its red step and its commit, the shared-files table, and the slot this work takes |
 
 ## What it is
 

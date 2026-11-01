@@ -327,7 +327,11 @@ repository.
   ("a fetch is a network write into a repository this command does not own"), and the forge read is
   an API call that does not touch the checkout either.
 - The fetched document is never written to disk, and no document is reused across commands (§6).
-- The launcher never falls back to the per-repository job when a read fails (§7).
+- The launcher never falls back to the per-repository job when a read **fails**: a read that cannot
+  be made — no permission, no network, no installation, a ref the forge does not have — refuses, in
+  §7's first four rows. The per-repository job is the outcome in the two rows below them, and it is
+  a decision rather than a fallback: there the document *was* read (or the ref's commit genuinely
+  carries none, which selects nothing), and nothing in it selects a shared job.
 - No credential value, token or key appears in an error, a log line or an audit line — the refusal
   names the secret, never its content.
 - The run's recorded job is treated as data from the runs bucket, and its only effect is to name a
