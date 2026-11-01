@@ -109,6 +109,14 @@ func TestBudgetKillRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if !reflect.DeepEqual(f.db.Value(budget.PathKillGlobal), own) {
 		t.Errorf("the refused kill wrote the switch: %v, want %v", f.db.Value(budget.PathKillGlobal), own)
 	}
+
+	// Data and no mark at all: the other half of the same answer.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = execute(t, "budget", "resume", "--all", "--yes", "--reason", "maintenance")
+	refusedByTheOwnershipCheck(t, "budget resume", err, "nothing was resumed")
+	if !reflect.DeepEqual(f.db.Value(budget.PathKillGlobal), own) {
+		t.Errorf("the refused resume wrote the switch: %v, want %v", f.db.Value(budget.PathKillGlobal), own)
+	}
 }
 
 // TestPolicyPublishRefusesAnotherInstallationsDatabase: `project policy publish`
@@ -122,17 +130,25 @@ func TestPolicyPublishRefusesAnotherInstallationsDatabase(t *testing.T) {
 	own := f.db.Value(projectpolicy.PathShared())
 
 	f.db.Set(budget.PathMark, birchMark())
-	out, _, err := execute(t, "project", "policy", "publish")
+	_, _, err := execute(t, "project", "policy", "publish")
 	refusedByTheOwnershipCheck(t, "project policy publish", err, "nothing was published")
 	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
 		t.Errorf("the refusal is not the shared one: %v", err)
 	}
-	_ = out
 	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
 		t.Error("the refused publish rewrote the policy node")
 	}
 
+	// Data and no mark at all: the same answer, from the other half.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = execute(t, "project", "policy", "publish")
+	refusedByTheOwnershipCheck(t, "project policy publish", err, "nothing was published")
+	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
+		t.Error("the refused publish rewrote the policy node with the mark removed")
+	}
+
 	// The delete door is the same opener: it writes exactly as much.
+	f.db.Set(budget.PathMark, birchMark())
 	_, _, err = execute(t, "project", "policy", "publish", "--delete", "--yes")
 	refusedByTheOwnershipCheck(t, "project policy publish --delete", err, "nothing was published")
 	if f.db.Value(projectpolicy.PathShared()) == nil {
@@ -164,6 +180,14 @@ func TestReposAddRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
 		t.Error("the refused edit rewrote the policy node")
 	}
+
+	// Data and no mark at all: the same answer, from the other half.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = execute(t, "project", "repos", "add", "github/acme/third")
+	refusedByTheOwnershipCheck(t, "project repos add", err, "nothing was added to the allow-list")
+	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
+		t.Error("the refused edit rewrote the policy node with the mark removed")
+	}
 }
 
 // TestEnrollRefusesAnotherInstallationsDatabase: `project sync` enrolls a batch
@@ -191,6 +215,14 @@ func TestEnrollRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if len(g.reads) != 1 {
 		t.Errorf("the App's key was read %d times, want once (the refusal comes before the read)", len(g.reads))
 	}
+
+	// Data and no mark at all: the same answer, from the other half.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = execute(t, "project", "sync", "--github-app-id", "12345", "--github-app-key")
+	refusedByTheOwnershipCheck(t, "project sync", err, "nothing was added to the allow-list")
+	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
+		t.Error("the refused sync rewrote the policy node with the mark removed")
+	}
 }
 
 // TestAccountsMarkRefusesAnotherInstallationsDatabase: `accounts clear` writes a
@@ -211,6 +243,14 @@ func TestAccountsMarkRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
 		t.Errorf("the refusal is not the shared one: %v", err)
 	}
+	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" {
+		t.Errorf("the refused clear wrote the mark: %v", m)
+	}
+
+	// Data and no mark at all: the same answer, from the other half.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = execute(t, "accounts", "clear", "acme-personal", "--yes")
+	refusedByTheOwnershipCheck(t, "accounts clear", err, "nothing was cleared")
 	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" {
 		t.Errorf("the refused clear wrote the mark: %v", m)
 	}
@@ -247,5 +287,12 @@ func TestPairRefusesAnotherInstallationsDatabase(t *testing.T) {
 	_, _, err = pairRun(t, "ls", "--json")
 	if err == nil || !strings.Contains(err.Error(), "one Firebase project serves one installation") {
 		t.Errorf("pair ls is not held to the same check: %v", err)
+	}
+
+	// Data and no mark at all: the same answer, from the other half.
+	f.db.Set(budget.PathMark, nil)
+	out, _, err = pairRun(t, "ls", "--json")
+	if err == nil || !strings.Contains(err.Error(), "and no Fugaro mark") {
+		t.Errorf("pair ls is not held to the unmarked database: %v\n%s", err, out)
 	}
 }
