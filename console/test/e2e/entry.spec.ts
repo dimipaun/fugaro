@@ -793,7 +793,7 @@ test.describe('the renderer entry, in the real window', () => {
         'Live',
         'Graph',
         'Spend',
-        'Projects',
+        'Project',
         'Coordinator',
       ])
       await expect(

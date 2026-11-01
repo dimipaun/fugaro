@@ -65,7 +65,7 @@ export const READING_WORDS: Readonly<Record<ReadingTab, string>> = Object.freeze
   live: 'Live',
   graph: 'Graph',
   spend: 'Spend',
-  projects: 'Projects',
+  projects: 'Project',
   coordinator: 'Coordinator',
 })
 

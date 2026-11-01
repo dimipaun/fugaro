@@ -112,7 +112,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	// jobs panel's "runs not drawn:" line, and the run list that fed the panel is
 	// gone. Two hooks remain, one per panel that still carries a note, and the
 	// count in the row has to move with them.
-	notes := mdRow(t, path, mdBetween(t, path, doc, "### 2.5 Projects", "### 2.6 Run detail"), "| Notes |")
+	notes := mdRow(t, path, mdBetween(t, path, doc, "### 2.5 Project", "### 2.6 Run detail"), "| Notes |")
 	for _, hook := range []string{"`projects-note`", "`projects-accounts-note`"} {
 		if !strings.Contains(notes, hook) {
 			t.Errorf("%s: §2.5's notes row does not name %s; that screen carries two note hooks, one per panel, and no single one of them reaches both", path, hook)
@@ -142,7 +142,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	if strings.Contains(notes, "generic `note` class") {
 		t.Errorf("%s: §2.5 says the accounts note carries a generic `note` class; the element's only class is `projects-accounts-note`, and a rule written against `p.note` matches nothing", path)
 	}
-	projects := mdBetween(t, path, doc, "### 2.5 Projects", "### 2.6 Run detail")
+	projects := mdBetween(t, path, doc, "### 2.5 Project", "### 2.6 Run detail")
 	if !strings.Contains(projects, "reachable by no feed today") {
 		t.Errorf("%s: §2.5 no longer says `projects-accounts-note` is reachable from no document the CLI produces, which is why it cannot be keyed on", path)
 	}
@@ -196,7 +196,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	// reserve line and not the banner, the banner hangs inside the caps panel
 	// rather than beside it, the person note is text and not a `title`, and the
 	// unknown-breakdown flag is on the switch, not on the item under it.
-	spendSection := mdFlat(mdBetween(t, path, doc, "### 2.4 Spend", "### 2.5 Projects"))
+	spendSection := mdFlat(mdBetween(t, path, doc, "### 2.4 Spend", "### 2.5 Project"))
 	for _, want := range []struct {
 		has, because string
 	}{
