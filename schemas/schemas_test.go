@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/tier"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -3906,4 +3907,112 @@ func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	if len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
 		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout naming 0.15.0", ps)
 	}
+}
+
+// TestSettingsSchema holds schemas/settings.schema.json to the registry and to
+// the command that writes the document. The document's rows are dynamic — one
+// per key and scope — so the schema cannot pin them by name; what it can pin,
+// and what this test checks, is that the schema loads, that its layer
+// vocabulary is settings.Layers (the same list --layer takes) and that its
+// $defs.keyDefaults carries every registry key with the default the registry
+// gives it. That is the DEFAULT column's contract written down where a
+// consumer of the JSON document can read it, and D841's "pinned by a test
+// rather than generated": the values are written out here, and this test is
+// what makes a row that moves without them red.
+//
+// The document itself is validated against this schema by
+// TestSettingsJSONMatchesSchema in internal/cli, which is where the command
+// that writes it lives.
+func TestSettingsSchema(t *testing.T) {
+	data, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	defs, ok := doc["$defs"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs")
+	}
+	// A schema that does not compile is a schema nobody can use, and the
+	// $refs between $defs are exactly where a hand edit breaks.
+	compile(t, "settings.schema.json")
+
+	wantLayers := settings.Layers
+	for _, tc := range []struct {
+		def  string
+		path []string
+	}{
+		{"source", []string{"source", "properties", "layer", "enum"}},
+		{"row", []string{"row", "properties", "wins", "enum"}},
+	} {
+		got := stringsOf(t, defs, tc.path...)
+		if !slices.Equal(got, wantLayers) {
+			t.Errorf("$defs.%s: the enum is %v, and settings.Layers is %v", tc.def, got, wantLayers)
+		}
+	}
+
+	kd, ok := defs["keyDefaults"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs.keyDefaults")
+	}
+	props, ok := kd["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("$defs.keyDefaults has no properties")
+	}
+	rows := settings.Rows()
+	if len(props) != len(rows) {
+		t.Errorf("$defs.keyDefaults carries %d keys, and the registry has %d rows", len(props), len(rows))
+	}
+	for _, r := range rows {
+		entry, ok := props[r.Key].(map[string]any)
+		if !ok {
+			t.Errorf("%s: no $defs.keyDefaults entry", r.Key)
+			continue
+		}
+		want := r.Default.Value
+		if want == "" {
+			want = r.Default.Unset
+		}
+		if got, _ := entry["default"].(string); got != want {
+			t.Errorf("%s: the schema's default is %q, and the registry says %q", r.Key, got, want)
+		}
+		if got, _ := entry["$comment"].(string); got != r.Default.Const {
+			t.Errorf("%s: the schema's $comment is %q, and the registry's constant is %q", r.Key, got, r.Default.Const)
+		}
+		delete(props, r.Key)
+	}
+	for key := range props {
+		t.Errorf("$defs.keyDefaults carries %s, and the registry has no such row", key)
+	}
+}
+
+// stringsOf is a schema node's string array, walked by property names.
+func stringsOf(t *testing.T, node map[string]any, path ...string) []string {
+	t.Helper()
+	var cur any = node
+	for _, key := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			t.Fatalf("%v: not an object at %q", path, key)
+		}
+		if cur, ok = m[key]; !ok {
+			t.Fatalf("%v: missing %q", path, key)
+		}
+	}
+	raw, ok := cur.([]any)
+	if !ok {
+		t.Fatalf("%v: not an array", path)
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("%v: %v is not a string", path, v)
+		}
+		out = append(out, s)
+	}
+	return out
 }

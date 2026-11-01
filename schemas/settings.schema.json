@@ -1,0 +1,1035 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/settings.schema.json",
+  "title": "Fugaro settings",
+  "description": "The document `fugaro settings --json` prints: one row per setting and scope, the layers the read touched with what came of each, and the built-in default of every key of the registry. See docs/settings-commands/spec.md §2.8. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "project",
+    "generated_at",
+    "sources",
+    "settings"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "settingsDocVersion in internal/cli/settings_render.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Fugaro project the read resolved, as the local selector names it."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the read ran, UTC. A consumer says how old an answer is from this, without a second call."
+    },
+    "sources": {
+      "type": "array",
+      "description": "The layers this read touched, in precedence order. A layer that was not read is not listed, so a consumer never sees a source that answered nothing.",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "settings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/row"
+      }
+    }
+  },
+  "$defs": {
+    "state": {
+      "oneOf": [
+        {
+          "const": "ok"
+        },
+        {
+          "const": "unpublished"
+        },
+        {
+          "const": "unknown (no checkout on this machine)"
+        },
+        {
+          "type": "string",
+          "pattern": "^stale [0-9]+[smh]$"
+        },
+        {
+          "type": "string",
+          "pattern": "^unread: .+$"
+        }
+      ],
+      "$comment": "The closed vocabulary of D851. `stale <age>` and `unread: <reason>` are open-ended, so they are patterns rather than constants; `unread` is never a default in its place, which is why it carries a reason and the pattern refuses an empty one."
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "layer",
+        "duration_ms",
+        "status"
+      ],
+      "properties": {
+        "layer": {
+          "enum": [
+            "default",
+            "project",
+            "profile",
+            "repo",
+            "flag",
+            "local",
+            "shared",
+            "policy",
+            "caps",
+            "env"
+          ],
+          "$comment": "The layer names of settings.Layers (internal/settings/registry.go), which --layer also takes."
+        },
+        "read_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/state"
+        },
+        "note": {
+          "type": "string",
+          "description": "What the layer was: the cache's age, the local config's path, the repository's name."
+        }
+      }
+    },
+    "default": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "description": "The built-in default a run gets, absent when unset is the answer."
+        },
+        "source": {
+          "type": "string",
+          "description": "The qualified Go constant holding value, absent for a literal."
+        },
+        "unset": {
+          "type": "string",
+          "description": "The sentence saying what unset means, absent when value is the answer."
+        }
+      },
+      "$comment": "Exactly one of value and unset is set, the way settings.Default is built (internal/settings/registry.go)."
+    },
+    "level": {
+      "type": "object",
+      "required": [
+        "layer",
+        "value",
+        "outcome"
+      ],
+      "properties": {
+        "layer": {
+          "enum": [
+            "default",
+            "project",
+            "profile",
+            "repo",
+            "flag",
+            "local",
+            "shared",
+            "policy",
+            "caps",
+            "env"
+          ]
+        },
+        "value": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Whether the level won, was overridden, or was ignored as looser than the winner (spec §2.6). The last two are the cloud layers' (S2), so the word is not closed here."
+        }
+      }
+    },
+    "row": {
+      "type": "object",
+      "required": [
+        "key",
+        "scope",
+        "wins",
+        "default",
+        "state"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "A key of the registry, and of $defs.keyDefaults below. Not an enum on purpose: a newer CLI's key is a member added within the version."
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "^(project|repo:[^\\s/]+/[^\\s/]+)$",
+          "description": "`project`, or `repo:owner/name` for a repository scope."
+        },
+        "value": {
+          "type": "string",
+          "$comment": "Absent, not null and not a sentinel, when the row is sensitive: the only spelling a consumer cannot mistake for the value."
+        },
+        "wins": {
+          "enum": [
+            "default",
+            "project",
+            "profile",
+            "repo",
+            "flag",
+            "local",
+            "shared",
+            "policy",
+            "caps",
+            "env"
+          ],
+          "description": "The layer that decided the value, or `default` when none did."
+        },
+        "default": {
+          "$ref": "#/$defs/default"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "sensitive": {
+          "type": "boolean",
+          "description": "Absent when false. A sensitive row carries the set/unset fact in value and never the value itself."
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/level"
+          }
+        }
+      }
+    },
+    "keyDefaults": {
+      "type": "object",
+      "description": "Every key of the registry and its built-in default, the DEFAULT column's own source (D841). A generator would be a go generate step a release must remember and a diff nobody reads, so this is written out and pinned to settings.Rows() by TestSettingsSchema in schemas_test.go.",
+      "properties": {
+        "agent.auth": {
+          "$comment": "config.DefaultAgentAuth",
+          "default": "vertex"
+        },
+        "agent.compression": {
+          "default": "unset = inherit"
+        },
+        "agent.first_line_review": {
+          "$comment": "config.FirstLineAuto",
+          "default": "auto"
+        },
+        "agent.first_line_rounds": {
+          "$comment": "config.DefaultFirstLineRounds",
+          "default": "1"
+        },
+        "agent.instructions": {
+          "default": "unset = none"
+        },
+        "agent.max_budget_usd": {
+          "$comment": "config.DefaultMaxBudgetUSD",
+          "default": "25"
+        },
+        "agent.max_output_tokens.coder": {
+          "default": "unset = the ceiling's"
+        },
+        "agent.max_output_tokens.reviewer": {
+          "default": "unset = the ceiling's"
+        },
+        "agent.max_run_tokens": {
+          "default": "unset = the ceiling's"
+        },
+        "agent.model": {
+          "default": "unset = Fugaro's own model choice"
+        },
+        "agent.models.background": {
+          "default": "unset = agent.model"
+        },
+        "agent.models.coder": {
+          "default": "unset = agent.model"
+        },
+        "agent.models.reviewer": {
+          "default": "unset = agent.model"
+        },
+        "agent.oauth_token": {
+          "default": "unset = the job's own credential"
+        },
+        "agent.recipe": {
+          "default": "unset = the built-in recipe"
+        },
+        "agent.review": {
+          "default": "unset = none"
+        },
+        "agent.review_rounds": {
+          "$comment": "config.DefaultReviewRounds",
+          "default": "2"
+        },
+        "backend": {
+          "default": "unset = cloud-run"
+        },
+        "base_branch": {
+          "default": "unset = none: each repository's own branch"
+        },
+        "base_images": {
+          "default": "unset = the installation's own base image per kind"
+        },
+        "batch.boot_image": {
+          "default": "unset = the batch design's own boot image"
+        },
+        "batch.image": {
+          "default": "unset = Fugaro's own batch image"
+        },
+        "batch.machine_type": {
+          "default": "unset = the batch design's own machine"
+        },
+        "batch.network": {
+          "default": "unset = the project's default network"
+        },
+        "batch.secrets": {
+          "default": "unset = none"
+        },
+        "batch.service_account": {
+          "default": "unset = the project's default service account"
+        },
+        "batch.socket_gid": {
+          "default": "unset = the image's own docker group"
+        },
+        "batch.subnetwork": {
+          "default": "unset = the project's default subnetwork"
+        },
+        "batch.task_timeout": {
+          "default": "unset = Fugaro's own task timeout"
+        },
+        "bitbucket_api_roots": {
+          "default": "unset = the provider's public API"
+        },
+        "bucket_url": {
+          "default": "unset = derived from runs_bucket"
+        },
+        "budget.allowed_models": {
+          "default": "unset = every model the installation allows"
+        },
+        "budget.firebase_api_key": {
+          "default": "unset = none: the Realtime Database API key"
+        },
+        "budget.firebase_project": {
+          "default": "unset = the installation's GCP project"
+        },
+        "budget.max_run_tokens": {
+          "default": "unset = the deployed ceiling's"
+        },
+        "budget.mode": {
+          "default": "unset = observe"
+        },
+        "budget.per_day_usd": {
+          "default": "unset = no daily cap"
+        },
+        "budget.per_run_usd": {
+          "default": "unset = the deployed ceiling"
+        },
+        "budget.rtdb_url": {
+          "default": "unset = none: no Realtime Database budget backend"
+        },
+        "budget.token_signer": {
+          "default": "unset = none"
+        },
+        "budget.unreachable_grace": {
+          "default": "unset = Fugaro's own grace period"
+        },
+        "build.machine_type": {
+          "default": "unset = the build design's own machine"
+        },
+        "build.region": {
+          "default": "unset = the installation's region"
+        },
+        "build.service_account": {
+          "default": "unset = the project's default service account"
+        },
+        "claude_accounts.*.allow_data_to": {
+          "default": "unset = nobody"
+        },
+        "commit_email": {
+          "default": "unset = Fugaro's own address"
+        },
+        "commit_name": {
+          "default": "unset = Fugaro"
+        },
+        "compute_prices.*.gib_second_usd": {
+          "default": "unset = the built-in list price"
+        },
+        "compute_prices.*.vcpu_second_usd": {
+          "default": "unset = the built-in list price"
+        },
+        "credentials_service.url": {
+          "default": "unset = none: the credentials service is not deployed"
+        },
+        "endpoints.api_keys": {
+          "default": "unset = the global API Keys endpoint"
+        },
+        "endpoints.artifact_registry": {
+          "default": "unset = the regional Artifact Registry endpoint"
+        },
+        "endpoints.batch": {
+          "default": "unset = the regional Cloud Batch endpoint"
+        },
+        "endpoints.cloud_asset": {
+          "default": "unset = the global Cloud Asset endpoint"
+        },
+        "endpoints.cloud_billing": {
+          "default": "unset = the global Cloud Billing endpoint"
+        },
+        "endpoints.cloud_build": {
+          "default": "unset = the global Cloud Build endpoint"
+        },
+        "endpoints.cloud_scheduler": {
+          "default": "unset = the regional Cloud Scheduler endpoint"
+        },
+        "endpoints.compute": {
+          "default": "unset = the regional Compute endpoint"
+        },
+        "endpoints.firebase_database": {
+          "default": "unset = the global Firebase Database endpoint"
+        },
+        "endpoints.firebase_management": {
+          "default": "unset = the global Firebase Management endpoint"
+        },
+        "endpoints.firebase_rules": {
+          "default": "unset = the global Firebase Rules endpoint"
+        },
+        "endpoints.firestore": {
+          "default": "unset = the global Firestore endpoint"
+        },
+        "endpoints.iam": {
+          "default": "unset = the global IAM endpoint"
+        },
+        "endpoints.iam_credentials": {
+          "default": "unset = the global IAM Credentials endpoint"
+        },
+        "endpoints.identity_toolkit": {
+          "default": "unset = the global Identity Toolkit endpoint"
+        },
+        "endpoints.logging": {
+          "default": "unset = the regional Cloud Logging endpoint"
+        },
+        "endpoints.no_auth": {
+          "default": "unset = false: every call carries credentials"
+        },
+        "endpoints.resource_manager": {
+          "default": "unset = the global Resource Manager endpoint"
+        },
+        "endpoints.run": {
+          "default": "unset = the regional Cloud Run endpoint"
+        },
+        "endpoints.secret_manager": {
+          "default": "unset = the global Secret Manager endpoint"
+        },
+        "endpoints.service_usage": {
+          "default": "unset = the global Service Usage endpoint"
+        },
+        "endpoints.storage": {
+          "default": "unset = the global Storage endpoint"
+        },
+        "followup.allow_public": {
+          "default": "unset = false"
+        },
+        "followup.trusted": {
+          "default": "unset = nobody"
+        },
+        "gcp_project": {
+          "default": "unset = the installation's GCP project"
+        },
+        "git.author": {
+          "default": "unset = none, which is Fugaro as the commit author"
+        },
+        "git.base_branch": {
+          "$comment": "config.DefaultBaseBranch",
+          "default": "main"
+        },
+        "git.pr.checkpoints": {
+          "default": "unset = inherit"
+        },
+        "git.pr.early_draft": {
+          "default": "true"
+        },
+        "git.pr.labels": {
+          "default": "unset = none"
+        },
+        "git.pr.reviewers": {
+          "default": "unset = none"
+        },
+        "git.provider": {
+          "default": "unset = the local config's repos.<owner/name>.provider"
+        },
+        "governance.max_subagents": {
+          "default": "unset = Fugaro's own cap"
+        },
+        "governance.review_floor_calls": {
+          "default": "unset = none"
+        },
+        "governance.review_ratio": {
+          "default": "unset = every review"
+        },
+        "governance.stage_budget": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "governance.stage_timeout": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_tokens": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "governance.tiers": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "image_source": {
+          "default": "unset = none: no base pin has been recorded"
+        },
+        "job_profiles.*.allow_repos": {
+          "default": "unset = every repository of the project"
+        },
+        "job_profiles.*.claude_accounts": {
+          "default": "unset = every account of the project"
+        },
+        "job_profiles.*.cpu": {
+          "default": "unset = the workflow's own"
+        },
+        "job_profiles.*.memory": {
+          "default": "unset = the workflow's own"
+        },
+        "job_profiles.*.provider": {
+          "default": "unset = none"
+        },
+        "job_profiles.*.secrets": {
+          "default": "unset = none"
+        },
+        "job_profiles.*.timeout_class": {
+          "default": "unset = the workflow's own"
+        },
+        "layer.ab.challengers": {
+          "default": "unset = none"
+        },
+        "layer.ab.exchange_rate": {
+          "default": "unset = the A/B design's own rate"
+        },
+        "layer.ab.judge_model": {
+          "default": "unset = the A/B design's own judge"
+        },
+        "layer.ab.max_pairs_per_day": {
+          "default": "unset = the A/B design's own cap"
+        },
+        "layer.ab.rate": {
+          "default": "unset = 0: no run is a challenger"
+        },
+        "layer.claude_models": {
+          "default": "unset = every Claude model the project's accounts may serve"
+        },
+        "layer.default_profile": {
+          "default": "unset = the layer's own profile block is refused without one"
+        },
+        "layer.defaults.agent.auth": {
+          "default": "unset = vertex"
+        },
+        "layer.defaults.agent.first_line_review": {
+          "default": "unset = auto"
+        },
+        "layer.defaults.agent.first_line_rounds": {
+          "default": "unset = 1"
+        },
+        "layer.defaults.agent.max_budget_usd": {
+          "default": "unset = 25"
+        },
+        "layer.defaults.agent.model": {
+          "default": "unset = Fugaro's own model choice"
+        },
+        "layer.defaults.agent.models.background": {
+          "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.models.coder": {
+          "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.models.reviewer": {
+          "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.recipe": {
+          "default": "unset = the built-in recipe"
+        },
+        "layer.defaults.agent.review_rounds": {
+          "default": "unset = 2"
+        },
+        "layer.defaults.git.pr.checkpoints": {
+          "default": "unset = inherit"
+        },
+        "layer.defaults.git.pr.early_draft": {
+          "default": "unset = true"
+        },
+        "layer.defaults.git.pr.labels": {
+          "default": "unset = none"
+        },
+        "layer.defaults.git.provider": {
+          "default": "unset = none"
+        },
+        "layer.defaults.rigor.areas.*.match": {
+          "default": "unset = none"
+        },
+        "layer.defaults.rigor.areas.*.mode": {
+          "default": "unset = none"
+        },
+        "layer.defaults.rigor.areas.*.name": {
+          "default": "unset = none"
+        },
+        "layer.defaults.rigor.default": {
+          "default": "unset = the built-in mode (pro)"
+        },
+        "layer.gcp_project": {
+          "default": "unset = the installation's GCP project"
+        },
+        "layer.governance.max_subagents": {
+          "default": "unset = Fugaro's own cap"
+        },
+        "layer.governance.review_floor_calls": {
+          "default": "unset = none"
+        },
+        "layer.governance.review_ratio": {
+          "default": "unset = every review"
+        },
+        "layer.governance.stage_budget.fix": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "layer.governance.stage_budget.implement": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "layer.governance.stage_budget.review": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "layer.governance.stage_tokens.fix": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "layer.governance.stage_tokens.implement": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "layer.governance.stage_tokens.review": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "layer.governance.tiers.large.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.large.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.large.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.medium.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.medium.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.medium.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.small.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.small.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.small.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.trivial.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.trivial.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.governance.tiers.trivial.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "layer.profiles.*.base": {
+          "default": "unset = none; the key was removed in 0.7.0"
+        },
+        "layer.profiles.*.cache.*.key": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.cache.*.paths": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.checkout": {
+          "default": "unset = baked"
+        },
+        "layer.profiles.*.commands.build": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.commands.fix": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.commands.lint": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.commands.probe": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.commands.render": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.commands.reports": {
+          "default": "unset = the built-in report globs"
+        },
+        "layer.profiles.*.commands.rerun_failed.command": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.commands.rerun_failed.each": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.commands.test": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.description": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.image.apt": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.image.jdk": {
+          "default": "unset = none; the key was removed in 0.7.0"
+        },
+        "layer.profiles.*.image.key_files": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.image.node": {
+          "default": "unset = none; the key was removed in 0.7.0"
+        },
+        "layer.profiles.*.image.setup": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.image.skip_build_scripts": {
+          "default": "unset = false: the dependency install and build scripts run"
+        },
+        "layer.profiles.*.image.tools": {
+          "default": "unset = none"
+        },
+        "layer.profiles.*.inputs.max_bytes": {
+          "default": "unset = the built-in cap"
+        },
+        "layer.profiles.*.inputs.max_files": {
+          "default": "unset = the built-in cap"
+        },
+        "layer.profiles.*.inputs.max_total_bytes": {
+          "default": "unset = the built-in cap"
+        },
+        "layer.profiles.*.rebuild.base": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "layer.profiles.*.rebuild.check": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "layer.profiles.*.rebuild.lockfiles": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "layer.profiles.*.rebuild.paths": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "layer.profiles.*.resources.cpu": {
+          "default": "unset = 4"
+        },
+        "layer.profiles.*.resources.memory": {
+          "default": "unset = 8Gi"
+        },
+        "layer.project": {
+          "default": "unset = the file is refused (project: is required)"
+        },
+        "layer.version": {
+          "default": "unset = the file is refused (version: is required)"
+        },
+        "log_view": {
+          "default": "unset = the project's default logs"
+        },
+        "mailbox.keychain_item": {
+          "default": "unset = the keychain item the subscription design names"
+        },
+        "max_parallel": {
+          "default": "unset = Fugaro's own cap"
+        },
+        "model_prices.*.cache_read": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.cache_write_1h": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.cache_write_5m": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.input_per_m": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.long_context.above_input_tokens": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.long_context.input_per_m": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.long_context.output_per_m": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.output_per_m": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.web_search_per_1k": {
+          "default": "unset = the built-in price"
+        },
+        "name": {
+          "default": "unset = the file is refused (name: is required)"
+        },
+        "profile": {
+          "default": "unset = the project layer's default_profile"
+        },
+        "project": {
+          "default": "unset = the file is refused (project: is required)"
+        },
+        "project_secrets.*.allow_data_to": {
+          "default": "unset = nobody"
+        },
+        "project_secrets.*.proxy": {
+          "default": "unset = none"
+        },
+        "providers.*.allow_data_to": {
+          "default": "unset = nobody"
+        },
+        "providers.*.auth": {
+          "default": "unset = none"
+        },
+        "providers.*.base_url": {
+          "default": "unset = the provider kind's own endpoint"
+        },
+        "providers.*.kind": {
+          "default": "unset = none: the provider is refused without one"
+        },
+        "providers.*.models": {
+          "default": "unset = none"
+        },
+        "providers.*.price_policy": {
+          "default": "unset = the provider kind's own policy"
+        },
+        "providers.*.require_zdr": {
+          "default": "unset = false"
+        },
+        "providers.*.route_fee_pct": {
+          "default": "unset = 0"
+        },
+        "providers.*.secret": {
+          "default": "unset = none"
+        },
+        "region": {
+          "default": "unset = the file is refused (region: is required)"
+        },
+        "registry": {
+          "default": "unset = none: the legacy shared registry"
+        },
+        "registry_host": {
+          "default": "unset = none: no image has been pinned yet"
+        },
+        "repos.*.base_branch": {
+          "default": "unset = the project's base_branch"
+        },
+        "repos.*.github_app_id": {
+          "default": "unset = none"
+        },
+        "repos.*.provider": {
+          "default": "unset = none"
+        },
+        "repos.*.vertex": {
+          "default": "unset = false"
+        },
+        "repos.*.workflows": {
+          "default": "unset = every workflow the repository defines"
+        },
+        "review_floor": {
+          "default": "unset = none: no floor is added"
+        },
+        "rigor.areas": {
+          "default": "unset = no area rules"
+        },
+        "rigor.default": {
+          "default": "unset = pro (rigor.Default)"
+        },
+        "routing.claude.models": {
+          "default": "unset = none"
+        },
+        "routing.claude.via": {
+          "default": "unset = direct: the model is called at its own provider"
+        },
+        "runs_bucket": {
+          "default": "unset = the file is refused (runs_bucket: is required)"
+        },
+        "scheduler_region": {
+          "default": "unset = the region the jobs run in"
+        },
+        "setup_pending": {
+          "default": "unset = none: setup ran to the end"
+        },
+        "terraform.alert_email": {
+          "default": "unset = none: no budget alert is mailed"
+        },
+        "terraform.budget_admins": {
+          "default": "unset = none"
+        },
+        "terraform.budget_backend": {
+          "default": "unset = false: no Realtime Database budget backend"
+        },
+        "terraform.coordinator": {
+          "default": "unset = false: no coordinator is deployed"
+        },
+        "terraform.launchers": {
+          "default": "unset = none"
+        },
+        "terraform.no_log_isolation": {
+          "default": "unset = false: each run's logs are isolated"
+        },
+        "terraform.operators": {
+          "default": "unset = none"
+        },
+        "terraform.registry_cleanup": {
+          "default": "unset = Fugaro's own cleanup rule"
+        },
+        "terraform.state_bucket": {
+          "default": "unset = the installation's state bucket"
+        },
+        "update_check": {
+          "$comment": "config.DefaultUpdateCheck",
+          "default": "true"
+        },
+        "user": {
+          "default": "unset = none"
+        },
+        "version": {
+          "default": "unset = the file is refused (version: 1 is required)"
+        },
+        "watch.burn_alert_usd_per_hour": {
+          "default": "unset = Fugaro's own alert threshold"
+        },
+        "workflows.*.base": {
+          "default": "unset = none; the key was removed in 0.7.0"
+        },
+        "workflows.*.cache": {
+          "default": "unset = none"
+        },
+        "workflows.*.checkout": {
+          "$comment": "config.CheckoutBaked",
+          "default": "baked"
+        },
+        "workflows.*.commands.build": {
+          "default": "unset = none"
+        },
+        "workflows.*.commands.fix": {
+          "default": "unset = none"
+        },
+        "workflows.*.commands.lint": {
+          "default": "unset = none"
+        },
+        "workflows.*.commands.probe": {
+          "default": "unset = none"
+        },
+        "workflows.*.commands.render": {
+          "default": "unset = none"
+        },
+        "workflows.*.commands.reports": {
+          "$comment": "config.DefaultReports",
+          "default": "**/junit*.xml, **/build/test-results/**/*.xml"
+        },
+        "workflows.*.commands.rerun_failed": {
+          "default": "unset = none"
+        },
+        "workflows.*.commands.test": {
+          "default": "unset = none"
+        },
+        "workflows.*.dockerfile": {
+          "default": "unset = none"
+        },
+        "workflows.*.image.apt": {
+          "default": "unset = none"
+        },
+        "workflows.*.image.jdk": {
+          "default": "unset = none; the key was removed in 0.7.0"
+        },
+        "workflows.*.image.key_files": {
+          "default": "unset = none"
+        },
+        "workflows.*.image.node": {
+          "default": "unset = none; the key was removed in 0.7.0"
+        },
+        "workflows.*.image.setup": {
+          "default": "unset = none"
+        },
+        "workflows.*.image.skip_build_scripts": {
+          "default": "unset = false: the dependency install and build scripts run"
+        },
+        "workflows.*.image.tools": {
+          "default": "unset = none"
+        },
+        "workflows.*.inputs.max_bytes": {
+          "default": "unset = the built-in cap"
+        },
+        "workflows.*.inputs.max_files": {
+          "default": "unset = the built-in cap"
+        },
+        "workflows.*.inputs.max_total_bytes": {
+          "default": "unset = the built-in cap"
+        },
+        "workflows.*.job_profile": {
+          "default": "unset = the project policy's default job profile"
+        },
+        "workflows.*.profile": {
+          "default": "unset = the project layer's default_profile"
+        },
+        "workflows.*.rebuild.base": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "workflows.*.rebuild.check": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "workflows.*.rebuild.lockfiles": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "workflows.*.rebuild.max_age": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "workflows.*.rebuild.paths": {
+          "default": "unset = the rebuild rule's own default"
+        },
+        "workflows.*.resources.cpu": {
+          "$comment": "config.DefaultCPU",
+          "default": "4"
+        },
+        "workflows.*.resources.memory": {
+          "$comment": "config.DefaultMemory",
+          "default": "8Gi"
+        },
+        "workflows.*.secrets": {
+          "default": "unset = none"
+        },
+        "workflows.*.timeouts.finalize_reserve": {
+          "default": "unset = 5m, or a fifth of the total when it is shorter"
+        },
+        "workflows.*.timeouts.render": {
+          "default": "unset = what verify gets"
+        },
+        "workflows.*.timeouts.stage": {
+          "default": "unset = 40m, or the total when it is shorter"
+        },
+        "workflows.*.timeouts.total": {
+          "default": "unset = 90m"
+        },
+        "workflows.*.timeouts.verify": {
+          "default": "unset = 30m, or the total when it is shorter"
+        }
+      }
+    }
+  }
+}
