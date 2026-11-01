@@ -23,7 +23,7 @@ first, or reject. The job is **read-only on the forge**: it can fetch the head a
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The design: what exists today for a reviewer on an OAuth account, how a cloud review of a pushed branch runs, the output contract, how it differs from the in-job reviewer, the trigger, what the coordinator does with the verdict, the threat model, and the owner-run live check |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E7** (**E7** — the credentials service enabled and admitting a project-scoped job — is a hard precondition, not a task: it blocks R7, R2 and the coordinator's `ship` → merge path), and the owner decisions **D880–D893**, **all answered** — D880–D891, then **D892 with option (a)** (the review job signs its verdict) and **D893 with option (c)** (the read-only token comes from the credentials service, by name), with **D894–D899 reserved and unused**. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E7** (**E7** — the credentials service enabled and admitting a project-scoped job — is a hard precondition, not a task: it blocks R7, R2 and the coordinator's `ship` → merge path), and the owner decisions **D880–D893**, **all answered** — D880–D891, then **D892 with option (a)** (the credentials service signs the verdict) and **D893 with option (c)** (the read-only token comes from the credentials service, by name), with **D894–D899 reserved and unused**. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The tasks **R1–R7** (at most 12 files each), the shared-files table, the first slice and the release slot. **Nothing in it is approved** |
 
 ## The shape in one paragraph
@@ -41,7 +41,9 @@ key, is on no path** (F16, D883, **D893 (c)**, spec §2), and whose only outputs
 artifact under `runs/<slug>/<review-run>/`. The artifact — `review.json` with a
 `schema_version` plus a human-readable `review.md` — carries the verdict `ship`, `fix first` or
 `reject`, one entry per issue with a severity, a `file:line`, a class and a suggested fix, and **a
-signature over its own bytes** (**D892 (a)**), which the coordinator verifies before it acts: `ship`
+signature over its own bytes** (**D892 (a)**), produced by the credentials service and binding the
+repository, the pull request, the head and the review run, which the coordinator verifies before it
+acts: `ship`
 means merge, `fix first` launches a fix round whose brief **is** the findings, and `reject` means no
 fix round and a person decides. **The whole chain requires the credentials service to be enabled for
 the installation, and it ships dormant** — D893(c)'s precondition, which is also what keeps R7, R2 and
@@ -51,7 +53,7 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
 
 | Block | State |
 | --- | --- |
-| **D880–D899** | **this work's block: D880–D893 written and answered — D891 by the owner with option (a), D892 with option (a) (the review job signs its verdict) and D893 with option (c) (the read-only token comes from the credentials service, by name) — with D894–D899 reserved and unused.** D892 and D893 were raised by the review of this branch's fix round; the owner has since answered both. **D893(c) is a precondition of the whole design, not a channel**, so it is the block's own open edge rather than a settled question: see [spec.md](spec.md) §2 and **E7** in [reconciliation.md](reconciliation.md) §5. Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
+| **D880–D899** | **this work's block: D880–D893 written and answered — D891 by the owner with option (a), D892 with option (a) (the credentials service signs the verdict) and D893 with option (c) (the read-only token comes from the credentials service, by name) — with D894–D899 reserved and unused.** D892 and D893 were raised by the review of this branch's fix round; the owner has since answered both. **D893(c) is a precondition of the whole design, not a channel**, so it is the block's own open edge rather than a settled question: see [spec.md](spec.md) §2 and **E7** in [reconciliation.md](reconciliation.md) §5. Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
 | **Check 125** | **claimed here, and not written in the register.** The register's own sentence is *"Check 124 is the Cloud Batch backend's own, and it is the next number free above 123"*: it reads **124 as a number the Cloud Batch backend took**, in four written parts (**124a–124d**), not as one still free — so the highest number in use is **124**, and the number free above it, which this work claims for the owner-run live check in [spec.md](spec.md) §8, is **125**. The register's own file is another work stream's (`docs/gcp-live-checklist.md` is not this task's to touch), so the row and the `## Check 125` section are written by the task that implements the check, under the number free at **that** merge — the register's rule that whichever of two open claims merges second renumbers itself. A reserved number is never reused and never renumbered |
 
 ## What this design does not do
@@ -63,10 +65,10 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   `stage_auth`, because its reviewer is a separate job execution whose credential the coder's job
   never holds. See [spec.md](spec.md) §4 and decision **D881**.
 - It invents no credential. The named account is the one `fugaro accounts add` stores; the review
-  job mounts that account's Claude token and the **review-signing key D892(a) adds** (one per account,
-  its own accessor grant, none on the App key) and no other secret it does not need. The read-only
-  installation token it works with is the **credentials service's** to mint, and it is fetched rather
-  than mounted.
+  job mounts **that account's Claude token and nothing else** — the owner's ruling of 2026-11-01 put
+  the signing key in the **credentials service**, so no signing key and no App key goes on the
+  variant. The read-only installation token it works with is the **credentials service's** to mint,
+  and it is fetched rather than mounted.
 - It changes no existing behaviour: an installation that launches no review job sees the tree it has
   today.
 - It writes no pull request and no comment of its own on any path: the review job's verdict is an
@@ -79,8 +81,10 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   only the separate container reduces. **R4 is unblocked and carries that machinery, subject to one
   gate:** no network namespace or `unshare` in Cloud Run's gen2 has been checked (**U7**), and that
   question **cannot be measured hermetically** — it is a property of the deployed execution
-  environment — so **it is an owner-run live observation taken before R4 launches** (Check 125's step
-  6), not the task's first step; if a child process cannot be fenced the answer falls back to **(b)**
+  environment — so **it is an owner-run live probe taken before R4 launches**, independent of R2 and
+  R4 (the old form, Check 125's step 6, ran `fugaro review --mutate` and so needed both — circular);
+  **Check 125 step 6 is now the confirmation after R4**, and the probe is its own step. If a child
+  process cannot be fenced the answer falls back to **(b)**
   or **(c)** and the owner is asked again — the design does not assume a fence it has not seen.
 - **It does not launch on a job that already exists.** The shared project job of
   `(profile, provider, account)` mounts the GitHub App key, so a read-only scope on it would be a
@@ -90,10 +94,10 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   no path (**D893 (c)**).
 - **It settles the verdict's provenance with a signature, and says what that does not close.**
   Ordering keeps a *coder* from forging its own review (spec §6), but another job on the same shared
-  project job can write under the review run's prefix. **D892 is answered — option (a):** the review
-  job **signs `review.json` with a per-account HMAC key held in Secret Manager**, read only by the
-  review variant's service account and the coordinator, and **the coordinator verifies the signature
-  before it acts** — a forged or unsigned verdict is refused. What it does not close is an injected
+  project job can write under the review run's prefix. **D892 is answered — option (a):** the
+  **credentials service signs `review.json`**, holding the account's HMAC key so that it **never
+  enters a container that runs untrusted code**, and **the coordinator verifies the signature before
+  it acts** — a forged, replayed or unsigned verdict is refused. What it does not close is an injected
   *reviewer* writing a dishonest verdict inside its own run, which is why the verdict is still advice.
 - **It does not make the read-only token's channel free — it makes it a precondition.** **D893 is
   answered — option (c):** the job fetches the token from the **credentials service, by name**, so

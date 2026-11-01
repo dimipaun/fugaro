@@ -11,7 +11,9 @@ names are satisfied.
 **Written to:** [spec.md](spec.md) and [reconciliation.md](reconciliation.md). **Where they
 disagree, the reconciliation wins.** The findings (**F1–F27**), the dependencies (**E1–E7**) and the
 decisions (**D880–D893**, all answered — D891 by the owner with option (a), **D892 with option (a)**
-(the review job signs its verdict with a per-account key and the coordinator verifies it) and **D893
+(the verdict is signed, by the **credentials service**, and the coordinator verifies it before it
+acts — the signer moved there on the owner's ruling of 2026-11-01, so the key never enters a
+container that runs untrusted code) and **D893
 with option (c)** (the read-only token is fetched from the credentials service, by name)) are that
 document's, and each task below names the ones it needs. **E7 is a hard precondition, not a
 dependency to schedule around**: D893(c) means the credentials service must be **enabled** and must
@@ -45,15 +47,18 @@ default token, which the coder's job already had.
 E1 (accounts add, PR #1470)  ─┐
 E2 (yamledit, PR #1467)      ─┤
 E3 (publish stages)          ─┴─▶ R1 (read-only token) ─▶ R7 (the job variant, no App key) ─▶ R2 (the command)
-                                                              ▲                               ─▶ R3 (the artifact)
-                                          E7 (credentials service,                    ────────┼─▶ R4 (mutation)
-                                          enabled + admitting a                       │       └─▶ R5 (findings→brief)
-                                          project-scoped job) ────────────────────────┘  R6 (gates, docs, release) last
+                                                                   ▲                              │
+                                          E7 (credentials service, │                              └─▶ R5 (findings→brief)
+                                          enabled + admitting a    │
+                                          project-scoped job) ─────┘
+                        R3 (the artifact, runner-side) ─▶ R4 (mutation)      R6 (gates, docs, release) last
 ```
 
 **R1 before R7 before R2**, because a command that launches a job must be able to say what that job
 may do, and the job it launches must exist: R1 names the scope, R7 builds the container that can hold
-it without the App key, R2 starts it. **R3 before R5**, because the fix brief reads the artifact R3
+it without the App key, R2 starts it. **R3 sits outside that chain**: it is the artifact and its
+signing, which is runner-side work needing no launch command, so E7 does not reach it (its block says
+so). **R3 before R5**, because the fix brief reads the artifact R3
 defines. **R4 is independent of R5** and can ship after R3 in either order; **D891 is answered —
 option (a) — so R4 is unblocked** and carries the machinery the answer names (a token-scrubbed
 subprocess with egress denied, and Bash denied for the rest of the stage), **on one condition: the
@@ -79,8 +84,12 @@ must both hold before the chain works, and only one of them is reachable from `f
    a deployment step.
 
 So **R7 cannot run, R2 cannot run, and the coordinator's `ship` → merge path cannot be built** until
-E7 is met; R1, R3, R4, R5 and R6 are unaffected, because none of them launches or authenticates a job.
-R6 carries the check that reports both halves (see R6), and [reconciliation.md](reconciliation.md) §5's
+E7 is met. **R1, R3 and R4 are unaffected** — none of them launches or authenticates a job, and R3 in
+particular is **runner-side and needs no command** (it says so in its own block, and it does not
+depend on R2). **R5 and R6 are gated transitively, through R2**: R5 ships the fix brief R2's `show`
+reads the artifact for, and R6 carries the gates and the notes for the command, so neither can finish
+before R2 can. R6 carries the check that reports both halves (see R6), and
+[reconciliation.md](reconciliation.md) §5's
 **E7** is where the dependency is recorded.
 
 **R7 is numbered last and comes third, deliberately.** It was added by the fix round after the review
@@ -154,8 +163,8 @@ it to its own Files list and says so in its pull request**; it never edits it si
 - **Red step:** `TestReviewTokenPermissionsAreReadOnly` fails on an undefined identifier: no
   read-only set beside the run's and the build's exists. **SEC flag:** it is a permission set, and the
   test that matters most is the one asserting the **run's** set did not change.
-- **Mutation to hold it:** change one value of the new set to `write` → the first test fails; change
-  the run's set and the third fails.
+- **Mutation to hold it:** change one value of the new set to `write` → `TestReviewTokenPermissionsAreReadOnly`,
+  the first, fails; narrow the run's set and the second, `TestRunTokenPermissionsUnchanged`, does.
 - **Commit:** `gitprov: a read-only installation-token set for the review job`.
 
 ### R2. `fugaro review --pr N`: launch the review job
@@ -209,7 +218,12 @@ E1, R1, **R7**, and **E7** — see the blocking note below.
 **Decisions:** D884, D886, D890, **D892 (a)**. **Findings it acts on:** F11, F12, F13, **F23**. **Findings it is an
 answer to, not work it does:** **F7** (the reviewer's model and `agent.max_output_tokens.reviewer`
 exist today) is the observation D886 is sized against and the reason this task's schema has to fit a
-cap that is already deployed — R3 consumes it, it does not address it. **Depends on:** R2.
+cap that is already deployed — R3 consumes it, it does not address it. **Depends on:** nothing that
+launches a job. This task is **runner-side**: it writes an artifact, a schema and a signature client,
+and it needs no command, no job variant and no credentials service **running** — the sign endpoint is
+called through a small interface a test satisfies with a fake, so E7 does not reach it. It **shares
+`internal/runner/reviewmode.go` with R2** (§2's shared-files rule: one task holds it at a time), which
+is an ordering on a file and not a dependency on the launch.
 
 - **Files:** `internal/runner/reviewartifact.go` (new), `internal/runner/reviewartifact_test.go`
   (new), `schemas/review.schema.json` (new), `schemas/schemas_test.go` (the corpus check),
@@ -221,7 +235,8 @@ cap that is already deployed — R3 consumes it, it does not address it. **Depen
   **At most 9 files.**
 - **Interfaces:** produces the versioned artifact of [spec.md](spec.md) §3 — `schema_version`,
   `review_run`, **`created_at`** (RFC 3339 UTC, the writer's own clock, so the object is
-  self-describing without the run record), `pr`, `head_sha`, `base`, `reviewer{account, model,
+  self-describing without the run record), **`repository`** (the run's own slug, one of the four
+  things the signature binds), `pr`, `head_sha`, `base`, `reviewer{account, model,
   effort}`, `verdict` ∈ {`ship`, `fix first`, `reject`}, `overview`, `strengths[]`, `issues[]`
   (`severity`, `class`, `file`, `line`, `summary`, `fix`, `evidence`; the three anchored axes when
   D884's sub-question says carry them), `security`, `performance`, `test_coverage`,
@@ -230,28 +245,39 @@ cap that is already deployed — R3 consumes it, it does not address it. **Depen
   stage's own request carries this schema, not `runner.VerdictSchema` (D890, F23)**: the review
   mode's stage call and its `ParseVerdict` are made conditional on the mode being a review *job*, so
   the coding run's `review` stage is byte-for-byte what it is today.
-- **The signature, in this task (D892(a)).** `reviewartifact.go` carries the **signer/verifier pair**
-  as well as the writer: a per-account **HMAC-SHA-256** key — the algorithm fixed by the design
-  ([spec.md](spec.md) §6), lowercase hex over the object's exact bytes, because the coordinator's
-  verifier is a different work stream's code and a design that named no algorithm would let the two
-  disagree with no error on either side — read from the review job's own environment, the value R7
-  mounts from Secret Manager as its second `secret_env` entry (see R7). It signs the bytes of
-  `review.json` as it is written, and the same function **recomputes the signature from an object's
-  bytes and refuses a mismatch or an absent signature**. The coordinator calls that same verifier
-  before it acts; a verdict that does not verify is **never a `ship`** (spec §6). The pair is
-  hermetic: the tests generate a key with `t.TempDir()`-scoped material, never a real secret and never
-  a secret-shaped literal. **The residual stays stated:** this closes a *forged artifact* written by
-  another job on the same project job; it does not close an injected reviewer writing a dishonest
-  verdict inside its own run, which is why the verdict remains advice (spec §7).
+- **The signature, in this task (D892(a)) — and the key is not here.** The owner's ruling of
+  2026-11-01 put the signer in the **credentials service**, because this task's job is the one that
+  runs a test from the head under review (D885): a key mounted on that variant would share an OS user
+  and the `/proc` residual with the account's OAuth token, and a key whose compromise forges every
+  verdict of that account is not worth that read. So `reviewartifact.go` carries **no key at all**
+  and R7 mounts none. What it carries is a **signing client** behind a small interface: it computes
+  **SHA-256 over `review.json`'s exact bytes** — the digest, not the object, so the reviewer's prose
+  never travels to the service — posts the digest to the service's sign endpoint, and writes the
+  **HMAC-SHA-256** it gets back (lowercase hex, the algorithm fixed by the design,
+  [spec.md](spec.md) §6) into the **sidecar object** `runs/<slug>/<review-run>/artifacts/review.json.sig`,
+  one line of hex, so the bytes that were signed are the bytes that are stored. It also carries the
+  **verifier's four checks**, which the coordinator calls rather than re-implementing: `review_run`
+  equals the run the coordinator launched (the nonce), `repository` and `pr` are that pull request's,
+  and `head_sha` equals the pull request's current head — **a replayed verdict from an earlier review
+  of the same pull request is refused**, because it is a valid signature over the wrong object. A
+  verdict that does not verify is **never a `ship`** (spec §6). Both halves are hermetic: the tests
+  satisfy the interface with a fake service that holds a `t.TempDir()`-scoped key, never a real secret
+  and never a secret-shaped literal. **The residual stays stated:** this closes a *forged or replayed
+  artifact*; it does not close an injected reviewer writing a dishonest verdict inside its own run,
+  which is why the verdict remains advice (spec §7).
 - **Tests:** `TestReviewArtifactRoundTrips`, `TestReviewArtifactSchemaMatchesStruct` (the
   schema-vs-Go check `schemas/schemas_test.go` already runs for every shape),
   `TestReviewArtifactRefusesAFourthVerdictWord`, `TestReviewArtifactTruncatedIsAFailure` (D886: a
   clipped result is a failed review, never a short `ship`),
   `TestReviewMarkdownMatchesTheJSON` (section for section),
-  `TestReviewArtifactIsSignedWithTheAccountsKey` (the written object verifies under the key it was
-  signed with, and under no other), `TestVerifyRefusesAForgedArtifact` (a byte changed in the object
-  is refused) and `TestVerifyRefusesAnUnsignedArtifact` (an object with no signature is refused, not
-  accepted by default), `TestReviewArtifactCarriesItsOwnClock` (`created_at` is written, RFC 3339 in
+  `TestReviewArtifactIsSignedByTheCredentialsService` (the writer posts the object's digest and stores
+  what the service answers, in the sidecar and not in the object — and a fake service that answers
+  under another account's key is refused), `TestVerifyRefusesAForgedArtifact` (a byte changed in the
+  object is refused), `TestVerifyRefusesAnUnsignedArtifact` (an object with no sidecar is refused, not
+  accepted by default) and `TestVerifyRefusesAReplayedArtifact` (a validly signed artifact of an
+  earlier review — a different `review_run`, or a `head_sha` that is no longer the head — is refused,
+  which is the check a signature alone does not make), `TestReviewArtifactCarriesItsOwnClock`
+  (`created_at` is written, RFC 3339 in
   UTC, and the object round-trips it), and two for F23:
   `TestReviewJobStageIsNotParsedAsAnInRunVerdict` (the review job's result is decoded by the artifact's
   reader and never reaches `ParseVerdict` — and, the other way round, the coding run's `review` stage
@@ -272,19 +298,25 @@ machinery for**. **Findings:** F13, F19, **F24**. **Depends on:** R3. **Unblocke
 (a), so the task is neither dropped nor reduced, and it carries the posture in its own files — **but
 it launches only after U7's owner-run live observation has returned** (below).
 
-- **The gate before this task launches — U7, an owner-run live observation, not a test R4 can write.**
+- **The gate before this task launches — U7, a standalone owner-run probe, not a test R4 can write.**
   D891(a) assumes egress can be denied for a child process inside the container, and **no network
   namespace or `unshare` in Cloud Run's gen2 has been checked**. That is a property of the **deployed
   execution environment**, so **it cannot be measured hermetically** — and this plan's rule is
   hermetic tests only, no live call and no real job (above), which means the observation is **not the
   task's first step and not something the task does at all**. It is the owner's, taken **before R4
-  launches**, and it is **Check 125's step 6** ([spec.md](spec.md) §8): a subprocess in a real
-  execution that tries to reach the network and fails. **R4 does not start until that observation has
-  returned**, and **the answer decides the task**: if a child can be fenced, the rest of this task
-  proceeds as written; **if it cannot, the task stops and the owner is asked again** — the fallbacks
-  are D891's **(b)** (no mutation check in the reviewer at all) or **(c)** (the check in a separate
-  execution), both of which are a different task, and the design does not quietly fall back to
-  `denyWeb`. **Nothing in this task's Files is opened before that observation returns.**
+  launches**, and it is **Check 125's step 6** ([spec.md](spec.md) §8). **It is deliberately not asked
+  through the mutation check, and the first draft of this bullet got that wrong:** running `fugaro
+  review --mutate` to answer U7 would need R2's command and this task's mutation code, and R4 may not
+  start until U7 returns — a question asked by the thing whose existence it decides. So the probe is
+  **standalone**: a one-off execution of the deployed job image whose entrypoint forks a child that
+  tries to reach the network and is fenced with a network namespace (`unshare -n` where the image has
+  it), recording whether the fence is available and whether it holds. **Check 125's step 7 is the
+  confirmation afterwards**, on the mutation path that actually uses the fence. **R4 does not start
+  until step 6 has returned**, and **the answer decides the task**: if a child can be fenced, the rest
+  of this task proceeds as written; **if it cannot, the task stops and the owner is asked again** —
+  the fallbacks are D891's **(b)** (no mutation check in the reviewer at all) or **(c)** (the check in
+  a separate execution), both of which are a different task, and the design does not quietly fall back
+  to `denyWeb`. **Nothing in this task's Files is opened before that probe returns.**
 - **Files:** `internal/runner/mutation.go` (new), `internal/runner/mutation_test.go` (new),
   `internal/runner/reviewartifact.go` (the `mutation_checks` field it fills),
   `internal/runner/prompts.go`, **`internal/agent/settings.go`** + `settings_test.go` (D891(a): the
@@ -300,7 +332,7 @@ it launches only after U7's owner-run live observation has returned** (below).
   and the account's secret scrubbed from its environment and egress denied** — and the agent's shell
   is denied for the rest of the stage, so the reviewer reads and reasons with no shell to exfiltrate
   through (D891(a), F24). **How egress is denied inside a Cloud Run container is U7**
-  ([reconciliation.md](reconciliation.md) §6), and it is **the owner-run live observation above**:
+  ([reconciliation.md](reconciliation.md) §6), and it is **the standalone owner-run probe above**:
   until it returns, D891(a) is an answered decision with an unmeasured mechanism, not a fact.
 - **Tests:** `TestMutationAppliesRunsRevertsAndPushesNothing` (the git fake records no push),
   `TestMutationRefusesMoreThanOneMutant`, `TestMutationRevertsOnFailure` (a test that errors still
@@ -367,11 +399,14 @@ it launches only after U7's owner-run live observation has returned** (below).
 - **Tests:** `TestRecipesSkewRefusesReviewJobOnAnOldImage`,
   `TestValidateNotesTheArtifactOutputCap`, `TestValidateNotesTheCredentialsServicePrecondition`
   (both halves, named separately — the service off, and the service refusing the review job's
-  account), `TestValidateNotesTheSigningKeyAge` (D892(a)'s rotation: the note is what tells an
-  operator the key is worth rotating **before** it is lost, since an artifact signed under a retired
-  version stops verifying and the remedy is a re-review — [spec.md](spec.md) §6), and the existing
+  account) and the existing
   docs tests for whichever documents this
-  task edits (`GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`).
+  task edits (`GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`). **A note about the signing
+  key's age is no longer this task's, and that is the ruling's consequence rather than a dropped
+  requirement:** the key is the **credentials service's** and the CLI never reads it (D892(a), the
+  owner's ruling of 2026-11-01), so the age an operator could act on is the service's to report —
+  C3.9's work, with the rotation itself — and a local note here would be a figure the CLI has no way
+  to obtain.
 - **Red step:** `TestRecipesSkewRefusesReviewJobOnAnOldImage` fails until the constant and the
   refusal exist. **SEC flag:** no.
 - **Release notes:** the `### For operators` section says which images must be refreshed before a
@@ -386,7 +421,9 @@ it launches only after U7's owner-run live observation has returned** (below).
 
 **Decisions:** D883, D888, **D893 (c)** — the owner's answer to how the read-only installation token
 reaches the job, which **this task implements and does not re-decide** (**UNVERIFIED-2** is closed by
-D893) — and **D892 (a)**, which puts the review-signing key in this variant's own `secret_env`.
+D893) — and **D892 (a)**, whose ruling of 2026-11-01 is that **no signing key goes on this variant**:
+the credentials service signs, so the variant's `secret_env` is the account's Claude token and
+nothing else.
 **D891**'s stage posture is **R4**'s, not this task's, and this task only needs the variant to
 mount the account's Claude token and no key.
 **Findings:**
@@ -396,7 +433,7 @@ the task that makes the read-only scope a boundary instead of a comment on the l
 installation *and* admits a project-scoped job.**
 
 - **Files:** `internal/infra/projectjobs.go` + `projectjobs_test.go` (the `ProjectJob` entry, its
-  `SecretEnv` — the Claude token and the review-signing key, and no App key — and its service
+  `SecretEnv` — the Claude token alone, no App key and no signing key — and its service
   account), `internal/config/config.go` +
   `internal/config/claude_accounts.go` (`config.ProjectJobAccounts`, the one function the job set is
   computed with — **shared with E1's `accounts add`, taken after it, alone**),
@@ -408,13 +445,15 @@ installation *and* admits a project-scoped job.**
   `internal/cli/recipes_skew.go` (its `…Since`, declared to R6). **At most 12 files.**
 - **Interfaces:** produces a **second job per `(profile, provider, account)`** — same axis, same
   `gcp.ProjectJobName` shape with a review suffix, its own service account, a `secret_env` carrying
-  the account's `CLAUDE_CODE_OAUTH_TOKEN` and the account's **review-signing key** (D892(a)) and **no
-  `github-app-key`**, and **no `secretAccessor` on that key** — deployed by `fugaro update` with the
-  rest of the job set, and recognised by the census. The signing key is the variant's **own second
-  `secret_env` entry**, with its own `secretAccessor` grant on that one secret and none on the App
-  key: the review job can read the key it signs with, and nothing else. It is a **versioned** Secret
-  Manager secret, so D892(a)'s rotation is a new version the alias follows — not a new secret — and
-  the variant mounts the alias rather than pinning a version ([spec.md](spec.md) §6).
+  the account's `CLAUDE_CODE_OAUTH_TOKEN` **and nothing else** — no **`github-app-key`**, and **no
+  review-signing key either** — and **no `secretAccessor` on that key** — deployed by `fugaro update`
+  with the rest of the job set, and recognised by the census. **Why no signing key on the variant,
+  which an earlier draft put there:** this is the container that runs a test from the head under
+  review (D885), so a key in its environment would share an OS user and the `/proc` residual with the
+  account's OAuth token — and the owner's ruling of 2026-11-01 moved the signer to the credentials
+  service rather than accept that. The variant therefore mounts **one** secret, and the account's
+  signing key is a Secret Manager secret the **service's own service account** reads
+  ([spec.md](spec.md) §6, [reconciliation.md](reconciliation.md) §4's D892 entry).
 - **The read-only token, fetched and never handed in (D893 (c)).** The variant carries the
   credentials-service URL in its environment (`FUGARO_CREDENTIALS_SERVICE_URL`, the same variable
   `internal/cli/run.go`'s `credentialsServiceLaunchEnv` sets today), and the job's git provider is
@@ -429,8 +468,9 @@ installation *and* admits a project-scoped job.**
   `github-app-key`), `TestReviewJobVariantServiceAccountHasNoAppKeyAccessor` (the account's grant list
   holds no accessor on the key — the exact assertion
   `shared_job_mounting_the_app_key_keeps_the_accessor` makes the other way round),
-  `TestReviewJobVariantMountsTheSigningKeyAndNothingElse` (D892(a): exactly one secret beyond the
-  account's Claude token, and the accessor is on that secret alone),
+  `TestReviewJobVariantMountsTheClaudeTokenAndNothingElse` (the variant's `SecretEnv` is exactly the
+  account's Claude token — **no signing key**, D892(a)'s ruling of 2026-11-01, and no other secret —
+  and the account's accessor list names that secret alone),
   `TestReviewJobVariantIsHandedNoToken` (nothing in the variant's environment or launch object
   carries an installation token; the fetch path is the only one),
   `TestSharedProjectJobKeepsItsAppKey` (the **shared** job's mount and grant are unchanged: this task
@@ -440,8 +480,9 @@ installation *and* admits a project-scoped job.**
   All hermetic: no live service, no real token.
 - **Red step:** `TestReviewJobVariantMountsNoAppKey` fails: there is no variant, and the only job the
   axis knows mounts the key. **Mutation to hold it:** add `github-app-key` to the variant's
-  `SecretEnv` → the first test fails; grant the accessor → the second does; drop the key from the
-  shared job → the third does (and the tftest, independently).
+  `SecretEnv` → the first test fails; grant the accessor on it → the second does; add the signing key
+  back to the variant's `SecretEnv` → the third does; drop the App key from the **shared** job →
+  `TestSharedProjectJobKeepsItsAppKey`, the fifth, does (and the tftest, independently).
 - **Commit:** `infra: the review job variant, per account, with no App key`.
 
 ## 4. What is deliberately not in this plan
@@ -451,13 +492,13 @@ installation *and* admits a project-scoped job.**
 - **A failover loop.** D882 keeps the retry with the coordinator; the cascade in `internal/creds` is
   the credentials service's and needs no change.
 - **The signature is now in this plan; the coordinator's use of it is not.** **D892 is answered with
-  option (a)**: the review job signs `review.json` with a per-account HMAC key, and a verdict that does
-  not verify is never a `ship`. That answer moved the signature **into** the plan — **R3** writes the
-  signer/verifier pair and its refusal tests, and **R7** mounts the key on the review-only variant as
-  its second `secret_env` entry, with its own accessor and none on the App key. What is still **not**
-  here is the caller: **the coordinator** that reads an artifact, verifies it and merges on a verified
-  `ship` is the coordinator's own work stream, and it **cannot be built until E7 is met** (§1), since
-  the token the whole chain rests on comes from a service that is not yet enabled.
+  option (a)**: the **credentials service** signs `review.json`, and a verdict that does not verify is
+  never a `ship`. That answer moved the signature **into** the plan — **R3** writes the signing client,
+  the verifier and their refusal tests, and **R7** keeps the signing key **off** the review variant:
+  the job holds the Claude token and nothing else. What is still **not** here is the caller: **the
+  coordinator** that reads an artifact, verifies it and merges on a verified `ship` is the
+  coordinator's own work stream, and it **cannot be built until E7 is met** (§1), since the token the
+  whole chain rests on comes from a service that is not yet enabled.
 - **The credentials service's admission of a project-scoped job (C3.9).** **D893(c)** makes the
   service a precondition of the whole design, and half of that precondition — the service admitting a
   caller whose account belongs to a project-scoped job, **Global Constraint 6** — is code in
@@ -478,8 +519,8 @@ installation *and* admits a project-scoped job.**
   bucket-layout change with an IAM migration, and the owner's 2026-10-17 ruling accepted the reach;
   if the owner ever wants the boundary, it is its own design and it belongs to the project-job work,
   not to this one.
-- **An egress rule for the review job as a whole, or a signature, or a token scoped to one run.** What
-  D891(a) chose is narrower than any of those and is **R4**'s: denial for the **mutation subprocess**
+- **An egress rule for the review job as a whole, or a token scoped to one run.** What
+  D891(a) chose is narrower than either and is **R4**'s: denial for the **mutation subprocess**
   and a **Bash denial for the rest of the stage**, not a firewall around the job. A whole-job egress
   rule is a bigger change (it is the job's VPC/egress posture, shared with every other tenant of the
   same image), and it is not what the owner answered.

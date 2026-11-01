@@ -184,8 +184,23 @@ no value in an execution object, because there is no hand-in to design: the revi
 carries the installation's `FUGARO_CREDENTIALS_SERVICE_URL` like any other job of an opted-in
 installation, and the keyless path already in the tree does the rest — `internal/gitprov/github`'s
 `ServiceTokens` (`apptoken.go:381`, its doc comment above it) makes one `POST /v1/github/installation-token` that carries
-the App ID and nothing else, and the **service** decides the repository (the one the calling account is
-bound to, `internal/credsvc/github.go:245`) and the permissions. The job authenticates with the two
+the App ID and nothing else, and the **service** decides the repository and the permissions.
+
+**Which repository, for a job that serves many — and this is new service work.** Today the mint
+resolves the repository from the **calling job account** (`JobAccount.Repo`,
+`internal/credsvc/github.go:245`), which is a complete answer because one job account belongs to one
+repository. **A review variant is per `(profile, account)` and serves every repository that account
+may review**, so no such binding names one, and the answer has to come from the other identity the
+call presents: the **verified run identity**, whose `fs` claim is the run's own repository slug
+(`Identity.Slug`, `internal/credsvc/auth.go:160`), taken **within the account's allowed
+repositories**. What authorizes it is launcher-side and unchanged: the account's `allow_data_to` must
+list that repository or the launch is refused (§1), and only a launcher holding the run's minting
+authority can mint the Firebase identity the service verifies. Growing the service to read the
+repository from the run identity for a review caller is **C3.9's** work with the rest of §2's
+precondition below, and it is not a field a caller could name: the request still carries the App ID
+alone.
+
+The job authenticates with the two
 identities the service already verifies on every call: the **job service account's Google ID token**
 (Cloud Run IAM admits it for `run.invoker`, and the service checks the `email` claim against the
 installation's job accounts, so the IAM bit says *an* authorised identity called and the email says
@@ -207,9 +222,11 @@ enabled for the installation**:
   **project-scoped** job, and the service refuses a caller whose account belongs to a shared project
   job (Global Constraint 6 of
   [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md));
-  **C3.9**, in that plan's Slice 3, *unscheduled*, is the task that lifts it. The service's mint must
-  also learn R1's **read-only** set for a review identity — it serves the run's own set today
-  (`internal/credsvc/github.go:263`);
+  **C3.9**, in that plan's Slice 3, *unscheduled*, is the task that lifts it. The same work must
+  teach the service three more things a review caller needs: R1's **read-only** set, which it does
+  not serve today (`internal/credsvc/github.go:263` mints the run's own), the repository resolved
+  from the run identity rather than from a one-repository job account (above), and **D892(a)'s sign
+  and verify endpoints** with their authentication (§6);
 - **no `fugaro update` can do that second half.** This design's HARD RULE — the whole upgrade is one
   command — is exactly what it cannot satisfy here, and the honest statement is that the reviewer is
   **blocked on another work stream's task** until C3.9 lands. **R7, R2 and the coordinator's
@@ -231,11 +248,12 @@ is off unless asked for, it is bounded (one mutant, one named test, a time limit
 before the stage ends), and the artifact says which test was run and what it did.
 
 **The job never holds a credential it does not need — which is why R7's variant is not optional.** It
-mounts exactly two secrets — the named account's Claude OAuth token and, since D892(a), the account's
-**review-signing key** — and is **handed no credential at all**: the read-only installation token is
-minted by the credentials service and fetched by the job itself, by name (D893(c), above). It does not
-mount the App private key (**the difference from the shared project job it would otherwise reuse**),
-the Bitbucket token, the credentials bundle, the budget token or the git signing material. The billing identity this design chooses is the thing to check against the tree: the
+mounts exactly one secret — the named account's Claude OAuth token — and is **handed no credential at
+all**: the read-only installation token is minted by the credentials service and fetched by the job
+itself, by name (D893(c), above). It does not mount the App private key (**the difference from the
+shared project job it would otherwise reuse**), **the review-signing key** — D892(a) is answered with
+the **service** signing, so no key is mounted and none is readable from the job (§6) — the Bitbucket
+token, the credentials bundle, the budget token or the git signing material. The billing identity this design chooses is the thing to check against the tree: the
 variant it inherits its shape from is the **shared project job** of `(profile, account)`, whose bucket
 condition is the whole of `runs/` (`gcp.ProjectBucketCondition`, `docs/design/bucket-iam.md` §2.1) —
 the accepted, installation-wide reach the owner ruled on 2026-10-17. A review job needs to write one
@@ -260,6 +278,7 @@ bucket layout, the name sanitisation and the record's own artifact list are the 
   "schema_version": 1,
   "review_run": "20261031-210911-718a",
   "created_at": "2026-10-31T21:14:07Z",
+  "repository": "owner-repo-a-1a2b3c4d",
   "pr": 1470,
   "head_sha": "<40 hex>",
   "base": "main",
@@ -320,9 +339,25 @@ outlive the run's own listing in a later audit — while the record does not tra
 ordering argument is about *when the review happened*, and that is a claim the artifact should be able
 to make about itself. `created_at` is the **writer's** claim and is not trusted on its own: the
 coordinator reads it **beside** the run record's own timestamps (§6), and the signature (D892(a)) is
-what binds the whole object, this field included, to the key the review job holds. So a forged
+what binds the whole object, this field included, to the **account's key in the credentials service**.
+So a forged
 `created_at` is a forged artifact and fails verification; an honest one makes the artifact
 self-describing.
+
+**`repository` is the run's own slug, and it is the first of the four things the signature binds.**
+The spelling is the one the artifact's own path uses — `runs/<slug>/<review-run>/artifacts/` — so the
+coordinator, which names the run by slug, compares like with like. It is a field rather than
+something a reader infers from the path because a **copy** of the artifact loses the path: an object
+pasted into a fix round's brief, a comment or a later audit carries no prefix to read a repository
+out of. With `review_run`, `pr` and `head_sha` it is what makes a verdict a statement about **one
+review of one pull request at one commit**; §6 states the four checks the verifier makes on them, and
+why the signature is what makes those checks worth doing.
+
+**The signature is not a field of this object.** It is a **sidecar object beside it** —
+`runs/<slug>/<review-run>/artifacts/review.json.sig`, one line of lowercase hex — so that the bytes
+that were signed are exactly the bytes that are stored, and a reader can hash the object without
+first having to remove a field from it. An artifact whose sidecar is absent is refused, not accepted
+by default (§6).
 
 **`mutation_checks[].observed` is a closed four-word vocabulary: `pass`, `fail`, `error`, `timeout`.**
 The example above shows `fail` because that is the *good* outcome — the mutant was killed. A
@@ -332,9 +367,10 @@ did not run to a verdict; `timeout` means the bounded run expired. **A fifth wor
 the same reason §3's verdict refuses a fourth: a reader that compares against the four would take
 anything else for one of them. `reverted` is the runner's own statement that the worktree was put
 back, and `applied` is the mutation's description — neither is a claim by the reviewer's prose.
-**R3's `TestMutationAppliesRunsRevertsAndPushesNothing` pins this vocabulary** (every `observed`
-value the task can write is one of the four, and a fifth is refused), and R4's own tests assert the
-`error` and `timeout` cases rather than leaving them to the writer's discretion.
+**R4's `TestMutationObservedVocabularyIsClosed` pins this vocabulary** — every `observed` value the
+task can write is one of the four, and a fifth is refused — and it asserts the `error` and `timeout`
+arms rather than leaving them to the writer's discretion. `TestMutationAppliesRunsRevertsAndPushesNothing`
+is R4's too, and what it pins is the revert and the absence of a push, not these four words.
 
 **The verdict vocabulary is this artifact's own: `ship`, `fix first`, `reject`.** It is **not** the
 in-run verdict's vocabulary. `internal/runner/verdict.go` decodes exactly two words, `ship` and
@@ -536,39 +572,77 @@ claiming a boundary it does not have.**
 
 **D892 is answered, option (a): the verdict is signed, and the signature is what the coordinator
 acts on.** Recording the gap was not enough, because the design's own `ship` path — *the coordinator
-merges* — is what the gap would defeat. **The review job signs its verdict with an HMAC key kept in
-Secret Manager, one per account, and the coordinator verifies the signature before it acts on
-`ship`; a forged or unsigned `review.json` is refused.** The key's home and its readers: **one Secret
-Manager secret per account**, in the installation's project, mounted on the review job variant alone
-(R7's second `secret_env` entry, with `secretAccessor` on that secret and none on the App key) and
-read by **the coordinator** with the operator's own credentials — the same read
-`fugaro doctor --check-github-app` makes of the App key. Nothing else reads it: not the shared project
-job, not the coder's job, not the coding run's account. **What is signed, and where it is checked:**
-the artifact writer computes an HMAC over `review.json`'s bytes as it writes them and stores it beside
-them; the coordinator recomputes it from the object's own bytes before it acts, so a concurrent job
-that can write under the prefix cannot produce a verdict the coordinator accepts, because it cannot
-read that secret. **The algorithm is fixed by this design, not left to the implementation: HMAC with
-SHA-256, the digest rendered as lowercase hex, over the exact bytes of the stored object** — the
-coordinator's verifier is a different work stream's code, and a design that named no algorithm would
-let the writer and the verifier disagree, or let the verifier pick a weaker one, with no error on
-either side. R3 writes both halves of the pair, so the constant lives in one place; the coordinator
-consumes it rather than choosing. **A verdict that does not verify is not a `ship`** — it is treated
-exactly like an unreadable artifact, an infra fault the coordinator reports — and the verifier is one
-function pair shipped with the artifact (`internal/runner/reviewartifact.go`, R3), which the
-coordinator calls rather than re-implementing. **Rotating the key, and what rotation costs.** The
-secret is a Secret Manager secret with **versions**, so rotation is a new version added and the
-variant's `secret_env` following the alias; the honest window is the one Secret Manager already
-gives: for the length of it the coordinator's verifier accepts **the current version and the one
-before it**, and nothing older. **An artifact signed under a retired version stops verifying**, and
-the design says so plainly rather than pretending otherwise: the remedy is not to trust the old
-object but to **re-review the head**, which is cheap next to merging on an unverifiable verdict. What
-rotation never does is invalidate the *decision* — the coordinator acts on a verdict once, at the
-time it verifies it, and a merge already made is not re-litigated. There is no key escrow and no
-re-signing path: a lost key means the artifacts it signed are refused, and R6's `validate` note is
-where an operator sees that the key's age is worth a rotation before it is lost. **Honest about what this does and does not close:** it stops **another
-job** forging a verdict; it does not stop an injected *reviewer* from writing a dishonest one inside
-its own run, which is §7's residual and which no signature reaches. That residual is why the verdict
-is still advice, the CI still runs and the owner's own look is still the last step.
+merges* — is what the gap would defeat. **The signature is produced by the credentials service, and
+the signing key never enters a container that runs untrusted code.** The review job does not hold it
+and does not mount it: that container runs a test from the head under review by design (§2, D885), so
+a key in its environment would share an OS user and the `/proc` residual with the account's OAuth
+token and be reachable by exactly the read §7 records as what the separate job cannot close. The
+owner's ruling is that a key whose compromise forges **every** verdict of that account is not worth
+that read. The flow is one call:
+
+1. the artifact writer (R3) computes **SHA-256 over `review.json`'s exact bytes** — the digest, and
+   not the object, because the object is reviewer prose derived from an untrusted diff and there is
+   no reason for it to travel to the service at all;
+2. the job **posts the digest** to the credentials service's sign endpoint, authenticated by the two
+   identities the service already verifies on every call (§2): the job service account's Google ID
+   token, whose `email` claim the service checks against the installation's job accounts, and the
+   **run's own Firebase identity**, whose claims name the repository (`fs`), the run (`fr`) and the
+   pull requests it may write (`fpr`);
+3. the service answers with the **HMAC-SHA-256 of that digest under the account's review-signing
+   key**, lowercase hex. **The algorithm is fixed by this design, not left to the implementation:**
+   the signer is the service's code and the verifier is a second call into it, but the digest's
+   spelling and the digest itself are the artifact writer's, and a design that named no algorithm
+   would let the two ends disagree — or let one of them accept a weaker construction — with no error
+   on either side;
+4. the job writes the answer into the **sidecar object beside the artifact** (§3) —
+   `runs/<slug>/<review-run>/artifacts/review.json.sig`, one line of lowercase hex — and not into
+   `review.json`, so the bytes that were signed are the bytes that are stored.
+
+**What the signature binds, and what the verifier refuses.** The digest covers the object's exact
+bytes, so every field of it is bound — `repository`, `pr`, `head_sha` and `review_run` (§3) among
+them — and a field cannot be altered without the signature failing. That alone would still let a
+**whole verdict be replayed**: an honest artifact of an *earlier* review of the same pull request is
+a valid signature over a valid object, and it is the wrong answer to the question being asked. So the
+verifier refuses unless all four agree with the present moment: **`review_run` equals the run the
+coordinator launched** (the nonce — the launcher mints that id after the coder's job has ended, and
+the coordinator asks about the run *it* launched), **`repository` and `pr` are that pull request's**,
+and **`head_sha` equals the pull request's current head** — which is also §5's rule that a verdict
+about a commit that is no longer the head is a verdict about nothing. **The signature is what makes
+those four checks worth making:** without it they would be checks on a document that anyone able to
+write under the prefix could have written.
+
+**Who holds the key, and what it costs.** The key is the **credentials service's**: a Secret Manager
+secret in the installation's project, **one per account**, read by the service's own service account
+and by nothing else — not the review variant, not the shared project job, not the coder's job, not
+the coordinator. **Verification is a call to the same service**, for the same reason: a second holder
+of the key is a second place it can leak from, and the whole point of this answer is that there is
+one. A verify call presents a digest and a signature and gets a yes or a no; the service never sees
+the artifact. **A verdict that does not verify is not a `ship`** — it is treated exactly like an
+unreadable artifact, an infra fault the coordinator reports.
+
+**What C3.9 has to grow, because none of this is built.** Both endpoints are new work in the
+credentials service, and so are the four things they need: **their authentication** (the two
+identities above for a sign call; the coordinator's own credentials for a verify call, which is a
+caller class the service does not have today); **which repositories and runs may request a
+signature** (the run identity's `fs` and `fpr` against the account's allowed repositories — the
+launcher's `allow_data_to` check plus the minting of the run's Firebase identity, and nothing a
+caller sends); **per-account key rotation** (below); and the **audit line** a sign call owes on the
+terms C1.13 already sets for a mint, because a signature is an act that record exists for.
+
+**Rotating the key, and what rotation costs.** The key is a Secret Manager secret with **versions**,
+and rotation is the service's own operation: a new version the service signs with, and a window in
+which it accepts a verification against **the version before it and nothing older**. **An artifact
+signed under a retired version stops verifying**, and the design says so plainly rather than
+pretending otherwise: the remedy is not to trust the old object but to **re-review the head**, which
+is cheap next to merging on an unverifiable verdict. What rotation never does is invalidate the
+*decision* — the coordinator acts on a verdict once, at the time it verifies it, and a merge already
+made is not re-litigated. There is no key escrow and no re-signing path, and **a leaked key forges
+every verdict of that account until the rotation**: that is the cost of the one-holder design, and
+it is why the key is kept out of the container that reads an untrusted diff. **Honest about what this
+does and does not close:** it stops **another job** forging a verdict; it does not stop an injected
+*reviewer* from writing a dishonest one inside its own run, which is §7's residual and which no
+signature reaches. That residual is why the verdict is still advice, the CI still runs and the
+owner's own look is still the last step.
 
 ---
 
@@ -607,9 +681,14 @@ is UNVERIFIED** — a network namespace or `unshare` in gen2 has not been checke
 [reconciliation.md](reconciliation.md) §6's **U7** is where that is settled. **So the answer is
 conditional, and the design says so:** if a child process cannot be fenced, D891(a) cannot be
 implemented as written, the fallback is the owner's **(b)** or **(c)**, and the owner is asked again —
-which is why **the plan makes R4's first step U7's gate** rather than starting the task on the
-assumption. What is left either way is the **`/proc` read**, which `mixed-credentials.md` §6 already
-lives with and which only the separate container reduces.
+which is why **U7 is an owner-run live observation taken before R4 launches**, rather than an
+assumption the task starts on. **It is a standalone probe, and §8's step 6 is where it is written**:
+the question is a property of the deployed gen2 execution environment — can a child process be denied
+the network at all — so it is asked directly, by a probe the owner runs on the sandbox installation,
+and **not** through `fugaro review --mutate`, which would need R2's command and R4's mutation code to
+exist before the answer that decides whether R4 should exist. What is left either way is the
+**`/proc` read**, which `mixed-credentials.md` §6 already lives with and which only the separate
+container reduces.
 
 What the design still buys, and it is worth having: a container that **did not run the coder**, a
 read-only forge scope, no App key in that container, and a run whose whole purpose is the review. What
@@ -659,11 +738,11 @@ reviewer must read it — that is its job — so the injection surface is not re
 **The verdict artifact's integrity.** Covered in §6, and **D892 is answered — option (a)**. The
 ordering (the review run's id does not exist while the coder runs) remains a real property **for that
 coder**, and it is not one for a concurrent job on the same shared job, which can list `runs/` and
-write under the prefix it sees. **What closes that is the signature the owner chose:** the review job
-signs `review.json` with the account's HMAC key, held in a Secret Manager secret whose only readers
-are the review variant's service account and the coordinator, and **the coordinator verifies the
-signature before it acts on a verdict** — a forged or unsigned artifact is refused rather than
-merged. The bucket-prefix narrowing (the owner's other option) is still not built, and §6's account of
+write under the prefix it sees. **What closes that is the signature the owner chose:** the **credentials
+service** signs the artifact's digest with the account's key — a key that never enters a container
+that runs untrusted code — and **the coordinator verifies it before it acts on a verdict**; a forged,
+unsigned or replayed artifact is refused rather than merged (§6). The bucket-prefix narrowing (the
+owner's other option) is still not built, and §6's account of
 why it belongs to the project-job work stands. **What no signature closes** is the injected reviewer
 writing a dishonest verdict inside its own run: that is the residual this section's last bullet
 already states, and it is why a verdict is advice rather than evidence.
@@ -745,7 +824,10 @@ run by the owner in their own terminal.
    issues the owner already knew about appear, with a `file:line` that lands on the right line of
    that commit; the **markdown and JSON agree** section for section; and **the signature verifies** —
    D892(a)'s own observation, and the one a reader can also test the other way round by flipping one
-   byte of the stored JSON and confirming the verifier refuses it.
+   byte of the stored JSON and confirming the verifier refuses it. Two more, and they are the replay
+   check: the artifact's `repository` is this repository and its `review_run` is the id this step
+   recorded, and an artifact of an **earlier** review of the same pull request — one whose `head_sha`
+   is no longer the head — is refused rather than acted on (§6).
 4. **Check what the job could not do.** Confirm from the pull request that the review job posted
    **nothing** — no comment, no review, no label — and that `git ls-remote` shows no branch the
    review run pushed. This is the read-only scope's positive test: it is the absence that has to be
@@ -754,17 +836,32 @@ run by the owner in their own terminal.
    cost; the installation's caps are unchanged by it, and `fugaro budget show` shows no counted
    spend for it. This is the subscription-versus-gateway property from §1, observed rather than
    assumed.
-6. **Run the mutation check once, and watch D891's answer hold.** On a security-sensitive pull
+6. **Probe the execution environment's egress fence — and this is the one step that runs *before* the
+   task it decides.** **U7** ([reconciliation.md](reconciliation.md) §6) asks whether a child process
+   inside this deployment's gen2 execution can be denied the network at all, because D891(a) assumes
+   it can. **The probe is standalone: it needs no `fugaro review`, no `--mutate` and no mutation code
+   from R4** — those are the things whose existence depends on its answer, so asking the question
+   through them would be circular. On the sandbox installation, the owner runs a one-off execution of
+   the deployed job image whose entrypoint forks a child that (a) tries to reach a host on the
+   network, and (b) is fenced with a network namespace — `unshare -n` where the image has it, or the
+   equivalent the platform allows — and records what the child could do. **What is being observed is
+   one of three things:** the child cannot reach the network when fenced and the fence is available;
+   the fence is unavailable in this execution environment; or the fence is available and does not
+   hold. The second and third amend D891's answer and the owner is asked again between **(b)** and
+   **(c)**; the design does not quietly fall back to `denyWeb`. **Why it is the owner's and not a
+   test:** whether a child process can be fenced is a property of the **deployed execution
+   environment**, and this repository's tests are hermetic — no network, no cloud, `t.TempDir()`.
+   **R4 does not start until this step has returned**, and nothing in R4's file list is opened before
+   it does.
+7. **Run the mutation check once, and watch D891's answer hold.** On a security-sensitive pull
    request, `fugaro review --pr N --mutate <file:test>` and read `mutation_checks` in the artifact:
    the test ran, the mutant was applied, the observed result is recorded, and the worktree was
    reverted. Confirm again that nothing was pushed, that the mutant's subprocess carried no token in
-   its environment and could not reach the network, and that the stage ran no other shell — this is
-   **U7**'s live observation, and it is the one step whose result can amend D891's answer
-   ([reconciliation.md](reconciliation.md) §6). **It is an owner-run observation taken before R4
-   launches, not a test R4 can write:** whether a child process can be fenced is a property of the
-   deployed execution environment, and this repository's tests are hermetic. **R4 does not start until
-   this step has returned.**
-7. **Drive the fix path once.** Take a `fix first` verdict, launch the fix round the coordinator
+   its environment and could not reach the network, and that the stage ran no other shell. **This is
+   the confirmation after R4, not the gate before it:** step 6 settled whether the fence exists at
+   all, and this step is the fence observed on the path that actually uses it — the one step whose
+   result can still amend D891's answer once the machinery is in place.
+8. **Drive the fix path once.** Take a `fix first` verdict, launch the fix round the coordinator
    would launch, and read the fix run's brief: it must name the review run and carry the findings,
    with no human having copied them. Then confirm the head moved and that a second review of the new
    head is what would follow.
