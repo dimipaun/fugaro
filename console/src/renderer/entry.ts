@@ -84,6 +84,7 @@ import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
 import type { RigorView } from '../shared/rigor'
 import { decodeCoordinatorStatus, decodePlanStatus, decodeSnapshot } from '../shared/schema'
+import type { PlanStatusView } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
@@ -103,7 +104,7 @@ import type {
   SpendModel,
   SpendReader,
 } from './screens/spend'
-import { CACHE_FRESH_MS, CACHE_LIMIT, cacheKey, renderStamp, resultCache, sectionRead } from './section'
+import { BUSY_SLOT_CLASS, CACHE_FRESH_MS, CACHE_LIMIT, cacheKey, renderStamp, resultCache, sectionRead } from './section'
 import { COORDINATOR_SHAPE, PROJECTS_SHAPE, SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE } from './skeleton'
 import {
   COORDINATOR_BUSY,
@@ -140,6 +141,7 @@ import {
   tabOf,
 } from './screens/graph'
 import type { GraphScreen } from './screens/graph'
+import type { GraphTab } from './graph/model'
 import { SKEW_HEADLINES, hidesView, launchSupported } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../shared/notice'
@@ -2025,6 +2027,25 @@ export const LIVE_POLL_MS = 1000
  */
 export const LIVE_RIGOR_TTL_MS = 15_000
 
+/**
+ * RUNS_SINCE is the window every `runs ls` this console makes is read for: a day.
+ *
+ * The owner's rule of 2026-10-31 puts it on the Jobs section by name -- "always
+ * with `--since 24h`" -- and the two other readers of the same command take it
+ * for their own reasons: a run's rigor block and the run a graph node's door
+ * opens are both facts about **this day's** work, and a `runs ls` that answered
+ * with the whole history would be a document nobody on these screens can use.
+ * The cut is the console's own: this tree has no `runs ls --limit`.
+ */
+export const RUNS_SINCE = '24h'
+
+/** GRAPH_BUSY is what the Graph section's mark says it is reading: the plan.
+ * The mark belongs to the operator's own controls -- a stream tab, the Refresh
+ * -- and neither to the poll's background cadence nor to the run list's
+ * decoration: a mark for a read nobody asked for would flicker over a picture
+ * that is already true. */
+export const GRAPH_BUSY = 'Reading the plan…'
+
 /** VIEW_BUTTON_CLASS, VIEW_PANEL_CLASS and VIEW_NAV_CLASS are the console's own
  * names for the three elements the navigation is made of. They are constants
  * because a spec reads them. */
@@ -2503,7 +2524,20 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     rigor: ReadonlyMap<string, RigorView>
     rigorAt: number
     rigorInFlight: boolean
-  } = { drawn: null, inFlight: false, timer: null, rigor: new Map(), rigorAt: 0, rigorInFlight: false }
+    /** reply is the last `live.watch` answer this screen drew, held so the rigor
+     * join's own read can redraw the frame it belongs to: the two are separate
+     * reads (the frame's and the join's) and the join's answer is what the column
+     * waits for. */
+    reply: unknown
+  } = {
+    drawn: null,
+    inFlight: false,
+    timer: null,
+    rigor: new Map(),
+    rigorAt: 0,
+    rigorInFlight: false,
+    reply: null,
+  }
 
   /** panel is where every screen is drawn. It is created here and appended
    * after the navigation below, so the page reads nav-then-screens. */
@@ -2705,6 +2739,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * `showProjects` sets it. */
   let leaveProjects: () => void = () => undefined
 
+  /** leaveGraph is the same door for the Graph: its section's mark belongs to
+   * the tab the operator is on, and the Graph's own controls put one up. */
+  let leaveGraph: () => void = () => undefined
+
   /** show switches the panel to one view. The Live screen is not re-read here --
    * its model is the one the last poll drew, which is the point of a live
    * screen -- and the other three read on entry. The Live screen's **rigor join**
@@ -2728,6 +2766,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (id !== 'spend') leaveSpend()
     if (id !== 'projects') leaveProjects()
     if (id !== 'coordinator') leaveCoordinator()
+    if (id !== 'graph') leaveGraph()
     if (id === 'live') {
       maybeRefreshRigor()
       // A console that opened on an issue has made no Live read yet.
@@ -2820,8 +2859,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     live.rigorInFlight = true
     live.rigorAt = Date.now()
     try {
-      const answer = documentOf(await bridge.listRuns({}))
+      const answer = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
       if (answer.ok) live.rigor = rigorIndex(answer.data)
+      // **The column fills in the moment the join lands** and not on the next
+      // tick of the poll: the rows are drawn without it (a run the join does not
+      // know about draws no chip at all, which is the cell a run with no block
+      // draws), and a read that took most of the second would otherwise leave the
+      // column empty for another one. The frame is the one the poll last drew, so
+      // what is redrawn is the same frame with its rigor cells filled.
+      if (answer.ok && currentView === 'live' && live.reply !== null) drawLive(live.reply)
     } catch {
       // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
       // is a bridge that threw where it should not have: the map stays as it
@@ -2897,6 +2943,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return
     }
     const envelope = answer.data as Record<string, unknown>
+    live.reply = reply
     const decoded = decodeSnapshot(envelope['document'], 'live.watch')
     if (!decoded.ok) {
       rail.setState('silent')
@@ -2989,11 +3036,56 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * read was outstanding, and `null` when no read is waiting: at most **one**
      * read is re-queued however many times the control is pressed. */
     queued: number | null
+    /** queuedToken is the section token that queued claim was taken with, so the
+     * re-queued read keeps the mark its own press put up. */
+    queuedToken: number | null
+    /** runs is the run list the last decoration answered, held for the section
+     * the next visit draws while its own runs read is out: a node's door is worth
+     * the list this console already has rather than one it is waiting for. */
+    runs: readonly string[]
+    /** decorating is whether a run-list read is outstanding. It is not the plan's
+     * in-flight flag: the two are different reads of the same tab, and the
+     * decoration must not hold up the plan's cadence. */
+    decorating: boolean
   } = {
     screen: null,
     readAt: 0,
     inFlight: false,
     queued: null,
+    queuedToken: null,
+    runs: [],
+    decorating: false,
+  }
+
+  /** GraphHeld is what the Graph's session cache keeps per installation: the
+   * plan document and the run list the last read answered. It is memory and
+   * nothing else, and `forgetLive` empties it. */
+  interface GraphHeld {
+    readonly document: PlanStatusView
+    readonly runs: readonly string[]
+  }
+
+  const graphViews = resultCache<GraphHeld>(CACHE_LIMIT)
+
+  /** graphRead is the Graph's section read lifecycle: the mark the operator's
+   * own controls put up in the frame they were pressed in, the sequence token
+   * that keeps the latest press's answer, and the fifteen-second line. */
+  const graphRead = sectionRead({ factory, theme })
+
+  /** leaveGraph ends the section's busy state when the operator moves to another
+   * tab: nothing is in flight for a screen nobody is looking at. */
+  leaveGraph = () => {
+    graphRead.end()
+  }
+
+  /** graphSlot is the slot the current drawing's mark and stamp go into, or
+   * `null` when the panel holds no drawing of this Graph (the placeholder, a
+   * refusal, or another screen) -- in which case there is nothing to mark and
+   * nothing to stamp, and the placeholder is already saying a read is running. */
+  const graphSlot = (): SkewElement | null => {
+    const tree = graphTree
+    if (tree === null) return null
+    return classed(tree, BUSY_SLOT_CLASS)[0] ?? null
   }
 
   /** graphScreenNow is the screen, built on first use. The worker is started
@@ -3016,7 +3108,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * it. That is not the Live screen's rule -- a frame that fails leaves the last
    * frame up -- because a frame is a moment and a plan is the whole picture.
    */
-  const readGraph = async (mine: number): Promise<void> => {
+  const readGraph = async (mine: number, token: number | null): Promise<void> => {
     if (graph.inFlight) {
       // A read that is already outstanding is not a reason to drop the
       // operator's: the one in flight may have started before the change they
@@ -3025,12 +3117,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // in the meantime has bumped the generation, and the queued read is then
       // stale and draws nothing.
       graph.queued = mine
+      graph.queuedToken = token
       return
     }
     graph.inFlight = true
     graph.readAt = Date.now()
+    // The mark goes up **before the await**, in the frame the operator pressed
+    // the control in, over the picture already drawn -- which is the other half
+    // of the owner's rule of 2026-10-31. `token` is `null` for a read nobody
+    // asked for (the poll's own cadence): a mark for that would flicker over a
+    // picture that is already true.
+    if (token !== null) markGraph(token)
     try {
       const plan = documentOf(await bridge.planStatus({ all: true }))
+      // The section's token is settled before the refusal is drawn, for the
+      // reason every other screen gives: the mark must come down for the
+      // operator's own read, and a read an earlier press started must not take
+      // down the mark a later one put up.
+      if (token !== null && !graphRead.settle(token)) return
       // Before the refusal, not after it: a refusal is a screen of its own, and
       // one drawn for a generation that has passed is the operation cell
       // `plan.status` under a tab that asked for another read.
@@ -3044,23 +3148,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         refuseGraph(decoded.skew.because)
         return
       }
-      // The console's run list, read the same way the Live screen's rigor join
-      // reads it and **not** through that join: `rigorIndex` drops every row it
-      // cannot show a rigor block for, and a node's door must not depend on a
-      // field that has nothing to do with it.
-      const listed = documentOf(await bridge.listRuns({}))
-      // The drawing below is guarded, so dropping this read only skips a load
-      // nobody would see -- but `load` also makes the screen hold the plan, and
-      // a screen holding a generation nobody is on redraws it on the next visit
-      // under a read that has not answered yet. This guard is what keeps the
-      // screen's own state to the reads the operator is waiting for.
-      if (stale(mine)) return
-      const runs = listed.ok ? runIdsIn(listed.data) : []
-      const drawn = await graphScreenNow().load(decoded.value, runs)
+      // **The canvas is drawn from the plan alone.** The plan is the graph, and
+      // `runs ls` is the decoration a node's door comes from: a screen that
+      // waited for both before drawing anything took the sum of the two reads
+      // before it answered at all (the owner's report of 2026-10-31). What this
+      // session already read decorates it at once, and the fresh list follows in
+      // `decorateRuns` below.
+      const drawn = await graphScreenNow().load(decoded.value, graph.runs)
       if (stale(mine) || drawn === null) return
       // A read names no gesture: the keyboard stays where it was, and a reader
       // who is not in the graph is not pulled into it.
       redraw(drawn, stopNow())
+      graphViews.put(graphKey(), { document: decoded.value, runs: graph.runs }, Date.now())
+      void decorateRuns(mine, decoded.value)
     } catch {
       // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
       // is a throw this file did not expect -- `graphScreenNow` building its
@@ -3072,8 +3172,82 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     } finally {
       graph.inFlight = false
       const queued = graph.queued
+      const queuedToken = graph.queuedToken
       graph.queued = null
-      if (queued !== null) void readGraph(queued)
+      graph.queuedToken = null
+      if (queued !== null) void readGraph(queued, queuedToken)
+    }
+  }
+
+  /** graphKey is one installation's Graph entry in the session cache. The cache
+   * is per installation like every other one here, and `forgetLive` empties it
+   * with the rest: a plan of the old installation is never drawn under the new
+   * one's positions. */
+  const graphKey = (): string =>
+    cacheKey([railNow.find((row) => row.open)?.project ?? '', 'graph'])
+
+  /** markGraph puts the section's busy mark up over the picture on screen, for
+   * one token. It is a no-op when the panel holds no drawing of this Graph: the
+   * placeholder is already saying a read is running, and a mark over a refusal
+   * would be a mark over a sentence that is an answer. */
+  const markGraph = (token: number): void => {
+    const slot = graphSlot()
+    const tree = graphTree
+    if (slot === null || tree === null) return
+    graphRead.mark(token, tree, slot, GRAPH_BUSY)
+  }
+
+  /**
+   * stampGraph draws the cached view's line and its Refresh into the drawing's
+   * own slot: when this view was read, and the one control that reads it again.
+   * A figure that arrived without a read is never silently old (the owner's rule
+   * of 2026-10-31), and the Refresh is the door the operator's own doubt goes
+   * through.
+   */
+  const stampGraph = (at: number): void => {
+    const slot = graphSlot()
+    if (slot === null) return
+    const stamp = renderStamp(factory, at)
+    slot.append(stamp.root)
+    surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+      void readGraph(claim(), graphRead.start())
+    })
+  }
+
+  /**
+   * decorateRuns reads the console's run list -- `runs ls --since 24h`, the same
+   * read the Live screen's rigor join makes and **not** through that join, which
+   * drops every row it cannot show a rigor block for -- and attaches it to the
+   * picture already on screen.
+   *
+   * **It is the read that decorates and never the read that decides.** A graph
+   * whose canvas is up is a graph the operator can read; the list is what a
+   * node's door resolves four characters of a run id against, so it arrives
+   * after the plan and nothing waits for it. A refusal is not a refusal screen
+   * and not a reason to take the doors away: the list this session already holds
+   * stays, and a console that never read one draws nodes with no door and the
+   * sentence saying so (`GRAPH_NO_RUN_LISTED`).
+   */
+  const decorateRuns = async (mine: number, document: PlanStatusView): Promise<void> => {
+    if (graph.decorating) return
+    graph.decorating = true
+    try {
+      const listed = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
+      // The generation is checked **after** the read and never before the mark,
+      // which is not this read's: a decoration nobody is waiting for must not
+      // replace a view the operator has moved to.
+      if (stale(mine) || !listed.ok) return
+      const runs = runIdsIn(listed.data)
+      const drawn = graphScreenNow().decorate(runs)
+      if (stale(mine) || drawn === null) return
+      graph.runs = runs
+      redraw(drawn, stopNow())
+      graphViews.put(graphKey(), { document, runs }, Date.now())
+    } catch {
+      // As above: a bridge that threw where it should not have leaves the
+      // doors as they were, which is the same drawing a refused read makes.
+    } finally {
+      graph.decorating = false
     }
   }
 
@@ -3134,7 +3308,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const maybeRefreshGraph = (): void => {
     if (graph.inFlight) return
     if (Date.now() - graph.readAt < GRAPH_REFRESH_MS) return
-    void readGraph(claim())
+    // **No token**: the cadence is nobody's press, and a mark put up for it would
+    // flicker over a picture the operator is reading.
+    void readGraph(claim(), null)
   }
 
   /**
@@ -3153,10 +3329,29 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    */
   const showGraph = async (): Promise<void> => {
     const mine = claim()
+    const held = graphViews.get(graphKey())
+    if (held !== null) {
+      // **The cached view is drawn before anything is awaited**, which is the
+      // whole point of the cache: the plan this session already read, with the
+      // run list it was decorated with, laid out again by the engine's own cache
+      // without a message to the worker. It is stamped `as of HH:MM` with the
+      // door to read it again, and a view older than `CACHE_FRESH_MS` is read
+      // again at once **as well** -- never served silently.
+      const drawn = await graphScreenNow().load(held.value.document, held.value.runs)
+      if (stale(mine) || drawn === null) return
+      graph.runs = held.value.runs
+      redraw(drawn, stopNow())
+      stampGraph(held.at)
+      if (Date.now() - held.at >= CACHE_FRESH_MS) void readGraph(mine, graphRead.start())
+      return
+    }
     const last = graph.screen?.redraw() ?? null
     if (last !== null) redraw(last, stopNow())
     else placeReading('graph', mine)
-    await readGraph(mine)
+    // The placeholder is what says a read is running when this console has
+    // nothing to redraw, so the read carries no token: a mark over the sentence
+    // that already names the tab would be a second answer to the same click.
+    await readGraph(mine, null)
   }
 
   /** graphTree is the graph drawing the panel holds, so a redraw no gesture
@@ -3346,15 +3541,34 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const screen = graph.screen
     if (screen === null) return
 
+    /**
+     * chooseTab is the stream filter's one door, from the mouse and from the
+     * keyboard alike.
+     *
+     * **It answers in the frame it was pressed in.** A tab is a different graph
+     * and not a different drawing of one -- the screen asks the engine to lay it
+     * out again -- so the press takes the section's token and puts the mark up
+     * over the picture on screen before anything is awaited; the drawing that
+     * answers replaces it, and the mark comes down with the token. Two quick
+     * presses leave the second one's graph: an answer whose token is no longer
+     * the newest is dropped, whatever order the two arrive in.
+     */
+    const chooseTab = (tab: GraphTab): void => {
+      const token = graphRead.start()
+      markGraph(token)
+      void screen.narrow(tab).then((element) => {
+        if (!graphRead.settle(token)) return
+        redraw(element, SELECTED_TAB)
+      })
+    }
+
     const tabButtons = classed(drawn, 'graph-tab')
     for (const button of tabButtons) {
       const tab = tabOf(button.getAttribute('data-tab') ?? tabKey(null))
       const node = surface.nodeOf(button)
       if (tab !== screen.current.tab) {
         node.addEventListener('click', () => {
-          // A tab is a different graph, not a different drawing of one: the screen
-          // re-lays it out, so this door is the asynchronous one.
-          void screen.narrow(tab).then((element) => redraw(element, SELECTED_TAB))
+          chooseTab(tab)
         })
       }
       // The tablist's keys (design section 4.3, the navigation's own rule): Left
@@ -3370,9 +3584,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // The tab the screen draws is the one to focus, not the tab that was
         // asked for: a stream this document no longer carries falls back to All,
         // and the ring belongs on the tab that is showing.
-        void screen.narrow(tabOf(wanted.getAttribute('data-tab') ?? tabKey(null))).then((element) =>
-          redraw(element, SELECTED_TAB),
-        )
+        chooseTab(tabOf(wanted.getAttribute('data-tab') ?? tabKey(null)))
       })
     }
 
@@ -3424,7 +3636,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const refresh = classed(drawn, 'graph-refresh')[0]
     if (refresh !== undefined) {
       surface.nodeOf(refresh).addEventListener('click', () => {
-        void readGraph(claim())
+        // The token is taken **in the click**, before the read is started: it is
+        // what puts the mark up in this frame, and what keeps two quick presses
+        // from leaving the earlier one's answer on screen.
+        void readGraph(claim(), graphRead.start())
       })
     }
 
@@ -4432,6 +4647,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     graph.screen?.dispose()
     graph.screen = null
     graph.readAt = 0
+    // The plan and the run list the Graph cache holds are this installation's
+    // own: a plan of the old one is never drawn under the new one's positions.
+    graphViews.clear()
+    graph.runs = []
   }
 
   /** showIssue puts one installation's issue in the main area (owner's design

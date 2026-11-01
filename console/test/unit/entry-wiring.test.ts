@@ -3989,12 +3989,17 @@ describe('a read that lands after the operator left its tab', () => {
     // its worker in its constructor (`GraphLayoutClient`). This suite would
     // otherwise never get there: every case that draws a graph stubs the worker
     // in. Both halves are pinned here, the sentence and the generation.
-    const runs = holding()
+    //
+    // The throw is in the same turn as the plan it follows -- the canvas is drawn
+    // from the plan alone, so there is no second read between the two -- and what
+    // can land after the operator has left is therefore the plan itself: the
+    // first half pins the guard in front of the catch, which is the reason the
+    // sentence is not drawn for a generation that has passed.
+    const plan = holding()
     const { bridge } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
-        planStatus: () => planStatusReply(),
-        listRuns: () => runs.reply(),
+        planStatus: () => plan.reply(),
       },
     })
     const document = await boot(bridge, new FakeDocument())
@@ -4007,11 +4012,12 @@ describe('a read that lands after the operator left its tab', () => {
       'live',
     )
 
-    runs.release(runsReply())
+    plan.release(planStatusReply())
     await flush()
     expect(panelOf(document).children[0], 'a build nobody is waiting for replaced the view on screen').toBe(
       chosen,
     )
+    expect(holdsText(panelOf(document), READ_UNREADABLE)).toBe(false)
     expect(operationOf(document)).toBe(null)
 
     // The same throw under the operator's own tab: the console's sentence, and
@@ -4024,43 +4030,43 @@ describe('a read that lands after the operator left its tab', () => {
     expect(holdsText(panelOf(document), READ_UNREADABLE)).toBe(true)
   })
 
-  it('never lets a plan read from an earlier visit answer for the one that is out', async () => {
-    // The run list is the await the second guard stands behind, and the read it
-    // belongs to is finished with by the time it answers. Guard 3 drops that
-    // read's *drawing* -- but the screen keeps what a load installs, so without
-    // this guard the plan of a generation nobody is on is the picture the next
-    // visit redraws, under a read that has not answered yet.
+  it('draws the plan it already read the moment the operator comes back', async () => {
+    // The session cache, and the other half of answering in the click's frame: a
+    // plan this console has already read is drawn again the moment the tab comes
+    // back, **before** anything is awaited but the layout -- stamped `as of
+    // HH:MM` with the door to read it again beside it. The read the return makes
+    // is the layout engine's cache, not a second `plan status`.
     const plans = readQueue()
-    const runs = holding()
+    let reads = 0
     const { bridge } = graphBridge({
       subscribeLive: () => snapshotReply(liveFrame()),
-      planStatus: plans.reply,
-      listRuns: () => runs.reply(),
+      planStatus: () => {
+        reads += 1
+        return plans.reply()
+      },
     })
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'graph').click()
     await flush()
     plans.release(0, planStatusReply())
     await flush()
+    expect(
+      classed(panelOf(document), 'graph-canvas').length,
+      'the first read drew no canvas: the case proves nothing',
+    ).toBeGreaterThan(0)
 
     buttonFor(document, 'live').click()
     await flush()
-    runs.release(runsReply())
-    await flush()
-    expect(
-      classed(panelOf(document), 'graph-canvas'),
-      'the stale read drew after all: the case proves nothing',
-    ).toEqual([])
-
-    // The next visit has nothing of its own yet, and what the screen holds is
-    // what this guard kept out of it.
     buttonFor(document, 'graph').click()
     await flush()
     expect(
-      readingOf(document),
-      'the screen redrew a plan from a read nobody was waiting for',
-    ).toContain('Reading')
-    expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
+      classed(panelOf(document), 'graph-canvas').length,
+      'the return drew nothing from the cache',
+    ).toBeGreaterThan(0)
+    const stamp = classed(panelOf(document), 'console-stamp')[0]
+    expect(stamp, 'the cached view was drawn with no stamp').toBeDefined()
+    expect(textOf(stamp as FakeNode)).toContain('as of')
+    expect(reads, 'the return read the plan again instead of drawing what it held').toBe(1)
   })
 
   it('never mounts the Spend frame from a caps read that landed after the operator left', async () => {

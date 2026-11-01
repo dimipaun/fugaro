@@ -2736,6 +2736,17 @@ div[data-busy='true'] > *:not(.console-busy-slot) {
   opacity: 0.55;
 }
 
+/* An empty slot is not a box. The slot is the section's first child whether or
+ * not anything is being read -- it has to be there for the mark to have
+ * somewhere to go, and the Graph's drawings are built before anyone knows
+ * whether a control will be pressed -- and an empty element is still a flex item:
+ * in a column with a gap it would push the section down by one gap, for nothing.
+ * `display: none` takes it out of the layout entirely, so a section nobody is
+ * re-reading is laid out exactly as it was before the slot existed. */
+div.console-busy-slot:empty {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   span.console-busy-spinner {
     display: none;
