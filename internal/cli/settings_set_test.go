@@ -1106,3 +1106,93 @@ func TestSettingsSetWritesMode0600AndLeavesNoTemporaryBehind(t *testing.T) {
 		t.Errorf("the write left temporaries beside the file: %v", left)
 	}
 }
+
+// TestSettingsSetNoOpOnADocumentThatDoesNotReadBack: the reparse holds what a
+// write would produce, so a command asked for no change at all is not run
+// through it. The document below is one this Fugaro refuses to read back, and
+// the test shows that first: the same document asked for a real change is
+// refused by the reparse. The no-op then reports the no-op, and the file is
+// left as it was — a write that reports a file's own state as the fault of an
+// edit is worse than no answer, because the person is sent to fix a file
+// nothing asked to write.
+func TestSettingsSetNoOpOnADocumentThatDoesNotReadBack(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, "governance:\n  review_ratio: 1\nnonsense: 1\n")
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "2", "--layer", "project", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "would not read back") {
+		t.Fatalf("a change to a document that does not read back = %v, want the reparse refusal", err)
+	}
+
+	out, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "1", "--layer", "project", "--yes")
+	if err != nil {
+		t.Fatalf("a no-op on a document that does not read back: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "already reads what was asked for") {
+		t.Errorf("the no-op answers something else:\n%s", out)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the no-op changed the layer file:\n%s", got)
+	}
+
+	// The unset path holds the same order: a key that is not in the document
+	// is not a write, so the document's own state is not reported as this
+	// command's failure.
+	_, _, err = execute(t, "settings", "unset", "layer.governance.max_subagents", "--layer", "project", "--yes")
+	if err != nil {
+		t.Fatalf("unsetting a key the document does not carry: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the no-op unset changed the layer file:\n%s", got)
+	}
+}
+
+// TestSettingsValueInRendersASequenceTheWayTheListComparisonReadsOne: a
+// sequence is the model list, and it is rendered as the members
+// settingsListSubset splits on — not as fmt.Sprint's "[a b]", a form no parser
+// here reads, which would make every member of a written list read as absent
+// and so make every write a widening.
+func TestSettingsValueInRendersASequenceTheWayTheListComparisonReadsOne(t *testing.T) {
+	data := []byte("budget:\n  allowed_models:\n    - claude-opus-5-5\n    - claude-sonnet-5\n")
+	got := settingsValueIn(data, []string{"budget", "allowed_models"})
+	if got != "claude-opus-5-5,claude-sonnet-5" {
+		t.Fatalf("settingsValueIn = %q, want the members comma-separated", got)
+	}
+	if settingsLoosens("budget.allowed_models", got, "claude-opus-5-5") {
+		t.Error("a list narrower than the file's reads as a widening")
+	}
+	if !settingsLoosens("budget.allowed_models", got, "claude-opus-5-5,claude-haiku-4-5") {
+		t.Error("a list wider than the file's does not read as a widening")
+	}
+}
+
+// TestSettingsCeilingBaseIsNeverLooserThanTheFile: the base a ceiling write is
+// measured against is the tighter of the file's own value and what a run gets
+// today, and the file is always one of the two. Here no layer below resolves a
+// cap at all — the state a read that could not see a layer leaves behind — so
+// the file is the whole of the base: 60 raises it and is the typed form, 40
+// tightens it and is the ordinary write. A base that fell back to "no layer
+// resolves one" would let the first write through untyped.
+func TestSettingsCeilingBaseIsNeverLooserThanTheFile(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 50\n"))
+
+	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "60", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("--yes confirmed a cap that raises the file's own ceiling")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 50") {
+		t.Errorf("the refused write changed fugaro.yaml:\n%s", got)
+	}
+
+	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "40", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 40") {
+		t.Errorf("fugaro.yaml does not carry the tightened cap:\n%s", got)
+	}
+}

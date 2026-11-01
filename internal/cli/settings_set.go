@@ -448,6 +448,17 @@ func settingsValueIn(data []byte, path []string) string {
 		return strconv.Itoa(v)
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
+	case []any:
+		// A sequence is the model list, and it is rendered the one way the
+		// widening check reads a list — comma-separated members, which is what
+		// settingsListSubset splits on. fmt.Sprint's "[a b]" is a form no
+		// parser here reads: a comparison against it would call every member
+		// absent and so call every write a widening.
+		items := make([]string, 0, len(v))
+		for _, item := range v {
+			items = append(items, fmt.Sprint(item))
+		}
+		return strings.Join(items, ",")
 	default:
 		return fmt.Sprint(v)
 	}
@@ -552,6 +563,18 @@ func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) stri
 // settingsEffectiveCeiling is the value a run gets for row from the read's own
 // resolver, "" when no layer resolves one. The read is the offline one, so a
 // command that edits a file never waits on a bucket or a database for it.
+//
+// That read is enough for the decision it feeds. The merge only tightens
+// (internal/policy), so a layer it does not read can hold a value tighter than
+// the one answered here and never a looser one: what it returns is at or above
+// the ceiling a run really gets. The layers that would matter are read anyway —
+// the cached copy of the published project layer is readLayerCache's, and a
+// repository's fugaro.yaml tightens only that repository's own runs, so another
+// repository's file never decides the file being edited. The direction of the
+// residual blindness is the safe one: the caller builds its base from the
+// tighter of this value and the file's own, so the base is never looser than
+// the file, and a write that raises the file's ceiling is typed whatever this
+// read could not see.
 func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 	r, err := readSettings(ctx, settingsOptions{offline: true}, time.Now())
 	if err != nil {
@@ -603,8 +626,10 @@ func settingsListSubset(a, b string) bool {
 }
 
 // settingsTypedWrite reports whether this write is one D846 reserves for the
-// project's own hand, and the sentence saying why. mode is set, unset, add or
-// remove.
+// project's own hand, and the sentence saying why. mode is the edit being made:
+// set, unset, add or remove. `remove` takes one member out of a list, which
+// narrows it, so it is never the typed form and has no case below; `unset`
+// always is, for a ceiling, because it hands the decision to a looser layer.
 func settingsTypedWrite(key, oldValue, newValue, mode string) (bool, string) {
 	ceilingWhy := "this loosens a ceiling: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, and --yes does not stand in"
 	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, and --yes does not stand in"
@@ -699,15 +724,19 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		return userErr("%s: %v", key, err)
 	}
 	changed := yamledit.Changed(old, newData)
-	if mode == "remove" && changed && settingsListGoneOrEmpty(newData, target.keyPath) {
+	if !changed {
+		// Nothing to write and nothing to hold against the loader: a
+		// document this Fugaro cannot read back is not this edit's doing,
+		// and a no-op that refused on it would report the file's own state
+		// as the fault of a command that was asked for no change at all.
+		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
+		return nil
+	}
+	if mode == "remove" && settingsListGoneOrEmpty(newData, target.keyPath) {
 		return userErr("removing %s would leave %s an empty list, and an absent key and an empty list mean different things: remove the key with `fugaro settings unset %s --layer %s` instead", quoteWord(o.remove), key, key, target.layer)
 	}
 	if err := settingsReparse(target, newData); err != nil {
 		return err
-	}
-	if !changed {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
-		return nil
 	}
 	oldValue := settingsValueIn(old, target.keyPath)
 	if settingsCeilingKey(key) {
@@ -758,12 +787,15 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err != nil {
 		return userErr("%s: %v", key, err)
 	}
-	if err := settingsReparse(target, newData); err != nil {
-		return err
-	}
 	if !yamledit.Changed(old, newData) {
+		// The same order as the set path: a key that is not there is not a
+		// write, so a document that does not read back is reported when a
+		// write is actually asked for, not when nothing would change.
 		fmt.Fprintf(cmd.OutOrStdout(), "nothing to unset: %s is not set in %s\n", key, target.path)
 		return nil
+	}
+	if err := settingsReparse(target, newData); err != nil {
+		return err
 	}
 	typed, why := settingsTypedWrite(key, settingsValueIn(old, target.keyPath), "", "unset")
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
