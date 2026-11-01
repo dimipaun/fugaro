@@ -43,7 +43,7 @@ read-only check it runs at session start so the owner hears about a stale instal
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The one command, the user-scope install, the opt-in pin, doctor, the nudge, and the migration of a repository that carries an old pin |
-| [reconciliation.md](reconciliation.md) | Each claim against the code on `main`: what exists (F1–F10), what is missing or conflicts (F11–F22), the census of everything that names `fugaro upgrade`, and the decisions **D940–D953**. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Each claim against the code on `main`: what exists (F1–F10), what is missing, what conflicts and what the move costs (F11–F22), the census of everything that names `fugaro upgrade`, and the decisions **D940–D953**. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks U0–U7, the external dependency E1, each task's files, tests, red step and gates. **Nothing in it is approved** |
 
 ## The three rulings this is written to
@@ -93,4 +93,4 @@ this line's conclusion.
   other runs own, and the release that carries them is the one that carries E1.
 - **Not a promise that the pin disappears.** It stays, as an opt-in (**D940**), because a team that
   wants the skills *required* in a repository has no other way to say so (**D949**, and the trade-offs
-  in [spec.md](spec.md) §7).
+  in [spec.md](spec.md) §10).

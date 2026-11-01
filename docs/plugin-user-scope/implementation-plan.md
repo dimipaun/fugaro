@@ -16,7 +16,7 @@ back the other way is redrawn before it is written, not after.
 | **U4** | One command: `fugaro upgrade` is removed and `update` takes `--check` | U1, U2, U3 | D948, D950, F16, F18 |
 | **U5** | The migration of a repository carrying an old pin | U2, U4 | D943, F19 |
 | **U6** | The skills: the nudge, the `update` skill, and the `plugin/` gate that keeps gating | U3, U4 | D947, D953, F8 |
-| **U7** | The living documents, and the release that carries them | U1–U6 | the census's class 1, §4 |
+| **U7** | The living documents, and the release that carries them | U1–U6 | the census's class 1 ([reconciliation.md](reconciliation.md) §4a) |
 | **E1** | The release | U0–U7 | the notes, the summary line, and **no operator step** |
 
 **The order is a dependency, not a preference.** U1 must land before anything that assumes the plugin step
@@ -171,8 +171,8 @@ contract file to that run.
 
 **What it is.** `--check` moves onto `fugaro update` (read-only, local files only, exit 1 when stale);
 `--local` is gone; `fugaro upgrade` and its file stop existing; nothing of it is left as a tombstone. The
-census in [reconciliation.md](reconciliation.md) §4 is this task's checklist, and it re-runs the two greps
-rather than trusting the counts.
+census in [reconciliation.md](reconciliation.md) §4 and the red-test inventory in its §5 are this task's
+checklist, and it re-runs the two greps rather than trusting the counts.
 
 **One resolution this task must get right, and it is not obvious.** `internal/cli/docs_release_notes_test.go`
 pins `{"upgrade","local"}` and `{"upgrade",""}` against **`docs/releases/v0.9.0.md`, which may not be
