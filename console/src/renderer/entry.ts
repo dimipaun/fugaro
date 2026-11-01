@@ -2089,7 +2089,7 @@ export const VIEWS: readonly {
   // `ReducedView`, which would be a mode that hides a view no mode hides.
   { id: 'graph', label: 'Graph', view: null },
   { id: 'spend', label: 'Spend', view: 'spend' },
-  { id: 'projects', label: 'Projects', view: 'caps' },
+  { id: 'projects', label: 'Project', view: 'caps' },
   { id: 'coordinator', label: 'Coordinator', view: null },
 ])
 
