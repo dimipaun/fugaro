@@ -3138,9 +3138,9 @@ costs nothing to leave out; the N are the newest of every repository
 listed, and --mine, --batch, --state and --pr then narrow fewer rows than
 that, never more. 0, the default, reads every run of the window.
 
---state STATE lists only runs in that state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched),
-matched against the status --json carries: the `halted (run_cap)` cell is
---state halted. A run's state is in its result.json, so this filter
+--state STATE lists only runs in that state, matched against the status --json
+carries: the `halted (run_cap)` cell is --state halted, and --help lists the
+states the flag takes. A run's state is in its result.json, so this filter
 reads every run it filters -- it narrows the listing, never the reads.
 
 --pr N lists the runs on pull request N of one repository (the first run and

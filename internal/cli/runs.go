@@ -141,9 +141,9 @@ func newLsCmd() *cobra.Command {
 			"costs nothing to leave out; the N are the newest of every repository\n" +
 			"listed, and --mine, --batch, --state and --pr then narrow fewer rows than\n" +
 			"that, never more. 0, the default, reads every run of the window.\n\n" +
-			"--state STATE lists only runs in that state (" + strings.Join(lsStates, ", ") + "),\n" +
-			"matched against the status --json carries: the `halted (run_cap)` cell is\n" +
-			"--state halted. A run's state is in its result.json, so this filter\n" +
+			"--state STATE lists only runs in that state, matched against the status --json\n" +
+			"carries: the `halted (run_cap)` cell is --state halted, and --help lists the\n" +
+			"states the flag takes. A run's state is in its result.json, so this filter\n" +
 			"reads every run it filters -- it narrows the listing, never the reads.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
 			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
