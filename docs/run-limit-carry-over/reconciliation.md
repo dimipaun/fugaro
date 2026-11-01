@@ -1,6 +1,6 @@
 # Per-launch limits and a chain budget: reconciliation against the code
 
-Read against `origin/main` at `46e1b072` (the merge this branch carries) and the open pull requests of
+Read against `origin/main` at `385510e3` (the merge this branch carries) and the open pull requests of
 2026-11-01. Line numbers are that commit's. Each finding is **Exists**, **Missing** or **Conflicts**, with its consequence for the spec
 or the plan. **F1–F19** are the draft's; **F20–F22** are the ledger, the two ways a run record can be written,
 and the raise of an exhausted chain — all three read off the tree and settled by the owner's 2026-11-01

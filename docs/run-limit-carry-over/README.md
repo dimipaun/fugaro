@@ -12,7 +12,7 @@ a **chain limit exists only when it is set explicitly** at the root launch, and 
 chain**.
 
 **Asked by:** the owner, 2026-10-31. **Answered by:** the owner, 2026-11-01.
-**Reconciled against** `origin/main` at `46e1b072` and the open pull requests of 2026-11-01.
+**Reconciled against** `origin/main` at `385510e3` and the open pull requests of 2026-11-01.
 
 ## What it is
 
@@ -43,7 +43,7 @@ the run records, and the design states what that does and does not bound (spec Â
 **How a `:line` in this folder reads.** A citation names a file and a symbol, and the number is the
 symbol's **declaration** line â€” for a claim about a symbol's documentation it is the first line of the
 comment directly above it, and a range is the whole block the claim is about. Every number was read off
-`origin/main` at `46e1b072`; a line drifts the first time anyone edits the file above it, so the symbol, not
+`origin/main` at `385510e3`; a line drifts the first time anyone edits the file above it, so the symbol, not
 the number, is what a reader should search for. Every claim also states the fact in words, so a moved line
 never carries the claim alone.
 
