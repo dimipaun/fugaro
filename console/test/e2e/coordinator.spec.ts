@@ -58,7 +58,12 @@ import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
-import { COORDINATOR_THEMES } from '../../src/renderer/screens/coordinator'
+import {
+  COORDINATOR_BUSY,
+  COORDINATOR_NO_AGE_WORD,
+  COORDINATOR_SOURCE_LINE,
+  COORDINATOR_THEMES,
+} from '../../src/renderer/screens/coordinator'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { expectGolden, expectGrounded } from '../support/goldens'
@@ -424,5 +429,101 @@ test.describe('the Coordinator screen', () => {
     for (const file of present) {
       expect(file).toMatch(new RegExp(`^(${COORDINATOR_THEMES.join('|')})-(darwin|linux)\\.png$`))
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Coordinator view in the dashboard, reading through the stub CLI.
+// ---------------------------------------------------------------------------
+
+/** THE_PANEL is the dashboard's own panel, which is where this view is drawn:
+ * the describe above mounts a screen of its own into `#coordinator-mount`, so a
+ * bare `section.coordinator` would be ambiguous between the two. */
+const THE_PANEL = 'div.console-panel'
+
+/** THE_VIEW is the dashboard's Coordinator view, and the scope every reading
+ * below is taken in. */
+const THE_VIEW = `${THE_PANEL} section.coordinator`
+
+/** THE_BODY is the section the read belongs to: the element the busy mark is put
+ * on, and the one the summary and each repository's detail are filled into. */
+const THE_BODY = `${THE_VIEW} div.coordinator-body`
+
+/** tab is one button of the dashboard's navigation. */
+function tab(view: string): string {
+  return `nav.console-views button.console-view[data-view="${view}"]`
+}
+
+test.describe('the Coordinator view in the dashboard', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+
+  test.beforeAll(async () => {
+    // A window of its own, and **the first visit to this tab in it**: the second
+    // visit inside five minutes is served from the session cache and paints at
+    // once, which is the state the case below is not about.
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+  })
+
+  test('draws what is true before the answer in the frame the tab was opened in, and fills the body after', async () => {
+    // **The click's own frame.** The read behind this view is the longest of the
+    // three tabs -- about 724 KB on the owner's installation -- so a screen that
+    // waited for it answered a click with nothing at all (the owner's report of
+    // 2026-10-31). What is asserted here is read from the frame the click
+    // happened in, before any answer can have arrived: the header the screen can
+    // state without a document, the mark naming the read, the shape that is
+    // coming, and the absence of every record.
+    const inTheFrame = await page.evaluate(
+      ({ button: selector, view: viewSelector, body: bodySelector }) => {
+        document.querySelector<HTMLElement>(selector)?.click()
+        const view = document.querySelector(viewSelector)
+        const body = document.querySelector(bodySelector)
+        return {
+          mounted: view !== null,
+          // The two sentences drawn before the read answers: which command the
+          // panel is reading, and that the console claims no age for the view.
+          source: view?.querySelector('p.coordinator-source')?.textContent ?? null,
+          age: view?.querySelector('p.coordinator-age')?.textContent ?? null,
+          busy: body?.getAttribute('aria-busy') ?? null,
+          marked: body?.hasAttribute('data-busy') ?? null,
+          label: body?.querySelector('.console-busy-label')?.textContent ?? null,
+          spinner: body?.querySelector('.console-busy-spinner') !== null,
+          skeleton: body?.querySelector('.console-skeleton') !== null,
+          records: view?.querySelectorAll('li.coordinator-record').length ?? -1,
+        }
+      },
+      { button: tab('coordinator'), view: THE_VIEW, body: THE_BODY },
+    )
+    expect(inTheFrame).toEqual({
+      mounted: true,
+      source: COORDINATOR_SOURCE_LINE,
+      age: COORDINATOR_NO_AGE_WORD,
+      busy: 'true',
+      marked: true,
+      label: COORDINATOR_BUSY,
+      spinner: true,
+      skeleton: true,
+      records: 0,
+    })
+
+    // Then the body: the summary and the records the stub's committed document
+    // carries, filled into the same section, under the header that was already
+    // there.
+    await expect(page.locator(`${THE_VIEW} li.coordinator-record`).first()).toBeVisible()
+    await expect(page.locator(`${THE_VIEW} div.coordinator-detail`).first()).toBeVisible()
+    await expect(page.locator(THE_BODY)).not.toHaveAttribute('aria-busy', 'true')
+    await expect(page.locator(`${THE_VIEW} p.coordinator-source`)).toHaveText(COORDINATOR_SOURCE_LINE)
   })
 })
