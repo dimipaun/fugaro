@@ -17,9 +17,9 @@ import (
 // a repository that configures POC is reviewed exactly as it was — the stricter
 // direction — while its record says what it asked for. The mode does have
 // readers, and none of them is here: the per-mode budget defaults (T6.1), the
-// per-mode filing (T4.6) and the review round ceiling (T3.2) ask the mode the
-// run has reached, which is what makes the moments the one place that answer
-// comes from. The read is this
+// review round ceiling (T3.2) and the mode's findings policy (outcome.go, T3.1)
+// ask the mode the run has reached, which is what makes the moments the one
+// place that answer comes from. The read is this
 // file's own part: the mode's configuration comes from the base branch (D25),
 // read as the repository's default branch — the revision no file in the
 // checkout can name, which is what makes it the base rather than the branch

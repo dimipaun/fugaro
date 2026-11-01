@@ -41,9 +41,11 @@
         "required": ["round", "verdict", "findings"],
         "properties": {
           "round": { "type": "integer", "minimum": 1 },
-          "tier": { "enum": ["first", "senior"], "description": "first: the coder model's first-line review, never decides readiness; senior: the reviewer's. Absent in a run without a first line (senior)." },
+          "tier": { "enum": ["first", "senior", "adversarial"], "description": "first: the coder model's first-line review, never decides readiness; senior: the reviewer's; adversarial: level 3's, which reviews after the senior's, so its rejection bounces the run into the cheap loop and this level is not reviewed again (docs/review-levels-ab-jobmax D727). Absent in a run without a first line (senior)." },
           "verdict": { "type": "string" },
-          "findings": { "type": "integer", "minimum": 0 }
+          "findings": { "type": "integer", "minimum": 0 },
+          "head": { "type": "string", "minLength": 1, "description": "The commit this review read. A level approves one head, and the levels' heads can differ within a round: a level reviewed again after a fix has the later one, and a level the bounce skipped keeps the earlier one. Absent when the round recorded none, which is every record written before this field existed." },
+          "bounce": { "type": "integer", "minimum": 0, "description": "Which cheap loop this review followed, under review: {bounce: first_line} (docs/recipes.md section 1, internal/runstore's ReviewSummary.Bounce). Absent (0) for a review before any senior rejection and on every senior review, 1 for the first-line loop after the first senior rejection, 2 after the second, and so on. The catalog recipes `standard` and `test-and-fix` set the bounce, so a schema missing this field refuses the record of their own bounced runs." }
         }
       }
     },

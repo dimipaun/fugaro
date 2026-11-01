@@ -67,7 +67,7 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/credentials.tf google_secret_manager_secret_iam_member.credentials_bundle",
 		},
 	},
-	{id: "E8", keys: []string{"internal/cli/creds.go"}},
+	{id: "E8", keys: []string{"internal/cli/creds.go", "internal/cli/doctor_brokering.go"}},
 	{
 		id: "E9",
 		keys: []string{

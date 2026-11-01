@@ -504,6 +504,12 @@ describe('the packaging configuration the fuses belong to', () => {
     // is not shipped; and the two compiled files the app never loads -- the
     // packing hook (it needs a devDependency) and the fixture loader (tests and
     // the recorder) -- are excluded by name.
+    //
+    // Every include is a `.js` module, one of the `.html` documents, or the
+    // served `.css`: since the owner's ruling of 2026-10-31 the crash reporter's
+    // DSN is a compiled constant rather than an artifact beside the bundle, so
+    // the list carries no data file at all -- and no source map, or any other
+    // build output of `tsc`.
     expect(build.files).toEqual([
       'LICENSE.md',
       'THIRD_PARTY_NOTICES.md',
@@ -531,6 +537,32 @@ describe('the packaging configuration the fuses belong to', () => {
       'dist/bundle/installations.html',
       'dist/bundle/installations.js',
       'dist/bundle/refusal.html',
+      // The build-time tree Task 2.1b's fix round A keeps out (see
+      // test/unit/build-files.test.ts for the list and the probe behind it):
+      // `@sentry/node` carries `@sentry/bundler-plugins` for *other people's*
+      // bundler builds, and the console, which bundles nothing at run time, was
+      // packing that subpath's whole dependency tree into the asar.
+      '!node_modules/@jridgewell/sourcemap-codec/**',
+      '!node_modules/@oxc-parser/**',
+      '!node_modules/@oxc-project/**',
+      '!node_modules/@sentry/bundler-plugins/**',
+      '!node_modules/balanced-match/**',
+      '!node_modules/brace-expansion/**',
+      '!node_modules/dotenv/**',
+      '!node_modules/glob/**',
+      // `has-flag` and `supports-color` are the two the packer hoisted *out* of
+      // that excluded tree and into the archive's own `node_modules`, through a
+      // `require` inside a `try` that no lockfile walk can see (Task 2.1b fix
+      // round A): excluded by name with the rest of it.
+      '!node_modules/has-flag/**',
+      '!node_modules/lru-cache/**',
+      '!node_modules/magic-string/**',
+      '!node_modules/minimatch/**',
+      '!node_modules/minipass/**',
+      '!node_modules/oxc-parser/**',
+      '!node_modules/path-scurry/**',
+      '!node_modules/sentry/**',
+      '!node_modules/supports-color/**',
     ])
   })
 
@@ -540,12 +572,21 @@ describe('the packaging configuration the fuses belong to', () => {
     // matcher understands exactly the two shapes the list uses (a
     // `dir/sub/**/*.js` include and an exact path, either one negated), and
     // every pattern is asserted to be one of them, so a wider glob cannot slip
-    // past it.
+    // past it. The one shape added since is the negation that takes a
+    // *dependency tree* out (`!node_modules/.../**`, Task 2.1b fix round A): it
+    // names a directory rather than a file, so it is read as one and only when
+    // negated -- a positive `dir/**` would still widen the package and still
+    // fails here.
     const patterns = build.files ?? []
     for (const pattern of patterns) {
-      expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css)|dist\/bundle\/[A-Za-z-]+\.woff2|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/,
-      )
+      const excludesATree = /^!node_modules\/(?:[a-z][a-z.-]*|@[a-z][a-z.-]*(?:\/[a-z][a-z.-]*)?)\/\*\*$/.test(pattern)
+      expect(
+        excludesATree ||
+          /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css|json)|dist\/bundle\/[A-Za-z-]+\.woff2|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/.test(
+            pattern,
+          ),
+        `${pattern} is not a shape this test can read`,
+      ).toBe(true)
     }
     const ships = (file: string): boolean => {
       let shipped = false
@@ -590,6 +631,9 @@ describe('the packaging configuration the fuses belong to', () => {
     ]) {
       expect(ships(dead), `${dead} must not ship`).toBe(false)
     }
+    // And nothing in the packed bundle is a data file either: the DSN is a
+    // compiled constant, so there is no `.json` for the main process to read.
+    expect(ships('dist/main/crash-dsn.json'), 'the DSN is not a shipped artifact').toBe(false)
   })
 
   it('ships no source map', () => {
@@ -597,8 +641,18 @@ describe('the packaging configuration the fuses belong to', () => {
     // the asar is a full copy of the sources with a pointer to it. Every
     // include in the list ends in `.js`, names one of the `.html` documents, or
     // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
-    // pattern that started to would fail here.
-    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css|md|woff2)$/)
+    // pattern that started to would fail here -- and since the owner's ruling of
+    // 2026-10-31 no entry is anything else. The `!node_modules/.../**` entries name a package's
+    // whole directory rather than a file and are asserted excluded, not
+    // included, so they take no part in this and are skipped rather than read
+    // as if they ended in nothing.
+    for (const pattern of build.files ?? []) {
+      if (pattern.startsWith('!node_modules/')) {
+        expect(pattern).toMatch(/\/\*\*$/)
+        continue
+      }
+      expect(pattern).toMatch(/\.(?:js|html|css|json|md|woff2)$/)
+    }
   })
 
   it('publishes nowhere: publish is null, not merely absent', () => {
@@ -606,8 +660,9 @@ describe('the packaging configuration the fuses belong to', () => {
     // GITHUB_TOKEN in the environment electron-builder infers a GitHub
     // provider, writes app-update.yml into the bundle and uploads on a CI tag.
     // `null` turns the inference off; the `--publish never` asserted on the
-    // script below turns the upload off from the other side. Task 4.4 is the
-    // auto-update task, and the feed is its decision.
+    // script below turns the upload off from the other side. Task 4.4's
+    // auto-update is unaffected: it sets its own feed URL at runtime, so
+    // publishing stays off and the feed stays this file's answer.
     expect(Object.hasOwn(build, 'publish')).toBe(true)
     expect(build.publish).toBeNull()
   })
@@ -774,7 +829,16 @@ describe('the packaging configuration the fuses belong to', () => {
     // put back what the README's `env -i` packaging step keeps out -- and, if it
     // held secrets, put them in a file in the checkout.
     expect(existsSync(join(CONSOLE_DIR, 'electron-builder.env'))).toBe(false)
-    for (const pattern of build.files ?? []) expect(pattern).not.toMatch(/\.env$|^\*|\/\*\*$/)
+    for (const pattern of build.files ?? []) {
+      // A pattern that ends in `/**` takes a whole tree into the package; the
+      // one exception is a negation, which takes one out (`!node_modules/...`,
+      // Task 2.1b's fix round A), and that shape is asserted separately.
+      if (pattern.startsWith('!node_modules/')) {
+        expect(pattern).toMatch(/^!node_modules\/[^\s]*\/\*\*$/)
+        continue
+      }
+      expect(pattern).not.toMatch(/\.env$|^\*|\/\*\*$/)
+    }
   })
 
   it('rebuilds no native module: the console has none, and a rebuild runs install scripts', () => {

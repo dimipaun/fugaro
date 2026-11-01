@@ -117,6 +117,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/repourl"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // Policy is the shared, readable node, decoded as JSON.
@@ -233,6 +234,24 @@ type Policy struct {
 	// run of the project is held to one list.
 	BitbucketAPIRoots []string `json:"bitbucket_api_roots,omitempty"`
 
+	// ReviewFloor is the owner's review-level floor (D722, G1): per rigor
+	// mode, the levels a run of that mode must run, whatever a lower layer
+	// asks for. It belongs to this node for the reason every member does —
+	// the owner writes it and the runner fails closed on it — and for a
+	// sharper one: the floor exists to stop a launcher turning review off,
+	// and the shared file is writable by any launcher, so a floor there could
+	// be dropped by the very launcher it is meant to bind
+	// (docs/design/bucket-iam.md §10 L1, L2). `fugaro project policy publish`
+	// writes it from the owner's project config, and the runner reads the
+	// node at bootstrap and merges the floor as a union (internal/policy's
+	// Merge): a lower layer can add a level and never remove one.
+	//
+	// An absent member and a written empty one are both "no floor": the
+	// publisher writes nothing at all for a project that sets none, so the
+	// node of such a project is byte for byte what it was before this member
+	// existed.
+	ReviewFloor map[rigor.Mode][]policy.Level `json:"review_floor,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -253,6 +272,7 @@ var knownTopLevelKeys = map[string]bool{
 	"profiles": true, "clone_urls": true, "accounts": true,
 	"credentials": true, "base_branch": true,
 	"bitbucket_token": true, "bitbucket_api_roots": true,
+	"review_floor": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -871,9 +891,16 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		if err := json.Unmarshal(rraw, &p.BitbucketAPIRoots); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: bitbucket_api_roots: %w", err)
 		}
-		if err := validBitbucketAPIRoots(p.BitbucketAPIRoots); err != nil {
+		if err := ValidBitbucketAPIRoots(p.BitbucketAPIRoots); err != nil {
 			return nil, true, err
 		}
+	}
+	if fraw, ok := doc["review_floor"]; ok && !IsNull(fraw) {
+		floor, err := decodeReviewFloor(fraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.ReviewFloor = floor
 	}
 	if craw, ok := doc["clone_urls"]; ok && !IsNull(craw) {
 		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
@@ -901,6 +928,42 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 	return &p, true, nil
+}
+
+// decodeReviewFloor reads the owner's review-level floor (Policy.ReviewFloor)
+// from the node.
+//
+// What the members *mean* is policy.ParseFloor's rule, the same one the
+// operator's config file is held to: a mode that is not one of rigor's, a
+// level outside l1/l2/l3, a level listed twice and a mode with no level in it
+// are refused rather than dropped — a dropped level is a run that reviews less
+// than the owner required, which is the one direction this key must never
+// move, and the node is hand-writable. What is left here is the document's own
+// shape, which the config loader has no equivalent of: the member must be an
+// object whose keys are named once (encoding/json keeps the last value it
+// reads, so a mode named twice would leave which floor a run got up to the
+// order the keys were written in).
+//
+// A block that names no mode at all is no floor: the publisher writes nothing
+// for a project that sets none, and a written empty object — which is how an
+// operator takes a published floor away on purpose — reads as the same answer.
+func decodeReviewFloor(raw json.RawMessage) (map[rigor.Mode][]policy.Level, error) {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: review_floor: %w", err)
+	}
+	if err := checkNoDuplicateNames("projectpolicy: review_floor", names); err != nil {
+		return nil, err
+	}
+	var written map[string][]string
+	if err := json.Unmarshal(raw, &written); err != nil {
+		return nil, fmt.Errorf("projectpolicy: review_floor: %w", err)
+	}
+	floor, err := policy.ParseFloor(written)
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: %w", err)
+	}
+	return floor, nil
 }
 
 // validCloneURLs checks the clone_urls block, entry by entry: each key a

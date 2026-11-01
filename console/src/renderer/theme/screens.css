@@ -99,7 +99,6 @@ h2.projects-title {
   font-weight: var(--weight-semibold);
 }
 
-span.projects-repos-label,
 span.degraded-mode-word,
 span.spend-persons-word {
   font-size: var(--font-size-xs);
@@ -121,7 +120,6 @@ p.spend-person-note,
 p.spend-notice,
 p.projects-because,
 p.projects-note,
-p.projects-jobs-note,
 p.projects-accounts-note,
 p.projects-warning,
 p.run-warning,
@@ -193,8 +191,6 @@ p.live-review-capped {
 li.live-review-row,
 li.spend-person,
 li.spend-cap-repo,
-li.projects-cap,
-li.projects-job,
 li.projects-secret,
 li.projects-account,
 li.degraded-run {
@@ -208,11 +204,7 @@ li.degraded-run {
 }
 
 ol.spend-cap-repos,
-ol.projects-cap-list,
-ol.projects-job-list,
-ol.projects-secret-list,
-ul.projects-enrolled-list,
-ul.projects-seen-list,
+ul.projects-secret-list,
 ul.projects-account-list,
 ol.degraded-runs,
 section.spend-caps,
@@ -247,19 +239,10 @@ span.live-review-repo,
 span.live-review-number,
 span.live-review-url,
 span.live-repo-name,
-span.projects-job-repo,
-span.projects-job-run,
-span.projects-job-workflow,
-span.projects-job-created,
-li.projects-enrolled-repo,
-li.projects-seen-repo,
-span.projects-only-seen-repo,
-span.projects-only-enrolled-repo,
+li.projects-repo-enrolled,
 span.projects-secret-name,
 span.projects-accounts-repo,
-span.projects-cap-repo,
 span.projects-kill-repo,
-span.projects-job-model,
 span.spend-key,
 td.spend-model,
 span.spend-person-user,
@@ -655,6 +638,13 @@ section.spend-caps[data-available='false'] {
  * `data-state` of `read`, `unavailable` or `not-built` (design section 2.5).
  * A panel in any state but `read` has no body at all, so a rule that painted an
  * empty body would paint nothing; what it has is the panel's own sentence.
+ *
+ * **The panels' contents are the redesign's now** (console redesign, step 5):
+ * the caps and the jobs are tables, the switches are rows with a state word,
+ * the repositories are three cards, and the two cards the CLI has no command
+ * for are dashed. Their rules live in `flight-deck.css` against the hooks they
+ * draw, and what is left here is the panel's box and the state its left rule
+ * carries.
  */
 
 header.projects-header {
@@ -668,24 +658,15 @@ span.projects-mode,
 span.projects-day,
 span.projects-source,
 span.projects-count,
-span.projects-cap-scope,
 span.projects-cap-source,
 span.projects-kill-scope,
-span.projects-jobs-total-of,
 span.projects-secret-scope,
 span.projects-secret-latest,
 span.projects-secret-label,
 span.projects-secret-label-key,
 span.projects-secret-label-value,
 span.projects-secret-allowed,
-span.projects-job-status,
-span.projects-job-stage,
-span.projects-job-by,
-span.projects-job-started-by,
-span.projects-cap-repo,
 span.projects-accounts-repo,
-span.projects-only-seen-repo,
-span.projects-only-enrolled-repo,
 span.projects-kill-repo {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -697,8 +678,7 @@ span.projects-kill-repo {
  * and the paragraphs of sections 2.3 and 2.5 are the decision. A rule that painted `POC` one way
  * and `Hotfix` another would be inventing a meaning, and section 3.5's table has
  * no mark to pair it with. */
-span.live-run-mode,
-span.projects-job-mode {
+span.live-run-mode {
   padding: 0 var(--space-2xs);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -709,15 +689,14 @@ span.projects-job-mode {
 
 /* A panel that is not `read` is not an empty region: it draws its state and the
  * sentence that explains it (`projects-because`), and `not-built` is the
- * design's own honesty rule in the DOM. */
+ * design's own honesty rule in the DOM. The `not-built` card itself -- the dash
+ * and the sunken ground that say "a panel will be here" -- is
+ * `flight-deck.css`'s now: this rule painted a solid left edge for a state the
+ * redesign draws as a dashed box, and two rules for one state is one rule too
+ * many. */
 section.projects-panel[data-state='unavailable'] {
   color: var(--text-muted);
   border-left: 3px solid var(--stale);
-}
-
-section.projects-panel[data-state='not-built'] {
-  color: var(--text-muted);
-  border-left: 3px solid var(--warn);
 }
 
 /* A panel the CLI could `read` is the normal panel, and its left rule is
@@ -735,33 +714,15 @@ section.projects-panel[data-state='read'] {
   border-left: 3px solid var(--accent);
 }
 
-/* The kill panel and a killed repository: `KILLED by <who> <when> "<reason>"`,
- * the word and the tone together.
- *
- * **The row is marked by the banner it holds.** `data-killed` is the
- * **banner's** attribute and not the row's (§2.5's `data-*` line, and §3.5's
- * states table: "the attribute is on the banner, and on Live's repository
- * block itself" -- Live's `section.live-repo` carries it, Projects' row does not),
- * so a rule spelling the row's own border `div.projects-kill-row[data-killed]`
- * selects nothing. `:has()` is the one selector that can see the banner inside,
- * and a row that *has* one is exactly a killed repository: the row without a
- * kill holds the words `not killed` instead. */
-div.projects-kill-row:has(div.projects-kill) {
-  border-left: 3px solid var(--halted);
-}
-
-span.projects-kill-none {
-  color: var(--text-muted);
-}
-
-/* An enrolled repository that is only seen, and a seen repository that is only
- * enrolled: two lists and the sentence that says which is which. */
-p.projects-only-seen,
-p.projects-only-enrolled {
-  margin-top: var(--space-2xs);
-  color: var(--warn);
-  font-size: var(--font-size-base);
-}
+/* The kill panel and a killed repository -- `KILLED by <who> <when> "<reason>"`,
+ * the word and the tone together -- are `flight-deck.css`'s now, against
+ * `li.projects-kill-row[data-killed='true']` and the banner's own
+ * `div.projects-kill` (console redesign, step 5). The rule that stood here
+ * selected the row through `:has()` because the banner was the only element
+ * carrying the attribute; the row carries it itself now, so the selector names
+ * the row. `span.projects-kill-none` and the `p.projects-only-*` sentences are
+ * gone with the markup that drew them: a live row says `live` in its state
+ * cell, and the repository list is one card. */
 
 /* ---- Run detail -----------------------------------------------------------
  *
@@ -1176,99 +1137,36 @@ main p {
  * is a percentage in an attribute). What the rules below paint is colour, weight
  * and dashes.
  *
+ * **The picture's own rules are not here** (console redesign, step 6a), and
+ * neither is the screen's chrome (step 6b). The canvas's ground, the stream
+ * bands, the release box, the edges, the cards, the heading, the stream filter
+ * and the three controls beside it, the stage's inspector and the legend are
+ * painted in `flight-deck.css`, in the redesign's tokens; the markup they meet is
+ * the same markup this file used to draw them for, so there is one rule per hook
+ * and it is in one place. What is left here is the **chrome** the redesign has not
+ * restyled yet -- the not-shown sentence, the chips of the finished
+ * releases and the list -- the screen's motion, whose keyframes and both arms stay
+ * in one block in this file (design section 3.9's amendment, and
+ * `graph-motion.test.ts` reads them here), and the theme's one `forced-colors` arm,
+ * which is one list for every screen of the console.
+ *
  * **No state is carried by colour alone** (design section 3.5). Every state word
- * is an element in the DOM beside the tone -- `implementing`, `in review`,
- * `fixing`, `queued`, `waiting`, `halted`, `blocked`, `ready`, `done` -- and the
- * two edge facts a reader scans for are shapes rather than hues: the stroke
- * **width** of a critical edge and the **dashes** of a blocked task's box, both
- * of which survive `forced-colors` because neither is a colour (design section
- * 4.4).
+ * is an element in the DOM beside the tone, and the two facts a reader scans for
+ * are shapes rather than hues: the stroke **width** of a critical edge and the
+ * **dashes** of a blocked task's box, both of which survive `forced-colors`
+ * because neither is a colour (design section 4.4).
  *
- * **The tones are the state tokens' roles and not a second palette.** A task
- * being worked on is `--accent`, the token section 3.2 gives to structure; one
- * that cannot move is `--warn`, which is attention; a halt is `--halted`, whose
- * role cell is "a deliberate stop"; a finished task is `--text-muted`, because
- * it is no longer a reading anyone acts on. `--ok` is **not** used: the design
- * licenses that token to exactly two readings, and a finished task is neither
- * (`theme-tokens.test.ts`'s `OK_SELECTORS`).
- *
- * **The faint cross-release edge is faint by its width.** The palette's one dim
- * tone is `--border`, and the design licenses it to a `--rule-width` hairline
- * and to nothing else -- a stroke is not a hairline, and a rule that reached for
- * it here would fail the `--border`-is-decorative scan. So the three edge kinds
- * are 1, 2 and 3 px, of `--border-strong`, `--accent` and `--text`: a scale a
- * reader with no colour at all still reads, which is the same defence the dashes
- * above are.
- *
- * **Three things here move, and they are the design's three.** The graph is the
- * one screen the design's section 3.9 amendment lets animate: a comet on a
- * running card, a pulse on a critical one and a flow along a critical edge, each
- * drawn by the motion block below with its own static style under the graph's own
- * `prefers-reduced-motion` and `forced-colors` arms. Every other state here, and
- * every figure on every screen, stays still.
+ * **Three things move, and they are the design's three.** The graph is the one
+ * screen the design's section 3.9 amendment lets animate: a comet on a running
+ * card, a pulse on a critical one and a flow along a critical edge, each drawn by
+ * the motion block below with its own static style under the graph's own
+ * `prefers-reduced-motion` and `forced-colors` arms. Every other screen stays
+ * still, and so does every figure (§3.9).
  */
 
 section.graph {
   display: block;
   color: var(--text);
-}
-
-header.graph-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-sm);
-}
-
-h1.graph-title {
-  font-size: var(--font-size-lg);
-  font-weight: var(--weight-semibold);
-  margin: 0 0 var(--space-md);
-}
-
-/* The tabs are a tablist: `aria-selected` is the machine-readable half and the
- * accent is the drawn one, the treatment the navigation's own buttons get in
- * `base.css` (design sections 2.1 and 4.3). */
-nav.graph-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2xs);
-}
-
-button.graph-tab {
-  padding: var(--space-2xs) var(--space-xs);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  transition: color var(--duration-fast) var(--ease-out);
-}
-
-button.graph-tab:hover {
-  color: var(--text);
-}
-
-button.graph-tab[aria-selected='true'] {
-  color: var(--accent-ink);
-  border-color: var(--accent);
-  font-weight: var(--weight-medium);
-}
-
-div.graph-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2xs);
-  margin-left: auto;
-}
-
-button.graph-view,
-button.graph-refresh,
-button.graph-fit {
-  padding: var(--space-2xs) var(--space-xs);
-  font-size: var(--font-size-sm);
-  color: var(--text);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
 }
 
 /* A bound that dropped tasks says so in the console's own sentence; the tone is
@@ -1372,123 +1270,6 @@ span.graph-chip-task-title {
   color: var(--text);
 }
 
-/* The canvas: an `svg` with a `viewBox` and no width or height of its own, so it
- * takes the panel's width and the picture's ratio decides its height. */
-svg.graph-canvas {
-  display: block;
-  width: 100%;
-  height: auto;
-  background: var(--surface);
-  border: var(--rule-width) solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-/* A release's box is a frame drawn *around* its tasks, so it is an outline and
- * never a fill: filling it would put a surface under the cards' own surfaces. */
-svg .graph-release-box {
-  fill: none;
-  stroke: var(--border-strong);
-  stroke-width: 1;
-}
-
-svg .graph-release-heading,
-svg .graph-release-bar,
-svg .graph-release-stream,
-svg .graph-release-version {
-  fill: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-svg .graph-release-name {
-  fill: var(--text);
-}
-
-/* The edges, in the order the widths are read: a cross-release edge is the
- * thinnest, a plain one is 2 px, the critical path is 3 px of the accent, and a
- * selected task's edges are 3 px of the reading tone -- the loudest line on the
- * canvas, because the selection is a question and its answer is those edges. */
-svg .graph-edge-path {
-  fill: none;
-  stroke: var(--border-strong);
-  stroke-width: 2;
-}
-
-svg .graph-edge[data-cross='true'] .graph-edge-path {
-  stroke-width: 1;
-}
-
-svg .graph-edge[data-critical='true'] .graph-edge-path {
-  stroke: var(--accent);
-  stroke-width: 3;
-}
-
-svg .graph-edge[data-selected='true'] .graph-edge-path {
-  stroke: var(--text);
-  stroke-width: 3;
-}
-
-/* The tasks. A card is a surface with a boundary, and the boundary carries the
- * state: `data-state` is the node's first word, so a rule keyed on it draws the
- * same state the word beside it spells. A blocked task is dashed as well as
- * amber, because "this one is not going to move" is the one state a reader needs
- * at a glance, and a done one goes quiet rather than green. */
-svg .graph-node-box {
-  fill: var(--surface);
-  stroke: var(--border-strong);
-  stroke-width: 1;
-}
-
-svg .graph-node[data-state='implementing'] .graph-node-box,
-svg .graph-node[data-state='in review'] .graph-node-box,
-svg .graph-node[data-state='fixing'] .graph-node-box {
-  stroke: var(--accent);
-}
-
-svg .graph-node[data-state='blocked'] .graph-node-box {
-  stroke: var(--warn);
-  stroke-dasharray: 6 4;
-}
-
-svg .graph-node[data-state='halted'] .graph-node-box {
-  stroke: var(--halted);
-}
-
-svg .graph-node[data-state='done'] .graph-node-box {
-  stroke: var(--text-muted);
-}
-
-/* A done card goes quiet in its **text** as well as its boundary, which is the
- * second channel the row below keeps: a reader who cannot tell the muted stroke
- * from the strong one still reads a done task from the title, and a reader who
- * can reads it twice. */
-svg .graph-node[data-state='done'] .graph-node-title {
-  fill: var(--text-muted);
-}
-
-/* The selected card's boundary thickens and does not change tone: the tone is
- * the state's, and a selection that recoloured it would hide the state. */
-svg .graph-node[data-selected='true'] .graph-node-box {
-  stroke-width: 2;
-}
-
-svg .graph-node-title {
-  fill: var(--text);
-  font-size: var(--font-size-sm);
-}
-
-svg .graph-node-word,
-svg .graph-node-pr,
-svg .graph-node-run,
-svg .graph-node-mark {
-  fill: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-svg .graph-node-run {
-  font-family: var(--font-mono);
-}
-
 /* ---- The graph's motion (design section 3.9's amendment of 2026-10-24) -----
  *
  * Three things move on this screen and no more: a **comet** that travels a
@@ -1525,7 +1306,7 @@ svg .graph-node-run {
  * 0`, is the static style both arms below are left with. */
 section.graph svg .graph-node-comet {
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--live);
   stroke-width: 3;
   stroke-dasharray: 12 88;
   stroke-dashoffset: 0;
@@ -1538,14 +1319,15 @@ section.graph svg .graph-node[data-state='queued'] .graph-node-comet {
   animation: graph-comet 2.6s linear infinite;
 }
 
-/* The glow is a critical card's own second channel: a filled wash of `--accent`,
- * the tone the critical path is drawn in, behind a card whose boundary keeps the
- * state it was already carrying -- amber for blocked, muted for done. It is
- * blurred so its edge is light rather than a line, and it is drawn before the card
- * so only the spill shows: a glow is not a border. Its resting opacity is what the
+/* The glow is a critical card's own second channel: a filled wash of `--live`,
+ * the tone the critical path and the running card's boundary are drawn in,
+ * behind a card whose boundary keeps the state it was already carrying -- the
+ * `--decor` dash of a blocked one, the neutral boundary of a done. It is blurred
+ * so its edge is light rather than a line, and it is drawn before the card so
+ * only the spill shows: a glow is not a border. Its resting opacity is what the
  * two arms below are left with. */
 section.graph svg .graph-node-pulse {
-  fill: var(--accent);
+  fill: var(--live);
   filter: blur(4px);
   opacity: 0.45;
 }
@@ -2022,7 +1804,6 @@ span.coordinator-unread-retry {
     max-width: 50%;
   }
 
-  li.projects-job,
   li.run-log-line {
     gap: var(--space-2xs) var(--space-xs);
   }
@@ -2073,12 +1854,14 @@ span.coordinator-unread-retry {
   section.live-repo,
   li.projects-secret,
   li.projects-account,
+  li.projects-kill-row,
   tr.live-run,
   div.live-runs,
   table.live-table,
   tr.spend-row,
-  li.projects-cap,
-  li.projects-job,
+  tr.projects-cap,
+  table.projects-cap-table,
+  article.projects-repo-card,
   li.degraded-run,
   li.run-stage,
   li.run-spend-stage,
@@ -2146,7 +1929,6 @@ span.coordinator-unread-retry {
   span.live-run-auth,
   span.live-run-contradiction,
   span.live-run-mode,
-  span.projects-job-mode,
   div.run-rigor,
   span.run-rigor-word,
   span.run-rigor-mode,
@@ -2193,25 +1975,23 @@ span.coordinator-unread-retry {
   p.run-replay-axis,
   p.run-replay-no-span,
   p.run-replay-window-line,
-  span.projects-cap-scope,
   span.projects-cap-source,
   span.projects-kill-scope,
-  span.projects-jobs-total-of,
+  span.projects-kill-state,
+  span.projects-state,
+  span.projects-reserve-word,
   span.projects-secret-scope,
   span.projects-secret-latest,
   span.projects-secret-label,
   span.projects-secret-label-key,
   span.projects-secret-label-value,
   span.projects-secret-allowed,
-  span.projects-job-status,
-  span.projects-job-stage,
-  span.projects-job-by,
-  span.projects-job-started-by,
-  span.projects-cap-repo,
+  span.projects-secret-bound-word,
   span.projects-accounts-repo,
-  span.projects-only-seen-repo,
-  span.projects-only-enrolled-repo,
   span.projects-kill-repo,
+  p.projects-repo-card-none,
+  p.projects-account-none,
+  p.projects-secrets-managed,
   span.spend-persons-state,
   span.spend-persons-word,
   p.live-note,
@@ -2224,11 +2004,8 @@ span.coordinator-unread-retry {
   p.spend-notice,
   p.projects-because,
   p.projects-note,
-  p.projects-jobs-note,
   p.projects-accounts-note,
   p.projects-warning,
-  p.projects-only-seen,
-  p.projects-only-enrolled,
   p.run-warning,
   p.run-log-note,
   p.run-log-refused,
@@ -2312,11 +2089,14 @@ span.coordinator-unread-retry {
 
   tr.live-run,
   tr.spend-row,
+  tr.projects-cap,
   li.spend-person,
-  li.projects-cap,
-  li.projects-job,
   li.projects-secret,
   li.projects-account,
+  li.projects-kill-row,
+  article.projects-repo-card,
+  table.projects-cap-table,
+  button.projects-kill-action,
   li.degraded-run,
   li.run-stage,
   li.run-spend-stage,
@@ -2337,12 +2117,11 @@ span.coordinator-unread-retry {
   /* The rigor chips are boundaries and nothing else, so the boundary is what
    * has to survive the author's colours going away. */
   span.live-run-mode,
-  span.projects-job-mode,
   span.run-rigor-area,
   section.projects-panel[data-state='read'],
   section.projects-panel[data-state='unavailable'],
   section.projects-panel[data-state='not-built'],
-  div.projects-kill-row:has(div.projects-kill),
+  li.projects-kill-row[data-killed='true'],
   li.spend-dim-unknown[data-dimension='unknown'],
   div.spend-cap-limit[data-limit='max_reserve'],
   section.console-unavailable[data-kind='refused'],
@@ -2366,39 +2145,129 @@ span.coordinator-unread-retry {
    * width, its dashes and its presence. The tones go to `CanvasText` and the
    * fills to `Canvas`, the same pair every row above gets. `stroke-width` and
    * `stroke-dasharray` are not forced by the system, so the dashed blocked task
-   * and the 1/2/3 px edge scale survive the author's colours going away -- which
-   * is design section 4.4's rule 1: a state keeps its word, and here its shape
-   * as well. */
-  svg.graph-canvas {
+   * and the edge scale survive the author's colours going away -- which is
+   * design section 4.4's rule 1: a state keeps its word, and here its shape as
+   * well.
+   *
+   * **Every graph selector below carries `section.graph`, and that is
+   * load-bearing.** The rule is about the graph's own rules and not about this
+   * whole arm: what follows is the graph's block, and the arm's rules for the
+   * other screens above are written against their own screens' selectors.
+   * A media query adds no specificity: a rule in this arm only overrides the
+   * rule it restates where its selector is at least as specific as that rule,
+   * and the graph's rules are written `section.graph svg ...` -- in
+   * flight-deck.css, in the motion block above, and in the list's own rules
+   * below. An arm rule written `svg .graph-edge[data-selected='true']
+   * .graph-edge-path` is one class short of the rule it restates, so the
+   * reading tone won where this arm's `Highlight` was meant to, taking away the
+   * one mark this mode has no colour left to draw. `graph-motion.test.ts` holds
+   * every graph selector in this arm to that. */
+  section.graph svg.graph-canvas {
     background: Canvas;
     border-color: CanvasText;
   }
 
-  svg .graph-release-box,
-  svg .graph-node-box {
+  /* The band is a background in this mode as well, so its fill is the ground's
+   * own colour and not `CanvasText`, which is this file's word for a mark. Its
+   * boundary is the one stroke here that is **not** `CanvasText`: both fills are
+   * `Canvas` in this mode, so a band drawn in the reading tone is a card the size
+   * of a row, and the band is the wash and the hairline at the lowest contrast
+   * the theme has (its `--line-subtle`). `GrayText` is this file's own word for
+   * "not the primary reading", which is the tone the burn-rate figures take when
+   * a figure was a fill. */
+  section.graph svg .graph-band-box {
+    fill: Canvas;
+    stroke: GrayText;
+  }
+
+  section.graph svg .graph-band-label {
+    fill: CanvasText;
+  }
+
+  /* The card is a raised surface, so it takes the ground's own colour, and the
+   * release's box is an **outline and never a fill** -- the rule in
+   * `flight-deck.css` says why (filling it would put a surface under the cards'
+   * own), and the arm has no reason of its own to overturn it, so the two are
+   * separate rules here and the box keeps its `fill: none`. */
+  section.graph svg .graph-node-box {
     fill: Canvas;
     stroke: CanvasText;
   }
 
-  svg .graph-edge-path {
+  section.graph svg .graph-release-box {
+    fill: none;
     stroke: CanvasText;
   }
 
-  svg .graph-edge[data-selected='true'] .graph-edge-path,
-  svg .graph-node[data-selected='true'] .graph-node-box {
+  section.graph svg .graph-edge-path {
+    stroke: CanvasText;
+  }
+
+  /* The critical path's own tone is on a rule **more specific** than the one
+   * above (`… .graph-edge[data-critical='true'] .graph-edge-path`), so the arm
+   * restates it and not only shortens it: without this the path keeps the
+   * author's `--live` -- a tone, in the mode that exists to take tones away --
+   * and the widths below are what is meant to tell one edge from another. It is
+   * written **above** the selection's rule on purpose: an edge that is both
+   * critical and selected is the selection's, and the two selectors weigh the
+   * same. */
+  section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
+    stroke: CanvasText;
+  }
+
+  /* The selected edge is a **wider** stroke here and not a toned one alone: the
+   * tone that says these are the selected task's edges is the one this mode
+   * takes away, and the critical path is already drawn 3 px, so the same width
+   * would leave the two strokes indistinguishable. The distinction survives as a
+   * shape instead -- 4 px against the critical path's 3, which is the scale
+   * design section 2.11 promises a forced-colors reader keeps. */
+  section.graph svg .graph-edge[data-selected='true'] .graph-edge-path {
+    stroke: Highlight;
+    stroke-width: 4;
+  }
+
+  /* The tones a card's boundary carries by state are on rules **more specific**
+   * than the card's own above (`… .graph-node[data-state='implementing']
+   * .graph-node-box`), so they are restated here as well as shortened: a rule
+   * that loses leaves a running card `--live` and a halted one `--warn` in the
+   * mode that exists to take those away. What the state keeps in this mode is
+   * what the system does not force -- its word on the card, the 2 px width and
+   * the blocked card's dashes -- which is design section 3.5, read in this
+   * screen's idiom. */
+  section.graph svg .graph-node[data-state='implementing'] .graph-node-box,
+  section.graph svg .graph-node[data-state='in review'] .graph-node-box,
+  section.graph svg .graph-node[data-state='fixing'] .graph-node-box,
+  section.graph svg .graph-node[data-state='queued'] .graph-node-box,
+  section.graph svg .graph-node[data-state='halted'] .graph-node-box,
+  section.graph svg .graph-node[data-state='blocked'] .graph-node-box {
+    stroke: CanvasText;
+  }
+
+  /* A done card's title is muted in the base theme, on a rule more specific
+   * again, and the mute is a tone: the card's own word is what says it is done
+   * here, and the same restatement is what keeps the arm's text rule from losing
+   * to this one. */
+  section.graph svg .graph-node[data-state='done'] .graph-node-title {
+    fill: CanvasText;
+  }
+
+  /* The selected card is left the 3 px its own rule gives it, against a running
+   * card's 2, and takes the system's highlight tone: a card's tone is its
+   * state's, so the width is what is left of the selection in this mode. */
+  section.graph svg .graph-node[data-selected='true'] .graph-node-box {
     stroke: Highlight;
   }
 
-  svg .graph-release-heading,
-  svg .graph-release-bar,
-  svg .graph-release-stream,
-  svg .graph-release-version,
-  svg .graph-release-name,
-  svg .graph-node-title,
-  svg .graph-node-word,
-  svg .graph-node-pr,
-  svg .graph-node-run,
-  svg .graph-node-mark {
+  section.graph svg .graph-release-heading,
+  section.graph svg .graph-release-bar,
+  section.graph svg .graph-release-stream,
+  section.graph svg .graph-release-version,
+  section.graph svg .graph-release-name,
+  section.graph svg .graph-node-title,
+  section.graph svg .graph-node-word,
+  section.graph svg .graph-node-pr,
+  section.graph svg .graph-node-run,
+  section.graph svg .graph-node-mark {
     fill: CanvasText;
   }
 
@@ -2436,19 +2305,34 @@ span.coordinator-unread-retry {
     animation: none;
   }
 
-  button.graph-tab[aria-selected='true'],
-  button.graph-chip[aria-expanded='true'] {
+  /* The chosen stream segment keeps a mark here: the system takes the raised
+   * ground the redesign gives it, so what is left of the choice is this border
+   * and the `aria-pressed` the button carries. */
+  section.graph button.graph-tab[aria-pressed='true'],
+  section.graph button.graph-chip[aria-expanded='true'] {
     border-color: Highlight;
   }
+
+  /* **The inspector and the legend take no rule here, and that is a decision
+   * rather than an omission.** The panel is drawn in the same tokens as every
+   * other panel of this theme -- a surface, a boundary, text and one refused
+   * write whose refusal is its words and its description, exactly as
+   * `button.live-halt` refuses under this mode in `base.css` -- and the system
+   * forces the surface, the boundary and every text tone over on its own. The
+   * legend is made of the two channels this mode **keeps**: a swatch's width
+   * (2 px and 3 px against 1) and a blocked swatch's dash, neither of which is a
+   * colour (§4.4's rule 1), and its colours are forced with the rest. A rule
+   * restating either would be a rule this mode already applies. */
+
 
   /* Only the tone is written here: a border's *style* is not forced by the
    * system, so the blocked row's dashed left edge survives with the amber
    * going to `CanvasText` (design section 4.4's rule 1). */
-  li.graph-row[data-state='blocked'] {
+  section.graph li.graph-row[data-state='blocked'] {
     border-left-color: CanvasText;
   }
 
-  li.graph-row[data-selected='true'] {
+  section.graph li.graph-row[data-selected='true'] {
     background: Highlight;
     color: HighlightText;
     forced-color-adjust: none;

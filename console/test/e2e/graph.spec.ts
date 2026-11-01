@@ -8,7 +8,7 @@
 // meets a **browser**: the real CSP, the real layout worker
 // (`app://console/elk-worker.min.js`, GV2.2), the real entry reading
 // `plan status --json` from the stub CLI, and the keyboard a person presses.
-// Six claims live here and nowhere else:
+// Seven claims live here and nowhere else:
 //
 //   1. **the state words are drawn, and a blocked card's second channel is a
 //      dash.** The unit suite reads the tree the screen builds; whether the
@@ -17,13 +17,16 @@
 //   2. **a chip expands on a click and on nothing else** (the addendum:
 //      "expand only when clicked"): the panel is drawn for the click, and not
 //      for the focus or the hover that a menu-ish control would open on.
-//   3. **`forced-colors: active` keeps the dash and the 1/2/3 px edge scale** --
-//      design section 4.4's rule 1 for this screen, whose information is a
-//      *stroke* rather than a colour. The emulation is Chromium's own, so this
-//      is the system's forced-colors pass and not a stylesheet pretending.
+//   3. **`forced-colors: active` keeps the dash and the edge scale** -- design
+//      section 4.4's rule 1 for this screen, whose information is a *stroke*
+//      rather than a colour. The scale is what is left of the selection in this
+//      mode, where the tone that says the same thing is gone: the selected edge
+//      is drawn a pixel wider than the critical path, so the two facts stay two
+//      strokes. The emulation is Chromium's own, so this is the system's
+//      forced-colors pass and not a stylesheet pretending.
 //   4. **the keyboard walks the graph.** A roving `tabindex` is a claim about
 //      the *tab order*, which a fake DOM cannot have: Tab has to reach the
-//      tablist and a task (a group whose every door is out of the tab order is a
+//      stream filter and a task (a group whose every door is out of the tab order is a
 //      picture no keyboard can enter), the arrows have to move the tab, and a
 //      redraw has to put the focus back in the tree it drew rather than on
 //      `<body>`.
@@ -38,16 +41,23 @@
 //      animation, which parks a comet off the card's far edge at `opacity: 0`).
 //   6. **a release heading is hit-tested as itself and not as the card that used
 //      to cover it.** The box is grown upward for its heading, and the engine's
-//      own room between two rows of tasks was less than that growth, so the
-//      heading was drawn inside the row above -- and painted over, because the
-//      screen appends every box before every card. A screenshot cannot report
-//      this (a covered heading is a heading-shaped hole, which looks like a
-//      heading drawn faintly) and the unit suite cannot either: whether a point
-//      on a glyph belongs to the heading or to a card is the browser's own hit
-//      test, over the real worker's answer. The hit test is made **once per
-//      glyph**, because one point on a heading is a point a card can miss: a
-//      card covering all but the first character of a line leaves that one
-//      point over the heading and every other one under the card.
+//      own room within a layer -- two cards of one layer are stacked one above
+//      the other, now that the picture is read left to right -- was less than
+//      that growth, so the heading was drawn inside the card above it, and
+//      painted over, because the screen appends every box before every card. A
+//      screenshot cannot report this (a covered heading is a heading-shaped
+//      hole, which looks like a heading drawn faintly) and the unit suite cannot
+//      either: whether a point on a glyph belongs to the heading or to a card is
+//      the browser's own hit test, over the real worker's answer. The hit test is
+//      made **once per glyph**, because one point on a heading is a point a card
+//      can miss: a card covering all but the first character of a line leaves
+//      that one point over the heading and every other one under the card.
+//   7. **the streams are drawn as rows.** One engine run per stream (the owner's
+//      ruling of 2026-10-31) is a claim about rectangles: the bands are stacked,
+//      and every card is inside its own stream's band. `graph.test.ts` proves it
+//      over the real engine with no browser; this is the same claim where the
+//      layout arrived through the real worker and the real CSP, and where the
+//      rectangles are the browser's own.
 //
 // **The graph's document is the stub's `plan status --json` answer.** The stub
 // beside this suite answers that read (`test/fixtures/bin/fugaro`,
@@ -89,6 +99,7 @@ import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { GRAPH_BUSY } from '../../src/renderer/entry'
 import { GRAPH_THEMES } from '../../src/renderer/screens/graph'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
@@ -149,9 +160,12 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 const SPEC = 'graph.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen,
- * the three modules of the picture (the model, the cache and the worker client)
- * and the three shared modules those reach. `shared/schema.js` is here because
- * the fixture is decoded in the window rather than in this file: the screen is
+ * the three modules of the picture (the model, the cache and the worker client),
+ * the section helper the screen's refresh and its stream tabs answer through
+ * (`renderer/section.js`, with the reading words and skeleton shapes it
+ * requires), and the three shared modules those reach. `shared/schema.js` is
+ * here because the fixture is decoded in the window rather than in this file:
+ * the screen is
  * handed a document the console's own decoder admitted, which is the shape the
  * entry hands it. Nothing else may be reachable -- the registry below refuses a
  * specifier that is not a relative path, so a bundle that grew an import of
@@ -164,6 +178,10 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/graph/model.js',
   'renderer/graph/layout-client.js',
   'renderer/graph/layout.js',
+  'renderer/skeleton.js',
+  'renderer/screens/reading.js',
+  'renderer/section.js',
+  'renderer/writes.js',
   'renderer/screens/graph.js',
 ])
 
@@ -287,6 +305,44 @@ function withFinishedRelease(): unknown {
   return document
 }
 
+/** Rect is a rectangle read out of the window: the four edges of it, in the
+ * window's own coordinates, which is what makes two of them comparable. */
+interface Rect {
+  readonly x: number
+  readonly y: number
+  readonly right: number
+  readonly bottom: number
+}
+
+/** planStreams is the committed document's plan id to the stream that plan names
+ * (the empty string for a plan that names none): the model's columns are built
+ * from exactly that, and the band a card is drawn in is its plan's stream. */
+function planStreams(): ReadonlyMap<string, string> {
+  const document = JSON.parse(readFileSync(PLAN_FIXTURE, 'utf8')) as {
+    plans: { id: string; stream?: string }[]
+  }
+  const found = new Map<string, string>()
+  for (const plan of document.plans) found.set(plan.id, plan.stream ?? '')
+  return found
+}
+
+/** planOf is the plan a card's own layout key names, or `null` when the key names
+ * no plan of `streams`. The key is `nodeKey`'s: the plan's **length**, the plan,
+ * then the task. The length is what says where the plan's id ends, so an id
+ * holding a colon is read whole. */
+function planOf(key: string, streams: ReadonlyMap<string, string>): string | null {
+  const at = key.indexOf(':')
+  const length = Number(key.slice(0, at))
+  if (!Number.isFinite(length)) return null
+  const plan = key.slice(at + 1, at + 1 + length)
+  return streams.has(plan) ? plan : null
+}
+
+/** holds is whether one rectangle holds another whole. */
+function holds(outer: Rect, inner: Rect): boolean {
+  return inner.x >= outer.x && inner.y >= outer.y && inner.right <= outer.right && inner.bottom <= outer.bottom
+}
+
 /** strokeDash is one element's computed `stroke-dasharray`: the browser's own
  * answer to what the stylesheet asked for. */
 async function strokeDash(page: Page, selector: string): Promise<string> {
@@ -330,7 +386,7 @@ async function active(
   return page.evaluate(() => {
     const element = document.activeElement
     const attributes: Record<string, string> = {}
-    for (const name of ['data-tab', 'data-key', 'data-selected', 'aria-selected']) {
+    for (const name of ['data-tab', 'data-key', 'data-selected', 'aria-pressed']) {
       const value = element?.getAttribute(name)
       if (value !== null && value !== undefined) attributes[name] = value
     }
@@ -424,7 +480,7 @@ test.describe('the graph view in a window', () => {
     expect(reached.attributes['data-selected']).toBe('false')
 
     // One door in the tab order, and it is the first the drawing draws: the
-    // roving rule is the tablist's own, one stop and not a second walk through
+    // roving rule is the stream filter's own, one stop and not a second walk through
     // every card.
     const stops = await page.evaluate(() =>
       [...document.querySelectorAll('g.graph-node, li.graph-row')].filter(
@@ -524,12 +580,85 @@ test.describe('the graph view in a window', () => {
     }
   })
 
+  test('stacks the streams as rows, and keeps every card inside its own row', async () => {
+    // **One engine run per stream** (the owner's ruling of 2026-10-31). Asked for
+    // the whole picture at once, the engine packs components anywhere: a stream
+    // whose plans run deeper than its neighbour's has the neighbour's plans
+    // placed among its own, and the band drawn as the union of its cards then
+    // swallows another stream's cards. Laid out one run per stream and stacked in
+    // the model's order, two rows cannot share ground.
+    //
+    // The committed document draws two of them -- `example`, and the plans that
+    // name no stream, which the model gives a column of its own -- so a claim
+    // about rows is not vacuous here, and every card has a band of its own to be
+    // inside.
+    const streams = planStreams()
+    const reading = await page.evaluate(() => {
+      const rect = (element: Element | null): Rect | null => {
+        if (element === null) return null
+        const box = element.getBoundingClientRect()
+        return { x: box.left, y: box.top, right: box.right, bottom: box.bottom }
+      }
+      return {
+        bands: [...document.querySelectorAll('g.graph-band')].map((each) => ({
+          stream: each.getAttribute('data-stream') ?? '',
+          box: rect(each.querySelector('.graph-band-box')),
+        })),
+        cards: [...document.querySelectorAll('g.graph-node')].map((each) => ({
+          key: each.getAttribute('data-key') ?? '',
+          box: rect(each.querySelector('.graph-node-box')),
+        })),
+      }
+    })
+
+    expect(reading.bands.length, 'the committed document draws one band per stream').toBeGreaterThan(1)
+    expect(reading.cards.length).toBeGreaterThan(1)
+    for (const band of reading.bands) {
+      expect(band.box, `${band.stream}'s band drew no box`).not.toBeNull()
+      expect([...streams.values()], `no plan of the committed document is in ${band.stream}`).toContain(band.stream)
+    }
+    const boxes = reading.bands.map((band) => band.box as Rect)
+
+    // **The rows share no ground.** Read in the order the screen drew them -- the
+    // model's own order, stream by stream -- each band's bottom is above the next
+    // band's top. Bands that overlapped are exactly the defect: one stream's band
+    // drawn across another stream's cards.
+    for (let at = 0; at + 1 < boxes.length; at += 1) {
+      const above = boxes[at] as Rect
+      const below = boxes[at + 1] as Rect
+      expect(
+        above.bottom,
+        `${reading.bands[at]?.stream ?? ''}'s band reaches into ${reading.bands[at + 1]?.stream ?? ''}'s row`,
+      ).toBeLessThanOrEqual(below.y)
+    }
+    // And the drawn order is the stacked order: the bands are drawn where they
+    // are stacked, so the picture's own rows are the model's columns.
+    const drawn = reading.bands.map((band) => band.stream)
+    const byRow = [...reading.bands]
+      .sort((one, two) => (one.box?.y ?? 0) - (two.box?.y ?? 0))
+      .map((band) => band.stream)
+    expect(byRow, 'the rows are stacked in the order the screen drew them').toEqual(drawn)
+
+    // **Every card is inside its own stream's band**, and no card is inside two:
+    // a card laid out by one stream's run and drawn in another's row is the
+    // picture this change removed.
+    for (const card of reading.cards) {
+      const plan = planOf(card.key, streams)
+      expect(plan, `${card.key} names no plan of the committed document`).not.toBeNull()
+      const mine = streams.get(plan ?? '') ?? ''
+      const holders = reading.bands.filter((band) => band.box !== null && card.box !== null && holds(band.box, card.box))
+      expect(holders.map((band) => band.stream), `${card.key} is inside its plan's own band`).toEqual([mine])
+    }
+  })
+
   test('keeps the dash and the edge scale when forced colors is active', async () => {
     // A task is selected first: the selection is a width as well as a tone
-    // (`svg .graph-node[data-selected='true'] .graph-node-box`), and a window with
+    // (`.graph-node[data-selected='true'] .graph-node-box`), and a window with
     // nothing selected has no such element at all -- a `null` read there would
-    // make the assertion below pass whatever the stylesheet says.
-    await page.locator('g.graph-node').first().click()
+    // make the assertion below pass whatever the stylesheet says. The card
+    // selected is one in a **neutral** state, so the running card read below
+    // keeps its own state's thickness with the selection out of its way.
+    await page.locator('g.graph-node[data-state="ready"]').first().click()
     await page.locator('g.graph-node[data-selected="true"]').first().waitFor()
     await page.emulateMedia({ forcedColors: 'active' })
     try {
@@ -554,13 +683,58 @@ test.describe('the graph view in a window', () => {
             'g.graph-edge[data-critical="false"][data-cross="false"][data-selected="false"] .graph-edge-path',
           ),
           selected: width('g.graph-node[data-selected="true"] .graph-node-box'),
+          // The selected task's own edges. The task selected above is in a
+          // neutral state and off the critical path, so the edge read here is one
+          // the selection is the only rule for: an edge of the critical path that
+          // were also selected would answer for both rules at once.
+          selectedEdge: width('g.graph-edge[data-selected="true"] .graph-edge-path'),
+          // A task being worked on, with no selection on it: its state is 2 px,
+          // which is the thickness the selected card's boundary has to be told
+          // apart from -- in this mode the tone that says the same thing is
+          // gone, so the difference has to be the width.
+          running: width('g.graph-node[data-state="implementing"]:not([data-selected="true"]) .graph-node-box'),
         }
       })
       expect(widths.critical).toBe('3px')
       expect(widths.plain).toBe('2px')
+      // The whole distinction survives, which is the claim design section 2.11
+      // makes for this mode: four strokes, four widths. The selected one is
+      // **wider** than the critical path and not the same width in another tone,
+      // because the tone is the one thing this mode takes away -- 4 px against 3,
+      // where the selection's own rule draws the two in different tones and the
+      // same thickness.
+      expect(widths.selectedEdge).toBe('4px')
+      expect(widths.selectedEdge).not.toBe(widths.critical)
       // The selection is a width too, and the tone it is drawn in is the
-      // reading's -- which forced colors takes away, leaving the thickness.
-      expect(widths.selected).toBe('2px')
+      // reading's -- which forced colors takes away, leaving the thickness. It is
+      // 3 px against a running card's 2, which is what keeps the selected card
+      // distinguishable from the state it also carries.
+      expect(widths.selected).toBe('3px')
+      expect(widths.running).toBe('2px')
+
+      // A band and a card are the **same fill** in this mode (`Canvas`), so the
+      // boundary is all that is left to tell the row's ground from a card on it,
+      // and the two are read against the reading tone rather than against a
+      // literal: the card's boundary is what a title is filled in (`CanvasText`
+      // in this mode, and never a name this test has to know), and the band's is
+      // not it.
+      const inks = await page.evaluate(() => {
+        const ink = (selector: string, property: 'stroke' | 'fill'): string | null => {
+          const element = document.querySelector(selector)
+          return element === null ? null : getComputedStyle(element)[property]
+        }
+        return {
+          band: ink('g.graph-band .graph-band-box', 'stroke'),
+          // A card with no selection on it: the selected card's boundary is
+          // `Highlight` by this arm's own rule, which is a mark of its own and
+          // not the reading tone read beside it here.
+          card: ink('g.graph-node:not([data-selected="true"]) .graph-node-box', 'stroke'),
+          reading: ink('g.graph-node .graph-node-title', 'fill'),
+        }
+      })
+      expect(inks.reading).not.toBeNull()
+      expect(inks.card).toBe(inks.reading)
+      expect(inks.band).not.toBe(inks.reading)
     } finally {
       await page.emulateMedia({ forcedColors: 'none' })
     }
@@ -634,13 +808,13 @@ test.describe('the graph view in a window', () => {
   })
 
   test('walks the graph from the keyboard, and the focus comes back after a redraw', async () => {
-    // The tablist's roving `tabindex` is a claim about the tab order, so this
-    // walks it: one tab of the graph's tablist is in the order, and Tab reaches
-    // it from wherever the keyboard is.
-    expect(await pressTabUntil(page, 'graph-tab'), 'the tab order never reached the graph’s tablist').toBe(true)
+    // The stream filter's roving `tabindex` is a claim about the tab order, so
+    // this walks it: one segment of the graph's filter is in the order, and Tab
+    // reaches it from wherever the keyboard is.
+    expect(await pressTabUntil(page, 'graph-tab'), 'the tab order never reached the graph’s stream filter').toBe(true)
     const first = await active(page)
     expect(first.classes).toContain('graph-tab')
-    expect(first.attributes['aria-selected']).toBe('true')
+    expect(first.attributes['aria-pressed']).toBe('true')
     const firstTab = first.attributes['data-tab'] ?? ''
     expect(firstTab, 'the first tab carries no data-tab: the polls below would be vacuous').not.toBe('')
 
@@ -648,7 +822,7 @@ test.describe('the graph view in a window', () => {
     // it lands on is the one the screen drew as selected: a tab is a different
     // graph, so the redraw lands a worker's answer later. The poll answers a
     // value only while a **focused** tab other than the first is showing, so the
-    // old tab's `aria-selected` (which is still `true` until the redraw lands)
+    // old segment's `aria-pressed` (which is still `true` until the redraw lands)
     // and `<body>` both keep it waiting rather than passing it.
     await page.keyboard.press('ArrowRight')
     await expect
@@ -660,7 +834,7 @@ test.describe('the graph view in a window', () => {
       .not.toBe('')
     const moved = await active(page)
     expect(moved.classes).toContain('graph-tab')
-    expect(moved.attributes['aria-selected']).toBe('true')
+    expect(moved.attributes['aria-pressed']).toBe('true')
     expect(moved.attributes['data-tab'] ?? '').not.toBe(firstTab)
 
     // And a redraw puts the focus back in the tree it drew. A click selects the
@@ -874,5 +1048,100 @@ test.describe('the Graph screen', () => {
       GRAPH_THEMES.map((theme) => `${theme}-${process.platform}.png`).sort(),
     )
     for (const file of present) expect(file).toMatch(new RegExp(`^(${GRAPH_THEMES.join('|')})-(darwin|linux)\\.png$`))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Graph view's stream filter, in the dashboard.
+// ---------------------------------------------------------------------------
+
+/** THE_PANEL is the dashboard's own panel, which is where the view is drawn: the
+ * describe above mounts a screen of its own into `#graph-mount`, so a bare
+ * `section.graph` would be ambiguous between the two. */
+const THE_PANEL = 'div.console-panel'
+
+/** THE_GRAPH is the dashboard's Graph view, and the scope every reading below is
+ * taken in. */
+const THE_GRAPH = `${THE_PANEL} section.graph`
+
+/** SELECTED_TAB is the segment the screen drew as the chosen one. The chosen
+ * segment carries no listener (the entry wires the segments it does not draw as
+ * pressed), so what a case about presses can read is which one it is. */
+const SELECTED_TAB = `${THE_GRAPH} div.graph-filter button.graph-tab[aria-pressed="true"]`
+
+test.describe('the Graph view’s stream filter', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+
+  test.beforeAll(async () => {
+    // A window of its own, opened on the Graph for the first time: the tab the
+    // console opens on is All, which is the state the two presses below are
+    // made from.
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    // The checkout `plan.status` is read against: the CLI resolves `docs/` from
+    // its working directory, so an installation that records none is refused
+    // before any child runs and the view would draw that refusal instead of a
+    // canvas.
+    cli.seedActiveCheckout()
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await page.locator(NAV_GRAPH).click()
+    await page.locator(CANVAS).waitFor()
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+  })
+
+  test('keeps the stream the operator pressed last when two presses land in one frame', async () => {
+    // The committed document carries three tabs: the catalogue's stream, the
+    // column its second plan makes by naming no stream, and All. Two of them can
+    // be pressed from here, which is what this case needs -- the third is the one
+    // showing.
+    await expect(page.locator(SELECTED_TAB)).toHaveAttribute('data-tab', 'all')
+    await expect(page.locator(`${THE_GRAPH} div.graph-filter button.graph-tab`)).toHaveCount(3)
+
+    // **Two presses in one turn of the event loop.** Each is a layout of its own
+    // graph rather than a redraw of the same picture, and the answer that must
+    // be on screen is the second one's, whatever order the two come back in.
+    const inTheFrame = await page.evaluate((scope) => {
+      const root = (): Element | null => document.querySelector(scope)
+      const press = (key: string): void => {
+        const button = root()?.querySelector<HTMLElement>(`div.graph-filter button.graph-tab[data-tab="${key}"]`)
+        button?.click()
+      }
+      press('stream:example')
+      press('stream:')
+      const section = root()
+      return {
+        // The mark is up in the frame the press happened in, over the picture the
+        // operator was already looking at.
+        busy: section?.getAttribute('aria-busy') ?? null,
+        marked: section?.hasAttribute('data-busy') ?? null,
+        label: section?.querySelector('.console-busy-label')?.textContent ?? null,
+        canvas: section?.querySelector('svg.graph-canvas') !== null,
+      }
+    }, THE_GRAPH)
+    expect(inTheFrame).toEqual({
+      busy: 'true',
+      marked: true,
+      label: GRAPH_BUSY,
+      canvas: true,
+    })
+
+    // The second press's graph is the one that stays. The tab is the strongest
+    // reading -- it is what the press chose -- and the picture behind it is
+    // independent evidence: the first plan is the only one with releases, so a
+    // canvas that came back for the first press would still carry its headings,
+    // and a dropped answer draws none of them.
+    await expect(page.locator(SELECTED_TAB)).toHaveAttribute('data-tab', 'stream:')
+    await expect(page.locator(`${THE_GRAPH} ${HEADING}`)).toHaveCount(0)
+    await expect(page.locator(`${THE_GRAPH} g.graph-node`)).toHaveCount(1)
   })
 })

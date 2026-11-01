@@ -206,11 +206,12 @@ type websiteFactsAnalytics struct {
 // booking widget load from, on the four campaign pages only, behind the
 // consent banner's second question.
 type websiteFactsMarketing struct {
-	// MetaPixelID and LinkedinPartnerID are the two identifiers the owner has
-	// not supplied yet, and both are empty until they are: an id invented here
-	// would send a campaign page's visitors into a stranger's ad account, and
-	// an empty id is a loader switched off rather than a loader that loads
-	// something nameless (R3).
+	// MetaPixelID and LinkedinPartnerID are the pixel's and the insight tag's
+	// identifiers. Both are the owner's, supplied on 2026-10-31, and the pin
+	// below refuses either of them coming back empty: an id invented here would
+	// send a campaign page's visitors into a stranger's ad account, and an empty
+	// id is a loader switched off rather than a loader that loads something
+	// nameless (R3).
 	MetaPixelID       string `yaml:"meta_pixel_id"`
 	LinkedinPartnerID string `yaml:"linkedin_partner_id"`
 	// The three origins, each the exact host the vendor documents rather than
@@ -1150,15 +1151,22 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 		t.Errorf("%s: features.video is true: the explainer video does not exist, so the hero may not render a player, an iframe, a poster or a play button. W2.4 sets this flag when the video exists, in the same commit that relaxes this check (D107, finding 57, plan Task W2.4 step 1)", websiteFactsPath)
 	}
 
-	// The campaign measurement (plan Task G2.3, D401). The two ids are pinned
-	// EMPTY, and this is the pin that says so: the owner has not supplied a
-	// pixel id or a partner id, the loaders are wired and gated around them, and
-	// an id this repository invented would send the four campaign pages'
-	// visitors into a stranger's ad account. A task that fills one in is a task
-	// the owner supplied the id for, and it relaxes this check in the same
-	// commit (R3) -- exactly as the video pin above is relaxed by W2.4.
-	if facts.Marketing.MetaPixelID != "" || facts.Marketing.LinkedinPartnerID != "" {
-		t.Errorf("%s: marketing carries meta_pixel_id = %q and linkedin_partner_id = %q, and both must be empty until the OWNER supplies them: the campaign loaders are wired, gated and held by website/test/consent.mjs either way, and an id nobody supplied would point the pixel or the insight tag at an account that is not this project's (R3, plan Task G2.3)", websiteFactsPath, facts.Marketing.MetaPixelID, facts.Marketing.LinkedinPartnerID)
+	// The campaign measurement (plan Task G2.3, D401; the owner's rulings of
+	// 2026-10-31). G2.3 pinned BOTH ids empty and said the pin is relaxed in
+	// the commit that fills one in, because a task that fills one in is a task
+	// the owner supplied the id for (R3) -- exactly as the video pin above is
+	// relaxed by W2.4. The owner supplied the insight tag's partner id and then
+	// the pixel's id, so both halves are now the other way round: an empty value
+	// is refused, because the four campaign pages load a tag only while one is
+	// there and website/test/consent.mjs reads that off the built artifact. What
+	// the pin still refuses is an empty file, not a value it happens to hold.
+	// Neither value is printed here: the id lives in site.yaml and nowhere
+	// else, and a copy in this file would be the second one to keep in step.
+	if facts.Marketing.MetaPixelID == "" {
+		t.Errorf("%s: marketing carries an empty meta_pixel_id: the OWNER supplied the pixel id on 2026-10-31, the four campaign pages hand it to the pixel after the campaign consent, and an empty value is the loader switched off (R3, plan Task G2.3)", websiteFactsPath)
+	}
+	if facts.Marketing.LinkedinPartnerID == "" {
+		t.Errorf("%s: marketing carries an empty linkedin_partner_id: the OWNER supplied the partner id on 2026-10-31, the four campaign pages hand it to the insight tag after the campaign consent, and an empty value is the loader switched off (R3, plan Task G2.3)", websiteFactsPath)
 	}
 	// The three origins are exact origins: scheme, host, no path, no wildcard.
 	// A wildcard is the one shape the plan refuses outright in `script-src` and

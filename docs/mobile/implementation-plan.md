@@ -10,7 +10,7 @@
 
 **Status as of 2026-10-22 (the telemetry phase; appended, like the paragraphs above).** The owner **approved a seventh phase on 2026-10-22, on one condition: that its plan is merged first.** [../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md) is the plan for **Firebase Crashlytics and Firebase Analytics in the app**, reporting to a Firebase project **Fugaro operates and not an installation's**; it takes the decision block **D253–D260** (all eight answered by the owner on 2026-10-19, **D255 always on** against the plan's recommendation and **D259 accepted**) and **checks 120, 121 and 122**, and it is registered below as **Phase 7** and in the gate's **step 7b**. **Nothing of the phase is built** — no `@react-native-firebase` dependency, no native config file, no telemetry module — and **approval is permission to start, not a claim that anything exists**. It is the **replacement for the draft on PR #693**, which asked for **D193–D200** and **checks 111–113**: those were taken by other works before it merged (D193–D197 by the coordinator, 111–113 by the setup wizard and the website zoom-diagrams plan), so the rebuilt plan reads the highest numbers on `main` and takes the ones that were free. **The phase amends D111's record from two items per account to four**, and the amendment is carried as a dated note in **Global Constraint 4** above, in [reconciliation.md](reconciliation.md)'s **D111** row, and in the two design documents and the functional-spec reconciliation that repeat the sentence.
 
-**Status as of 2026-10-30 (telemetry Task P7.1a; appended, like the paragraphs above).** **The first half of Task P7.1 is built**: `mobile/package.json` carries `@react-native-firebase/app`, `@react-native-firebase/analytics` and `@react-native-firebase/crashlytics` (`27.1.0`, exact) plus `expo-build-properties` (the iOS build needs dynamic frameworks, which its own plugin source says), `mobile/app.config.js` registers their config plugins, writes `googleServicesFile` from `GOOGLE_SERVICES_JSON` / `GOOGLE_SERVICE_INFO_PLIST` **only when each is set** and blocks `com.google.android.gms.permission.AD_ID`, `mobile/firebase.json` carries the four Android switches, and `mobile/.gitignore` ignores `google-services.json` and `GoogleService-Info.plist` so neither is committed. **The 2026-10-22 paragraph's "nothing of the phase is built" is the state of that date, kept as written**; unbuilt still are the build-time guard (**D260**), the ad-ID walk, and `shared/telemetry-consent/` with `mobile/src/telemetry/` — **P7.1b**, a later run, which also owns the status lines. **D259 as amended on 2026-10-29**: this half writes no secure-store item and touches no file under `mobile/src/accounts/`.
+**Status as of 2026-10-30 (telemetry Task P7.1a; appended, like the paragraphs above).** **The first half of Task P7.1 is built**: `mobile/package.json` carries `@react-native-firebase/app`, `@react-native-firebase/analytics` and `@react-native-firebase/crashlytics` (`27.1.0`, exact) plus `expo-build-properties` (the iOS build needs dynamic frameworks, which its own plugin source says), `mobile/app.config.js` registers their config plugins, writes `googleServicesFile` from `GOOGLE_SERVICES_JSON` / `GOOGLE_SERVICE_INFO_PLIST` **only when each is set** and blocks `com.google.android.gms.permission.AD_ID`, `mobile/firebase.json` carries the four Android switches, and `mobile/.gitignore` ignores `google-services.json` and `GoogleService-Info.plist` so neither is committed. **The 2026-10-22 paragraph's "nothing of the phase is built" is the state of that date, kept as written**; **superseded 2026-10-30 by Task P7.1b**, which landed the build-time guard (**D260**) and the ad-ID walk, so **P7.1 is built** — and unbuilt remain **P7.2–P7.5**: the always-on statement, the event allow-list and its scan, `mobile/src/telemetry/`, and the store labels and the privacy paragraph. **(`shared/telemetry-consent/`, listed here as unbuilt in the first version of this paragraph, is not a task at all: the plan's §6 removed it with the consent gate D255's answer dropped — amended 2026-10-31.)** **D259 as amended on 2026-10-29**: this half writes no secure-store item and touches no file under `mobile/src/accounts/`.
 
 **Spec.** [spec.md](spec.md) (the owner's spec, verbatim); [functional-spec-v0.1.md](functional-spec-v0.1.md) (the owner's functional spec, verbatim), reconciled in [functional-spec-reconciliation.md](functional-spec-reconciliation.md). **Reconciliation.** [reconciliation.md](reconciliation.md) — findings F1–F37, decisions D110–D129, open items. **Index.** [README.md](README.md).
 
@@ -691,8 +691,13 @@ dependency, native config file or telemetry module was in the tree. **Amended 20
 packages with `expo-build-properties` are in `mobile/package.json`, `mobile/app.config.js`
 registers their config plugins, `mobile/firebase.json` exists, and `mobile/.gitignore`
 ignores both native config files, so **no native config file is in the tree still**.
-Unbuilt remain the build-time guard (**D260**), the ad-ID walk, and
-`shared/telemetry-consent/` with `mobile/src/telemetry/` — **P7.1b**.
+**Superseded 2026-10-30 by Task P7.1b:** the build-time guard (**D260**) and the
+ad-ID walk landed, so **P7.1 is built**; unbuilt remain **P7.2–P7.5** — the
+always-on statement, the event allow-list and its scan,
+`mobile/src/telemetry/`, and the store labels and the privacy paragraph.
+**Amended 2026-10-31:** `shared/telemetry-consent/` was listed here with the rest
+and is dropped — §6 removes it with the consent gate D255's answer dropped, so
+it is nothing a task builds.
 
 **The numbers it takes.** **D253–D260** — the next free decision block, read from the tree
 rather than remembered: **D252** is the highest number written anywhere in `docs/` (the website
@@ -739,24 +744,35 @@ items to four, and the owner accepted that consequence with the answer.
 ### Task P7.1: The config plugin, the native files, and the development build — SECURITY-SENSITIVE
 
 **Files.** `mobile/app.config.js` (**modified** — the plugin entry, the two native config paths
-resolved from the environment, and the build-time guard), `mobile/eas.json` (**modified** — the
-two `env` entries in each of its three build profiles), `mobile/firebase.json`, `mobile/.gitignore`, `mobile/package.json`,
-`mobile/README.md`, and `mobile/src/app-config.test.js` (the tracked-file and ignore rules,
-the extension of the existing credential walk to `app.config.js`, and **the ad-ID test**: the
-two Android ad switches `false`, no `AD_ID` permission, no `AdSupport` linked, with a planted
-control — the plan's §4.2 and §7.4, and the website's *the app carries no advertising
-identifier* sentence is what it holds).
+resolved from the environment, and the build-time guard), `mobile/native-config-guard.js` and
+`mobile/src/native-config-guard.test.js` (**new** — the guard of **D260** and its test),
+`mobile/eas.json` (**not modified — amended 2026-10-30, P7.1b**: the two `env` entries in each
+of its three build profiles were the planned mechanism and are not the one used; an `env` block
+there would **override** the EAS environment rather than deliver it, so the files arrive as EAS
+environment variables with file visibility, and `mobile/src/eas-config.test.js` refuses an `env`
+per profile), `mobile/firebase.json`, `mobile/.gitignore`, `mobile/package.json`,
+`mobile/README.md`, `mobile/src/app-config.test.js` (the tracked-file and ignore rules and the
+extension of the existing credential walk to `app.config.js`) and **`mobile/src/ad-id.test.js`**
+(**new — the ad-ID test**: the two Android ad switches `false`, no `AD_ID` permission, the
+Analytics plugin entry carrying `ios.withoutAdIdSupport`, with a planted control each — the
+plan's §4.2 and §7.4, and the website's *the app carries no advertising identifier* sentence is
+what it holds).
 **Depends on.** **D260** (answered: the config is built into the app through EAS file secrets, the development build, Expo Go unsupported, and a build that cannot see them fails loudly), **D254** (answered: **`fugaro-prod`**, the project the owner creates the two apps in by hand) and **D259** (**accepted 2026-10-19**, and the last row this task waited on): the native config files are the telemetry project's, and what may not be built in is each **installation's** own Firebase connection (its Realtime Database URL and web API key), which arrives in the pairing payload and lives in secure storage. Both
-store-path files are on `main` — **PR #675** merged them — so P7.1 modifies them in place and
-waits on no pull request.
+store-path files are on `main` — **PR #675** merged them — so P7.1 modifies `app.config.js` in
+place and waits on no pull request; `mobile/eas.json` is left as PR #675 wrote it, per the Files
+line above.
 **Verification.** `cd mobile && npm test` — both native config paths are untracked and
 ignored; `app.config.js` carries no `AIza…`-shaped value (against the planted control the file
-already has); a build profile with no `GOOGLE_SERVICES_JSON` in its `env` is refused by the
-guard's pure part; the existing "no credential, no installation" walk still passes; and the
-ad-ID walk passes. **The plan's §4.2 marks two names VERIFY** — the iOS pod/plugin option that
-links the ad-ID-free Analytics variant, and whether the Android permission removal is the
-plugin's own option — resolved here by reading the pinned `@react-native-firebase` source and
-the generated native files.
+already has); the existing "no credential, no installation" walk still passes; and the ad-ID
+walk — `mobile/src/ad-id.test.js` — passes. **Amended 2026-10-30 (P7.1b): the planned "a build
+profile with no `GOOGLE_SERVICES_JSON` in its `env` is refused" is retired** with the `eas.json`
+wiring above — the guard's subject is the **resolved file** the build's config carries, not a
+profile's `env` key, so what is refused is a build whose platform resolves to no readable file.
+**The plan's §4.2 marked two names VERIFY** — the iOS
+pod/plugin option that links the ad-ID-free Analytics variant, and whether the Android
+permission removal is the plugin's own option — **both resolved 2026-10-30** by reading the
+pinned `@react-native-firebase` source: `ios.withoutAdIdSupport`, and Expo's own
+`android.blockedPermissions`, the plugins offering no Android option.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It decides which project
 the app's **default** Firebase app is, and it is the change that would put a native config
 file in the tree if it were wrong.
@@ -947,8 +963,11 @@ decides whether one is wanted when the first task lands.
    from memory of the SDKs' documentation and not from a page read today** — including the
    option that must switch ad-ID collection off on each platform (P7.1, and the plan's §14);
    `mobile/app.config.js` and `mobile/eas.json` are **PR #675's and are merged**, so P7.1
-   modifies them in place; `dev.fugaro.app` is the
-   brief's name for the first internal build's environment and **is in no file**; and the
+   modifies `app.config.js` in place and leaves `eas.json` as it stands; `<the dev host>` is the
+   brief's name for the first internal build's environment and **is in no file** — *amended
+   2026-10-31: this line spelled the host out while saying it was in no file, the one thing it
+   must not do, so it writes the placeholder form `mobile/README.md` writes for the values that
+   belong in the EAS project and not in this tree* — and the
    website's privacy page is stated as **PRs #689 and #705** leave it — **both merged**, so the
    page is read from this tree, but **`website/`'s own gates are not run by this repository's
    CI** and this change does not run them. Each is listed in the plan's §14 rather than smoothed

@@ -479,11 +479,12 @@ func TestDocsBacklogFormatStatesTheClosingRule(t *testing.T) {
 		// T4.7), and the sentence that used to say a run may not close an item
 		// it did not fix as a rule no test could hold is now the runner's own
 		// behaviour — stated here, where a reader meets the rule, and asserted
-		// there (TestFollowUpClosesTheItemItsRoundFixed). Filing is D30's table
-		// rather than the folder's, so a follow-up that left findings open files
-		// its own item (TestFollowUpFilesItsOwnRoundBesideAnOpenItem).
+		// there (TestFollowUpClosesTheItemItsRoundFixed). A run no longer files
+		// items at all: the runner stopped when the owner ruled backlog items
+		// are filed by hand, so the document says that instead of describing a
+		// follow-up that files its own.
 		"a run that left findings open closes nothing",
-		"files an item of its own beside whatever the pull request already carries",
+		"A run no longer files items itself",
 	} {
 		if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("%s does not state %q: D31's closing rule is a rule the tree holds, and this document is where a reader meets it (plan T4.7)", backlogFormat, want)

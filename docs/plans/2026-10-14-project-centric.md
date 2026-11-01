@@ -491,7 +491,7 @@ L=<the installation's region>
 # argument gcloud resolves from its ambient configuration.
 [ "$P" = fugaro-dev ] && [ -n "$L" ] \
   || { echo "Check NN stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check NN stopped: this is not the fugaro-dev installation" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check NN stopped: this checkout's origin is not the sandbox" >&2; exit 1; }

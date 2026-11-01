@@ -34,16 +34,41 @@ var Bases = []string{BaseKind}
 // "workflows.web.base: base: was removed in 0.7.0...", the word doubled.
 const legacyBaseMessage = "was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)"
 
-// The round knobs' defaults, named: `fugaro budget preview` counts a
-// recipe's stages at these when it has no checkout of the repository to read
-// the knobs from, so the two must not drift apart.
+// The loop counts the budget floor is computed at, deliberately flat: a run's
+// rounds come from the mode that resolves for it (internal/rigor's
+// DefaultRounds) and from the layers over it, and no single default stands for
+// them any more.
+//
+// A floor computed from a mode's own row would move with the mode whose budget
+// fraction it floors, and the two rows below the value here — POC's and
+// Hotfix's, one round each, whose fraction is the tightest of all — would lower
+// it: the floor exists so a fraction cannot put a run under one stage's lease
+// (RigorBudgetFloorUSD), so the number under it must not come from the run it
+// protects. These are the counts every mode ran at before the per-mode ruling,
+// which is the conservative direction: no installation's floor moves, and none
+// can start fitting a cap it did not fit before.
 const (
-	DefaultFirstLineRounds = 1
-	DefaultReviewRounds    = 2
+	rigorBudgetFloorFirstRounds  = 1
+	rigorBudgetFloorReviewRounds = 2
 	// DefaultAgentAuth is agent.auth's default: a fugaro.yaml that names none
 	// authenticates with a Vertex key. applyDefaults applies it, and
 	// AgentOf is the other reader of the rule.
 	DefaultAgentAuth = "vertex"
+	// DefaultMaxBudgetUSD is agent.max_budget_usd's default: a repository
+	// that names none starts under the $25 ceiling. applyDefaults applies it
+	// and the settings registry's row for the key reads this constant rather
+	// than restating the number.
+	DefaultMaxBudgetUSD = 25
+	// DefaultCPU and DefaultMemory are a workflow's resources when it names
+	// none. applyDefaults applies them and the settings registry's rows read
+	// the same two constants.
+	DefaultCPU    = 4
+	DefaultMemory = "8Gi"
+	// DefaultUpdateCheck is update_check's default: the daily update check
+	// and its stderr nag run unless the local config turns them off. The
+	// local loader reads it (Config.UpdateCheckEnabled) and the settings
+	// registry's row for the key cites it.
+	DefaultUpdateCheck = true
 	// AuthCascade is agent.auth's cascade value (docs/credentials-service,
 	// D133): the run's calls are made with whatever credential the project's
 	// credentials cascade settled on, through the gateway, instead of with a
@@ -51,6 +76,20 @@ const (
 	// every reader that places an auth places this one the same way.
 	AuthCascade = "cascade"
 )
+
+// defaultReports is the list itself; DefaultReports answers a copy.
+var defaultReports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
+
+// DefaultReports are the report globs a workflow collects when it names none,
+// the files a run's artifacts step reads back (artifact-runs.md). It is the
+// settings registry's row for workflows.*.commands.reports that reads it, so
+// the DEFAULT column and a real run cannot part company.
+//
+// A slice is the one default that cannot be a const, and it is read by two
+// packages, so it answers a copy: a caller that appends to the result changes
+// nothing for the next one (the rule PaidCommandNames and BudgetScopes follow
+// in internal/cli).
+func DefaultReports() []string { return slices.Clone(defaultReports) }
 
 // RigorBudgetStageFloorUSD is the least model spend one stage can be granted:
 // the budget gateway's own lease floor (internal/budget's minLease, $0.25).
@@ -110,6 +149,13 @@ var rigorBudgetFloor = sync.OnceValue(func() float64 {
 // smokeStages is the model stages the smallest run the built-in recipe
 // catalog ships can start, at the knobs' defaults: the smallest
 // recipe.StageBound over the catalog.
+//
+// The adversarial default is the strictest row, Critical's senior rounds,
+// because this call site has no rigor mode: a floor is computed over the whole
+// catalog rather than a run's own path, and the one direction a bound may be
+// wrong in is high (recipe.StageBound). No catalog recipe carries the step, so
+// it is unchanged either way; a recipe that reaches this arithmetic with one
+// would be priced by its own max_rounds wherever it writes one.
 func smokeStages() int {
 	smallest := 0
 	for _, name := range recipe.CatalogNames() {
@@ -121,7 +167,7 @@ func smokeStages() int {
 		if len(ps) > 0 {
 			continue
 		}
-		if n := recipe.StageBound(r, DefaultFirstLineRounds, DefaultReviewRounds); smallest == 0 || n < smallest {
+		if n := recipe.StageBound(r, rigorBudgetFloorFirstRounds, rigorBudgetFloorReviewRounds, rigor.AdversarialDefault(rigor.Critical)); smallest == 0 || n < smallest {
 			smallest = n
 		}
 	}
@@ -196,9 +242,16 @@ func KnownAgentAuth(auth string) bool { return slices.Contains(AgentAuths, auth)
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
 // default depends on the checkout's lockfile, so it is not applied here:
 // DefaultCache computes it, and M4's cache restore applies it.
+//
+// The two round knobs are deliberately left at 0 when nothing set them: their
+// default depends on the rigor mode a run resolves, which is every layer's
+// decision plus the run's own request and paths — none of it known here — so
+// the unset value travels to the one place that does know it (internal/runner's
+// planOf and internal/cli's budget preview read rigor.DefaultRounds). A layer
+// that does set one still wins, and 0 is "unset" at every layer (validate).
 func applyDefaults(c *Config) {
 	if c.Git.BaseBranch == "" {
-		c.Git.BaseBranch = "main"
+		c.Git.BaseBranch = DefaultBaseBranch
 	}
 	if c.Git.PR.EarlyDraft == nil {
 		t := true
@@ -207,27 +260,21 @@ func applyDefaults(c *Config) {
 	if c.Agent.Auth == "" {
 		c.Agent.Auth = DefaultAgentAuth
 	}
-	if c.Agent.ReviewRounds == 0 {
-		c.Agent.ReviewRounds = DefaultReviewRounds
-	}
 	if c.Agent.FirstLineReview == "" {
 		c.Agent.FirstLineReview = FirstLineAuto
 	}
-	if c.Agent.FirstLineRounds == 0 {
-		c.Agent.FirstLineRounds = DefaultFirstLineRounds
-	}
 	if c.Agent.MaxBudgetUSD == 0 {
-		c.Agent.MaxBudgetUSD = 25
+		c.Agent.MaxBudgetUSD = DefaultMaxBudgetUSD
 	}
 	for name, w := range c.Workflows {
 		if len(w.Commands.Reports) == 0 {
-			w.Commands.Reports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
+			w.Commands.Reports = DefaultReports()
 		}
 		if w.Resources.CPU == 0 {
-			w.Resources.CPU = 4
+			w.Resources.CPU = DefaultCPU
 		}
 		if w.Resources.Memory == "" {
-			w.Resources.Memory = "8Gi"
+			w.Resources.Memory = DefaultMemory
 		}
 		if w.Checkout == "" {
 			w.Checkout = CheckoutBaked

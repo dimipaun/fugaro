@@ -401,7 +401,10 @@ func jobConfigCopyCredentialsNote(cfg *config.Config) string {
 	if auth != config.AuthCascade {
 		return ""
 	}
-	return fmt.Sprintf("this repository's workflows run with agent.auth: %s, and that mode's credential comes from the installation's credentials service at call time: a job that is `cascade` must mount no model credential at all, and the two steps that make it so are owner-run. Turn the service on in the installation with `fugaro update --provision-credentials` (a typed confirmation, and it needs the installation's Firebase rules redeployed with `fugaro update --firebase-project` first), then run `fugaro update --repo .` in this checkout and in every other repository of the project, which is what drops each job's model-secret accessors and grants its account an invoker on the service. Until both have run, a %s run is refused at launch and the deployed job still mounts the credential it should not", config.AuthCascade, config.AuthCascade)
+	// --firebase-project is a string flag with no default, so the note names
+	// its value; the repository's own file is the only place this side can
+	// read one from, and a checkout that records none says what to type.
+	return fmt.Sprintf("this repository's workflows run with agent.auth: %s, and that mode's credential comes from the installation's credentials service at call time: a job that is `cascade` must mount no model credential at all, and the two steps that make it so are owner-run. Turn the service on in the installation with `fugaro update --provision-credentials` (a typed confirmation, and it needs the installation's Firebase rules redeployed with `fugaro update --firebase-project %s` first), then run `fugaro update --repo .` in this checkout and in every other repository of the project, which is what drops each job's model-secret accessors and grants its account an invoker on the service. Until both have run, a %s run is refused at launch and the deployed job still mounts the credential it should not", config.AuthCascade, firebaseProjectIDWord(cfg.GCPProject), config.AuthCascade)
 }
 
 // jobConfigCopyPolicyNote is the drift note's policy clause: what a
@@ -610,12 +613,7 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepSkipped, reason: "--local; for the cloud step, run in your own terminal window: " + u.o.cloudLine(u.loc.Root, false)}
 	}
 	if u.agent != "" {
-		reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (it confirms every step itself, each billable build included), or %s to be asked at each step",
-			u.agent, u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false))
-		if h := initflow.IDEHint(u.agent); h != "" {
-			reason += " (" + h + ")"
-		}
-		return stepResult{state: stepSkipped, reason: reason}
+		return stepResult{state: stepSkipped, reason: cloudAgentRefusal(u)}
 	}
 	v, failed := verdict()
 	if failed != nil {
@@ -638,6 +636,21 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepCurrent, reason: "no base image to pin and no image to rebuild"}
 	}
 	return stepResult{state: stepDone, reason: "the repository is on this release's base image"}
+}
+
+// cloudAgentRefusal is why the cloud step applies nothing in a coding agent's
+// session (U7), in one place: cloudStep returns it as its own skip, and the
+// checkout stage of the converge refuses the step with it before the step is
+// reached, its plan being local-only under a marker
+// (init_checkout_upgrade.go). One refusal, one wording, so the two doors say
+// the same thing about the same session.
+func cloudAgentRefusal(u *upgradeCtx) string {
+	reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (it confirms every step itself, each billable build included), or %s to be asked at each step",
+		u.agent, u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false))
+	if h := initflow.IDEHint(u.agent); h != "" {
+		reason += " (" + h + ")"
+	}
+	return reason
 }
 
 // cloudLine is the command that runs the cloud step for root in the user's

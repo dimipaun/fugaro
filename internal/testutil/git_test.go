@@ -10,6 +10,31 @@ import (
 	"time"
 )
 
+// TestIsolateGitDropsEnvironmentConfig runs where a run's agent runs its tests:
+// with the stamp's core.hooksPath in the environment (gitops.StampEnv), which
+// outranks the test repository's own config and would replace its hooks.
+func TestIsolateGitDropsEnvironmentConfig(t *testing.T) {
+	elsewhere := t.TempDir()
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+	t.Setenv("GIT_CONFIG_VALUE_0", elsewhere)
+	t.Setenv("GIT_CONFIG_PARAMETERS", "'core.hookspath'='"+elsewhere+"'")
+	IsolateGit(t)
+	dir := t.TempDir()
+	Git(t, dir, "init", "--quiet", "-b", "main", dir)
+	ran := filepath.Join(t.TempDir(), "ran")
+	hook := filepath.Join(dir, ".git", "hooks", "post-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+ran+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	WriteFiles(t, dir, map[string]string{"a.txt": "a\n"})
+	Git(t, dir, "add", "-A")
+	Git(t, dir, "commit", "--quiet", "-m", "seed")
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatalf("the repository's own post-commit hook did not run: %v", err)
+	}
+}
+
 // TestGitDoesNotHangOnLeakedHookChild reproduces, against the exported Git
 // helper itself, the same hang class fixed in internal/gitops: a repo hook
 // that backgrounds a child hands it the git process's stdout/stderr pipes,

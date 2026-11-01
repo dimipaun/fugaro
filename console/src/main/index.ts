@@ -61,6 +61,10 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import type { CrashReportingHandle } from './crash-electron'
+import { startUpdates } from './updater-electron'
+import { createUpdateSettings } from './updatestore'
+import type { UpdateController } from './updates'
 import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
@@ -693,6 +697,14 @@ function dashboardWindow(): BrowserWindow | null {
 }
 
 /**
+ * updates is the running update policy, or null on everything that is not a
+ * packaged macOS app. It is module scope rather than a local of `main` because
+ * `before-quit` is not inside `main`: the timer it holds has to be stopped by
+ * the quit, and the launcher's idle listener reaches it through this name.
+ */
+let updates: UpdateController | null = null
+
+/**
  * launchRunner is the launcher the surface's `run.launch` answers through, and
  * the handler reads it **at message time** rather than closing over it. That is
  * what makes this the fail-closed default rather than the shipped one: its
@@ -866,10 +878,51 @@ const lifecycle = createConsoleLifecycle({
 let picker: InstallationPicker | null = null
 
 /**
+ * crashReporting is the handle `startCrashReporting` answered, and it is null
+ * until `main` runs -- and stays null when the gate is shut, which is every
+ * start today. The quit path below is the one thing that needs it.
+ */
+let crashReporting: CrashReportingHandle | null = null
+
+/**
  * main is what `whenReady` resolves into: serve the bundle once, then run the
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
+  // **The crash reporter comes up before anything it could report on, and the
+  // module that holds the SDK comes up with it and not before.** The gate is an
+  // allow test and not a list of the answers that shut it: `optedIn` is `null`
+  // -- nothing has read the switch yet, and reading it is the next slice's,
+  // which reads the per-user switch this console keeps for itself -- and only a
+  // `true` reaches the reporter, so the third state D734 makes off is off here
+  // because it is not a yes rather than because this file knows its name. What
+  // follows from it is the whole of this slice's cost: in a console whose switch
+  // is not a yes, `./crash-electron` and
+  // the fourteen packages `@sentry/electron/main` reaches are never loaded and no
+  // client exists to start -- so a start that reports nothing pays nothing for
+  // the wiring that would, and the DSN sitting one import away is never read.
+  //
+  // Everything after the yes is `startCrashReporting`'s: the DSN constant the
+  // build carries (`./crash-dsn`), and the one way a yes can still end without a
+  // client, which is a caller that passed a DSN of its own. That is why this
+  // file needs no opinion about either -- and why it imports nothing from
+  // `./crash` to ask a question `===` answers.
+  //
+  // The reporter is wired here rather than beside the window because a crash
+  // before the window opens is the one an operator most wants back, and because
+  // the handle has to be closed on the way out.
+  const optedIn: unknown = null
+  if (optedIn === true) {
+    // The `.js` is the CommonJS build's spelling rather than a file this source
+    // tree has: `dist/main/index.js` carries this `import()` as `tsc` emitted it
+    // (`module: Node16` keeps the real dynamic import in CommonJS output), and
+    // `dist/main/crash-electron.js` is the file it resolves to --
+    // `test/e2e/crash-init.spec.ts` resolves the emitted specifier and loads it
+    // for that reason. The type-checking config resolves either spelling, so it
+    // is the build that decides.
+    const { startCrashReporting } = await import('./crash-electron.js')
+    crashReporting = startCrashReporting({ optedIn, appRoot: app.getAppPath() })
+  }
   // The icon first, and before any window exists: an unpackaged console has no
   // bundle to carry `build/icon.png`, so until this runs the dock shows
   // Electron's own icon rather than the website's mark (the owner's brief of
@@ -911,6 +964,33 @@ async function main(): Promise<void> {
     appEnv: process.env,
     log: createSpawnLog(process.env),
   })
+  // **The update policy comes up with the launcher it defers to**, and before
+  // the surface exists: `startUpdates` answers null on anything but a packaged
+  // macOS app, so this is a no-op on the Linux build and in development, and on
+  // a Mac it is where the client is hardened and the first check is started.
+  //
+  // The two halves are the same fact from each side: the policy asks
+  // `isIdle()` when it is about to prompt or install, and the flow tells it
+  // through `onIdle` when a launch that was in flight settles -- so a download
+  // that finished mid-launch is offered the moment the launch ends rather than
+  // waiting for the next six-hourly check.
+  //
+  // **The switch's one source is `updates.json`** (U4, D768 (a) of 2026-10-30).
+  // The settings are built first because the policy reads them: `switchOn` is
+  // asked afresh before every check, every prompt and every install, so a
+  // hand-edited file -- or the checkbox, which writes the same file and then
+  // stops or starts this controller -- is what the gate acts on.
+  const updateSettings = createUpdateSettings({
+    directory: app.getPath('userData'),
+    controller: () => updates,
+  })
+  updates = startUpdates({
+    isLaunchFlowIdle: () => launchRunner.isIdle(),
+    switchOn: () => updateSettings.auto,
+  })
+  launchRunner.onIdle(() => {
+    updates?.launchFlowIdle()
+  })
   picker = installInstallationPicker({
     // `shell` and not `dialog`: the picker has no file dialog any more (owner's
     // ruling of 2026-10-20) and its one external link goes through
@@ -951,6 +1031,19 @@ async function main(): Promise<void> {
     onRecordRemoved: (project) => {
       launchRunner.cancelFor(project)
     },
+    // The two update items, handed over **only while a controller is running**:
+    // `startUpdates` answered null on everything that is not a packaged macOS
+    // app, so the menu carries neither item off a Mac and in development, and
+    // nothing here repeats that admission test.
+    ...(updates === null
+      ? {}
+      : {
+          updateMenu: {
+            auto: updateSettings.auto,
+            setAuto: (on) => updateSettings.setAuto(on),
+            checkNow: () => updateSettings.checkNow(),
+          },
+        }),
   })
   // The menu is installed in **every** mode, `refused` included: choosing an
   // installation is how an operator gets out of a refusal, and a console that
@@ -998,10 +1091,24 @@ app.on('before-quit', (event) => {
   if (closing) return
   closing = true
   event.preventDefault()
-  void boundSource
-    .close()
-    .catch(() => undefined)
-    .finally(() => app.quit())
+  // The update controller goes first, and it is the one thing here that is not
+  // a child process: its timer is a live handle and its generation counter is
+  // what abandons a check whose listing is still in flight, so a quit that left
+  // it running would leave a check that finishes -- and prompts -- into a
+  // process on its way out.
+  updates?.stop()
+  // The reporter goes with the child, and the quit waits for both: `close`
+  // gives up on the request the transport has in flight after
+  // `CLOSE_TIMEOUT_MS` -- the console's own bound, because neither the client's
+  // `close` nor the electron-net transport carries one -- so a report that was on
+  // its way is not cut off by the process ending, and a stalled endpoint is not
+  // a quit that never happens. The two run together rather than one after the
+  // other, because neither has anything to do with the other -- one is a socket
+  // and one is a `SIGTERM`.
+  void Promise.all([
+    crashReporting?.close() ?? Promise.resolve(),
+    boundSource.close().catch(() => undefined),
+  ]).finally(() => app.quit())
 })
 
 // Note which of the two halves this calls. `serveBundle` here would re-register

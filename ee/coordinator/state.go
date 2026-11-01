@@ -138,6 +138,16 @@ type RepoView struct {
 	// caller spelled it. The node's key is a slug — a hash of the provider
 	// and the name — so an absent node carries no name to read back.
 	Repo string `json:"repo"`
+	// Provider is the git provider kind the caller resolved for this
+	// repository, one of config.Providers' two words, or "" when the caller
+	// had none to give. It is the caller's answer and not the node's: the
+	// stored view names no host, and a reader that built a pull request's URL
+	// out of the URL the sweep stored would be reading a field a job wrote as
+	// if it were a fact about the repository.
+	//
+	// The key is written even when it is empty, so "" is a repository with no
+	// provider rather than a document older than this field.
+	Provider string `json:"provider"`
 	// Stored is whether the database held a view document.
 	Stored bool `json:"stored"`
 	// View is the stored view, and the zero view when Stored is false.
