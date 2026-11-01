@@ -140,6 +140,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Depends on:** L1.1. Each level's settings reuse `config.LevelSetting` and its closed `config.Efforts`, so this task cannot define them a second time.
 - **Red step:** `TestLevelsDecodeStrict` fails because `levels` is an unknown field.
 - **Commit:** `config: per-level review settings and agent.adversarial_rounds`.
+- **Done (PR "config: per-level review settings and agent.adversarial_rounds").** Red first: `TestLevelsDecodeStrict` failed with `line 12: field levels not found in type config.Agent`, and `TestAdversarialRoundsDefaultAndBounds` with `line 11: field adversarial_rounds not found in type config.Agent`. Shipped as the supersede note above rules: 1–10, no `DefaultAdversarialRounds` constant, unset leaving the number to the mode's own senior row. `agent.levels` is the typed `config.ReviewLevels`, so the block's rules are `config.ReviewLevels.Validate`'s at both paths (`agent.levels` in the repository's file, `defaults.agent.levels` in the project layer), and the two layers merge key by key.
 
 #### L1.4 The owner's level floor, owner-only and tighten-only (D722)
 
