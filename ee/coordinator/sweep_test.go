@@ -102,6 +102,20 @@ func (s *fakeSource) PullRequests(_ context.Context, _, _ string, numbers []int)
 	return out, nil
 }
 
+// PullRequest is Reader's single-read half, which the sweep never reaches: a
+// tick reads each repository's pull requests in one call (PullRequests). It
+// answers from the same pull requests, so the fake keeps one story about the
+// host, and refuses a number it does not hold the way the host does rather
+// than inventing an empty document.
+func (s *fakeSource) PullRequest(_ context.Context, _, _ string, number int) (PRDocument, error) {
+	for _, pr := range s.prs {
+		if pr.Number == number {
+			return PRDocument{Number: pr.Number, URL: pr.URL, Title: pr.Title, State: pr.State, Draft: pr.Draft, Branch: pr.Branch}, nil
+		}
+	}
+	return PRDocument{}, errors.New("the host answered 404 for a pull request the fake does not hold")
+}
+
 func testRepo() Repo {
 	return Repo{Provider: "github", Name: "acme/webapp", Slug: "acme-webapp"}
 }
