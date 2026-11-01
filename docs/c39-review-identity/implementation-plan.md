@@ -91,8 +91,13 @@ seven.
 
 The service gains a third account class and the one thing the other two do not need: a way to pair a caller
 with a run when the caller's account names no repository. The gate is **narrowed**, not lifted: `verifyJob`
-keeps refusing the shared set with today's sentence, and the review set is refused on every route except the
-two C3.9b, C3.9e and C3.9f add.
+keeps refusing the shared set with today's sentence, and the review set is admitted on the **three routes its
+class owns** — the **mint** (C3.9b), the **sign** (C3.9e) and the **model path** (`/v1/messages` and its
+`count_tokens` sibling) **for its own account only**, which is what the owner's ruling **O1** put into
+**D1063** — and refused everywhere else, the **verify route** (C3.9f) included. **The model path is not a
+later task's**: the mint and the model path already exist, and what admits a review caller to them is the
+class and the pairing this task writes, decided in the same `verifyJob` that refuses a shared caller on every
+route (`sharedAccounts`, `auth.go:469`, which is the gate a shared caller meets on the model path too).
 
 - **Files (7):** `internal/credsvc/review.go` (new: `ReviewJobAccount{Email, Account}` — the account
   **name** is what the published admissions speak and the email is what the service is called as;
@@ -120,10 +125,16 @@ two C3.9b, C3.9e and C3.9f add.
 - **The repository table is not a second spelling.** Its keys are `task.Slug(provider, repo)` and its values
   `projectpolicy.Canonical(provider, repo)` — the two derivations the run identity and the mint already use —
   and an unknown slug is refused rather than guessed (D1066).
-- **Red step:** `TestReviewAccountIsAdmittedAndIsRefusedTheModelRoutes` fails at its first assertion while
-  the class does not exist: the review caller is refused with "the caller is not one of the installation's
-  job service accounts", which is the state this task's subject exists to change.
-- **Tests:** `TestReviewAccountIsAdmittedAndIsRefusedTheModelRoutes`,
+- **Red step:** `TestReviewAccountIsAdmittedOnTheModelPathForItsOwnAccount` fails at its first assertion
+  while the class does not exist: the review caller is refused with "the caller is not one of the
+  installation's job service accounts", which is the state this task's subject exists to change. The test
+  names the **model path** because that is the route a review caller reaches first, and the one **D1063** as
+  amended by **O1** admits it to; the mint and the sign are not in its name because C3.9b and C3.9e are the
+  tasks that open those two routes to the class, and it claims no refusal on the model path at all — the
+  refusal the test does pin is the pairing's, for an account that is not the one the run identity claims.
+- **Tests:** `TestReviewAccountIsAdmittedOnTheModelPathForItsOwnAccount`,
+  `TestReviewAccountIsRefusedTheModelPathForAnotherAccount` (the pairing is the class's, and a review account
+  is admitted for its own account only),
   `TestReviewAccountsAreTheNamesProjectJobsDeploys`, `TestSharedAndReviewSetsAreDisjoint`,
   `TestSharedJobCallerIsStillRefusedOnEveryRoute` (F2 — today's behaviour, unchanged),
   `TestReviewCallerOnAnUnpublishedRepositoryIsRefused` (F13, fail closed),
