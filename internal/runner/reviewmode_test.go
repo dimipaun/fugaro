@@ -2121,10 +2121,12 @@ func TestReviewStageRefusesProjectHooksAndMCP(t *testing.T) {
 func TestCodingRunStagesKeepTheirOwnSettingsPosture(t *testing.T) {
 	h := newGW(t, pinnedConfig(t), "observe", "").harness
 	var raws []string
+	var argvs [][]string
 	read := func(inner step) step {
 		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 			_, _, raw := settingsEnv(t, h)
 			raws = append(raws, raw)
+			argvs = append(argvs, agent.Args(req))
 			return inner(t, ctx, req)
 		}
 	}
@@ -2135,9 +2137,17 @@ func TestCodingRunStagesKeepTheirOwnSettingsPosture(t *testing.T) {
 		t.Fatalf("%d stages read the managed settings, want implement, review, fix and review", len(raws))
 	}
 	for i, raw := range raws {
-		for _, key := range []string{"disableAllHooks", "allowManagedHooksOnly", "enableAllProjectMcpServers", "settingSources"} {
+		for _, key := range []string{"disableAllHooks", "allowManagedHooksOnly", "allowManagedMcpServersOnly", "allowedMcpServers"} {
 			if strings.Contains(raw, key) {
 				t.Errorf("stage %d of a coding run carries the review posture's %s: %s", i, key, raw)
+			}
+		}
+		// The posture's other half is its argv, and a coding run's stages
+		// carry none of that either: its in-loop review rounds are the
+		// rounds D894(a) leaves exactly as they are.
+		for _, flag := range []string{"--setting-sources", "--strict-mcp-config"} {
+			if slices.Contains(argvs[i], flag) {
+				t.Errorf("stage %d of a coding run carries %s: %q", i, flag, argvs[i])
 			}
 		}
 	}
