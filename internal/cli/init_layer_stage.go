@@ -149,7 +149,7 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 		}
 		p.l = l
 	}
-	data, gen, exists, rerr := readPublishedLayer(ctx, p.url)
+	data, gen, exists, rerr := layerPublishedRead(ctx, lc, p.url)
 	switch {
 	case rerr != nil:
 		// The bucket this run would publish into cannot be read, so nothing of
@@ -192,12 +192,18 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 	return p, nil
 }
 
+// layerPublishedRead reads the published object for the stage; a var because a
+// file:// or mem:// bucket reports generation 0 for every object, and the state
+// D854's refusal exists for — a published generation ahead of the record — is
+// one only a test can hand the stage.
+var layerPublishedRead = readPublishedLayer
+
 // readPublishedLayer reads the canonical project layer object from url, the
 // runs bucket as this machine reads it. exists is false — with no error — when
 // the project has published none, which is a state of its own and not a
 // failure.
-func readPublishedLayer(ctx context.Context, url string) (data []byte, gen int64, exists bool, err error) {
-	if fakeEndpointsOnGS(nil, url) {
+func readPublishedLayer(ctx context.Context, lc *localcfg.Config, url string) (data []byte, gen int64, exists bool, err error) {
+	if fakeEndpointsOnGS(lc, url) {
 		return nil, 0, false, errors.New("the local config's storage endpoint is a fake, so the real bucket is not read")
 	}
 	b, err := openRecordBucket(ctx, url)
@@ -426,7 +432,7 @@ func (s *layerStage) Verify(ctx context.Context) error {
 		}
 		return nil
 	case p.publish:
-		data, gen, exists, err := readPublishedLayer(ctx, p.url)
+		data, gen, exists, err := layerPublishedRead(ctx, p.lc, p.url)
 		if err != nil {
 			return err
 		}
