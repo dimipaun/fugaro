@@ -89,7 +89,7 @@ import type {
   ScreenFactory,
 } from '../../src/renderer/screens/coordinator'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { PATH_PLACEHOLDER } from '../../src/shared/sanitize'
+import { PATH_PLACEHOLDER, type TextClass } from '../../src/shared/sanitize'
 import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
 import type { CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
@@ -480,6 +480,17 @@ function aBudget(options: {
     repos: [repo],
     warnings: [],
   }
+}
+
+/** aBudgetFor is `aBudget`'s own document with its one repository row renamed,
+ * which is where a budget alert's one document cell comes from: an alert names
+ * the repository it is about, and `repoKilled` is what makes the queue draw one
+ * for it. */
+function aBudgetFor(repo: string): JSONDoc {
+  const document = aBudget({ repoKilled: true })
+  const rows = document['repos']
+  const row = Array.isArray(rows) ? (rows[0] as Record<string, unknown> | undefined) : undefined
+  return { ...document, repos: [{ ...row, repo }] }
 }
 
 /** queueInputs is what the entry hands the model, with the four reads answered
@@ -991,10 +1002,37 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
 // documents or absent -- never invented, and never a zero standing in for
 // "unknown".
 //
-// What this file pins is the drawing and the model; that the four reads are
-// started together, and what the buttons do when they are clicked, is
-// `entry-wiring.test.ts`'s.
+// What this file pins is the drawing and the model; that three of the four
+// reads are started together and the jobs are read when they are asked for, and
+// what the buttons do when they are clicked, is `entry-wiring.test.ts`'s.
 // ---------------------------------------------------------------------------
+
+/** itemOf is one kind's item, found by the word it draws for its kind rather
+ * than by its place in the list: a case that named a kind is about that kind. */
+function itemOf(node: ScreenElement, word: string): FakeScreen {
+  const found = all(node, 'coordinator-queue-item').filter(
+    (item) => textOf(item, 'coordinator-queue-kind') === word,
+  )
+  expect(found, `expected exactly one ${word} item`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`no ${word} item`)
+  return first
+}
+
+/** holdsToPutText asserts one drawn cell holds exactly what `putText` makes of
+ * the same value, in the class its wire key declares: the sanitized text, or
+ * the not-available mark with the refusal's reason in the title. It is the one
+ * assertion a cell drawn through `literal` cannot pass -- `literal` draws the
+ * string the document wrote and writes no reason -- so it is how a case tells
+ * the screen's two text paths apart. */
+function holdsToPutText(cell: ScreenElement, raw: string, textClass: TextClass, field: string): void {
+  const expected = new FakeScreen('span')
+  putText(expected, raw, textClass, field)
+  expect(
+    [cell.textContent, cell.getAttribute('title')],
+    `${field} was not drawn the way putText draws it`,
+  ).toEqual([expected.textContent, expected.getAttribute('title')])
+}
 
 describe('the action queue (K1)', () => {
   it('draws one item per thing that is waiting, and exactly one button on each', () => {
@@ -1225,6 +1263,55 @@ describe('the action queue (K1)', () => {
     const waiting = coordinatorJobsControl(factory, false)
     expect(waiting.getAttribute('aria-expanded')).toBe('false')
     expect(waiting.textContent).toBe(COORDINATOR_QUEUE_JOBS_WORD)
+  })
+
+  it('draws every kind’s title and subject as text, whatever the document wrote', () => {
+    // A document's strings are drawn through `putText` in the class their wire
+    // key declares, and the console's own words through `literal`. A case that
+    // read only the text would pass with either -- `literal` draws the string
+    // too -- so each cell here is held to what `putText` makes of the same
+    // value, and the three values below are the shapes that tell the two paths
+    // apart: a bidi override, which no class keeps, a newline, which no
+    // validating class accepts, and a marker-shaped string, which is the
+    // console's own placeholder drawn as though a document had written it.
+    //
+    // Two cells of the four kinds are not a document's, and neither is a gap in
+    // this case: a pull request's subject is the console's own label over its
+    // number (`recordLabel`), and a budget alert draws no title at all -- the
+    // item is about a repository, and there is no title somebody wrote. The
+    // budget alert's subject is that repository, which is the hostile value.
+    const hostile = ['a\u202Eb', 'first\nsecond', '<path>']
+
+    for (const value of hostile) {
+      const node = drawsQueue({
+        view: decodes(aStore([aRecord({ title: value })])),
+        runs: queueRuns(runsDocument([aRunRow({ halted: true, run: value, title: value })])),
+        plans: plans([aTask(value, 'ready', value)]),
+        caps: capsOf(aBudgetFor(value)),
+      })
+      const pull = itemOf(node, COORDINATOR_QUEUE_PR_WORD)
+      holdsToPutText(one(pull, 'coordinator-queue-title'), value, 'sentence', 'records[].pr.title')
+      // The subject is the console's own label, and it is the number whatever
+      // the title says.
+      expect(textOf(pull, 'coordinator-queue-subject')).toBe('#1458')
+
+      const job = itemOf(node, COORDINATOR_QUEUE_JOB_WORD)
+      holdsToPutText(one(job, 'coordinator-queue-subject'), value, 'runId', 'runs[].run')
+      holdsToPutText(one(job, 'coordinator-queue-title'), value, 'sentence', 'runs[].title')
+
+      const task = itemOf(node, COORDINATOR_QUEUE_PLAN_WORD)
+      holdsToPutText(one(task, 'coordinator-queue-subject'), value, 'label', 'plans[].nodes[].id')
+      holdsToPutText(one(task, 'coordinator-queue-title'), value, 'sentence', 'plans[].nodes[].title')
+
+      const alert = itemOf(node, COORDINATOR_QUEUE_BUDGET_WORD)
+      holdsToPutText(one(alert, 'coordinator-queue-subject'), value, 'repository', 'repos[].repo')
+      expect(all(alert, 'coordinator-queue-title')).toEqual([])
+
+      // And the bidi override is nowhere on the screen at all: the cells above
+      // are the ones a document's strings reach, and this is the whole tree
+      // saying so rather than the four kinds saying it one at a time.
+      expect(drawn(node), `${value} reached the screen as itself`).not.toContain('\u202E')
+    }
   })
 })
 
