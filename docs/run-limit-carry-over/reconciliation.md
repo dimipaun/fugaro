@@ -1,10 +1,11 @@
 # Per-launch limits and a chain budget: reconciliation against the code
 
-Read against `origin/main` at `3d6ed04d` and the 15 pull requests open on 2026-11-01. Line numbers are
-that commit's. Each finding is **Exists**, **Missing** or **Conflicts**, with its consequence for the spec
-or the plan.
+Read against `origin/main` at `46e1b072` (the merge this branch carries) and the open pull requests of
+2026-11-01. Line numbers are that commit's. Each finding is **Exists**, **Missing** or **Conflicts**, with its consequence for the spec
+or the plan. **F1–F19** are the draft's; **F20–F22** are the owner's answer, the IAM facts and the missing
+operator raise.
 
-## 1. What exists
+## 1. The findings
 
 **F1: Exists. `fugaro run`'s flag set.** `newRunCmd` registers `--total-timeout`, `--tier`, `--mode`,
 `--no-budget-check`, `--pr`, `--attempts`, `--retry`, `--recipe`, `--token`, `--plan-task` and the task
@@ -30,11 +31,18 @@ handed to the gateway as `Options.Cap` (`internal/runner/gateway.go:138`). The v
 job when `fugaro setup` creates it and re-converged by `fugaro update`. *Consequence:* a per-launch cap cannot ride the job
 environment; it must ride `task.json`, which is the one per-launch carrier the runner reads (spec §2).
 
-**F4: Exists. The merge is tighten-only, in one place.** `policy.Merge` (`internal/policy/merge.go:44`)
-takes a ceiling and any number of later layers, keeps the smaller positive cap and the stricter mode, and
-records a looser value in `Ignored`. The runner calls it once at bootstrap with the owner's ceiling, the
-default branch's file and the run's own file (`internal/runner/policy.go:65`), and never recomputes it.
-*Consequence:* a per-launch limit is one more layer, and no new merge rule is written (spec §2, D904).
+**F4: Conflicts. The merge is tighten-only, but its layer has no wall-time or review-rounds member, and
+its third layer has no name of its own.** `policy.Merge` (`internal/policy/merge.go:44`) takes a ceiling and
+any number of later layers, keeps the smaller positive cap and the stricter mode, and records a looser value
+in `Ignored`; the runner calls it once at bootstrap with the owner's ceiling, the default branch's file and
+the run's own file (`internal/runner/policy.go:65`). But `policy.Layer` (`internal/policy/policy.go:423`)
+carries `Mode`, `PerRunUSD`, `PerDayUSD`, `MaxRunTokens`, the two output limits, `AllowedModels`, `ABRate`,
+`Governance` and `ReviewFloor` — **no wall-time member and no review-rounds member** — and `layerName`
+(`internal/policy/merge.go:27-35`) returns `SourceBranch` for **every** index past 1. *Consequence:* a
+launch/chain layer is **not** free. It needs a `Layer` member per new dimension and its own name in
+`layerName`, or `runs show` would print a chain limit whose source reads `branch` — a source that is not
+where the number came from. L3's `merge.go` entry is therefore unconditional, not conditional on a search
+(spec §2, D904, spec §7).
 
 **F5: Exists. The halt vocabulary.** `runstore.HaltReason` (`internal/runstore/runstore.go:44`) holds
 `run_cap`, `repo_daily_cap`, `global_daily_cap`, `no_cap`, `kill_switch`, `token_cap`, the budget- and
@@ -49,19 +57,24 @@ reason is added by this work.
 (`internal/budget/session.go:501`). *Consequence:* the chain budget changes nothing here; it hands the
 gateway a smaller cap (spec §4, D919).
 
-**F7: Exists. The record already carries most of a chain ledger.** `Record` (`internal/runstore/runstore.go:610`)
-carries `cost_usd` (`:655`), `cost` with `model_usd` and the compute split (`internal/runstore/cost.go:12`),
-`stages[]` with `model_usd` and `duration_s` (`:531`), `budget.granted_micros` and `released_micros`
-(`:847`), `reviews[].round` (`:146`), `halt` (`:684`), `follow_up.pr` and `.previous_run` (`:922`),
-`started_at` and `deadline` (`:667`), and `policy.sources` / `.ignored` (`:859-865`). *Consequence:*
-carry-over is a read over records that already exist, not a new store (spec §4, D906).
+**F7: Exists. The run record carries the chain's shape, and it is the fallback ledger.** `Record`
+(`internal/runstore/runstore.go:610`) carries `cost_usd` (`:655`), `cost` with `model_usd` and the compute
+split (`internal/runstore/cost.go:12`), `stages[]` with `model_usd` and `duration_s` (`:531`),
+`budget.granted_micros` and `released_micros` (`:847`), `reviews[].round` (`:146`), `halt` (`:684`),
+`follow_up.pr` and `.previous_run` (`:922`), `started_at` and `deadline` (`:667`), and `policy.sources` /
+`.ignored` (`:859-865`). *Consequence:* the record is where the chain's **links**, its **rounds**, its
+**clock** and its **halt** come from — but not where its money does (D906, spec §4). It is the fallback
+ledger only when the budget is off, and then the chain is **UNENFORCED** (F20).
 
-**F8: Missing. The record carries no token total.** The runner counts a run's tokens in memory
-(`r.tokens`, `internal/runner/halt.go:137`) and checks the cap at stage boundaries (`:143`), but the value
-is never written: `schemas/result.schema.json:97-98` has `cache_read_tokens` and `cache_write_tokens`
-only, and those are gateway-only sums. *Consequence:* a token carry-over needs a new `result.json` member
-(spec §4, D911). This is the one place the design must extend a wire format, and it extends it by adding a
-member within version 1.
+**F8: Missing. The record carries no *whole-run* token total — but the ledger does.** The budget database's
+per-run ledger has a `tokens` leaf (`internal/budget/model.go:338`, increase-only at
+`internal/budget/rules/rules.json.tmpl:87`), so with the budget on the token dimension needs **no new node
+and no new field**: it reads `/runs/<slug>/<run>/tokens` like the money (F20). What does not exist is a
+token figure in `result.json`: `schemas/result.schema.json:97-98` has `cache_read_tokens` and
+`cache_write_tokens` only, and those are gateway-only cache sums that exclude the input and output tokens a
+cap counts, while the runner's own total (`r.tokens`, `internal/runner/halt.go:139`) is in memory and never
+written. *Consequence:* the **fallback** ledger cannot enforce a token limit and must say so rather than
+approximate one (spec §4, §7, D911). No wire format is extended by this work.
 
 **F9: Missing. `fugaro runs` has no `show`.** `newRunsCmd` adds `ls`, `stats` and `digest`
 (`internal/cli/runs.go:107-112`); `diagnose` is the failure view of one run
@@ -97,17 +110,21 @@ launch needs (`internal/budget/precheck.go:12`), and the sweeper "never releases
 never low" (`internal/budget/sweep.go:28-29`). *Consequence:* a chain split is bounded by the day caps
 whatever the chain read says, and the unknown-usage case takes the sweeper's own direction (spec §5, §9).
 
-**F15: Exists. The rigor modes' round ceiling is a table under a floor.** `roundCeilings`
-(`internal/rigor/rounds.go:33`) is POC 1, Startup 2, Pro 3, Critical the widest, Hotfix 1, and
-`RoundCeiling` (`:51`) holds each under `minRoundCeiling` 2 — the owner's O3 ruling of 2026-10-27
-(`docs/rigor-modes/reconciliation.md:2126`). *Consequence:* `--max-review-rounds` composes under the mode's
-number and never above it (spec §8, D917).
+**F15: Conflicts. `minRoundCeiling` is a FLOOR, and the table's rows are all below or at it.** The table
+(`internal/rigor/rounds.go:31-38`) is POC 1, Startup 2, Pro 3, Critical the widest, Hotfix 1, and
+`RoundCeiling` (`:51-56`) returns `min(max(n, minRoundCeiling), widestRoundCeiling)` with `minRoundCeiling`
+2 and `widestRoundCeiling` 10. So the table's numbers are **not** the ceilings a mode runs at: the effective
+ceilings today are **POC 2, Startup 2, Pro 3, Critical 10, Hotfix 2** — every row below the floor is lifted
+to it. *Consequence:* `--max-review-rounds` composes under the **clamped** figure, and the refusal names the
+clamped figure, not the table's row (spec §8, D917). A design that quoted "POC 1, Hotfix 1" as the ceiling
+would refuse a launch the engine would run.
 
 **F16: Missing on `main`. The cloud senior review is an open design, not code.** `docs/cloud-senior-review/`
 is on **PR #1472** only, holding D880–D899 and claiming **Check 125**; it adds a second job with its own
-named account. This is a *placement* finding rather than a gap in what this work needs: nothing in this
-design depends on it. *Consequence:* its job is a separate chain unless the owner rules otherwise
-(spec §8, D918).
+named account, and its review-fix loop is a second reviewer round. This is a *placement* finding rather than
+a gap in what this work needs: nothing here depends on it. *Consequence:* per the owner's answer of
+2026-11-01, that job **joins the PR's chain** rather than opening a chain of its own, and the chain's
+`--max-review-rounds` is what bounds its review-fix loop (spec §8, D918).
 
 **F17: Exists. A halted run still writes back.** `finalize` makes no model call, and `writeback`
 (`internal/runner/lockcache.go:315`) sets `stage: writeback` and saves the record before the session and
@@ -126,13 +143,58 @@ a block above everything in use (`docs/models-commands/README.md`, `docs/rigor-c
 *Consequence:* this work reads the tree and the open pull requests rather than the register (README
 §"Numbers this work holds").
 
+**F20: Exists. The budget database keeps a per-run ledger, and every leaf of it is increase-only.**
+`RunLedger` (`internal/budget/model.go:332-347`) is `/runs/<slug>/<run>` and holds `reserved`, `released`,
+`spent`, `notional`, `overrun`, `tokens`, `exp`, `crashed` and `byTier`. The rules
+(`internal/budget/rules/rules.json.tmpl:56-91`) give each leaf its own write rule and no ancestor one, and
+**every numeric leaf validates `NEW >= OLD`** — `reserved`, `released`, `spent`, `byTier/*/spent`,
+`notional`, `overrun` and `tokens` alike; `exp` is write-once (`!data.exists()`); `crashed` is not in the
+rules at all, because the sweeper writes it with database admin rights. Two further ties bind the leaves:
+`released + spent <= reserved` and `spent + released <= reserved`, so a release may take at most the
+unsettled amount, and `reserved` must move with the day counter by the same delta (`COUNTERS_FOLLOW`). The
+rules' own identity test (`RUN`, `internal/budget/rules/rules.go:581-582`) requires
+`auth.token.fs == $slug && auth.token.fr == $run`, so a token speaks only for the one run it was minted
+for. *Consequence, and it is the load-bearing one:* `max(Spent, Reserved − Released)` **cannot be pushed
+below `Spent` by any writer holding a run's identity**, because every leaf is increase-only and a release is
+capped at `reserved − spent`. The settled figure is a floor nobody can lower. That is what makes the ledger
+the right source (spec §4, §9, D906).
+
+**F21: Conflicts. Who can write the run record, and who can write the ledger, are different questions.**
+The launcher's grant is `roles/storage.objectUser` on the runs bucket conditioned on `runs/` **and**
+`tokens/` (`deploy/terraform/gcp/modules/installation/iam.tf:172-187`), so a launcher **may write,
+overwrite and delete run records under `runs/`** — it is not confined to its own run's prefix. A job's own
+account is `roles/storage.objectUser` conditioned on `runs/<slug>/`, `cache/<slug>/` and `locks/<slug>/`
+(`deploy/terraform/gcp/modules/workflow/sa.tf:22-35`), and per `docs/design/v1.md` §6.1 **"the condition
+names objects, so it also denies listing the bucket… The runner never lists"** — and the agent shares the
+container, so it reaches everything the job's account does. *Consequence:* two things the earlier draft got
+wrong, both now fixed. (1) The chain read cannot be a **listing**: the launcher resolves the chain's run ids
+from what it can read and passes them, and the runner reads each record **by name** (spec §3, §4; plan
+L0/L5). (2) The run records are **not** a trustworthy ledger — a launcher can forge one — which is why the
+ledger is the database (F20) and the records are only the budget-off fallback, marked UNENFORCED (spec §9,
+T2/U2).
+
+**F22: Missing. Nothing lets an operator raise a chain that has spent its limit.** Every cap in the system
+today is either the owner's (the database, `fugaro budget set`) or the launcher's (a launch argument), and
+the budget database's caps are writable only by budget admins. A chain limit is a **launcher's** number
+(D1045), so when a chain exhausts one there is no one above the launcher who can move it: the launcher
+would simply raise its own limit, which is exactly the power the chain limit exists to remove from a
+launcher and, a fortiori, from the agent. *Consequence:* the design needs an **operator-only** way to raise
+an exhausted chain — one the launcher and the agent cannot use — and it is a decision of its own
+(spec §4, §6; D1061).
+
 ## 2. What is missing, and what conflicts
 
-- **Missing:** a launch flag for any of the four dimensions except time (F1); a token total in the record
-  (F8); `runs show` (F9); any engine read of "what a chain already used" (F7 exists as data, not as a
-  read).
+- **Missing:** a launch flag for any of the four dimensions except time (F1); a whole-run token total in
+  the fallback record (F8); `runs show` (F9); any engine read of "what a chain already used" (F7 exists as
+  data, not as a read); an operator-only way to raise an exhausted chain (F22).
 - **Conflicts:** the per-run cap's carrier is the job environment, which a launch cannot write (F3); the
-  one existing per-launch limit may raise (F18), so the new family is separate rather than a reuse.
+  one existing per-launch limit may raise (F18), so the new family is separate rather than a reuse; the
+  policy layer has no member for two of the four dimensions and its third layer has no name of its own
+  (F4); the rigor table's rows are below a floor, so the *clamped* figure is the ceiling (F15); and the run
+  records are neither listable by the runner nor writable by the launcher alone (F21).
+- **No longer a conflict, by the owner's answer (2026-11-01):** the ledger question. The budget database
+  already holds a per-run ledger whose every leaf is increase-only (F20), so "where does a chain's spend
+  come from" has an answer in the tree and does not need a new node, a rules change or a new wire field.
 - **The image skew.** `task.Parse` decodes with `DisallowUnknownFields` (`internal/task/task.go:863`), so a
   job image whose runner predates the new `overrides` members refuses the whole task. Every other field
   added to a task is gated by `checkImageSince` (`internal/cli/recipes_skew.go:700`) against a `*Since`
@@ -140,37 +202,45 @@ a block above everything in use (`docs/models-commands/README.md`, `docs/rigor-c
   gates are called in one block in `launchRun` (`internal/cli/run.go:727-801`). A new field that skips the
   gate is a launch that fails in the container, which the HARD RULE forbids.
 
-## 3. Decisions D901–D920
+## 3. Decisions D1041–D1061
 
-**Every one is open.** The owner has answered none; the recommendation comes first, the alternative and
-its cost second. The spec is written to the recommendation.
+**Every one is answered.** The owner answered all of them on 2026-11-01, **as recommended**, in the brief
+that carries this fix round; the Answer column records that. The spec is written to the answer.
 
-| D | Question | Recommendation | The alternative, and its cost | Answer |
-| --- | --- | --- | --- | --- |
-| **D901** | Where is an explicit per-launch limit carried? | **In `task.json`'s `overrides`, gated by `checkImageSince` like every other task field (F3, F2).** | A new job environment variable through the backend: Cloud Run's `jobs.run` override does not carry env, and a value outside the task would be invisible in the record and to every reader | **open** |
-| **D902** | One flag per dimension, or one bundle? | **One flag per dimension (`--max-usd`, `--max-tokens`, `--max-time`, `--max-review-rounds`).** Each has its own unit, its own refusal and its own ceiling; a bundle cannot name which dimension a refusal is about. | A single `--limit usd=5,tokens=900000`: one parser for four units, a typo in one dimension silently sets none, and the help text cannot state a default per dimension | **open** |
-| **D903** | A value that would loosen: dropped or refused? | **Refused, naming both numbers and the layer that set the lower one.** A caller typed it one second ago; a silent drop tells them their limit took effect when it did not (F4). `--total-timeout` keeps its meaning and is not one of the four (F18). | Reuse `policy.Merge` and record the drop in `ignored`, as a repository file's looser value is: right for a file a team wrote once, a lie for a launch argument | **open** |
-| **D904** | What does a launch tighten against? | **The effective policy the launcher resolves before the launch, merged again by the runner at bootstrap.** Two reads of one rule, so a launch that wrote a looser value is still held to the policy. | Trust the launch's own resolution and skip the runner's merge: one read, and a task written by hand or by an older CLI reaches the runner unchecked | **open** |
-| **D905** | What identifies a chain? | **The link the launcher names: the PR (`--pr`), the stored task (`--retry`), or a new `--continues RUN-ID` for a chain with no PR.** The chain id is the **root run id**, derived by the engine from the records (F10). | A new explicit `--chain ID` string: a caller-chosen identity is a caller-chosen split, and two callers can name one chain or two for the same work | **open** |
-| **D906** | Where does the chain ledger live? | **The run records (F7).** They already carry the cost, the stages, the rounds, the halt and the `previous_run` link, and every reader already reads them. | The budget database: a new node, a rules change, a second source of truth that can disagree with the record, and a write path for a launcher that today writes only its own run's prefix | **open** |
-| **D907** | How is remaining computed? | **`remaining = chain limit − Σ settled usage over the chain's records`, read by the engine.** Settled dollars (`cost.model_usd`), not the lease (`granted_micros`, which is a reservation) (F6, F7). | Read the lease: a reservation is money held, not money spent, and a lease released at Close would make the chain read *less* than it spent | **open** |
-| **D908** | May a caller supply "used"? | **Only as a further tightening: `--used-*` larger than the engine's read raises the charge; smaller is refused, naming both.** Keeps the honest orchestrator case (spend the records do not hold) and closes the understatement hole (T1). | Accept it as given: a caller states zero and the chain starts fresh, which is the hole this work exists to close | **open** |
-| **D909** | A chain record that cannot be read: zero or unknown? | **Unknown, never zero: refuse the continuation unless the caller's `--used-*` covers it, naming the run.** The sweeper's own direction, "errs high, never low" (F14). | Treat a missing record as zero: one deleted object restores the whole chain's budget, which is a cheaper attack than forging one | **open** |
-| **D910** | The halted-run writeback case | **No special rule: a halted run counts what its record settled, and a halt at the cap makes the restart's remaining small or zero, so a zero remaining is a refusal at launch (F17, spec §5).** | A grace that lets a halted chain restart with a fixed top-up: a number nothing measures, and a chain that can always restart is a chain with no cap | **open** |
-| **D911** | The token total the record does not carry | **Add `tokens` to `result.json` (input/output/cache totals) in the same task that writes the token cap, within version 1 (F8).** An addition, so the console accepts any newer CLI on the contract. | Derive it from the stages' figures: the stage timings carry dollars, not tokens, so the derivation does not exist; or from `cache_read_tokens`/`cache_write_tokens`, which are gateway-only and exclude the input and output tokens the cap counts | **open** |
-| **D912** | `--pr` follow-ups | **A follow-up inherits the chain's *remaining* limits and merges its own `--max-*` under them, tighten-only (F10).** A follow-up that names none gets the remaining amounts, which is the behaviour the owner asked for. | Inherit the limits as the previous run recorded them: the restart then gets the full cap again, which is the hole | **open** |
-| **D913** | `--retry` and `--attempts` | **A retry is the same chain (its stored `run_id`), computed at its own launch; a batch is N chains, each with the full per-launch limit, bounded by the existing `batchBudgetPrecheck` (F11, F14).** | One chain for the batch: the attempts are alternatives, not continuations, and a shared budget would halt attempt 2 because attempt 1 was expensive | **open** |
-| **D914** | The orchestrator and the coordinator's launch path | **The limits ride the launch arguments; the coordinator's intent record is unchanged and stays advisory (F13).** An orchestrator is a CLI caller like any other. | Put the limits in the intent record: the coordinator takes nothing back and authorises nothing, so a limit there would bind nobody, and `ee/` would gain a second place a budget is stated | **open** |
-| **D915** | The CLI and display surface | **`fugaro runs show RUN [--json]` is new (F9), `diagnose` gains the same block for a halted run, and the console passes none of the new flags (F12).** | Put it on `runs ls`: a listing cannot show per-dimension limits without a column per dimension, and the chain read is per run | **open** |
-| **D916** | The JSON contract | **Additions only, within the existing versions: `result.json` gains `tokens`; `task.json`'s `overrides` gains the four members; `runs show --json` is a new document; `launchResult` gains `chain` and `limits[]` (F1, F7, F8).** No member is renamed, retyped or removed and no version is bumped. | A new version for the run record: the console's contract accepts a newer CLI on the same version, and a bump would make an older console refuse a document it could read | **open** |
-| **D917** | Under the rigor modes' loop defaults | **`--max-review-rounds` composes *under* the mode's ceiling: `min(recipe rounds, mode ceiling, chain remaining)`, and a value above the mode's number is refused (F15).** The mode's number is a ceiling on the recipe's ask; the limit is a ceiling on the chain. | Let the limit raise the mode's ceiling: a caller would buy rounds the mode exists to deny, and O3's floor would be bypassed by a flag | **open** |
-| **D918** | Under the cloud senior reviewer | **A separate chain with its own limits unless the owner rules otherwise; a review job that must not outspend a chain passes `--continues` and gets the same carry-over (F16).** | Fold the reviewer into the coding chain's budget: it is a different job on a different account with a different purpose, and the design is not merged yet | **open** |
-| **D919** | The gateway's lease and the daily caps | **Nothing changes: the chain budget hands the gateway a smaller cap and the database's day caps keep binding (F6, F14).** | Teach the gateway the chain: a second budget in the enforcement path, in the one component whose correctness the whole spend story rests on | **open** |
-| **D920** | Clock skew in the chain's time read | **Take the larger of the record's `finished_at − started_at` and the sum of its stages' `duration_s`, so a doctored `started_at` cannot shrink the figure (T4).** | Trust `started_at` alone: a record whose start is moved forward reports less elapsed time, and the chain's clock budget grows | **open** |
+**The block is renumbered at merge.** This work's earlier draft held D901–D920, which open pull requests
+now hold too (#1481 holds D901–D914, #1487 D920–D934, #1496 D1011–D1040), so the block moves to the first
+free one, **D1041**. It is **D1041–D1061: 21 decisions** — the 20 of the draft plus **D1061**, the
+operator-only raise the owner's second answer asks for. The re-check is recorded in
+[README.md](README.md) §"Numbers this work holds"; the open pull requests' numbers are the launcher's
+2026-11-01 reading, because this session has no GitHub credentials and cannot re-read them.
+
+| D | Question | Answer | Why, and what the alternative cost |
+| --- | --- | --- | --- |
+| **D1041** | Where is an explicit per-launch limit carried? | **In `task.json`'s `overrides`, gated by `checkImageSince` like every other task field.** A chain limit exists **only** when it is set this way, at the **root** launch of the chain; a launch that names none gets today's per-run caps, per run. | Cloud Run's `jobs.run` override does not carry env, and a value outside the task would be invisible in the record and to every reader (F3) |
+| **D1042** | One flag per dimension, or one bundle? | **One flag per dimension (`--max-usd`, `--max-tokens`, `--max-time`, `--max-review-rounds`).** | A single `--limit usd=5,tokens=900000` needs one parser for four units, a typo in one dimension silently sets none, and the help text cannot state a default per dimension |
+| **D1043** | A value that would loosen: dropped or refused? | **Refused, naming both numbers and the layer that set the lower one.** `--total-timeout` keeps its meaning and is not one of the four. | Reusing `policy.Merge`'s `Ignored` drop is right for a file a team wrote once and a lie for a launch argument typed a second ago (F4, F18) |
+| **D1044** | What does a launch tighten against? | **The effective policy the launcher resolves before the launch, merged again by the runner at bootstrap.** | Trusting the launch's own resolution is one read instead of two, and a task written by hand or by an older CLI reaches the runner unchecked |
+| **D1045** | What identifies a chain? | **The link the launcher names: the PR (`--pr`), the stored task (`--retry`), or `--continues RUN-ID` for a chain with no PR.** The chain id is the **root run id**. `--continues` is refused with `--pr`, `--retry` and `--attempts`. | A caller-chosen `--chain ID` string is a caller-chosen split: two callers can name one chain or two for the same work (F10, F11) |
+| **D1046** | Where does the chain's "used" come from? | **The budget database's per-run ledger** (F20): with the budget on, `used = max(Spent, Reserved − Released)` while the ledger is unclosed or `crashed`, else `Spent`. The **run records are the fallback only when the budget is off**, and that chain is **UNENFORCED**. | The records alone: the launcher can write and delete them (F21), so a launcher could understate its own chain, and the number would differ from the one the rules actually enforce |
+| **D1047** | How is remaining computed? | **`remaining = chain limit − Σ used over the chain's runs`**, with the *used* figure of D1046. | Reading the lease's `reserved` alone: a reservation is money held, not spent, and a released lease would make the chain read *less* than it spent (F6) |
+| **D1048** | May a caller supply "used"? | **Only as a further tightening: `--used-*` larger than the engine's read raises the charge; smaller is refused, naming both.** | Accepting it as given lets a caller state zero and start the chain fresh (T1) |
+| **D1049** | A chain's ledger that cannot be read: zero or unknown? | **Unknown, never zero: refuse the continuation unless the caller's `--used-*` covers it, naming the run.** | A missing ledger read as zero restores the whole chain's budget, which is cheaper than forging one (F14) |
+| **D1050** | The halted-during-writeback case | **No special rule.** A restart charges what the halted run's ledger holds: `Spent` if the ledger closed, and the **held** amount (`Reserved − Released`, which is what the lease counted) if it did not. A halt at the cap therefore leaves a small or zero remaining, and a zero remaining is a refusal at launch. | A grace that lets a halted chain restart with a fixed top-up is a number nothing measures, and a chain that can always restart is a chain with no cap (F17) |
+| **D1051** | The token dimension's figure | **The ledger's `tokens` leaf (F20) — no new node, no rules change, no new field.** In the budget-off **fallback** the token dimension is **not measured**: the record has no whole-run total, so the fallback says so instead of approximating from cache sums. | A new `result.json` member: it would be a second token figure that can disagree with the one the rules enforce, for a dimension the ledger already carries |
+| **D1052** | `--pr` follow-ups | **A follow-up inherits the chain's *remaining* limits and merges its own `--max-*` under them, tighten-only.** | Inheriting the limits as the previous run recorded them gives the restart the full cap again, which is the hole |
+| **D1053** | `--retry` and `--attempts` | **A retry is the same chain (its stored `run_id`), computed at its own launch; a batch is N chains, each with the full per-launch limit, bounded by the existing `batchBudgetPrecheck`.** | One chain for a batch: the attempts are alternatives, not continuations, and a shared budget would halt attempt 2 because attempt 1 was expensive (F11, F14) |
+| **D1054** | The orchestrator and the coordinator's launch path | **The limits ride the launch arguments; the coordinator's intent record is unchanged and stays advisory.** An orchestrator is a CLI caller like any other. | A limit in the intent record binds nobody: the coordinator takes nothing back and authorises nothing (F13) |
+| **D1055** | The CLI and display surface | **`fugaro runs show RUN [--json]` is new, `diagnose` gains the same block for a halted run, and the console passes none of the new flags.** The `source` of each limit is printed from the policy layer's own name (F4). | A column per dimension on `runs ls`: the chain read is per run, and a listing cannot carry it (F9, F12) |
+| **D1056** | The JSON contract | **Additions only, within the existing versions: `task.json`'s `overrides` gains the four members; `runs show --json` is a new document; `launchResult` gains `chain` and `limits[]`. No `result.json` change at all (D1051).** | A new version for the run record would make an older console refuse a document it could read |
+| **D1057** | Under the rigor modes' round limits | **Refuse only against the chain's own limit, never against the mode's.** Per run the rounds are `min(recipe, the mode's clamped round ceiling, the chain's remaining)`, and a refusal names the clamped figure — POC 2, Startup 2, Pro 3, Critical 10, Hotfix 2 (F15). | Refusing a `--max-review-rounds` above the mode's number would refuse a launch the engine would run, and would make a per-launch limit a second copy of the mode |
+| **D1058** | The cloud senior reviewer | **A review job on PR N joins the PR's chain by its PR link, and the chain's `--max-review-rounds` counts senior-review iterations** — it is what bounds that design's review-fix loop. It does not open a chain of its own. | Folding the reviewer into the coding chain by *budget merge* rather than by link: it is a different job on a different account, and the link is what the chain already means (F16) |
+| **D1059** | The gateway's lease and the daily caps | **Nothing changes: the chain hands the gateway a smaller cap and the database's day caps keep binding.** | Teaching the gateway the chain puts a second budget in the enforcement path, in the one component the whole spend story rests on (F6, F14) |
+| **D1060** | Clock skew in the chain's time read | **Take the larger of the record's elapsed time and the sum of its stages' `duration_s`.** | Trusting `started_at` alone lets a record whose start is moved forward report less elapsed time |
+| **D1061** | Who may raise a chain that has spent its limit? | **An operator only** — not a launcher, not the agent. The raise is a budget-database write by an operator (a budget admin, the same identity class that owns `fugaro budget set`), recorded with a reason, and a launcher that tries it is refused. | Letting a launcher raise its own chain limit makes the whole family decorative: the launcher could name a small limit, exhaust it, and raise it again, which is exactly the power the limit exists to remove (F22) |
 
 ## 4. Open items this work found and did not decide
 
-**O1 — Whether a chain's limits should survive a merged PR.** A chain is the PR's runs (D905); when the PR
+**O1 — Whether a chain's limits should survive a merged PR.** A chain is the PR's runs (D1045); when the PR
 merges, the link is gone and a later run on the same task is a new chain. Whether that is right, or
 whether a merged chain should carry into a follow-up branch, is a product question this design does not
 answer.
@@ -180,14 +250,19 @@ other document, so it *can*; whether the Spend screen should join a chain's runs
 console's own decision (`docs/console-coordinator-v2/`), and no console task is in this plan.
 
 **O3 — What `fugaro update` must do.** Adding `overrides` members to `task.json` is additive, and a job
-image that knows them is what the gate (D901) requires. Whether `fugaro update` should *also* re-converge
-an existing job's environment, the way the models work's E2 does for provider copies, is not this
-design's: nothing here changes a job's environment (F3), so there is nothing for `update` to carry.
+image that knows them is what the gate (D1041) requires. Nothing here changes a job's environment (F3), so
+there is nothing for `update` to carry.
+
+**O4 — How a chain's `remaining` reaches a job whose budget is off.** The budget-off fallback reads the run
+records (D1046) and is UNENFORCED, so a chain limit in that mode is a report and not a stop. Whether that
+mode should refuse a chain limit outright, rather than honour it without enforcing it, is a product
+question this design does not answer. The spec states the mode and its limit plainly (spec §4).
 
 ## 5. UNVERIFIED
 
 | # | Claim | Why it is not verified here |
 | --- | --- | --- |
-| U1 | That Cloud Run's `jobs.run` override cannot carry environment variables | Read off the Go client's API surface and the backend seam, not against the live API; the recommendation does not depend on it (D901 recommends the task either way) |
-| U2 | That a launcher's write grant on the runs bucket is its own run's prefix only | Read from the rules' shape and `docs/design/v1.md` §6.1, not from a deployed rules file; T2's conclusion assumes it |
-| U3 | The exact cost of the `runs show` read over a long chain | `docs/console-coordinator-v2/spec.md:131` measures `runs ls --json --since 24h` at about 5.8 s; a chain read is one listing plus the chain's records, unmeasured |
+| U1 | That Cloud Run's `jobs.run` override cannot carry environment variables | Read off the Go client's API surface and the backend seam, not against the live API; the answer does not depend on it (D1041 carries the limits in the task either way) |
+| U2 | ~~That a launcher's write grant on the runs bucket is its own run's prefix only~~ | **Withdrawn.** The grant's own condition (`deploy/terraform/gcp/modules/installation/iam.tf:172-187`) names `runs/` and `tokens/`, not one run's prefix, so a launcher can write and delete any repository record under `runs/`. F21 records the fact and D1046 is what it costs the design |
+| U3 | The exact cost of the `runs show` read over a long chain | `docs/console-coordinator-v2/spec.md:131` measures `runs ls --json --since 24h` at about 5.8 s; a chain read is one resolution plus the chain's ledgers, unmeasured |
+| U4 | That a chain's ledger reads stay inside the rules' read path | The rules' run read is `RUN` (`internal/budget/rules/rules.go:581-582`), which is the run's own identity; whether one run's token may read a **sibling's** ledger node is a rules question this design assumes is denied (each `fr` speaks only for itself) and does not prove here. If it is not denied, the chain read of D1046 needs the platform's admin read instead of a run token |
