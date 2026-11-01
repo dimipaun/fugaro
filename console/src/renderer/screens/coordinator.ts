@@ -57,7 +57,7 @@
 
 import { measured } from '../../shared/availability'
 import type { Reading, Unit } from '../../shared/availability'
-import { nameableText } from '../../shared/sanitize'
+import { nameableText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import { BUSY_SLOT_CLASS } from '../section'
 import type {
@@ -272,6 +272,13 @@ export const COORDINATOR_RETRY_WORD = 'Retry'
 export const COORDINATOR_LAUNCH_WORD = 'Launch'
 export const COORDINATOR_OPEN_SPEND_WORD = 'Open Spend'
 
+/** COORDINATOR_OPEN_PR_NAME_WORD is the verb the pull request numbers are named
+ * with. It is a **name** and not a drawn word: the number keeps the same `#1458`
+ * it had as text, and the name is what a reader who cannot see the row hears
+ * instead -- the verb, the number and the repository, so two numbers that read
+ * the same are still two different things to open. */
+export const COORDINATOR_OPEN_PR_NAME_WORD = 'open pull request'
+
 /** COORDINATOR_BLIND_WORD introduces the line under the queue, and
  * COORDINATOR_BLIND_STALE_WORD and COORDINATOR_BLIND_UNREAD_WORD are the two
  * things it counts: repositories the sweep has marked stale, and pull requests a
@@ -368,13 +375,48 @@ export interface CoordinatorRunPanel {
   readonly filesTruncated: boolean
 }
 
+/**
+ * CoordinatorPullLink is the triple a pull request's number is opened with: the
+ * host the repository is on, its `owner/name`, and the number.
+ *
+ * **It is the whole of what a press sends**, and it is deliberately not a URL:
+ * `src/main` builds the destination from these three fields (`pullRequestUrl`,
+ * D815) and hands *its own* string to the one validated shell call, so no URL a
+ * document carries ever reaches a browser (rule 2, reconciliation F2). It is
+ * also why the triple is a value of this screen's own making rather than a field
+ * read back out of the DOM: what the entry point sends is what the number was
+ * drawn for.
+ */
+export interface CoordinatorPullLink {
+  readonly provider: string
+  readonly repo: string
+  readonly number: number
+}
+
+/**
+ * CoordinatorPullButton is one number drawn as a button: the element, and the
+ * triple pressing it opens. The screen answers these to the entry point, which
+ * binds the press -- and it binds **this pair** rather than looking the element
+ * up again by class, so the two cannot come apart.
+ */
+export interface CoordinatorPullButton {
+  readonly element: ScreenElement
+  readonly link: CoordinatorPullLink
+}
+
 /** CoordinatorRecordPanel is one record: a pull request with the runs behind it,
  * or the in-flight runs alone. `label` is the console's own name for the record
  * -- the pull request's number, or the newest run's id -- and `title` is the
  * untrusted text whoever opened the pull request wrote. `runs` is already cut to
- * `COORDINATOR_LIST_CAP` and `runsDropped` is the count that was cut. */
+ * `COORDINATOR_LIST_CAP` and `runsDropped` is the count that was cut.
+ *
+ * `link` is the triple the label opens when the console can form one (K2), and
+ * `null` where it cannot: a record with no pull request at all, or one whose
+ * repository or provider the console will not build a destination from. A `null`
+ * is drawn as text, and a label that is a run's id is never a button. */
 export interface CoordinatorRecordPanel {
   readonly label: string
+  readonly link: CoordinatorPullLink | null
   readonly title: string
   readonly state: string
   readonly draft: boolean
@@ -482,11 +524,15 @@ export type CoordinatorQueueAction =
  *   - `ground` is which of the two budget grounds an alert stands on, and is
  *     `null` for every other kind. It is a closed word rather than a sentence so
  *     the sentence itself is drawn from this file's constants, beside the words
- *     it belongs to.
+ *     it belongs to;
+ *   - `link` is the triple the subject opens where the subject is a pull
+ *     request's number the console can build a destination for (K2), and `null`
+ *     for every other item and for a number it cannot.
  */
 export interface CoordinatorQueueItem {
   readonly kind: CoordinatorQueueKind
   readonly subject: string
+  readonly link: CoordinatorPullLink | null
   readonly scope: string
   readonly repo: string
   readonly title: string
@@ -671,6 +717,66 @@ function recordLabel(record: CoordinatorRecord): string {
   return newest === undefined ? '-' : newest.id
 }
 
+/**
+ * PULL_PROVIDERS is the hosts this console has a pull request route for, in
+ * `src/main/window.ts`'s own order (`PULL_REQUEST_ROUTES`, D815).
+ *
+ * The list is written here as well because the renderer cannot ask main before
+ * it draws, and what it decides is only **whether a number is a button**: the
+ * destination is still built by main, from the triple, in main's own alphabet.
+ * The two lists agreeing is therefore not a security property -- a provider this
+ * screen lists and main does not is a press that opens nothing -- but a
+ * provider this screen refuses is a number drawn as text, which is the safe
+ * direction to be wrong in.
+ */
+const PULL_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbucket'])
+
+/** PULL_REPO is main's own `PULL_REQUEST_REPO_RE`, character for character:
+ * exactly the two segments a repository has, each beginning with a letter or a
+ * digit. It is stricter than the `repository` kind the IPC schema accepts, and
+ * the strictness is the point -- a value that is already a path or one that
+ * walks is refused here rather than pasted into a URL later. */
+const PULL_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/**
+ * pullLink is the triple a number is opened with, or `null` when this console
+ * will not build one -- and a `null` is drawn as text, never as a button that
+ * would do nothing.
+ *
+ * Four things have to hold, and the first three are main's own builder's: a
+ * provider it has a route for, a repository that is `owner/name` in the host's
+ * alphabet, and a whole positive number. The fourth is this screen's, and it is
+ * what keeps the button and the row saying the same thing: the repository must
+ * be one the **`repository` text class draws**, because a number whose cell
+ * shows `n/a` must not be a control that opens something -- the press would act
+ * on a string the reader was never shown. `sanitizeText` is the class itself
+ * rather than a second copy of its rules, so a value it refuses (`..` inside a
+ * segment, or one past `MAX_REPOSITORY_LENGTH`) is text here too.
+ */
+function pullLink(provider: string, repo: string, number: number): CoordinatorPullLink | null {
+  if (!PULL_PROVIDERS.includes(provider)) return null
+  if (!PULL_REPO.test(repo)) return null
+  if (!Number.isSafeInteger(number) || number < 1) return null
+  if (!sanitizeText(repo, 'repository', 'repos[].repo').ok) return null
+  return { provider, repo, number }
+}
+
+/** pullName is the button's accessible name: the verb, the number as the row
+ * draws it, and the repository it is in. The repository has already been through
+ * `pullLink`'s own check, which is the same class the cell beside it draws. */
+function pullName(label: string, repo: string): string {
+  return `${COORDINATOR_OPEN_PR_NAME_WORD} ${label} in ${repo}`
+}
+
+/** pullButton finishes a number's button: a real button -- so it is in the tab
+ * order and a press is a press, with no key handler of its own -- carrying the
+ * name above and **no destination of any kind**, because the entry point sends
+ * the triple to the operation and main builds the URL. */
+function pullButton(element: ScreenElement, link: CoordinatorPullLink, label: string): void {
+  element.setAttribute('type', 'button')
+  element.setAttribute('aria-label', pullName(label, link.repo))
+}
+
 /** cut is one list with its first `COORDINATOR_LIST_CAP` members and how many
  * were left off, so a row can say what it did not draw. */
 function cut<T>(items: readonly T[]): { readonly drawn: readonly T[]; readonly dropped: number } {
@@ -680,11 +786,15 @@ function cut<T>(items: readonly T[]): { readonly drawn: readonly T[]; readonly d
   }
 }
 
-function recordPanel(record: CoordinatorRecord): CoordinatorRecordPanel {
+function recordPanel(record: CoordinatorRecord, provider: string, repo: string): CoordinatorRecordPanel {
   const pr = record.pr
   const runs = cut(record.runs)
   return {
     label: recordLabel(record),
+    // The record's own number, and never the label: a label that fell back to a
+    // run's id names no pull request, so there is no triple to build and the
+    // cell stays text.
+    link: pr === null ? null : pullLink(provider, repo, pr.number),
     title: pr === null ? '' : pr.title,
     state: pr === null ? '' : pr.state,
     draft: pr !== null && pr.draft,
@@ -714,7 +824,7 @@ function repoPanel(repo: CoordinatorRepoView): CoordinatorRepoPanel {
     repo: repo.repo,
     stored: repo.stored,
     stale: repo.stale === null ? null : { since: repo.stale.since, reason: repo.stale.reason },
-    records: view.records.map((record) => recordPanel(record)),
+    records: view.records.map((record) => recordPanel(record, repo.provider, repo.repo)),
     collisions: view.collisions.map((collision) => {
       const files = cut(collision.files)
       const services = cut(collision.services)
@@ -765,6 +875,7 @@ function documentQueuePart(document: CoordinatorStatusView): CoordinatorQueuePar
       items.push({
         kind: 'pullRequest',
         subject: recordLabel(record),
+        link: pullLink(repo.provider, repo.repo, pr.number),
         scope: record.branch,
         repo: repo.repo,
         title: pr.title,
@@ -787,6 +898,7 @@ function runsQueuePart(rows: readonly CoordinatorRunRow[]): CoordinatorQueuePart
     (row): CoordinatorQueueItem => ({
       kind: 'job',
       subject: row.run,
+      link: null,
       scope: row.planTask,
       repo: row.repo,
       title: row.title,
@@ -820,6 +932,7 @@ function plansQueuePart(document: PlanStatusView): CoordinatorQueuePart {
       items.push({
         kind: 'plan',
         subject: node.id,
+        link: null,
         scope: plan.id,
         repo: document.repo,
         title: node.title,
@@ -860,6 +973,7 @@ function budgetQueuePart(caps: SpendCaps): CoordinatorQueuePart {
         {
           kind: 'budget',
           subject: '',
+          link: null,
           scope: '',
           repo: '',
           title: '',
@@ -878,6 +992,7 @@ function budgetQueuePart(caps: SpendCaps): CoordinatorQueuePart {
     items.push({
       kind: 'budget',
       subject: row.repo,
+      link: null,
       scope: '',
       repo: '',
       title: '',
@@ -1172,7 +1287,7 @@ function queueItemCell(
   parent: ScreenElement,
   factory: ScreenFactory,
   item: CoordinatorQueueItem,
-): ScreenElement {
+): CoordinatorPullButton | null {
   const row = cell(parent, factory, 'li', 'coordinator-queue-item')
   const kind = cell(row, factory, 'span', 'coordinator-queue-kind')
   if (item.kind === 'pullRequest') literal(kind, COORDINATOR_QUEUE_PR_WORD)
@@ -1180,7 +1295,11 @@ function queueItemCell(
   else if (item.kind === 'plan') literal(kind, COORDINATOR_QUEUE_PLAN_WORD)
   else literal(kind, COORDINATOR_QUEUE_BUDGET_WORD)
   const cells = QUEUE_CELLS[item.kind]
-  const subject = cell(row, factory, 'span', 'coordinator-queue-subject')
+  // The tag is written out here, in the open, rather than hidden behind a
+  // helper: `theme-selectors.test.ts` reads the renderer's own emitter calls for
+  // the `tag.class` pairs a stylesheet rule may select, and the reset the button
+  // needs is selected as `button.coordinator-queue-subject` (§2's licence).
+  const subject = cell(row, factory, item.link === null ? 'span' : 'button', 'coordinator-queue-subject')
   // An item with nothing as its subject draws the cell empty and says why in
   // its own words: the fleet's alert is about every repository at once, so it
   // has none -- and `putText` on an empty string would draw the console's
@@ -1188,6 +1307,11 @@ function queueItemCell(
   // different fact from "there is no such figure", and a false one.
   if (item.subject === '') literal(subject, '')
   else putText(subject, item.subject, cells.subject.textClass, cells.subject.field)
+  // A number the console can form a triple for is a button, and the triple is
+  // what the entry point binds -- never a value the entry reads back out of the
+  // element. A number it cannot form one for is the text K1 drew.
+  const pull = item.link === null ? null : { element: subject, link: item.link }
+  if (pull !== null) pullButton(subject, pull.link, item.subject)
   if (item.scope !== '') {
     textCell(row, factory, 'span', item.scope, cells.scope.textClass, cells.scope.field, 'coordinator-queue-scope')
   }
@@ -1204,16 +1328,17 @@ function queueItemCell(
   else if (item.ground === 'kill') literal(why, COORDINATOR_QUEUE_KILL_WORD)
   else if (item.ground === 'repoKill') literal(why, COORDINATOR_QUEUE_REPO_KILL_WORD)
   else literal(why, COORDINATOR_QUEUE_CAP_WORD)
-  // One button, and it is the only control the item draws: the pull request's
-  // own number is text (no link in K1), and the button is a button and never an
-  // anchor, so the renderer never builds a destination out of wire text.
+  // The item's own button -- Open run, Retry, Launch or Open Spend -- which is
+  // the act the item is *for*. The item's number is a second thing a person can
+  // press (K2) and is drawn above as the number itself: this button acts on the
+  // item, and that one opens the thing the item is about.
   const button = cell(row, factory, 'button', 'coordinator-queue-button')
   button.setAttribute('type', 'button')
   if (item.action.kind === 'openRun') literal(button, COORDINATOR_OPEN_RUN_WORD)
   else if (item.action.kind === 'retry') literal(button, COORDINATOR_RETRY_WORD)
   else if (item.action.kind === 'launch') literal(button, COORDINATOR_LAUNCH_WORD)
   else literal(button, COORDINATOR_OPEN_SPEND_WORD)
-  return row
+  return pull
 }
 
 /**
@@ -1224,31 +1349,41 @@ function queueItemCell(
  * It is the function the entry calls **when that part's own read answers**, and
  * it decides nothing about waiting: a part whose read is still out is `null` in
  * the model and is drawn as nothing at all, under the section's own busy mark.
+ *
+ * It answers the numbers it drew as buttons, in the order it drew them, because
+ * the press is the entry's to bind: the screen holds no bridge, and a pair is
+ * what keeps the element and the triple together without a class lookup or a
+ * value written into the DOM.
  */
 export function fillCoordinatorQueuePart(
   factory: ScreenFactory,
   model: CoordinatorModel,
   source: CoordinatorQueueSource,
   host: ScreenElement,
-): void {
+): readonly CoordinatorPullButton[] {
+  const pulls: CoordinatorPullButton[] = []
   const part = model.queue[source]
-  if (part === null) return
+  if (part === null) return pulls
   if (part.note === 'noPlans') {
     literal(cell(host, factory, 'p', 'coordinator-queue-note'), COORDINATOR_QUEUE_NO_PLANS_WORD)
-    return
+    return pulls
   }
   if (part.note === 'capsHidden') {
     literal(cell(host, factory, 'p', 'coordinator-queue-note'), COORDINATOR_QUEUE_CAPS_HIDDEN_WORD)
-    return
+    return pulls
   }
-  if (part.items.length === 0) return
+  if (part.items.length === 0) return pulls
   const list = cell(host, factory, 'ul', 'coordinator-queue-items')
-  for (const item of part.items) queueItemCell(list, factory, item)
+  for (const item of part.items) {
+    const pull = queueItemCell(list, factory, item)
+    if (pull !== null) pulls.push(pull)
+  }
   if (part.dropped > 0) {
     // A list holds list items, so the count is one of them: the console's own
     // figure for what it did not draw, said rather than dropped.
     putReading(cell(list, factory, 'li', 'coordinator-more'), measured(part.dropped), 'count')
   }
+  return pulls
 }
 
 /**
@@ -1394,11 +1529,25 @@ function runCell(parent: ScreenElement, factory: ScreenFactory, run: Coordinator
 /** recordCell draws one pull request as a row: a head line carrying the number,
  * the title and the state of the pull request, and the runs behind it nested
  * under that line. A record with no run keeps the console's own sentence where
- * the list would be, so the row says which of the two it is. */
-function recordCell(parent: ScreenElement, factory: ScreenFactory, record: CoordinatorRecordPanel): void {
+ * the list would be, so the row says which of the two it is.
+ *
+ * The number is the row's **one** control where the console can form a triple
+ * for it (K2), and text where it cannot -- the same rule the queue's subject
+ * follows, drawn by the other half of this screen. It answers the pair it drew,
+ * for the reason `fillCoordinatorQueuePart` does. */
+function recordCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  record: CoordinatorRecordPanel,
+): CoordinatorPullButton | null {
   const row = cell(parent, factory, 'li', 'coordinator-record')
   const head = cell(row, factory, 'div', 'coordinator-record-head')
-  textCell(head, factory, 'span', record.label, 'label', 'records[].pr.number', 'coordinator-record-label')
+  // The tag is written out at the call site for `theme-selectors.test.ts`'s
+  // reason, above.
+  const label = cell(head, factory, record.link === null ? 'span' : 'button', 'coordinator-record-label')
+  putText(label, record.label, 'label', 'records[].pr.number')
+  const pull = record.link === null ? null : { element: label, link: record.link }
+  if (pull !== null) pullButton(label, pull.link, record.label)
   if (record.title !== '') {
     // The pull request's own words, written by whoever opened it: text, in the
     // class the wire key declares, and never a link (design section 5.1 rule 2).
@@ -1427,7 +1576,7 @@ function recordCell(parent: ScreenElement, factory: ScreenFactory, record: Coord
   else literal(flight, COORDINATOR_FINISHED_WORD)
   if (record.runs.length === 0) {
     literal(cell(row, factory, 'span', 'coordinator-record-noruns'), COORDINATOR_NO_RUNS_WORD)
-    return
+    return pull
   }
   const runs = cell(row, factory, 'ul', 'coordinator-runs')
   for (const run of record.runs) runCell(runs, factory, run)
@@ -1436,6 +1585,7 @@ function recordCell(parent: ScreenElement, factory: ScreenFactory, record: Coord
     // `countCell` makes: the figure is a reading like every other here.
     putReading(cell(runs, factory, 'li', 'coordinator-more'), measured(record.runsDropped), 'count')
   }
+  return pull
 }
 
 function collisionCell(parent: ScreenElement, factory: ScreenFactory, collision: CoordinatorCollisionPanel): void {
@@ -1525,15 +1675,22 @@ function repoSummary(
 /** repoDetail draws the part of one repository the summary does not: a record
  * per pull request with the runs behind it, the collisions and the pulls a sweep
  * could not read. It is a drawing of its own so the entry can make it in a chunk
- * of its own (`entry.ts`), after the summary is on screen. */
+ * of its own (`entry.ts`), after the summary is on screen.
+ *
+ * It answers the numbers it drew as buttons, in the order it drew them, for the
+ * reason `fillCoordinatorQueuePart` does. */
 export function repoDetail(
   parent: ScreenElement,
   factory: ScreenFactory,
   panel: CoordinatorRepoPanel,
-): void {
+): readonly CoordinatorPullButton[] {
+  const pulls: CoordinatorPullButton[] = []
   if (panel.records.length > 0) {
     const records = cell(parent, factory, 'ul', 'coordinator-records')
-    for (const record of panel.records) recordCell(records, factory, record)
+    for (const record of panel.records) {
+      const pull = recordCell(records, factory, record)
+      if (pull !== null) pulls.push(pull)
+    }
   }
   if (panel.collisions.length > 0) {
     const collisions = cell(parent, factory, 'ul', 'coordinator-collisions')
@@ -1543,6 +1700,7 @@ export function repoDetail(
     const unread = cell(parent, factory, 'ul', 'coordinator-unreads')
     for (const entry of panel.unread) unreadCell(unread, factory, entry)
   }
+  return pulls
 }
 
 /** CoordinatorDetail is one repository's detail: the panel to draw and the host

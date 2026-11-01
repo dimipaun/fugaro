@@ -1387,17 +1387,24 @@ describe('the numbers that open a pull request (K2)', () => {
     expect(drawn(node)).not.toContain('example.invalid')
   })
 
-  it('takes the name\u2019s repository from the sanitizer, so a value the row refuses is refused in the name too', () => {
-    // The repository a name carries is the repository a cell carries: one
-    // sanitizer answers both, so a value the cell refused to draw -- here one
-    // past the class's own bound -- is `n/a` in the name rather than the raw
-    // string, and the value itself is on the screen nowhere.
+  it('draws the number as text when the repository is one the row itself refuses to draw', () => {
+    // A button acts on a string the reader can see: a number whose cell draws
+    // `n/a` because the `repository` class refused the value must not be a
+    // control that opens something built from it. So the class is asked, and
+    // these two are what it refuses while the host's own alphabet would allow
+    // them -- a walk inside a segment, and a repository past the class's bound.
     const long = `${'a'.repeat(150)}/${'b'.repeat(150)}`
-    const node = drawsQueue({ view: decodes(aStore([aRecord({})], { provider: 'github', repo: long })) })
-    const label = one(node, 'coordinator-record-label')
-    expect(label.tag).toBe('button')
-    expect(label.getAttribute('aria-label')).toBe('open pull request #1458 in n/a')
-    expect(drawn(node)).not.toContain(long)
+    const refused: readonly (readonly [string, string])[] = [
+      ['a walk inside a segment', 'owner/a..b'],
+      ['a repository past the class\u2019s bound', long],
+    ]
+    for (const [because, repo] of refused) {
+      const node = drawsQueue({ view: decodes(aStore([aRecord({})], { provider: 'github', repo })) })
+      const label = one(node, 'coordinator-record-label')
+      expect([label.tag, label.textContent], because).toEqual(['span', '#1458'])
+      expect(label.getAttribute('aria-label'), because).toBeNull()
+      expect(drawn(node), because).not.toContain(repo)
+    }
   })
 })
 

@@ -133,6 +133,7 @@ import {
 } from './screens/coordinator'
 import type {
   CoordinatorModel,
+  CoordinatorPullButton,
   CoordinatorQueueAction,
   CoordinatorQueueSource,
   CoordinatorRunRow,
@@ -504,6 +505,32 @@ export interface LaunchBridge {
 export function launchBridgeFrom(fugaro: unknown): LaunchBridge {
   const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
   return { launchRun: (args) => ask('launchRun', args) }
+}
+
+/**
+ * LinkBridge is the one operation the Coordinator's pull request numbers use:
+ * `link.openPullRequest` (K2a), which takes the triple -- provider, repository,
+ * number -- and opens it in the operator's browser. It is a bridge of its own
+ * rather than a member of `ReadBridge` for `LaunchBridge`'s reason: a reader
+ * looking for what this console can *do* should not find it among the things it
+ * can look at.
+ *
+ * **It is handed a triple and never a URL.** The renderer builds no destination
+ * at all: main builds it from these three fields with its own alphabet and hands
+ * the result to the one validated shell call, so a document's `url` field has no
+ * path to a browser even when the field is a `javascript:` one.
+ *
+ * It is answered the way the other bridges are: a member that is missing or
+ * fails to answer is `null`, and a number pressed then opens nothing -- which is
+ * the same answer main gives for a triple it cannot build a URL from.
+ */
+export interface LinkBridge {
+  openPullRequest(args: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
+export function linkBridgeFrom(fugaro: unknown): LinkBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
+  return { openPullRequest: (args) => ask('openPullRequest', args) }
 }
 
 /**
@@ -2534,6 +2561,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     rail,
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
+    linkBridge: linkBridgeFrom(scope.fugaro),
     rows,
     railListed: listedRows !== null,
     onboarding,
@@ -2632,6 +2660,10 @@ interface DashboardDeps {
   /** launchBridge is the Live view's one write (`run.launch`, V2.5.1b), the
    * only operation of this console that spends money. */
   readonly launchBridge: LaunchBridge
+  /** linkBridge is the Coordinator's numbers (`link.openPullRequest`, K2a): the
+   * one operation that leaves this window, and the only one handed a triple
+   * rather than a document's own field. */
+  readonly linkBridge: LinkBridge
   readonly rows: readonly RailRow[]
   /** railListed is whether `rows` is the CLI's own list answer rather than the
    * fallback for a list this console could not read (`currentRailRows`). The
@@ -2657,7 +2689,8 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, railBridge, launchBridge, wiring, navigator, header } = deps
+  const { document, surface, gate, bridge, rail, railBridge, launchBridge, linkBridge, wiring, navigator, header } =
+    deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
 
@@ -4780,6 +4813,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * the queue never looks like a screen that is still coming when it is
      * waiting on a press.
      */
+    /**
+     * bindPulls makes every number the screen drew as a button a press, and the
+     * press is the operation with **the triple the screen formed** and nothing
+     * else: no URL is built here, and no part of the model is read back out of
+     * the DOM to be sent. A number whose triple could not be formed was drawn as
+     * text, so it is not in this list and there is nothing to bind.
+     *
+     * The answer is deliberately not drawn: what the press does happens in the
+     * operator's browser, and main's refusal -- a triple it will not build a URL
+     * from -- opens nothing and says nothing, which is exactly what the number
+     * being text would have done.
+     */
+    const bindPulls = (pulls: readonly CoordinatorPullButton[]): void => {
+      for (const pull of pulls) {
+        surface.nodeOf(pull.element).addEventListener('click', () => {
+          void linkBridge.openPullRequest({
+            provider: pull.link.provider,
+            repo: pull.link.repo,
+            number: pull.link.number,
+          })
+        })
+      }
+    }
+
     const paintQueue = (): void => {
       const drawn = mount(false)
       const panel = model()
@@ -4800,7 +4857,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           })
           continue
         }
-        fillCoordinatorQueuePart(factory, panel, source, host)
+        // The numbers this part drew are bound before the items' own buttons
+        // are: the two are separate controls on the same row (K2).
+        bindPulls(fillCoordinatorQueuePart(factory, panel, source, host))
         // One button per item, and the buttons and the items are drawn in the
         // same order -- so the pairing is that order rather than an index
         // written into the DOM: nothing the model carries reaches an attribute.
@@ -4892,7 +4951,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         const detail = details[next]
         next += 1
         if (detail === undefined) return
-        repoDetail(detail.host, factory, detail.panel)
+        // The repository's numbers are bound in the chunk that drew them, so a
+        // press is answered by the visit that is on screen -- and the chunk's
+        // own staleness check above covers them with the rows they belong to.
+        bindPulls(repoDetail(detail.host, factory, detail.panel))
         if (next < details.length) coordinatorChunk = setTimeout(step, 0)
       }
       if (details.length > 0) coordinatorChunk = setTimeout(step, 0)
