@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -555,5 +556,531 @@ func TestSettingsGetRefusesAnUnknownKeyWithTheNearest(t *testing.T) {
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit code = %d, want %d", ExitCode(err), ExitUserError)
+	}
+}
+
+// settingsWriteLayerFile writes the local project layer file the way
+// `fugaro update` seeds it: the anchors its own loader requires, plus whatever
+// the caller adds.
+func settingsWriteLayerFile(t *testing.T, extra string) string {
+	t.Helper()
+	path, err := localcfg.LayerFile(os.Getenv, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "version: 1\nproject: aurora\ngcp_project: aurora-gcp\n" + extra
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestSettingsGenericKeyIsSpec44sAllowlist: the generic path writes spec §4.4's
+// names and nothing else, and the list is an allowlist — a name the spec does
+// not hand it is refused whatever the registry holds. The names are spelled the
+// way the registry spells them: the project layer's own block carries the
+// `layer.` prefix (SD14), so §4.4's `default_profile` and `defaults.git.*` are
+// `layer.default_profile` and `layer.defaults.git.*` here.
+//
+// The list is the first of the refusals, not the only one: a name it holds is
+// still refused when a family owns it (layer.defaults.agent.model) or when it
+// has a varying segment (workflows.*.commands.test).
+func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
+	allowed := []string{
+		// §4.4: "budget.{per_run_usd,max_run_tokens,allowed_models,unreachable_grace}".
+		"budget.per_run_usd", "budget.max_run_tokens", "budget.allowed_models", "budget.unreachable_grace",
+		"base_branch", "max_parallel", "update_check", "watch.burn_alert_usd_per_hour",
+		"commit_name", "commit_email",
+		"agent.review_rounds", "agent.max_budget_usd", "agent.recipe",
+		"git.base_branch", "git.pr.labels",
+		"followup.trusted", "followup.allow_public",
+		"governance.review_ratio", "governance.stage_budget", "layer.governance.review_ratio",
+		"layer.default_profile", "layer.defaults.git.provider", "layer.defaults.agent.review_rounds",
+		"credentials.fallback", "clone_urls.github",
+	}
+	for _, key := range allowed {
+		if !settingsGenericKey(key) {
+			t.Errorf("settingsGenericKey(%q) = false, and spec §4.4 hands it to the generic path", key)
+		}
+	}
+	refused := []string{
+		"endpoints.compute", "terraform.state_bucket", "policy_generation", "layer_generation",
+		"credentials_service.url", "budget.rtdb_url", "budget.firebase_api_key",
+		"name", "runs_bucket", "bucket_url", "repos.*.base_branch",
+		"providers.*.base_url", "bitbucket_api_roots", "model_prices", "routing.claude",
+	}
+	for _, key := range refused {
+		if settingsGenericKey(key) {
+			t.Errorf("settingsGenericKey(%q) = true, and spec §4.4 does not hand it to the generic path", key)
+		}
+	}
+}
+
+// TestSettingsSetRefusesEveryKeyOutsideSpec44: the installation's own plumbing
+// is refused by name, so `settings set` can never be turned into a second path
+// that writes an endpoint, a Terraform switch or a generation counter (spec
+// §4.4, D853). The refusal names the key and nothing is written anywhere.
+func TestSettingsSetRefusesEveryKeyOutsideSpec44(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	before := readFileString(t, localPath)
+	for _, key := range []string{
+		"endpoints.compute", "terraform.state_bucket", "policy_generation", "layer_generation",
+		"credentials_service.url", "budget.rtdb_url", "name", "runs_bucket", "bucket_url",
+	} {
+		t.Run(key, func(t *testing.T) {
+			out, _, err := execute(t, "settings", "set", key, "x", "--yes")
+			if err == nil {
+				t.Fatalf("settings set wrote %s:\n%s", key, out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("the refusal does not name the key: %v", err)
+			}
+			if readFileString(t, localPath) != before {
+				t.Errorf("the refused write changed the local config")
+			}
+		})
+	}
+}
+
+// TestSettingsSetRefusesASensitiveKeyAndNeverPrintsItsValue: a row marked
+// Sensitive is refused before the diff is built, so the value the person typed
+// never reaches the output — not the diff, not the refusal (spec §2.3).
+func TestSettingsSetRefusesASensitiveKeyAndNeverPrintsItsValue(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	before := readFileString(t, localPath)
+	const value = "not-a-real-credential-value"
+	out, _, err := execute(t, "settings", "set", "budget.firebase_api_key", value, "--layer", "local", "--yes")
+	if err == nil {
+		t.Fatalf("settings set wrote a sensitive row:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "sensitive") {
+		t.Errorf("the refusal does not say why: %v", err)
+	}
+	if printed := out + err.Error(); strings.Contains(printed, value) {
+		t.Errorf("the sensitive value reached the output:\n%s", printed)
+	}
+	if readFileString(t, localPath) != before {
+		t.Error("the refused write changed the local config")
+	}
+}
+
+// TestSettingsCeilingKeyCoversGovernanceAndTheLayerPrefix: D846's prefix test
+// is `budget.*` and `governance.*`, and the project layer's own block is the
+// same setting under the `layer.` prefix (SD14), so the typed name guards it
+// too.
+func TestSettingsCeilingKeyCoversGovernanceAndTheLayerPrefix(t *testing.T) {
+	for _, key := range []string{
+		"budget.per_run_usd", "budget.mode", "budget.allowed_models",
+		"governance.review_ratio", "governance.stage_budget",
+		"layer.governance.review_ratio",
+	} {
+		if !settingsCeilingKey(key) {
+			t.Errorf("settingsCeilingKey(%q) = false, and D846 makes it a ceiling", key)
+		}
+	}
+	for _, key := range []string{"git.base_branch", "agent.max_run_tokens", "followup.allow_public", "layer.defaults.git.provider"} {
+		if settingsCeilingKey(key) {
+			t.Errorf("settingsCeilingKey(%q) = true, and it is no ceiling", key)
+		}
+	}
+}
+
+// TestSettingsLoosensRanksABudgetMode: budget.mode is a ceiling whose values
+// are ordered, not compared as numbers: enforce is the tightest, then observe,
+// then off, and only a write that moves down the order is a loosening
+// (policy.Merge's order).
+func TestSettingsLoosensRanksABudgetMode(t *testing.T) {
+	cases := []struct {
+		old, new string
+		want     bool
+	}{
+		{"enforce", "observe", true},
+		{"enforce", "off", true},
+		{"observe", "enforce", false},
+		{"observe", "off", true},
+		{"enforce", "enforce", false},
+	}
+	for _, tc := range cases {
+		if got := settingsLoosens("budget.mode", tc.old, tc.new); got != tc.want {
+			t.Errorf("settingsLoosens(budget.mode, %q, %q) = %v, want %v", tc.old, tc.new, got, tc.want)
+		}
+	}
+}
+
+// TestSettingsLoosensTreatsAWiderModelListAsAWidening: budget.allowed_models
+// loosens when the new list holds a model the old one did not — a subset is a
+// tightening, so dropping a model is not the typed form.
+func TestSettingsLoosensTreatsAWiderModelListAsAWidening(t *testing.T) {
+	cases := []struct {
+		old, new string
+		want     bool
+	}{
+		{"a,b", "a", false},
+		{"a,b", "a,b", false},
+		{"a", "a,b", true},
+		{"a,b", "a,c", true},
+	}
+	for _, tc := range cases {
+		if got := settingsLoosens("budget.allowed_models", tc.old, tc.new); got != tc.want {
+			t.Errorf("settingsLoosens(budget.allowed_models, %q, %q) = %v, want %v", tc.old, tc.new, got, tc.want)
+		}
+	}
+}
+
+// TestSettingsLoosensTreatsAnUnknownValueFormAsAWidening: a ceiling value this
+// Fugaro cannot compare is not proof that the write tightens, so it takes the
+// typed name. D846's asymmetry — the safe half is asking — is the point.
+func TestSettingsLoosensTreatsAnUnknownValueFormAsAWidening(t *testing.T) {
+	for _, tc := range []struct{ old, new string }{
+		{"10", "many"},
+		{"many", "10"},
+		{"enforce", "unknown-mode"},
+	} {
+		if !settingsLoosens("budget.per_run_usd", tc.old, tc.new) {
+			t.Errorf("settingsLoosens(budget.per_run_usd, %q, %q) = false, want true (an unknown form is not a proven tightening)", tc.old, tc.new)
+		}
+	}
+}
+
+// TestSettingsSetLooseningAGovernanceCeilingAsksForTheTypedProjectName: the
+// other half of D846's prefix test, and the one at --layer repo — a governance
+// ratio written into a repository's own file crosses the same boundary.
+func TestSettingsSetLooseningAGovernanceCeilingAsksForTheTypedProjectName(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("governance:\n  review_ratio: 0.5\n"))
+	before := readFileString(t, path)
+	_, _, err := execute(t, "settings", "set", "governance.review_ratio", "0.9", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("--yes confirmed a loosened governance ceiling")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "governance.review_ratio", "0.9", "--layer", "repo"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "review_ratio: 0.9") {
+		t.Errorf("fugaro.yaml does not carry the loosened ceiling:\n%s", got)
+	}
+}
+
+// TestSettingsSetTypedTheProjectLayersGovernanceBlock: the project layer's own
+// `layer.governance.*` is the same ceiling under the prefix SD14 gives it, so
+// it is typed exactly as `governance.*` is, --yes included.
+func TestSettingsSetTypedTheProjectLayersGovernanceBlock(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, "governance:\n  review_ratio: 0.5\n")
+	before := readFileString(t, path)
+	_, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatal("--yes confirmed a loosened layer ceiling")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed the layer file")
+	}
+
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "review_ratio: 0.9") {
+		t.Errorf("the layer file does not carry the loosened ceiling:\n%s", got)
+	}
+}
+
+// TestSettingsSetTreatsEveryBooleanSpellingAsTurningAFollowupKeyOn: the value
+// on the command line is read the way the config decoder reads it, so `True`,
+// `TRUE`, `yes` and `on` are the same widening as `true` and ask for the typed
+// name just the same. The decoder is asked here, not a second table, so the two
+// cannot part company.
+func TestSettingsSetTreatsEveryBooleanSpellingAsTurningAFollowupKeyOn(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+	for _, spelling := range []string{"true", "True", "TRUE", "yes", "Yes", "on"} {
+		t.Run(spelling, func(t *testing.T) {
+			_, _, err := execute(t, "settings", "set", "followup.allow_public", spelling, "--layer", "repo", "--yes")
+			if err == nil {
+				t.Fatalf("--yes confirmed followup.allow_public %s", spelling)
+			}
+			if !strings.Contains(err.Error(), "typed confirmation") {
+				t.Errorf("the refusal does not name the typed form: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the refused write changed fugaro.yaml")
+			}
+		})
+	}
+	// The decoder's own answer, for the spellings above that are not the
+	// literal `true`: the file a run reads turns the follow-up on.
+	cfg, ps := config.Parse([]byte(settingsRepoYAML("followup:\n  allow_public: yes\n")))
+	if len(ps) > 0 {
+		t.Fatalf("the decoder refuses the spelling this command reads as true: %s", ps[0].String())
+	}
+	if !cfg.Followup.AllowPublic {
+		t.Error("the config decoder reads followup.allow_public: yes as false")
+	}
+	// And the other direction: false is not a widening, so --yes writes it.
+	if out, _, err := execute(t, "settings", "set", "followup.allow_public", "false", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "allow_public: false") {
+		t.Errorf("fugaro.yaml does not carry the tightened key:\n%s", got)
+	}
+}
+
+// TestSettingsSetComparesACeilingAgainstTheValueARunGets: D846 guards what a
+// run gets, not what one file says, so a write into a repository's file that
+// raises a ceiling a layer below already set is the typed form too — the file
+// it edits is not the only place the value comes from.
+func TestSettingsSetComparesACeilingAgainstTheValueARunGets(t *testing.T) {
+	settingsWriteHomeWith(t, "budget:\n  per_run_usd: 10\n")
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+
+	// The repository's file writes no cap; the layer below holds 10, so 50
+	// raises what a run gets and is the typed form.
+	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("--yes confirmed a cap that raises what a run gets above the layer below")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	// Tightening under the same layer is the ordinary write, which is what
+	// makes the comparison a comparison and not "always typed".
+	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "5", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 5") {
+		t.Errorf("fugaro.yaml does not carry the tightened cap:\n%s", got)
+	}
+}
+
+// TestSettingsSetRefusesASymlinkedFugaroYAML: a checkout's file is read through
+// config.ReadRegular, the one reader of them, so a symlink is refused rather
+// than written through to whatever it names.
+func TestSettingsSetRefusesASymlinkedFugaroYAML(t *testing.T) {
+	settingsWriteHome(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	target := filepath.Join(t.TempDir(), "elsewhere.yaml")
+	if err := os.WriteFile(target, []byte(settingsRepoYAML("")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	before := readFileString(t, target)
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("settings set wrote through a symlinked fugaro.yaml")
+	}
+	if !strings.Contains(err.Error(), "symbolic link") {
+		t.Errorf("the refusal does not say the file is a symlink: %v", err)
+	}
+	if readFileString(t, target) != before {
+		t.Error("the refused write reached through the symlink")
+	}
+}
+
+// TestSettingsSetRepoLayerRefusesACheckoutOfAnotherProject: `--layer repo`
+// writes the selected project's own repository, so a checkout whose file is
+// anchored to another project is refused rather than edited — the file decides
+// the ceiling of a run that belongs to somebody else.
+func TestSettingsSetRepoLayerRefusesACheckoutOfAnotherProject(t *testing.T) {
+	settingsWriteHome(t)
+	other := strings.Replace(settingsRepoYAML(""), "project: aurora", "project: other", 1)
+	path := settingsWriteCheckout(t, other)
+	before := readFileString(t, path)
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("settings set edited a checkout of another project")
+	}
+	for _, want := range []string{"other", "aurora"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed the other project's fugaro.yaml")
+	}
+}
+
+// TestSettingsSetRefusesAMapKey: a key with a varying segment is a map entry,
+// and a map has no generic form (spec §4.2 step 1), so the `*` spelling is
+// refused as a map entry rather than as a key nobody listed.
+func TestSettingsSetRefusesAMapKey(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	before := readFileString(t, localPath)
+	out, _, err := execute(t, "settings", "set", "workflows.*.commands.test", "go test", "--yes")
+	if err == nil {
+		t.Fatalf("settings set wrote a map entry:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "map") {
+		t.Errorf("the refusal does not say it is a map entry: %v", err)
+	}
+	if readFileString(t, localPath) != before {
+		t.Error("the refused write changed the local config")
+	}
+}
+
+// TestSettingsSetRepoLayerChecksTheRepoFlag: --repo names a repository, so it
+// goes with --layer repo and nowhere else, it has to be owner/name, and the
+// checkout it names has to be one this machine remembers. Each is a refusal
+// with nothing written.
+func TestSettingsSetRepoLayerChecksTheRepoFlag(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	before := readFileString(t, localPath)
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a repo with a local write", []string{"settings", "set", "commit_name", "person-1", "--layer", "local", "--repo", "owner/repo-a", "--yes"}, "--layer repo"},
+		{"a repo with a layer write", []string{"settings", "set", "layer.default_profile", "svc", "--layer", "project", "--repo", "owner/repo-a", "--yes"}, "--layer repo"},
+		{"a repo that is not owner/name", []string{"settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "notarepo", "--yes"}, "owner/name"},
+		{"a repo with no remembered checkout", []string{"settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-a", "--yes"}, "remembered"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("settings set accepted %v:\n%s", tc.args, out)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not mention %q: %v", tc.want, err)
+			}
+			if readFileString(t, localPath) != before {
+				t.Error("the refused write changed the local config")
+			}
+		})
+	}
+}
+
+// TestSettingsSetReparsesTheRepoAndLayerDocuments: the edited bytes are held
+// against the document's own strict loader, so a value that loader refuses
+// never reaches a repository's fugaro.yaml or the local project layer file
+// (spec §4.2 step 3).
+func TestSettingsSetReparsesTheRepoAndLayerDocuments(t *testing.T) {
+	settingsWriteHome(t)
+	repoPath := settingsWriteCheckout(t, settingsRepoYAML(""))
+	repoBefore := readFileString(t, repoPath)
+	_, _, err := execute(t, "settings", "set", "git.provider", "nosuchforge", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("settings set wrote a provider the repository's loader refuses")
+	}
+	if !strings.Contains(err.Error(), "would not read back") {
+		t.Errorf("the refusal is not the loader's: %v", err)
+	}
+	if readFileString(t, repoPath) != repoBefore {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	layerPath := settingsWriteLayerFile(t, "profiles:\n  svc:\n    cpu: \"1\"\n")
+	layerBefore := readFileString(t, layerPath)
+	_, _, err = execute(t, "settings", "set", "layer.default_profile", "nosuchprofile", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatal("settings set wrote a default profile the layer's loader refuses")
+	}
+	if !strings.Contains(err.Error(), "would not read back") {
+		t.Errorf("the refusal is not the loader's: %v", err)
+	}
+	if readFileString(t, layerPath) != layerBefore {
+		t.Error("the refused write changed the layer file")
+	}
+}
+
+// TestSettingsSetAddOnACeilingAsksForTheTypedProjectName: a member added to a
+// ceiling's list widens it — the list is what a run may use — so --add on a
+// ceiling is the typed form, --yes included (D846).
+func TestSettingsSetAddOnACeilingAsksForTheTypedProjectName(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  allowed_models:\n    - claude-sonnet-5\n"))
+	before := readFileString(t, path)
+	_, _, err := execute(t, "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("--yes confirmed a model added to a ceiling")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "claude-opus-5-5") {
+		t.Errorf("fugaro.yaml does not carry the added model:\n%s", got)
+	}
+}
+
+// TestSettingsSetTurningAFollowupKeyOnAsksForTheTypedProjectName: a follow-up
+// key turned on widens who can steer a run, so the typed name confirms it and
+// --yes does not stand in (D846).
+func TestSettingsSetTurningAFollowupKeyOnAsksForTheTypedProjectName(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+	_, _, err := execute(t, "settings", "set", "followup.allow_public", "true", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("--yes turned a followup key on")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "followup.allow_public", "true", "--layer", "repo"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "allow_public: true") {
+		t.Errorf("fugaro.yaml does not carry the key:\n%s", got)
+	}
+}
+
+// TestSettingsSetWritesMode0600AndLeavesNoTemporaryBehind: the new file is the
+// old file's permissions and the rename is atomic, so no half-written document
+// and no temporary is ever visible beside it (spec §4.2 step 5).
+func TestSettingsSetWritesMode0600AndLeavesNoTemporaryBehind(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	fi, err := os.Stat(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("the written file's mode is %o, want 600", perm)
+	}
+	left, err := filepath.Glob(filepath.Join(filepath.Dir(localPath), ".config-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Errorf("the write left temporaries beside the file: %v", left)
 	}
 }
