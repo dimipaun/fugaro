@@ -396,7 +396,7 @@ func TestUpdatePolicyPublishRefusesANodeItDoesNotModel(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the publish rewrote a node it does not model:\n%s", out)
 	}
-	for _, want := range []string{"1 key(s) this Fugaro does not know", "fugaro upgrade", "update again"} {
+	for _, want := range []string{"1 key(s) this Fugaro does not know", "brew upgrade dimipaun/tap/fugaro", "update again"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
