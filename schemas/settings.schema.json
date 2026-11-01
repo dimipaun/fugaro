@@ -215,6 +215,9 @@
       "type": "object",
       "description": "Every key of the registry and its built-in default, the DEFAULT column's own source (D841). A generator would be a go generate step a release must remember and a diff nobody reads, so this is written out and pinned to settings.Rows() by TestSettingsSchema in schemas_test.go.",
       "properties": {
+        "agent.adversarial_rounds": {
+          "default": "unset = the run's rigor mode decides (rigor.AdversarialDefault)"
+        },
         "agent.auth": {
           "$comment": "config.DefaultAgentAuth",
           "default": "vertex"
@@ -231,6 +234,42 @@
         },
         "agent.instructions": {
           "default": "unset = none"
+        },
+        "agent.levels.l1.effort": {
+          "default": "unset = the model's own default"
+        },
+        "agent.levels.l1.focus": {
+          "default": "unset = none"
+        },
+        "agent.levels.l1.model": {
+          "default": "unset = the coder's model"
+        },
+        "agent.levels.l1.none": {
+          "default": "unset = the run's rigor mode and the recipe decide"
+        },
+        "agent.levels.l2.effort": {
+          "default": "unset = the model's own default"
+        },
+        "agent.levels.l2.focus": {
+          "default": "unset = none"
+        },
+        "agent.levels.l2.model": {
+          "default": "unset = agent.models.reviewer"
+        },
+        "agent.levels.l2.none": {
+          "default": "unset = the run's rigor mode and the recipe decide"
+        },
+        "agent.levels.l3.effort": {
+          "default": "unset = the model's own default"
+        },
+        "agent.levels.l3.focus": {
+          "default": "unset = none"
+        },
+        "agent.levels.l3.model": {
+          "default": "unset = agent.models.reviewer"
+        },
+        "agent.levels.l3.none": {
+          "default": "unset = the run's rigor mode and the recipe decide"
         },
         "agent.max_budget_usd": {
           "$comment": "config.DefaultMaxBudgetUSD",
@@ -532,6 +571,9 @@
         "layer.default_profile": {
           "default": "unset = the layer's own profile block is refused without one"
         },
+        "layer.defaults.agent.adversarial_rounds": {
+          "default": "unset = the run's rigor mode decides (rigor.AdversarialDefault)"
+        },
         "layer.defaults.agent.auth": {
           "default": "unset = vertex"
         },
@@ -540,6 +582,42 @@
         },
         "layer.defaults.agent.first_line_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
+        },
+        "layer.defaults.agent.levels.l1.effort": {
+          "default": "unset = the model's own default"
+        },
+        "layer.defaults.agent.levels.l1.focus": {
+          "default": "unset = none"
+        },
+        "layer.defaults.agent.levels.l1.model": {
+          "default": "unset = the coder's model"
+        },
+        "layer.defaults.agent.levels.l1.none": {
+          "default": "unset = the run's rigor mode and the recipe decide"
+        },
+        "layer.defaults.agent.levels.l2.effort": {
+          "default": "unset = the model's own default"
+        },
+        "layer.defaults.agent.levels.l2.focus": {
+          "default": "unset = none"
+        },
+        "layer.defaults.agent.levels.l2.model": {
+          "default": "unset = defaults.agent.models.reviewer"
+        },
+        "layer.defaults.agent.levels.l2.none": {
+          "default": "unset = the run's rigor mode and the recipe decide"
+        },
+        "layer.defaults.agent.levels.l3.effort": {
+          "default": "unset = the model's own default"
+        },
+        "layer.defaults.agent.levels.l3.focus": {
+          "default": "unset = none"
+        },
+        "layer.defaults.agent.levels.l3.model": {
+          "default": "unset = defaults.agent.models.reviewer"
+        },
+        "layer.defaults.agent.levels.l3.none": {
+          "default": "unset = the run's rigor mode and the recipe decide"
         },
         "layer.defaults.agent.max_budget_usd": {
           "default": "unset = 25"
@@ -777,6 +855,12 @@
         },
         "layer_generation": {
           "default": "unset = none: no generation is recorded; the next update adopts the published one"
+        },
+        "local.gcp_project": {
+          "default": "unset = the file is refused (gcp_project: is required)"
+        },
+        "local.version": {
+          "default": "1"
         },
         "log_view": {
           "default": "unset = the project's default logs"

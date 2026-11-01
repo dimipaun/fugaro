@@ -3493,6 +3493,104 @@ Flags:
 
 Subcommands:
 
+- `fugaro settings get` -- Show one setting, what decides it, and its default
+- `fugaro settings set` -- Write one setting into one of the three documents
+- `fugaro settings unset` -- Remove one setting from one of the three documents
+
+## `fugaro settings get`
+
+Show one setting, what decides it, and its default
+
+Show one row of the settings read, for one key.
+
+A key set at no layer prints its default row and exits 0: a state that is
+already the answer is not a failure. An unknown key exits non-zero with the
+nearest registry names.
+
+Usage: `fugaro settings get KEY`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for get |
+| `--json` | bool | `false` | no | print the versioned document |
+| `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro settings set`
+
+Write one setting into one of the three documents
+
+Write one setting into the local project config, the local project layer
+file, or a repository's fugaro.yaml.
+
+The layers are `local` (the local project config), `project` (the local
+project layer file) and `repo` (a checkout's fugaro.yaml); `default` is never
+a target. With no --layer the narrowest layer the key may be set in is the
+target. --layer repo without --repo uses the current directory's checkout and
+refuses when the directory is not one.
+
+A string-list key takes --add V or --remove V instead of a value. A list
+emptied by --remove is refused: an absent key and an empty list mean different
+things to the loader, so use unset to remove the key.
+
+Loosening a ceiling key (budget.*, governance.*) or turning a followup.* key
+on asks for the project's name rather than y/N, and --yes never answers that
+form. Writing outside a repository is refused in a coding agent's session,
+--yes included; a ceiling loosened at --layer repo is refused there too.
+
+Every write ends with one line: next: fugaro update.
+
+Usage: `fugaro settings set KEY VALUE`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--add` | string | "" | no | add an item to a string-list key |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--remove` | string | "" | no | remove an item from a string-list key |
+| `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro settings unset`
+
+Remove one setting from one of the three documents
+
+Remove a key from one layer so the layer below decides again.
+
+It never writes a default in the key's place: a written default is
+indistinguishable from a deliberate pin and silently wrong the day the built-in
+changes. Nothing to remove is a no-op with a sentence and exit 0, so an
+idempotent script does not fail.
+
+Removing a ceiling key asks for the project's name rather than y/N, and --yes
+never answers that form.
+
+Every write ends with one line: next: fugaro update.
+
+Usage: `fugaro settings unset KEY`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for unset |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
 This command has no subcommands.
 
 ## `fugaro setup`
