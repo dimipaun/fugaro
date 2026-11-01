@@ -165,6 +165,12 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	if strings.TrimSpace(lc.Budget.FirebaseAPIKey) == "" {
 		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key: the phone exchanges the pairing token with it, and a code without one scans into a phone that cannot sign in; restore it with 'fugaro update --firebase-project %s', which writes budget.rtdb_url and budget.firebase_api_key", lc.Name, lc.GCPProject))
 	}
+	// The one ownership question every writer into the database asks, before
+	// the name check: a pairing writes the device node the rules admit a phone
+	// by, so it asks whether the database is this installation's at all.
+	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was paired"); err != nil {
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedMismatch), err)
+	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedMismatch), err)
 	}
@@ -949,6 +955,12 @@ func pairOpen(cmd *cobra.Command, o cloudOptions, ev *pairEventWriter, asJSON bo
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedBudget), err)
+	}
+	// The same one ownership question the pairing itself asks: `ls` reads the
+	// device nodes and `revoke` deletes one, and neither is this installation's
+	// to do anywhere but in its own database.
+	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was done there"); err != nil {
+		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedMismatch), err)
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
 		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedMismatch), err)

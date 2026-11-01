@@ -159,7 +159,7 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 // would derive from the project's name alone (a `--config` run's file is not the
 // project's own, and a baseline recorded in the other file is one that file's
 // business, not this run's).
-func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, string, error) {
+func openProjectBudget(ctx context.Context, o cloudOptions, declined string) (*localcfg.Config, *rtdb.Client, string, error) {
 	sel, lc, err := selectProject(ctx, o)
 	if err != nil {
 		return nil, nil, "", err
@@ -171,6 +171,12 @@ func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *
 	}
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
+		return nil, nil, "", err
+	}
+	// Every command that comes through here writes the published policy node,
+	// so all of them ask the one ownership question first (declined is the
+	// caller's word for what it did not write).
+	if err := requireOwnBudgetDB(ctx, lc, db, declined); err != nil {
 		return nil, nil, "", err
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
@@ -191,7 +197,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	if m := agentMarker(os.Getenv); m != "" {
 		return userErr("nothing was written: fugaro project policy publish writes the policy every run of the project is admitted by: %s", initflow.AgentRefusal(m))
 	}
-	lc, db, configPath, err := openProjectBudget(ctx, o.cloud)
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was published")
 	if err != nil {
 		return err
 	}

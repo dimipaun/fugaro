@@ -31,6 +31,10 @@ type projectFixture struct {
 	db   *gcpfake.RTDB
 	dir  string
 	path string
+	// fs is the project's spend history: the fixture's budget block names a
+	// Firebase project, so every reader that reaches for spendDaily reaches
+	// for this fake rather than for the real Firestore.
+	fs *gcpfake.Firestore
 }
 
 // projectProvidersYAML is the operator's providers block. require_zdr and
@@ -86,7 +90,7 @@ func projectConfigText(dir, dbURL, providers, extra string) string {
 		"name: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
 		"bucket_url: file://" + filepath.Join(dir, "runs") + "\n" +
 		"user: someone@example.com\nmax_parallel: 2\n" +
-		"budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + dbURL + " }\n" +
+		"budget: { mode: enforce, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + dbURL + " }\n" +
 		"endpoints: { no_auth: true }\n" +
 		providers +
 		"repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n" +
@@ -99,25 +103,39 @@ func projectConfigText(dir, dbURL, providers, extra string) string {
 // handling of a member the file is silent about is about.
 func rewriteProjectConfig(t *testing.T, f *projectFixture, extra string) {
 	t.Helper()
-	if err := os.WriteFile(f.path, []byte(projectConfigText(f.dir, f.db.URL, projectProvidersYAML, extra)), 0o600); err != nil {
+	if err := os.WriteFile(f.path, []byte(f.configText(t, projectConfigText(f.dir, f.db.URL, projectProvidersYAML, extra))), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// configText is projectConfigText with the fixture's own endpoints block: the
+// Firestore fake the budget block's Firebase project is read through. Every
+// writer of the fixture's config goes through it, so a rewritten config keeps
+// the spend history the readers reach for.
+func (f *projectFixture) configText(t *testing.T, text string) string {
+	t.Helper()
+	return strings.Replace(text, "endpoints: { no_auth: true }", "endpoints: { firestore: "+f.fs.URL+", no_auth: true }", 1)
 }
 
 func newProjectFixtureWith(t *testing.T, providers, extra string) *projectFixture {
 	t.Helper()
 	dir := t.TempDir()
-	db := gcpfake.NewRTDB(t)
+	db, fs := gcpfake.NewRTDB(t), gcpfake.NewFirestore(t)
 	path := isolateProjects(t, dir)
-	if err := os.WriteFile(path, []byte(projectConfigText(dir, db.URL, providers, extra)), 0o600); err != nil {
+	f := &projectFixture{db: db, dir: dir, path: path, fs: fs}
+	if err := os.WriteFile(path, []byte(f.configText(t, projectConfigText(dir, db.URL, providers, extra))), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	db.Set("fugaro/project", "aurora")
+	// The mark `fugaro update --firebase-project` writes: the database is this
+	// installation's, which is what every writer into it asks before it writes
+	// (requireOwnBudgetDB, a call of budgetDBUnadopted).
+	db.Set(budget.PathMark, auroraMark())
 	// The rules are deployed: publishing refuses without the marker.
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	writeRunsMarker(t, filepath.Join(dir, "runs"), "aurora", "proj-1234")
-	return &projectFixture{db: db, dir: dir, path: path}
+	return f
 }
 
 // writeRunsMarker writes the runs bucket's project marker, which the
