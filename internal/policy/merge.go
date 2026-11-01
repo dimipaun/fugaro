@@ -2,9 +2,12 @@ package policy
 
 import (
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 func modeRank(m string) int {
@@ -102,6 +105,16 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		// rule itself is ee/governance's (§5.2, D522).
 		governanceHook().Tighten(&e, l.Governance, src)
 
+		// The review-level floor is the one key whose "stricter" is a union
+		// rather than a comparison: a level a layer requires is a level every
+		// layer under it must run, so a later layer can add one and can never
+		// take one away (D722, G1). It is also the one key no launcher-written
+		// layer is given: the owner's floor arrives on the ceiling, from the
+		// policy node (Layer.ReviewFloor).
+		if len(l.ReviewFloor) > 0 {
+			e.unionReviewFloor(l.ReviewFloor)
+		}
+
 		if r := modeRank(l.Mode); r > 0 {
 			cur := modeRank(e.Mode)
 			switch {
@@ -146,6 +159,33 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		e.Sources = nil
 	}
 	return e
+}
+
+// unionReviewFloor adds l's levels to the effective floor, mode by mode, and
+// keeps each mode's levels in the vocabulary's order (Levels). Nothing is
+// recorded in Ignored: a union has no loser — the levels a layer asked for
+// are all required, and the levels it left out are the ones no layer asked
+// for.
+//
+// Every slice the result holds is built here, so neither the layers' maps nor
+// their slices are aliased or written to.
+func (e *Effective) unionReviewFloor(l map[rigor.Mode][]Level) {
+	for mode, added := range l {
+		running := e.Layer.ReviewFloor[mode]
+		var out []Level
+		for _, lv := range Levels {
+			if slices.Contains(added, lv) || slices.Contains(running, lv) {
+				out = append(out, lv)
+			}
+		}
+		if len(out) == 0 {
+			continue
+		}
+		if e.Layer.ReviewFloor == nil {
+			e.Layer.ReviewFloor = make(map[rigor.Mode][]Level, len(l))
+		}
+		e.Layer.ReviewFloor[mode] = out
+	}
 }
 
 // TightenDuration is tightenDuration for the packages outside this one:

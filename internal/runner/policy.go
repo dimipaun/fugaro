@@ -282,6 +282,15 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 		// refused: ValidBudget holds a policy's list to at least one model.
 		ceiling.AllowedModels, set[policy.KeyAllowedModels] = pp.Budget.AllowedModels, true
 	}
+	// The review-level floor rides the ceiling layer, and this is the only
+	// place it is read from (D722, G1): it is the owner's, it lives in the
+	// owner-only node, and every other layer is written by the launcher. It is
+	// not recorded in `set`, which names the keys result.json sources as the
+	// node's: the floor is not a key of the merge's own vocabulary, and the
+	// record has no field for it yet (L4.1). Merge unions it into the
+	// effective policy (policy.Merge), so a later layer could add a level and
+	// none can take one away.
+	ceiling.ReviewFloor = pp.ReviewFloor
 	if len(pp.Prices) > 0 {
 		o, err := policyOverrides(pp)
 		if err != nil {

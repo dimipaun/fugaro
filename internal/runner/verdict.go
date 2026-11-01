@@ -50,6 +50,12 @@ var fencedJSONRE = regexp.MustCompile("(?s)```json\\s*\\n(.*?)\\n```")
 // round needs — a score written as a word ("likelihood": "high") is the case
 // this is for, and a finding that says only "no parseable verdict" leaves
 // that reader searching the transcript by hand.
+//
+// The run's own review rounds do not read a verdict this way: a round with
+// nothing to read is retried once and then let through, so no reviewer that
+// answers nothing can fail a run (seniorLoop, TryVerdict). What is left here
+// is the caller that must have an answer — a pick run choosing the pull
+// request out of the list it was given, and diagnose's account of a round.
 func ParseVerdict(res agent.Result) Verdict {
 	v, why := readVerdict(res)
 	if why == "" {

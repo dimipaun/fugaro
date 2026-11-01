@@ -28,7 +28,7 @@ var check58Guard = []string{
 	"# owner's ambient project is a *-prod one).",
 	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$S\" ] && [ -n \"$W\" ] && [ -n \"$B\" ] \\",
 	"  || { echo \"Check 58 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R S=$S W=$W B=$B must not be empty)\" >&2; exit 1; }",
-	"fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \\",
+	"fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \\",
 	"  || { echo \"Check 58 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)\" >&2; exit 1; }",
 	"git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\\.git)?$' \\",
 	"  || { echo \"Check 58 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)\" >&2; exit 1; }",

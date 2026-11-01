@@ -254,12 +254,72 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 	}
 }
 
+// askOrdinary's own agent arm (init_review.go) is the one decision in init that
+// a stage's apply cannot attribute: ask refuses a marker too, and every path on
+// from askOrdinary reaches it, so removing the arm alone leaves the stages'
+// refusals standing and no test at that level can tell which one answered (the
+// rules stage's own test says so). The review stage's seam separates them. A
+// review already taken, with a step whose plan is outside what it announced, is
+// the one state in which askOrdinary prints something about the review before
+// asking — and under a marker it prints nothing at all: the refusal comes
+// first, so an agent's session reads no line of the review, not even the note
+// telling the person this step asks for its own.
+//
+// The run with no marker is the control: the same two arguments do print that
+// note there, so the silence under the marker is the arm's and not the
+// arguments'.
+func TestReviewSeamRefusesAnAgentMarkerBeforeItPrintsAnything(t *testing.T) {
+	const notCovered = "the plan is outside what the review announced (a replace)"
+	for _, c := range []struct {
+		where     string
+		cond      condition
+		note      bool
+		becauseOf string
+	}{
+		{"a terminal", condition{"a terminal", initOptions{}, true, ""}, true, "the same arguments at the same seam"},
+		{"a terminal in a coding agent's session", condition{"a terminal", initOptions{}, true, "CLAUDECODE"}, false, "the agent marker"},
+	} {
+		t.Run(c.where, func(t *testing.T) {
+			r, spy, out, owner, screens := c.cond.reviewRun(t, "", true)
+			r.review.state = reviewTaken
+			ok, err := r.askOrdinary("applies the other plan", notCovered)
+			if ok || *owner != 0 || *screens != 0 {
+				t.Fatalf("allowed %v, owner %d, screens %d", ok, *owner, *screens)
+			}
+			// The control case ends in the per-step confirmation, which an empty
+			// stdin declines: what this checks is where it got to, not the answer.
+			if got := strings.Contains(out.String(), "not covered by the run confirmation: "); got != c.note {
+				t.Errorf("the note about the review is printed %v, want %v, so this says nothing about %s:\n%s", got, c.note, c.becauseOf, out)
+			}
+			if c.note {
+				if err != nil {
+					t.Fatalf("the step's own confirmation returned %v", err)
+				}
+				if !strings.Contains(out.String(), "⚠ CONFIRM") {
+					t.Errorf("the step's own banner was not shown:\n%s", out)
+				}
+				return
+			}
+			var ae *initflow.AgentError
+			if !errors.As(err, &ae) || ae.Marker != "CLAUDECODE" {
+				t.Fatalf("the seam answered %v, want the agent refusal", err)
+			}
+			if spy.read {
+				t.Error("the refusal read the terminal's input")
+			}
+			if strings.Contains(out.String(), "⚠ CONFIRM") {
+				t.Errorf("the banner was printed before the refusal:\n%s", out)
+			}
+		})
+	}
+}
+
 // Only ordinary steps may ask the run's one confirmation. These are the
 // places that do, and no other file may (the project's creation and billing,
 // the Firestore location, a Cloud Build, replacing a tag, an unlisted
 // repository, a secret and the plugin wiring each keep their own).
 func TestRunConfirmationCallSites(t *testing.T) {
-	want := map[string]int{"init.go": 7, "init_firebase.go": 2, "init_images.go": 1}
+	want := map[string]int{"init.go": 7, "init_firebase.go": 2, "init_images.go": 1, "init_rules_stage.go": 1}
 	re := regexp.MustCompile(`\br\.(confirmOrdinary|askOrdinary|runCovers)\(`)
 	files, err := filepath.Glob("*.go")
 	if err != nil {

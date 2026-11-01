@@ -32,6 +32,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -58,6 +59,16 @@ type Config struct {
 	// again, as on a first run). The config the installation's apply writes
 	// clears it.
 	SetupPending string `yaml:"setup_pending,omitempty"`
+	// PolicyGeneration is the published policy node's generation as of the last
+	// publish that wrote this file's policy keys, or the publish this file was
+	// seeded from: the ETag the node was read at, which is the same value the
+	// write is conditional on (rtdb.PutIfMatch). A file carrying none was never
+	// written from a published node — every installation before the first
+	// `fugaro update` of this release — and the next run ADOPTS the generation
+	// it reads rather than refusing (D854: refusing once would ask a question
+	// with no information in it, since the machine has no baseline to compare
+	// against). An installation that writes no policy node carries none.
+	PolicyGeneration string `yaml:"policy_generation,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind
@@ -152,7 +163,7 @@ type Config struct {
 	// able to widen where a credential is sent.
 	//
 	// It is a copy and not a derivation, and it is held to the node's rule
-	// alone (projectpolicy.validBitbucketAPIRoots): an https root that reaches
+	// alone (projectpolicy.ValidBitbucketAPIRoots): an https root that reaches
 	// one host, without a query, a fragment or userinfo. There is no second
 	// copy of that rule here on purpose — a root that the node would refuse is
 	// refused by the publish that builds the node, before anything is written,
@@ -211,6 +222,30 @@ type Config struct {
 	// would go out without the variable while the installation has the service
 	// on.
 	CredentialsService *CredentialsService `yaml:"credentials_service,omitempty"`
+	// SecretRotationDays is how often the operator means the installation's
+	// stored credentials to be rotated, in days (plan B1.9, D503c): doctor's
+	// secret-rotation-age check warns once a container's newest enabled
+	// version is older than this. Zero, or absent, is no period at all —
+	// doctor then says nothing, because the operator has not said how often
+	// these are meant to change, and no Secret Manager call is made on their
+	// behalf.
+	//
+	// Operator-only, like update_check: it is one person's reminder about
+	// credentials only they can rotate, and a launcher writing it into the
+	// runs bucket would be choosing when everyone else is told their
+	// installation is overdue.
+	SecretRotationDays int `yaml:"secret_rotation_days,omitempty"`
+	// SecretExpires is the expiry date the operator recorded per secret name
+	// (plan B1.9, D503c), as YYYY-MM-DD (SecretExpiryLayout): doctor warns
+	// when a named secret's date is near or past. It exists because nothing
+	// Fugaro can read tells it when a stored credential expires — Bitbucket
+	// shows an access token's expiry in its UI and its API does not expose it
+	// (U3, F19) — so the operator's own record is the only source there is,
+	// and the key is the secret's logical name (the label a container
+	// carries), not a container ID.
+	//
+	// Operator-only, for SecretRotationDays' reason.
+	SecretExpires map[string]string `yaml:"secret_expires,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
 	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
@@ -250,8 +285,32 @@ type Config struct {
 	// node, which is where the runner reads it, while the value itself never
 	// travels in the shared config a launcher can write (Shared drops it,
 	// like each repo's).
-	BaseBranch string          `yaml:"base_branch,omitempty"`
-	Repos      map[string]Repo `yaml:"repos"`
+	BaseBranch string `yaml:"base_branch,omitempty"`
+	// ReviewFloor is the owner's review-level floor (D722, G1): per rigor
+	// mode, the levels a run of that mode must run, whatever a lower layer
+	// asks for. It travels the way BaseBranch does, and the reason is the
+	// same one: `fugaro project policy publish` copies it into the policy
+	// node, which only the owner writes and the runner fails closed on, and
+	// the value itself never enters the shared config a launcher can write
+	// (Shared drops it, and the publisher refuses the key). A floor a
+	// launcher could write — in the published shared config, in the project
+	// layer or in the task (docs/design/bucket-iam.md §10 L1, L2) — would be
+	// that launcher deciding how much review it gets, which is the one thing
+	// the floor exists to prevent.
+	//
+	// A mode that is not one of rigor's, a level outside l1/l2/l3, and a
+	// repeated level are refused at load (validate), never dropped: a
+	// misspelt floor is a run that reviews less than the owner asked for.
+	//
+	// A publish keeps the node's floor when this file sets none (see
+	// internal/cli's buildProjectPolicy): a floor is the one value a publish
+	// must not lower by accident, so silence about it is not a request to
+	// remove it. Taking a published floor away on purpose is therefore a
+	// written empty object — `review_floor: {}` — and not an absent key. The
+	// two spellings are told apart here (a written empty object is a non-nil
+	// empty map, an absent key a nil one) and mean the same floor, none.
+	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
+	Repos       map[string]Repo     `yaml:"repos"`
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
@@ -601,6 +660,12 @@ const PriceSource = "local override"
 // MaxPriceUSD bounds a per-second price: list prices are around 1e-5, so
 // anything above 1e-3 is a unit mistake (per hour, per month).
 const MaxPriceUSD = 0.001
+
+// SecretExpiryLayout is how an operator writes a date in secret_expires. The
+// date is a day rather than an instant on purpose: it is what the provider's
+// own page for a token says, and a time of day would be an invention of this
+// file's that the check would then warn about.
+const SecretExpiryLayout = "2006-01-02"
 
 // Batch is the Cloud Batch backend's installation configuration: the facts a
 // run's VM and job are built and placed from (design
@@ -1165,6 +1230,22 @@ func profileNames(profiles map[string]config.JobProfile) []string {
 	return names
 }
 
+// ReviewFloorPolicy is the owner's floor in the policy package's vocabulary:
+// the form `fugaro project policy publish` writes into the node, and nil when
+// the file sets no floor — the key left out and an empty object alike, which
+// is what leaves the published node without the member. The rule itself is
+// policy.ParseFloor, the one the node's own decoder applies, so the file the
+// operator writes and the node the runner reads cannot disagree about what a
+// written floor means.
+//
+// A name outside either vocabulary is an error rather than a value dropped:
+// the floor is a minimum, so a level lost on the way to the node would be a
+// run reviewing less than the file says, which is the direction this key must
+// never move.
+func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
+	return policy.ParseFloor(c.ReviewFloor)
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -1188,6 +1269,21 @@ func (c *Config) validate() error {
 	}
 	if c.RegistryHost != "" && !registryHostRE.MatchString(c.RegistryHost) {
 		bad("registry_host %q is not <region>-docker.pkg.dev/<project>", c.RegistryHost)
+	}
+	// The operator's rotation record is refused here rather than at doctor:
+	// doctor is a reading on a bad day, and a period or a date it cannot use
+	// would turn into a check that silently says nothing.
+	if c.SecretRotationDays < 0 {
+		bad("secret_rotation_days must be zero or more days")
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.SecretExpires)) {
+		if name == "" {
+			bad("secret_expires has an entry with no secret name")
+			continue
+		}
+		if _, err := time.Parse(SecretExpiryLayout, c.SecretExpires[name]); err != nil {
+			bad("secret_expires.%s %q is not a date (YYYY-MM-DD)", name, c.SecretExpires[name])
+		}
 	}
 	// Profile names, and the one value rule only this document can apply: what
 	// a profile holds is otherwise refused where it is used and published
@@ -1401,6 +1497,17 @@ func (c *Config) validate() error {
 	}
 	if c.BaseBranch != "" && !config.ValidBranchName(c.BaseBranch) {
 		bad("base_branch %q is not a plain git branch name (the project's default base branch)", c.BaseBranch)
+	}
+	// The floor is a closed vocabulary twice over — the modes rigor names and
+	// the three levels — and this file is where it is written. Its one rule is
+	// ReviewFloorPolicy's, which is policy.ParseFloor, the rule
+	// projectpolicy.Decode holds the node to: called here so that the load and
+	// the publish cannot disagree about what a written floor means, and so that
+	// neither can disagree with the node. A name it refuses is a run that would
+	// review less than the owner asked for, and nothing downstream can tell a
+	// misspelt mode from one the owner meant to leave alone.
+	if _, err := c.ReviewFloorPolicy(); err != nil {
+		bad("%v", err)
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

@@ -84,15 +84,43 @@ import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
 import type { RigorView } from '../shared/rigor'
 import { decodeCoordinatorStatus, decodePlanStatus, decodeSnapshot } from '../shared/schema'
+import type { PlanStatusView } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
-import { SPEND_DEFAULT_CONTROLS, personView, readSpend, renderSpend } from './screens/spend'
-import type { PeopleReader, SpendControls, SpendReader } from './screens/spend'
-import { buildCoordinatorModel, renderCoordinator } from './screens/coordinator'
-import { buildProjectsModel, renderProjects } from './screens/projects'
+import {
+  SPEND_DEFAULT_CONTROLS,
+  capsOf,
+  fillSpendCaps,
+  fillSpendReport,
+  personView,
+  readSpend,
+  renderSpendFrame,
+} from './screens/spend'
+import type {
+  DrawnSpendFrame,
+  PeopleReader,
+  SpendControls,
+  SpendModel,
+  SpendReader,
+} from './screens/spend'
+import { BUSY_SLOT_CLASS, CACHE_FRESH_MS, CACHE_LIMIT, cacheKey, renderStamp, resultCache, sectionRead } from './section'
+import { COORDINATOR_SHAPE, PROJECTS_SHAPE, SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE } from './skeleton'
+import {
+  COORDINATOR_BUSY,
+  buildCoordinatorModel,
+  fillCoordinatorSummary,
+  renderCoordinatorFrame,
+  repoDetail,
+} from './screens/coordinator'
+import type { CoordinatorModel, DrawnCoordinatorFrame } from './screens/coordinator'
+import { PROJECTS_BUSY, buildProjectsModel, fillProjects, renderProjectsFrame } from './screens/projects'
+import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
+import { READING_STILL_MS, renderReading } from './screens/reading'
+import type { ReadingTab } from './screens/reading'
+import { NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
 import {
   launchBytes,
   launchCheck,
@@ -113,6 +141,7 @@ import {
   tabOf,
 } from './screens/graph'
 import type { GraphScreen } from './screens/graph'
+import type { GraphTab } from './graph/model'
 import { SKEW_HEADLINES, hidesView, launchSupported } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../shared/notice'
@@ -1998,12 +2027,37 @@ export const LIVE_POLL_MS = 1000
  */
 export const LIVE_RIGOR_TTL_MS = 15_000
 
+/**
+ * RUNS_SINCE is the window every `runs ls` this console makes is read for: a day.
+ *
+ * The owner's rule of 2026-10-31 puts it on the Jobs section by name -- "always
+ * with `--since 24h`" -- and the two other readers of the same command take it
+ * for their own reasons: a run's rigor block and the run a graph node's door
+ * opens are both facts about **this day's** work, and a `runs ls` that answered
+ * with the whole history would be a document nobody on these screens can use.
+ * The cut is the console's own: this tree has no `runs ls --limit`.
+ */
+export const RUNS_SINCE = '24h'
+
+/** GRAPH_BUSY is what the Graph section's mark says it is reading: the plan.
+ * The mark belongs to the operator's own controls -- a stream tab, the Refresh
+ * -- and neither to the poll's background cadence nor to the run list's
+ * decoration: a mark for a read nobody asked for would flicker over a picture
+ * that is already true. */
+export const GRAPH_BUSY = 'Reading the plan…'
+
 /** VIEW_BUTTON_CLASS, VIEW_PANEL_CLASS and VIEW_NAV_CLASS are the console's own
  * names for the three elements the navigation is made of. They are constants
  * because a spec reads them. */
 export const VIEW_NAV_CLASS = 'console-views'
 export const VIEW_BUTTON_CLASS = 'console-view'
 export const VIEW_PANEL_CLASS = 'console-panel'
+
+/** PANEL_BUSY_ATTRIBUTE is on the panel while it holds a tab's placeholder: the
+ * region is being replaced, and a reader that cannot see the sentence in it is
+ * owed that much. `replace` takes it off again, so it is up exactly as long as
+ * the placeholder is. */
+export const PANEL_BUSY_ATTRIBUTE = 'aria-busy'
 
 /**
  * VIEWS is the navigation, and it lists **only views `drawScreen` would draw**:
@@ -2065,6 +2119,40 @@ function classed(root: Drawn, className: string): readonly Drawn[] {
   return elementsUnder(root).filter((element) =>
     (element.getAttribute('class') ?? '').split(/\s+/).includes(className),
   )
+}
+
+/** SPEND_CAPS_BUSY is what the caps section's mark says it is reading. The caps
+ * are one read (`budget show`) and the mark names it, so a section that is busy
+ * never says only "reading". */
+const SPEND_CAPS_BUSY = 'Reading the budget caps…'
+
+/**
+ * spendBusyLabel is what the report section's mark says: the window and the
+ * breakdown the operator just chose, so the seconds a report takes are spent
+ * telling them which read is running rather than only that one is.
+ *
+ * Both words are the screen's own -- the picker's window and the switch's
+ * breakdown, which the drawing already put on screen -- and never a value out of
+ * a document.
+ */
+function spendBusyLabel(controls: SpendControls): string {
+  return `Reading spend for ${controls.since}, by ${controls.by}…`
+}
+
+/**
+ * spendViewKey is one cached view: the installation and the three controls that
+ * name it. `until` is in the key as its own word rather than left out: no
+ * control sets it yet, and a cached view drawn for a range the console later
+ * learns to ask for differently would be a figure under the wrong window.
+ */
+function spendViewKey(project: string, controls: SpendControls): string {
+  return cacheKey([
+    project,
+    controls.since,
+    controls.until ?? 'today',
+    controls.by,
+    controls.persons ? 'persons' : 'alone',
+  ])
 }
 
 /** nowStamp is the console's own clock, RFC 3339 UTC, in the same shape
@@ -2239,7 +2327,8 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   }
   const railBridge = railBridgeFrom(scope.fugaro)
   const listed = await railBridge.listInstallations({})
-  const rows = railRows(listed) ?? currentRailRows(installation)
+  const listedRows = railRows(listed)
+  const rows = listedRows ?? currentRailRows(installation)
   const onboarding = railOnboarding(listed)
   // The rail is drawn before the dashboard for the DOM order, and a click on it
   // is answered by the dashboard's own views: `mountDashboard` binds `activate`.
@@ -2297,6 +2386,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
     rows,
+    railListed: listedRows !== null,
     onboarding,
     wiring,
     navigator: scope.navigator,
@@ -2393,6 +2483,12 @@ interface DashboardDeps {
    * only operation of this console that spends money. */
   readonly launchBridge: LaunchBridge
   readonly rows: readonly RailRow[]
+  /** railListed is whether `rows` is the CLI's own list answer rather than the
+   * fallback for a list this console could not read (`currentRailRows`). The
+   * two are not the same fact: a fallback row carries an empty `checkouts`
+   * because nothing was read, and the Graph's no-checkout card decides whether
+   * it has an action from whether the CLI listed one. */
+  readonly railListed: boolean
   /** onboarding is the screen the list answer names for a machine with no
    * installation, or `null`. */
   readonly onboarding: RailOnboarding | null
@@ -2428,7 +2524,20 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     rigor: ReadonlyMap<string, RigorView>
     rigorAt: number
     rigorInFlight: boolean
-  } = { drawn: null, inFlight: false, timer: null, rigor: new Map(), rigorAt: 0, rigorInFlight: false }
+    /** reply is the last `live.watch` answer this screen drew, held so the rigor
+     * join's own read can redraw the frame it belongs to: the two are separate
+     * reads (the frame's and the join's) and the join's answer is what the column
+     * waits for. */
+    reply: unknown
+  } = {
+    drawn: null,
+    inFlight: false,
+    timer: null,
+    rigor: new Map(),
+    rigorAt: 0,
+    rigorInFlight: false,
+    reply: null,
+  }
 
   /** panel is where every screen is drawn. It is created here and appended
    * after the navigation below, so the page reads nav-then-screens. */
@@ -2438,9 +2547,72 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   /** replace clears the panel and draws one screen into it. The panel is this
    * file's own element, so clearing it is `replaceChildren` on the node behind
    * it -- a write no screen makes, because a screen draws one tree and owns none
-   * of the page. */
+   * of the page.
+   *
+   * **It is also what ends a read's placeholder.** Every drawing in this file
+   * comes through here -- a screen, a refusal, the issue view, the console's own
+   * onboarding -- so this is the one place the still-reading timer can be
+   * disarmed: the read has landed, or the operator has moved on, and a line
+   * armed for a panel that is no longer there must not arrive into it. */
   const replace = (drawn: SkewElement): void => {
+    endReading()
+    surface.nodeOf(panel).removeAttribute(PANEL_BUSY_ATTRIBUTE)
     surface.nodeOf(panel).replaceChildren(surface.nodeOf(drawn))
+  }
+
+  /** readingTimer is the one timer behind the placeholder's still-reading line.
+   * There is never more than one: a second `placeReading` replaces the first, and
+   * `replace` clears it, so a line can only arrive into the placeholder its own
+   * read put up. */
+  let readingTimer: ReturnType<typeof setTimeout> | null = null
+
+  const endReading = (): void => {
+    if (readingTimer === null) return
+    clearTimeout(readingTimer)
+    readingTimer = null
+  }
+
+  /**
+   * placeReading puts the placeholder up for a read that has not landed yet, and
+   * arms the one line that says so when the read is slow.
+   *
+   * **It is called where a read starts and nowhere else**, and that is the whole
+   * of this fix: the panel used to hold the last view's drawing -- the Graph's
+   * refusal, most visibly -- until the new read answered, which is a screen
+   * naming one tab and holding another's answer. A view that redraws a model
+   * this file already holds is not one of these (Live's frame, the Graph's
+   * picture), and asking for one there would take a screen down to put the
+   * placeholder up.
+   *
+   * `mine` is the generation of the read that is starting. The placeholder itself
+   * is drawn unconditionally -- it is what the operator is looking at while the
+   * read runs -- and the timer is the half that is guarded: a line whose read was
+   * left behind is not added to anything, which matters because the timer's
+   * callback is the one thing here that is not a read's own answer.
+   */
+  const placeReading = (tab: ReadingTab, mine: number): void => {
+    const drawn = renderReading(factory, tab, theme)
+    replace(drawn.root)
+    // The panel itself is busy, not only the sentence in it: a reader who cannot
+    // see the drawing is told that the region is being replaced, which is what
+    // `aria-busy` on a live region is for.
+    surface.nodeOf(panel).setAttribute(PANEL_BUSY_ATTRIBUTE, 'true')
+    readingTimer = setTimeout(() => {
+      readingTimer = null
+      // `replace` already disarmed this timer for every read that landed, so a
+      // drawing that arrived is never read over. What is left is the operator:
+      // `show` claims, and a placeholder that is still up while the generation
+      // moved is the panel of a view nobody is on.
+      //
+      // That claim draws through `replace` in the same turn it makes (Live's
+      // frame, the Graph's picture, the next tab's placeholder), so this check
+      // is layered behind `endReading` above and no case can tell it from its
+      // absence: removing it alone fails nothing. It stays because the rule it
+      // keeps is this file's own -- a line armed for a read is only ever added
+      // to the drawing that read put up.
+      if (stale(mine)) return
+      drawn.body.append(drawn.still)
+    }, READING_STILL_MS)
   }
 
   const refuse = (operation: string, sentence: string): void => {
@@ -2538,13 +2710,38 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * view before it. Run detail is a view without a button -- it is reached from
    * a run row -- so every button is unmarked while it is up, which is the truth
    * about the navigation: none of the offered views is the one on screen.
+   *
+   * It answers the generation it claimed, because the switch itself is a door
+   * that holds a drawing: `show` hands it to `placeReading` for the views whose
+   * read has not started yet.
    */
-  const markCurrent = (id: string): void => {
-    claim()
+  const markCurrent = (id: string): number => {
+    const mine = claim()
     markButtons(id)
     currentView = id
     syncPolling()
+    return mine
   }
+
+  /** leaveSpend is what `show` calls when the operator moves to another tab. It
+   * is the Spend section's own (`showSpend` sets it), and it is a variable here
+   * for the reason `setGauge` is one: the switch is written above the screen it
+   * switches away from, and a screen's own state is not the navigation's to
+   * know. */
+  let leaveSpend: () => void = () => undefined
+
+  /** leaveCoordinator is the same door for the Coordinator screen, and it also
+   * stops the chunks the screen's detail is drawn in: a repository that has not
+   * been drawn yet belongs to a tab nobody is looking at. */
+  let leaveCoordinator: () => void = () => undefined
+
+  /** leaveProjects is the same door for the Projects screen's one section:
+   * `showProjects` sets it. */
+  let leaveProjects: () => void = () => undefined
+
+  /** leaveGraph is the same door for the Graph: its section's mark belongs to
+   * the tab the operator is on, and the Graph's own controls put one up. */
+  let leaveGraph: () => void = () => undefined
 
   /** show switches the panel to one view. The Live screen is not re-read here --
    * its model is the one the last poll drew, which is the point of a live
@@ -2552,17 +2749,34 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * is not its frame and is not re-read by the poll either, so it is asked for
    * here: entering the view is the moment a reader is looking at run rows, and
    * `maybeRefreshRigor` decides whether the map is old enough to be worth a
-   * read. */
+   * read.
+   *
+   * **The panel never keeps the last tab's answer.** A view that has something to
+   * redraw draws it (Live's frame, the Graph's picture); a view whose read is
+   * about to start says what it is waiting for (`placeReading`), so the refusal
+   * the Graph left on screen cannot outlive the tab that chose it. The claim is
+   * taken here, before any of that, and it is the generation the placeholder and
+   * the read are held to. */
   const show = (id: string): void => {
-    markCurrent(id)
+    const mine = markCurrent(id)
     rail.view(null)
+    // A section's busy mark and its fifteen-second line belong to the tab the
+    // operator is on: leaving Spend ends both, so nothing that was armed for a
+    // screen nobody is looking at is left armed.
+    if (id !== 'spend') leaveSpend()
+    if (id !== 'projects') leaveProjects()
+    if (id !== 'coordinator') leaveCoordinator()
+    if (id !== 'graph') leaveGraph()
     if (id === 'live') {
       maybeRefreshRigor()
       // A console that opened on an issue has made no Live read yet.
       if (live.drawn !== null) {
         replace(live.drawn)
         placeLaunch()
-      } else void pollLive()
+      } else {
+        placeReading('live', mine)
+        void pollLive()
+      }
       return
     }
     if (id === 'graph') void showGraph()
@@ -2645,8 +2859,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     live.rigorInFlight = true
     live.rigorAt = Date.now()
     try {
-      const answer = documentOf(await bridge.listRuns({}))
+      const answer = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
       if (answer.ok) live.rigor = rigorIndex(answer.data)
+      // **The column fills in the moment the join lands** and not on the next
+      // tick of the poll: the rows are drawn without it (a run the join does not
+      // know about draws no chip at all, which is the cell a run with no block
+      // draws), and a read that took most of the second would otherwise leave the
+      // column empty for another one. The frame is the one the poll last drew, so
+      // what is redrawn is the same frame with its rigor cells filled.
+      if (answer.ok && currentView === 'live' && live.reply !== null) drawLive(live.reply)
     } catch {
       // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
       // is a bridge that threw where it should not have: the map stays as it
@@ -2722,6 +2943,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return
     }
     const envelope = answer.data as Record<string, unknown>
+    live.reply = reply
     const decoded = decodeSnapshot(envelope['document'], 'live.watch')
     if (!decoded.ok) {
       rail.setState('silent')
@@ -2814,11 +3036,56 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * read was outstanding, and `null` when no read is waiting: at most **one**
      * read is re-queued however many times the control is pressed. */
     queued: number | null
+    /** queuedToken is the section token that queued claim was taken with, so the
+     * re-queued read keeps the mark its own press put up. */
+    queuedToken: number | null
+    /** runs is the run list the last decoration answered, held for the section
+     * the next visit draws while its own runs read is out: a node's door is worth
+     * the list this console already has rather than one it is waiting for. */
+    runs: readonly string[]
+    /** decorating is whether a run-list read is outstanding. It is not the plan's
+     * in-flight flag: the two are different reads of the same tab, and the
+     * decoration must not hold up the plan's cadence. */
+    decorating: boolean
   } = {
     screen: null,
     readAt: 0,
     inFlight: false,
     queued: null,
+    queuedToken: null,
+    runs: [],
+    decorating: false,
+  }
+
+  /** GraphHeld is what the Graph's session cache keeps per installation: the
+   * plan document and the run list the last read answered. It is memory and
+   * nothing else, and `forgetLive` empties it. */
+  interface GraphHeld {
+    readonly document: PlanStatusView
+    readonly runs: readonly string[]
+  }
+
+  const graphViews = resultCache<GraphHeld>(CACHE_LIMIT)
+
+  /** graphRead is the Graph's section read lifecycle: the mark the operator's
+   * own controls put up in the frame they were pressed in, the sequence token
+   * that keeps the latest press's answer, and the fifteen-second line. */
+  const graphRead = sectionRead({ factory, theme })
+
+  /** leaveGraph ends the section's busy state when the operator moves to another
+   * tab: nothing is in flight for a screen nobody is looking at. */
+  leaveGraph = () => {
+    graphRead.end()
+  }
+
+  /** graphSlot is the slot the current drawing's mark and stamp go into, or
+   * `null` when the panel holds no drawing of this Graph (the placeholder, a
+   * refusal, or another screen) -- in which case there is nothing to mark and
+   * nothing to stamp, and the placeholder is already saying a read is running. */
+  const graphSlot = (): SkewElement | null => {
+    const tree = graphTree
+    if (tree === null) return null
+    return classed(tree, BUSY_SLOT_CLASS)[0] ?? null
   }
 
   /** graphScreenNow is the screen, built on first use. The worker is started
@@ -2841,7 +3108,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * it. That is not the Live screen's rule -- a frame that fails leaves the last
    * frame up -- because a frame is a moment and a plan is the whole picture.
    */
-  const readGraph = async (mine: number): Promise<void> => {
+  const readGraph = async (mine: number, token: number | null): Promise<void> => {
     if (graph.inFlight) {
       // A read that is already outstanding is not a reason to drop the
       // operator's: the one in flight may have started before the change they
@@ -2850,12 +3117,27 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // in the meantime has bumped the generation, and the queued read is then
       // stale and draws nothing.
       graph.queued = mine
+      graph.queuedToken = token
       return
     }
     graph.inFlight = true
     graph.readAt = Date.now()
+    // The mark goes up **before the await**, in the frame the operator pressed
+    // the control in, over the picture already drawn -- which is the other half
+    // of the owner's rule of 2026-10-31. `token` is `null` for a read nobody
+    // asked for (the poll's own cadence): a mark for that would flicker over a
+    // picture that is already true.
+    if (token !== null) markGraph(token)
     try {
       const plan = documentOf(await bridge.planStatus({ all: true }))
+      // The section's token is settled before the refusal is drawn, for the
+      // reason every other screen gives: the mark must come down for the
+      // operator's own read, and a read an earlier press started must not take
+      // down the mark a later one put up.
+      if (token !== null && !graphRead.settle(token)) return
+      // Before the refusal, not after it: a refusal is a screen of its own, and
+      // one drawn for a generation that has passed is the operation cell
+      // `plan.status` under a tab that asked for another read.
       if (stale(mine)) return
       if (!plan.ok) {
         refuseGraph(plan.sentence)
@@ -2866,27 +3148,106 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         refuseGraph(decoded.skew.because)
         return
       }
-      // The console's run list, read the same way the Live screen's rigor join
-      // reads it and **not** through that join: `rigorIndex` drops every row it
-      // cannot show a rigor block for, and a node's door must not depend on a
-      // field that has nothing to do with it.
-      const listed = documentOf(await bridge.listRuns({}))
-      if (stale(mine)) return
-      const runs = listed.ok ? runIdsIn(listed.data) : []
-      const drawn = await graphScreenNow().load(decoded.value, runs)
+      // **The canvas is drawn from the plan alone.** The plan is the graph, and
+      // `runs ls` is the decoration a node's door comes from: a screen that
+      // waited for both before drawing anything took the sum of the two reads
+      // before it answered at all (the owner's report of 2026-10-31). What this
+      // session already read decorates it at once, and the fresh list follows in
+      // `decorateRuns` below.
+      const drawn = await graphScreenNow().load(decoded.value, graph.runs)
       if (stale(mine) || drawn === null) return
       // A read names no gesture: the keyboard stays where it was, and a reader
       // who is not in the graph is not pulled into it.
       redraw(drawn, stopNow())
+      graphViews.put(graphKey(), { document: decoded.value, runs: graph.runs }, Date.now())
+      void decorateRuns(mine, decoded.value)
     } catch {
       // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
-      // is a bridge that threw where it should not have.
+      // is a throw this file did not expect -- `graphScreenNow` building its
+      // worker, which is the same turn as the run-list guard above. The
+      // generation check is therefore layered behind that guard and cannot be
+      // told from its absence on its own; it stays because the guard above is
+      // about the run list and this one is about the read as a whole.
       if (!stale(mine)) refuseGraph(READ_UNREADABLE)
     } finally {
       graph.inFlight = false
       const queued = graph.queued
+      const queuedToken = graph.queuedToken
       graph.queued = null
-      if (queued !== null) void readGraph(queued)
+      graph.queuedToken = null
+      if (queued !== null) void readGraph(queued, queuedToken)
+    }
+  }
+
+  /** graphKey is one installation's Graph entry in the session cache. The cache
+   * is per installation like every other one here, and `forgetLive` empties it
+   * with the rest: a plan of the old installation is never drawn under the new
+   * one's positions. */
+  const graphKey = (): string =>
+    cacheKey([railNow.find((row) => row.open)?.project ?? '', 'graph'])
+
+  /** markGraph puts the section's busy mark up over the picture on screen, for
+   * one token. It is a no-op when the panel holds no drawing of this Graph: the
+   * placeholder is already saying a read is running, and a mark over a refusal
+   * would be a mark over a sentence that is an answer. */
+  const markGraph = (token: number): void => {
+    const slot = graphSlot()
+    const tree = graphTree
+    if (slot === null || tree === null) return
+    graphRead.mark(token, tree, slot, GRAPH_BUSY)
+  }
+
+  /**
+   * stampGraph draws the cached view's line and its Refresh into the drawing's
+   * own slot: when this view was read, and the one control that reads it again.
+   * A figure that arrived without a read is never silently old (the owner's rule
+   * of 2026-10-31), and the Refresh is the door the operator's own doubt goes
+   * through.
+   */
+  const stampGraph = (at: number): void => {
+    const slot = graphSlot()
+    if (slot === null) return
+    const stamp = renderStamp(factory, at)
+    slot.append(stamp.root)
+    surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+      void readGraph(claim(), graphRead.start())
+    })
+  }
+
+  /**
+   * decorateRuns reads the console's run list -- `runs ls --since 24h`, the same
+   * read the Live screen's rigor join makes and **not** through that join, which
+   * drops every row it cannot show a rigor block for -- and attaches it to the
+   * picture already on screen.
+   *
+   * **It is the read that decorates and never the read that decides.** A graph
+   * whose canvas is up is a graph the operator can read; the list is what a
+   * node's door resolves four characters of a run id against, so it arrives
+   * after the plan and nothing waits for it. A refusal is not a refusal screen
+   * and not a reason to take the doors away: the list this session already holds
+   * stays, and a console that never read one draws nodes with no door and the
+   * sentence saying so (`GRAPH_NO_RUN_LISTED`).
+   */
+  const decorateRuns = async (mine: number, document: PlanStatusView): Promise<void> => {
+    if (graph.decorating) return
+    graph.decorating = true
+    try {
+      const listed = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
+      // The generation is checked **after** the read and never before the mark,
+      // which is not this read's: a decoration nobody is waiting for must not
+      // replace a view the operator has moved to.
+      if (stale(mine) || !listed.ok) return
+      const runs = runIdsIn(listed.data)
+      const drawn = graphScreenNow().decorate(runs)
+      if (stale(mine) || drawn === null) return
+      graph.runs = runs
+      redraw(drawn, stopNow())
+      graphViews.put(graphKey(), { document, runs }, Date.now())
+    } catch {
+      // As above: a bridge that threw where it should not have leaves the
+      // doors as they were, which is the same drawing a refused read makes.
+    } finally {
+      graph.decorating = false
     }
   }
 
@@ -2894,11 +3255,51 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * console could not read must not be redrawn from the plan it read before it,
    * so the screen drops the document it holds as well as the panel drawing it
    * (GV2.3b, `GraphScreen.forget`). The drawing it held goes too, so a redraw
-   * that comes later asks the keyboard about the tree the panel really has. */
+   * that comes later asks the keyboard about the tree the panel really has.
+   *
+   * **A read refused for want of a checkout is not a refusal screen.** The
+   * sentence is `src/source/cli.ts`'s precondition for this one read -- no plan
+   * document can be read because the installation names no directory to read it
+   * from -- and it is a state of the installation with one action, not a failure
+   * of the console or of the CLI; `drawNoCheckout` draws it as such and keeps the
+   * CLI's sentence in a disclosure. **That is the only sentence routed here**:
+   * every other refusal, including one the console could not read at all, is the
+   * refusal screen it always was. */
   const refuseGraph = (sentence: string): void => {
     graph.screen?.forget()
     graphTree = null
+    if (sentence === NO_CHECKOUT_SENTENCE) {
+      drawNoCheckout(sentence)
+      return
+    }
     refuse('plan.status', sentence)
+  }
+
+  /**
+   * drawNoCheckout draws the Graph's no-checkout card and wires its one action.
+   *
+   * The action is the installation picker's own door, and it is opened the way
+   * the rail's `+` opens it: `installation.open`, the picker's window, where the
+   * checkout chooser already is. There is no new channel, no new bridge method
+   * and no new argument -- a card in the panel is not a reason to widen the IPC
+   * allow-list, and the chooser this button needs is one the console already
+   * ships.
+   */
+  const drawNoCheckout = (sentence: string): void => {
+    // The card's action opens the picker, and the picker's only word about a
+    // checkout is one `Use <dir>` per checkout the CLI listed for the row. So
+    // the action is offered for an installation the CLI listed a checkout for,
+    // and the card says what to do instead when the CLI listed none -- while a
+    // console that never read the list at all keeps the action, because "no
+    // checkout is recorded" is not a claim it can make.
+    const open = railNow.find((row) => row.open)
+    const choosable = !deps.railListed || open === undefined || open.checkouts.length > 0
+    const drawn = renderNoCheckout(factory, sentence, theme, { choosable })
+    replace(drawn.root)
+    if (drawn.choice === null) return
+    surface.nodeOf(drawn.choice).addEventListener('click', () => {
+      void railBridge.openInstallations({})
+    })
   }
 
   /** maybeRefreshGraph is the one place the plan's cadence is applied, so
@@ -2907,7 +3308,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const maybeRefreshGraph = (): void => {
     if (graph.inFlight) return
     if (Date.now() - graph.readAt < GRAPH_REFRESH_MS) return
-    void readGraph(claim())
+    // **No token**: the cadence is nobody's press, and a mark put up for it would
+    // flicker over a picture the operator is reading.
+    void readGraph(claim(), null)
   }
 
   /**
@@ -2917,12 +3320,38 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * its way), and the plan is read on entry. That read is the first of the three
    * moments the read is made at; the others are the cadence and the operator's
    * own refresh.
+   *
+   * The placeholder goes up for the console that has **nothing** to redraw: a
+   * Graph a refusal took down, or one this console has never read. A Graph that
+   * holds a picture keeps it -- the picture is the plan the operator was looking
+   * at, and a placeholder in its place would take a drawing away to say that
+   * another one is coming.
    */
   const showGraph = async (): Promise<void> => {
     const mine = claim()
+    const held = graphViews.get(graphKey())
+    if (held !== null) {
+      // **The cached view is drawn before anything is awaited**, which is the
+      // whole point of the cache: the plan this session already read, with the
+      // run list it was decorated with, laid out again by the engine's own cache
+      // without a message to the worker. It is stamped `as of HH:MM` with the
+      // door to read it again, and a view older than `CACHE_FRESH_MS` is read
+      // again at once **as well** -- never served silently.
+      const drawn = await graphScreenNow().load(held.value.document, held.value.runs)
+      if (stale(mine) || drawn === null) return
+      graph.runs = held.value.runs
+      redraw(drawn, stopNow())
+      stampGraph(held.at)
+      if (Date.now() - held.at >= CACHE_FRESH_MS) void readGraph(mine, graphRead.start())
+      return
+    }
     const last = graph.screen?.redraw() ?? null
     if (last !== null) redraw(last, stopNow())
-    await readGraph(mine)
+    else placeReading('graph', mine)
+    // The placeholder is what says a read is running when this console has
+    // nothing to redraw, so the read carries no token: a mark over the sentence
+    // that already names the tab would be a second answer to the same click.
+    await readGraph(mine, null)
   }
 
   /** graphTree is the graph drawing the panel holds, so a redraw no gesture
@@ -3112,15 +3541,34 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const screen = graph.screen
     if (screen === null) return
 
+    /**
+     * chooseTab is the stream filter's one door, from the mouse and from the
+     * keyboard alike.
+     *
+     * **It answers in the frame it was pressed in.** A tab is a different graph
+     * and not a different drawing of one -- the screen asks the engine to lay it
+     * out again -- so the press takes the section's token and puts the mark up
+     * over the picture on screen before anything is awaited; the drawing that
+     * answers replaces it, and the mark comes down with the token. Two quick
+     * presses leave the second one's graph: an answer whose token is no longer
+     * the newest is dropped, whatever order the two arrive in.
+     */
+    const chooseTab = (tab: GraphTab): void => {
+      const token = graphRead.start()
+      markGraph(token)
+      void screen.narrow(tab).then((element) => {
+        if (!graphRead.settle(token)) return
+        redraw(element, SELECTED_TAB)
+      })
+    }
+
     const tabButtons = classed(drawn, 'graph-tab')
     for (const button of tabButtons) {
       const tab = tabOf(button.getAttribute('data-tab') ?? tabKey(null))
       const node = surface.nodeOf(button)
       if (tab !== screen.current.tab) {
         node.addEventListener('click', () => {
-          // A tab is a different graph, not a different drawing of one: the screen
-          // re-lays it out, so this door is the asynchronous one.
-          void screen.narrow(tab).then((element) => redraw(element, SELECTED_TAB))
+          chooseTab(tab)
         })
       }
       // The tablist's keys (design section 4.3, the navigation's own rule): Left
@@ -3136,9 +3584,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // The tab the screen draws is the one to focus, not the tab that was
         // asked for: a stream this document no longer carries falls back to All,
         // and the ring belongs on the tab that is showing.
-        void screen.narrow(tabOf(wanted.getAttribute('data-tab') ?? tabKey(null))).then((element) =>
-          redraw(element, SELECTED_TAB),
-        )
+        chooseTab(tabOf(wanted.getAttribute('data-tab') ?? tabKey(null)))
       })
     }
 
@@ -3190,7 +3636,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const refresh = classed(drawn, 'graph-refresh')[0]
     if (refresh !== undefined) {
       surface.nodeOf(refresh).addEventListener('click', () => {
-        void readGraph(claim())
+        // The token is taken **in the click**, before the read is started: it is
+        // what puts the mark up in this frame, and what keeps two quick presses
+        // from leaving the earlier one's answer on screen.
+        void readGraph(claim(), graphRead.start())
       })
     }
 
@@ -3225,32 +3674,114 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
   }
 
+  // ---- Section fillers --------------------------------------------------
+
+  /** clearSection empties one section down to its own slot -- the mark of the
+   * read that has just landed, and the view it replaces. The slot stays, because
+   * it is where the next read's mark goes, and it is put back as the section's
+   * only child so the fillers below can append the content beside it.
+   *
+   * It is shared by every screen whose sections fill as their own reads land
+   * (Spend's two and Projects'), because the rule it keeps is the same one: a
+   * section is emptied to its slot and never to nothing. */
+  const clearSection = (host: Drawn, slot: Drawn): void => {
+    const node = surface.nodeOf(slot)
+    node.replaceChildren()
+    surface.nodeOf(host).replaceChildren(node)
+  }
+
+  /** appendTo puts one of the entry's own drawings into a section a screen made.
+   * The screens' `append` takes a child of their own declared type and a refusal
+   * screen or a cache stamp is not one of those: they are this file's, drawn
+   * into a host the screen drew. */
+  const appendTo = (host: Drawn, child: SkewElement): void => {
+    host.append(child)
+  }
+
   // ---- Spend ------------------------------------------------------------
 
+  /** spendBudget and spendCapsSentence are what `budget show` last answered for
+   * this installation: the document the caps section reads its figures out of,
+   * or the CLI's own words when it refused. They are held for the installation
+   * and dropped by `forgetLive` -- the caps are a fact about the installation
+   * and not about the window the operator chose, so a control change re-reads
+   * the report and never the budget (`readSpend`'s own division, kept here) --
+   * and they are what a visit draws while its own caps read is in flight. */
+  let spendBudget: Readonly<Record<string, unknown>> | null = null
+  let spendCapsSentence: string | null = null
+
+  /** spendViews is what this session already read, one entry per view the three
+   * controls can name: the installation, the window, the breakdown and the
+   * person switch. It is memory and nothing else, and `forgetLive` empties it,
+   * so a view read for one installation is never drawn under another. */
+  const spendViews = resultCache<SpendModel>(CACHE_LIMIT)
+
+  /** spendCapsRead and spendReportRead are the two sections' read lifecycles:
+   * each has its own busy mark, its own sequence token and its own refusal, so a
+   * slow report cannot take the caps' mark down and a control change cannot make
+   * the caps section look busy. Both are read on every visit and neither waits
+   * for the other. */
+  const spendCapsRead = sectionRead({ factory, theme })
+  const spendReportRead = sectionRead({ factory, theme })
+
+  /** leaveSpend ends both sections' busy state when the operator moves to
+   * another tab: nothing is in flight for a screen nobody is looking at. */
+  leaveSpend = () => {
+    spendCapsRead.end()
+    spendReportRead.end()
+  }
+
   /**
-   * showSpend reads the caps once and the report on every control change, which
-   * is `readSpend`'s own division: the budget document is the caller's, because
-   * it is a different operation and a control change is not a reason to re-read
-   * it. The by-person panel is the screen's second read (`statsRuns`, console
-   * L5b) and `readSpend` makes it only while the operator's knob is on, so the
-   * wiring here hands over the reader and decides nothing about when it runs.
+   * showSpend draws the Spend screen as **two sections that fill as their own
+   * reads land** (the owner's rule of 2026-10-31): the caps section from
+   * `budget show` and the report section from `report --json`. The two reads
+   * start together and neither waits for the other -- the caps answer in about a
+   * second and the report in about twenty-three on the owner's installation, so
+   * a screen that waited for both would hold a spinner for the whole of the
+   * second one.
+   *
+   * **A control change is answered in the frame it happened in.** The click puts
+   * a busy mark and `aria-busy` on the report section, keeps the figures already
+   * drawn under it (dimmed, never blanked) and starts the read; the mark names
+   * the window and the breakdown being read. A read that lands with an older
+   * token than the latest change is dropped, so two quick changes leave the
+   * second one's view on screen whatever order the answers arrive in.
+   *
+   * **What the session already read is drawn instantly.** The cache is keyed by
+   * the installation and the three controls, lives in memory for this session
+   * only, and a view older than `CACHE_FRESH_MS` is stamped and re-read at once
+   * rather than served silently. Entering the tab **and** a control change both
+   * answer from it, so the round trip an operator makes between two windows
+   * costs no read; the stamp's own Refresh is the one control that always reads
+   * again.
+   *
+   * **The caps are read on every visit.** They are the installation's own budget
+   * rather than the view the operator chose, so a control change never re-reads
+   * them -- but they move while the console is open and a refusal must not stick
+   * for the session, so entering the tab starts their read again, in parallel
+   * with the report's, and draws what the session holds under its mark.
+   *
+   * The by-person panel is the screen's second read (`statsRuns`, console L5b)
+   * and `readSpend` makes it only while the operator's knob is on, so the wiring
+   * here hands over the reader and decides nothing about when it runs.
    */
   const showSpend = async (): Promise<void> => {
     const mine = claim()
+    const project = railNow.find((row) => row.open)?.project ?? ''
     let controls: SpendControls = SPEND_DEFAULT_CONTROLS
-    let caps: Readonly<Record<string, unknown>> | null = null
-    const capsReply = documentOf(await bridge.showBudget({}))
-    // The rail's spend is the console's own budget read -- this one, the read
-    // the caps panel makes -- and the rail makes none of its own (design section
-    // 4.1). It is filled before the staleness check below: the spend is a fact
-    // about the installation rather than about the view the operator chose, so a
-    // read that landed after they moved on still fills the rail.
-    if (capsReply.ok) {
-      rail.setSpend(railSpend(capsReply.data))
-      setGauge(gaugeFromBudget(capsReply.data))
-    }
-    if (stale(mine)) return
-    if (capsReply.ok) caps = capsReply.data
+    /** frame is the shell on screen, or `null` while the panel holds the tab's
+     * placeholder: the shell goes up the moment the first of the two reads
+     * lands, because a Spend screen with no figure under a tab that is still
+     * being read is worse than the placeholder that names the tab. */
+    let frame: DrawnSpendFrame | null = null
+    let reportPending = true
+    let capsPending = spendBudget === null && spendCapsSentence === null
+    /** reportToken and capsToken are the sequence tokens of the reads that are
+     * out. They are held here and not only inside the readers because `mount`
+     * marks a section that is still pending, and the mark has to belong to the
+     * read that is really in flight. */
+    let reportToken = 0
+    let capsToken = 0
 
     const reader: SpendReader = async (args) => {
       const answer = documentOf(await bridge.runReport(args))
@@ -3272,31 +3803,251 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return answer.data
     }
 
-    // asked is which report is the latest one asked for. Two control changes in
-    // a row are two reports in flight, and the first can answer last: drawn, it
-    // would put the earlier range's figures under a picker that marks the later
-    // one. Each draw also renders with the controls *it* read with, never with
-    // whatever `controls` has become since.
-    let asked = 0
-    const draw = async (): Promise<void> => {
-      const ticket = (asked += 1)
-      const readWith = controls
-      const outcome = await readSpend(reader, readWith, caps, peopleReader)
-      // The report was read for a view that is no longer the one on screen (the
-      // operator left Spend), or for controls the operator has changed again.
-      if (stale(mine) || ticket !== asked) return
+    /**
+     * mount draws the shell if it is not up yet, and answers it.
+     *
+     * It puts the busy mark on every section whose read is still out, which is
+     * the only moment those marks can be drawn: the panel held the tab's
+     * placeholder until now, and the sections did not exist.
+     *
+     * **The mark of a pending section carries that section's skeleton**, and it
+     * is what keeps the placeholder's promise across the swap: the first read to
+     * land replaces the panel with this shell, and the section still out shows
+     * the shape it will take rather than a mark over nothing. That is also why
+     * the section that just landed gets no mark here -- its own fill replaces
+     * the slot's contents in this same turn, and it is `paintCaps` and
+     * `paintReport` that decide that, not this.
+     */
+    const mount = (): DrawnSpendFrame => {
+      if (frame !== null) return frame
+      const drawn = renderSpendFrame(factory, theme)
+      frame = drawn
+      replace(drawn.root)
+      if (capsPending) {
+        spendCapsRead.mark(capsToken, drawn.caps, drawn.capsSlot, SPEND_CAPS_BUSY, SPEND_CAPS_SHAPE)
+      }
+      if (reportPending) {
+        spendReportRead.mark(
+          reportToken,
+          drawn.report,
+          drawn.reportSlot,
+          spendBusyLabel(controls),
+          SPEND_REPORT_SHAPE,
+        )
+      }
+      return drawn
+    }
+
+    /** paintCaps draws the caps section from what `budget show` answered. It is
+     * its own read, its own refusal (`budget.show`) and its own token: a report
+     * that refuses is not a reason to take this section's answer down, and the
+     * other way round.
+     *
+     * `still` is the case of a visit that already holds caps and has just asked
+     * for them again: the figures this session has are drawn **and then** the
+     * mark goes up over them, because a mark drawn before the drawing is taken
+     * out of the section with the slot it was in. */
+    const paintCaps = (still = false): void => {
+      capsPending = false
+      const drawn = mount()
+      clearSection(drawn.caps, drawn.capsSlot)
+      if (spendCapsSentence !== null) {
+        appendTo(drawn.capsSlot, refusedScreen(factory, 'budget.show', spendCapsSentence, theme))
+      } else {
+        fillSpendCaps(factory, capsOf(spendBudget), drawn.caps)
+      }
+      if (still) spendCapsRead.mark(capsToken, drawn.caps, drawn.capsSlot, SPEND_CAPS_BUSY)
+    }
+
+    /**
+     * paintReport fills the report section from what the report answered, and
+     * wires the controls it drew.
+     *
+     * `cached` is whether this view came out of the session cache rather than
+     * out of a read made now: a cached view is drawn with the console clock it
+     * was read at and a control to read it again, so a figure the operator is
+     * looking at is never silently old.
+     */
+    const paintReport = (
+      model: SpendModel,
+      readWith: SpendControls,
+      at: number,
+      cached: boolean,
+    ): void => {
+      reportPending = false
+      const drawn = mount()
+      clearSection(drawn.report, drawn.reportSlot)
+      fillSpendReport(factory, model, theme, readWith, drawn.report)
+      if (cached) {
+        const stamp = renderStamp(factory, at)
+        appendTo(drawn.reportSlot, stamp.root)
+        surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+          // `refreshFrom` and not `change`: the visit's own `controls` is what
+          // the read is started from, whatever drew the control the operator
+          // pressed -- and a Refresh reads the view again even though the cache
+          // holds it, which is the whole of what the control is for.
+          refreshFrom(readWith)
+        })
+      }
+      wireSpendControls(drawn.root, readWith, change)
+    }
+
+    /**
+     * refresh starts the report read for one set of controls.
+     *
+     * The token is taken **before the await**, so a slow earlier read cannot
+     * overwrite a later one, and the mark goes up in the frame the change
+     * happened in. When the shell is not up yet -- the first read of a visit --
+     * there is nothing to mark, and `mount` puts the mark up when it arrives.
+     */
+    const refresh = (readWith: SpendControls): void => {
+      reportToken = spendReportRead.start()
+      const token = reportToken
+      if (frame !== null) {
+        spendReportRead.mark(token, frame.report, frame.reportSlot, spendBusyLabel(readWith))
+      }
+      void loadReport(readWith, token)
+    }
+
+    /** loadReport makes one report read and draws it when it is still the
+     * latest. */
+    const loadReport = async (readWith: SpendControls, token: number): Promise<void> => {
+      // The caps are handed over for the model's own `caps` field, which the
+      // report section does not draw: the caps are their own section, and this
+      // read starts before that one may have answered.
+      const outcome = await readSpend(reader, readWith, spendBudget, peopleReader)
+      // The token is checked **before** anything is taken down. The busy state
+      // belongs to the helper rather than to this read, so a read from an earlier
+      // visit that landed after the operator came back would end the *current*
+      // visit's mark -- taking its `aria-busy` off and cancelling its
+      // fifteen-second line -- for a read nobody is waiting for any more.
+      if (!spendReportRead.settle(token)) return
+      if (stale(mine)) return
       if (!outcome.ok) {
-        refuse('spend.report', outcome.reason)
+        // The report's refusal is **this section's own**, exactly as the caps'
+        // is: the caps read may still be out, and a refusal drawn over the whole
+        // panel would be replaced the moment it landed -- leaving the report
+        // section marked as reading with no read in flight. The frame stays for
+        // the same reason.
+        reportPending = false
+        const drawn = mount()
+        clearSection(drawn.report, drawn.reportSlot)
+        appendTo(drawn.reportSlot, refusedScreen(factory, 'spend.report', outcome.reason, theme))
         return
       }
-      const drawn = renderSpend(factory, outcome.model, theme, readWith)
-      replace(drawn)
-      wireSpendControls(drawn, readWith, (next) => {
-        controls = next
-        void draw()
-      })
+      const at = Date.now()
+      spendViews.put(spendViewKey(project, readWith), outcome.model, at)
+      paintReport(outcome.model, readWith, at, false)
     }
-    await draw()
+
+    /** loadCaps makes one caps read and paints the section when it lands. It is
+     * started together with the report's read and never waits for it, and it is
+     * told which token it is: the section's read is made on every visit, so two
+     * of them can be out at once and the one that answers is not necessarily the
+     * one this call started. */
+    const loadCaps = async (token: number): Promise<void> => {
+      const reply = documentOf(await bridge.showBudget({}))
+      // The rail's spend is the console's own budget read -- this one, the read
+      // the caps section makes -- and the rail makes none of its own (design
+      // section 4.1). It is filled before the staleness check below: the spend
+      // is a fact about the installation rather than about the view the
+      // operator chose, so a read that landed after they moved on still fills
+      // the rail.
+      if (reply.ok) {
+        rail.setSpend(railSpend(reply.data))
+        setGauge(gaugeFromBudget(reply.data))
+        spendBudget = reply.data
+        // The sentence and the document are one answer between them, and
+        // `paintCaps` reads the sentence first: a refusal left standing here is
+        // the section refusing for the rest of the session, whatever the reads
+        // that follow say (only `forgetLive` used to clear it).
+        spendCapsSentence = null
+      } else {
+        spendCapsSentence = reply.sentence
+        spendBudget = null
+      }
+      // The token goes first, for the report's own reason: the mark this section
+      // wears may belong to a later read, and `end` would take it down with it.
+      if (!spendCapsRead.settle(token)) return
+      if (stale(mine)) return
+      paintCaps()
+    }
+
+    /**
+     * startCaps starts one caps read: its token, the mark when the section is
+     * already drawn, and the read itself. `mount` puts the mark up when the
+     * shell is not up yet, and the read is out either way -- a section with a
+     * read in flight must not look as though it has answered.
+     */
+    const startCaps = (): void => {
+      capsToken = spendCapsRead.start()
+      if (frame === null) capsPending = true
+      else spendCapsRead.mark(capsToken, frame.caps, frame.capsSlot, SPEND_CAPS_BUSY)
+      void loadCaps(capsToken)
+    }
+
+    /**
+     * change answers one control change: the mark goes up in the same frame as
+     * the click, the figures already drawn stay under it, and the read for the
+     * new controls starts at once -- unless this session has already read the
+     * view the change names, which the three controls make a small and often
+     * repeated set: 30d → 7d → 30d is a round trip an operator makes without
+     * meaning to ask the CLI anything. A hit is drawn stamped in the click's own
+     * frame, and one older than `CACHE_FRESH_MS` is read again at once rather
+     * than served silently.
+     */
+    const change = (next: SpendControls): void => {
+      controls = next
+      const hit = spendViews.get(spendViewKey(project, next))
+      if (hit === null) {
+        refresh(next)
+        return
+      }
+      // A token is taken even though no read is made. The cached view is the
+      // newest answer for the controls on screen, and a read still in flight for
+      // a range the operator has just left -- a whole report, so a read that can
+      // take twenty seconds -- must not be drawn over it when it lands. `end`
+      // then takes that read's mark off the section it would keep dimmed.
+      reportToken = spendReportRead.start()
+      spendReportRead.end()
+      paintReport(hit.value, next, hit.at, true)
+      if (Date.now() - hit.at >= CACHE_FRESH_MS) refresh(next)
+    }
+
+    /**
+     * refreshFrom is the stamp's own control, and the one door out of the cache
+     * for the view on screen: a Refresh is the operator saying the figures they
+     * are looking at are old, so the view is read again whatever this session
+     * holds. The caps are read again with it, because they are as old as the view
+     * the stamp is about.
+     */
+    const refreshFrom = (readWith: SpendControls): void => {
+      controls = readWith
+      refresh(readWith)
+      startCaps()
+    }
+
+    // The view the screen opens on, if this session has already read it. A hit
+    // is drawn before anything is awaited -- which is the whole point of the
+    // cache -- and a view older than `CACHE_FRESH_MS` is stamped and re-read at
+    // once rather than served silently.
+    const cached = spendViews.get(spendViewKey(project, controls))
+    const heldCaps = spendBudget !== null || spendCapsSentence !== null
+    capsPending = !heldCaps
+    if (cached === null) placeReading('spend', mine)
+    else paintReport(cached.value, controls, cached.at, true)
+
+    // The caps are read on **every** visit, not once for the installation: they
+    // are the installation's budget, which moves while the console is open, and
+    // a `budget show` the CLI refused would otherwise stay refused for the rest
+    // of the session. What this session already holds is drawn first, under the
+    // mark of the read that is starting -- never a blank section for the second
+    // the CLI takes. Both reads start here, together: the caps section is not a
+    // consequence of the report, and waiting for the report before asking for
+    // the caps is the serialisation this fix exists to remove.
+    if (heldCaps) paintCaps(true)
+    startCaps()
+    if (cached === null || Date.now() - cached.at >= CACHE_FRESH_MS) refresh(controls)
   }
 
   /**
@@ -3335,41 +4086,167 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   // ---- Projects ---------------------------------------------------------
 
+  /** projectsViews is what this session already read for the Projects screen:
+   * one entry per installation, keyed by the open installation's project. It is
+   * memory and nothing else, and `forgetLive` empties it with the rest of the
+   * installation's state, so a view read for one installation is never drawn
+   * under another. */
+  const projectsViews = resultCache<ProjectsModel>(CACHE_LIMIT)
+
+  /** projectsRead is the screen's own read lifecycle. The read is one
+   * (`budget show`), so the section is the screen and there is one of each: one
+   * busy mark, one sequence token, one refusal. */
+  const projectsRead = sectionRead({ factory, theme })
+
+  /** leaveProjects ends that section's busy state when the operator moves to
+   * another tab: nothing is in flight for a screen nobody is looking at. */
+  leaveProjects = () => {
+    projectsRead.end()
+  }
+
   /**
-   * showProjects reads the two documents this console can read for it and hands
-   * each one's refusal -- when there is one -- to the screen's own `sentences`,
-   * so a panel that has nothing says *why* in the CLI's words rather than in a
-   * default this file invented.
+   * showProjects draws the Projects screen from its **one** read.
    *
-   * The two repository-scoped reads are **not made**: `accounts ls` and
-   * `secrets ls` both need a repository, and this console has none to name (the
-   * installation's project is not a repository). Their panels say so through the
-   * screen's own absent sentence, which is the truth about a read the console
-   * did not make -- and is not a zero.
+   * **The jobs list is gone** (owner's report of 2026-10-31: it "is slow and
+   * serves no purpose there"). `runs ls --json` is about 248 KB and six seconds
+   * for a day of runs on the owner's installation, and this screen started it
+   * before the caps -- the panel's whole content -- could be drawn: the tab took
+   * about twenty seconds with nothing on screen. The read is `budget show` now,
+   * about a second, and the panels derived from the run list went with it
+   * (`buildProjectsModel`'s own note).
+   *
+   * **The shell is mounted the moment the tab is opened**, and the section's
+   * busy mark and skeleton go up in that same frame: the header, the caps and the
+   * rest of the panels are all that read's, so a screen that waited for it would
+   * be the placeholder under another name. The mark names the read, the previous
+   * visit's figures stay under it (dimmed, never blanked), and after fifteen
+   * seconds it says so.
+   *
+   * **What this session already read is drawn instantly**, stamped `as of
+   * HH:MM` with a Refresh control, and a view older than `CACHE_FRESH_MS` is
+   * read again at once rather than served silently.
    */
   const showProjects = async (): Promise<void> => {
     const mine = claim()
-    const sentences: Record<string, string> = {}
-    const read = async (operation: string, go: () => Promise<unknown>): Promise<unknown> => {
-      const answer = documentOf(await go())
-      if (!answer.ok) sentences[operation] = answer.sentence
-      return answer.ok ? answer.data : null
+    const project = railNow.find((row) => row.open)?.project ?? ''
+    const key = cacheKey([project, 'projects'])
+    const held = projectsViews.get(key)
+    let frame: DrawnProjectsFrame | null = null
+    let token = 0
+
+    /** mount draws the shell if it is not up yet, and answers it. The mark of a
+     * read that is still out goes up here, which is the only moment it can be
+     * drawn: the panel held another view's content until this call. */
+    const mount = (busy: boolean): DrawnProjectsFrame => {
+      if (frame !== null) return frame
+      const drawn = renderProjectsFrame(factory, theme)
+      frame = drawn
+      replace(drawn.root)
+      if (busy) projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY, PROJECTS_SHAPE)
+      return drawn
     }
-    const budget = await read('budget.show', () => bridge.showBudget({}))
-    // The Projects view makes the same budget read, and the rail's spend is that
-    // read's too: one read serves the panel and the rail.
-    if (budget !== null) {
-      rail.setSpend(railSpend(budget))
-      setGauge(gaugeFromBudget(budget))
+
+    /** paint fills the section from what `budget show` answered. `cached` is
+     * whether this view came out of the session cache rather than out of a read
+     * made now: a cached view carries the console clock it was read at and the
+     * one control that reads it again. */
+    const paint = (model: ProjectsModel, at: number, cached: boolean): void => {
+      const drawn = mount(false)
+      clearSection(drawn.body, drawn.slot)
+      fillProjects(factory, model, drawn.body)
+      if (cached) {
+        const stamp = renderStamp(factory, at)
+        appendTo(drawn.body, stamp.root)
+        surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+          start()
+        })
+      }
     }
-    const runs = await read('runs.list', () => bridge.listRuns({}))
-    // Both reads are in, and the operator may have moved on while they were.
-    if (stale(mine)) return
-    const model = buildProjectsModel({ budget, runs, accounts: null, secrets: null, sentences })
-    replace(renderProjects(factory, model, theme))
+
+    /** load makes the one read and draws it when it is still the latest. */
+    const load = async (readToken: number): Promise<void> => {
+      const answer = documentOf(await bridge.showBudget({}))
+      // The rail's spend and the fleet gauge are this read's too (design section
+      // 4.1): they are filled before the staleness check, because the spend is a
+      // fact about the installation rather than about the panel the operator is
+      // on, and a read that landed after they moved on still fills them.
+      if (answer.ok) {
+        rail.setSpend(railSpend(answer.data))
+        setGauge(gaugeFromBudget(answer.data))
+      }
+      // The token is checked before anything is taken down, so a read from an
+      // earlier visit cannot end the *current* visit's mark.
+      if (!projectsRead.settle(readToken)) return
+      if (stale(mine)) return
+      if (!answer.ok) {
+        const drawn = mount(false)
+        clearSection(drawn.body, drawn.slot)
+        appendTo(drawn.body, refusedScreen(factory, 'budget.show', answer.sentence, theme))
+        return
+      }
+      const model = buildProjectsModel({
+        budget: answer.data,
+        accounts: null,
+        secrets: null,
+        sentences: {},
+      })
+      const at = Date.now()
+      projectsViews.put(key, model, at)
+      paint(model, at, false)
+    }
+
+    /** start takes the sequence token for one read, puts the mark up in the
+     * frame's own section when the shell is already drawn, and makes the read. */
+    const start = (): void => {
+      token = projectsRead.start()
+      if (frame === null) mount(true)
+      else projectsRead.mark(token, frame.body, frame.slot, PROJECTS_BUSY)
+      void load(token)
+    }
+
+    // The view this screen opens on, if this session has already read it, is
+    // drawn before anything is awaited -- which is the whole point of the cache.
+    // A view older than `CACHE_FRESH_MS` is stamped **and** read again at once
+    // rather than served silently.
+    if (held === null) start()
+    else {
+      paint(held.value, held.at, true)
+      if (Date.now() - held.at >= CACHE_FRESH_MS) start()
+    }
   }
 
   // ---- Coordinator ------------------------------------------------------
+
+  /** coordinatorViews is what this session already read for the Coordinator
+   * screen: the stored view of every repository of one installation. It is
+   * memory and nothing else, and `forgetLive` empties it, so a view read for one
+   * installation is never drawn under another. */
+  const coordinatorViews = resultCache<CoordinatorModel>(CACHE_LIMIT)
+
+  /** coordinatorRead is the screen's own read lifecycle: one busy mark, one
+   * sequence token, one refusal -- the read is one document, the stored view of
+   * every repository at once. */
+  const coordinatorRead = sectionRead({ factory, theme })
+
+  /** coordinatorChunk is the timer the detail is drawn on. It is held here
+   * rather than inside a visit because leaving the tab has to stop it: the
+   * chunks draw into a tree the operator has left. */
+  let coordinatorChunk: ReturnType<typeof setTimeout> | null = null
+
+  /** stopCoordinatorChunks cancels the detail still to be drawn. */
+  const stopCoordinatorChunks = (): void => {
+    if (coordinatorChunk === null) return
+    clearTimeout(coordinatorChunk)
+    coordinatorChunk = null
+  }
+
+  /** leaveCoordinator ends the section's busy state and stops its chunks when the
+   * operator moves to another tab: nothing is in flight for a screen nobody is
+   * looking at. */
+  leaveCoordinator = () => {
+    stopCoordinatorChunks()
+    coordinatorRead.end()
+  }
 
   /**
    * showCoordinator reads the project view: one document, the coordinator's
@@ -3387,21 +4264,139 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * document this build cannot read is drawn with the skew's own sentence --
    * never as a view with nothing in it, which is the one reading a strict reader
    * exists to prevent.
+   *
+   * **The tab answers in the frame it was opened in** (the owner's rule of
+   * 2026-10-31). This is the longest read the console makes -- about 724 KB and
+   * thirteen seconds on the owner's installation -- so the frame goes up at once
+   * and the count of what the read is made of is on it: the source line and the
+   * console's sentence about the view's age are the console's own words and need
+   * no document. Under the frame's mark the body holds the shape of what is
+   * coming, and what the last visit drew stays dimmed rather than blanked.
+   *
+   * **The summary is painted the moment the document lands, and each
+   * repository's detail after it, one repository per chunk.** A document that
+   * lists hundreds of pull requests with their runs is the larger half of the
+   * drawing, so making all of it in the frame the decode returned in would
+   * freeze the window for as long as the drawing took; the chunks let the
+   * operator scroll and read the summary while the rest arrives. The sequence
+   * token is checked in every chunk as well as at the end of the read, so a
+   * repository drawn late never lands under another installation or another
+   * visit.
+   *
+   * **What this session already read is drawn instantly**, stamped `as of
+   * HH:MM` with a Refresh control, and a view older than `CACHE_FRESH_MS` is
+   * read again at once rather than served silently.
    */
   const showCoordinator = async (): Promise<void> => {
     const mine = claim()
-    const answer = documentOf(await bridge.coordinatorStatus({}))
-    if (stale(mine)) return
-    if (!answer.ok) {
-      refuse('coordinator.status', answer.sentence)
-      return
+    const project = railNow.find((row) => row.open)?.project ?? ''
+    const key = cacheKey([project, 'coordinator'])
+    const held = coordinatorViews.get(key)
+    let frame: DrawnCoordinatorFrame | null = null
+    let token = 0
+
+    /** mount draws the shell if it is not up yet, and answers it. The mark of a
+     * read that is still out goes up here, which is the only moment it can be
+     * drawn: the panel held another view's content until this call. */
+    const mount = (busy: boolean): DrawnCoordinatorFrame => {
+      if (frame !== null) return frame
+      const drawn = renderCoordinatorFrame(factory, theme)
+      frame = drawn
+      replace(drawn.root)
+      if (busy) coordinatorRead.mark(token, drawn.body, drawn.slot, COORDINATOR_BUSY, COORDINATOR_SHAPE)
+      return drawn
     }
-    const decoded = decodeCoordinatorStatus(answer.data, 'coordinator.status')
-    if (!decoded.ok) {
-      refuse('coordinator.status', decoded.skew.because)
-      return
+
+    /**
+     * paint draws the whole screen from a document: the summary in this frame,
+     * and one repository's detail per chunk after it.
+     *
+     * `cached` is whether this view came out of the session cache rather than
+     * out of a read made now: a cached view carries the console clock it was
+     * read at and the one control that reads it again.
+     */
+    const paint = (model: CoordinatorModel, at: number, cached: boolean): void => {
+      stopCoordinatorChunks()
+      const drawn = mount(false)
+      clearSection(drawn.body, drawn.slot)
+      if (cached) {
+        const stamp = renderStamp(factory, at)
+        appendTo(drawn.body, stamp.root)
+        surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+          start()
+        })
+      }
+      const details = fillCoordinatorSummary(factory, model, drawn.body)
+      let next = 0
+      const step = (): void => {
+        coordinatorChunk = null
+        // The chunk is a drawing of a view this visit may no longer own: the
+        // operator can have left the tab, or opened another installation, while
+        // it was queued. Laid out per repository anyway, because `details` is
+        // the order the summary drew them in and a detail must land under its
+        // own summary.
+        if (stale(mine)) return
+        const detail = details[next]
+        next += 1
+        if (detail === undefined) return
+        repoDetail(detail.host, factory, detail.panel)
+        if (next < details.length) coordinatorChunk = setTimeout(step, 0)
+      }
+      if (details.length > 0) coordinatorChunk = setTimeout(step, 0)
     }
-    replace(renderCoordinator(factory, buildCoordinatorModel({ view: decoded.value }), theme))
+
+    /** load makes the one read and paints it when it is still the latest. */
+    const load = async (readToken: number): Promise<void> => {
+      const answer = documentOf(await bridge.coordinatorStatus({}))
+      // The token is checked before anything is taken down, so a read from an
+      // earlier visit cannot end the *current* visit's mark.
+      if (!coordinatorRead.settle(readToken)) return
+      if (stale(mine)) return
+      if (!answer.ok) {
+        stopCoordinatorChunks()
+        const drawn = mount(false)
+        clearSection(drawn.body, drawn.slot)
+        appendTo(drawn.body, refusedScreen(factory, 'coordinator.status', answer.sentence, theme))
+        return
+      }
+      const decoded = decodeCoordinatorStatus(answer.data, 'coordinator.status')
+      if (!decoded.ok) {
+        stopCoordinatorChunks()
+        const drawn = mount(false)
+        clearSection(drawn.body, drawn.slot)
+        appendTo(drawn.body, refusedScreen(factory, 'coordinator.status', decoded.skew.because, theme))
+        return
+      }
+      const model = buildCoordinatorModel({ view: decoded.value })
+      const at = Date.now()
+      coordinatorViews.put(key, model, at)
+      paint(model, at, false)
+    }
+
+    /** start takes the sequence token for one read, puts the mark up in the
+     * frame's own section when the shell is already drawn, and makes the read. */
+    const start = (): void => {
+      token = coordinatorRead.start()
+      if (frame === null) mount(true)
+      else coordinatorRead.mark(token, frame.body, frame.slot, COORDINATOR_BUSY)
+      void load(token)
+    }
+
+    // The view this screen opens on, if this session has already read it, is
+    // drawn before anything is awaited -- which is the whole point of the cache.
+    // A view older than `CACHE_FRESH_MS` is stamped **and** read again at once
+    // rather than served silently. The frame is drawn either way, so the tab is
+    // never a blank panel while that read runs.
+    if (held === null) start()
+    else {
+      paint(held.value, held.at, true)
+      // The mark goes up **after** the drawing, and only for a view old enough to
+      // be read again: `paint` empties the section down to its slot, so a mark
+      // drawn before it would go out with the slot's own contents. A view still
+      // inside `CACHE_FRESH_MS` is served as it is, with its stamp and its
+      // Refresh, and no read at all.
+      if (Date.now() - held.at >= CACHE_FRESH_MS) start()
+    }
   }
 
   // ---- Run detail -------------------------------------------------------
@@ -3632,6 +4627,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     live.rigor = new Map()
     live.rigorAt = 0
     history = new BurnHistory()
+    // Spend's two documents and the views read from them are this
+    // installation's: the caps are its budget, and a cached view carries its
+    // figures. The next installation is read afresh rather than drawn from
+    // another one's spend.
+    spendBudget = null
+    spendCapsSentence = null
+    spendViews.clear()
+    // The Projects screen's view is the same kind of fact: it is this
+    // installation's caps, and a cached one carries its figures.
+    projectsViews.clear()
+    // And the Coordinator's: the stored view is one installation's own
+    // repositories, so a view read for another one is never drawn under it.
+    coordinatorViews.clear()
     // The graph is a picture of **one installation's** plan, laid out by a worker
     // this console started for it: both are dropped here, so the next
     // installation is drawn from its own document by its own engine rather than
@@ -3639,6 +4647,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     graph.screen?.dispose()
     graph.screen = null
     graph.readAt = 0
+    // The plan and the run list the Graph cache holds are this installation's
+    // own: a plan of the old one is never drawn under the new one's positions.
+    graphViews.clear()
+    graph.runs = []
   }
 
   /** showIssue puts one installation's issue in the main area (owner's design

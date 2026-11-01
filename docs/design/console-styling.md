@@ -167,7 +167,7 @@ eight that are hooks here as well — `data-key` for the spend screen (§2.3, §
 `data-view` for the navigation and the people panel (§2.1, §2.5) — stay licensed, and §2.11
 says so.
 
-Three facts hold across every screen and are stated once:
+Four facts hold across every screen and are stated once:
 
 - **A number is never bare.** Every figure goes through `putReading` (`app.ts`), which
   calls `formatReading` (`console/src/shared/availability.ts`), so the marks are fixed console-wide:
@@ -181,6 +181,21 @@ Three facts hold across every screen and are stated once:
 - **The theme travels as an attribute.** Each screen's root is
   `<section class="<screen>" data-theme="light|dark">`; nothing else about the drawing
   depends on the theme today.
+- **A panel whose data has not arrived draws the shape of what is coming** (the owner,
+  2026-10-31: "when changing tabs in the Console we should show a skeleton while we load the
+  data, no?"). A tab switch draws one `div.console-skeleton` per section the tab is made of
+  — a `div.console-skeleton-block` per thing that is coming, each carrying `data-shape`
+  (`line`, `chip`, `row`, `card` or `band`) and the `data-section` its own wrapper names —
+  and a section whose own read is in flight draws one too, in place of the content it does
+  not have yet. The whole tree is `aria-hidden`, because a block is a shape and not a
+  reading, and what a reader who cannot see it is told is the panel's own sentence in
+  `span.console-reading-status` — visually hidden beside the blocks, with the fifteen-second
+  `p.console-busy-still` under them. The shapes are `console/src/renderer/skeleton.ts`'s
+  (`SKELETON_SHAPES`, one list per tab), the placeholder that draws them is
+  `screens/reading.ts`'s and the per-section one is `renderer/section.ts`'s, so the hooks
+  above are the console's rather than one screen's — and the heights the blocks hold are
+  `--skeleton-*` steps of `flight-deck.css`, so the section does not move when the read
+  lands.
 
 ### 2.1 The dashboard's chrome — `src/renderer/entry.ts`
 
@@ -538,7 +553,26 @@ read was resolved for, drawing the document's totals and **no row at all**); run
 never started (a count in no row and no total, drawn after the totals as
 `span.spend-people-unlaunched` beside the word `never started` in
 `span.spend-people-unlaunched-word`).
-**There is no loading state, no stale state and no halted state on this screen.** The one
+**A section that is being read says so, and keeps what it had.** The owner's rule of
+2026-10-31 — "we need to render parts of screen as soon as we get that data, not wait for
+it all before we show anything" — gives this screen two sections, each with a read of its
+own (`budget show` for the caps, the report for everything else), and a read that has not
+answered draws a **busy mark** at the top of its own section instead of blanking it: the
+section carries `data-busy="true"` and `aria-busy="true"` and fades every child but its
+slot, and the mark itself is `div.console-busy` — `span.console-busy-spinner`, the static
+word `span.console-busy-still-mark` a reader with the reduced-motion preference sees
+**instead of** the spinning element, and the label `span.console-busy-label` naming what is
+being read. The section's own first child is `div.console-busy-slot`, which is where the
+mark goes and where a cached view's stamp is drawn, and a read that outlives fifteen
+seconds adds `p.console-busy-still` to it. A view that came out of the session cache is
+drawn at once, stamped `p.console-stamp` — `span.console-stamp-at` carrying the words
+`as of HH:MM` on the console's own clock, and the `button.console-stamp-refresh` that reads
+it again beside them, in the line but not inside the element that says *when*, because a
+node's `textContent` is its whole subtree's and a hook on the line would answer
+`as of 09:05Refresh`. The mark and the stamp are drawn by
+`console/src/renderer/section.ts`, the helper every tab adopts as it is rebuilt around
+sections, so the hooks above are the console's rather than this screen's.
+**There is no halted state on this screen.** The one
 cap-reached marker it draws is the caps panel's own word `at cap` (above), beside the
 figures it was measured from; nothing else on the screen carries one, and a rule may not
 read the tone alone as the state.
@@ -558,31 +592,92 @@ exported: it is the sentence a row draws, not a vocabulary anything reads.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 
-Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
-(where there is one) `data-operation`: `caps`, `kill`, `repositories`, `jobs`, `accounts`,
-`secrets`, `policy`, `enrollment`.
+Seven panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
+(where there is one) `data-operation`: `caps`, `kill`, `repositories`, `accounts`,
+`secrets`, `policy`, `enrollment`. **The panel's state is a word as well as a frame**:
+`span.projects-state` draws `read`, `not read`, or the design's word for a card this CLI
+cannot read at all — `locked` — so no rule has to carry a state on a tone alone (§3.5).
+
+**The jobs panel is gone, and so is the second read behind it** (the owner's report of
+2026-10-31: that list "is slow and serves no purpose there"). `runs ls --json` is about
+248 KB and six seconds for a day of runs, and this screen started it before the caps —
+the whole of the panel's content — could be drawn, which is what made the tab about
+twenty seconds with nothing on screen. The screen makes **one** read, `budget show
+--json`; the jobs table, the `projects-jobs-*` hooks beside it, `data-operation="runs.list"`
+and the two repository claims the run list carried (the enrolled-and-seen split and the
+"seen, not enrolled" card) all leave the vocabulary with it. The repositories panel draws
+the cap document's own `repos` and says nothing about which of them have run: a repository
+enrolled with no run is not the same fact as a repository that ran with no cap row.
+
+**The screen's shell is `section.projects > div.projects-body > div.console-busy-slot`**,
+and the entry mounts it in the frame the tab is opened in. The mark, the skeleton and the
+`aria-busy` on `.projects-body` are `src/renderer/section.ts`'s (§2.11, and the console
+rule in `.claude/rules/console.md`): the section is dimmed while the read is out, never
+blanked, and says "still reading" after a quarter of a minute. A screen this session has
+already read is drawn at once, stamped `as of HH:MM` with a Refresh control.
 
 | Group | Class hooks |
 |---|---|
-| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
-| Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches all three**, and the third is **unreachable today** — see below |
-| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
-| Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
-| Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
-| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-job-mode`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
-| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-accounts-note` |
-| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed` |
+| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-state`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
+| Notes | two hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches both**, and the second is **unreachable today** — see below. The jobs panel's own note went with the panel |
+| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-word`, `projects-reserve-value`, `projects-cap-table`, `projects-cap-head`, `projects-cap`, `projects-cap-scope`, `projects-cap-cell`, `projects-cap-value`, `projects-cap-source` |
+| Kill | `projects-kills`, `projects-kill-list`, `projects-kill-row`, `projects-kill-scope`, `projects-kill-repo`, `projects-kill-state`, `projects-kill-action`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
+| Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
+| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
+| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
 `read`, `unavailable`, `not-built`**; `data-operation`
-(`budget.show|runs.list|accounts.inventory|secrets.inventory`, absent on `policy` and
-`enrollment`); `data-scope` (`global|defaults|repo`); `data-slug`; `data-killed` (`true`).
+(`budget.show|accounts.inventory|secrets.inventory`, absent on `policy` and
+`enrollment`); `data-scope` (`global|defaults|repo`, on a caps row and on a kill row);
+`data-slug` (the same two rows); `data-killed` (`true`|`false` on a kill row, and `true` on
+the banner a killed row carries); `data-kind` (`enrolled` alone, on a repository card —
+the run list that carried the other two went with the jobs panel).
 
 The `not-built` state is the design's own honesty rule in the DOM: `policy` and
 `enrollment` carry `data-state="not-built"` and a `projects-because` sentence ("not
 readable with this CLI: …"). An `unavailable` panel carries the CLI's sentence or "no
 document arrived for …". A `read` panel carries a count and a body; **a panel in any other
 state has no body at all**, so a rule that painted an empty body would be painting nothing.
+The two `not-built` panels are the design's locked cards: a dashed frame, the state word
+`locked` beside the title, and no body, no list and no count behind it.
+
+**The caps are one table and every cell in it is labelled.** `table.projects-cap-table`
+carries a `th.projects-cap-head` per column, and each row — the project (`global`), the
+repository defaults (`defaults`) and one per repository — opens with
+`th.projects-cap-scope` naming what the caps are set for, before the two
+`td.projects-cap-cell`s. Each of those carries its figure as money
+(`span.projects-cap-value`) **with the cap's source word** (`span.projects-cap-source`, from
+`CAP_SOURCES`) beside it, because a bare column of numbers names nothing: a rule that
+right-aligned three `$` figures would align a cap the CLI derived from the project's
+defaults with one an operator typed on the repository. A source this build does not know is
+drawn as `unknown` and not guessed at. Above the table, `p.projects-reserve` carries the
+largest single lease the project has out (`span.projects-reserve-word` names it,
+`span.projects-reserve-value` is the money).
+
+**The switches are rows whose state is a word.** `ul.projects-kill-list` holds one
+`li.projects-kill-row` for the project and one per repository, each with
+`data-killed="true"` or `"false"` and a `span.projects-kill-state` that draws `KILLED` or
+`live`. A killed row carries the badge banner, `div.projects-kill` — itself
+`data-killed="true"`, with `span.projects-kill-word` (`KILLED by`) and the who, when and why
+only when the document has them, and nothing invented when it does not. The row's own action
+is drawn through `disabledWrite` (§5.1): `Kill` on a live row, `Revive` on a killed one.
+
+**The repositories are one card**, `article.projects-repo-card`, drawn from the cap
+document's own `repos`: `data-kind="enrolled"` and a title saying so, then one
+`li.projects-repo-enrolled` per repository. It was three cards, one per state of a document
+that also listed runs — a repository with a cap row and a run (`both`), one with a cap row
+and no run yet (`enrolled`), and one that ran with no cap row (`seen`, with the only action
+any card drew, `Add cap`) — and the two that needed a run went with the run list. A known
+but empty set says `none` in `p.projects-repo-card-none` rather than drawing an empty card
+or nothing at all. The panel's reason for an unread set stays `projects-because`
+(`repositoriesBecause`), so a set no document reported is never drawn as an empty one.
+
+The accounts and secrets panels draw their rows as lists (`ul.projects-account-list`,
+`ul.projects-secret-list`). **Neither read is wired in this build**, so the two panels are
+drawn with their own "not read" sentence and no list at all — and the secrets panel's
+`p.projects-secrets-managed` sentence ("All managed by fugaro.") waits for a document whose
+every entry says so.
 
 **`projects-accounts-note` is a hook no document this CLI produces can reach.** `fugaro
 accounts ls --json` writes `note` with `omitempty` and answers `complete: false` whenever
@@ -594,19 +689,10 @@ hook is emitted by the code and reachable by no feed today; it becomes reachable
 `complete: true` and a non-empty `note` can arrive together, which is why it stays in the
 vocabulary rather than being deleted.
 
-Readings: money (`usd`) for the reserve, the caps and the job figures; counts for panel
-counts, dropped/total, enrolled/seen, secret versions. **No reading is a time on this
-screen** — every date is text.
-
-**`projects-job-mode` is the jobs row's rigor mode, and the column is conditional.** The
-cell draws the mode's word — the five §2.3 names — or the record's own value when this
-build does not know it, or `-` for a run whose record carries no block; and **no cell is
-drawn at all unless some listed run carries a block**, which is the rule `fugaro runs ls`
-writes for its own MODE column (`internal/cli/runs.go`'s `showMode`). A project whose runs
-all predate the field therefore draws the jobs list it drew before, and not a column of
-dashes. The cell is the mode and nothing else: the CLI's own cell appends the layer and the
-strictest matched area (`pro (repo payments +2)`), and the screen that has room for that
-whole answer is the run detail's Rigor row (§2.6).
+Readings: money (`usd`) for the reserve and the caps; counts for the panel counts and the
+secret versions. **No reading is a time on this screen** — every date is text, and no cell
+of this screen carries a rigor mode: the run detail owns that answer (§2.6), and the jobs
+row that used to repeat it went with the run list.
 
 ### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
@@ -833,7 +919,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
+| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (a kill row, and the banner that row carries). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, on Live's repository block itself, and on Projects' kill row** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), and `li.projects-kill-row` carries `true`/`false` with the banner appended into the row, so `.live-repo[data-killed="true"]` and `li.projects-kill-row[data-killed="true"]` are rules this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
 | silent / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
@@ -906,6 +992,57 @@ worker's answer, written as SVG attributes because `style-src 'self'` admits no 
 style, §5.5) and a **list** that is the same model with every title whole. Regions in tree
 order: header → tabs → chips → canvas, or the list, never both.
 
+**The screen answers a control in the frame it was pressed in** (0.117.0). The refresh,
+the stream filter's tabs and the plan select are one section's controls, and
+`src/renderer/section.ts` puts the busy mark and `aria-busy` on `section.graph` for as long
+as the read it started is out — the canvas already drawn stays under the mark, dimmed and
+never blanked — and says it is still reading after a quarter of a minute. The canvas is
+drawn from the plan status alone and the run overlay decorates it when the run list lands,
+so a screen that waited for both reads would be the all-or-nothing wait this rule forbids.
+
+**The picture is read left to right** (console redesign, step 6a). The layout engine is
+asked for `elk.direction: 'RIGHT'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a task sits to
+the **left** of the tasks that need it, the layers it computes are the columns a reader
+reads across, and a dependency is a line that leaves one card's side and arrives at
+another's. A card is **260 × 88** (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), which is the
+two constants the engine is told and the two **one stream's** layout cache is keyed by: the
+key is a serialization of that stream's **structure**, so the box sizes are in it and a
+card that changes size changes the key with it.
+
+**One engine run per stream, and the runs are stacked as rows** (the owner's ruling of
+2026-10-31). The engine's packing is two-dimensional: handed every stream at once, it
+places one stream's plans among another's wherever they fit, and the band drawn around a
+stream's cards then swallows another stream's cards. So each stream is laid out on its own
+run, and the runs are placed below one another **in the model's order**, `GRAPH_ROW_GAP`
+between two rows — the room two bands need to stay apart. A read that changes one stream's
+structure lays that stream out again and reuses every other stream's positions, because
+the key above is a stream's.
+
+**A stream is a band, and the band is geometry the screen computes rather than a
+container the engine is given** — a run is handed one stream's nodes and edges and no
+containers. Each stream's band
+is the rectangle around the cards that stream has **on the picture** — a shut chip's hidden
+tasks are outside it — padded by `GRAPH_PAD` and grown upward by `GRAPH_BAND_HEAD` for the
+band's own label, which is the stream's `Sanitized` name ("no stream" for the plans that
+name none). Bands are drawn **first**, so every card and every release box sits on its own
+stream's ground, and the picture's `viewBox` covers them. Because the rows are stacked, a
+band **is** a row: it cannot reach into another stream's. Under `forced-colors: active` the
+band's boundary is the one graph stroke drawn `GrayText`: both fills are `Canvas` there, and
+a boundary in the reading tone would leave the row's ground drawn as a card the size of a
+row (§4.4). An edge whose two ends land in
+different rows is the one thing no run has routed, and `crossStreamRoute` draws it as an
+orthogonal line through the gutter between the two rows — no document this console builds
+has one today (a plan's `needs` name tasks of that plan, and a plan belongs to one stream:
+the reconciliation's F4, and GV4.1 is the slice that would add them).
+
+**The canvas's ground is a dotted grid, and it is decoration.** It is a CSS background on
+`svg.graph-canvas` and not an element: nothing is read from it, no state is carried by it,
+and a background needs no element to be drawn, sized or hidden from a reader.
+
+**The toolbar's stream filter, the inspector and the legend are not drawn yet: they are
+console redesign step 6b**, a later change, and this section will name their hooks when it
+lands. What step 6a restyles is the canvas and the cards, below.
+
 | Hook | Drawn as | Note |
 |---|---|---|
 | `section.graph` | the screen's root | carries `data-theme` like every other screen's |
@@ -918,13 +1055,16 @@ order: header → tabs → chips → canvas, or the list, never both.
 | `graph-chip-name`, `graph-chip-mark`, `graph-chip-version` | `span`s inside the chip | the name, the `✓` mark and the version |
 | `graph-chip-body`, `graph-chip-tasks`, `graph-chip-task`, `graph-chip-task-title` | the open chip's own panel | drawn **only** while `aria-expanded` is `true` |
 | `graph-release-bar` | `p` (chip body) and `span` (list heading) | the "n of m done" bar, both places |
-| `graph-canvas` | `svg` | `viewBox` carries the zoom; the element has no width or height of its own |
+| `graph-canvas` | `svg` | `viewBox` carries the zoom; the element has no width or height of its own, and its dotted-grid ground is a CSS background on this element rather than an element of its own |
+| `graph-band`, `graph-band-box` | `g` + `rect` | one band per stream that has a task on the picture, drawn **first** so it is the ground of its own row: the `g` carries `data-stream`, and the box is the row's wash |
+| `graph-band-label` | `text` at the band's head | the stream's own `Sanitized` name ("no stream" for the plans that name none) |
 | `graph-release`, `graph-release-box` | `g` + `rect` | one frame per release with a task on the picture |
 | `graph-release-heading`, `graph-release-bar` | `text` inside the box | the heading line and the bar under it |
 | `graph-release-stream`, `graph-release-name`, `graph-release-version` | `tspan`s inside that heading | the same three parts the chip draws |
 | `graph-edge`, `graph-edge-path` | `g` + `path` | one edge per dependency; the `g` carries the three facts below |
-| `graph-node`, `graph-node-box` | `g` + `rect` | one card per task; the `g` carries `data-state`, `data-selected` and `data-critical` |
-| `graph-node-title`, `graph-node-word`, `graph-node-pr`, `graph-node-run`, `graph-node-mark` | `text` inside the card | the title, one element per state word, the pull request number, the run and the reading's mark |
+| `graph-node`, `graph-node-box` | `g` + `rect` | one card per task; the `g` carries `data-state`, `data-selected` and `data-critical`, a `role` (`button` where Enter or Space opens the card's run, `group` where no key does anything) and an `aria-label` of the whole title and every word the card draws — the card's lines cut a title at three, and the name is where it is whole |
+| `graph-node-title`, `graph-node-title-line` | `text` inside the card, and one `tspan` per line it was wrapped to | SVG has no wrap, so the lines are the screen's: a title is wrapped at `GRAPH_NODE_TITLE_LINE_CODE_POINTS` over at most `GRAPH_NODE_TITLE_LINES` lines, and only a title that still does not fit is cut (with an ellipsis, on a code-point boundary) — the whole title is still in the list |
+| `graph-node-word`, `graph-node-pr`, `graph-node-run`, `graph-node-mark` | `text` inside the card | one element per state word, the pull request number, the run and the reading's mark |
 | `graph-node-comet` | `rect` on the card's own border, `aria-hidden` | the light streak that travels a **running** card's border: GV2.4's motion, drawn only while the first word is one of the four a running task draws (`implementing`, `in review`, `fixing`, `queued`) |
 | `graph-node-pulse` | `rect` behind the card, `aria-hidden` | the glow a **critical** card draws: a filled, blurred wash of the same `--accent` the critical path is drawn in, a few pixels larger than the card so what a reader sees is the spill around it and never the card's own boundary, which keeps the state's tone |
 | `graph-list`, `graph-list-plan`, `graph-list-title` | the list's `div`, one `section` and `h2` per plan | `role="list"` on the `div` |
@@ -947,13 +1087,13 @@ order: header → tabs → chips → canvas, or the list, never both.
 **The attributes no rule needs**, and §2's rule read the other way: the graph also emits
 eight. `data-key` (a card's and a row's layout key), `data-run-id` (the run a gesture would
 open), `data-tab` (the tablist's own value), `data-chip` (a chip's release key),
-`data-view` (the view switch's own value), `data-stream` (the stream a chip group is drawn
-for), `data-release` (a box's key) and `data-word` (the word an element draws, beside the
-text it draws). They are the screen's own bookkeeping — the entry reads `data-key`,
-`data-run-id`, `data-tab` and `data-chip` back off the drawn tree to route a click, and the
-other four name only what the screen itself knows (which drawing is showing, which stream a
-group belongs to, which release a box is, which word an element draws) — and no stylesheet
-rule may select one without adding it above first. Six of the eight are refused by name in
+`data-view` (the view switch's own value), `data-stream` (the stream a chip group **and a
+band** are drawn for), `data-release` (a box's key) and `data-word` (the word an element
+draws, beside the text it draws). They are the screen's own bookkeeping — the entry reads
+`data-key`, `data-run-id`, `data-tab` and `data-chip` back off the drawn tree to route a
+click, and the other four name only what the screen itself knows (which drawing is showing,
+which stream a group or a band belongs to, which release a box is, which word an element
+draws) — and no stylesheet rule may select one without adding it above first. Six of the eight are refused by name in
 the inventory test with `data-hidden` and `data-skew`; the other two, `data-key` and
 `data-view`, are §2's hooks on other screens and stay licensed (§2's licence paragraph).
 
@@ -961,20 +1101,25 @@ the inventory test with `data-hidden` and `data-skew`; the other two, `data-key`
 
 | State | The word | The second channel |
 |---|---|---|
-| implementing / in review / fixing | on the card, and in the list | the card's boundary in `--accent` — structure, which is what a task being worked on is |
-| queued / waiting | on the card, and in the list | the card's own `--border-strong` boundary: nothing is happening, and nothing shouts |
-| blocked | on the card, and in the list | the boundary in `--warn` **and dashed** — the one state a reader needs at a glance |
-| halted | on the card, and in the list | the boundary in `--halted`, the deliberate stop |
-| ready | on the card, and in the list | the boundary in `--border-strong`, as queued |
-| done | on the card, and in the list | the boundary and the title in `--text-muted`: no longer a reading anyone acts on |
-| critical | a **second** word beside the first | the edges of the critical path, 3 px of `--accent` against a plain edge's 2 px, and the card's own glow behind it in the same `--accent` |
+| implementing / in review / fixing / queued | on the card, and in the list | the card's boundary in `--live` at 2 px — the tone a task being worked on is, and the tone the comet travels and the critical path is drawn in |
+| waiting | on the card, and in the list | the card's own neutral boundary (`--line-strong`, 1 px): nothing is happening, and nothing shouts |
+| blocked | on the card, and in the list | the boundary in `--decor` **and dashed** — the one state a reader needs at a glance |
+| halted | on the card, and in the list | the boundary in `--warn`: something stopped and a person has to look |
+| ready | on the card, and in the list | the neutral boundary, as waiting |
+| done | on the card, and in the list | the neutral boundary and the title in `--text-3`: no longer a reading anyone acts on |
+| critical | a **second** word beside the first | the edges of the critical path, 3 px of `--live` against a plain edge's 2 px of `--decor`, and the card's own glow behind it in the same `--live` |
 
-**The edge widths are the second channel and the only one a forced-colors reader keeps**:
-a cross-release edge is 1 px, a plain one 2 px, the critical path 3 px, and the edges of a
-selected task 3 px of the reading tone — so the whole distinction survives
-`forced-colors: active`, where the dashes of a blocked card survive with it (§4.4). No rule
-paints `--ok` on this screen: §3.2 licenses that token to two readings, and a finished task
-is neither.
+**A dependency is a line and not a state**: an edge is `--decor` (the tone a drawing is
+made of) unless it is on the critical path, which is `--live`. **The edge widths are the
+second channel and the only one a forced-colors reader keeps**: a cross-release edge is
+1 px, a plain one 2 px, the critical path 3 px, and the edges of a selected task 3 px of
+the reading tone — and the selection's tone is the one thing that mode takes away, so its
+arm draws those edges **4 px of `Highlight`**, a pixel wider than the critical path: the
+whole distinction survives `forced-colors: active`, where the dashes of a blocked card
+survive with it (§4.4). The selected **card** is a width too, 3 px
+against a running card's 2, and it keeps its state's tone: a selection that recoloured the
+boundary would hide the state it is selecting. No rule paints `--ok` on this screen: §3.2
+licenses that token to two readings, and a finished task is neither.
 
 **This section's motion is §3.9's amendment, and GV2.4 landed it, in the spec's own three
 shapes.** A light streak travels a running card's border, a glow pulses behind a critical
@@ -997,6 +1142,14 @@ the console's own empty sentence instead of the panels. **The read is one comman
 (`fugaro coordinator status --from-store --all --json`) and the drawing adds no control, no
 link and no gesture: the screen is read-only, which is why no rule here needs a transition
 beyond the focus ring the shared blocks already carry.
+
+**What is already known is drawn before the read** (0.117.0): the source line and the
+console's age sentence are mounted in the frame the tab is opened in, and the body's own
+section is filled when the document arrives — the summary first, the per-PR and per-run
+detail after, in idle chunks or on the operator's expand. While the read is out the body
+carries `src/renderer/section.ts`'s busy mark, its `aria-busy` and a skeleton of the same
+shape, and a document this session has already read is drawn at once, stamped `as of
+HH:MM` with a Refresh control.
 
 | Hook | Drawn as | Note |
 |---|---|---|
@@ -1598,7 +1751,7 @@ the `ElementLike` interface is untouched (a media query is not a DOM write).
 | Panel / section title (`projects-title`, `run-panel-title`, `spend-account-title`) | `--font-size-md` (15px) | 600 | sans |
 | Table header (`projects-repos-label`, `run-log-time`, a column caption) | `--font-size-xs` (11px), uppercase, letter-spaced | 500 | sans |
 | Row text, labels, controls | `--font-size-sm` (12px) — the dense default | 400 | sans |
-| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the three Projects note hooks — `projects-note`, `projects-jobs-note`, `projects-accounts-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
+| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the two Projects note hooks — `projects-note`, `projects-accounts-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
 | **Every number, id, slug, path, timestamp and log line** | `--font-size-sm` | 400 | `--font-mono` with `font-variant-numeric: tabular-nums` |
 
 Money is always tabular and right-aligned, in mono, with the `$` inside the same cell —
@@ -1643,10 +1796,14 @@ animated would be a figure whose last frame is a lie about when the value was re
 
 **Amendment, 2026-10-24: one screen animates, and this section carries its states and their static styles.** The owner's console dependency graph spec of 2026-10-22 asks for a moving graph — a light streak circling a running node, a glow behind the critical ones, a flow along the critical path's edges — and the owner's answer GD4 of that day, confirmed by the reconciliation's ruling (b) ([reconciliation](../console-dependency-graph/reconciliation.md)), amends this section **for that screen alone**: the graph screen (GV2.3, GV2.4 in [the plan](../console-dependency-graph/implementation-plan.md)) may animate, and everything above stands unchanged for every other screen. The exception is bounded by four rules, and a reader should be able to check a build against them:
 
-- **The animation belongs to the graph and to nothing else.** Three keyframes, no more: a **comet** on a node that is running, a **pulse** on a critical node, and a **flow** along an edge of the critical path. No other screen gains one, and **no figure animates anywhere** — which is the paragraph above, kept: a number whose last frame is stale is a number that lies. The test that matters here is a negative one: no animation outside the graph screen.
+- **The animation belongs to the graph and to nothing else.** Three keyframes, no more — the one exception the later amendment below adds is the busy mark's single turn: a **comet** on a node that is running, a **pulse** on a critical node, and a **flow** along an edge of the critical path. No other screen gains one, and **no figure animates anywhere** — which is the paragraph above, kept: a number whose last frame is stale is a number that lies. The test that matters here is a negative one: no animation outside the graph screen.
 - **Every animated state carries its word.** §3.5's rule, unchanged and load-bearing on this screen: the states are `implementing`, `in review`, `fixing`, `queued`, `waiting`, `halted`, `stuck`, `blocked`, `ready`, `done` and `critical`, each drawn as text on the node with its colour second. A reader who cannot tell two colours apart reads the same graph, and a screenshot read in greyscale is still a graph.
 - **Reduced motion gets a static style per state, not the global freeze.** The rule above *freezes* an animation rather than restyling it: `animation-duration: 0.01ms` with one iteration leaves a comet wherever it stopped, which is a picture of something that is not happening, and the same freeze is the whole of what `base.css` does (F36 in the reconciliation is where that gap was found). So the graph screen writes **one explicit static style per animated state** under its own `@media (prefers-reduced-motion: reduce)` block in `console/src/renderer/theme/screens.css`, each keeping its word above it, and the global freeze stays exactly where it is.
 - **Forced colours draw no animation at all** (§4.4): under `forced-colors: active` every state is its mark and its border, the same drawing the reduced-motion arm leaves behind.
+
+**Amendment, 2026-10-31: the busy mark's one turn, and nothing else moves.** The owner's rule of 2026-10-31 — "we need to render parts of screen as soon as we get that data, not wait for it all before we show anything" — needs the other half of the same complaint: a control change used to look like nothing had happened, and a section whose read has not answered has to say so **in the frame the click happened in**. A mark that says "reading" without moving is a mark a reader takes for a stopped console, so the busy mark (`console/src/renderer/section.ts`, drawn into a section's own slot) may draw **one** spinning element, `span.console-busy-spinner` in `flight-deck.css`, turned by **one** keyframe, `console-busy-turn`, whose only property is `transform`. The count above therefore becomes four. It is not a figure and not a state of a screen: it carries no number and no word about the data, it is drawn only while a read is in flight, and it is the only motion the console has outside the graph screen. Its two arms follow the rules above rather than restating them: under `prefers-reduced-motion: reduce` the element is **not drawn at all** (`display: none`, with the animation stopped on that same selector) and the static word `span.console-busy-still-mark` is shown in its place, because the global freeze would leave a ring wherever its last frame put it — a picture of half a circle rather than of reading; under `forced-colors: active` it declares no animation at all.
+
+**Amendment, 2026-11-01: the skeleton's one shimmer.** The owner, 2026-10-31: "when changing tabs in the Console we should show a skeleton while we load the data, no?" A skeleton of still blocks is a panel that may as well be a picture of a panel, so a block that is waiting on a read may carry **one** shimmer: `div.console-skeleton-block` in `flight-deck.css`, swept by **one** keyframe, `console-skeleton-shimmer`, whose only property is `background-position` over a gradient of two steps of the vocabulary. The count above therefore becomes five. It is bounded exactly as the turn before it is: one element and one keyframe; it carries no figure, no word and no state (the whole skeleton tree is `aria-hidden`, §2's fourth fact); it is drawn only while a read is in flight; and it is not a state of a screen. Its two arms are §3.9's rules rather than exceptions to them: under `prefers-reduced-motion: reduce` the blocks are **static** — the animation is stopped on the selector that started it and the sweep is taken off, because the global freeze would otherwise leave the gradient wherever the sweep stopped, which is a picture of a half-loaded block — and under `forced-colors: active` they declare **no animation at all** and are drawn as the system's own outline (§4.4).
 
 **What this amendment does not change.** The 120 ms `--duration-fast` hover and focus transitions are still the only motion on every other screen, the reduce rule is still written once in `base.css` and still applies to everything this screen does not restate, and the graph screen still takes its colours and its spacing from the shared token layer — which is why this is an amendment to the motion rule and to nothing else in this design.
 

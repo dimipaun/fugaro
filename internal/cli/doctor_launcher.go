@@ -216,7 +216,13 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	// suppresses the "everything checked is ok" line beside it. Being un-ok is
 	// what makes the print independent of the printer's OK rule as well: a line
 	// the owner must be able to read is the shape that prints either way.
-	out := []doctorCheck{{ID: "launcher-jobs", Severity: "info", Problem: problem,
+	//
+	// Any withheld policy sets the unread marker, not only a listing where every
+	// one was: the counts above are over the policies this doctor read, so a
+	// partial read is a partial answer — "2 grants over 1 job" says nothing about
+	// the job whose policy was refused, and a measurement nobody hears about is
+	// how a grant that was never read passes for a count that is fine.
+	out := []doctorCheck{{ID: "launcher-jobs", Severity: "info", unread: withheld > 0 || len(unread) > 0, Problem: problem,
 		Fix: "the launcher role's permissions are unchanged by the project-centric model (run.jobs.run, run.jobs.runWithOverrides and the secret metadata list): what changes is how many jobs they attach to, so a grant count that falls while runs still work is a migration doing what it says, and a job a launcher is not granted on is a job fugaro run cannot start. Project-level run roles bypass the jobs' own policies and are not counted here"}}
 	if len(public) > 0 {
 		slices.Sort(public)

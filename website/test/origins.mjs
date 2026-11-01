@@ -630,13 +630,16 @@ export function gateFailures(js, rel, facts) {
 // `'unsafe-eval'`, nonce or hash in `script-src` — the site ships no inline script, so a hash
 // would admit nothing and the two unsafe keywords would admit everything.
 //
-// **The campaign measurement's entries (G2.3, F18, O3).** Three more vendors arrive with the
-// campaign pages, each behind the campaign's own consent, and each is admitted as the exact
-// host its documentation names — never a wildcard, which is the failure mode this list exists
-// against: `https://connect.facebook.net` (the pixel's script), `https://snap.licdn.com` (the
-// insight tag's), `https://assets.calendly.com` (the booking widget's script and stylesheet),
-// `https://www.facebook.com` and `https://px.ads.linkedin.com` (the two beacons, which are
-// image requests, and the pixel's own collect calls). The policy is written per directive
+// **The campaign measurement's entries (G2.3, F18, O3, and the owner's ruling of 2026-10-31).**
+// Three more vendors arrive with the campaign pages, each behind the campaign's own consent,
+// and each is admitted as the exact host its documentation names: `https://connect.facebook.net`
+// (the pixel's script), `https://snap.licdn.com` (the insight tag's), `https://assets.calendly.com`
+// (the booking widget's script and stylesheet), `https://www.facebook.com` and
+// `https://px.ads.linkedin.com` (the two beacons, which are image requests, and the pixel's own
+// collect calls). The one wildcard is the owner's own ruling, made for `img-src` alone and for no
+// other directive (O3): `https://*.licdn.com`, the host pattern LinkedIn's Insight Tag
+// documentation names for the image its tag loads. `script-src` stays wildcard-free, which
+// `brand.mjs` holds separately, and nothing else widens. The policy is written per directive
 // because the site's consent does not distinguish between them at the browser's level: a
 // visitor who declines loads nothing, so what the policy admits is what a consenting visitor
 // may reach, host by host, and nothing else. `frame-src` is the new directive: Calendly's
@@ -646,7 +649,7 @@ export const CSP_DIRECTIVES = new Map([
   ['default-src', ["'self'"]],
   ['script-src', ["'self'", ANALYTICS_ORIGIN, 'https://connect.facebook.net', 'https://snap.licdn.com', 'https://assets.calendly.com']],
   ['style-src', ["'self'", "'unsafe-inline'", 'https://assets.calendly.com']],
-  ['img-src', ["'self'", 'data:', ANALYTICS_ORIGIN, 'https://*.google-analytics.com', 'https://www.facebook.com', 'https://px.ads.linkedin.com']],
+  ['img-src', ["'self'", 'data:', ANALYTICS_ORIGIN, 'https://*.google-analytics.com', 'https://www.facebook.com', 'https://px.ads.linkedin.com', 'https://*.licdn.com']],
   ['font-src', ["'self'"]],
   ['connect-src', ["'self'", ANALYTICS_ORIGIN, 'https://*.google-analytics.com', 'https://*.google.com', 'https://connect.facebook.net', 'https://www.facebook.com', 'https://px.ads.linkedin.com']],
   ['frame-src', ['https://calendly.com']],
@@ -661,8 +664,9 @@ export const CSP_DIRECTIVES = new Map([
 /**
  * Why `policy` is not the policy the site's contract states: every directive present with
  * exactly the tokens it may carry and no others, and no directive missing. An origin added
- * anywhere, an `'unsafe-inline'` or an `'unsafe-eval'`, a nonce, a hash and a wildcard are
- * all the same defect to this reader: a token the contract does not carry.
+ * anywhere, an `'unsafe-inline'` or an `'unsafe-eval'`, a nonce, a hash and a wildcard — in a
+ * directive that does not carry one, which is every directive but `img-src` — are all the same
+ * defect to this reader: a token the contract does not carry.
  */
 export function cspFailures(policy) {
   const out = []
@@ -681,7 +685,7 @@ export function cspFailures(policy) {
     for (const value of values) {
       if (!allowed.includes(value)) {
         out.push(
-          `${name} admits ${value}: the policy carries exactly the tokens this contract lists for ${name} (${allowed.join(', ')}) — the origins Google documents for Google Analytics 4 without Ads features, the exact three the campaign's vendors document, and this site's own — and no 'unsafe-inline', 'unsafe-eval', nonce, hash or wildcard beyond the two Google documents`,
+          `${name} admits ${value}: the policy carries exactly the tokens this contract lists for ${name} (${allowed.join(', ')}) — the origins Google documents for Google Analytics 4 without Ads features, the exact three the campaign's vendors document, and this site's own — and no 'unsafe-inline', 'unsafe-eval', nonce, hash or wildcard beyond the three the vendors themselves document (Google's two and, in img-src alone, the owner's ruling of 2026-10-31 on LinkedIn's)`,
         )
       }
     }

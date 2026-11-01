@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -160,6 +161,18 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 	var mark string
 	if !found || json.Unmarshal(raw, &mark) != nil || mark != env[envProject] {
 		return userErr("the database at %s is not project %s's budget database (its /fugaro/project does not name the project); nothing was swept", envRTDBURL, oneLine(env[envProject]))
+	}
+	// The name is half the answer, and the weaker half: a project name is a
+	// string two installations can both carry, and what tells them apart is the
+	// GCP project the mark records beside it. This job deletes registry nodes
+	// and Firebase users, so the ownership question is the one every writer into
+	// the budget database asks, asked of the same predicate
+	// (budgetDBUnadopted) rather than of a second check that agrees with it
+	// until one of the two is edited (the review's F5). The environment is read
+	// as the config it is the same facts as (historyJobConfig); the pair itself
+	// was refused above, before a client was built (checkDatabaseHost).
+	if why := budgetDBUnadopted(ctx, historyJobConfig(env), infra.NewDB(db, env[envProject], env[envGCPProject], ""), "nothing was swept", selfCommand()+" update"); why != "" {
+		return userErr("%v", oneLine(why))
 	}
 
 	be, err := gcp.New(ctx, runOpts)

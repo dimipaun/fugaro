@@ -1440,3 +1440,55 @@ func TestReposAddTakesTheLengthEnrollableArgBoundsAt(t *testing.T) {
 		t.Fatalf("`repos add` accepted a %d-byte name, one byte over the bound enrollableArg refuses at: the gate and the command have drifted apart", len(at)+1)
 	}
 }
+
+// TestProjectAllowListDoorsAreRefusedInAnAgentSession: SD8's allow-list half.
+// The three commands that write `allow_repos` — and, through it, which
+// repository a run of the project may be — are the operator's, the same way
+// `project policy publish` is: refused before the read, so nothing is written
+// and no node is even looked at, and, for `sync`, without the App's private key
+// ever being read. The `--github-app-key` arm is the one that has to hold with
+// the flag as well as without it: the flag is what allows that read, and it is
+// not a way past this refusal (TestProjectSyncRefusesTheKeyReadInACodingAgentSession
+// is the flag's own test, which pins the sentence the flag carries).
+func TestProjectAllowListDoorsAreRefusedInAnAgentSession(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		sync bool
+	}{
+		{"repos add", []string{"project", "repos", "add", "github/acme/new"}, false},
+		{"repos rm", []string{"project", "repos", "rm", "github/acme/app", "--yes"}, false},
+		{"sync", []string{"project", "sync", "--github-app-id", "12345"}, true},
+		{"sync --github-app-key", []string{"project", "sync", "--github-app-id", "12345", "--github-app-key"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+			var g *syncRig
+			if tc.sync {
+				g = newSyncRig(t, "acme/new")
+			}
+			t.Setenv("CLAUDECODE", "1")
+			before := nodeOf(t, f.db)
+
+			out, errOut, err := executeStdin(t, "", tc.args...)
+			if err == nil {
+				t.Fatalf("a coding agent's session edited the allow-list:\n%s%s", out, errOut)
+			}
+			if got := ExitCode(err); got != ExitUserError {
+				t.Errorf("exit %d, want %d", got, ExitUserError)
+			}
+			for _, want := range []string{"nothing was written", "coding agent", "allow-list"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if after := nodeOf(t, f.db); after != before {
+				t.Errorf("the database changed in a coding agent's session:\nbefore %s\nafter  %s", before, after)
+			}
+			if g != nil && len(g.reads) != 0 {
+				t.Errorf("the App's private key was read in a coding agent's session: %v", g.reads)
+			}
+		})
+	}
+}

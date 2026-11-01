@@ -52,6 +52,7 @@ type initEngine struct {
 	previewed []initflow.StageResult
 	images    *imagesStage
 	repo      *repositoryStage
+	policy    *policyMigrateStage
 
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
@@ -156,9 +157,14 @@ func (e *initEngine) options() initflow.Options {
 // project it never creates) and minus the Batch backend's (the stage is
 // behind --provision-batch, which update refuses). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
-// secrets, plugin and the repository of the checkout it is run in (W5.1).
-// There is no services stage in either list: initflow.Services is a slot in
-// the canonical order nothing registers.
+// secrets, plugin, the repository of the checkout it is run in (W5.1), the
+// deployed security rules generation, the published policy node itself
+// (migrated and published from the local config) and the checkout's own
+// steps: fugaro
+// upgrade's pin, plugin and cloud steps for that checkout
+// (init_checkout_upgrade.go, the owner's rule of 2026-10-30). There is no
+// services stage in either
+// list: initflow.Services is a slot in the canonical order nothing registers.
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
@@ -170,7 +176,26 @@ func initStages(e *initEngine) []initflow.Stage {
 	if e.r.o.provisionCredentials {
 		stages = append(stages, newCredentialsStage(e))
 	}
+	// The policy stage last: it writes the node every run of the project is
+	// admitted by — migrated in place when it is an older node, built from the
+	// local config when it does not carry what the config states — and the
+	// stages before it are what those runs are launched against (see the
+	// stage's own file for why it is a migration and never a delete and a
+	// republish).
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
+	// The rules stage before the policy stage: the deployed security rules
+	// generation is what a published policy node is read under, and the policy
+	// write is gated on it — a run that migrated the node first would refuse
+	// its own write and leave the upgrade for a second command
+	// (init_rules_stage.go, the owner's rule of 2026-10-30).
+	stages = append(stages, newRulesStage(e))
+	e.policy = newPolicyMigrateStage(e)
+	stages = append(stages, e.policy)
+	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
+	// are a stage of this run too: fugaro update is the whole upgrade, so the
+	// one command the user runs may not leave the checkout it runs in behind
+	// (init_checkout_upgrade.go, the owner's rule of 2026-10-30).
+	stages = append(stages, newCheckoutStage(e))
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
 	// `backend: cloud-batch` stays refused by config validation until the
@@ -513,10 +538,21 @@ func newInstallationStage(e *initEngine) *engineStage {
 // firebaseProjectWord is --firebase-project's value in a printed command: the
 // installation's own GCP project id, the only value it takes.
 func (e *initEngine) firebaseProjectWord() string {
-	if e.lc != nil && e.lc.GCPProject != "" {
-		return quoteWord(e.lc.GCPProject)
+	if e.lc == nil {
+		return firebaseProjectIDWord("")
 	}
-	return "<gcp-project-id>"
+	return firebaseProjectIDWord(e.lc.GCPProject)
+}
+
+// firebaseProjectIDWord is --firebase-project's value in a command printed
+// anywhere else. The flag is a string flag with no default, so a message that
+// stopped at the flag prints a command nobody can run; the id is what it
+// takes, and a caller with none to read prints the placeholder to type.
+func firebaseProjectIDWord(id string) string {
+	if id == "" {
+		return "<gcp-project-id>"
+	}
+	return quoteWord(id)
 }
 
 // newFirebaseStage is stage 4: update --firebase-project's engine, which is two

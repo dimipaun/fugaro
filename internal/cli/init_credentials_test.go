@@ -552,6 +552,19 @@ func TestInitCredentialsStageRefusedWhenTheMarkerCannotBeRead(t *testing.T) {
 	if !strings.Contains(err.Error(), rules.PathCredsRulesMarker()) {
 		t.Errorf("the refusal does not name the node that could not be read: %v\n%s", err, s)
 	}
+	// The refusal has to be the READ's and not the missing marker's: both fail
+	// closed, and only this arm says which of the two the database answered, so
+	// a run told "the database carries no marker" would go looking for a node
+	// that is there. The transport's own message is in it for the same reason
+	// ("the database answered nothing" is what the fake refused with).
+	for _, want := range []string{"reading the credentials rules marker at", "the database answered nothing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say the read itself failed (%q): %v\n%s", want, err, s)
+		}
+	}
+	if strings.Contains(err.Error(), "carries no credentials rules marker") {
+		t.Errorf("a read that failed is reported as a database with no marker: %v\n%s", err, s)
+	}
 	if r.resolveCalls != 0 {
 		t.Errorf("a digest was resolved before the rules gate answered (%d calls)", r.resolveCalls)
 	}

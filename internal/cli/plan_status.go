@@ -113,6 +113,12 @@ const (
 	// pull request, so a plan whose tasks carry many runs costs at most this
 	// many lookups, the newest runs' first.
 	planMaxLookups = 32
+	// planLookupWorkers is how many of those lookups run at once. A lookup is
+	// two gh processes against github.com, and GitHub's secondary rate limits
+	// discourage concurrent requests, so this read is narrower than the runs
+	// bucket's own width (lsWorkers) and stays narrower however wide the
+	// bucket reads become.
+	planLookupWorkers = 8
 )
 
 // planStatusDoc is plan status --json's document.
@@ -430,7 +436,7 @@ func planMerges(ctx context.Context, facts []plan.RunFact, repo string, warn fun
 	}
 	answers := make([]answer, len(urls))
 	pr := watch.NewPRState(watch.PRStateOptions{})
-	parallel(len(urls), func(i int) {
+	parallelN(len(urls), planLookupWorkers, func(i int) {
 		m, k := pr.MergeNow(ctx, urls[i])
 		answers[i] = answer{merged: m, known: k}
 	})
