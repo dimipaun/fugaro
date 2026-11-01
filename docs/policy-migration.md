@@ -68,7 +68,9 @@ drift into two shapes of one node.
 A publish never touches the allow-list (`allow_repos`): it is the node's own,
 and re-seeding it is `--seed-repos` on the explicit door (P4 — removing an entry
 is how a repository is un-enrolled). And a node that already carries what the
-config states is not rewritten at all: the stage writes nothing, byte for byte.
+config states is not rewritten at all: the node stays as it is, byte for byte,
+and the one write such a run may still make is the generation record in the
+local file (below).
 
 ## A machine whose file is older than the node (D854)
 
@@ -88,6 +90,20 @@ file it replaces. Nothing of the older file is published. An installation whose
 config records no generation adopts the one it reads: refusing once would ask a
 question with no information in it, since the machine has no baseline to compare
 against.
+
+That record belongs to the agreement between the file and the node, not to one
+run's write, so it is refreshed by every write: the migration, the publish, the
+re-seed's own migration, and the publish `fugaro project policy publish` makes
+from the explicit door. A run that finds the file and the node **agreeing** while
+the record names another generation — a migration-only write of an earlier
+release, a door that published without recording, a re-seed put right by hand —
+writes the record and nothing else: no node, a backup of the file, and the next
+edit of the config is the publish it asks for. A record left behind at an older
+generation is what refuses that edit, and the re-seed offered in answer would
+revert it — which is the overwrite this rule exists to prevent, one round later.
+And the generation recorded is checked against the node before it is written: a
+writer that published between this run's write and its read-back is **not**
+adopted, so the file never names a generation this machine did not write.
 
 A member a single file edit cannot re-seed is refused **by name** rather than
 skipped: a value the node leaves out, which the file would have to drop, and a
