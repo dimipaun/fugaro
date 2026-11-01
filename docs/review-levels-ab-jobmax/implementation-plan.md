@@ -188,6 +188,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Red step:** `TestResolveLevelsRefusesSameModel` fails before the refusal exists.
 - **Reviewer:** opus + mandatory independent review (the floor and the guardrail are policy).
 - **Commit:** `config: resolve review levels, the owner floor and the same-model refusal`.
+- **Done (PR "config: resolve review levels, the owner floor and the same-model refusal").** Red first: `TestResolveLevelsRefusesSameModel` failed with "a run with l1 and l2 both on deepseek/deepseek-v4-flash launched; want D721's refusal", and `TestResolveLevelsWarnsCoderAndFamily` and `TestResolveLevelsRefusesFirstLineRecipeWithCoderEqualsReviewer` with it, before the guard existed. `LevelInputs` takes the floor as `[]policy.Level` (internal/policy does not import internal/config, so the two do not cycle) and carries `CatalogDefault`, because the catalog's own `default` is the one recipe whose `first_line` step follows `agent.first_line_review` (docs/recipes.md §2, `runner.planOf`'s `derived`). Level 1's fallback is `Agent.FirstLineOn` except where the mode's own row turns it on (POC), and a recipe with a `first_line` step that is not the catalog default always runs it (O11). The resolver inserts nothing itself: `ResolvedLevel.Inserted` says which step the runner adds (L4.2).
 
 #### L3.2 `fugaro validate` and launch apply the resolver
 
