@@ -214,6 +214,37 @@ describe('the heights a skeleton holds', () => {
     expect(flightDeck()).toContain('gap: var(--skeleton-gap)')
   })
 
+  it('leaves the blocks still under reduced motion, and outlined with no animation under forced colors', () => {
+    // The two arms of §3.9's amendment of 2026-11-01, and the reason each is a
+    // restatement rather than a removal. Under reduced motion the blocks stay and
+    // the **sweep** goes: `base.css`'s global freeze alone would leave the
+    // gradient wherever its last frame put it, which is a picture of a
+    // half-loaded block. Under forced colors there is no animation at all and the
+    // shape is the system's own outline (§4.4).
+    const css = flightDeck()
+    /** arm is the body of the media block that stops the blocks' animation: `@`
+     * ends one, because an arm holds no at-rule of its own, and the arm is told
+     * from the busy mark's -- which the file writes before it -- by the rule it
+     * holds rather than by the selector it mentions. */
+    const arm = (query: string): string =>
+      [...css.matchAll(new RegExp(`@media \\(${query}\\)([^@]*)`, 'g'))]
+        .map((match) => match[1] ?? '')
+        .find((body) => /div\.console-skeleton-block\s*\{[^}]*animation:\s*none/.test(body)) ?? ''
+    const reduced = arm('prefers-reduced-motion: reduce')
+    expect(reduced, 'the skeleton has no reduced-motion arm').not.toBe('')
+    expect(reduced).toContain('div.console-skeleton-block')
+    expect(reduced).toMatch(/animation:\s*none/)
+    expect(reduced).toMatch(/background-image:\s*none/)
+
+    const forced = arm('forced-colors: active')
+    expect(forced, 'the skeleton has no forced-colors arm').not.toBe('')
+    expect(forced).toContain('div.console-skeleton-block')
+    expect(forced).toMatch(/animation:\s*none/)
+    // The outline carries the shape once the fill is gone: a block drawn as
+    // nothing at all is a panel that says a read is running by leaving a hole.
+    expect(forced).toMatch(/border:[^;]*CanvasText/)
+  })
+
   it('draws the wrapper as a column, so the blocks do not sit on one line', () => {
     // A flex row would put a section's blocks side by side, which is a panel
     // laid out like nothing the read will draw.
