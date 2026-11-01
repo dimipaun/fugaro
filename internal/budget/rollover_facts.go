@@ -52,8 +52,12 @@ func (b BucketFacts) warnf(format string, a ...any) {
 	}
 }
 
-// Facts lists, for each day of [from, to], the runs started on it. The run
-// records are read factsWorkers at a time; the walk over them is still one
+// Facts lists, for each day of [from, to], the runs started on it. The runs
+// are listed by the mint time their IDs carry — from mintSkewMargin before the
+// window's first day, since a run minted before the window can be one that
+// started inside it — and each is counted on the day its record's started_at
+// names, which for a run minted inside the window can be a day outside it. The
+// run records are read factsWorkers at a time; the walk over them is still one
 // pass in the order the runs were listed, so a day's facts and the failures
 // that reach the caller are what reading them one at a time gave, with these
 // exceptions, both of them about a pass that stops early rather than about
