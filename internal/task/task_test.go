@@ -1170,3 +1170,112 @@ func TestSpecAuthorRefusesControlCharacters(t *testing.T) {
 		t.Errorf("an author at both length caps was refused: %v", err)
 	}
 }
+
+// sameLevels reports whether two level blocks carry the same settings,
+// pointer for pointer.
+func sameLevels(a, b *config.ReviewLevels) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == nil {
+		return true
+	}
+	same := func(x, y *config.LevelSetting) bool {
+		if x == nil || y == nil {
+			return x == y
+		}
+		return *x == *y
+	}
+	return same(a.L1, b.L1) && same(a.L2, b.L2) && same(a.L3, b.L3)
+}
+
+// TestReviewLevelsRoundTrip: the per-level block a launcher writes into a
+// task is read back by both readers — the JSON a launcher writes and the
+// struct this package marshals — and a spec that carries none writes
+// neither the key nor a byte the release before this field did, which is
+// what keeps every launch readable by a runner older than it (Parse decodes
+// with DisallowUnknownFields).
+func TestReviewLevelsRoundTrip(t *testing.T) {
+	const doc = `{"version":1,"run_id":"20261031-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it",
+	"review_levels":{"l1":{"model":"claude-haiku-4-5"},"l2":{"none":true},
+	"l3":{"model":"claude-opus-5-5","effort":"xhigh","focus":"the migration and its rollback"}}}`
+	want := &config.ReviewLevels{
+		L1: &config.LevelSetting{Model: "claude-haiku-4-5"},
+		L2: &config.LevelSetting{Off: true},
+		L3: &config.LevelSetting{Model: "claude-opus-5-5", Effort: "xhigh", Focus: "the migration and its rollback"},
+	}
+	got, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("Parse refused a task carrying review_levels: %v", err)
+	}
+	if !sameLevels(got.ReviewLevels, want) {
+		t.Fatalf("parsed review_levels = %+v, want %+v", got.ReviewLevels, want)
+	}
+	s := Spec{Version: 1, RunID: "20261031-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", ReviewLevels: want}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if !sameLevels(back.ReviewLevels, want) {
+		t.Fatalf("round trip review_levels = %+v, want %+v", back.ReviewLevels, want)
+	}
+	plain, err := json.Marshal(Spec{Version: 1, RunID: "20261031-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "review_levels") {
+		t.Errorf("a spec with no review levels was not omitted: %s", plain)
+	}
+}
+
+// TestReviewLevelsRefusesUnknownKey: the task's copy of the level block is
+// written by the launcher, and every key inside it decides which review
+// runs, on which model, at which effort — so an unknown key is refused at
+// every level of the object (the block, a level, and a level's own keys)
+// rather than dropped. The decode does it (DisallowUnknownFields reaches
+// every nested object), and the block's own rules reach a hand-written
+// task.json through Validate: a spec written straight into the bucket
+// refuses the same documents a launcher would have refused before writing.
+func TestReviewLevelsRefusesUnknownKey(t *testing.T) {
+	head := `"version":1,"run_id":"20261031-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"an unknown key inside the block", `{"l4":{"none":true}}`, "l4"},
+		{"an unknown key inside a level", `{"l1":{"efforts":"high"}}`, "efforts"},
+		{"an unknown key inside a level beside a real one", `{"l2":{"effort":"high","model_name":"claude-opus-5-5"}}`, "model_name"},
+		{"an unknown key in the last level of three", `{"l1":{"none":true},"l2":{"none":true},"l3":{"off":true}}`, "off"},
+		{"an unknown block", `{"reviewLevels":{"l1":{"none":true}}}`, "reviewLevels"},
+		{"an effort outside the closed set", `{"l3":{"effort":"auto"}}`, "auto"},
+		{"an effort the binary would drop in silence", `{"l3":{"effort":"xhigh "}}`, "xhigh"},
+		{"an upper-case effort", `{"l2":{"effort":"HIGH"}}`, "HIGH"},
+		{"none: true beside another key", `{"l2":{"none":true,"model":"claude-opus-5-5"}}`, "none: true"},
+		{"a focus over the bound", `{"l3":{"focus":"` + strings.Repeat("a", config.MaxLevelFocusBytes+1) + `"}}`, "longer than"},
+		{"a focus with a bidi override", `{"l3":{"focus":"the ‮migration"}}`, "U+202E"},
+		{"a focus with a control character", `{"l1":{"focus":"the\u0007migration"}}`, "U+0007"},
+	} {
+		_, err := Parse([]byte("{" + head + `,"review_levels":` + tc.doc + "}"))
+		if err == nil {
+			t.Errorf("%s: Parse accepted the spec", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: refusal %q does not mention %q", tc.name, err, tc.want)
+		}
+	}
+	for _, doc := range []string{
+		`{"l1":{"model":"claude-haiku-4-5","effort":"low"},"l2":{"none":true}}`,
+		`{"l3":{"focus":"the migration and its rollback"}}`,
+		`{"l2":{}}`,
+	} {
+		if _, err := Parse([]byte("{" + head + `,"review_levels":` + doc + "}")); err != nil {
+			t.Errorf("Parse refused %s: %v", doc, err)
+		}
+	}
+}

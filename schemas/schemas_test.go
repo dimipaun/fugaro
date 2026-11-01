@@ -3909,6 +3909,169 @@ func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaReviewLevelsMatchesTheGoField ties task.schema.json's
+// `review_levels` property to the Go type it mirrors (task.Spec.ReviewLevels,
+// config.ReviewLevels): the schema is additionalProperties: false, so a
+// property missing here, or one of the block's keys named differently from
+// the Go field's own JSON tag, makes every task a launcher writes with levels
+// schema-invalid — and only the schema's consumers would notice, since no Go
+// test reads this document (the defect that made the plan_task, oauth_token
+// and compression_off properties necessary, one field at a time).
+//
+// The enum and the cap are read from config's own constants rather than
+// restated, and the documents below are marshalled from task.Spec, so
+// renaming either side's spelling, moving the bound or dropping a value from
+// the closed set stops the two agreeing.
+//
+// Mutation (rename the property to `reviewLevels` in schemas/task.schema.json,
+// or drop one of the five effort values from its enum): the document carrying
+// the block is rejected as an unknown key, or the level at that effort is,
+// and this fails.
+func TestTaskSchemaReviewLevelsMatchesTheGoField(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Defs       map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.Properties["review_levels"]
+	if !ok {
+		t.Fatal("task.schema.json has no review_levels property: a task carrying one is schema-invalid (additionalProperties: false)")
+	}
+	var block struct {
+		AdditionalProperties *bool                      `json:"additionalProperties"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatal(err)
+	}
+	if block.AdditionalProperties == nil || *block.AdditionalProperties {
+		t.Error("review_levels does not carry additionalProperties: false: a key beside l1, l2 and l3 would be read by nobody")
+	}
+	if want := []string{"l1", "l2", "l3"}; !sameStrings(keysOf(t, block.Properties), want) {
+		t.Errorf("review_levels properties = %v, want %v (config.ReviewLevels' own three levels)", keysOf(t, block.Properties), want)
+	}
+	// Every level is the one object, by $ref, so the three cannot drift
+	// apart from each other.
+	for _, level := range []string{"l1", "l2", "l3"} {
+		var ref struct {
+			Ref string `json:"$ref"`
+		}
+		if err := json.Unmarshal(block.Properties[level], &ref); err != nil {
+			t.Fatal(err)
+		}
+		if ref.Ref != "#/$defs/level" {
+			t.Errorf("review_levels.%s = %q, want a $ref to #/$defs/level, the one level object", level, ref.Ref)
+		}
+	}
+	raw, ok = doc.Defs["level"]
+	if !ok {
+		t.Fatal("task.schema.json has no $defs.level: every review level's $ref points at nothing")
+	}
+	var level struct {
+		AdditionalProperties *bool `json:"additionalProperties"`
+		Properties           map[string]struct {
+			Type      string   `json:"type"`
+			Enum      []string `json:"enum"`
+			MaxLength int      `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &level); err != nil {
+		t.Fatal(err)
+	}
+	if level.AdditionalProperties == nil || *level.AdditionalProperties {
+		t.Error("$defs.level does not carry additionalProperties: false: a key inside a level would be read by nobody")
+	}
+	if want := []string{"effort", "focus", "model", "none"}; !sameStrings(keysOf(t, level.Properties), want) {
+		t.Errorf("$defs.level properties = %v, want %v (config.LevelSetting's own four keys, `none` being Off's tag)", keysOf(t, level.Properties), want)
+	}
+	if got := level.Properties["effort"].Enum; !slices.Equal(got, config.Efforts) {
+		t.Errorf("$defs.level.effort enum = %v, want config.Efforts %v", got, config.Efforts)
+	}
+	if got := level.Properties["focus"].MaxLength; got != config.MaxLevelFocusBytes {
+		t.Errorf("$defs.level.focus maxLength = %d, want config.MaxLevelFocusBytes %d", got, config.MaxLevelFocusBytes)
+	}
+	if got := level.Properties["none"].Type; got != "boolean" {
+		t.Errorf("$defs.level.none type = %q, want boolean (config.LevelSetting.Off)", got)
+	}
+
+	// Both readers see the same document: the schema validates the JSON, and
+	// task.Parse is what the runner does with it. The block's own rules are
+	// the decoder's, so a document either reader refuses and the other
+	// accepts is the drift this test exists for — each case asserts both.
+	sch := compile(t, "task.schema.json")
+	agree := func(t *testing.T, s task.Spec) (schemaErr, parseErr error) {
+		t.Helper()
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, parseErr = task.Parse(data)
+		return sch.Validate(inst), parseErr
+	}
+	base := task.Spec{Version: 1, RunID: "20261031-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	spec := func(r *config.ReviewLevels) task.Spec {
+		s := base
+		s.ReviewLevels = r
+		return s
+	}
+	for _, tc := range []struct {
+		name string
+		s    task.Spec
+		ok   bool
+	}{
+		{"no levels", spec(nil), true},
+		{"all three levels", spec(&config.ReviewLevels{
+			L1: &config.LevelSetting{Model: "claude-haiku-4-5"},
+			L2: &config.LevelSetting{Off: true},
+			L3: &config.LevelSetting{Model: "claude-opus-5-5", Effort: "xhigh", Focus: "the migration and its rollback"},
+		}), true},
+		{"the lowest and the highest effort", spec(&config.ReviewLevels{
+			L1: &config.LevelSetting{Effort: config.Efforts[0]},
+			L3: &config.LevelSetting{Effort: config.Efforts[len(config.Efforts)-1]},
+		}), true},
+		{"a focus at the cap in ASCII", spec(&config.ReviewLevels{
+			L3: &config.LevelSetting{Focus: strings.Repeat("a", config.MaxLevelFocusBytes)},
+		}), true},
+		{"an effort outside the closed set", spec(&config.ReviewLevels{
+			L3: &config.LevelSetting{Effort: "auto"},
+		}), false},
+		{"a focus over the cap in ASCII", spec(&config.ReviewLevels{
+			L3: &config.LevelSetting{Focus: strings.Repeat("a", config.MaxLevelFocusBytes+1)},
+		}), false},
+		{"none: true beside a model", spec(&config.ReviewLevels{
+			L2: &config.LevelSetting{Off: true, Model: "claude-opus-5-5"},
+		}), false},
+	} {
+		schemaErr, parseErr := agree(t, tc.s)
+		if tc.ok && (schemaErr != nil || parseErr != nil) {
+			t.Errorf("%s: schema = %v, task.Parse = %v, want both to accept", tc.name, schemaErr, parseErr)
+		}
+		if !tc.ok && schemaErr == nil && parseErr == nil {
+			t.Errorf("%s: both readers accepted the document", tc.name)
+		}
+	}
+}
+
+// keysOf returns m's keys, sorted, for a comparison that does not depend on
+// the order a JSON object was written in.
+func keysOf[V any](t *testing.T, m map[string]V) []string {
+	t.Helper()
+	if m == nil {
+		t.Fatal("the object has no properties")
+	}
+	return slices.Sorted(maps.Keys(m))
+}
+
 // TestSettingsSchema holds schemas/settings.schema.json to the registry and to
 // the command that writes the document. The document's rows are dynamic — one
 // per key and scope — so the schema cannot pin them by name; what it can pin,
