@@ -67,7 +67,7 @@ and rigor.areas are unions: a lower layer only adds.`,
 	f.StringSliceVar(&o.layer, "layer", nil, "read only these layers ("+strings.Join(settings.Layers, ", ")+")")
 	f.StringVar(&o.grep, "grep", "", "show only the rows whose key or a rendered column matches this regexp")
 	f.BoolVar(&o.changed, "changed", false, "show only the rows a layer decides")
-	f.BoolVar(&o.why, "why", false, "show every level that sets a key, and whether it won")
+	f.BoolVar(&o.why, "why", false, "show the winning level for each key")
 	f.BoolVar(&o.offline, "offline", false, "read the offline layers only")
 	f.BoolVar(&o.jsonOut, "json", false, "print the versioned document")
 	return cmd

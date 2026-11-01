@@ -3489,7 +3489,7 @@ Flags:
 | `--layer` | stringSlice | `[]` | no | read only these layers (default, project, profile, repo, flag, local, shared, policy, caps, env) |
 | `--offline` | bool | `false` | no | read the offline layers only |
 | `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
-| `--why` | bool | `false` | no | show every level that sets a key, and whether it won |
+| `--why` | bool | `false` | no | show the winning level for each key |
 
 Subcommands:
 
