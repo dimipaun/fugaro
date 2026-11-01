@@ -241,7 +241,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 	}
 	for _, want := range []string{
 		"the project policy is version 99", "this Fugaro understands version " + strconv.Itoa(projectpolicy.Version),
-		"fugaro upgrade",
+		"brew upgrade dimipaun/tap/fugaro",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
@@ -504,7 +504,7 @@ func TestPolicySinceGateIsNotOnTheRunnerPath(t *testing.T) {
 	publishPolicy(t, f, `{"version":99,"allow_repos":["*"]}`)
 
 	// Through fugaro run: refused, and nothing was created.
-	if _, _, err := runBudget(t); err == nil || !strings.Contains(err.Error(), "fugaro upgrade") {
+	if _, _, err := runBudget(t); err == nil || !strings.Contains(err.Error(), "brew upgrade dimipaun/tap/fugaro") {
 		t.Fatalf("err = %v, want the gate's refusal", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
