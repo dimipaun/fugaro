@@ -134,9 +134,11 @@ repository caller, and a refusal for any other shape).
   `internal/credsvc/review_test.go`. **Read, not changed:** `github.MintInstallationToken` and,
   once R1 lands, the exported read-only set in `internal/gitprov/github/apptoken.go`.
 - **The refusal order is part of the contract**, because it decides what an audit line says and which
-  refusal a caller reads first: unverified identities → class not admitted to the mint → pairing → the claim
-  rule → the stop flag → the bundle. A review caller that fails the claim rule is refused **before** the
-  bundle is read, so a mis-shaped identity never touches key material.
+  refusal a caller reads first: unverified identities → class not admitted to the mint → the stop flag →
+  pairing → the claim rule → the bundle. The stop flag is where it is because `ServeHTTP` already reads it
+  before it branches on the route (`server.go:440`), and the order is not rearranged to suit the new class.
+  A review caller that fails the pairing or the claim rule is refused **before** the bundle is read, so a
+  mis-shaped identity never touches key material.
 - **No new request field and no new answer field.** `MintRequest` stays the App ID alone, and the answer's
   existing `Repository` field carries the resolved canonical name — so a review run learns which repository
   its token is for from the answer, not from a request it wrote (D893 (c)).

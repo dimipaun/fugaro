@@ -55,7 +55,7 @@ gains a **class** — the same answer the rest of the call branches on:
 | **review** | the review-only variant, per `(profile, account)` | new, `ReviewJobAccountsFor` (§2.2) | the **mint** (the read-only set) and the **sign**. Refused on `/v1/messages` and `/v1/messages/count_tokens`, and refused the verify route |
 
 An account is in exactly one class, and an account that a deployment's input puts in two is refused rather
-than admitted — the rule the shared gate already applies (`auth.go:460`: "an account that is in both sets
+than admitted — the rule the shared gate already applies (`auth.go:469`: "an account that is in both sets
 is refused rather than admitted: the refusal is the safe answer").
 
 The class is read from the **verified email** and never from `X-Fugaro-Run-Job`, for the reason the shared
@@ -153,7 +153,7 @@ from a request field:
 A review call whose run identity carries an `fb`, or a `fpr` that is present but empty, is refused with a
 typed refusal naming the claim that failed and never its value. The refusal vocabulary is the one the
 two-identity check already answers with — `ErrUnverified` in Go, `unverified_run_identity`
-(`ErrorUnverifiedRunIdentity`, `StatusUnverified`) on the wire (`internal/credsvc/wire.go:158`, `:176`) —
+(`ErrorUnverifiedRunIdentity`, `StatusUnverified`) on the wire (`internal/credsvc/wire.go:152`, `:176`) —
 so no runner needs a new switch arm and no caller learns a new error type.
 
 ### 3.4 Signing is an end-of-run act
@@ -195,9 +195,11 @@ whose node is unpublished unmintable, for a name the deployment already publishe
 ### 4.2 The permission set is chosen from the verified identity
 
 The mint hard-codes the run's set (`github.RunTokenPermissions()`, `github.go:239`;
-`internal/gitprov/github/apptoken.go:146`). The review caller is served **R1's fourth, read-only set**
+`internal/gitprov/github/apptoken.go:91`). The review caller is served **R1's read-only set**
 (`docs/cloud-senior-review/implementation-plan.md` R1: `{contents: read, pull_requests: read, metadata:
-read}`), and the choice is made from the verified side and nothing else:
+read}`) — a **fifth** set, not a reuse: the package's four (`:91` the run's, `:97` an image build's, `:111` a
+challenger arm's, `:128` the coordinator's) each read something else, and R1's combination is the one a
+review needs. The choice is made from the verified side and nothing else:
 
 | caller | run identity | set served |
 | --- | --- | --- |
@@ -205,15 +207,18 @@ read}`), and the choice is made from the verified side and nothing else:
 | review class | any other shape | **refused** — never the run set |
 | repository class | any | the run set, unchanged (`RunTokenPermissions`) |
 
-R1's set is **another work stream's symbol**; this design serves it and declares no second spelling of the
-permissions. If R1 has not landed, the review mint cannot land either — the dependency is recorded in
+R1's set is **another work stream's symbol**, and it must be **a set of its own** rather than one composed
+out of the four — the reason `shadowTokenPermissions`'s own comment gives for its own duplicate: a later
+change to one set must not silently widen the other. This design serves it and declares no second spelling of
+the permissions. If R1 has not landed, the review mint cannot land either — the dependency is recorded in
 [implementation-plan.md](implementation-plan.md) §"Dependencies" and is a precondition, not a task here.
 
 ### 4.3 Lifetime, refresh, and what is never mounted
 
 Unchanged from the mint the service already answers: GitHub's own installation token, **one hour**,
 minted on demand and refreshed by the `Token(ctx, minValid)` contract the in-job
-`github.ServiceTokens` source already holds (`internal/gitprov/github/apptoken.go:381`); it lives in the
+`github.ServiceTokens` source already holds (`internal/gitprov/github/apptoken.go:381` is the type, `:438`
+its `Token`); it lives in the
 review container's memory for the run's length and is **never written down, never mounted and never handed
 in at launch** — D893 (c)'s whole point. The review variant carries the service's URL in its environment
 and nothing else about it (`docs/cloud-senior-review/` R7).
@@ -251,8 +256,9 @@ not a discovery.
 by the artifact writer (`docs/cloud-senior-review/` R3). The **digest is not the object**: the reviewer's
 prose never leaves the run (D892).
 
-**Admission**: the review class (§2.1); the pairing (§3.2); the review claim rule (§3.3); the run live
-(§3.4); the stop flag.
+**Admission**, in the order `ServeHTTP` already makes its decisions (§4.4): the review class (§2.1); the
+stop flag; the pairing (§3.2); the review claim rule (§3.3); the run live, already checked by `verifyRun`
+(§3.4).
 
 **Answer**: `{"alg":"HMAC-SHA-256","signature":"<64 lowercase hex>"}`, the HMAC-SHA-256 of the digest's 32
 bytes under **that account's review-signing key** (§6), rendered lowercase hex. The algorithm is named in

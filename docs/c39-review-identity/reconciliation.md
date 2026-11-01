@@ -12,7 +12,7 @@ the plan. **F1–F14**, **D1062–D1072** and **X1–X4** are this folder's own 
 spelling of the calling account — and its only two outcomes are "matched a row of `jobAccounts`" and
 "refused". `jobAccounts` maps an email to `JobAccount{Email, Slug, Repo}` (`internal/credsvc/server.go:76`):
 **one repository per account**, which is exactly what a per-`(profile, account)` review job does not have.
-`sharedAccounts` (`auth.go:460`) is a refusal set with no shape of its own. *Consequence:* the review class
+`sharedAccounts` (`auth.go:469`) is a refusal set with no shape of its own. *Consequence:* the review class
 is new, it must be built from the deployment's own derivation rather than typed (§2 of
 [spec.md](spec.md)), and every branch that reads the account must read the class with it (D1062).
 
@@ -42,13 +42,18 @@ member is `credentials.accounts`). *Consequence:* the service needs a repository
 input it already gets, or a new published field; the design takes the table (D1066) and records the
 alternative.
 
-**F5: Exists/Conflicts. The mint's permission set is hard-coded, and the read-only set is another work
-stream's.** `mint` passes `github.RunTokenPermissions()` (`github.go:239`;
-`internal/gitprov/github/apptoken.go:146`, whose exported copy is `:152`), and
-`github.MintInstallationToken` takes one set for one repository. There is **no** read-only set in the tree:
-`internal/gitprov/github/apptoken.go` is `docs/cloud-senior-review/`'s **R1**, an open work stream's task.
-*Consequence:* the set is chosen per class (§4.2 of [spec.md](spec.md)), and R1 is a **hard dependency** of
-the review mint — see [implementation-plan.md](implementation-plan.md) §"Dependencies" (D1065).
+**F5: Conflicts. The mint's permission set is hard-coded, and the set a review needs is a fifth one that
+does not exist.** `mint` passes `github.RunTokenPermissions()` (`github.go:239`;
+`internal/gitprov/github/apptoken.go:91`, whose exported copy is `:152`), and
+`github.MintInstallationToken` takes one set for one repository. The package holds **four** sets already —
+the run's (`:91`), an image build's (`:97`), a challenger arm's (`:111`) and the coordinator's (`:128`) — and
+none of them is R1's: build and shadow read `contents` and `metadata` and no pull request, the coordinator
+reads `pull_requests` and `metadata` and no contents, and R1's `{contents: read, pull_requests: read,
+metadata: read}` is a combination none of them has. It is `docs/cloud-senior-review/`'s **R1**, an open work
+stream's task, and it must be **a set of its own** for the reason `shadowTokenPermissions`'s own comment
+gives: a later change to one must not silently widen the other. *Consequence:* the set is chosen per class
+(§4.2 of [spec.md](spec.md)), and R1 is a **hard dependency** of the review mint — see
+[implementation-plan.md](implementation-plan.md) §"Dependencies" (D1065).
 
 **F6: Exists. The claims that make an identity a review identity are already verified.**
 `verifyRun` (`auth.go:516`) reads the identity, and `branchClaims` (`:626`) holds `fb` and `fpr` to their
@@ -109,7 +114,7 @@ with no allow-list. *Consequence:* the pairing for a project-scoped caller uses 
 than a new registry (D1064, D1071's "not done" list in [spec.md](spec.md) §10).
 
 **F14: Exists, and it is R7's wiring, not this slice's.** The service's URL reaches a launch through
-`credentialsServiceLaunchEnv` (`internal/cli/run.go:2922`), which is deliberately per-repository — a shared
+`credentialsServiceLaunchEnv` (`internal/cli/run.go:2946`), which is deliberately per-repository — a shared
 job would not be given it, because a shared job's calls are refused. R7's variant carries the variable in
 its own environment. *Consequence:* nothing in this slice changes the launch path; the design states the
 assumption it rests on, and the review variant's environment stays R7's to write.
@@ -124,7 +129,7 @@ assumption it rests on, and the review variant's environment stays R7's to write
 - the one bundle container, the one accessor grant and the owner-run write path (Q6; `creds.go`);
 - O4's admissions reader (`server.go:281`);
 - the keyless fetch path and the `Token(ctx, minValid)` refresh contract
-  (`internal/gitprov/github/apptoken.go:381`).
+  (`internal/gitprov/github/apptoken.go:381` for `ServiceTokens`, `:438` for its `Token`).
 
 ## 3. Decisions D1062–D1072
 
