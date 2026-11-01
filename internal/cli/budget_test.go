@@ -55,9 +55,6 @@ func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	f.db.Set("fugaro/project", "aurora")
-	// The mark `fugaro update --firebase-project` writes: the database is this
-	// installation's, which is what every writer into it asks before it writes
-	// (requireOwnBudgetDB, a call of budgetDBUnadopted).
 	f.db.Set(budget.PathMark, auroraMark())
 	// The installation names its project in the runs bucket, as its
 	// Terraform does (mirrors cloudFixture.writeMarker): watch's queued-run

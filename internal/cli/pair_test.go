@@ -91,9 +91,6 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	f.db.Set("fugaro/project", "aurora")
-	// The mark `fugaro update --firebase-project` writes: the database is this
-	// installation's, which is what every writer into it asks before it writes
-	// (requireOwnBudgetDB, a call of budgetDBUnadopted).
 	f.db.Set(budget.PathMark, auroraMark())
 	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})
 	if err != nil {

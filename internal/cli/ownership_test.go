@@ -1,6 +1,11 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -20,6 +25,15 @@ import (
 // written to as before, and then the database is handed to another installation
 // (its mark) or emptied of the mark while holding data, and the command is
 // refused with the shared sentence, naming what was not done.
+//
+// The refusal is held to its exit code as well as to its words. A database that
+// is not this installation's is the operator's to fix and exits 1; a database
+// that cannot be read at all is an outage and exits 2, at the pairing door as
+// the "unreachable" code a console switches on. And the config's own half of
+// the question — a pair of config facts that do not name one database — is
+// asked first of all, without any database being contacted: it is the answer
+// `fugaro update`'s stages skip on, so it carries their sentence and not a
+// command's.
 
 // installMark is the mark `fugaro update --firebase-project` writes into the
 // installation's own database (infra.DB.Plan): the Fugaro project's name and the
@@ -30,7 +44,12 @@ func installMark(project, gcpProject string) map[string]any {
 }
 
 // auroraMark is installMark for the fixtures' installation: the one every
-// fixture's config names (name aurora, gcp_project proj-1234).
+// fixture's config names (name aurora, gcp_project proj-1234), and the mark
+// `fugaro update --firebase-project` writes. A database carrying it is this
+// installation's, which is what every writer into it asks before it writes
+// (requireOwnBudgetDB, a call of budgetDBUnadopted), so a fixture that seeds it
+// is the ordinary installation and one that hands the database a different mark
+// is the refusal the tests here are about.
 func auroraMark() map[string]any { return installMark("aurora", "proj-1234") }
 
 // birchMark is that mark with both names changed: a database another
@@ -55,6 +74,74 @@ func refusedByTheOwnershipCheck(t *testing.T, what string, err error, declined s
 		// one those assertions can be read against.
 		t.Fatalf("%s: the refusal does not say what was not done (%q): %v", what, declined, err)
 	}
+}
+
+// refusedByTheConfigHalf fails the test unless err is the config half's answer:
+// a user error naming the fact the config records. It is a helper of its own,
+// and not refusedByTheOwnershipCheck, because that half carries the *stage's*
+// sentence rather than the caller's declined line (budgetDBUnadoptedErr): the
+// words an operator reads there are the ones `fugaro update` skips a stage
+// with, and a command's "nothing was set" is not among them.
+func refusedByTheConfigHalf(t *testing.T, what string, err error, fact string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s wrote while its config named no database of this installation's", what)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("%s: exit %d, want 1 (a config fact the operator fixes, not an outage): %v", what, ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), fact) {
+		t.Fatalf("%s: the refusal does not name the config fact %q: %v", what, fact, err)
+	}
+}
+
+// rewriteBudgetBlock replaces the config's budget block with block. The fixture
+// writes its block with the fake database's URL, which is only known once the
+// fake is up, so a test that needs the config to record something else says so
+// here rather than through newBudgetFixture's argument.
+func rewriteBudgetBlock(t *testing.T, f *budgetFixture, block string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	was := "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + " }\n"
+	if !strings.Contains(string(data), was) {
+		t.Fatalf("the config no longer carries the budget block this rewrites:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), was, block, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// emptySeparateProjectDatabase is a fixture whose database is EMPTY and whose
+// config names a Firebase project other than the installation's own GCP
+// project: the shape the one question refuses on the absent mark, because an
+// empty database passes every check that asks it anything.
+func emptySeparateProjectDatabase(t *testing.T) *budgetFixture {
+	t.Helper()
+	f := newBudgetFixture(t, "")
+	rewriteBudgetBlock(t, f, "budget: { mode: observe, per_run_usd: 5, firebase_project: shared-fp-1, rtdb_url: "+f.db.URL+" }\n")
+	f.db.Set(budget.PathProject, nil)
+	f.db.Set(budget.PathMark, nil)
+	return f
+}
+
+// rootReadDownTransport is a database answering every request but the one that
+// says what is in it: the one question's first read is a shallow root GET
+// (infra.DB.Check through rtdb.RootKeys), so failing exactly that request puts
+// the failure inside the question while every read the command makes before it
+// still succeeds. A transport that fails every request cannot hold the outage
+// branch on its own — the name read of /fugaro/project comes first and would
+// fail instead, and the answer would be that gate's.
+type rootReadDownTransport struct{ rt http.RoundTripper }
+
+func (c rootReadDownTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodGet && r.URL.Query().Get("shallow") == "true" {
+		return nil, errors.New("the database is unreachable")
+	}
+	return c.rt.RoundTrip(r)
 }
 
 // TestBudgetSetRefusesAnotherInstallationsDatabase: `fugaro budget set` is a
@@ -89,6 +176,136 @@ func TestBudgetSetRefusesAnotherInstallationsDatabase(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.db.Value(nodeCG), own) {
 		t.Errorf("the refused set wrote the ceiling: %v, want %v", f.db.Value(nodeCG), own)
+	}
+}
+
+// TestBudgetSetRefusesAConfigWithNoBudgetBackend: the question has a config
+// half, and it is answered without the database being asked anything at all —
+// budget.rtdb_url with no budget.firebase_project is a config that records no
+// shared backend, and `budget set` refuses it as the config fact it is rather
+// than writing caps into a database the config never named. It is the why-only
+// answer: no database was contacted, and the answer is not an error.
+func TestBudgetSetRefusesAConfigWithNoBudgetBackend(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	own := f.db.Value(nodeCG)
+	rewriteBudgetBlock(t, f, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+f.db.URL+" }\n")
+
+	_, _, err := execute(t, "budget", "set", "--global", "--daily", "60")
+	refusedByTheConfigHalf(t, "budget set", err, "records no shared Firebase budget backend")
+	if !reflect.DeepEqual(f.db.Value(nodeCG), own) {
+		t.Errorf("the refused set wrote the ceiling: %v, want %v", f.db.Value(nodeCG), own)
+	}
+}
+
+// TestBudgetSetRefusesAConfigWhoseDatabaseIsAnotherProjects: the config half's
+// other fact — a budget.firebase_project and a budget.rtdb_url that are not one
+// Firebase project's. The database the config names is one nothing here may
+// contact, so the refusal has to come from the pair alone: the transport
+// carries the one read the command makes before the question (the name read of
+// /fugaro/project, checkDBProject) to the fixture's own database, and the
+// address the config names is never reached.
+func TestBudgetSetRefusesAConfigWhoseDatabaseIsAnotherProjects(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	own := f.db.Value(nodeCG)
+	rewriteBudgetBlock(t, f, "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: https://proj-9999-default-rtdb.firebaseio.com }\n")
+	base, err := url.Parse(f.db.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	budgetTransport = carryToFake{base: base, rt: http.DefaultTransport}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	_, _, err = execute(t, "budget", "set", "--global", "--daily", "60")
+	refusedByTheConfigHalf(t, "budget set", err, "is not the database of the Firebase project its budget.firebase_project names")
+	if !reflect.DeepEqual(f.db.Value(nodeCG), own) {
+		t.Errorf("the refused set wrote the ceiling: %v, want %v", f.db.Value(nodeCG), own)
+	}
+}
+
+// TestBudgetSetRefusesAnEmptyDatabaseOfASeparateProject: the empty-database
+// case the shared check was written for — nothing in the database and no mark,
+// with a config naming a Firebase project other than the installation's own.
+// `budget set` refuses and writes nothing, and what answers at this level is
+// the name gate: checkDBProject reads /fugaro/project before the ownership
+// question is asked, and an empty database does not name the project either. So
+// this is where a command stops, and the question's own sentence for this shape
+// — the one a `fugaro update` stage skips on, where no name gate stands in
+// front of it — is held by the test below.
+func TestBudgetSetRefusesAnEmptyDatabaseOfASeparateProject(t *testing.T) {
+	f := emptySeparateProjectDatabase(t)
+
+	_, _, err := execute(t, "budget", "set", "--global", "--daily", "60")
+	if err == nil {
+		t.Fatal("budget set wrote into an empty database that no mark proves is this installation's")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("budget set: exit %d, want 1 (a refusal, not an outage): %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "no /fugaro/project") {
+		t.Errorf("the refusal does not name the empty database's missing project: %v", err)
+	}
+	if f.db.Value(nodeCG) != nil || f.db.Value(budget.PathMark) != nil {
+		t.Errorf("the refused set wrote into the empty database: caps %v, mark %v", f.db.Value(nodeCG), f.db.Value(budget.PathMark))
+	}
+}
+
+// TestRequireOwnBudgetDBRefusesAnEmptyDatabaseOfASeparateProject is that same
+// database asked by the one question itself: with a separate Firebase project
+// named, an empty database that carries no mark is not a licence (it passes
+// every check that asks it anything), and the answer is the long one — not this
+// installation's, and here is the mark that would be the proof. The command's
+// own opener is used without its name gate (budgetDBFor), because no command
+// reaches this branch otherwise.
+func TestRequireOwnBudgetDBRefusesAnEmptyDatabaseOfASeparateProject(t *testing.T) {
+	f := emptySeparateProjectDatabase(t)
+	ctx := context.Background()
+	_, lc, err := selectProject(ctx, cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = requireOwnBudgetDB(ctx, lc, db, "nothing was set")
+	refusedByTheOwnershipCheck(t, "budget set", err, "nothing was set")
+	if err != nil && !strings.Contains(err.Error(), "nothing proves the database at") {
+		t.Errorf("the refusal is not the empty database's own answer: %v", err)
+	}
+	if f.db.Value(budget.PathMark) != nil {
+		t.Errorf("the refusal wrote the mark into the database it refused: %v", f.db.Value(budget.PathMark))
+	}
+}
+
+// TestBudgetSetExitsTwoWhenTheDatabaseCannotBeRead: the split the one question
+// owes its callers. A database that is not this installation's is the
+// operator's to fix and exits 1 (every refusal above); a database that cannot
+// be read at all is an outage and exits 2, so a script does not treat the
+// network as a config it should go and edit. The failure is put inside the
+// question, at its first read: everything the command does before it — reaching
+// the database, reading its /fugaro/project — has already succeeded.
+func TestBudgetSetExitsTwoWhenTheDatabaseCannotBeRead(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	own := f.db.Value(nodeCG)
+	budgetTransport = rootReadDownTransport{rt: http.DefaultTransport}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	_, _, err := execute(t, "budget", "set", "--global", "--daily", "60")
+	if err == nil {
+		t.Fatal("budget set wrote while the database could not be read")
+	}
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("budget set: exit %d, want 2 (an outage, not a refusal): %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "nothing was set") {
+		t.Errorf("the outage does not say what was not done: %v", err)
+	}
+	if !reflect.DeepEqual(f.db.Value(nodeCG), own) {
+		t.Errorf("the failed set wrote the ceiling: %v, want %v", f.db.Value(nodeCG), own)
 	}
 }
 
@@ -314,5 +531,30 @@ func TestPairRefusesAnotherInstallationsDatabase(t *testing.T) {
 	out, _, err = pairRun(t, "ls", "--json")
 	if err == nil || !strings.Contains(err.Error(), "and no Fugaro mark") {
 		t.Errorf("pair ls is not held to the unmarked database: %v\n%s", err, out)
+	}
+}
+
+// TestPairExitsTwoWhenTheDatabaseCannotBeRead is the same outage at the pairing
+// door, where the exit code is also a wire code a console switches on: exit 2
+// with "unreachable", so a phone is not told its pairing is into somebody
+// else's project when the answer was the database. It is the ownership
+// question's failure and not the probe's — the probe's read of the devices node
+// comes first and succeeds — so the refusal is held to its declined line as
+// well as to the code.
+func TestPairExitsTwoWhenTheDatabaseCannotBeRead(t *testing.T) {
+	newPairFixture(t, pairMe)
+	budgetTransport = rootReadDownTransport{rt: http.DefaultTransport}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	out, _, err := pairRun(t, "--json", "--timeout", "1s")
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("pair with a database that cannot be read: err = %v, want exit 2", err)
+	}
+	if !strings.Contains(err.Error(), "nothing was paired") {
+		t.Fatalf("the failure is not the ownership question's: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedUnreachable {
+		t.Fatalf("events = %v, want one refused with code %q", events, pairRefusedUnreachable)
 	}
 }

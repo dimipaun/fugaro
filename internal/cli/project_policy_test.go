@@ -128,9 +128,6 @@ func newProjectFixtureWith(t *testing.T, providers, extra string) *projectFixtur
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	db.Set("fugaro/project", "aurora")
-	// The mark `fugaro update --firebase-project` writes: the database is this
-	// installation's, which is what every writer into it asks before it writes
-	// (requireOwnBudgetDB, a call of budgetDBUnadopted).
 	db.Set(budget.PathMark, auroraMark())
 	// The rules are deployed: publishing refuses without the marker.
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)

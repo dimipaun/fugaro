@@ -170,10 +170,14 @@ func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
 //
 // declined names what the caller would have written there and program the
 // command the way out is run with, so one sentence serves every door. declined
-// ends the sentence on every path, the two halves of the config and the
-// database's own refusals alike: what was NOT done is the caller's fact and not
-// the database's, and the operator reading a skipped stage or a refused job has
-// to know nothing was written.
+// ends the sentence on the database's own answers — Check refusing and Check
+// failing alike — because what was NOT done is the caller's fact and not the
+// database's, and the operator reading a refused job has to know nothing was
+// written. The config's half keeps the stage's sentence instead and not a
+// caller's (rulesUnavailable): the two sentences there are what `fugaro update`
+// is skipped with, they are printed before any database is opened, and the
+// foreign-database one already ends on the fact that nothing was read or
+// written.
 func budgetDBUnadopted(ctx context.Context, lc *localcfg.Config, db *infra.DB, declined, program string) string {
 	why, _ := budgetDBUnadoptedErr(ctx, lc, db, declined, program)
 	return why
