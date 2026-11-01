@@ -24,7 +24,10 @@ const SharedMaxBytes = 64 << 10
 // trust anchor (design docs/design/named-oauth-tokens.md §3: never
 // published, never settable from fugaro.yaml or the project layer, so it
 // must not round-trip through the runs bucket either, which any launcher
-// with objectAdmin on it can write), update_check (same reasoning: a
+// with objectAdmin on it can write), secret_rotation_days and secret_expires
+// (the same reasoning again: they are the operator's own record of when the
+// credentials they hold are rotated and when they expire, which no launcher
+// should be able to write for everyone), update_check (same reasoning: a
 // machine's choice to silence the nag is its own operator's, not something
 // a launcher writing the shared file should be able to flip for everyone),
 // and each repo's base_branch and the project's top-level base_branch, which
@@ -87,8 +90,24 @@ func (c *Config) Shared() *Config {
 	// phase 3 added profiles.
 	s.Profiles = nil
 	s.UpdateCheck = nil
+	// The operator's rotation record is local-only for update_check's reason,
+	// one credential at a time: secret_rotation_days is how often the person
+	// who holds the provider accounts means to rotate them, and secret_expires
+	// is what their own page for a token says — neither is a fact of the
+	// installation, and a launcher who could write the shared file would be
+	// choosing when every other machine is told its credentials are overdue.
+	s.SecretRotationDays = 0
+	s.SecretExpires = nil
 	s.Build.ServiceAccount = ""
 	s.BaseBranch = ""
+	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
+	// through `fugaro project policy publish` into the policy node. It is
+	// dropped here for a sharper reason than the keys above it: the floor is
+	// what stops a launcher turning review off, so a floor a launcher could
+	// write into the runs bucket's shared file would be that launcher setting
+	// its own floor — and ParseShared refuses the key besides, because a
+	// shared config carrying it was not written by the converge.
+	s.ReviewFloor = nil
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }

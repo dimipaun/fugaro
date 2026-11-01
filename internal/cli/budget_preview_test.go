@@ -1246,6 +1246,96 @@ func TestBudgetPreviewStageShapes(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewUsesTheProjectsRigorMode: a repository that sets no round
+// knob is previewed at the mode's own row, which is what a run of it spends
+// (the owner's ruling of 2026-10-31, rigor.DefaultRounds) — the project
+// layer's default where it sets one, the repository's own rigor default where
+// it does not, and pro where neither does. Before the ruling the preview
+// counted every repository at one flat 1/2; the stage figures below are the
+// same standard recipe at each row, so a reader sees both the numbers and the
+// mode they came from.
+//
+// One case has no checkout at all (--repo alone, as fugaro run --repo does):
+// there the project layer is still read — it is the installation's own, which
+// is the layer a run without a checkout resolves (embedProjectLayer) — so the
+// mode, and the stage count that follows from it, is the run's.
+func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
+	// standard is a first_line loop under a bouncing review: the bound moves
+	// with both knobs at once.
+	const standard = "at most %d stages (mode %s, agent.first_line_rounds %d, agent.review_rounds %d)"
+	for _, tc := range []struct {
+		name       string
+		layer      string
+		repoRigor  string
+		noCheckout bool
+		mode       string
+		first      int
+		rounds     int
+		stages     int
+	}{
+		{name: "no layer and no repository value: pro", mode: "pro", first: 3, rounds: 3, stages: 31},
+		{name: "the repository's own rigor default", repoRigor: "rigor: { default: poc }\n", mode: "poc", first: 1, rounds: 1, stages: 7},
+		{name: "the project layer's default", layer: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
+		{name: "no checkout: the project layer's default", layer: "startup", noCheckout: true, mode: "startup", first: 2, rounds: 2, stages: 17},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBudgetFixture(t, "")
+			f.SetCaps(100, 3, 20, 3)
+			f.SetSpentToday(0)
+			if tc.layer != "" {
+				f.DefaultRunsBucket(t)
+				testutil.WriteFiles(t, f.runsDir(), map[string]string{config.LayerKey: previewLayer(tc.layer)})
+			}
+			args := []string{"budget", "preview", "--recipe", "standard", "--runs", "1"}
+			agent := "  max_budget_usd: 0.5\n"
+			if tc.repoRigor != "" {
+				agent += tc.repoRigor
+			}
+			if tc.noCheckout {
+				// No checkout of acme/app anywhere: the file that would
+				// anchor the layer is not here, so the layer the project
+				// published under its own name is the one that applies.
+				t.Chdir(t.TempDir())
+				args = append(args, "--repo", "acme/app")
+			} else {
+				f.Checkout(t, agent)
+				if tc.layer != "" {
+					// A layer is read for a repository whose file is anchored:
+					// the project's own name and GCP project, which Checkout's
+					// fugaro.yaml does not carry (minimalAnchored's shape).
+					testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": previewCheckoutYAML(agent)})
+				}
+			}
+			out, _, err := execute(t, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf(standard, tc.stages, tc.mode, tc.first, tc.rounds)
+			if !strings.Contains(out, want) {
+				t.Fatalf("preview never says %q:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// previewCheckoutYAML is Checkout's fugaro.yaml with the project anchor a
+// layer is resolved against (minimalAnchored): without project and
+// gcp_project an unanchored file reads as "no layer applies".
+func previewCheckoutYAML(agentYAML string) string {
+	return "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: main }\n" +
+		"agent:\n  auth: api-key\n" + agentYAML +
+		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+}
+
+// previewLayer is the project layer these preview cases read a rigor default
+// from: testProjectLayer's shape with defaults.rigor.default set to mode, at
+// the project and GCP project the budget fixture names.
+func previewLayer(mode string) string {
+	return "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n" +
+		"  git: { provider: github }\n  agent: { auth: api-key }\n  rigor: { default: " + mode + " }\n" +
+		"profiles:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
+}
+
 // TestBudgetPreviewRecipeNote: resolveRecipe's note explains figures that did
 // not come from the layer they should have, so the preview prints it, as run
 // does, and carries it in --json.

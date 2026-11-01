@@ -3,7 +3,9 @@
 **Status.** This is counsel's restructured text, written 2026-10-28 (the date of the document
 counsel returned, which carries no date or version number in its own text). It replaces the draft
 of 2026-10-27 that followed the owner's answers, and reorganises the agreement by plan: Parts A to
-G, sections 1 to 34. Counsel has approved the text. It is not an offer, and nobody has agreed to it: the Licensor's name, jurisdiction, address, privacy notice URL
+G, sections 1 to 34. Counsel has approved the text, including section 7.3 (Crash reports and
+diagnostics) as revised on 2026-10-31 to the owner's ruling that crash reporting is opt-in
+and off by default. It is not an offer, and nobody has agreed to it: the Licensor's name, jurisdiction, address, privacy notice URL
 and notice address were filled in by the owner on 2026-10-30. These are the "Fugaro Subscription Terms" that the
 business licence in [`ee/LICENSE`](../../ee/LICENSE), [`console/LICENSE.md`](../../console/LICENSE.md)
 and [`mobile/LICENSE.md`](../../mobile/LICENSE.md) refers to as published "at https://fugaro.dev/legal/subscription-terms";
@@ -284,10 +286,13 @@ prompts, model output, credentials, run records, logs or cloud data. Customer Da
 systems the Customer controls and with the third parties the Customer chooses under section 7.4
 (Third parties the Customer chooses).
 
-7.3 **Crash reports and diagnostics.** The Software may send crash reports and basic diagnostic
-data to the Licensor, and the Customer may not disable this reporting. The data collected by
-Licensor does not include Customer Data, such as code, prompts, repository contents or credentials.
-The Licensor shall use it only to identify and fix faults and to improve the Software.
+7.3 **Crash reports and diagnostics.** The Software does not send crash reports or other
+diagnostic data unless a User turns crash reporting on. It is off by default, and each User can
+turn it on or off at any time in the desktop console's settings. When it is on, the Software sends only the
+type of an error and the source locations inside the Software's own code, to the Licensor's
+crash-reporting processor (Sentry, hosted in the European Union). It does not send error messages,
+file paths, user names, environment values or host names, and it never sends the Customer's
+repository contents, credentials or task text.
 
 7.4 **Third parties the Customer chooses.** The Software and the Core send the Customer's code and
 prompts to the AI model providers, code hosts and cloud providers that the Customer configures,
@@ -780,9 +785,10 @@ Quebec language clause, the late-payment rate, resellers and the merchant of rec
    organisation, stating its User Seats, instead of one per User (sections 2, 5.3, 6.1, 6.3, 6.4,
    7.5 and 9.1); no covered-versions date (sections 6.1 and 8.2, ruling O4); the free seat applied
    per legal person and its Affiliates (sections 6.3, 7.5 and 10.2(a), ruling T15).
-5. **Crash reports** (section 7.3): counsel's text lets the Software send crash reports and
-   diagnostics that the Customer cannot turn off. The console and the mobile app send none today,
-   and the earlier draft promised any telemetry would be opt-in.
+5. **Crash reports** (section 7.3): counsel's first text let the Software send crash reports and
+   diagnostics that the Customer cannot turn off. Resolved by the owner on 2026-10-31: crash
+   reporting is opt-in, per User, and off by default, and counsel approved the revised section.
+   The console and the mobile app send none today.
 6. **Publicity** (section 30.1): the Licensor may name a Customer as a customer unless an
    Enterprise Order Form says otherwise; the earlier draft required consent both ways.
 7. **The coordinator** (section 7.1): counsel's text called the credentials service and the

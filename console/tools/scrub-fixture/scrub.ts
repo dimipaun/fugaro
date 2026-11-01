@@ -71,6 +71,10 @@ export const INVENTED_CAP_USD = 50
  * one: what the installation currently holds, which is a real dollar figure
  * whatever the amount. */
 export const INVENTED_LEASE_USD = 0.2
+/** INVENTED_MAX_PARALLEL is the invented concurrent-run cap, in place of the
+ * real one: a cap the operator chose for the installation, so it is their
+ * configuration rather than a shape, and it is replaced like the daily cap. */
+export const INVENTED_MAX_PARALLEL = 4
 /**
  * TIME_SHIFT_RANGE_MS bounds the clock shift drawn for one run: plus or minus
  * 400 days. Wide enough that the offset cannot be guessed, and narrow enough
@@ -612,7 +616,7 @@ function scrubKill(kill: unknown, path: string, shiftMs: number): unknown {
 function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefined, shiftMs: number): Obj {
   if (!isObj(value)) return refuse(path, 'not an object')
   const inventedRepo = `example-owner/example-repo${repoN === 1 ? '' : `-${repoN}`}`
-  return applyRules(value, path, {
+  const rules: Record<string, Rule> = {
     slug: invent(`github-com-example-owner-example-repo${repoN === 1 ? '' : `-${repoN}`}`),
     repo: invent(inventedRepo),
     counted_usd: num, spent_usd: num, notional_usd: num, runs: num, run_hours: num, // recomputed below
@@ -627,7 +631,20 @@ function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefine
     daily_cap_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_CAP_USD : refuse(p, 'not a number')),
     burn: (v, p) => (isObj(v) ? applyRules(v, p, BURN_RULES) : refuse(p, 'not an object')),
     kill: (v, p) => scrubKill(v, p, shiftMs),
-  })
+  }
+  // `max_parallel` is `JSONTotal`'s and not `JSONRepo`'s -- the concurrent-run
+  // cap a launch is checked against bounds the project's launches, not one
+  // repository's -- so it is named for `$.total` alone, which is the call with
+  // no `repoN`; a `repos[]` entry carrying it is a document no version of the
+  // CLI writes and stays refused as an unknown key. The field is a `*int` with
+  // no `omitempty`, so `null` -- a document whose writer could read no cap -- is
+  // a value to keep, and a number is the operator's own configuration and is
+  // invented like the daily cap beside it.
+  if (repoN === undefined) {
+    rules['max_parallel'] = (v, p) =>
+      (v === null ? null : typeof v === 'number' ? INVENTED_MAX_PARALLEL : refuse(p, 'not a number'))
+  }
+  return applyRules(value, path, rules)
 }
 
 /**

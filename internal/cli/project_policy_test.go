@@ -17,7 +17,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -76,21 +78,38 @@ const twoClaudeModelsProvidersYAML = projectProvidersYAML +
 	"    models: [\"anthropic/claude-sonnet-5.5\", \"anthropic/claude-opus-5.5\"]\n" +
 	"    allow_data_to: [\"*\"]\n"
 
+// projectConfigText is the fixture's whole config file: the installation the
+// publisher needs, this machine's providers block, two repositories and
+// whatever a test adds on top.
+func projectConfigText(dir, dbURL, providers, extra string) string {
+	return "version: 1\n" +
+		"name: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
+		"bucket_url: file://" + filepath.Join(dir, "runs") + "\n" +
+		"user: someone@example.com\nmax_parallel: 2\n" +
+		"budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + dbURL + " }\n" +
+		"endpoints: { no_auth: true }\n" +
+		providers +
+		"repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n" +
+		extra
+}
+
+// rewriteProjectConfig replaces the fixture's config with one whose only
+// difference is extra: a second publish of the same installation from a
+// machine whose file says something else — which is the state a publish's
+// handling of a member the file is silent about is about.
+func rewriteProjectConfig(t *testing.T, f *projectFixture, extra string) {
+	t.Helper()
+	if err := os.WriteFile(f.path, []byte(projectConfigText(f.dir, f.db.URL, projectProvidersYAML, extra)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newProjectFixtureWith(t *testing.T, providers, extra string) *projectFixture {
 	t.Helper()
 	dir := t.TempDir()
 	db := gcpfake.NewRTDB(t)
 	path := isolateProjects(t, dir)
-	cfg := "version: 1\n" +
-		"name: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
-		"bucket_url: file://" + filepath.Join(dir, "runs") + "\n" +
-		"user: someone@example.com\nmax_parallel: 2\n" +
-		"budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + db.URL + " }\n" +
-		"endpoints: { no_auth: true }\n" +
-		providers +
-		"repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n" +
-		extra
-	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(projectConfigText(dir, db.URL, providers, extra)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
@@ -690,8 +709,15 @@ func TestProjectPolicyPublishRefusesWithoutTheRulesMarker(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish without the rules marker was allowed")
 	}
-	if !strings.Contains(err.Error(), "update --firebase-project") {
+	// The move is the plain door: `fugaro update`'s rules stage deploys this
+	// binary's generation over rules whose marker is absent, in the same run,
+	// so --firebase-project (the door that adopts a Firebase project) is not
+	// what an installation that has one needs to run.
+	if !strings.Contains(err.Error(), "fugaro update") {
 		t.Errorf("the refusal does not name the fix: %v", err)
+	}
+	if strings.Contains(err.Error(), "--firebase-project") {
+		t.Errorf("the refusal sends the operator to --firebase-project for a state fugaro update repairs: %v", err)
 	}
 	// An absent marker is not an old one: the refusal must not tell the
 	// operator a marker is older than itself when there is no marker.
@@ -716,7 +742,11 @@ func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish behind the deployed rules was allowed")
 	}
-	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) || !strings.Contains(err.Error(), "update --firebase-project") {
+	// The move is plain `fugaro update`, whose rules stage deploys this
+	// binary's generation over the state — not `--firebase-project`, the door
+	// that adopts a Firebase project this installation already has.
+	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) ||
+		!strings.Contains(err.Error(), "fugaro update") || strings.Contains(err.Error(), "--firebase-project") {
 		t.Errorf("the refusal does not say the marker is below the generation a policy is read under: %v", err)
 	} // Not the marker-current state's sentence: "the deployed rules are older
 	// than the marker" is a claim about a document, and nothing here compared
@@ -993,8 +1023,15 @@ func TestProjectPolicyDeleteRefusesWithoutTheRulesMarker(t *testing.T) {
 	if err == nil {
 		t.Fatal("--delete without the rules marker was allowed")
 	}
-	if !strings.Contains(err.Error(), "update --firebase-project") {
+	// The move is the plain door: `fugaro update`'s rules stage deploys this
+	// binary's generation over rules whose marker is absent, in the same run,
+	// so --firebase-project (the door that adopts a Firebase project) is not
+	// what an installation that has one needs to run.
+	if !strings.Contains(err.Error(), "fugaro update") {
 		t.Errorf("the refusal does not name the fix: %v", err)
+	}
+	if strings.Contains(err.Error(), "--firebase-project") {
+		t.Errorf("the refusal sends the operator to --firebase-project for a state fugaro update repairs: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
 		t.Error("the policy was removed anyway")
@@ -1508,14 +1545,20 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 		what   string
 		marker any
 		want   string
+		// Where the refusal sends the operator. Both states are what
+		// `fugaro update`'s own rules stage deploys over, so both sentences now
+		// name that one command; the two are pinned as written, since a remedy
+		// that drifts back to the `--firebase-project` door sends the operator to
+		// adopt a Firebase project this installation already has.
+		fix string
 	}{
-		{"no marker at all", nil, "carry no policy marker"},
+		{"no marker at all", nil, "carry no policy marker", "run 'fugaro update'"},
 		// main's requirePolicyRules (#532) admits every marker at or above
 		// PolicyRulesVersion — those rules carry the policy nodes — and words a
 		// marker below it as its own case ("records generation N", the
 		// pre-policy sentence doctor prints): that is the marker behind this
 		// Fugaro's that still refuses the write.
-		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation"},
+		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation", "re-run 'fugaro update' with fugaro"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -1531,8 +1574,8 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 				if err == nil {
 					t.Fatalf("%v was allowed with %s", args, tc.what)
 				}
-				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "update --firebase-project") {
-					t.Errorf("%v refused with %q, want it to say %q and to name the fix", args, err, tc.want)
+				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), tc.fix) {
+					t.Errorf("%v refused with %q, want it to say %q and to name the fix %q", args, err, tc.want, tc.fix)
 				}
 			}
 			if got := nodeJSON(t, f, projectpolicy.PathShared()); got != before {
@@ -3264,6 +3307,7 @@ func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
 				t.Fatalf("%s: %v was accepted", tc.what, tc.args)
 			}
 			assertEscapedRefusal(t, err.Error(), tc.wantIn, hostile, escaped)
+			assertNamesTheBinaryUpgrade(t, err.Error())
 		})
 	}
 	t.Run("the launch gate, which refuses a run against the node", func(t *testing.T) {
@@ -3281,7 +3325,23 @@ func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
 			t.Fatal("a launch against a node with an unknown key was accepted")
 		}
 		assertEscapedRefusal(t, err.Error(), "never takes effect", hostile, escaped)
+		assertNamesTheBinaryUpgrade(t, err.Error())
 	})
+}
+
+// assertNamesTheBinaryUpgrade: a refusal whose remedy is a newer Fugaro names
+// the package manager's command, because `fugaro upgrade` never upgrades the
+// binary it runs — it moves a checkout onto the installed release. The reader
+// of such a refusal is on the older side, so a fix naming `fugaro upgrade`
+// leaves them with no move at all.
+func assertNamesTheBinaryUpgrade(t *testing.T, msg string) {
+	t.Helper()
+	if !strings.Contains(msg, "brew upgrade dimipaun/tap/fugaro") {
+		t.Errorf("the refusal does not name the binary upgrade: %s", msg)
+	}
+	if strings.Contains(msg, "fugaro upgrade") {
+		t.Errorf("the refusal sends the operator to fugaro upgrade, which never upgrades fugaro itself: %s", msg)
+	}
 }
 
 // assertEscapedRefusal checks one refusal of the unknown policy keys: that it
@@ -3333,4 +3393,159 @@ func TestProjectPolicyPublishCarriesTheProjectBaseBranch(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestReviewFloorPublishedToPolicyNode is D722's publish half: the owner's
+// review-level floor travels from his project config into the policy node —
+// the one object only the owner writes and the runner fails closed on — and
+// nowhere else. A project that sets no floor publishes no member at all, so
+// its node is byte for byte what it was before the key existed.
+func TestReviewFloorPublishedToPolicyNode(t *testing.T) {
+	f := newProjectFixture(t, "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n")
+	publishOut, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The diff warns that the member stops older readers (the plan's C1.2 skew
+	// section): an older CLI refuses every launch and publish of this project,
+	// and an older runner image warns that the key has no effect and runs the
+	// levels anyway, so the floor does not bind there until the image is
+	// upgraded (L1.2's gate on the resolved levels is what refuses that image,
+	// and it is not in this change).
+	if !strings.Contains(publishOut, "carries a review_floor member") {
+		t.Errorf("the publish does not warn that the floor stops older readers:\n%s", publishOut)
+	}
+	p := publishedPolicy(t, f)
+	if len(p.ReviewFloor) != 2 {
+		t.Fatalf("ReviewFloor = %v, want the two modes the config writes", p.ReviewFloor)
+	}
+	if got, want := p.ReviewFloor[rigor.Pro], []policy.Level{policy.LevelL2}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor[pro] = %v, want %v", got, want)
+	}
+	if got, want := p.ReviewFloor[rigor.Critical], []policy.Level{policy.LevelL2, policy.LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor[critical] = %v, want %v", got, want)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_floor"`) {
+		t.Errorf("the node does not carry the floor:\n%s", raw)
+	}
+
+	// A project that writes none: no member, and no other change to the node.
+	g := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if raw := nodeJSON(t, g, projectpolicy.PathShared()); strings.Contains(raw, "review_floor") {
+		t.Errorf("a project that sets no floor published one:\n%s", raw)
+	}
+	if p := publishedPolicy(t, g); p.ReviewFloor != nil {
+		t.Errorf("ReviewFloor = %v, want nil", p.ReviewFloor)
+	}
+}
+
+// TestPublishKeepsReviewFloorTheConfigIsSilentAbout is the review finding this
+// behaviour exists for: a publish from a machine whose config says nothing
+// about the floor does not take the node's away. The floor is a minimum the
+// owner set to bind the launchers of his own project, and the publish that
+// would drop it is the one he did not mean — a second machine whose file
+// predates the key, or a key deleted while tidying one. The diff says it was
+// kept, because the value does not change and no line of the diff above would
+// mention it otherwise, and an operator who deleted the key would read that
+// silence as "it is gone".
+func TestPublishKeepsReviewFloorTheConfigIsSilentAbout(t *testing.T) {
+	f := newProjectFixture(t, "review_floor:\n  pro: [l2]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if len(p.ReviewFloor) != 1 || !slices.Equal(p.ReviewFloor[rigor.Pro], []policy.Level{policy.LevelL2}) {
+		t.Errorf("the second publish changed the floor: ReviewFloor = %v, want pro: [l2]", p.ReviewFloor)
+	}
+	if !strings.Contains(out, "review_floor kept: pro: l2") {
+		t.Errorf("the publish does not say the floor was kept:\n%s", out)
+	}
+}
+
+// TestPublishDropsReviewFloorOnPurpose: `review_floor: {}` is how the owner
+// takes a published floor away. Silence about the key keeps the node's floor
+// (the test above), so the written empty object is the spelling that has to
+// mean "none" — and the diff names the change like any other value's, which is
+// what makes the removal a decision the operator reads rather than one that
+// happened behind the diff.
+func TestPublishDropsReviewFloorOnPurpose(t *testing.T) {
+	f := newProjectFixture(t, "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, "review_floor: {}\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewFloor != nil {
+		t.Errorf("ReviewFloor = %v, want none after a written empty object", p.ReviewFloor)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "review_floor") {
+		t.Errorf("the node still carries the member:\n%s", raw)
+	}
+	if !strings.Contains(out, "~ review_floor:") || !strings.Contains(out, "→ none") {
+		t.Errorf("the diff does not name the floor going away:\n%s", out)
+	}
+}
+
+// TestPolicyShowPrintsReviewFloor: `policy show` is the audit surface, and the
+// floor is a member a publish decides — so it is a row of that output whether
+// the node carries one or not, the way the Bitbucket block's row is (the
+// review of #1329). Without it the operator cannot confirm that the floor he
+// published is the floor the runs read.
+func TestPolicyShowPrintsReviewFloor(t *testing.T) {
+	newProjectFixture(t, "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "review_floor: critical: l2, l3; pro: l2") {
+		t.Errorf("policy show does not print the floor:\n%s", out)
+	}
+
+	newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "review_floor: none (a run reviews what its rigor mode and the repository ask for)") {
+		t.Errorf("policy show does not say a policy carries no floor:\n%s", out)
+	}
+}
+
+// TestReviewFloorNotInShared: the floor is the owner's, and the shared config
+// is the file any launcher with objectAdmin on the runs bucket can write. A
+// floor published there would be the launcher the floor exists to bind,
+// setting it (D722, G1, docs/design/bucket-iam.md §10 L1, L2), so the reader
+// refuses the key — the way it refuses bitbucket_api_roots — and the publisher
+// never writes it (localcfg.Config.Shared drops it).
+func TestReviewFloorNotInShared(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "review_floor") {
+		t.Fatal("sharedForbidden does not name review_floor, so a published floor would be read")
+	}
+	data := validShared() + "review_floor:\n    pro: [l2]\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying review_floor: was accepted")
+	}
+	for _, want := range []string{"review_floor", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
 }

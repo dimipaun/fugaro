@@ -100,6 +100,14 @@ export { PICKER_ENTRY_PATH, PICKER_ENTRY_URL }
  * only door to the picker (C9). */
 export const INSTALLATIONS_MENU_LABEL = 'Installations…'
 
+/** UPDATE_AUTO_LABEL and UPDATE_NOW_LABEL are the two items the owner's ruling
+ * D768 (a) of 2026-10-30 puts in the application menu: the visible off switch
+ * the design's D5 asks for, and a check the operator can ask for now. Both are
+ * macOS only, and only while an update controller is running -- the entry point
+ * is where that is decided, and it hands them over only then. */
+export const UPDATE_AUTO_LABEL = 'Check for Updates Automatically'
+export const UPDATE_NOW_LABEL = 'Check for Updates Now'
+
 /** PICKER_WINDOW_TITLE is the picker's window title. It carries no mode and no
  * version: the picker draws a list, and the console's own compatibility is the
  * dashboard's to state. */
@@ -140,6 +148,21 @@ export const OPEN_EXTERNAL_FAILED = 'the console could not open the link in the 
  * (D3(a)).
  */
 export const REVEAL_FAILED = 'the console could not open the installation’s directory'
+
+/** UpdateMenuOptions is the off switch as the menu sees it: the value the
+ * checkbox draws, and the two things the items do with it. Plain values and
+ * callbacks rather than the store itself, so that the template stays a plain
+ * value a unit test can read and this module keeps knowing nothing about where
+ * the switch is kept. */
+export interface UpdateMenuOptions {
+  readonly auto: boolean
+  /** setAuto moves the switch and answers the value it holds afterwards, read
+   * from wherever the switch is kept: Electron has already drawn the state this
+   * click moved its checkbox to, and a write that did not land is only visible
+   * as this answer disagreeing with it. */
+  readonly setAuto: (on: boolean) => boolean
+  readonly checkNow: () => void
+}
 
 /** MenuLike is the slice of Electron's `Menu` this file uses. */
 export interface MenuLike {
@@ -247,6 +270,11 @@ export interface InstallationPickerDeps {
    * cancel fire for the wrong removals and hand it an id it cannot use.
    */
   readonly onRecordRemoved?: (project: string) => void
+  /** updateMenu is the two update items of D768 (a), when this console has a
+   * controller to offer them: absent on everything that is not a packaged macOS
+   * app, where the entry point passes nothing and the menu carries neither
+   * item. */
+  readonly updateMenu?: UpdateMenuOptions | undefined
 }
 
 /** InstallationPicker is what the entry point holds. */
@@ -329,7 +357,9 @@ export function installationsMenuTemplate(options: {
   readonly onOpen: () => void
   readonly onQuit: () => void
   readonly appName: string
+  readonly updateMenu?: UpdateMenuOptions | undefined
 }): readonly unknown[] {
+  const updateMenu = options.updateMenu
   // **Not frozen**, unlike every other table in this module: Electron's
   // `Menu.buildFromTemplate` sorts the template in place and assigns each
   // item's `submenu`, and a frozen template makes it throw ("Cannot assign to
@@ -347,6 +377,30 @@ export function installationsMenuTemplate(options: {
       label: options.appName,
       submenu: [
         { label: INSTALLATIONS_MENU_LABEL, click: options.onOpen },
+        // The update items, when there is a controller to move (D768 (a)). The
+        // checkbox is Electron's own: its click hands over the item, whose
+        // `checked` is the state the click has just moved it to, and that is
+        // what moves the switch -- a value this file toggled itself could
+        // disagree with what the user sees after the menu redraws it.
+        ...(updateMenu === undefined
+          ? []
+          : [
+              { type: 'separator' },
+              {
+                label: UPDATE_AUTO_LABEL,
+                type: 'checkbox',
+                checked: updateMenu.auto,
+                click: (item: { readonly checked: boolean }) => {
+                  updateMenu.setAuto(item.checked)
+                },
+              },
+              {
+                label: UPDATE_NOW_LABEL,
+                click: () => {
+                  updateMenu.checkNow()
+                },
+              },
+            ]),
         { type: 'separator' },
         { role: 'quit', click: options.onQuit },
       ],
@@ -1113,29 +1167,60 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     })
   }
 
+  /** drawnAuto is the value the update checkbox is drawn with. Electron's own
+   * checkbox moves itself on the click, before anything is written, so a click
+   * whose write did not land leaves the menu showing a switch this console is
+   * not using -- and the value that *is* in force only comes back from
+   * `setAuto`, which reads it from wherever the switch is kept and answers
+   * rather than throwing (a throw here would be Electron's uncaught-error
+   * dialog over the running app). The menu is built again from that answer when
+   * the two disagree. */
+  let drawnAuto = deps.updateMenu?.auto ?? false
+
+  const installMenu = (): void => {
+    const updateMenu = deps.updateMenu
+    deps.menu.setApplicationMenu(
+      deps.menu.buildFromTemplate(
+        installationsMenuTemplate({
+          appName: 'Fugaro console',
+          ...(updateMenu === undefined
+            ? {}
+            : {
+                updateMenu: {
+                  auto: drawnAuto,
+                  setAuto: (on) => {
+                    const actual = updateMenu.setAuto(on)
+                    if (actual !== on) {
+                      drawnAuto = actual
+                      installMenu()
+                    }
+                    return actual
+                  },
+                  checkNow: () => {
+                    updateMenu.checkNow()
+                  },
+                },
+              }),
+          onOpen: () => {
+            open().catch((error: unknown) => {
+              console.error('[console] the installation picker could not be opened:', error)
+            })
+          },
+          onQuit: () => {
+            // The real quit is Electron's `role: 'quit'`; the callback exists
+            // so a test can hold the item's action without an app to quit.
+          },
+        }),
+      ),
+    )
+  }
+
   return {
     installation: current,
     open,
     openInstallation,
     answer: answerFor,
-    installMenu(): void {
-      deps.menu.setApplicationMenu(
-        deps.menu.buildFromTemplate(
-          installationsMenuTemplate({
-            appName: 'Fugaro console',
-            onOpen: () => {
-              open().catch((error: unknown) => {
-                console.error('[console] the installation picker could not be opened:', error)
-              })
-            },
-            onQuit: () => {
-              // The real quit is Electron's `role: 'quit'`; the callback exists
-              // so a test can hold the item's action without an app to quit.
-            },
-          }),
-        ),
-      )
-    },
+    installMenu,
     get refusal(): string | null {
       return registry.refusal
     },
@@ -1192,6 +1277,7 @@ export function installInstallationPicker(options: {
   readonly onChosen?: InstallationPickerDeps['onChosen']
   readonly onRemoved?: InstallationPickerDeps['onRemoved']
   readonly onRecordRemoved?: InstallationPickerDeps['onRecordRemoved']
+  readonly updateMenu?: UpdateMenuOptions | undefined
 }): InstallationPicker {
   const { electron } = options
   // **The home is this app's own environment's, and not `app.getPath('home')`.**
@@ -1255,6 +1341,7 @@ export function installInstallationPicker(options: {
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
+    ...(options.updateMenu === undefined ? {} : { updateMenu: options.updateMenu }),
   })
 }
 

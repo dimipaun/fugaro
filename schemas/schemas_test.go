@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/tier"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -707,7 +708,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// (design v1.md §4.6).
 		StartSHA: strings.Repeat("c", 40),
 		PR:       &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7"},
-		Reviews:  []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 2}, {Round: 1, Tier: runstore.TierSenior, Verdict: "ship"}},
+		// The bounce is on the first-line review that followed a senior
+		// rejection, which is the only shape that carries one (a recipe with
+		// review: {bounce: first_line}, docs/recipes.md section 1), and the
+		// entry is closed: without the field the schema refused the record of
+		// a bounced run, catalog recipes included.
+		Reviews: []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 2}, {Round: 1, Tier: runstore.TierSenior, Verdict: "ship"}, {Round: 2, Tier: runstore.TierFirst, Verdict: "ship", Bounce: 1}},
 		Verify: []verify.Record{{
 			N: 1, Kind: verify.KindTest, Rerun: true, HeadSHA: "abcdef1234567", CleanTree: true, ExitCode: 1,
 			TimedOut: true, Tests: 3, Failures: 1, Skipped: 1, Failed: []string{"pkg.A"}, Flaky: []string{"pkg.B"},
@@ -974,6 +980,98 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("schema rejects a record that filed, closed and tolerated nothing: %v\n%s", err, bare)
+	}
+}
+
+// TestTierAdversarialInSchema: the review entry's tier enum is the vocabulary
+// internal/runstore writes — level 3's adversarial review included
+// (docs/review-levels-ab-jobmax L4.1, D727) — and the entry carries the head
+// the review read, bounded like the schema's other commit fields. A tier
+// added to runstore and not here is a record the runner legally wrote and its
+// own published schema refuses.
+func TestTierAdversarialInSchema(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := strings.Repeat("a", 40)
+	rec := runstore.Record{
+		Version: 1, RunID: "20261030-120000-abcd", Status: runstore.StatusSucceeded,
+		Stage: "review",
+		Reviews: []runstore.ReviewSummary{
+			{Round: 3, Tier: runstore.TierFirst, Verdict: "ship", Bounce: 1},
+			{Round: 3, Tier: runstore.TierSenior, Verdict: "ship", Head: head},
+			{Round: 3, Tier: runstore.TierAdversarial, Verdict: "ship", Head: head},
+		},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record naming the adversarial tier and its head: %v\n%s", err, data)
+	}
+
+	raw, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var reviews struct {
+		Items struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(doc.Properties["reviews"], &reviews); err != nil {
+		t.Fatal(err)
+	}
+	var tier struct {
+		Enum []string `json:"enum"`
+	}
+	if err := json.Unmarshal(reviews.Items.Properties["tier"], &tier); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{runstore.TierFirst, runstore.TierSenior, runstore.TierAdversarial}
+	if !slices.Equal(tier.Enum, want) {
+		t.Errorf("result.schema.json reviews tier enum %v != runstore's tiers %v", tier.Enum, want)
+	}
+	var headField struct {
+		Type      string `json:"type"`
+		MinLength int    `json:"minLength"`
+	}
+	if err := json.Unmarshal(reviews.Items.Properties["head"], &headField); err != nil {
+		t.Fatal(err)
+	}
+	if headField.Type != "string" || headField.MinLength != 1 {
+		t.Errorf("result.schema.json reviews head = %+v, want a string bounded at minLength 1 like the schema's other commit fields", headField)
+	}
+	lit := []byte(`"head":"` + head + `"`)
+	if !bytes.Contains(data, lit) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, lit, []byte(`"head":""`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts an empty review head")
+	}
+	bounce := []byte(`"bounce":1`)
+	if !bytes.Contains(data, bounce) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, bounce, []byte(`"bounce":-1`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts a review that followed a negative number of cheap loops")
 	}
 }
 
@@ -3847,4 +3945,166 @@ func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	if len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
 		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout naming 0.15.0", ps)
 	}
+}
+
+// TestSettingsSchema holds schemas/settings.schema.json to the registry and to
+// the command that writes the document. The document's rows are dynamic — one
+// per key and scope — so the schema cannot pin them by name; what it can pin,
+// and what this test checks, is that the schema loads, that its layer
+// vocabulary is settings.Layers (the same list --layer takes) and that its
+// $defs.keyDefaults carries every registry key with the default the registry
+// gives it. That is the DEFAULT column's contract written down where a
+// consumer of the JSON document can read it, and D841's "pinned by a test
+// rather than generated": the values are written out here, and this test is
+// what makes a row that moves without them red.
+//
+// The document itself is validated against this schema by
+// TestSettingsJSONMatchesSchema in internal/cli, which is where the command
+// that writes it lives.
+func TestSettingsSchema(t *testing.T) {
+	data, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	defs, ok := doc["$defs"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs")
+	}
+	// A schema that does not compile is a schema nobody can use, and the
+	// $refs between $defs are exactly where a hand edit breaks.
+	compile(t, "settings.schema.json")
+
+	wantLayers := settings.Layers
+	if got := stringsOf(t, defs, "source", "properties", "layer", "enum"); !slices.Equal(got, wantLayers) {
+		t.Errorf("$defs.source: the layer enum is %v, and settings.Layers is %v", got, wantLayers)
+	}
+	// WINS and --why's level name where a value came from, which is a layer of
+	// settings.Layers — or `profile <name>` when one of the project layer's
+	// profiles decided it, the spelling config.SourceProfile holds and spec
+	// §2.2 says is config show's own. The two nodes share one definition, so a
+	// consumer reads one vocabulary and WINS cannot accept what a level does
+	// not.
+	dec, ok := defs["decider"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs.decider")
+	}
+	branches, ok := dec["anyOf"].([]any)
+	if !ok || len(branches) != 2 {
+		t.Fatalf("$defs.decider: want an anyOf of two branches — the layer names and the profile form — got %v", dec["anyOf"])
+	}
+	first, ok := branches[0].(map[string]any)
+	if !ok {
+		t.Fatalf("$defs.decider: the first branch is %v, not the layer list", branches[0])
+	}
+	if got := stringsOf(t, first, "enum"); !slices.Equal(got, wantLayers) {
+		t.Errorf("$defs.decider: the layer enum is %v, and settings.Layers is %v", got, wantLayers)
+	}
+	second, ok := branches[1].(map[string]any)
+	if !ok {
+		t.Fatalf("$defs.decider: the second branch is %v, not the profile form", branches[1])
+	}
+	pattern, _ := second["pattern"].(string)
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("$defs.decider: the profile pattern %q does not compile: %v", pattern, err)
+	}
+	for _, want := range []string{config.SourceProfile("svc"), config.SourceProfile("node-web-2")} {
+		if !re.MatchString(want) {
+			t.Errorf("$defs.decider: the pattern %q refuses %q, which a profile source is", pattern, want)
+		}
+	}
+	// A bare `profile` is the layer, and the enum's member: the pattern must
+	// not be the thing that admits it, or the list would stop being the pin.
+	if re.MatchString(settings.LayerProfile) {
+		t.Errorf("$defs.decider: the pattern %q matches %q, so a bare layer name comes in through the profile branch", pattern, settings.LayerProfile)
+	}
+	for _, tc := range []struct{ def, path string }{
+		{"row", "row.properties.wins"},
+		{"level", "level.properties.layer"},
+	} {
+		node := nodeOf(t, defs, strings.Split(tc.path, ".")...)
+		if got, _ := node["$ref"].(string); got != "#/$defs/decider" {
+			t.Errorf("$defs.%s: %s is %v, and it is the decider vocabulary", tc.def, tc.path, node)
+		}
+	}
+
+	kd, ok := defs["keyDefaults"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs.keyDefaults")
+	}
+	props, ok := kd["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("$defs.keyDefaults has no properties")
+	}
+	rows := settings.Rows()
+	if len(props) != len(rows) {
+		t.Errorf("$defs.keyDefaults carries %d keys, and the registry has %d rows", len(props), len(rows))
+	}
+	for _, r := range rows {
+		entry, ok := props[r.Key].(map[string]any)
+		if !ok {
+			t.Errorf("%s: no $defs.keyDefaults entry", r.Key)
+			continue
+		}
+		want := r.Default.Value
+		if want == "" {
+			want = r.Default.Unset
+		}
+		if got, _ := entry["default"].(string); got != want {
+			t.Errorf("%s: the schema's default is %q, and the registry says %q", r.Key, got, want)
+		}
+		if got, _ := entry["$comment"].(string); got != r.Default.Const {
+			t.Errorf("%s: the schema's $comment is %q, and the registry's constant is %q", r.Key, got, r.Default.Const)
+		}
+		delete(props, r.Key)
+	}
+	for key := range props {
+		t.Errorf("$defs.keyDefaults carries %s, and the registry has no such row", key)
+	}
+}
+
+// nodeOf is one schema node, walked by property names.
+func nodeOf(t *testing.T, node map[string]any, path ...string) map[string]any {
+	t.Helper()
+	cur := node
+	for _, key := range path {
+		next, ok := cur[key].(map[string]any)
+		if !ok {
+			t.Fatalf("%v: no object at %q", path, key)
+		}
+		cur = next
+	}
+	return cur
+}
+
+// stringsOf is a schema node's string array, walked by property names.
+func stringsOf(t *testing.T, node map[string]any, path ...string) []string {
+	t.Helper()
+	var cur any = node
+	for _, key := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			t.Fatalf("%v: not an object at %q", path, key)
+		}
+		if cur, ok = m[key]; !ok {
+			t.Fatalf("%v: missing %q", path, key)
+		}
+	}
+	raw, ok := cur.([]any)
+	if !ok {
+		t.Fatalf("%v: not an array", path)
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("%v: %v is not a string", path, v)
+		}
+		out = append(out, s)
+	}
+	return out
 }

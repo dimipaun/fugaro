@@ -159,12 +159,6 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
-    RIGOR_ABSENT: 'the dash `runs ls`\'s MODE column draws for a run whose record carries no rigor block (`shared/rigor.ts`), a console constant',
-    word: {
-      within: 'rigorCell',
-      reason:
-        '`rigorModeWord(view.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `textCell` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
-    },
   },
   // The drawers outside `src/renderer/screens`: `src/shared/notice.ts` writes
   // the notice card's text slots, and `src/shared/version.ts` composes the
@@ -209,8 +203,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'barText(release)':
       '`barText` composes "n of m done" from two `formatReading` readings -- the console\'s only formatter, whose unavailable mark is what a release the document gave no counters reads -- and the words around them are this file\'s',
     'barText(box.release)': '`barText`, the same "n of m done" run the chip and the list heading draw, so one rule reads all three',
-    'cutForCard(node.title)':
-      '`cutForCard` answers the model\'s own `Sanitized` title cut to the room a card has, or the console\'s unavailable mark: the value has been through `sanitizeText` in `graph/model.ts`, and the cut is `[...text]` so a surrogate pair is never split',
+    line: {
+      within: 'nodeCard',
+      reason:
+        'one line of `titleLines(node.title)`, the model\'s own `Sanitized` title wrapped to the lines a card has and cut only past them: the value has been through `sanitizeText` in `graph/model.ts`, a refusal is the console\'s `UNAVAILABLE_MARK`, and every cut is `[...text]` so a surrogate pair is never split',
+    },
     '`#${String(node.prNumber)}`':
       'a pull request number the model read as a positive integer (`prNumberAt`), drawn as **text**: design section 5.1 rule 2 and its gap 7 leave the console no URL to build, so the number is the whole of it and its `title` carries `GRAPH_PR_NO_LINK_REASON` -- the treatment `live.ts` and `run.ts` give the same field',
     '`run …${node.run.text}`':
@@ -235,6 +232,18 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'the parameter of the `numberCell` helper itself; every call site passes one of this file\'s own count words (`COORDINATOR_RECORDS_WORD`, `COORDINATOR_IN_FLIGHT_COUNT_WORD`, `COORDINATOR_COLLISIONS_WORD`), so no document string reaches the sink',
     },
+  },
+  // The two drawings console 0.116.1 adds: the panel's reading placeholder and
+  // the Graph's no-checkout card. Neither is handed a document string that
+  // reaches a sink -- the card's one is the CLI's refusal sentence, which
+  // `sanitizeRefusal` has already drawn -- and the entries below say so.
+  'reading.ts': {
+    '`${READING_LEAD} ${READING_WORDS[tab]}…`':
+      'the placeholder\'s one sentence: `READING_LEAD` is this file\'s own word and `READING_WORDS` is this file\'s own table of the navigation\'s five labels, keyed by the closed `ReadingTab` union the entry passes -- the tab is the console\'s own view id and never a value a document or a child process chose (`entry-wiring.test.ts` asserts the table against the labels the navigation itself drew)',
+  },
+  'nocheckout.ts': {
+    'drawn.ok ? drawn.text : REFUSAL_UNREADABLE':
+      'the CLI\'s refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string, **through `sanitizeRefusal`** -- the same text and the same treatment `degraded.ts` gives it (design section 6.3 requires the remedy verbatim, a token a child echoed is still redacted), with `REFUSAL_UNREADABLE` for a sentence the sanitizer refuses, so the disclosure is never empty',
   },
   // The launch control (V2.5.1b) is the one screen that writes a string it was
   // also handed by a document -- the repository identities main recorded -- and
@@ -455,7 +464,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'panel.operation': '`OperationName`, the closed IPC allow-list union',
     'row.scope': '`ProjectCapScope`, a closed union the model assigns (`global`, `defaults`, `repo`)',
     slug: { within: 'capRowLine', reason: '`sanitizedKey(row.slug)`: the slug as `sanitizeText` drew it, null when refused' },
-    theme: { within: 'renderProjects', reason: 'a `ProjectsTheme`, the closed theme tuple' },
+    theme: {
+      within: 'renderProjectsFrame',
+      reason:
+        'a `ProjectsTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderProjects` draws the whole screen by calling it (console 0.117.0)',
+    },
   },
   'degraded.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -496,11 +509,22 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       within: 'chips',
       reason: 'a stream name, which the model holds as a **key**: `graph/model.ts` never spells one, the heading beside it is the `Sanitized` label, and a plan\'s `stream` is the same kind of value',
     },
+    'one.stream': {
+      within: 'band',
+      reason: 'the same stream key the chip group carries, on the band drawn behind that stream\'s row: `graph/model.ts` never spells a stream name, and the label drawn at the band\'s head is the `Sanitized` one',
+    },
     'box.key': { within: 'releaseBox', reason: '`releaseKey(plan, version)`, this file\'s own join of two ids the model holds as keys -- written as `data-release` and never drawn' },
     key: 'the layout key of a card, a row or a chip -- `nodeKey(plan.id, node.id)` or `releaseKey(plan.id, version)`, ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key`/`data-chip` and never drawn; the drawn text is the `Sanitized` title beside it',
     "node.words[0] ?? ''": 'the node\'s first `StateWord`, the model\'s own vocabulary, as the `data-state` hook a rule colours; the empty string is a node the model gave no word, which is a state no colour applies to',
     'door.run': 'the run id this console\'s own run list resolved the node\'s suffix to (`doorFor`), which is what `data-run-id` carries and what the entry opens -- a node whose suffix no run ends with, or one two runs end with, carries no attribute at all',
     'door.because': { within: 'listRow', reason: '`doorFor`\'s own sentence for a gesture that opens nothing, in the `title` an HTML element keeps a tooltip in' },
+    "door.run !== null ? 'button' : 'group'":
+      'a card\'s role as one of two literals: where a run resolved the card is the `button` Enter and Space open, and where none did it is the `group` no key touches -- the same shape as `live.ts`\'s `repo.kill === null ? \'false\' : \'true\'`',
+    'cardLabel(node)': {
+      within: 'nodeCard',
+      reason:
+        '`cardLabel`: a card\'s accessible name -- the same `Sanitized` title the card draws, **whole** rather than cut at three lines, and the `StateWord` list the model answered beside it. It is a name and not a drawing: it is never painted, and what a reader is told is therefore the title the card could not hold',
+    },
     'viewBoxOf(bounds, picture.state.zoom)': {
       within: 'canvas',
       reason: '`viewBoxOf`: four numbers off the picture\'s own bounds and the state\'s zoom, so what the canvas looks at is geometry rather than a style',
@@ -573,7 +597,7 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "scope.known ? scope.source : 'unknown'": "a known scope's word is on the console's `SCOPES` table; an unknown one is drawn as `unknown`",
     'people.view': '`PeopleView`, the closed three words `peopleViewOf` resolves (`all`, `own`, and `unknown` for a word this build does not know)',
     'drawnKey(currency)': 'read back from a cell `putText` wrote, so it is the sanitized text',
-    theme: { within: 'renderSpend', reason: 'a `SpendTheme`, the closed theme tuple' },
+    theme: { within: 'renderSpendFrame', reason: 'a `SpendTheme`, the closed theme tuple' },
     'chartUnits(SPEND_CHART_SIZE - (share / 100) * SPEND_CHART_SIZE)': {
       within: 'gridline',
       reason:
@@ -601,7 +625,18 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   },
   'coordinator.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
-    theme: { within: 'renderCoordinator', reason: 'a `CoordinatorTheme`, the closed theme tuple' },
+    theme: {
+      within: 'renderCoordinatorFrame',
+      reason:
+        'a `CoordinatorTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderCoordinator` draws the whole screen by calling it (console 0.117.0)',
+    },
+  },
+  'reading.ts': {
+    theme: { within: 'renderReading', reason: 'a `SkewTheme`, the closed two-word theme union' },
+  },
+  'nocheckout.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    theme: { within: 'renderNoCheckout', reason: 'a `SkewTheme`, the closed two-word theme union' },
   },
   'launch.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -967,6 +1002,14 @@ const SCREEN_FILES: readonly string[] = Object.freeze(
   walkFiles(SCREENS).sort((a, b) => a.localeCompare(b)),
 )
 
+/** SINK_FLOOR is the fewest sink calls a screen may have, for the one screen
+ * whose drawing is smaller than that: `reading.ts` draws the panel's two
+ * sentences (the placeholder and the line a slow read adds) and calls the sink
+ * twice. Every other screen draws more, so the floor stays where it was -- the
+ * case below is a non-vacuity guard, and lowering it everywhere to fit one
+ * screen would be the weakened guard rather than the honest exception. */
+const SINK_FLOOR: Readonly<Record<string, number>> = Object.freeze({ 'reading.ts': 1 })
+
 /** SHARED_FILES are the modules outside `src/renderer/screens` that may draw --
  * `src/shared/notice.ts` writes the notice card's text slots, and
  * `src/shared/version.ts` composes the version-skew notice for it (Task 3.2).
@@ -1004,14 +1047,16 @@ const SHARED_DRAWER = '../../shared/notice.ts'
 const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the eight screens', () => {
+  it('reads the ten screens', () => {
     expect([...SCREEN_FILES]).toEqual([
       'coordinator.ts',
       'degraded.ts',
       'graph.ts',
       'launch.ts',
       'live.ts',
+      'nocheckout.ts',
       'projects.ts',
+      'reading.ts',
       'run.ts',
       'spend.ts',
     ])
@@ -1082,7 +1127,9 @@ describe('a screen writes only its own vocabulary through literal', () => {
 
   it('finds a sink call in every screen, so an empty scan cannot pass', () => {
     for (const file of SCREEN_FILES) {
-      expect(sinkCalls(readFileSync(join(SCREENS, file), 'utf8')).length, file).toBeGreaterThan(2)
+      expect(sinkCalls(readFileSync(join(SCREENS, file), 'utf8')).length, file).toBeGreaterThan(
+        SINK_FLOOR[file] ?? 2,
+      )
     }
   })
 
@@ -1344,9 +1391,13 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/graph.ts',
       'screens/launch.ts',
       'screens/live.ts',
+      'screens/nocheckout.ts',
       'screens/projects.ts',
+      'screens/reading.ts',
       'screens/run.ts',
       'screens/spend.ts',
+      'section.ts',
+      'skeleton.ts',
       'writes.ts',
     ])
   })

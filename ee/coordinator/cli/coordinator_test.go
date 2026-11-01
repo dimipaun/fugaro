@@ -201,6 +201,17 @@ func setCoordinatorHost(t *testing.T, open func([]string, func(string)) (coordin
 	t.Cleanup(func() { openCoordinatorProvider = prev })
 }
 
+// setCoordinatorGitHubRoot points the coordinator's pinned GitHub API root at
+// one test's hermetic host. The seam is what the command reads instead of the
+// environment (D474), so this is the only way a test reaches a fake server:
+// FUGARO_GITHUB_API_URL changes nothing.
+func setCoordinatorGitHubRoot(t *testing.T, root string) {
+	t.Helper()
+	prev := coordinatorGitHubAPIURL
+	coordinatorGitHubAPIURL = root
+	t.Cleanup(func() { coordinatorGitHubAPIURL = prev })
+}
+
 // setCoordinatorProject is the fixture for a project-wide read: one fake host
 // per repository, opened through the coordinator's own token source, which the
 // opener asks for a token the way a provider's first call does — so the read
@@ -603,6 +614,81 @@ func TestCoordinatorStatusAllReadsEveryRepository(t *testing.T) {
 	}
 }
 
+// The App's credential is the strongest one this command holds — the JWT the
+// mint signs and the installation tokens minted with it — and where it goes is
+// pinned (D474): FUGARO_GITHUB_API_URL is the run's redirect and the
+// coordinator does not read it, so nothing that can set a variable in this
+// process can have the App's key spent at a host of its choosing.
+//
+// The environment here names a server that holds no exchange at all, so a
+// single request to it fails this test; the seam names the fixture the read is
+// meant to reach. The command's own wiring is used — the real opener, mint and
+// revoke — so all three calls that carry the App credential are covered: the
+// mint, the read those tokens authenticate, and the revoke.
+func TestCoordinatorIgnoresGitHubAPIURLEnv(t *testing.T) {
+	envSrv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_no_requests.json"))
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_read_token.json"))
+	realOpen := openCoordinatorProvider
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	t.Setenv(providers.EnvGitHubAPIURL, envSrv.URL)
+	t.Setenv(providers.EnvCredentialsServiceURL, "")
+	setCoordinatorGitHubRoot(t, srv.URL)
+
+	newCoordinatorFixture(t, []coordinatorRunSeed{{
+		id: "20261013-100000-aaaa", pr: 12, prev: "20261012-090000-1111",
+		branch: "fugaro/20261013-100000-aaaa", who: "someone@example.com",
+		status: runstore.StatusSucceeded, prRef: 12, base: "main",
+		files: []string{"internal/cli/exec.go"},
+	}})
+	setCoordinatorHost(t, realOpen)
+
+	out, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--json", "--since", "0")
+	if err != nil {
+		t.Fatalf("the read with a GitHub API root in the environment: %v", err)
+	}
+	if !strings.Contains(out, "Add search") {
+		t.Errorf("the view does not carry the pull request the fixture answered with:\n%s", out)
+	}
+}
+
+// The root is pinned (D474): the seam holds GitHub's own API root and the
+// environment cannot move it, not even where the read is opened, because the
+// provider is opened with the pinned root put in place of whatever
+// FUGARO_GITHUB_API_URL the process carries.
+//
+// This is the half of the claim no hermetic test can watch on the wire — a
+// request to api.github.com is a network call — so it is asserted where the
+// value is decided, beside the test that watches the requests the environment
+// cannot redirect.
+func TestCoordinatorGitHubRootIsPinned(t *testing.T) {
+	if coordinatorGitHubAPIURL != "https://api.github.com" {
+		t.Fatalf("the coordinator's GitHub API root = %q, want %q", coordinatorGitHubAPIURL, "https://api.github.com")
+	}
+
+	env := coordinatorProviderEnv([]string{
+		"PATH=/usr/bin",
+		providers.EnvGitHubAPIURL + "=https://github.example",
+	})
+	roots := 0
+	for _, kv := range env {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k != providers.EnvGitHubAPIURL {
+			continue
+		}
+		roots++
+		if v != coordinatorGitHubAPIURL {
+			t.Errorf("the provider environment's %s = %q, want the pinned %q", k, v, coordinatorGitHubAPIURL)
+		}
+	}
+	if roots != 1 {
+		t.Errorf("the provider environment carries %s %d times, want exactly one: the pinned root", providers.EnvGitHubAPIURL, roots)
+	}
+	if !slices.Contains(env, "PATH=/usr/bin") {
+		t.Errorf("the provider environment is %v, want the rest of it left alone", env)
+	}
+}
+
 // The coordinator's credential is a named read-only set, minted per repository
 // from the App the environment holds (Q3 answered (A), D193(A)): the fixture is
 // a real mint's own exchanges, so what is asserted here is the request the
@@ -611,7 +697,7 @@ func TestCoordinatorStatusMintsAReadOnlyTokenPerRepository(t *testing.T) {
 	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_token.json"))
 	t.Setenv(providers.EnvGitHubAppID, "12345")
 	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
-	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	setCoordinatorGitHubRoot(t, srv.URL)
 
 	f := newCoordinatorFixture(t, append(coordinatorSeeds(),
 		coordinatorRunSeed{id: "20261013-150000-ffff", repo: "acme/other", pr: 21, prev: "20261012-090000-4444",
@@ -661,7 +747,7 @@ func TestCoordinatorStatusReadsWithTheReadOnlyToken(t *testing.T) {
 	realOpen := openCoordinatorProvider
 	t.Setenv(providers.EnvGitHubAppID, "12345")
 	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
-	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	setCoordinatorGitHubRoot(t, srv.URL)
 	// Opened on the App's own credential rather than keyless through the
 	// credentials service: what is under test here is what the coordinator
 	// mints.
@@ -731,7 +817,7 @@ func TestCoordinatorStatusRefusesAMalformedAppKeyAsTheCallers(t *testing.T) {
 	realOpen := openCoordinatorProvider
 	t.Setenv(providers.EnvGitHubAppID, "12345")
 	t.Setenv(providers.EnvGitHubAppKey, "this is not a PEM block")
-	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	setCoordinatorGitHubRoot(t, srv.URL)
 
 	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
 	setCoordinatorHost(t, realOpen)
@@ -775,7 +861,7 @@ func TestCoordinatorStatusRefusesToMintWhenTheServiceHoldsTheKey(t *testing.T) {
 	realOpen := openCoordinatorProvider
 	t.Setenv(providers.EnvGitHubAppID, "12345")
 	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
-	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	setCoordinatorGitHubRoot(t, srv.URL)
 	t.Setenv(providers.EnvCredentialsServiceURL, "https://credentials.example")
 
 	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
@@ -1020,7 +1106,7 @@ func TestCoordinatorStatusNeverPrintsTheAppKey(t *testing.T) {
 	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_mint_refused.json"))
 	t.Setenv(providers.EnvGitHubAppID, "12345")
 	t.Setenv(providers.EnvGitHubAppKey, pem)
-	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	setCoordinatorGitHubRoot(t, srv.URL)
 
 	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
 	// The real coordinatorMint, against a host that refuses: the key is read
@@ -1954,7 +2040,7 @@ func TestCoordinatorSweepRevokesEveryTokenItMinted(t *testing.T) {
 	}})
 	setCoordinatorHost(t, realOpen)
 	coordinatorMint, coordinatorRevoke = realMint, realRevoke
-	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	setCoordinatorGitHubRoot(t, srv.URL)
 	t.Setenv(providers.EnvCredentialsServiceURL, "")
 
 	if _, _, err := execute(t, "coordinator", "sweep"); err != nil {

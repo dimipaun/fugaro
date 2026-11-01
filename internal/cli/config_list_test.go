@@ -547,7 +547,7 @@ func TestConfigListRevalidatesEveryPathAndWritesNothing(t *testing.T) {
 	checkoutsRemember(t, "aurora", valid, "https://github.com/acme/app.git")
 	renamed := checkoutsAt(t, filepath.Join(dir, "src", "other"), checkoutsProjectYAML("aurora"), "https://github.com/acme/other.git")
 	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
-		localcfg.CheckoutIdentity{Provider: "github", Repo: "acme/other-2"}, renamed, time.Now()); err != nil {
+		localcfg.CheckoutIdentity{Provider: "github", Repo: "acme/other-2"}, renamed, time.Now(), checkoutTempRoots()); err != nil {
 		t.Fatal(err)
 	}
 	before, beforeState := treeState(t, dir), configListState(t)
@@ -670,7 +670,7 @@ func TestConfigListValidatesAgainstTheOriginsProvider(t *testing.T) {
 	// here gives: hand-written state, or state an older fugaro wrote.
 	other := checkoutsAt(t, filepath.Join(dir, "src", "other"), saysBitbucket, "https://github.com/acme/other.git")
 	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
-		localcfg.CheckoutIdentity{Provider: "bitbucket", Repo: "acme/other"}, other, time.Now()); err != nil {
+		localcfg.CheckoutIdentity{Provider: "bitbucket", Repo: "acme/other"}, other, time.Now(), checkoutTempRoots()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -907,7 +907,7 @@ func TestConfigListKeepsTheBounds(t *testing.T) {
 		for i := range localcfg.MaxCheckoutPaths + 1 {
 			if err := localcfg.RecordCheckout(os.Getenv, "aurora",
 				localcfg.CheckoutIdentity{Provider: "github", Repo: repo},
-				"/src/"+repo+"/"+string(rune('a'+i)), time.Now().Add(time.Duration(r*10+i)*time.Second)); err != nil {
+				"/src/"+repo+"/"+string(rune('a'+i)), time.Now().Add(time.Duration(r*10+i)*time.Second), checkoutTempRoots()); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -1104,7 +1104,7 @@ func TestConfigListReportsACheckoutTheProjectDoesNotEnroll(t *testing.T) {
 	// Not in aurora's repos: nothing the fixture enrolls.
 	evil := checkoutsAt(t, filepath.Join(dir, "src", "evil"), checkoutsProjectYAML("aurora"), "https://github.com/acme/evil.git")
 	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
-		localcfg.CheckoutIdentity{Provider: "github", Repo: "acme/evil"}, evil, time.Now()); err != nil {
+		localcfg.CheckoutIdentity{Provider: "github", Repo: "acme/evil"}, evil, time.Now(), checkoutTempRoots()); err != nil {
 		t.Fatal(err)
 	}
 	// The control: the same fixture's enrolled repository, same run.

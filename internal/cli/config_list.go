@@ -206,10 +206,14 @@ const (
 	// nothing about it is checked and nothing may be acted on: the identity is
 	// not a provider's owner/name, the path is not absolute (a relative one
 	// would be resolved against *this* command's working directory, which is
-	// not where it was recorded), or printing it changed it — the escaping and
+	// not where it was recorded), printing it changed it — the escaping and
 	// the length bound below are what a row is printed through, and a printed
 	// path that is not the recorded path names a directory that may exist and
-	// is not this one.
+	// is not this one — or the path is under this machine's temporary
+	// directory, where this machine records no checkout and reads none
+	// (localcfg.InTempRootsAsWritten): a scratchpad a coding agent made is a
+	// live checkout, and the row is a working directory the console would
+	// otherwise be offered.
 	checkoutNotRepresentable = "not_representable"
 )
 
@@ -338,8 +342,17 @@ func configListCheckouts(ctx context.Context, known *localcfg.Checkouts, project
 			representable := printed == p.Path &&
 				pluginwire.Printable(id.Key()) == id.Key() &&
 				filepath.IsAbs(p.Path) && validIdentity(id)
+			// A path under this machine's temporary directory is refused the
+			// same way and for the same reason — nothing about it is checked
+			// and nothing may be acted on — and the verdict comes from the
+			// row's own string: no link is followed, no stat and no git runs
+			// for it, so a scratchpad an agent made is refused whether or not
+			// it is still there and whatever it is a checkout of. The writer
+			// records nothing under one (localcfg.RecordCheckout) and drops a
+			// row under one; a row already in the state file predates that,
+			// and this is the read refusing it now.
 			valid, reason := false, checkoutNotRepresentable
-			if representable {
+			if representable && !localcfg.InTempRootsAsWritten(p.Path, checkoutTempRoots()) {
 				valid, reason = validateCheckoutPath(ctx, p.Path, project, id, enrolled)
 			}
 			out = append(out, configListCheckout{

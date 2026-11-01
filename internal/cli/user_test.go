@@ -584,6 +584,47 @@ func TestUserRmSelfRefusalWritesNothing(t *testing.T) {
 	r.noCloudWrites(t)
 }
 
+// setUser rewrites who the rig's local config says the caller is — its `user:`
+// line, which localcfg.Me answers with before it looks at git config user.email
+// — and takes the new file as the state a refusal must leave alone.
+func (r *userRig) setUser(t *testing.T, user string) {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(string(r.configNow(t)), "\n") {
+		if strings.HasPrefix(line, "user: ") {
+			line = "user: " + user
+		}
+		out = append(out, line)
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Join(out, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.before = r.configNow(t)
+}
+
+// TestUserRmSelfMatchIgnoresEmailCase: an address's case is not part of who it
+// is, and the two spellings the guard compares are written by different hands —
+// the config's `user:` (or git config user.email) keeps whatever case its owner
+// typed, while the member read back from the installation's own outputs is
+// lower-cased. So a caller spelled Person-1@Example.test is the operator the
+// list holds as user:person-1@example.test, and removing that member is the
+// self-removal the guard refuses rather than a removal that goes through.
+func TestUserRmSelfMatchIgnoresEmailCase(t *testing.T) {
+	r := userRigFor(t, nil, []string{"user:person-1@example.test", "user:person-2@example.test"})
+	r.setUser(t, "Person-1@Example.test")
+	out, _, err := userCommand(t, "rm", "user:person-1@example.test", "--role", "operator")
+	if err == nil {
+		t.Fatalf("the caller removed themselves from the operators:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "remove yourself") {
+		t.Errorf("the refusal is not the self-removal one: %v", err)
+	}
+	r.unchanged(t)
+}
+
 // dropUser rewrites the rig's local config without its user line, which is the
 // state a caller whose identity cannot be read is in.
 func (r *userRig) dropUser(t *testing.T) {

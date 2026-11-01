@@ -823,14 +823,29 @@ describe('both document shapes decode', () => {
     const fromTheStruct = structTags(WATCH_SOURCE, 'JSONTotal').map((tag) => tag.key)
     expect(fromTheStruct).toEqual([
       'counted_usd', 'spent_usd', 'notional_usd', 'leased_usd', 'daily_cap_usd',
-      'percent', 'burn', 'kill', 'runs', 'run_hours',
+      'percent', 'max_parallel', 'burn', 'kill', 'runs', 'run_hours',
     ])
     expect([...TOTAL_KEYS].sort()).toEqual([...fromTheStruct].sort())
     expect(TOTAL_KEYS.length).toBe(fromTheStruct.length)
     // And the recorded total still carries exactly the struct's keys, so the
     // addition did not come at the cost of the document the fixture holds.
+    //
+    // `max_parallel` is the one key the fixture is *approved to lack*: the
+    // synthetic documents are written by `synthetic.ts` and committed
+    // byte-identical -- `fixture.test.ts` regenerates the file from it and
+    // compares -- so putting the key in them is that module's own change and not
+    // this pin's. It is the same allowance the Go side makes for the recording it
+    // walks (`mayLackOldRecording`, `docs_desktop_console_test.go`): the list is
+    // the struct's, whether or not the document the fixture holds is old enough
+    // to carry every key.
+    const approvedAheadOfTheFixture = ['max_parallel']
     const wireTotal = (first as { total?: Record<string, unknown> }).total ?? {}
-    expect(Object.keys(wireTotal).sort()).toEqual([...fromTheStruct].sort())
+    expect(Object.keys(wireTotal).sort()).toEqual(
+      [...fromTheStruct].filter((key) => !approvedAheadOfTheFixture.includes(key)).sort(),
+    )
+    // ... and a document that does carry it is accepted rather than refused,
+    // drawing nothing: the key is the struct's, and no screen reads it yet.
+    ignoring(first, patched(first, ['total', 'max_parallel'], 4), (raw) => decodeDocument(raw))
   })
 
   it('carries notional as the wire wrote it, and never infers it from auth', () => {
@@ -1625,6 +1640,7 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     repos: [
       {
         repo: 'owner/repo-a',
+        provider: 'github',
         stored: true,
         view: {
           repo: 'owner/repo-a',
@@ -1700,6 +1716,10 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     // the screen has one branch for each and not one branch for both.
     const stored = coordinatorDecoded(STORED_VIEW).repos[0]
     expect(stored?.repo).toBe('owner/repo-a')
+    // The host the repository is on, which is the one thing a pull request's
+    // link can be built from (D814): carried as the CLI's answer and never
+    // read off `pr.url`, which a job wrote.
+    expect(stored?.provider).toBe('github')
     expect(stored?.stored).toBe(true)
     expect(stored?.stale?.since).toBe('2026-10-27T02:00:00Z')
     expect(stored?.view.records[0]?.pr?.number).toBe(7)
@@ -1719,6 +1739,12 @@ describe('the coordinator’s stored project view (T1.2)', () => {
       repos: [{ repo: 'owner/repo-b', stored: false, view: { repo: 'owner/repo-b', records: [], collisions: [] } }],
     }).repos[0]
     expect(noNode?.stored).toBe(false)
+    // `provider` is additive (D814) and the CLI writes the key even when it is
+    // empty, so a document that has none — a CLI older than the field — reads
+    // as the empty provider rather than being refused whole. `''` is what a
+    // screen draws the number as text for, whether the CLI had no provider to
+    // give or predates the key.
+    expect(noNode?.provider).toBe('')
     // The sweep's three `omitempty` keys are absent from a view `status`
     // computes, and absent is the zero and the empty list -- "nothing was
     // dropped" -- never a gap a screen would have to draw as unknown.
@@ -1767,6 +1793,12 @@ describe('the coordinator’s stored project view (T1.2)', () => {
       unknown
     >).records = 'none'
     expect(coordinatorRefusal(wrongType)).toMatchObject({ name: 'not-an-array', field: 'repos[0].view.records' })
+    const providerRetyped = structuredClone(STORED_VIEW) as Record<string, unknown>
+    ;((providerRetyped.repos as Record<string, unknown>[])[0] as Record<string, unknown>).provider = 7
+    expect(coordinatorRefusal(providerRetyped)).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].provider',
+    })
 
     // An object that is not one at all is refused before anything is read from
     // it, and the live feed's document is refused by this door for the key it

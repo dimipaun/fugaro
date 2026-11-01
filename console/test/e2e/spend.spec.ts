@@ -122,6 +122,14 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/notice.js',
   'shared/version.js',
   'renderer/app.js',
+  // The placeholder and the busy mark the screen’s two sections are drawn with
+  // (console 0.116.1): `renderSpendFrame` puts a busy slot in each section, so
+  // the screen requires the helper and the words it is drawn with. The skeleton
+  // is what each of them draws while its read is out (console 0.117.0), so both
+  // require it.
+  'renderer/skeleton.js',
+  'renderer/screens/reading.js',
+  'renderer/section.js',
   'renderer/screens/spend.js',
 ])
 
@@ -1141,5 +1149,137 @@ test.describe('the Spend screen', () => {
     expect(forced.tabular, 'the numbers lost their tabular figures').toContain('tabular-nums')
 
     await page.emulateMedia({ forcedColors: 'none' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Spend view in the dashboard, reading through the stub CLI.
+// ---------------------------------------------------------------------------
+
+/** THE_PANEL is the dashboard's own panel, which is where the view is drawn:
+ * this file mounts a screen of its own into `#spend-mount` above, so a bare
+ * `section.spend` would be ambiguous between the two. */
+const THE_PANEL = 'div.console-panel'
+
+/** THE_SPEND is the dashboard's Spend view, and the scope every reading below
+ * is taken in. */
+const THE_SPEND = `${THE_PANEL} section.spend`
+
+/** THE_REPORT is the view's report section: the one a control change marks, and
+ * the one whose content stays on screen under the mark. */
+const THE_REPORT = `${THE_SPEND} div.spend-report`
+
+/** tab is one button of the dashboard's navigation. */
+function tab(view: string): string {
+  return `nav.console-views button.console-view[data-view="${view}"]`
+}
+
+/** windowButton is one window of the range picker. Its whole text is the
+ * window's own word, so the word is what finds it. */
+function windowButton(word: string): string {
+  return `${THE_SPEND} ol.spend-picker li.spend-item button.spend-window:text-is("${word}")`
+}
+
+/** reportWindow is the document the stub answers one window with: the fixture
+ * above, with the `since` day that window covers. The header draws the
+ * document's own `since` (`span.spend-since`), so the day is what says which
+ * window's answer is on screen -- which is the whole of what the case below
+ * reads. */
+function reportWindow(since: string): JSONDoc {
+  return { ...REPORT, since }
+}
+
+test.describe('the Spend view in the dashboard', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+
+  test.beforeAll(async () => {
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    // The two sections' reads, and the order their answers arrive in: the window
+    // the operator asks for **first** is the slow one (three seconds), so its
+    // answer lands after the answer to the window they ask for last. That is the
+    // case the fix is about -- the view that must stay is the last change's, and
+    // the console's own tests cannot make a real child slow.
+    cli.seedSpend({
+      budget: { document: BUDGET },
+      reports: {
+        '30d': { document: reportWindow('2026-09-16') },
+        '7d': { document: reportWindow('2026-10-09'), delaySeconds: 3 },
+        '90d': { document: reportWindow('2026-07-18'), delaySeconds: 0.5 },
+      },
+    })
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli?.remove()
+  })
+
+  test('answers a control change in the frame it happened in, and keeps the last change’s view', async () => {
+    await page.locator(tab('spend')).click()
+    const since = page.locator(`${THE_SPEND} span.spend-since`)
+    // The view opens on `30d`, which is the console's own default, and the
+    // header draws the day the stub's document for that window covers.
+    await expect(since).toHaveText('2026-09-16')
+
+    // **The click's own frame.** The window is pressed and the section read in
+    // the same turn of the event loop, with nothing awaited in between -- so a
+    // mark that only appeared when the read landed would be missing here, and
+    // the three seconds this window's read takes are not part of the wait.
+    const inTheFrame = await page.evaluate((scope) => {
+      const button = Array.from(document.querySelectorAll(`${scope} ol.spend-picker button.spend-window`)).find(
+        (one) => one.textContent === '7d',
+      )
+      if (button === undefined) return null
+      ;(button as HTMLElement).click()
+      const section = document.querySelector(`${scope} div.spend-report`)
+      const mark = section?.querySelector('.console-busy') ?? null
+      return {
+        busy: section?.getAttribute('aria-busy') ?? null,
+        marked: section?.hasAttribute('data-busy') ?? null,
+        label: mark?.querySelector('.console-busy-label')?.textContent ?? null,
+        // Both halves of the mark are drawn and the stylesheet picks one, so the
+        // ring being here is the drawing and not a claim about the machine's
+        // motion preference (the arm that hides it is `graph-motion.test.ts`'s).
+        spinner: mark !== null && mark.querySelector('.console-busy-spinner') !== null,
+        // The view already drawn stays under the mark: the operator is never
+        // shown a blank panel for a read that is running.
+        since: document.querySelector(`${scope} span.spend-since`)?.textContent ?? null,
+      }
+    }, THE_SPEND)
+    expect(inTheFrame).toEqual({
+      busy: 'true',
+      marked: true,
+      label: 'Reading spend for 7d, by day…',
+      spinner: true,
+      since: '2026-09-16',
+    })
+
+    // The second change, made before the first read has answered. Its view is
+    // the one that has to stay.
+    await page.locator(windowButton('90d')).click()
+    await expect(since).toHaveText('2026-07-18')
+    await expect(page.locator(THE_REPORT)).not.toHaveAttribute('aria-busy', 'true')
+
+    // The read asked for first answers last, and is dropped -- and a dropped
+    // answer draws nothing, so there is no screen to wait on. The wait is on the
+    // stub's own log of the answers it printed, which is the one signal that says
+    // the superseded read exists: the ceiling is on that poll, so a loaded
+    // machine slows this case down rather than letting it pass before the answer
+    // it is about has been produced.
+    await expect.poll(() => cli.answeredReads(), { timeout: 30_000 }).toContain('report 7d')
+    // The answer has been printed by then; this is the hop to the renderer and
+    // not a read, and it is the only fixed wait the case has left.
+    await page.waitForTimeout(1000)
+    await expect(since).toHaveText('2026-07-18')
+    await expect(page.locator(THE_REPORT)).not.toHaveAttribute('aria-busy', 'true')
+    await expect(page.locator(`${THE_REPORT} .console-busy`)).toHaveCount(0)
   })
 })

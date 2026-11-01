@@ -5,8 +5,12 @@
 **Approved; nothing is implemented yet.** The owner approved every task on 2026-10-30, with these
 exceptions: T2.1 and T2.2 stay draft until the processor is named (O4); O1 and O2 are counsel's; T3.2
 (O6), the checks X1 and X2 write (270–273) and every OWNER-RUN part below are the owner's. The owner
-also named L5.2's model: `claude-opus-5-5` as this repository's level-2 reviewer. CLI work ships in
-0.15.0 and console work in console 0.116.0.
+also named L5.2's model: `claude-opus-5-5` as this repository's level-2 reviewer. *(**Superseded
+2026-10-30 (evening):** L5.2's level-2 model is `deepseek/deepseek-v4-pro` through the same
+OpenRouter route as the coder, `agent.auth` stays `api-key`, and no new secret is stored — the
+per-stage OAuth reviewer, mixed-credentials.md §5 Path B, is not built. Shipped in PR "fugaro.yaml:
+deepseek-v4-pro as the level-2 reviewer (O11)".)* CLI work ships in 0.15.0 and console work in
+console 0.116.0.
 
 This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). Where the
 two disagree, the reconciliation wins. The owner answered D720–D737 on 2026-10-30, every one as
@@ -98,7 +102,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L0.1 Answer U1: how Claude Code takes an effort setting
 
 - **Files:** `docs/multi-model.md` (its section on what was measured against Claude Code, beside `MAX_THINKING_TOKENS`).
-- **Interfaces:** produces the closed set of effort values and the per-process mechanism (a flag, an environment variable or a settings key) for the pinned Claude Code version. It is measured with the fake `claude` and the pinned binary's own `--help`, offline. If there is no per-process mechanism, the task says so and L4.3 is dropped (D725 then has nothing to apply).
+- **Interfaces:** produces the closed set of effort values and the per-process mechanism (a flag, an environment variable or a settings key) for the pinned Claude Code version. It is measured with the fake `claude` and the pinned binary's own `--help`, offline. If there is no per-process mechanism, the task says so and L4.3 is dropped (D725 then has nothing to apply). **Done** (#1422, measured locally because this repository's cloud loop pins no Claude model): the mechanism exists, so L4.3 stays.
 - **Tests and command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Depends on:** none.
 - **Red step:** none. It is a measurement recorded in a doc, and L1.1's closed set is built from it.
@@ -107,7 +111,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L1.1 The task's `review_levels` field (D724)
 
 - **Files:** `internal/config/levelsetting.go` (new), `internal/config/levelsetting_test.go` (new), `internal/task/task.go`, `schemas/task.schema.json`, `internal/task/task_test.go`.
-- **Interfaces:** produces `config.LevelSetting{Model, Effort, Off bool, Focus string}` and `config.ReviewLevels{L1, L2, L3 *LevelSetting}`. They live in `internal/config` because `internal/task` already imports `internal/config`, so a resolver in `config` cannot import `task`. `task.Spec.ReviewLevels` reuses the type. `Off` is the YAML/JSON `none`. `Effort` is decoded against a closed set (`config.Efforts`, from L0.1), so an unknown value is refused at decode time. `Focus` is at most 500 bytes, is never put through a shell, and reaches the reviewer only as quoted data (L4.2). Consumed by L3.1 and L4.2. Inert until L3.1.
+- **Interfaces:** produces `config.LevelSetting{Model, Effort, Off bool, Focus string}` and `config.ReviewLevels{L1, L2, L3 *LevelSetting}`. They live in `internal/config` because `internal/task` already imports `internal/config`, so a resolver in `config` cannot import `task`. `task.Spec.ReviewLevels` reuses the type. `Off` is the YAML/JSON `none`. `Effort` is decoded against a closed set, `config.Efforts` = `low`, `medium`, `high`, `xhigh`, `max` (L0.1, [multi-model.md](../multi-model.md) "How the pinned Claude Code takes an effort setting"), so an unknown value is refused at decode time. The refusal has to be Fugaro's: Claude Code never refuses a bad value (its flag warns and sends the default, its variable and settings key drop it silently). `Focus` is at most 500 bytes, is never put through a shell, and reaches the reviewer only as quoted data (L4.2). Consumed by L3.1 and L4.2. Inert until L3.1.
 - **Schema change:** `task.schema.json` gains `review_levels` (closed objects, `additionalProperties: false`).
 - **Tests:** `TestReviewLevelsRoundTrip`, `TestReviewLevelsRefusesUnknownKey`, `TestReviewLevelsFocusBound`, `TestLevelSettingRefusesUnknownEffort`, and `schemas/schemas_test.go`'s existing schema-vs-struct check.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/config ./internal/task ./schemas -run 'ReviewLevels|LevelSetting|Schema' -count=1`.
@@ -161,8 +165,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L2.2 Per-rigor level defaults (D722, R2; folds rigor LV6.1)
 
 - **Files:** `internal/rigor/levels.go` (new), `internal/rigor/rounds.go`, `internal/rigor/levels_test.go` (new).
-- **Interfaces:** produces `rigor.DefaultLevels(mode)` for **L2 and L3 only**: POC {L2: none}; Startup and Pro {L2}; Critical {L2, L3}. L1 keeps following `agent.first_line_review` (`auto` turns it on only when a provider serves the coder and none serves the reviewer, `config.Agent.FirstLineOn`), except at POC, where L2 is `none` and L1 is turned on so a review still runs (D723). This is what keeps `solo`, `lint-fix`, and a coder = reviewer configuration on the catalog `default` recipe, from resolving to L1 = L2 and being refused under D721. A recipe that names `first_line` runs it regardless, so there the refusal stands (O11). Hotfix is not in the spec; the owner ruled on 2026-10-30 (O10) that it takes Pro's levels: L2 on, with L1 as Pro has it. Also produces `rigor.AdversarialCeiling(mode)`, held to `minRoundCeiling` while rigor O3 is open.
-- **Tests:** `TestDefaultLevelsPerMode`, `TestDefaultLevelsLeaveL1ToFirstLineReview`, `TestAdversarialCeilingNeverRaises`.
+- **Interfaces:** produces `rigor.DefaultLevels(mode)` for **L2 and L3 only**: POC {L2: none}; Startup and Pro {L2}; Critical {L2, L3}. L1 keeps following `agent.first_line_review` (`auto` turns it on only when a provider serves the coder and none serves the reviewer, `config.Agent.FirstLineOn`), except at POC, where L2 is `none` and L1 is turned on so a review still runs (D723). This is what keeps `solo`, `lint-fix`, and a coder = reviewer configuration on the catalog `default` recipe, from resolving to L1 = L2 and being refused under D721. A recipe that names `first_line` runs it regardless, so there the refusal stands (O11). Hotfix is not in the spec; the owner ruled on 2026-10-30 (O10) that it takes Pro's levels: L2 on, with L1 as Pro has it. Also produces `rigor.AdversarialCeiling(mode)`, held to `minRoundCeiling` while rigor O3 is open — **superseded by `DefaultRounds`/`AdversarialDefault` (#1483): the table is `roundDefaults`, the numbers are defaults rather than ceilings, and no clamp remains.**
+- **Tests:** `TestDefaultLevelsPerMode`, `TestDefaultLevelsLeaveL1ToFirstLineReview`, `TestAdversarialCeilingNeverRaises` — **this last one is superseded by `DefaultRounds`/`AdversarialDefault` (#1483); it is `TestAdversarialDefaultIsTheModesSeniorRow` now.**
 - **Command:** `GOFLAGS=-p=2 go test ./internal/rigor -count=1`.
 - **Depends on:** none.
 - **Red step:** the package does not compile without `DefaultLevels`, and the test fails.
@@ -174,7 +178,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Interfaces:** consumes L1.1, L1.3, L1.4 and L2.2. Produces `config.ResolveLevels(in LevelInputs) (Levels, []Warning, error)`. `LevelInputs` carries the merged config, the mode, the floor, the task's `*config.ReviewLevels`, the recipe, the providers map (which models a provider claims) and the effective `allowed_models`. Precedence is rigor defaults < project < repository < task, and the floor is applied last. **O7 as ruled (2026-10-30): the rigor mode wins.** An enabled level whose step the recipe lacks is inserted in its fixed place: L1 before `review`, L3 after `review` with `bounce: first_line`, its knobs from `agent.*`. `none` removes a step the recipe has, unless the owner's floor requires it. The same function is the runner's bootstrap check (L4.2), so a task written straight to the bucket meets the same refusals.
   - Refuses L1 = L2 by exact model ID.
   - Warns when L2 equals the coder's model, or when L1 and L2 share a vendor family. It creates `config.ModelFamily`: a Claude ID is `anthropic`, a provider ID is its vendor prefix. A/B D553 reuses it.
-  - Refuses `effort` for a model a provider claims, with the reason.
+  - Refuses `effort` for a model a provider claims, with the reason (D725).
+  - Warns when `effort` is set for a Claude model that ignores it (`claude-haiku-4-5` sends no effort by any mechanism, L0.1).
   - Refuses a level model outside `allowed_models`.
 - **Tests:** `TestResolveLevelsPrecedence`, `TestResolveLevelsFloorRefusesNone`, `TestResolveLevelsRefusesSameModel`, `TestResolveLevelsInsertsMissingStep`, `TestResolveLevelsWarnsCoderAndFamily`, `TestResolveLevelsRefusesProviderEffort`, `TestResolveLevelsRefusesModelOutsideAllowList`, `TestResolveLevelsSoloUnaffected` (`solo`, `lint-fix`, and a coder = reviewer configuration on the catalog `default` recipe, resolve with no refusal at every mode), and `TestResolveLevelsRefusesFirstLineRecipeWithCoderEqualsReviewer`. A recipe carrying `first_line: {}` (`standard`, `test-and-fix`) always runs L1 (`docs/recipes.md` §2), so a coder = reviewer configuration on it **is** refused under D721. That includes this repository's own `fugaro.yaml` launched with `--recipe standard`. See O11.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/config -run 'ResolveLevels' -count=1`.
@@ -206,9 +211,9 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### L4.3 Effort for a Claude stage (D725)
 
-- **Files:** `internal/agent/env.go`, `internal/agent/effort_test.go` (new).
-- **Interfaces:** produces `agent.EffortVars(effort string, provider bool) (map[string]string, error)`. It is empty for a provider stage and for "", and it returns an error for a value outside `config.Efforts`. The variable or flag it sets is the one L0.1 recorded.
-- **Tests:** `TestEffortVarsClaudeOnly`, `TestEffortVarsNeverOnProviderStage`, `TestEffortVarsRefusesUnknown`.
+- **Files:** `internal/agent/env.go`, `internal/agent/effort_test.go` (new), and `internal/agent/settings.go` only if its managed settings could carry `maxEffortLevel`.
+- **Interfaces:** produces `agent.EffortVars(effort string, provider bool) (map[string]string, error)`. It is empty for a provider stage and for "", and it returns an error for a value outside `config.Efforts`. It sets `CLAUDE_CODE_EFFORT_LEVEL` (L0.1: the variable beats the `--effort` flag and the `effortLevel` settings key, and a `maxEffortLevel` in any settings file, the managed one included, clamps all three). So the agent's managed settings file must carry no `maxEffortLevel` below the value set, and the stage's record keeps the value Fugaro set, because Claude Code's stream-json output does not show the level. `claude-haiku-4-5` sends no effort by any mechanism: setting one there is a no-op, and L3.1 warns about it.
+- **Tests:** `TestEffortVarsClaudeOnly`, `TestEffortVarsNeverOnProviderStage`, `TestEffortVarsRefusesUnknown`, `TestEffortVarsSetsTheVariable` (the name is `CLAUDE_CODE_EFFORT_LEVEL`), and `TestManagedSettingsCarryNoEffortCap`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/agent -run 'EffortVars' -count=1`.
 - **Depends on:** L1.1 (`config.Efforts`, fixed by L0.1, so this task changes no schema).
 - **Red step:** an undefined function fails the test.
@@ -265,8 +270,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L5.2 This repository's `fugaro.yaml` gets a different level-2 model (O11)
 
 - **Files:** `fugaro.yaml`, `docs/dogfooding.md` (its statement of this repository's setup).
-- **Interfaces:** `agent.models.reviewer` names a model other than the coder's `deepseek/deepseek-v4.1-flash` (the owner named `claude-opus-5-5` on 2026-10-30, so the senior review runs in the job), so a `standard` launch here no longer resolves to L1 = L2 (D721). The comment above `agent:` and `docs/dogfooding.md`'s statement of this setup change with it.
-- **OWNER-RUN part:** the owner names the model. If it needs a credential this repository's jobs do not mount yet (for example `anthropic-api-key` for a Claude reviewer), the owner stores it with `fugaro secrets set <name>` in their own terminal and runs `fugaro update --repo`. No agent performs either step.
+- **Interfaces:** `agent.models.reviewer` names a model other than the coder's `deepseek/deepseek-v4.1-flash` (the owner's evening ruling of 2026-10-30 named `deepseek/deepseek-v4-pro`, served through the coder's own OpenRouter route, so the senior review runs in the job and no credential this repository does not mount is needed), so a `standard` launch here no longer resolves to L1 = L2 (D721). The comment above `agent:` and `docs/dogfooding.md`'s statement of this setup change with it.
+- **OWNER-RUN part:** none for the model this ruling names — it needs no credential the repository's jobs do not already mount. (Had the model been a Claude one, the owner would have stored `anthropic-api-key` with `fugaro secrets set <name>` in their own terminal and run `fugaro update --repo`; no agent performs either step.)
 - **Tests and command:** `fugaro validate --json` in this checkout (no refusal), then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` (`docs/dogfooding.md` is pinned).
 - **Depends on:** none. It must merge before L3.2.
 - **Red step:** none in this task. L3.2's `TestResolveLevelsRefusesFirstLineRecipeWithCoderEqualsReviewer` is the case this file would hit.

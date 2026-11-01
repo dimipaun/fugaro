@@ -10,6 +10,14 @@
 // not-built, the source lines and the binding scopes are drawn, and there is a
 // golden for each theme.
 //
+// **The screen reads one document and no run list** (console 0.117.0's fix,
+// owner's report of 2026-10-31: this tab "also takes about 20 s with no
+// feedback"). The jobs table is gone from the screen and with it the
+// `runs ls --json` read that fed it, so the corpus here is three documents --
+// `budget show`, `accounts ls` and `secrets ls` -- and the dashboard case at the
+// foot of this file asserts the other half of that: the real window's Projects
+// view drives `budget show` and no `runs` read at all.
+//
 // **Why the screen is drawn through `executeJavaScript` rather than by a script
 // tag or a page.** This task's file list is the screen and its two tests: the
 // entry point (`src/renderer/index.html`, `src/renderer/app.js`) and the place
@@ -23,8 +31,8 @@
 // `spend.spec.ts` use, for the same reasons.
 //
 // **There is no recorded corpus for these documents.** `test/fixtures/` holds
-// the watch feed and nothing else, and neither `budget show --json`, `runs ls
-// --json`, `accounts ls --json` nor `secrets ls --json` is recorded anywhere, so
+// the watch feed and nothing else, and neither `budget show --json`,
+// `accounts ls --json` nor `secrets ls --json` is recorded anywhere, so
 // the documents below are written here in the shapes the contract describes
 // (`console/docs/json-contract.md`), the same corpus `projects.test.ts` builds.
 // `secrets ls --json` is a **bare array** and not an object, which is why it is
@@ -75,14 +83,17 @@
 // `FUGARO_CONSOLE_GOLDENS=skip`, which skips exactly the golden tests and says
 // so in the report; nothing skips them silently.
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
+import type { SpawnLogEntry } from '../../src/main/spawnlog'
 import type { JSONDoc } from '../../src/source/source'
-import { PROJECT_PANEL_KEYS, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
+import { PROJECT_PANEL_KEYS, PROJECTS_BUSY, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { expectGolden, expectGrounded } from '../support/goldens'
@@ -115,19 +126,26 @@ const SPEC = 'projects.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen
  * and the writers in `renderer/app.js`, and the shared modules those writers
- * use. `src/main/ipc.ts` is imported by the screen for a **type** only, which
- * the compiler erases, so nothing of the main process is reachable from here --
- * and the registry below refuses a specifier that is not a relative path, so a
- * bundle that grew an import of `node:` or of a package fails here rather than
- * in a window with no Node in it. */
+ * use. The list follows the compiled `require` calls and nothing else -- the
+ * section helper the screen draws its busy mark through (`renderer/section.js`)
+ * and the reading words and skeleton beside it are here for that reason, while
+ * `shared/launcher.js` and `shared/rigor.js` are gone with the run list that
+ * used them -- `shared/notice.js` stays, because `shared/version.js` reads the
+ * reduced-mode notice it carries. `src/main/ipc.ts` is imported by the screen
+ * for a **type** only, which the compiler erases, so nothing of the main
+ * process is reachable from here -- and the registry below refuses a specifier
+ * that is not a relative path, so a bundle that grew an import of `node:` or of
+ * a package fails here rather than in a window with no Node in it. */
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
-  'shared/launcher.js',
-  'shared/rigor.js',
   'shared/notice.js',
   'shared/version.js',
   'renderer/app.js',
+  'renderer/skeleton.js',
+  'renderer/screens/reading.js',
+  'renderer/section.js',
+  'renderer/writes.js',
   'renderer/screens/projects.js',
 ])
 
@@ -201,15 +219,14 @@ function domFactory() {
 `
 
 /** draw is the expression the window evaluates: load the compiled screen, build
- * the model from the four documents, and mount what it draws. */
-function draw(budget: JSONDoc, runs: JSONDoc, accounts: JSONDoc, secrets: readonly JSONDoc[], theme: string): string {
+ * the model from the three documents, and mount what it draws. */
+function draw(budget: JSONDoc, accounts: JSONDoc, secrets: readonly JSONDoc[], theme: string): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var projects = load('/renderer/screens/projects.js');
 var factory = domFactory();
 var model = projects.buildProjectsModel({
   budget: ${JSON.stringify(budget)},
-  runs: ${JSON.stringify(runs)},
   accounts: ${JSON.stringify(accounts)},
   secrets: ${JSON.stringify(secrets)},
   sentences: {}
@@ -234,17 +251,22 @@ interface Screen {
   readonly titles: readonly string[]
   readonly sources: readonly string[]
   readonly counts: readonly string[]
+  // The panel's state **as a word**: `read`, `not read` or `locked`, drawn
+  // beside the title so no state is carried by a frame's tone alone.
+  readonly stateWords: readonly string[]
   readonly scopes: readonly (string | null)[]
+  // The word each cap comes from, on the repository rows that carry one.
+  readonly capSources: readonly string[]
   readonly kills: readonly string[]
-  readonly notKilled: number
+  readonly killStates: readonly string[]
+  readonly killActions: readonly string[]
+  readonly killedRows: number
+  readonly repoKinds: readonly (string | null)[]
+  readonly repoNotes: readonly string[]
+  // The repository entries the cap document reports: one card, and one entry per
+  // repository it has a cap row for.
   readonly enrolled: readonly string[]
-  readonly seen: readonly string[]
-  readonly onlySeen: readonly string[]
-  readonly onlyEnrolled: readonly string[]
-  readonly jobs: number
-  // The MODE column's cells, in row order: empty when no listed run carries a
-  // rigor block, which is the column's own rule.
-  readonly modes: readonly string[]
+  readonly repoWrites: readonly string[]
   readonly secretNames: readonly string[]
   readonly anchors: number
   readonly hrefs: number
@@ -272,15 +294,20 @@ function screen(page: Page): Promise<Screen> {
       // The count of a panel that read a document: absent entirely on the
       // panels that did not, which is what makes a not-built panel not a zero.
       counts: texts('.projects-count'),
+      stateWords: texts('.projects-state'),
       scopes: attributes('.projects-cap', 'data-scope'),
+      capSources: texts('.projects-cap-source'),
       kills: texts('.projects-kill'),
-      notKilled: all('.projects-kill-none').length,
-      enrolled: texts('.projects-enrolled-repo'),
-      seen: texts('.projects-seen-repo'),
-      onlySeen: texts('.projects-only-seen-repo'),
-      onlyEnrolled: texts('.projects-only-enrolled-repo'),
-      jobs: all('.projects-job').length,
-      modes: texts('.projects-job-mode'),
+      // The switch's state is a word on the row (`live` / `KILLED`), and so is
+      // the action the design puts on it -- drawn refused (`writes.ts`), which
+      // is why these are read as text rather than clicked.
+      killStates: texts('.projects-kill-state'),
+      killActions: texts('.projects-kill-action'),
+      killedRows: all('li.projects-kill-row[data-killed="true"]').length,
+      repoKinds: attributes('.projects-repo-card', 'data-kind'),
+      repoNotes: texts('.projects-repo-card-note'),
+      enrolled: texts('.projects-repo-enrolled'),
+      repoWrites: texts('button.projects-repo-add'),
       secretNames: texts('.projects-secret-name'),
       // A screen may offer no navigation at all, and no destination attribute
       // either: this console draws text, and the main process owns opening.
@@ -349,88 +376,6 @@ const BUDGET: JSONDoc = {
   ],
   running: [],
   warnings: [],
-}
-
-/**
- * RUNS is `runs ls --json`: one job for an enrolled repository, and one for a
- * repository no cap row knows (`unenrolled-repo`) -- the "seen but not
- * enrolled" case the screen exists to show. `BUDGET`'s second cap row
- * (`other-repo`) has no run, so the fixture holds the opposite case too.
- */
-const RUNS: JSONDoc = {
-  project: 'example-project',
-  runs: [
-    {
-      run: '20261015-110030-4a5b',
-      run_id: '4a5b',
-      repo: 'example-owner/example-repo',
-      workflow: 'default',
-      status: 'running',
-      stage: 'verify',
-      branch: 'fugaro/20261015-110030-4a5b',
-      requested_by: 'operator@example.test',
-      pr: 42,
-      pr_url: 'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
-      created: '2026-10-15T11:00:00Z',
-      cost: { model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' },
-    },
-    {
-      run: '20261015-100000-1122',
-      run_id: '1122',
-      repo: 'example-owner/unenrolled-repo',
-      workflow: 'default',
-      status: 'finished',
-      stage: 'done',
-      outcome: 'success',
-      created: '2026-10-15T10:00:00Z',
-      cost: { model_usd: 0.5, compute_usd: 0, compute_estimated: false, total_usd: 0.5, model_basis: 'subscription' },
-    },
-  ],
-  totals: {
-    runs: 2,
-    model_usd: 1.75,
-    model_notional_usd: 0.5,
-    compute_usd: 0.5,
-    total_usd: 2.25,
-    compute_not_estimated: 1,
-  },
-  warnings: [],
-}
-
-/** RUNS_ROWS is `RUNS`'s two rows, so a case can add a key to one of them. */
-const RUNS_ROWS = RUNS['runs'] as readonly JSONDoc[]
-
-/**
- * RUNS_WITH_RIGOR is `RUNS` as a 0.11.0 runner writes it: the first run's record
- * carries the `rigor` block (`runstore.RigorRecord`, docs/rigor-modes D24, D25)
- * -- the mode, the layer that decided it, the areas that matched with the mode
- * each sets and the moment it was applied, the moment of the block and the
- * revision the configuration was read from -- and the second carries none, which
- * is what a run from before the field, or one that died before bootstrap, looks
- * like. The two together are the MODE column's whole rule: one row with a block
- * turns the column on for every row, and the row without one says so.
- *
- * The stamps (`at`, `revision`) are in the block because a real record carries
- * them; the screen draws neither, which is why they are distinctive here.
- */
-const RUNS_WITH_RIGOR: JSONDoc = {
-  ...RUNS,
-  runs: [
-    {
-      ...RUNS_ROWS[0],
-      rigor: {
-        mode: 'critical',
-        from: 'area',
-        areas: [
-          { name: 'payments', mode: 'critical', at: '2026-10-15T11:00:05Z' },
-          { name: 'billing', mode: 'pro', at: '2026-10-15T11:00:05Z' },
-        ],
-        at: '2026-10-15T11:00:05Z',
-        revision: 'origin/main',
-      },
-    },
-    RUNS_ROWS[1],
-  ],
 }
 
 /** ACCOUNTS is `accounts ls --json`, complete: the names are drawn, and the
@@ -510,11 +455,10 @@ test.describe('the Projects screen', () => {
     cli.remove()
   })
 
-  /** mount draws the four documents and fails with the window's own words if
+  /** mount draws the three documents and fails with the window's own words if
    * the bundle could not be loaded or the screen refused to draw. */
   async function mount(
     budget: JSONDoc,
-    runs: JSONDoc,
     accounts: JSONDoc,
     secrets: readonly JSONDoc[],
     theme: string,
@@ -523,35 +467,33 @@ test.describe('the Projects screen', () => {
       const window = BrowserWindow.getAllWindows()[0]
       if (window === undefined) return { error: 'the console has no window' }
       return (await window.webContents.executeJavaScript(source, true)) as { error?: string }
-    }, draw(budget, runs, accounts, secrets, theme))
+    }, draw(budget, accounts, secrets, theme))
     expect(result.error).toBeUndefined()
   }
 
   test('draws one panel per section, each naming its source and its state', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     expect(drawn.theme).toBe('light')
     expect(drawn.panels).toEqual([...PROJECT_PANEL_KEYS])
-    expect(drawn.states).toEqual([
-      'read',
-      'read',
-      'read',
-      'read',
-      'read',
-      'read',
-      'not-built',
-      'not-built',
-    ])
+    expect(drawn.states).toEqual(['read', 'read', 'read', 'read', 'read', 'not-built', 'not-built'])
     // Every panel names the command it read, drawn on the panel itself: a panel
-    // whose source is nowhere is a panel a reader cannot check.
+    // whose source is nowhere is a panel a reader cannot check. There is one
+    // command behind the three panels that read the cap document -- `budget show`
+    // -- and `runs ls` is not among the sources at all, which is the screen's
+    // half of the read that was taken off this tab.
     for (const source of drawn.sources) expect(source.length).toBeGreaterThan(0)
     expect(drawn.sources).toContain('fugaro budget show --json')
-    expect(drawn.sources).toContain('fugaro runs ls --json')
+    expect(drawn.sources).not.toContain('fugaro runs ls --json')
+    // And every panel says its state in words, so the frame's tone is never the
+    // only channel: `read` on the five that read a document, the design's
+    // `locked` on the two cards this CLI cannot read at all.
+    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked'])
   })
 
   test('renders the two sections with no command as not-built, and never as a zero', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
     const text = drawn.text
 
@@ -564,14 +506,14 @@ test.describe('the Projects screen', () => {
     // The two panels say *why* they have nothing, with the design's own phrase
     // for the state: "not readable with this CLI".
     expect(text).toContain('not readable with this CLI')
-    // The six panels that read a document have a count; the two that did not
+    // The five panels that read a document have a count; the two that did not
     // have none. This is the mechanism behind "never as a zero": there is no
     // reading to format, so nothing can render as `0`.
-    expect(drawn.counts.length).toBe(6)
+    expect(drawn.counts.length).toBe(5)
   })
 
   test('names the binding scope of every cap', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     // A cap with no scope is a number a reader cannot act on: whether it is the
@@ -579,106 +521,83 @@ test.describe('the Projects screen', () => {
     // what says where to change it.
     expect(drawn.scopes).toEqual(['global', 'defaults', 'repo', 'repo'])
     expect(drawn.text).toContain('global')
+    // A figure with no word for where it comes from is a number a reader cannot
+    // check: the repository rows carry the cap's source (`repo`, `global` or
+    // `none`), which is the vocabulary `budget show --json` binds them with.
+    expect(drawn.capSources).toEqual(['repo', 'global', 'none', 'none'])
     // A cap the document does not carry is `n/a`, never `$0.00`.
     expect(drawn.text).toContain('n/a')
     expect(drawn.text).toContain('largest single lease')
   })
 
   test('draws the kill state as a fact, including the repositories that are not killed', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
+    // The state is a word on the row and the attribute beside it, so a tone is
+    // never the only thing that carries it.
+    expect(drawn.killStates).toEqual(['live', 'live', 'KILLED'])
+    expect(drawn.killedRows).toBe(1)
     expect(drawn.kills).toHaveLength(1)
     expect(drawn.kills[0]).toContain('KILLED by')
     expect(drawn.kills[0]).toContain('spend rate')
-    // The switches that are off are drawn as "not killed" -- a measured fact --
-    // and not as a missing value, which `n/a` would say.
-    expect(drawn.notKilled).toBe(2)
+    // The switches that are off are drawn with their own word, `live` -- a
+    // measured fact -- and not as a missing value, which `n/a` would say.
+    // Each row carries the action the design puts on it, and the console does
+    // not perform it: `Kill` on a live row, `Revive` on a killed one, drawn
+    // through `disabledWrite` (`writes.ts`) with nothing behind it.
+    expect(drawn.killActions).toEqual(['Kill', 'Kill', 'Revive'])
   })
 
-  test('shows the enrolled and the seen repositories, and names which is which', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+  test('draws the repository set the cap document reports, and claims nothing beyond it', async () => {
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
-    // Enrolled is the cap document's set and seen is the run list's: they
-    // overlap in one repository and differ in one each, so a screen that drew
-    // one list twice would fail here.
+    // **One card, and one entry per cap row.** The panel used to be the crossing
+    // of two sets -- the cap document's repositories and the run list's -- and
+    // each of its three cards needed `runs ls` to say anything. The run list is
+    // not read on this tab at all now, so the panel draws the one set the
+    // document itself reports and makes no claim about which of these
+    // repositories have run: the sentences about the crossing are gone with the
+    // read that could support them.
+    expect(drawn.repoKinds).toEqual(['enrolled'])
     expect(drawn.enrolled).toEqual(['example-owner/example-repo', 'example-owner/other-repo'])
-    expect(drawn.seen).toEqual(['example-owner/example-repo', 'example-owner/unenrolled-repo'])
-    expect(drawn.enrolled).not.toEqual(drawn.seen)
-    // The repository with a run and no cap row is the case worth a line of its
-    // own: it is running with no cap above it. And the cap row with no run yet
-    // is named as that, not as a repository that was seen.
-    expect(drawn.onlySeen).toEqual(['example-owner/unenrolled-repo'])
-    expect(drawn.onlyEnrolled).toEqual(['example-owner/other-repo'])
-    expect(drawn.text).toContain('running with no cap row:')
-    expect(drawn.text).toContain('a cap row and no run yet:')
-    expect(drawn.text).toContain('enrolled (a cap row exists)')
-    expect(drawn.text).toContain('seen (a run has been recorded)')
-  })
-
-  test('shows the project jobs, with the three cost accounts apart', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
-    const drawn = await screen(page)
-
-    expect(drawn.jobs).toBe(2)
-    // A subscription's model dollars are notional, and the job's model, compute
-    // and total are never added into one figure.
-    expect(drawn.text).toContain('~$')
-    expect(drawn.text).toContain('$1.75')
-  })
-
-  test('draws a run\'s rigor mode in the jobs list, and the dash for a run with no block', async () => {
-    // Owner request 2026-10-25: the mode in the run screens. The column is the
-    // conditional one `runs ls` writes for its own MODE cell
-    // (`internal/cli/runs.go`'s `showMode`): with no block anywhere in the list
-    // there is no cell at all, and one block turns it on for every row.
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
-    expect((await screen(page)).modes).toEqual([])
-
-    await mount(BUDGET, RUNS_WITH_RIGOR, ACCOUNTS, SECRETS, 'light')
-    const drawn = await screen(page)
-    expect(drawn.modes).toEqual(['Critical', '-'])
-    // The mode is this build's own word for the record's enum, and the block's
-    // other keys -- the layer, the areas, the moment, the revision -- are not
-    // this column's: it is the mode and nothing else.
-    expect(drawn.text).not.toContain('origin/main')
-    expect(drawn.text).not.toContain('2026-10-15T11:00:05Z')
+    expect(drawn.text).toContain('enrolled')
+    expect(drawn.text).not.toContain('seen, not enrolled')
+    expect(drawn.text).not.toContain('Running with no cap row.')
+    // Nothing on the card is a write either: the "Add cap" action belonged to
+    // the seen-not-enrolled case, which no longer exists here.
+    expect(drawn.repoNotes).toEqual([])
+    expect(drawn.repoWrites).toEqual([])
   })
 
   test('draws the secrets inventory as names, labels and version counts, and no value', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     expect(drawn.secretNames).toEqual(['fugaro-github-token', 'fugaro-slack-webhook'])
     expect(drawn.text).toContain('managed_by')
+    // The panel says the one thing it can vouch for -- every entry in this
+    // document is fugaro's -- in a sentence of its own.
+    expect(drawn.text).toContain('All managed by fugaro.')
     // The document's own shape is drawn on the panel: an operator who sees an
     // empty inventory should know why the console reads it.
     expect(drawn.text).toContain('bare JSON array')
   })
 
   test('draws an incomplete accounts document as unavailable rather than as an empty list', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS_INCOMPLETE, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS_INCOMPLETE, SECRETS, 'light')
     const drawn = await screen(page)
 
-    expect(drawn.states).toEqual([
-      'read',
-      'read',
-      'read',
-      'read',
-      'unavailable',
-      'read',
-      'not-built',
-      'not-built',
-    ])
+    expect(drawn.states).toEqual(['read', 'read', 'read', 'unavailable', 'read', 'not-built', 'not-built'])
     expect(drawn.text).toContain('the project could not be selected')
     // An incomplete inventory has no count: `0 accounts` would be a false
     // statement about the project, not a missing one.
-    expect(drawn.counts.length).toBe(5)
+    expect(drawn.counts.length).toBe(4)
   })
 
   test('offers no link, and nothing to click', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     expect(drawn.anchors).toBe(0)
@@ -695,7 +614,7 @@ test.describe('the Projects screen', () => {
     // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
     // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
     // rather than recorded as a fresh baseline nobody compared.
-    await expectGrounded(page, (theme) => mount(BUDGET, RUNS, ACCOUNTS, SECRETS, theme), {
+    await expectGrounded(page, (theme) => mount(BUDGET, ACCOUNTS, SECRETS, theme), {
       themes: PROJECTS_THEMES,
       mount: THE_MOUNT,
       text: 'h1.projects-project',
@@ -705,12 +624,12 @@ test.describe('the Projects screen', () => {
 
   test('draws the projects screen', async ({}, testInfo) => {
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
   })
 
   test('draws the projects screen in the dark theme', async ({}, testInfo) => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'dark')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
@@ -749,7 +668,7 @@ test.describe('the Projects screen', () => {
     // fewest colours: every panel carries `data-state`, the two with no command say
     // "not readable with this CLI" in a sentence, and neither may become a colour the
     // system takes away. The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     await page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
     expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true)
 
@@ -757,11 +676,17 @@ test.describe('the Projects screen', () => {
       const scope: ParentNode = document.getElementById('projects-mount') ?? document.createDocumentFragment()
       const all = (selector: string): HTMLElement[] =>
         Array.from(scope.querySelectorAll<HTMLElement>(selector))
-      const row = scope.querySelector('li.projects-job') ?? scope.querySelector('li.projects-cap')
+      // The caps table is the only table this screen draws now: the jobs table
+      // and its `tr.projects-job` rows went with the run list.
+      const row = scope.querySelector('tr.projects-cap')
       const computed = row === null ? null : getComputedStyle(row)
       const number = scope.querySelector('.projects-number')
       return {
         states: all('.projects-panel').map((panel) => panel.getAttribute('data-state')),
+        // The state words the panels draw beside their titles: the tone a panel
+        // is painted in is not what says which state it is.
+        words: all('.projects-state').map((one) => one.textContent ?? ''),
+        killWords: all('.projects-kill-state').map((one) => one.textContent ?? ''),
         because: all('.projects-because').map((one) => one.textContent ?? ''),
         rowVisibility: computed?.visibility ?? null,
         rowWidth: computed?.borderBottomWidth ?? null,
@@ -773,6 +698,9 @@ test.describe('the Projects screen', () => {
     // The state is in the DOM twice over: as the attribute a reader's tools read, and
     // as the sentence a reader reads.
     expect(forced.states).toContain('not-built')
+    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked'])
+    // The switches' state words survive too, `KILLED` among them.
+    expect(forced.killWords).toEqual(['live', 'live', 'KILLED'])
     expect(forced.because.join(' '), 'a panel with no document lost its reason').toContain(
       'not readable with this CLI',
     )
@@ -782,5 +710,152 @@ test.describe('the Projects screen', () => {
     expect(forced.tabular, 'the numbers lost their tabular figures').toContain('tabular-nums')
 
     await page.emulateMedia({ forcedColors: 'none' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Projects view in the dashboard, reading through the stub CLI.
+// ---------------------------------------------------------------------------
+
+/** THE_PANEL is the dashboard's own panel, which is where the view is drawn:
+ * this file mounts a screen of its own into `#projects-mount` above, so a bare
+ * `section.projects` would be ambiguous between the two. */
+const THE_PANEL = 'div.console-panel'
+
+/** THE_PROJECTS is the dashboard's Projects view, and the scope every reading
+ * below is taken in. */
+const THE_PROJECTS = `${THE_PANEL} section.projects`
+
+/** THE_BODY is the section the read belongs to: the element the busy mark is
+ * put on, and the one the screen is filled into when the answer lands. */
+const THE_BODY = `${THE_PROJECTS} div.projects-body`
+
+/** tab is one button of the dashboard's navigation. */
+function tab(view: string): string {
+  return `nav.console-views button.console-view[data-view="${view}"]`
+}
+
+test.describe('the Projects view in the dashboard', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+  let scratch: string
+  let spawnLog: string
+
+  test.beforeAll(async () => {
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    // The one document this view reads, handed to the stub the way the Spend
+    // specs hand it their own: the stub answers `budget show --json` with
+    // `spend-budget.json`, and refuses the read when no document is seeded.
+    cli.seedSpend({ budget: { document: BUDGET } })
+    // The spawn log is the operator's own opt-in (`SPAWN_LOG_ENV`) and the only
+    // place a read that should not have happened is visible from outside: the
+    // case below reads it to say which commands this view drove.
+    scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-projects-'))
+    spawnLog = join(scratch, 'spawn.jsonl')
+    app = await launchConsole({
+      args: cli.launchArgs(consoleDir),
+      env: { ...cli.env, [SPAWN_LOG_ENV]: spawnLog },
+    })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+    rmSync(scratch, { recursive: true, force: true })
+  })
+
+  /** reads is the spawn log as records: one line per child the console ran,
+   * written by `src/main/spawn.ts` before the child prints anything. */
+  function reads(): readonly SpawnLogEntry[] {
+    let text: string
+    try {
+      text = readFileSync(spawnLog, 'utf8')
+    } catch {
+      return []
+    }
+    return text
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as SpawnLogEntry)
+  }
+
+  test('answers the tab in the frame it was opened in, and reads one command', async () => {
+    // Live, the view this console opens on, makes one `runs ls --json` of its own
+    // -- the rigor join -- and that read is not this case's subject. Waiting for
+    // it to land is what makes the count below a count of *this view's* reads: a
+    // console that asked for a run list when Projects was opened would add a
+    // second record here, and one that asked as the tab was opened would be
+    // seen whatever the boot had done.
+    await expect
+      .poll(() => reads().filter((record) => record.argv[1] === 'runs').length, {
+        message: 'the Live view never made its rigor join',
+      })
+      .toBeGreaterThan(0)
+    const before = reads().length
+
+    // **The click's own frame.** The tab is pressed and the section drawn in the
+    // same turn of the event loop, with nothing awaited in between: the mark,
+    // the shape it holds and the absence of the header are all read from the
+    // frame the click happened in, before any answer can have arrived.
+    const inTheFrame = await page.evaluate(
+      ({ button: selector, body: bodySelector }) => {
+        const pressed = document.querySelector<HTMLElement>(selector)
+        pressed?.click()
+        const body = document.querySelector(bodySelector)
+        const section = document.querySelector('div.console-panel section.projects')
+        return {
+          mounted: section !== null,
+          busy: body?.getAttribute('aria-busy') ?? null,
+          marked: body?.hasAttribute('data-busy') ?? null,
+          label: body?.querySelector('.console-busy-label')?.textContent ?? null,
+          // Both halves of the mark are drawn and the stylesheet picks one, so
+          // the ring being here is the drawing rather than a claim about the
+          // machine's motion preference.
+          spinner: body?.querySelector('.console-busy-spinner') !== null,
+          // The shape of what is coming, because this section has never been
+          // filled: the read is the whole screen here.
+          skeleton: body?.querySelector('.console-skeleton') !== null,
+          // And nothing of the document: the header names the project, which is
+          // the read's own, so a header before the answer would be a screen
+          // naming something the console has not read.
+          header: section?.querySelector('h1.projects-project') !== null,
+          jobs: section?.querySelectorAll('.projects-job').length ?? -1,
+        }
+      },
+      { button: tab('projects'), body: THE_BODY },
+    )
+    expect(inTheFrame).toEqual({
+      mounted: true,
+      busy: 'true',
+      marked: true,
+      label: PROJECTS_BUSY,
+      spinner: true,
+      skeleton: true,
+      header: false,
+      jobs: 0,
+    })
+
+    // Then the content, drawn from the document the stub answered with.
+    await expect(page.locator(`${THE_PROJECTS} h1.projects-project`)).toHaveText('example-project')
+    await expect(page.locator(`${THE_PROJECTS} tr.projects-cap`).first()).toBeVisible()
+    await expect(page.locator(THE_BODY)).not.toHaveAttribute('aria-busy', 'true')
+    // The jobs table is not there to be drawn: this screen has no run list and
+    // no panel built from one, which is the owner's report of 2026-10-31
+    // answered on the tab itself.
+    await expect(page.locator(`${THE_PROJECTS} .projects-job`)).toHaveCount(0)
+
+    // And the reads behind that drawing: `budget show`, the one command the
+    // panels name, and **no `runs` read at all** since this view was opened.
+    const asked = reads()
+      .slice(before)
+      .map((record) => record.argv.slice(1))
+    expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
+    expect(asked.filter((argv) => argv[0] === 'runs')).toEqual([])
   })
 })

@@ -523,7 +523,9 @@ func TestDoctorFugaroYAML(t *testing.T) {
 
 // TestDoctorNeverPrintsSecretValues: doctor lists a repository's secrets by
 // name (design: "secrets by name from secrets ls"), and the value never
-// reaches stdout, stderr or --json, in either outcome.
+// reaches stdout, stderr or --json, in either outcome. The list is context and
+// not work, so it prints under --all: the default view is the verdict and what
+// to do, and a clean installation is one line.
 func TestDoctorNeverPrintsSecretValues(t *testing.T) {
 	r := newDoctorRig(t)
 	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
@@ -531,7 +533,7 @@ func TestDoctorNeverPrintsSecretValues(t *testing.T) {
 	const value = "super-secret-token-value-ABC123"
 	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token", []byte(value))
 
-	out, errOut, err := execute(t, "doctor")
+	out, errOut, err := execute(t, "doctor", "--all")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
@@ -1835,7 +1837,7 @@ func TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack(t *testing.T) {
 // project-eligible name and a repository-only one to show.
 func secretScopeRig(t *testing.T) *doctorRig {
 	t.Helper()
-	r := secretScopeCheckout(t)
+	r, _ := secretScopeCheckout(t)
 	addLocalLines(t, r, projectSecretsConfig)
 	return r
 }
@@ -1848,22 +1850,23 @@ func secretScopeRig(t *testing.T) *doctorRig {
 // checks have to answer for that case too, not only for an owner's entry.
 func secretScopeSweepRig(t *testing.T) *doctorRig {
 	t.Helper()
-	r := secretScopeCheckout(t)
+	r, _ := secretScopeCheckout(t)
 	addLocalLines(t, r, "repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n")
 	return r
 }
 
 // secretScopeCheckout is the checkout both rigs above share: github.com/acme/app,
 // one workflow mounting a secret of its own, and the local config's repos block
-// left to the caller.
-func secretScopeCheckout(t *testing.T) *doctorRig {
+// left to the caller. The checkout's own directory is returned beside the rig,
+// for a caller that has to write into it.
+func secretScopeCheckout(t *testing.T) (*doctorRig, string) {
 	t.Helper()
 	r := newDoctorRig(t)
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: db-password, env: DB_PASSWORD }] }\n"
 	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
-	return r
+	return r, dir
 }
 
 // TestDoctorSecretScopeCheck: doctor lists each name this checkout's jobs
@@ -2346,6 +2349,12 @@ func TestDoctorProjectSecretExtraAccessorsReadsNoValue(t *testing.T) {
 // than warning past it — so doctor says so before the project's name is
 // typed. It is a warning, not a failure: a repository that only copies
 // history never needs it.
+//
+// The message names the ordinary update as well (0.15.0), because that is the
+// path an owner meets this on without naming any flag: an installation that
+// opted in re-pins the credentials service's image at the release's signed
+// digest, through this same binary, on every upgrade after the release it
+// opted in under.
 func TestDoctorChecksTheCosignVerifier(t *testing.T) {
 	old := basepin.CosignBin
 	t.Cleanup(func() { basepin.CosignBin = old })
@@ -2383,6 +2392,9 @@ func TestDoctorChecksTheCosignVerifier(t *testing.T) {
 	c := check(t, run(t))
 	if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "cosign is not on PATH") || !strings.Contains(c.Fix, "install cosign") {
 		t.Errorf("with no cosign: %+v", c)
+	}
+	if want := "an ordinary fugaro update of an installation that opted in with --provision-credentials"; !strings.Contains(c.Problem, want) {
+		t.Errorf("the message does not say %q: an installation that opted in resolves the release's credentials image through this same binary on an upgrade that names no flag, so a message that stops at --base sends the owner into a failing fugaro update from a machine doctor called clean: %+v", want, c)
 	}
 }
 

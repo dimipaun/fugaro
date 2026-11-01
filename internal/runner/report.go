@@ -57,16 +57,13 @@ func Report(rec *runstore.Record, location string, tail *LogTail) string {
 
 // FollowUpReport is Report with a follow-up's section, when fu is non-nil.
 func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection) string {
-	return followUpReport(rec, location, tail, fu, nil, "")
+	return followUpReport(rec, location, tail, fu, nil)
 }
 
 // followUpReport is FollowUpReport with notes about the pull request itself
 // (reviewers that could not be requested, a host without drafts), each
-// shown as a line after the outcome. filedFrom is the commit the run's
-// backlog write was committed on top of, "" when it wrote nothing: the
-// suite ran there, and the write commit rec.HeadSHA names only writes items —
-// it files them, and a follow-up's closes the ones it fixed (D31).
-func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string, filedFrom string) string {
+// shown as a line after the outcome.
+func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
@@ -119,7 +116,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	// T4.2, D9, F19).
 	b.WriteString(rigorLine(rec.Rigor))
 	b.WriteString(toleratedSection(rec))
-	b.WriteString(testsLine(rec, filedFrom))
+	b.WriteString(testsLine(rec))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
 	} else {
@@ -300,16 +297,12 @@ func toleratedCell(title string) string {
 	return tableCode(strings.Join(strings.Fields(title), " "))
 }
 
-// testsLine is the report's account of the suite on the final commit. A run
-// that filed backlog items committed them after the suite's last run and did
-// not run it again (finalize), so for that run the line names the commit the
-// suite ran on and says the final one adds only items, rather than claiming
-// no test ran.
-func testsLine(rec *runstore.Record, filedFrom string) string {
-	last, filed := latestVerifiedTest(rec.Verify, rec.HeadSHA), false
-	if last == nil && filedFrom != "" && filedFrom != rec.HeadSHA {
-		last, filed = latestVerifiedTest(rec.Verify, filedFrom), true
-	}
+// testsLine is the report's account of the suite on the final commit: the run
+// writes nothing after the commit it tested (finalize), so the only way the
+// final commit is not the tested one is the leftover work finalize committed,
+// and that is a draft whose reason says so rather than a line here.
+func testsLine(rec *runstore.Record) string {
+	last := latestVerifiedTest(rec.Verify, rec.HeadSHA)
 	if last == nil {
 		return "**Tests:** no recorded test run on the final commit\n\n"
 	}
@@ -326,9 +319,6 @@ func testsLine(rec *runstore.Record, filedFrom string) string {
 		s += ", flaky: " + strings.Join(last.Flaky, ", ")
 	}
 	s += ")"
-	if filed {
-		s += fmt.Sprintf("; the final commit %s only writes backlog items", shortSHA(rec.HeadSHA))
-	}
 	return s + "\n\n"
 }
 

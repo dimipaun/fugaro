@@ -935,12 +935,38 @@ func (t *coordinatorTokens) revoke(ctx context.Context) {
 	}
 }
 
+// coordinatorGitHubAPIURL is the one GitHub API root every call this command
+// makes with the App's credential goes to: the JWT the mint signs, the
+// installation tokens minted with it, the read those authenticate and the
+// revoke that takes them back. It is pinned, not read from the environment
+// (D474): FUGARO_GITHUB_API_URL is the run's own redirect, and a variable
+// anything that launches this job can set must not decide where the App's key
+// is spent — a root of a launcher's choosing would receive the App credential
+// itself. Tests point it at a hermetic host; production code has no way to
+// change it.
+var coordinatorGitHubAPIURL = github.DefaultBaseURL
+
+// coordinatorProviderEnv is the environment a provider is opened with: the one
+// this command was handed, with the GitHub API root replaced by the pinned one,
+// so the redirect the process may carry for the run's own sake cannot decide
+// where the App credential's calls go (coordinatorGitHubAPIURL).
+func coordinatorProviderEnv(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, providers.EnvGitHubAPIURL+"=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, providers.EnvGitHubAPIURL+"="+coordinatorGitHubAPIURL)
+}
+
 // coordinatorRevoke revokes one installation token this command minted. It is a
 // package variable so that a test can watch it — or refuse it — without a
-// network, and its own call reads the API root from the same environment
-// variable the mint does, so the two cannot be pointed at different hosts.
+// network, and its own call reads the same pinned API root the mint does, so
+// the two cannot be pointed at different hosts.
 var coordinatorRevoke = func(ctx context.Context, token string) error {
-	return github.RevokeInstallationToken(ctx, os.Getenv(providers.EnvGitHubAPIURL), token, nil)
+	return github.RevokeInstallationToken(ctx, coordinatorGitHubAPIURL, token, nil)
 }
 
 // coordinatorAppCredential is the App credential the coordinator's mint needs:
@@ -1011,7 +1037,7 @@ func coordinatorAppCredential() (appID string, key *rsa.PrivateKey, pemData stri
 // returns before opening when the runs name no pull request, so a project with
 // nothing in it is still read with no App credential anywhere.
 var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator.ProviderOpener, error) {
-	_, open, err := fcli.OpenProvider(env, warn)
+	_, open, err := fcli.OpenProvider(coordinatorProviderEnv(env), warn)
 	if err != nil {
 		return nil, err
 	}
@@ -1077,7 +1103,7 @@ var coordinatorMint = func(ctx context.Context, repo string) (string, time.Time,
 		Repo:       name,
 		AppID:      appID,
 		PrivateKey: key,
-		BaseURL:    os.Getenv(providers.EnvGitHubAPIURL),
+		BaseURL:    coordinatorGitHubAPIURL,
 	}, github.CoordinatorTokenPermissions())
 	if err != nil {
 		return "", time.Time{}, fcli.RemoteErr(errors.New(agent.Redact(err.Error(), []string{pemData})))

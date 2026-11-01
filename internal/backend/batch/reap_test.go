@@ -292,6 +292,13 @@ func TestReaperDefaultsComeFromTheRunCeiling(t *testing.T) {
 	if got := rt.r.QueueDeadline(); got != queueDeadline {
 		t.Fatalf("QueueDeadline = %v, want %v", got, queueDeadline)
 	}
+	// The facts pass that lists runs by their mint time has to reach back over
+	// this same wait, and it has no platform read to ask for it: its Batch
+	// margin is this deadline's floor (backend.MintSkewMargin), and a run still
+	// in the queue when its day is written is the one a shorter margin drops.
+	if got := backend.MintSkewMargin(backend.CloudBatch); got != queueDeadline {
+		t.Fatalf("backend.MintSkewMargin(CloudBatch) = %v, want the queue deadline %v", got, queueDeadline)
+	}
 	runBudget := queueDeadline + ReapMargin
 	if got := rt.r.RunBudget(); got != runBudget {
 		t.Fatalf("RunBudget = %v, want %v", got, runBudget)

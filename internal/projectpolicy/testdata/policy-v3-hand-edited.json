@@ -1,0 +1,62 @@
+{
+  "version": 3,
+  "budget": {
+    "mode": "enforce",
+    "per_run_usd": 5
+  },
+  "base_branch": "main",
+  "allow_repos": [
+    "github/owner/repo-a",
+    "github/owner/repo-b"
+  ],
+  "providers": {
+    "openrouter": {
+      "kind": "anthropic-compat",
+      "base_url": "https://openrouter.ai/api/v1",
+      "auth": "bearer",
+      "secret": "openrouter-key",
+      "models": [
+        "anthropic/claude-sonnet-5.5"
+      ],
+      "allow_data_to": [
+        "*"
+      ]
+    }
+  },
+  "routing": {
+    "claude": {
+      "via": "auto",
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    }
+  },
+  "accounts": {
+    "ops": {
+      "allow_repos": [
+        "github/owner/repo-a"
+      ]
+    }
+  },
+  "profiles": {
+    "standard": {
+      "provider": "github",
+      "cpu": 2,
+      "memory": "4Gi",
+      "timeout_class": "6h",
+      "claude_accounts": [
+        "ops"
+      ],
+      "allow_repos": [
+        "github/owner/repo-a"
+      ]
+    }
+  },
+  "clone_urls": {
+    "github%2Fowner%2Frepo-a": "https://github.com/owner/repo-a.git"
+  },
+  "future_release_block": {
+    "kept": "byte for byte, the way the owner's node held it",
+    "escaped": "a & b <c>"
+  }
+}

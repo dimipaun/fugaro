@@ -37,7 +37,7 @@ func TestAgentEnvHasNoProviderKey(t *testing.T) {
 	if !slices.Contains(h.deps.Env, orProvider.SecretEnv()+"="+providerKey) {
 		t.Fatal("the key is not in the runner's environment, so the test proves nothing")
 	}
-	if _, err := h.run(t, implement("feature"), review("revise", 1), idle, review("ship", 0)); err != nil {
+	if _, err := h.run(t, implement("feature"), review("changes", 1), idle, review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.agent.calls) == 0 {

@@ -128,14 +128,20 @@ func Validate(c *Config) []Problem {
 	if !KnownAgentAuth(c.Agent.Auth) {
 		add("agent.auth", "must be one of %s", strings.Join(AgentAuths, ", "))
 	}
-	if c.Agent.ReviewRounds < 1 || c.Agent.ReviewRounds > 10 {
-		add("agent.review_rounds", "must be between 1 and 10")
+	// 0 is unset, and an unset knob takes the rigor mode's own default
+	// (internal/rigor's DefaultRounds): the value is resolved where the mode
+	// is, which this package does not read. Unset is not "fall through to the
+	// layer below": a layer's scalars replace whole (resolve.go), so a
+	// repository's written 0 replaces the project layer's number, and the
+	// mode's row is what supplies the gap.
+	if c.Agent.ReviewRounds < 0 || c.Agent.ReviewRounds > 10 {
+		add("agent.review_rounds", "must be between 1 and 10, or 0 (unset: the mode's default supplies it)")
 	}
 	if !slices.Contains([]string{FirstLineAuto, FirstLineOn, FirstLineOff}, c.Agent.FirstLineReview) {
 		add("agent.first_line_review", "must be one of auto, on, off")
 	}
-	if c.Agent.FirstLineRounds < 1 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
-		add("agent.first_line_rounds", "must be between 1 and %d", MaxFirstLineRounds)
+	if c.Agent.FirstLineRounds < 0 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
+		add("agent.first_line_rounds", "must be between 1 and %d, or 0 (unset: the mode's default supplies it)", MaxFirstLineRounds)
 	}
 	if c.Agent.Recipe != "" && !recipe.NameRE.MatchString(c.Agent.Recipe) {
 		add("agent.recipe", "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
@@ -404,6 +410,15 @@ func validateRebuild(p string, r Rebuild) []Problem {
 // write is the value the resolver can use, so a mode outside the vocabulary
 // or a glob no matcher can read is refused where it is written rather than
 // silently never firing at resolution time.
+//
+// Two rules of one list may not carry the same glob (F14). They would match
+// exactly the same paths, and only the strictest matched rule decides (D20c),
+// so the second one is named in the run's record for nothing the first does
+// not already cover — a layer saying the same thing twice is a mistake its
+// writer cannot see. The rule is per layer: the two area lists are a union
+// rather than a replacement (D20c), and a repository's rule for the project
+// layer's glob is a rule of its own, which this function never sees because
+// each layer is validated on its own.
 func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 	var ps []Problem
 	if mode != "" && !rigor.Known(mode) {
@@ -412,10 +427,20 @@ func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 	if len(areas) > rigor.MaxAreas {
 		ps = append(ps, Problem{Path: p + ".areas", Message: fmt.Sprintf("must hold at most %d rules", rigor.MaxAreas)})
 	}
+	// A rule already refused for its own shape is not also called a repeat:
+	// it can never reach the resolver for the glob to matter, and the first
+	// reason is the one its writer has to fix.
+	seen := make(map[string]int, len(areas))
 	for i, a := range areas {
 		if msg := a.Validate(); msg != "" {
 			ps = append(ps, Problem{Path: fmt.Sprintf("%s.areas[%d]", p, i), Message: msg})
+			continue
 		}
+		if j, dup := seen[a.Match]; dup {
+			ps = append(ps, Problem{Path: fmt.Sprintf("%s.areas[%d]", p, i), Message: fmt.Sprintf("repeats the glob %q of areas[%d]: two rules that match the same paths leave only the strictest of them deciding, and the other is named for nothing", a.Match, j)})
+			continue
+		}
+		seen[a.Match] = i
 	}
 	return ps
 }

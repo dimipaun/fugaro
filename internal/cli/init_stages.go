@@ -52,6 +52,7 @@ type initEngine struct {
 	previewed []initflow.StageResult
 	images    *imagesStage
 	repo      *repositoryStage
+	policy    *policyMigrateStage
 
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
@@ -156,9 +157,14 @@ func (e *initEngine) options() initflow.Options {
 // project it never creates) and minus the Batch backend's (the stage is
 // behind --provision-batch, which update refuses). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
-// secrets, plugin and the repository of the checkout it is run in (W5.1).
-// There is no services stage in either list: initflow.Services is a slot in
-// the canonical order nothing registers.
+// secrets, plugin, the repository of the checkout it is run in (W5.1), the
+// deployed security rules generation, the published policy node itself
+// (migrated and published from the local config) and the checkout's own
+// steps: fugaro
+// upgrade's pin, plugin and cloud steps for that checkout
+// (init_checkout_upgrade.go, the owner's rule of 2026-10-30). There is no
+// services stage in either
+// list: initflow.Services is a slot in the canonical order nothing registers.
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
@@ -170,7 +176,31 @@ func initStages(e *initEngine) []initflow.Stage {
 	if e.r.o.provisionCredentials {
 		stages = append(stages, newCredentialsStage(e))
 	}
+	// The policy stage last: it writes the node every run of the project is
+	// admitted by — migrated in place when it is an older node, built from the
+	// local config when it does not carry what the config states — and the
+	// stages before it are what those runs are launched against (see the
+	// stage's own file for why it is a migration and never a delete and a
+	// republish).
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
+	// The rules stage before the policy stage: the deployed security rules
+	// generation is what a published policy node is read under, and the policy
+	// write is gated on it — a run that migrated the node first would refuse
+	// its own write and leave the upgrade for a second command
+	// (init_rules_stage.go, the owner's rule of 2026-10-30).
+	stages = append(stages, newRulesStage(e))
+	e.policy = newPolicyMigrateStage(e)
+	stages = append(stages, e.policy)
+	// The layer stage after the policy one: the project layer this run would
+	// publish is read under the node the policy stage just moved in place, so a
+	// layer whose claims the older node could not carry is judged by the same
+	// installation it is published for (init_layer_stage.go).
+	stages = append(stages, newLayerStage(e))
+	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
+	// are a stage of this run too: fugaro update is the whole upgrade, so the
+	// one command the user runs may not leave the checkout it runs in behind
+	// (init_checkout_upgrade.go, the owner's rule of 2026-10-30).
+	stages = append(stages, newCheckoutStage(e))
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
 	// `backend: cloud-batch` stays refused by config validation until the
@@ -383,6 +413,150 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	return initflow.Outcome{Changed: true, Detail: "applied"}, nil
 }
 
+// pinCredentialsImage moves an installation that opted in under an earlier
+// release onto THIS release's credentials service image, before the stage that
+// plans the installation root. It is what makes an ordinary `fugaro update` the
+// whole upgrade for such an installation: the opt-in is carried forward by
+// init.go's prepare (CarriedCredentialsService) and the image inside it with
+// it, so without this the recorded reference keeps naming the release the
+// service was turned on with, and the module's own decisions that read the
+// release out of that reference — credentials.tf's credentials_image_release,
+// which names the Cloud Run container port h2c at and above the release that
+// serves HTTP/2 — stay where they were. The owner is then left with an
+// operator step (re-running `fugaro update --provision-credentials`, the other
+// path that pins) that the upgrade is not allowed to leave them.
+//
+// It pins through resolveCredentialsImage, the same step the credentials stage
+// pins through: the release's signed "-pinned" image, its signature verified
+// and its digest read back through the installation's remote repository. A
+// digest nothing verified is never written, and a resolve that fails returns
+// the error rather than leaving the installation on an older image silently —
+// an update that cannot reach the registry cannot report the service as moved
+// either. (A run that does not apply — a plan-only run, or one whose
+// confirmation the owner declines — leaves the tfvars naming this release's
+// image while the deployed service is still the previous one. That is
+// prepare's own plan-time write, unchanged by this: the tfvars ARE the desired
+// state, and the next run that applies converges the service on them.)
+//
+// Four things it deliberately does not do:
+//
+//   - It leaves an installation that never opted in alone, whole. No
+//     credentials_service entry in the tfvars is no service to move, and it
+//     reports that without a registry call at all, so the overwhelming majority
+//     of updates are byte-for-byte the run they were.
+//   - It moves the reference forward only. A CLI older than the release the
+//     recorded image names — two machines of one installation upgraded at
+//     different times — finds the recorded release newer than its own and
+//     leaves it alone (newer, init_images.go: the rule the base image's own pin
+//     follows). Re-pinning DOWN would put the previous release's process back,
+//     and those two machines would flip the service on every update. A
+//     reference naming no release at all — an operator's hand-written digest,
+//     which the module's validation admits — has nothing to compare and is
+//     replaced by the release's image, which is the upgrade's own direction.
+//   - It runs nothing in a coding agent's session. The engine stages are
+//     PLANNED there rather than skipped, so a plan-only run would reach cosign
+//     and the registry with the operator's ADC and write the resolved image
+//     into the workdir's tfvars: the same resolve and the same write the
+//     credentials stage's own agent refusal keeps out of such a session
+//     (TestInitCredentialsStageRefusedInAgent).
+//   - It makes no database call. The budget backend's ownership gate is the
+//     credentials stage's (requireCredsRules), and only a run that TURNS THE
+//     SERVICE ON has to answer for it.
+func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
+	if m := agentMarker(os.Getenv); m != "" {
+		return nil
+	}
+	ver := releaseVersion()
+	if ver == "" {
+		// A development build resolves no released image (resolveCredentialsImage
+		// refuses it), so there is nothing here for it to pin: the recorded
+		// reference is left as it stands rather than made an error of.
+		return nil
+	}
+	doc, image, err := e.recordedCredentialsImage()
+	if err != nil {
+		return err
+	}
+	if doc == nil { // no credentials_service in the installation's tfvars: nothing opted in
+		return nil
+	}
+	// The document goes back on disk BEFORE anything that can fail. prepare
+	// (init.go) is what rewrites the installation's tfvars from this run's spec
+	// and carries the opt-in forward, and it is steps away: PrepareWorkdir has
+	// already deleted the file, so a failure in between — the resolve below,
+	// which reaches for cosign and for the registry and can fail for either —
+	// would leave an installation whose tfvars hold no opt-in at all. The next
+	// run reads that as "never opted in", plans the service's removal, and the
+	// bundle container's prevent_destroy refuses the plan, and no later update
+	// moves the installation again without --provision-credentials. Putting the
+	// document the carry is about to use back closes the window this resolve
+	// opened, and costs one write of a file prepare rewrites a few steps later.
+	//
+	// A run that fails before that rewrite leaves the file on disk, and that is
+	// the point rather than a leak to clean up: nothing removes a workdir on
+	// the error path (the next run's PrepareWorkdir is what replaces the tree),
+	// and every reader of this file reads it AS the earlier run's document —
+	// prepare and --print-vars carry forward from it the keys this run's spec
+	// never holds, and installationFenceRecorded reads the managed deployer's
+	// fence out of it. What is written is those same bytes, the ones
+	// recordedCredentialsImage just read (Workdir.PrevVars in an ordinary
+	// update), so the file and the snapshot agree; deleting it here would put
+	// the opt-in back out of reach and repeat the failure above.
+	if err := e.wd.WriteVars(doc); err != nil {
+		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
+	}
+	// A reference that names NO release is replaced rather than compared: it
+	// is an operator's hand-written digest, and there is no release in it to
+	// say the installation is ahead of this binary. The check is written out
+	// because the comparison alone answers the wrong way for it — newer splits
+	// both sides on "." and atoi's each part, so an empty operand reads as one
+	// zero part and compares equal to a release whose major is 0, which is
+	// every release this program has cut so far.
+	recorded := infra.CredentialsServiceImageRelease(image)
+	if recorded != "" && !newer(ver, recorded) {
+		return nil
+	}
+	pinned, err := resolveCredentialsImage(ctx, e)
+	if err != nil {
+		return err
+	}
+	updated, err := infra.SetCredentialsServiceImage(doc, pinned)
+	if err != nil {
+		return userErr("setting the credentials service's image in the installation's %s: %v", infra.VarsFile, err)
+	}
+	if err := e.wd.WriteVars(updated); err != nil {
+		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
+	}
+	return nil
+}
+
+// recordedCredentialsImage is the installation root's tfvars as they carry the
+// credentials service, and the image in them: nil when the installation never
+// opted in.
+//
+// The document is the one prepare (init.go) reads its carry from — the tfvars
+// the workdir holds NOW, else the snapshot PrepareWorkdir took before it
+// rebuilt the tree — so the two agree about which entry this run is working
+// on. In an ordinary update the workdir is fresh and only the snapshot has it;
+// in a run that also carries --provision-credentials the stage has already
+// written its own, and the newer document is the one to move.
+func (e *initEngine) recordedCredentialsImage() ([]byte, string, error) {
+	now, err := e.wd.Vars()
+	if err != nil {
+		return nil, "", userErr("reading the installation's tfvars: %v", err)
+	}
+	for _, doc := range [][]byte{now, e.wd.PrevVars} {
+		image, ok, err := infra.CredentialsServiceImageOf(doc)
+		if err != nil {
+			return nil, "", userErr("reading the installation's tfvars: %v", err)
+		}
+		if ok {
+			return doc, image, nil
+		}
+	}
+	return nil, "", nil
+}
+
 // newInstallationStage is stage 3: init's installation engine. With
 // --firebase-project the installation is the Firebase engine's first apply, so the
 // stage is skipped.
@@ -409,6 +583,9 @@ func newInstallationStage(e *initEngine) *engineStage {
 					return err
 				}
 			}
+			if err := e.pinCredentialsImage(ctx); err != nil {
+				return err
+			}
 			return e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old)
 		},
 		left: promptLeft(initflow.Installation, "type the project's name to apply", e.r.o.doorName()),
@@ -418,10 +595,21 @@ func newInstallationStage(e *initEngine) *engineStage {
 // firebaseProjectWord is --firebase-project's value in a printed command: the
 // installation's own GCP project id, the only value it takes.
 func (e *initEngine) firebaseProjectWord() string {
-	if e.lc != nil && e.lc.GCPProject != "" {
-		return quoteWord(e.lc.GCPProject)
+	if e.lc == nil {
+		return firebaseProjectIDWord("")
 	}
-	return "<gcp-project-id>"
+	return firebaseProjectIDWord(e.lc.GCPProject)
+}
+
+// firebaseProjectIDWord is --firebase-project's value in a command printed
+// anywhere else. The flag is a string flag with no default, so a message that
+// stopped at the flag prints a command nobody can run; the id is what it
+// takes, and a caller with none to read prints the placeholder to type.
+func firebaseProjectIDWord(id string) string {
+	if id == "" {
+		return "<gcp-project-id>"
+	}
+	return quoteWord(id)
 }
 
 // newFirebaseStage is stage 4: update --firebase-project's engine, which is two
@@ -448,6 +636,9 @@ func newFirebaseStage(e *initEngine) *engineStage {
 						return err
 					}
 				}
+			}
+			if err := e.pinCredentialsImage(ctx); err != nil {
+				return err
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},

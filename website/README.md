@@ -122,10 +122,12 @@ LinkedIn's insight tag and Calendly's booking widget.
   `data/landing.yaml` writes. `site.js` names no host, so a page that is not one of the four
   carries none of it and loads none of them, and a campaign page served from another path
   loads none of them either.
-- **Both ids are empty in `site.yaml`, and an empty id is a loader switched off** (R3): the
-  owner has not supplied a pixel id or a partner id, and this repository publishes no
-  identifier the owner did not supply. `internal/cli`'s boundary test pins both empty and the
-  three origins exact, so the day they arrive is the day that pin is relaxed.
+- **An empty id is a loader switched off** (R3), and this repository publishes no identifier
+  the owner did not supply. Both ids are the owner's, supplied on 2026-10-31 — the LinkedIn
+  Partner ID and the Meta pixel id — so all three loaders run on the four campaign pages behind
+  the campaign consent, and a value cleared in `site.yaml` switches its loader off. `internal/cli`'s
+  boundary test refuses either id coming back empty and pins the three origins exact, and
+  `test/consent.mjs` reads the switched-off state off a page whose markup carries an empty id.
 - **Each vendor is handed the page's path and no query** (F22): the site builds the address it
   reports from the origin and the path, and passes it to the pixel and the insight tag as
   `page_location` rather than leaving them to read the address in the window, so what this site
@@ -143,14 +145,16 @@ LinkedIn's insight tag and Calendly's booking widget.
   privacy statement says in those words.
 - **The deployed policy gains each vendor's origin per directive** — `script-src` for the
   three scripts, `img-src` and `connect-src` for the pixel's and the insight tag's beacons,
-  `style-src` for Calendly's stylesheet, and a new `frame-src` for the booking page — with no
-  wildcard anywhere and nothing else added to `script-src`. `test/origins.mjs` holds the exact
+  `style-src` for Calendly's stylesheet, and a new `frame-src` for the booking page — with
+  nothing added to `script-src` and one wildcard, `https://*.licdn.com` in `img-src`, which
+  the owner ruled in on 2026-10-31 for that directive alone. `test/origins.mjs` holds the exact
   per-directive list, `test/brand.mjs` the coarse one, and `test/consent.mjs` the cross-check
   that the gate loads from exactly the origins the policy admits. The Calendly booking link
   itself stays a plain `<a href>`: a visitor who declines the campaign consent keeps it.
 
-**G2.4 is the task that added the funnel and the pass-through** — three key events to GA4, and
-the campaign parameters a visitor arrived through, onto the booking address and nothing else.
+**G2.4 is the task that added the funnel and the pass-through** — three key events to GA4 (and,
+since the owner's ruling of 2026-10-31, the same three actions to the pixel under Meta's names),
+and the campaign parameters a visitor arrived through, onto the booking address and nothing else.
 
 - **Three events, and only after the analytics grant.** `install_click` and `whatsapp_click`
   are presses of the two secondary calls to action, found by the ids the markup gives them;
@@ -164,6 +168,14 @@ the campaign parameters a visitor arrived through, onto the booking address and 
   the visitor has granted analytics or after a withdrawal; the count is the funnel, and the
   campaign's own attribution reaches GA4 through the owner's Calendly-to-GA4 integration rather
   than through this site (F22).
+- **The same three actions are Meta's events too, and only after the campaign grant** (the
+  owner's ruling of 2026-10-31): `ViewContent` for a press of Install free, `Contact` for the
+  chat link and `Lead` for a booking, sent from the same handlers — the same press, the same
+  once-per-action binding, and the same origin and sender checks on the widget's message — so
+  the two measurements cannot drift apart. The gate is the campaign question rather than the
+  analytics one: a visitor who granted the campaign measurement and not the site's is sent the
+  pixel's three and none of GA4's, and a campaign page whose pixel id is empty sends Meta
+  nothing (`test/landing-events.mjs`).
 - **The campaign parameters go onto the booking address and nowhere else.** The five `utm_*`
   names the agenda's links carry, each value decoded and encoded again — a `+` in the visitor's
   query read as the space a browser reads it as, and the `%20` this page writes read back the
@@ -1150,7 +1162,7 @@ added or removed without this sentence moving fails there:
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
     page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
-    is 309; the privacy statement, at 1069, is the page the words-per-page ceiling itself is
+    is 309; the privacy statement, at 1076, is the page the words-per-page ceiling itself is
     derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
@@ -1298,7 +1310,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 1337 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1345 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1319,14 +1331,18 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **1069
-    words** — plus 25 %, rounded up, which is **1337**. The count moved four times since
+    site's pitch; the number is that page's own count on the gates' own build — **1076
+    words** — plus 25 %, rounded up, which is **1345**. The count moved six times since
     G2.3: the campaign section took the page 988 → 1030, the owner's ruling of 2026-10-29 on
     the banner's wording — one question, worded for everything the site may load, with the
     refusal's reach stated in the consent card — took it 1030 → 1144, G2.4's sentence
-    naming the campaign pages' three key events took it 1144 → 1213, and the owner's feedback
+    naming the campaign pages' three key events took it 1144 → 1213, the owner's feedback
     of 2026-10-30, which cut the banner to two sentences and the statement's website part to
-    what a reader has to be told, took it 1213 → 1069. `budget.mjs`'s
+    what a reader has to be told, took it 1213 → 1069, naming LinkedIn, whose insight
+    tag the owner switched on with the Partner ID of 2026-10-31, took it 1069 → 1073, and
+    naming Meta, whose pixel the owner switched on with the pixel id of 2026-10-31, took it
+    1073 → 1076.
+    `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
@@ -1929,10 +1945,11 @@ nothing else, so adding, replacing or removing a screenshot is a data-file edit 
 things are worth knowing before editing the file. The four campaign pages' heroes are a second
 consumer of those rows: each variant names one in `data/landing.yaml` and the loader refuses a
 name no row carries, so removing a row a variant names stops the campaign build rather than
-quietly shrinking a page (D411). And the homepage's "See it" panel is the same component over
-`data/home-screens.yaml`, not over this file — its console rows mirror these three files and
-`test/home.mjs` holds them equal row for row, so a change here reaches the homepage only through
-that file:
+quietly shrinking a page (D411). And the homepage's "See it" panel and the four campaign pages'
+own slideshow are the same component over `data/home-screens.yaml`, not over this file — its
+console rows mirror these three files and `test/home.mjs` holds them equal row for row, so a
+change here reaches the homepage and the campaign pages only through that file, whose rows the
+campaign slider is held to slide for slide by `test/landing-pages.mjs` (D412):
 
 1. **The file**, under `public/screenshots/`. The name is letters, digits, dots, dashes and
    underscores; the extension is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`.
