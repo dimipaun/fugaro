@@ -130,10 +130,7 @@ function toolOwned(paths: readonly string[]): boolean {
  * process wrote it: the file the console's store keeps, and the only place a
  * spec can see which directory a chooser actually sent. */
 async function readInstallations(app: ElectronApplication): Promise<InstallationFile> {
-  const path = await app.evaluate(
-    ({ app: electronApp }, name) => join(electronApp.getPath('userData'), name),
-    INSTALLATIONS_FILE_NAME,
-  )
+  const path = join(await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData')), INSTALLATIONS_FILE_NAME)
   return JSON.parse(readFileSync(path, 'utf8')) as InstallationFile
 }
 
@@ -461,10 +458,10 @@ test.describe('the Graph’s chooser with exactly one checkout', () => {
     // console's own write takes it off the screen again within the round trip.
     const said = textWhenItAppears(page, CARD)
     await page.locator(nav('graph')).click()
-    expect(said).toContain(
+    expect(await said).toContain(
       `${NO_CHECKOUT_AUTO_SENTENCE} ${checkoutLabel({ repository: 'github/owner/repo-a', path: first, more: 0 })}`,
     )
-    expect(said).not.toContain(NO_CHECKOUT_USE_LABEL)
+    expect(await said).not.toContain(NO_CHECKOUT_USE_LABEL)
 
     // The console sent it without being asked to, and the read answered.
     await expect.poll(() => storedCheckout(app)).toBe(first)
