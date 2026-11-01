@@ -6034,14 +6034,14 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 		tsNumber(t, scrub, "VERIFY_CLIP_RUNES"))
 
 	// The report globs the warning sentence carries and nowhere else in the
-	// document: the two `commands.reports` patterns internal/config/defaults.go
-	// installs, which are what internal/verify/verify.go joins into
-	// `no JUnit reports found under ...`. They are the vocabulary the fixture
-	// scan pins the glob slot to (VERIFY_REPORT_GLOBS), so a change to the
-	// defaults that the scrub did not follow would make the scan refuse a
+	// document: config.DefaultReports, which internal/config/defaults.go
+	// installs as `commands.reports` and which internal/verify/verify.go joins
+	// into `no JUnit reports found under ...`. They are the vocabulary the
+	// fixture scan pins the glob slot to (VERIFY_REPORT_GLOBS), so a change to
+	// the defaults that the scrub did not follow would make the scan refuse a
 	// recording the CLI itself wrote.
 	sameSet(t, "verify report glob", quoted(sourceValues(t, "internal/config/defaults.go",
-		readDoc(t, "internal/config/defaults.go"), `w\.Commands\.Reports = \[\]string\{([^}]*)\}`)[0]),
+		readDoc(t, "internal/config/defaults.go"), `DefaultReports = \[\]string\{([^}]*)\}`)[0]),
 		tsList(t, scrub, `VERIFY_REPORT_GLOBS = \[([^\]]*)\]`, "VERIFY_REPORT_GLOBS"))
 
 	// The connection states, the healths and the deadlines: three inline tables
