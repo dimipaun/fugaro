@@ -79,12 +79,13 @@ const secretExpiryWarnWithin = 14 * 24 * time.Hour
 // since Secret Manager's own version times are the server's.
 var doctorNow = time.Now
 
-// bitbucketAPIURL is the API root the token check asks and bitbucketAPIClient
-// the HTTP client it uses; tests replace both. The root is Bitbucket's own and
-// never whatever an environment variable names: a run's root is the published
-// policy's to choose (bitbucket_api_roots, internal/runner's
-// checkBitbucketAPIRoot), and a check that reads a credential with the
-// operator's own identity asks the forge the token was issued for.
+// bitbucketAPIURL is the API root the token check asks when the installation
+// lists none of its own, and bitbucketAPIClient the HTTP client it uses; tests
+// replace both. A root the installation does list is asked instead of this one
+// (bitbucketTokenRoots), and the root is never whatever an environment variable
+// names: a run's root is the published policy's to choose (bitbucket_api_roots,
+// internal/runner's checkBitbucketAPIRoot), and a check that reads a credential
+// with the operator's own identity asks the forge the token was issued for.
 var (
 	bitbucketAPIURL    = bitbucket.DefaultBaseURL
 	bitbucketAPIClient *http.Client
@@ -199,13 +200,22 @@ func noteIfAny(note string, any bool) string {
 // runInvokeRoles, and whether a role on the way could not be judged —
 // "not read" and "carries nothing" are not the same answer, which is the rule
 // every other role question doctor asks is written by.
+//
+// Only a binding that names member is a question about them: a custom role
+// granted to somebody else may or may not carry run.invoke, and it says nothing
+// about whether this member may invoke the service. Marking the member unread
+// for it is doctor reporting "could not be checked" about a policy that answers
+// the question it asked.
 func invokerGranted(bindings []iamBinding, member string) (granted, unread bool) {
 	for _, b := range bindings {
+		if !slices.Contains(b.members, member) {
+			continue
+		}
 		if isCustomRole(b.role) {
 			unread = true
 			continue
 		}
-		if slices.Contains(runInvokeRoles, b.role) && slices.Contains(b.members, member) {
+		if slices.Contains(runInvokeRoles, b.role) {
 			return true, unread
 		}
 	}
@@ -222,9 +232,13 @@ func invokerGranted(bindings []iamBinding, member string) (granted, unread bool)
 // bitbucket-token is per-repository by default — so both listings are
 // measured: project is the installation's project-wide containers, and repo is
 // this checkout's own (doctorSecrets, empty when doctor is not in one). A date
-// that matches neither is a warning of its own rather than silence: a name
-// nothing carries is a typo, or a secret that has gone, and a check that
-// quietly skipped it would leave the operator believing a date was watched.
+// that matches neither is looked for in the rest of the installation's
+// containers (set, doctorManagedSecrets: another repository's own, which this
+// checkout's listing does not reach), and is a warning of its own only when
+// nothing carries it: a name nothing carries is a typo, or a secret that has
+// gone, and a check that quietly skipped it would leave the operator believing
+// a date was watched. When the rest could not be listed, the warning is that
+// instead — a name doctor could not look for is not a name nothing carries.
 //
 // Nothing here reads a value, and nothing here runs unless the operator
 // recorded something: with no period and no date there is no age to measure
@@ -239,7 +253,7 @@ func invokerGranted(bindings []iamBinding, member string) (granted, unread bool)
 //
 // Both halves are warnings, never failures: an old credential still works, and
 // what the check is for is that the operator asked to be told.
-func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, project []gcp.SecretInfo, ok bool, repo []secretEntry) []doctorCheck {
+func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, project []gcp.SecretInfo, ok bool, repo []secretEntry, set doctorManagedSet) []doctorCheck {
 	if lc.SecretRotationDays <= 0 && len(lc.SecretExpires) == 0 {
 		return nil
 	}
@@ -265,8 +279,18 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, project [
 		}
 		printable := pluginwire.Printable(cmp.Or(name, s.ID))
 		if lc.SecretRotationDays > 0 && s.Latest != "" {
-			created, known := newestEnabledVersion(ctx, sm, lc.GCPProject, s.ID)
-			if !known {
+			created, dated, err := newestEnabledVersion(ctx, sm, lc.GCPProject, s.ID)
+			switch {
+			case err != nil:
+				// The listing itself failed, which is not the container having
+				// nothing to date: the same fix, a different sentence, because
+				// doctor may say what it could not do and may not report a read
+				// it never made as an answer about the secret.
+				out = append(out, doctorCheck{ID: id, Severity: "warning",
+					Problem: fmt.Sprintf("the versions of %s could not be read, so its age against the %d-day rotation period (secret_rotation_days) could not be measured", printable, lc.SecretRotationDays),
+					Fix:     "read the versions by hand: gcloud secrets versions list " + pluginwire.Printable(s.ID)})
+				return
+			case !dated:
 				out = append(out, doctorCheck{ID: id, Severity: "warning",
 					Problem: fmt.Sprintf("%s holds an enabled version whose creation time could not be read, so its age against the %d-day rotation period (secret_rotation_days) could not be measured", printable, lc.SecretRotationDays),
 					Fix:     "read the versions by hand: gcloud secrets versions list " + pluginwire.Printable(s.ID)})
@@ -308,6 +332,13 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, project [
 	for _, e := range repo {
 		measure(e.SecretInfo)
 	}
+	// The rest of the installation's containers, for the names the two scopes
+	// above do not carry: a name may be stored in another repository's own
+	// container, and doctor run in this checkout would otherwise report the
+	// operator's correct date as a typo.
+	for name := range set.Names {
+		carried[name] = true
+	}
 	var unmatched []string
 	for _, name := range slices.Sorted(maps.Keys(lc.SecretExpires)) {
 		if !carried[name] {
@@ -315,10 +346,20 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, project [
 		}
 	}
 	if len(unmatched) > 0 {
-		out = append(out, doctorCheck{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("secret_expires records a date for %s, and no secret container this run could list carries that name (the project-wide ones%s): a date nothing matches is watched by nothing, so a name that is a typo, or a secret that has gone, is reported instead of skipped",
-				strings.Join(unmatched, ", "), noteIfAny(" and this checkout's own", repo != nil)),
-			Fix: "fix the name in secret_expires, or drop the entry: the key is a secret's logical name, which is what " + selfCommand() + " secrets ls prints beside its container"})
+		if !set.Read {
+			// A name is unmatched and the containers it may live in could not
+			// be listed: "no container carries that name" would be doctor
+			// reporting its own blind spot as the operator's mistake, which is
+			// the false warning this arm exists to keep out.
+			out = append(out, doctorCheck{ID: id, Severity: "warning",
+				Problem: fmt.Sprintf("secret_expires records a date for %s, and the containers of every repository this installation knows could not be listed, so whether anything carries those names could not be checked", strings.Join(unmatched, ", ")),
+				Fix:     "rerun doctor with Secret Manager reachable and your credentials available"})
+		} else {
+			out = append(out, doctorCheck{ID: id, Severity: "warning",
+				Problem: fmt.Sprintf("secret_expires records a date for %s, and no secret container this run could list carries that name (the project-wide ones, this checkout's own, and the ones of every other repository this installation knows): a date nothing matches is watched by nothing, so a name that is a typo, or a secret that has gone, is reported instead of skipped",
+					strings.Join(unmatched, ", ")),
+				Fix: "fix the name in secret_expires, or drop the entry: the key is a secret's logical name, which is what " + selfCommand() + " secrets ls prints beside its container"})
+		}
 	}
 	if len(out) == 0 {
 		// The measurement: what the operator recorded was checked and nothing is
@@ -338,15 +379,20 @@ func doctorSecretRotationAge(ctx context.Context, lc *localcfg.Config, project [
 
 // newestEnabledVersion answers the createTime of the container's newest
 // enabled version: the highest version number in state ENABLED, which is what
-// Secret Manager's own `latest` resolves to. known is false when the container
-// has no such version, or when a page of its versions could not be read.
-func newestEnabledVersion(ctx context.Context, sm *secretmanager.Service, project, id string) (time.Time, bool) {
+// Secret Manager's own `latest` resolves to.
+//
+// dated is false when the container has no version this function can date —
+// none in state ENABLED, or none whose name and creation time it can read —
+// and the error is the listing failing, which is a different answer: a
+// container whose versions could not be read is not a container with nothing
+// enabled in it, and the caller says so.
+func newestEnabledVersion(ctx context.Context, sm *secretmanager.Service, project, id string) (created time.Time, dated bool, err error) {
 	var (
 		best  string
 		at    time.Time
 		found bool
 	)
-	err := sm.Projects.Secrets.Versions.List("projects/"+project+"/secrets/"+id).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
+	err = sm.Projects.Secrets.Versions.List("projects/"+project+"/secrets/"+id).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
 		for _, v := range p.Versions {
 			if v.State != "ENABLED" {
 				continue
@@ -364,9 +410,9 @@ func newestEnabledVersion(ctx context.Context, sm *secretmanager.Service, projec
 		return nil
 	})
 	if err != nil {
-		return time.Time{}, false
+		return time.Time{}, false, err
 	}
-	return at, found
+	return at, found, nil
 }
 
 // doctorBundleChecks are the two checks that read the bundle's value, both
@@ -439,7 +485,7 @@ func doctorBundleChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 	// not a value is what every message here carries.
 	out := []doctorCheck{{ID: idBundle, OK: true, Severity: "info",
 		Problem: fmt.Sprintf("the credentials service's bundle %s holds a %s credential", pluginwire.Printable(store.id), config.BitbucketSecret)}}
-	out = append(out, doctorBitbucketTokenValid(ctx, proxied, entry.Value())...)
+	out = append(out, doctorBitbucketTokenValid(ctx, lc, proxied, entry.Value())...)
 	return out
 }
 
@@ -464,17 +510,24 @@ func bundleSeverity(proxied int) string {
 }
 
 // doctorBitbucketTokenValid is the one check that asks Bitbucket: one
-// GET /repositories/<repo> per proxied repository, with the bundle's token, in
-// memory. A token that Bitbucket refuses (401, 403) or cannot see a repository
-// with (404) fails the check as a warning, because every run of that repository
-// fails at its first git call; anything else — a network that is down, a
-// Bitbucket outage, a rate limit — is reported as not checked rather than as a
-// bad token, since sending the operator to rotate a working credential is
-// worse than saying the question was not answered.
-func doctorBitbucketTokenValid(ctx context.Context, repos []string, token string) []doctorCheck {
+// GET /repositories/<repo> per proxied repository and per root, with the
+// bundle's token, in memory. A token that Bitbucket refuses (401, 403) or
+// cannot see a repository with (404) fails the check as a warning, because
+// every run of that repository fails at its first git call; anything else — a
+// network that is down, a Bitbucket outage, a rate limit — is reported as not
+// checked rather than as a bad token, since sending the operator to rotate a
+// working credential is worse than saying the question was not answered.
+//
+// The roots are bitbucketTokenRoots': Bitbucket's own API, or the installation's
+// own allow-list when it lists one. Asking Bitbucket's API about a token issued
+// for a root the installation listed is the false "refused, rotate" this
+// answers: the runs of that installation send the token to its own root, and
+// that is where the question belongs.
+func doctorBitbucketTokenValid(ctx context.Context, lc *localcfg.Config, repos []string, token string) []doctorCheck {
 	if len(repos) == 0 {
 		return nil
 	}
+	roots := bitbucketTokenRoots(lc)
 	const id = "bitbucket-token-valid"
 	var (
 		refused []string
@@ -486,16 +539,9 @@ func doctorBitbucketTokenValid(ctx context.Context, repos []string, token string
 			unknown = append(unknown, pluginwire.Printable(repo))
 			continue
 		}
-		p, err := bitbucket.New(bitbucket.Options{Workspace: workspace, Slug: slug, Token: token,
-			BaseURL: bitbucketAPIURL, HTTP: bitbucketAPIClient})
-		if err != nil {
-			unknown = append(unknown, pluginwire.Printable(repo))
-			continue
-		}
-		_, err = p.Repository(ctx)
-		switch {
-		case err == nil:
-		case isBitbucketRefusal(err):
+		switch askTokenAtRoots(ctx, roots, workspace, slug, token) {
+		case tokenAccepted:
+		case tokenRefused:
 			refused = append(refused, pluginwire.Printable(repo))
 		default:
 			unknown = append(unknown, pluginwire.Printable(repo))
@@ -518,6 +564,66 @@ func doctorBitbucketTokenValid(ctx context.Context, repos []string, token string
 		Problem: fmt.Sprintf("Bitbucket refuses the bundle's %s credential for %s: a run of each of those repositories fails at its first git call%s",
 			config.BitbucketSecret, strings.Join(refused, ", "), noteIfAny("; not asked about "+strings.Join(unknown, ", "), len(unknown) > 0)),
 		Fix: "store a token Bitbucket accepts, with Repositories read and Pull requests read/write: " + selfCommand() + " creds set " + config.BitbucketSecret}}
+}
+
+// bitbucketTokenRoots are the API roots the bundle's token is asked about: the
+// installation's own allow-list when it lists one (bitbucket_api_roots), and
+// Bitbucket's own API otherwise. It is the rule a cloud run is held to — the
+// token goes only to Bitbucket or to a root the owner listed (internal/runner's
+// checkBitbucketAPIRoot) — applied to the one check that spends the credential
+// from the operator's machine.
+//
+// Never whatever an environment variable names: an installation whose runs
+// point FUGARO_BITBUCKET_API_URL somewhere lists that root here, and a
+// variable nothing lists is a host the owner never allowed, which no read of a
+// credential may be pointed at.
+func bitbucketTokenRoots(lc *localcfg.Config) []string {
+	if lc != nil && len(lc.BitbucketAPIRoots) > 0 {
+		return lc.BitbucketAPIRoots
+	}
+	return []string{bitbucketAPIURL}
+}
+
+// tokenAnswer is what asking a repository's roots said about the token.
+type tokenAnswer int
+
+const (
+	// tokenUnanswered: no root accepted the token and none refused it — every
+	// root the check reached failed to answer (a network that is down, an
+	// outage, a rate limit). It is a fact doctor reports, never an answer
+	// about the credential.
+	tokenUnanswered tokenAnswer = iota
+	tokenAccepted
+	tokenRefused
+)
+
+// askTokenAtRoots asks each root the token may be sent to, and answers accepted
+// as soon as one accepts it: an installation may list more than one root, and
+// the token is good for the runs that use that one. Refused is *every* root
+// refusing — a single root in the common case — so a listed root that is down
+// leaves the answer unanswered rather than refused, which is what keeps a
+// working token from being sent to be rotated. Each root is asked with the
+// client of the check, whose timeout bounds the request.
+func askTokenAtRoots(ctx context.Context, roots []string, workspace, slug, token string) tokenAnswer {
+	refused, answered := 0, 0
+	for _, root := range roots {
+		p, err := bitbucket.New(bitbucket.Options{Workspace: workspace, Slug: slug, Token: token,
+			BaseURL: root, HTTP: bitbucketAPIClient})
+		if err != nil {
+			continue
+		}
+		answered++
+		switch _, err = p.Repository(ctx); {
+		case err == nil:
+			return tokenAccepted
+		case isBitbucketRefusal(err):
+			refused++
+		}
+	}
+	if answered > 0 && refused == answered {
+		return tokenRefused
+	}
+	return tokenUnanswered
 }
 
 // isBitbucketRefusal reports whether Bitbucket answered about the credential

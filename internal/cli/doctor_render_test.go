@@ -954,8 +954,11 @@ func TestDoctorUnreadCheckThatSaysOKIsCounted(t *testing.T) {
 	// The verdict --security prints above the sweep is held by the same rule: a
 	// check the sweep holds is printed below it, so an ok one that carries the
 	// marker may not be answered with the ok line the reader would read first.
-	sweep := doctorCheck{ID: "model-key-in-agent", OK: true, unread: true, Severity: "info",
-		Problem: "whether a model credential reaches the agent could not be checked"}
+	// The ID is one the sweep holds rather than prints: model-key-in-agent is
+	// the one sweep check the default view prints as an item as well
+	// (doctorClassSecurity), so its verdict is the item one, not this one.
+	sweep := doctorCheck{ID: "token-signers", OK: true, unread: true, Severity: "info",
+		Problem: "whether a member may sign a budget token could not be checked"}
 	shown := doctorSecurityOutput(t, []doctorCheck{sweep})
 	if strings.Contains(shown, "everything checked is ok") {
 		t.Errorf("--security says everything is ok above its own unread finding:\n%s", shown)

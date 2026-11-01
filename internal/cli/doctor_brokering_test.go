@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,7 +16,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -312,6 +315,48 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		}
 	})
 
+	// A custom role is a role doctor cannot judge, but only a binding that
+	// names the job account is a question about that account: a custom role
+	// granted to somebody else may or may not carry run.invoke, and it says
+	// nothing about whether this job may invoke the service. Reporting the job
+	// as unread for it is doctor answering "could not be checked" to a policy
+	// that answered the question.
+	t.Run("a custom role granted to somebody else", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}},
+			gcpfake.Binding{Role: "projects/proj-1234/roles/deployer", Members: []string{"serviceAccount:someone-else@proj-1234.iam.gserviceaccount.com"}})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check: the invoker grant is there and the custom role is somebody else's", cs)
+		}
+	})
+
+	t.Run("a custom role granted to the job account", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "projects/proj-1234/roles/deployer", Members: []string{brokeringJobAccount("app")}})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "could not be checked") {
+			t.Errorf("a role doctor cannot read is reported as a grant that is missing: %q", cs[0].Problem)
+		}
+	})
+
 	t.Run("not opted in", func(t *testing.T) {
 		r := newBrokeringUnoptedRig(t)
 		o, err := r.doctor(t)
@@ -472,6 +517,136 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 			t.Errorf("the line does not say the question was not asked: %q", vs[0].Problem)
 		}
 	})
+
+	// The installation with a root of its own: its runs send the token there
+	// (bitbucket_api_roots is the owner's allow-list, and the run is held to
+	// it), so that root is where the token is asked about — and Bitbucket's own
+	// API, which never issued a token for such an installation, is not asked at
+	// all. Asking it is the false "refused, rotate": the refusal is about a
+	// forge the installation does not use.
+	t.Run("a root the installation lists", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		mine, mineCalls := bitbucketFake(t, http.StatusOK)
+		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+mine.URL+"\n")
+		def, defCalls := bitbucketFake(t, http.StatusUnauthorized)
+		useBitbucketRoot(t, def.URL, def.Client())
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || !vs[0].OK {
+			t.Fatalf("bitbucket-token-valid = %+v, want one ok check: the listed root accepts the token", vs)
+		}
+		if mineCalls.Load() != 1 {
+			t.Errorf("the root the installation lists was asked %d time(s), want one GET per proxied repository", mineCalls.Load())
+		}
+		if defCalls.Load() != 0 {
+			t.Errorf("Bitbucket's own API was asked %d time(s), want none: the installation lists a root of its own", defCalls.Load())
+		}
+	})
+
+	// And the same installation with a token the listed root refuses is the
+	// warning it should be: honouring the allow-list is not believing it.
+	t.Run("a root the installation lists refuses the token", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		mine, _ := bitbucketFake(t, http.StatusUnauthorized)
+		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+mine.URL+"\n")
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || vs[0].OK || vs[0].Severity != "warning" {
+			t.Fatalf("bitbucket-token-valid = %+v, want one warning", vs)
+		}
+		if !strings.Contains(vs[0].Fix, "creds set "+config.BitbucketSecret) {
+			t.Errorf("the fix does not name the command that replaces the token: %q", vs[0].Fix)
+		}
+	})
+
+	// More than one listed root: the token is good for the runs that use the
+	// root that accepts it, so a root that refuses does not make it a refusal —
+	// and a root that does not answer leaves the question unanswered rather
+	// than refused, which is the rule the single-root states keep.
+	t.Run("two listed roots, one accepting", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		mine, _ := bitbucketFake(t, http.StatusOK)
+		other, _ := bitbucketFake(t, http.StatusUnauthorized)
+		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+other.URL+"\n  - "+mine.URL+"\n")
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || !vs[0].OK {
+			t.Fatalf("bitbucket-token-valid = %+v, want one ok check", vs)
+		}
+	})
+
+	t.Run("two listed roots, one refusing and one that does not answer", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		one, _ := bitbucketFake(t, http.StatusUnauthorized)
+		two, _ := bitbucketFake(t, http.StatusBadGateway)
+		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+one.URL+"\n  - "+two.URL+"\n")
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || vs[0].OK || vs[0].Severity != "info" {
+			t.Fatalf("bitbucket-token-valid = %+v, want one informational line: a root that did not answer leaves the question unanswered", vs)
+		}
+	})
+
+	// Each root is bounded by the client's timeout, and a root that runs into
+	// it is a question not answered: rotating a credential because a mirror is
+	// slow is exactly the false warning this check must not write.
+	t.Run("a listed root that does not answer in time", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(300 * time.Millisecond)
+		}))
+		t.Cleanup(slow.Close)
+		addLocalLines(t, r.doctorRig, "bitbucket_api_roots:\n  - "+slow.URL+"\n")
+		useBitbucketRoot(t, slow.URL, &http.Client{Timeout: 50 * time.Millisecond})
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || vs[0].OK || vs[0].Severity != "info" {
+			t.Fatalf("bitbucket-token-valid = %+v, want one informational line", vs)
+		}
+	})
+}
+
+// TestDoctorBitbucketTokenRoots pins the rule itself: the roots the check asks
+// are the installation's own allow-list when it lists one, and Bitbucket's own
+// API otherwise — never both, and never a host from anywhere else. An
+// environment variable is not in this function at all, which is the point: a
+// run's FUGARO_BITBUCKET_API_URL is the policy's to allow (the runner refuses a
+// root nobody listed), and a check that reads a credential with the operator's
+// own identity must not be pointed at a host by something a launcher can set.
+func TestDoctorBitbucketTokenRoots(t *testing.T) {
+	lc := &localcfg.Config{}
+	if got := bitbucketTokenRoots(lc); len(got) != 1 || got[0] != bitbucket.DefaultBaseURL {
+		t.Errorf("bitbucketTokenRoots(no list) = %v, want Bitbucket's own API alone", got)
+	}
+	lc.BitbucketAPIRoots = []string{"https://bitbucket.example.com/2.0", "https://mirror.example.com/2.0"}
+	if got := bitbucketTokenRoots(lc); !slices.Equal(got, lc.BitbucketAPIRoots) {
+		t.Errorf("bitbucketTokenRoots(listed) = %v, want exactly the listed roots", got)
+	}
 }
 
 // TestDoctorBrokeringBitbucketDirect: the repository's own side of the flip.
@@ -728,6 +903,93 @@ func TestDoctorBrokeringSecretRotationAge(t *testing.T) {
 			t.Errorf("the warning does not say how long ago it expired: %q", cs[0].Problem)
 		}
 	})
+
+	// The name lives in another repository's own container: the operator
+	// recorded a date for it, this checkout's listing does not reach it, and
+	// doctor looks in every container the installation has before calling the
+	// name a typo. The false warning this pins is the one that told an
+	// operator their correct date matched nothing.
+	t.Run("a name another repository's container carries", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		slug := mustSlug("bitbucket", "workspace-b/repo-b")
+		r.sm.Seed(gcp.SecretID(slug, "deploy-key"), map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "deploy-key"}, []byte("repo-value"))
+		addLocalLines(t, r.doctorRig, "secret_expires:\n  deploy-key: \"2026-11-05\"\n")
+		pinDoctorNow(t, func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) })
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "secret-rotation-age")
+		if len(cs) != 1 || !cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("secret-rotation-age = %+v, want the one measurement: a container of the installation carries the name", cs)
+		}
+	})
+
+	// And the same name when that listing is refused: doctor may not report a
+	// name it could not look for as a name nothing carries. The read that fails
+	// is the installation-wide one (its own filter), so the two listings the
+	// check measures still answer.
+	t.Run("the other containers could not be listed", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		slug := mustSlug("bitbucket", "workspace-b/repo-b")
+		r.sm.Seed(gcp.SecretID(slug, "deploy-key"), map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "deploy-key"}, []byte("repo-value"))
+		addLocalLines(t, r.doctorRig, "secret_expires:\n  deploy-key: \"2026-11-05\"\n")
+		r.sm.FailListWithFilter = "labels." + gcp.LabelManaged + "=" + gcp.ManagedValue
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "secret-rotation-age")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("secret-rotation-age = %+v, want one warning", cs)
+		}
+		if strings.Contains(cs[0].Problem, "no secret container this run could list carries that name") {
+			t.Errorf("the names the refused read would have placed are reported as names nothing carries: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Problem, "could not be listed") || !strings.Contains(cs[0].Problem, "deploy-key") {
+			t.Errorf("the warning does not say which names could not be looked for: %q", cs[0].Problem)
+		}
+	})
+
+	// A version listing that fails is not a container with nothing to date:
+	// the two are separate arms since the review, and this is the one a read
+	// failure takes. The read is the age's own, made last, so the container
+	// listing before it still answers.
+	t.Run("the versions could not be read", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		addLocalLines(t, r.doctorRig, "secret_rotation_days: 30\n")
+		if _, err := r.doctor(t); err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		// The age's own read is the last version list of a run with a period
+		// recorded, and the same installation makes the same calls twice: the
+		// second run's Nth call is the one to fail, with the ones before it
+		// answering the container listings the check also makes.
+		first := r.sm.VersionsListCalls()
+		if first == 0 {
+			t.Fatal("the rig made no version list at all")
+		}
+		r.sm.FailVersionsAfter = 2*first - 1
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "secret-rotation-age")
+		if len(cs) == 0 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("secret-rotation-age = %+v, want a warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "could not be read") {
+			t.Errorf("a failed read is not reported as one: %q", cs[0].Problem)
+		}
+		if strings.Contains(cs[0].Problem, "holds an enabled version whose creation time could not be read") {
+			t.Errorf("a failed listing is reported as a container with nothing to date: %q", cs[0].Problem)
+		}
+	})
 }
 
 // TestDoctorBrokeringModelKeyInAgent: the reading an owner asked for — which
@@ -765,6 +1027,13 @@ func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
 		if !strings.Contains(cs[0].Problem, config.ReservedSecrets[config.AnthropicSecret]) || !strings.Contains(cs[0].Problem, "budget.mode is off") {
 			t.Errorf("the line does not name the variable and why it is there: %q", cs[0].Problem)
 		}
+		// On the default screen since the ruling of 2026-11-01, and still not a
+		// failure: an installation that runs without the budget is a legitimate
+		// one, so neither the item nor the count it carries makes doctor red,
+		// --strict included.
+		if checksFail(cs, true) {
+			t.Errorf("the security finding fails doctor under --strict: %+v", cs)
+		}
 	})
 
 	t.Run("oauth, no service", func(t *testing.T) {
@@ -788,6 +1057,22 @@ func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
 			t.Errorf("an installation whose agent holds no key of its own got %+v", cs)
 		}
 	})
+
+	// The gateway is what decides this check, not auth on its own: with the
+	// budget on, the model credential is the gateway's and the agent's own
+	// environment carries none of it (runner.GatewayOn), so an api-key workflow
+	// is not a finding. The mutant this kills is the check that reads auth and
+	// forgets the gateway, which reports a key in the agent's reach for an
+	// installation that took the credential out of it.
+	t.Run("api-key with the budget on", func(t *testing.T) {
+		for _, mode := range []string{"observe", "enforce"} {
+			r := newRig(t, "api-key", false)
+			addLocalLines(t, r, "budget: { mode: "+mode+", per_run_usd: 5 }\n")
+			if cs := check(t, r); len(cs) != 0 {
+				t.Errorf("budget.mode %s: model-key-in-agent = %+v, want none: the gateway holds the key", mode, cs)
+			}
+		}
+	})
 }
 
 // TestDoctorBrokeringStatesOnTheOneScreen is item 1's classification read from
@@ -797,7 +1082,8 @@ func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
 // warning is an item of the default view, printed with the command that fixes
 // it; a measurement is printed by --all and counted by nothing; an information
 // line is counted in the pointer the default view ends with, which is where the
-// owner's ruling of 2026-10-31 puts model-key-in-agent.
+// owner's ruling of 2026-10-31 puts model-key-in-agent — except the one the
+// ruling of 2026-11-01 puts in both, below.
 func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 	wants := func(t *testing.T, got string, want ...string) {
 		t.Helper()
@@ -963,11 +1249,13 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		}
 	})
 
-	// The owner's ruling of 2026-10-31: a model credential that reaches a
-	// workflow's agent is a counted security finding. It is not an item — the
-	// installation that runs without the budget is a legitimate one — so the
-	// default screen carries it as the count it ends with, and --security prints
-	// it whole with its fix.
+	// The owner's ruling, corrected on 2026-11-01: a model credential that
+	// reaches a workflow's agent is a counted security finding printed on the
+	// default screen. It is the one check that is both — the item carries the
+	// check's own fix, and the screen still ends with the count, because it is
+	// a security finding and the pointer is how the screen says the sweep has
+	// something. The installation that runs without the budget is a legitimate
+	// one, so neither the item nor the count fails doctor.
 	t.Run("the model key reaches the agent", func(t *testing.T) {
 		newDoctorRig(t)
 		dir := checkoutWith(t, map[string]string{"fugaro.yaml": strings.Replace(cliMinimalYAML,
@@ -979,13 +1267,13 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Fatalf("json: %v\n%s", err, out)
 		}
 		cs := checksByID(o, "model-key-in-agent")
-		if len(cs) != 1 || cs[0].Class != doctorClassAudit {
-			t.Fatalf("model-key-in-agent = %+v, want the counted security audit finding", cs)
+		if len(cs) != 1 || cs[0].Class != doctorClassSecurity {
+			t.Fatalf("model-key-in-agent = %+v, want the printed and counted security finding", cs)
 		}
 		def := doctorDefaultOutput(t, o.Checks)
-		if strings.Contains(def, "model-key-in-agent") {
-			t.Errorf("the default view prints the sweep's own line:\n%s", def)
-		}
+		wants(t, def,
+			"info model-key-in-agent:", "the gateway holds the key",
+			"update --provision-credentials")
 		counted(t, def, "`fugaro doctor --security`")
 		wants(t, doctorSecurityOutput(t, o.Checks),
 			"model-key-in-agent", "the gateway holds the key")
@@ -1034,6 +1322,131 @@ func TestDoctorBrokeringCleanInstallationIsOneLine(t *testing.T) {
 	}
 }
 
+// TestDoctorBrokeringStrictFailsTheWarnings: which of this group's states
+// --strict turns red. A check's severity is the whole of the answer — checksFail
+// reads nothing else — so the assertion is on the check the state's own emitter
+// produced rather than on the command's error: this rig is a real installation,
+// and its checkout has no plugin pin and no base image recorded, so warnings
+// beside this group's fail every run of it under --strict. `err != nil` would
+// hold in every case here and pin nothing about the state under test; the
+// group's own checks are what this reads.
+func TestDoctorBrokeringStrictFailsTheWarnings(t *testing.T) {
+	// A date another repository's container carries is the state the review
+	// fixed: the check must find the name and report the measurement, not warn
+	// about a name the installation does carry.
+	seedOtherReposContainer := func(t *testing.T, r *brokeringRig, name string) {
+		t.Helper()
+		slug := mustSlug("bitbucket", "workspace-b/repo-b")
+		r.sm.Seed(gcp.SecretID(slug, name), map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: name}, []byte("repo-value"))
+	}
+	for _, tc := range []struct {
+		name string
+		// id is the check the state is about. red is what --strict must answer
+		// for it: a warning fails doctor, an information line and a measurement
+		// never do.
+		id  string
+		red bool
+		// direct builds the installation and checkout that hold their own token
+		// instead of proxying it; every other case starts from the opted-in
+		// proxied rig.
+		direct bool
+		flag   bool
+		setup  func(t *testing.T, r *brokeringRig)
+	}{
+		{name: "the credentials service is missing", id: "credentials-service-deployed", red: true,
+			setup: func(*testing.T, *brokeringRig) {}},
+		{name: "the credentials service is deployed and its callers are granted", id: "credentials-service-deployed",
+			setup: func(t *testing.T, r *brokeringRig) {
+				r.svcs.AddService(infra.CredentialsServiceName)
+				r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{
+					Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+			}},
+		{name: "the bundle holds no token and a repository is proxied", id: "bundle-bitbucket-token", red: true, flag: true,
+			setup: func(t *testing.T, r *brokeringRig) {
+				r.putBundle(t, config.AnthropicSecret+": "+credsValue(t, "model")+"\n")
+			}},
+		{name: "the bundle holds a token Bitbucket accepts", id: "bundle-bitbucket-token", flag: true,
+			setup: func(t *testing.T, r *brokeringRig) {
+				r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+				srv, _ := bitbucketFake(t, http.StatusOK)
+				useBitbucketRoot(t, srv.URL, srv.Client())
+			}},
+		{name: "Bitbucket refuses the token", id: "bitbucket-token-valid", red: true, flag: true,
+			setup: func(t *testing.T, r *brokeringRig) {
+				r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+				srv, _ := bitbucketFake(t, http.StatusUnauthorized)
+				useBitbucketRoot(t, srv.URL, srv.Client())
+			}},
+		{name: "Bitbucket does not answer", id: "bitbucket-token-valid", flag: true,
+			setup: func(t *testing.T, r *brokeringRig) {
+				r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+				srv, _ := bitbucketFake(t, http.StatusBadGateway)
+				useBitbucketRoot(t, srv.URL, srv.Client())
+			}},
+		{name: "the repository holds its own token", id: "bitbucket-direct", direct: true,
+			setup: func(*testing.T, *brokeringRig) {}},
+		{name: "a job still mounts the token after the flip", id: "bitbucket-direct", red: true,
+			setup: func(t *testing.T, r *brokeringRig) {
+				flipProxiedGitList(t, config.BitbucketSecret)
+				r.jobMountingBitbucketToken(t)
+			}},
+		{name: "a container older than the period", id: "secret-rotation-age", red: true,
+			setup: func(t *testing.T, r *brokeringRig) {
+				addLocalLines(t, r.doctorRig, "secret_rotation_days: 30\n")
+				pinDoctorNow(t, func() time.Time { return time.Now().Add(100 * 24 * time.Hour) })
+			}},
+		{name: "every credential inside its period", id: "secret-rotation-age",
+			setup: func(t *testing.T, r *brokeringRig) {
+				addLocalLines(t, r.doctorRig, "secret_rotation_days: 30\n")
+			}},
+		{name: "a date recorded for a name nothing carries", id: "secret-rotation-age", red: true,
+			setup: func(t *testing.T, r *brokeringRig) {
+				addLocalLines(t, r.doctorRig, "secret_expires:\n  bitbucket-toke: \"2026-11-05\"\n")
+				pinDoctorNow(t, func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) })
+			}},
+		{name: "a date another repository's container carries", id: "secret-rotation-age",
+			setup: func(t *testing.T, r *brokeringRig) {
+				seedOtherReposContainer(t, r, "deploy-key")
+				addLocalLines(t, r.doctorRig, "secret_expires:\n  deploy-key: \"2026-11-05\"\n")
+				pinDoctorNow(t, func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) })
+			}},
+		{name: "the installation's other containers could not be listed", id: "secret-rotation-age", red: true,
+			setup: func(t *testing.T, r *brokeringRig) {
+				seedOtherReposContainer(t, r, "deploy-key")
+				addLocalLines(t, r.doctorRig, "secret_expires:\n  deploy-key: \"2026-11-05\"\n")
+				r.sm.FailListWithFilter = "labels." + gcp.LabelManaged + "=" + gcp.ManagedValue
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newBrokeringRig(t)
+			if tc.direct {
+				r = newBrokeringDirectRig(t)
+			}
+			tc.setup(t, r)
+			var args []string
+			if tc.flag {
+				args = append(args, "--check-bitbucket-token")
+			}
+
+			o, err := r.doctor(t, args...)
+			if err != nil {
+				t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+			}
+			cs := checksByID(o, tc.id)
+			if len(cs) == 0 {
+				t.Fatalf("%s emitted no %s check: %+v", tc.name, tc.id, o.Checks)
+			}
+			if checksFail(cs, false) {
+				t.Errorf("%s fails doctor without --strict: %+v", tc.id, cs)
+			}
+			if got := checksFail(cs, true); got != tc.red {
+				t.Errorf("--strict on %s = %v, want %v: %+v", tc.id, got, tc.red, cs)
+			}
+		})
+	}
+}
+
 // TestDoctorBitbucketTokenNeverPrinted is the rule the whole flag is built
 // around: the bundle's value is used in memory and appears nowhere — not in
 // the printed output, not in --json, not in an error string. Both of the
@@ -1046,14 +1459,35 @@ func TestDoctorBitbucketTokenNeverPrinted(t *testing.T) {
 		name   string
 		status int
 		flag   bool
+		// doc is what the bundle holds, when it is not the document both values
+		// are read out of. The unparseable case seeds bytes that carry the token
+		// and are not a document at all: ParseBundle refuses to wrap the YAML
+		// error precisely because it quotes the document, so this is the state
+		// where a message that echoed what it could not read would print a
+		// credential.
+		doc string
+		// disable marks every version of the bundle DISABLED: the document is
+		// not reached at all, and the state's own sentence must carry nothing of
+		// it.
+		disable bool
 	}{
-		{"accepted", http.StatusOK, true},
-		{"refused", http.StatusUnauthorized, true},
-		{"without the flag", http.StatusOK, false},
+		{name: "accepted", status: http.StatusOK, flag: true},
+		{name: "refused", status: http.StatusUnauthorized, flag: true},
+		{name: "without the flag", status: http.StatusOK},
+		{name: "a document that does not parse", status: http.StatusOK, flag: true,
+			doc: config.BitbucketSecret + ": " + token + "\n  broken: [\n"},
+		{name: "the newest version DISABLED", status: http.StatusOK, flag: true, disable: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newBrokeringRig(t)
-			r.putBundle(t, brokeringBundleDoc(t, token))
+			doc := brokeringBundleDoc(t, token)
+			if tc.doc != "" {
+				doc = tc.doc
+			}
+			id := r.putBundle(t, doc)
+			if tc.disable {
+				r.sm.DisableVersions(id)
+			}
 			srv, _ := bitbucketFake(t, tc.status)
 			useBitbucketRoot(t, srv.URL, srv.Client())
 
@@ -1065,6 +1499,15 @@ func TestDoctorBitbucketTokenNeverPrinted(t *testing.T) {
 			}
 			out, errOut, _ := execute(t, args...)
 			plain, plainErr, _ := execute(t, plainArgs...)
+			if tc.doc != "" || tc.disable {
+				// The state is the one this case is named for, and not a
+				// document that parsed after all: --json carries the check's
+				// own sentence (the default screen prints the short line of the
+				// ID), and that sentence is where a value would appear.
+				if !strings.Contains(out, "the bundle could not be read") {
+					t.Fatalf("doctor did not reach the bundle's refusal:\n%s", out)
+				}
+			}
 			for what, got := range map[string]string{
 				"the json output":    out,
 				"the json error":     errOut,

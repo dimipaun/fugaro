@@ -494,7 +494,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// bitbucket-token is stored in the repository's own container by default.
 	// nil outside a checkout, which is what doctorSecrets answers for one.
 	repoSecrets := doctorSecrets(cmd, lc)
-	o.Checks = append(o.Checks, doctorSecretRotationAge(ctx, lc, projSecrets, projOK, repoSecrets)...)
+	o.Checks = append(o.Checks, doctorSecretRotationAge(ctx, lc, projSecrets, projOK, repoSecrets, doctorManagedSecrets(ctx, lc))...)
 	if checkBitbucketToken {
 		o.Checks = append(o.Checks, doctorBundleChecks(ctx, lc)...)
 	}
@@ -871,6 +871,53 @@ func doctorProjectSecrets(ctx context.Context, lc *localcfg.Config) (sm *gcp.Sec
 	}
 	slices.SortFunc(list, func(a, b gcp.SecretInfo) int { return strings.Compare(a.ID, b.ID) })
 	return client, list, true
+}
+
+// doctorManagedSet is every container Fugaro manages in the project — the
+// project-wide ones and each repository's own, whoever onboarded it — by the
+// logical names they carry, and whether that listing answered.
+//
+// It answers the one question secret-rotation-age cannot answer from the two
+// scopes it measures: whether a name the operator recorded in secret_expires is
+// carried by a container of another repository's own (bitbucket-token is
+// per-repository by default, so the date may have been recorded from another
+// checkout). Read is false when the listing could not be made — and the check
+// reads it only for a name nothing in the two scopes carries, so a false Read is
+// always a failed read and never "there was nothing to look for".
+type doctorManagedSet struct {
+	Names map[string]bool
+	Read  bool
+}
+
+// doctorManagedSecrets reads doctorManagedSet, best-effort and never fatal:
+// nothing is listed at all unless the operator recorded an expiry date, since a
+// name is what the listing is for and doctor's other two listings already cover
+// the scopes the age check measures (which matters, since listing a container
+// costs a version listing as well).
+func doctorManagedSecrets(ctx context.Context, lc *localcfg.Config) doctorManagedSet {
+	if len(lc.SecretExpires) == 0 {
+		return doctorManagedSet{}
+	}
+	if lc.Endpoints.NoAuth && lc.Endpoints.SecretManager == "" {
+		// Fakes only, and no fake for Secret Manager: the same guard
+		// doctorProjectSecrets makes.
+		return doctorManagedSet{}
+	}
+	sm, err := gcp.NewSecrets(ctx, gcpOptions(lc))
+	if err != nil {
+		return doctorManagedSet{}
+	}
+	list, err := sm.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+	if err != nil {
+		return doctorManagedSet{}
+	}
+	set := doctorManagedSet{Names: make(map[string]bool, len(list)), Read: true}
+	for _, s := range list {
+		if name := s.Labels[gcp.LabelSecret]; name != "" {
+			set.Names[name] = true
+		}
+	}
+	return set
 }
 
 // projectSecretEnabled is the logical names holding an enabled version, from
