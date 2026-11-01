@@ -44,6 +44,7 @@
 
 import { measured } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
+import { nameableText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type {
   CoordinatorRecord,

@@ -73,7 +73,7 @@ import { UNAVAILABLE_MARK, measured, readNumber, unavailable } from '../../share
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
 import type { KillView } from '../../shared/schema'
-import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
+import { nameableText, sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
@@ -375,7 +375,16 @@ const CAP_SOURCES: readonly string[] = Object.freeze(['repo', 'default', 'global
 function killAt(raw: unknown): KillView | null {
   const kill = objectAt(raw)
   if (kill === null) return null
-  return { by: textAt(kill['by']) ?? '', at: textAt(kill['at']) ?? '', reason: textAt(kill['reason']) ?? '' }
+  const by = textAt(kill['by']) ?? ''
+  // The banner is one of the console's two sentence-style attributions, and the
+  // rule is the Coordinator's `declared by` rule: a value that is empty, a
+  // redaction the CLI made or an address with nothing before the `@` is nobody
+  // to name, so the phrase goes altogether (`nameableText`).
+  return {
+    by: nameableText(by) ? by : '',
+    at: textAt(kill['at']) ?? '',
+    reason: textAt(kill['reason']) ?? '',
+  }
 }
 
 /** repoEntryOf reads `slug` and `repo` off a repository block or a run row. The
