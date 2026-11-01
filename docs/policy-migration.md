@@ -49,6 +49,51 @@ deleting it:
    flight stops the write unless `--yes` is passed, exactly as `publish
    --delete` does with it).
 
+## Who publishes the node
+
+`fugaro update` is the one command an operator runs, and it is also what
+*publishes*: the same stage that migrates an older node writes the node the
+local config states when the published one does not carry it — the budget block,
+the model-price overrides, the base branch, the routing switch and the review
+floor. A config edit therefore reaches every run of the project through the one
+command, instead of a second `fugaro project policy publish` after every edit.
+
+It is one write. The migration and the publish share one ownership read (the
+database this installation adopted), one ETag and one write path, and the
+document a publish writes is built on top of the migrated node, so a run that
+has both to do does both in a single ETag-guarded write. `fugaro project policy
+publish` builds its document through the same function, so the two doors cannot
+drift into two shapes of one node.
+
+A publish never touches the allow-list (`allow_repos`): it is the node's own,
+and re-seeding it is `--seed-repos` on the explicit door (P4 — removing an entry
+is how a repository is un-enrolled). And a node that already carries what the
+config states is not rewritten at all: the stage writes nothing, byte for byte.
+
+## A machine whose file is older than the node (D854)
+
+The published node can be moved by *another* machine — a second operator's
+laptop, or the console. That machine's config file, meanwhile, states what it
+stated when it was last written from the node. Publishing from it would replace
+a newer node with an older file.
+
+So the local config records the generation its policy keys were last written
+from (`policy_generation`, the ETag the node was read at), and a
+`fugaro update` that finds the published node ahead of it refuses the publish
+and says so: it prints the three-way state — the generation this file was
+written from, the one the node carries now, and the members the two differ on —
+and offers to **re-seed** the file from the published node instead, under the
+same typed confirmation (`--yes` where that is enough), with a backup of the
+file it replaces. Nothing of the older file is published. An installation whose
+config records no generation adopts the one it reads: refusing once would ask a
+question with no information in it, since the machine has no baseline to compare
+against.
+
+A member a single file edit cannot re-seed (a value the node leaves out, which
+the file would have to drop) is refused by name rather than skipped: a re-seed
+that recorded the generation while leaving a member behind is exactly the
+overwrite this rule exists to prevent.
+
 A project policy is read under a deployed security rules generation, so the
 migration's write is gated on it (`requirePolicyRules`): the same run deploys
 the generation this Fugaro carries **before** the write — `fugaro update`'s
@@ -73,7 +118,12 @@ Two refusals stay put on purpose. A coding agent's session never writes the
 policy (every cloud write of this CLI is the operator's, in their own terminal):
 `fugaro update` there exits 1 with the checkout left for the user, and
 `fugaro upgrade`'s rules and policy steps are skipped, each naming the command
-to run in their own terminal — an expected exit, not a failure. And a
+to run in their own terminal — an expected exit, not a failure. The same holds
+for every command that writes the node by hand: `fugaro project policy publish`
+(including `--delete`, which takes the policy away), and `fugaro project repos
+add`, `repos rm` and `sync`, which write its allow-list — a coding agent's
+session is refused before the read, so nothing is written and, for `sync`, no
+GitHub call is even made. And a
 concurrent writer — a publish landing between the read and the write — makes
 the write fail rather than overwrite: the operator confirmed a diff of a node
 that is no longer there.
@@ -111,8 +161,12 @@ sees what their policy becomes.
 Run `fugaro update`. It brings the installation, the repository and — new in
 this release — the published policy node up to this version: a node an earlier
 release wrote is migrated in place, after a diff of what changes and what is
-kept, and it asks for the project's name (or `--yes`) before writing. Nothing
-is deleted and nothing has to be published again. Expect the confirmation when
-the policy's version moved; a project whose node is already current is told so
-and asked nothing.
+kept, and it asks for the project's name (or `--yes`) before writing. It also
+now publishes the policy node from the local config — a config edit reaches
+every run of the project through this one command, with no separate publish —
+and `fugaro project policy publish`, which writes the same node by hand, is
+refused in a coding agent's session. Nothing is deleted and nothing has to be
+published again. Expect the confirmation when the policy's version moved or when
+a member of the local config is not what the node carries; a project whose node
+is already current is told so and asked nothing.
 ```
