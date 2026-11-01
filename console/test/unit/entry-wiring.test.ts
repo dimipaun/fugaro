@@ -662,11 +662,22 @@ describe('the dashboard the entry mounts', () => {
       // see is what the click itself drew.
       const diagnosis = holding()
       const logs = holding()
-      const { panel } = await opened({
-        diagnoseRun: diagnosis.reply,
-        readRunLogs: logs.reply,
-        runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+      const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+      const fake = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          diagnoseRun: diagnosis.reply,
+          readRunLogs: logs.reply,
+          runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+        },
       })
+      const document = await boot(fake.bridge, new FakeDocument())
+      const panel = panelOf(document)
+      ;(classed(panel, 'live-run')[0] as FakeNode).click()
+      // **Nothing is awaited between the click above and the assertions
+      // below.** A case that flushed first would pass against a screen that
+      // drew a turn later, and drawing a turn later is the whole of the
+      // owner's complaint.
       expect(panel.children[0]?.attributes.get('class'), 'the click drew no run screen').toBe('run')
       // The run the operator clicked, and the way back from it.
       expect(classed(panel, 'run-id')[0]?.textContent).toBe('20261015-120000-aa01')
