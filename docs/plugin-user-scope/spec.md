@@ -38,9 +38,11 @@ there in the first place. So the plugin stage keeps its position and changes its
 **Why the plugin stage becomes `LocalUnderAgent` (D941).** The stage is *not* local under an agent marker
 today, and that is deliberate: it writes a file that lands in a pull request, which an agent may not
 approve. At user scope every write it makes is on this machine's own Claude Code — the same class of
-write the checkout stage is already `LocalUnderAgent` for (`init_checkout_upgrade.go:53`, and
-`internal/initflow/stage.go:337` for the interface). So a coding agent's session moves the plugin, and no
-longer stops at `left for you` for it.
+write the checkout stage is already `LocalUnderAgent` for (`init_checkout_upgrade.go:63`, and
+`internal/initflow/stage.go:349` for the interface). So a coding agent's session moves the plugin, and no
+longer stops at `left for you` for it. **That marker is about a session, not about a person:** it says
+what the loop may apply under an agent, and it does nothing for a teammate at a terminal, whose run the
+ordinary path drives (§11).
 
 The **checkout stage** keeps the `cloud` step and nothing else. Its `pin` and `plugin` entries
 (`init_checkout_upgrade.go:39`) are removed, its `planFor` loses its `pinSkip` case, and
@@ -124,7 +126,11 @@ by each teammate's machine.
   local half needed a flag to be runnable at all. After §2 the plugin stage is `LocalUnderAgent` and the
   checkout stage is too, so **plain `fugaro update`, under an agent marker, does the local half and parks
   the cloud half** — which is what `--local` said, without a flag. `fugaro update --local` would be the
-  same run with fewer steps, and `fugaro update-skills` is the command for the plugin alone. The **cost**
+  same run with fewer steps, and `fugaro update-skills` is the command for the plugin alone. **That
+  argument is about a coding agent's session and it does not carry to the teammate who is not the owner**:
+  a marker is set by the session, not by a person's roles, so the teammate's run is driven by the
+  ordinary path, where a stage that has something to do and no terminal to ask at stops the loop — which
+  is §11's gap, D954 and U8. `--local`'s removal is therefore gated on U8, not on §2 alone. The **cost**
   of dropping it: a note or a habit that says `fugaro update --local` becomes a cobra "unknown flag" and
   has to say `fugaro update`, and the plan's census lists the places.
 - **The cloud flags stay where they are.** `--repo`, `--workflow`, `--image-source`, `--expect-digest`,
@@ -164,17 +170,28 @@ reports is still "the installed plugin is not the version Fugaro wants" — and 
 version Fugaro wants and which install answers.
 
 - `installed differs` is a **warning**, as today.
-- `not installed` becomes a **warning** (today it is `info`, `doctor_render.go:174`'s
-  `doctorMeasureIDs`): with the plugin at user scope, "no plugin on this machine" is a state `fugaro
-  update` repairs, and a measurement nothing acts on is the silent pass the classes exist to prevent.
-- `plugin-install` **moves into `doctorUpdatePrefixes`** (`doctor_render.go:100`) and its default-view
+- `not installed` becomes a **warning** (today it is `info`, `doctor_render.go:203`, which is
+  `plugin-install`'s row in `doctorMeasureIDs`): with the plugin at user scope, "no plugin on this
+  machine" is a state `fugaro update` repairs, and a measurement nothing acts on is the silent pass the
+  classes exist to prevent.
+- `plugin-install` **moves into `doctorUpdatePrefixes`** (`doctor_render.go:117`) and its default-view
   line becomes ``run `fugaro update` ``, replacing ``run `fugaro upgrade --local` `` in
-  `doctor_render.go:583`, `doctor_render.go:690` and `doctor_render_test.go:722`. The comment above
-  `doctorUpdatePrefixes` already says this line was waiting for the change: "the converge's plugin stage
-  rewrites the checkout's pin, not the installation: `fugaro upgrade --local` ... is what installs it."
-  After §2 the plugin stage *is* the installation's, so the class's own fix is the true one.
-- `pluginwire.Fix` for `Outdated`, `NotWired`, `Unpinned` and `InstalledDiffers`
-  (`internal/pluginwire/status.go`) stops naming `fugaro upgrade --local` and names `fugaro update`.
+  `doctor_render.go:768` (`doctorUpdateFixes`, `:644`) and `doctor_render_test.go:729`. The comment above
+  `doctorUpdatePrefixes` already says this line was waiting for the change (`doctor_render.go:88-91`):
+  "the converge's plugin stage rewrites the checkout's pin, not the installation: `fugaro upgrade
+  --local` ... is what installs it." After §2 the plugin stage *is* the installation's, so the class's own
+  fix is the true one — and the plan-reader's "not here yet" note goes with the move.
+- `pluginwire.Fix` **already points at `fugaro update` everywhere a fix names a command.** The tree
+  moved under this design: a commit on this branch's own line of work (#1495, "every message that sent
+  the owner to `fugaro upgrade --local` says `fugaro update`") re-pointed `Outdated`, `NotWired`,
+  `Unpinned`, `InstalledDiffers` and `NotInstalled` at `fugaro update` (`internal/pluginwire/status.go:49`,
+  `:55`, `:57`; `Foreign` names no command) and the same sentences in `internal/cli/init_plugin_stage.go`
+  (`pluginFirstRun`, `:32`, and `pluginRefresh`, `:41`, both "Run fugaro update …"). What is **left** is
+  `Newer`'s line
+  (`status.go:51`, "fugaro upgrade never moves a pin down"), which goes with the command (U4), and the
+  two `doctor_render.go` lines above, which U3 owns. The census and every line number in these documents
+  were re-read on this branch's merged tree, not trusted from the day they were written
+  ([reconciliation.md](reconciliation.md) §7).
 
 **The one-screen doctor.** In the default view the two IDs read: `plugin-pin` — a repository that opts in
 to the pin, and whether it matches this binary; `plugin-install` — the plugin on this machine, and whether
@@ -337,7 +354,9 @@ A repository wired by an earlier Fugaro carries a `fugaro@fugaro` pin in a commi
 - **Every teammate installs on their own machine: `brew upgrade dimipaun/tap/fugaro`, then `fugaro
   update`.** That is a real cost the pin used to pay for them, and the design does not hide it: the
   session-start nudge (§7) is what makes it a two-command onboarding instead of a silent absence, and the
-  skills' own text is what a user reads when the plugin is not there.
+  skills' own text is what a user reads when the plugin is not there. **For the teammate who is not the
+  owner, the second command is not yet the one that does it** — §11 is where that is answered, and U8 is
+  what closes it.
 - **Version skew between teammates is possible and is not detected by the repository.** Two teammates can
   run two plugin versions, and one can run a plugin newer than their CLI (the marketplace follows the
   default branch, §4). Nothing in a repository can tell; `doctor` reports it per machine, and the
@@ -359,7 +378,116 @@ A repository wired by an earlier Fugaro carries a `fugaro@fugaro` pin in a commi
   becomes `fugaro update` (or `fugaro doctor --offline` where it was asking a question), and the census in
   [reconciliation.md](reconciliation.md) §4 is the list of places that has to happen.
 
-## 11. What this work does not do
+## 11. A teammate who is not the owner (F23–F25, D954, D955)
+
+**The verification question, written down so it can be checked rather than assumed: a teammate who is not
+the owner runs `fugaro update` in a checkout — what happens?** Every claim below was read in the tree on
+this branch after `origin/main` was merged into it (`28425eba`), not assumed from the rulings.
+
+**The answer in one sentence: what stops a non-owner is the converge's ordering, not a permission.** No
+write `fugaro update` makes for the plugin needs an owner's credential — the install runs the `claude` on
+the teammate's own `PATH` (`internal/cli/upgrade_plugin.go:26`, `claudeplugin.Decide`; F5: the argv is
+already `--scope user`) and needs no project at all. What ends the run is the loop's own rule: it applies
+each stage in order and **"stops at the first stage that needs the user or fails: nothing after it
+runs"** (`internal/initflow/loop.go:329`, `converge`), marking everything after it `blocked: waits for
+<stage>` (`:339`). Four of the stages in front of the plugin are cloud writes (`internal/cli/init_stages.go:169`,
+`:182`), so a teammate's run ends before the plugin as soon as the first of those has something to do.
+
+| update's stage, in order (`init_stages.go:169`, `:182`, `:188-195`) | what it does for a teammate who is not the owner | the credential it needs there |
+| --- | --- | --- |
+| preflight | the environment (`gcloud`, `terraform`, ADC), and **nothing runs at all** if it is not ready (`init_stages.go:296`) — a teammate who ran `gcloud auth application-default login` passes, which is all `README.md` asks of a launcher | none |
+| installation | writes **this machine's** local config from the installation's outputs and applies nothing (`newMachineConfig`, `init_new_machine.go:42`), then prints the roles and the one-line command an owner runs to grant them (`roleNotes`, `:117`) | read access to the state bucket's outputs, no apply |
+| firebase | skipped unless `--firebase-project` | — |
+| images | **the first stage that can end the run**: it is not exempt from `newMachineGuard` (`init_new_machine.go:94`), and the release the teammate just installed is exactly what gives it something to do | Artifact Registry write, and a billable Cloud Build |
+| secrets | the same guard (`initsecrets.go:620`) | Secret Manager |
+| **plugin** | **exempt from the guard by name** (`init_new_machine.go:95` exempts `Installation` and `Plugin`; its comment says why — "the plugin wiring writes a local file only … the run still wires the plugin, with its own confirmation") and it needs no cloud — **but only if the run reaches it** | none |
+| repository | the guard refuses it; it is a cloud write (the onboarding creates Terraform resources) | the operator role |
+| rules | a cloud write | deploying the security rules |
+| policy | a cloud write | the project's Realtime Database |
+| checkout | **shaped for a teammate**, and this part already works: its `cloud` step skips with its own sentence ("no local project config selects this checkout …: the cloud step is for the operator who set the project up", `upgrade_cloud.go:80`), and what is left is the machine's own writes | none |
+
+**Where that lands in the teammate's ordinary case, and it is the release's own day.** A machine that has
+never run `setup` has no local config (`README.md`'s own words: a launcher needs the CLI and ADC, "no
+`fugaro setup`"), so the installation stage takes the new-machine path, the guard arms, and the next cloud
+stage that has something to do refuses it. On the day of a release there always is one: the images stage
+has this release's base image to pin or copy wherever the checkout names a base kind in its `fugaro.yaml`
+(the ordinary checkout) or the run passes `--firebase-project`. The run writes the config, prints the role
+notes and stops: **the plugin the teammate ran `fugaro update` for is `blocked`, and so is the checkout
+stage.** The guard's exemption is the code's own statement that the plugin's writes are the machine's; the
+images stage simply comes first, and an exemption by stage name cannot see that.
+
+**So `fugaro update` does not today do what `fugaro upgrade --local` did for a non-owner, and the gap is
+worth naming precisely.** `--local` was defined as "pin and plugin only … the cloud, rules and policy
+steps are skipped before they read anything, never attempted … the exit code is 0 when the local steps
+succeeded" (`upgrade.go:141-144`): no cloud stage could stop it, because it had none. Plain `fugaro
+update` reaches the local half only where every stage in front of it is **skipped or done**. Two changes
+make the one command true for this reader, and both are U8:
+
+1. **D954 — a stage that is only this machine's is not blocked by a cloud stage that stopped.** The
+   property is already in the tree three times by hand: `LocalUnderAgent` ("every write of the stage's own
+   is on this machine", `internal/initflow/stage.go:349`), `newMachineGuard`'s name list
+   (`init_new_machine.go:95`) and `NeedsBilling`'s case list (`stage.go`'s `case Preflight, Project,
+   Plugin, Checkout`, under a comment that calls the plugin "the plugin wiring, and the checkout's own
+   steps, whose pin and plugin write the checkout's settings and the user's own Claude Code"). `initflow`
+   gains the marker itself, the plugin stage implements it, `converge` applies such a stage even after
+   `stopped != ""` and reports it in its own words (`machine-local: ran although images waits for you`),
+   and `newMachineGuard` reads the marker instead of the stage's name. **The alternative is to move the
+   plugin stage to just after `installation`** (`init_stages.go:169`) — a smaller diff, and it is not the
+   recommendation: a plugin stage that returns needs-you would then end the run *before* the images,
+   secrets and repository work the owner's own run does today, and the stage order is what the plan view
+   and `docs/design/upgrade.md`'s step list show every reader. **The cost of the recommendation**: the
+   loop's "nothing after it runs" gains one exception, and the marker's rule has to stay true by hand —
+   a marked stage reads no cloud and writes nothing outside the machine.
+2. **D955 — the user-scope install stops asking about the repository.** The plugin stage consults the
+   checkout's repository gate (`init_plugin_stage.go:109`, `authState`), and where the checkout's
+   repository is not in the machine's config, `update`'s `enrolling()` is false (`internal/cli/init.go:242`)
+   — so it is needs-you with the line naming `fugaro setup` (`:112-117`, `enrolLeft`). That gate belongs
+   to the **pin**: it is what authorises writing `.claude/settings.json` in somebody's checkout. A
+   machine's plugin install concerns no repository, and a new machine's config lists no repositories at
+   all (`newMachineConfig` copies the installation's outputs, which carry launchers, operators, cleanup,
+   log isolation and the budget backend), so the gate would send every teammate to a second command for a
+   write that is not the repository's. At user scope the **install half drops the gate**; the gate stays
+   for the checkout write U5 adds (the pin's removal), which is also gated by `namesAnotherProject`. The
+   same reasoning removes the stage's need for a checkout: outside one it prints the settings snippet and
+   skips (`:81-88`), and that snippet is the **pin's**, which is opt-in (D949) — a machine install
+   happens anywhere. **The alternative**: keep the gate as it is, and every teammate is sent to `fugaro
+   setup` before their own machine's plugin is installed.
+
+**A pin the plugin stage cannot move must not end the run, and today it does.** §8 says "a pin that is
+not removable is not a failure … each is left exactly as it is, with the existing refusal text, and the
+run continues to the next stage" — a `pluginwire.ForeignError`, a `ForkError` and an invalid file are
+needs-you in the code (`init_plugin_stage.go:128-136`), and needs-you is the loop's stop. U8 makes those
+three the shape the loop already has for "done with what this session may do, with something only the
+user can do": apply, report the refusal as `Outcome.Left` (which continues **and** sets the exit code,
+`loop.go:439`) and leave the file alone. This is F25, and it is the one part of the gap that is a
+contradiction inside this design rather than a consequence of the move.
+
+**The exit code changes for this reader, and that is the honest part.** `fugaro upgrade --local` exited
+**0** when the local steps succeeded (`upgrade.go:144`); a teammate's `fugaro update` ends **1**, because
+the run really does have something left for a person — the owner's cloud stages, in `left_for_you`
+(`initflow.Result.ExitCode`). A script that read `--local`'s 0 reads `--json`'s `left_for_you` instead.
+The HARD RULE is not what this costs: the run that must exit 0 after doing everything is the **owner's**,
+and it does.
+
+**The open item: what a teammate's ADC may do is IAM, and this design cannot see it.** Whether that
+teammate may read the state bucket's outputs, plan the installation, or write Artifact Registry is
+decided by bindings in the project, not by anything the binary reads — so **which** cloud stage ends a
+given teammate's run is not answerable from the code, and this document does not pretend otherwise. It
+does not have to be: U8 makes the local half independent of where the cloud stops, rather than making the
+cloud stages succeed. What is deliberately not promised is the other half — that a teammate's own `fugaro
+update` afterwards converges the installation. That is the owner's run, and §10 says so.
+
+**The two documents that send a teammate to a command are not this pull request's, and the order
+matters.** `README.md` (~line 46, "run `fugaro upgrade --local` in the checkout … then restart the
+session") and `website/data/install.yaml` (~line 119, the plugin path's third command) both still name
+`--local`; both paths belong to other runs (U7 names them, and this design directory may not edit them).
+**The ordering rule U8 puts on them:** neither may be rewritten to `fugaro update` before U8 lands, and
+U4 may not delete `--local` (or `fugaro upgrade`) before U8 lands either — a release that deleted the old
+spelling while the new one cannot yet reach the plugin would leave a teammate with a sentence and no
+command. That is the one place in this plan where the order is not a preference but a
+correctness condition, and [implementation-plan.md](implementation-plan.md)'s table carries it.
+
+## 12. What this work does not do
 
 - **It writes no code.** Four documents, one commit.
 - **It does not change `fugaro update`'s cloud behaviour**, its confirmations, its typed project names,

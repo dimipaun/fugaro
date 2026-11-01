@@ -9,7 +9,7 @@ rather than trust: a line number ages, and a count ages faster.
 
 | # | The claim | Where it holds |
 | --- | --- | --- |
-| F1 | `fugaro update` already converges the checkout it stands in | `internal/cli/init_checkout_upgrade.go:39` — `checkoutSteps = {pin, plugin, cloud}` with `LocalUnderAgent()` at `:53`; the stage is declared after the repository stage (`internal/initflow/stage.go`'s stage list, `checkout` needs `repository`) |
+| F1 | `fugaro update` already converges the checkout it stands in | `internal/cli/init_checkout_upgrade.go:39` — `checkoutSteps = {pin, plugin, cloud}` with `LocalUnderAgent()` at `:63`; the stage is declared after the repository stage (`internal/initflow/stage.go:159`, `checkout` needs `repository`) |
 | F2 | One converge engine, two doors | `internal/cli/init.go`'s `newInitCmdWith` builds `setup` and `update` from the same `internal/initflow` stages; the stage order is `Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Rules, Policy, Checkout, Compute` |
 | F3 | The plugin merge lives in the **plugin** stage, which runs **before** the repository stage | `internal/cli/init_plugin_stage.go`; the stage list above puts `Plugin` at 8 and `Repository` at 11 |
 | F4 | `pluginwire` is narrow and refuses to be clever | `internal/pluginwire` merges only `extraKnownMarketplaces.fugaro` and `enabledPlugins["fugaro@fugaro"]`, needs a strict `vX.Y.Z`, never rewrites a file it cannot parse, never moves a pin down, and never commits |
@@ -41,10 +41,14 @@ any task that looks for a scope to change will not find one.
 | F20 | **These tests will go red, and each is named by the task that owns it** (the list is in §5) | the gate |
 | F21 | **A repository that never opted in fails `fugaro doctor --plugin --strict` today.** `pluginwire.Severity()` gives `info` only to `NotInstalled` and `CannotCompare`; `not wired` is a `warning`, and `--strict` is the mode a repository's CI runs (doctor's own help calls `--plugin` "offline, no credentials, safe for CI") | conflict — decides D942 |
 | F22 | **What the pin pays for, which the user-scope install does not**: a teammate who has run nothing still gets the skills, and a repository can say "required". Stated as a trade-off in [spec.md](spec.md) §10 rather than designed away | cost — D949 |
+| F23 | **A teammate who is not the owner can be stopped before the plugin, by a cloud stage, and the loop's stop is why.** `converge` "stops at the first stage that needs the user or fails: nothing after it runs" (`internal/initflow/loop.go:329`) and marks the rest `blocked: waits for <stage>` (`:339`); the images stage and the secrets stage are before the plugin stage (`internal/cli/init_stages.go:169`, `:182`) and are not exempt from `newMachineGuard` (`init_new_machine.go:94`), which exempts `Installation` and `Plugin` **by name** (`:95`). A `brew upgrade` run is exactly the run in which the images stage has the release's new base image to pin. `--local` could not be stopped this way: it had no cloud stage (`upgrade.go:141-144`) | gap — D954, closed by U8 |
+| F24 | **The plugin stage's repository gate is the pin's, not the user-scope install's.** `pluginwire`'s write is `.claude/settings.json` in somebody's checkout, so the stage asks `authState` (`init_plugin_stage.go:109`) and, where the checkout's repository is not in the machine's config, is needs-you with the line naming `fugaro setup` (`:112-117`) — `update`'s `enrolling()` is false (`internal/cli/init.go:242`). A new machine's config lists no repositories (copied from the installation's outputs, `newMachineConfig`), and the machine install needs none of them: outside a checkout the stage even prints the **pin's** snippet and skips (`:81-88`) | gap — D955, closed by U8 |
+| F25 | **§8 says a pin that cannot be removed is not a failure "and the run continues to the next stage"; the code stops the loop.** A fork's marketplace, a foreign marketplace and an invalid file are needs-you (`init_plugin_stage.go:128-136`), and needs-you is the stop. The shape for what §8 asks already exists: `Outcome.Left` continues the loop **and** sets the exit code (`loop.go:439`) | contradiction — closed by U8 |
 
-## 3. Decisions (D940–D953)
+## 3. Decisions (D940–D955)
 
-Fourteen, none answered: the owner decides. Each recommendation is first, with the alternative's cost.
+Sixteen, none answered: the owner decides. Each recommendation is first, with the alternative's cost.
+D954 and D955 are the follow-up round's (§7): the teammate who is not the owner, answered from the code.
 
 | D | Question | Recommendation | The alternative, and its cost | Answer |
 | --- | --- | --- | --- | --- |
@@ -62,27 +66,45 @@ Fourteen, none answered: the owner decides. Each recommendation is first, with t
 | **D951** | What can the offline check answer? | The table in spec §7: the plugin install, the pin, the base image and the local image config **yes**; the deployed rules generation, the published policy node and the CLI's own release **no, and said to be skipped** | Pretend to answer them: a guessed "ok" on a credential-only fact is the silent pass `doctor`'s `unread` state exists to prevent | |
 | **D952** | Does the session-start check reach the network? | **No.** Detecting a newer release stays opt-in (`doctor`'s own `cli-version` check in the full run, `internal/cli/doctor.go:172`) and the skills never trigger it | Check the network at session start: an agent that reaches out on the user's behalf, unasked, at the start of every session — and a check that fails offline, which is the state a nudge must survive | |
 | **D953** | What becomes of the `upgrade` skill? | **The `update` skill**: same job (check, explain, hand over the one command), `plugin/skills/upgrade/` renamed to `plugin/skills/update/`, its body rewritten for two commands, `plugin/plugin_test.go:134`'s list swapped one for one | Drop the skill: the one place a user's agent is told how to read the converge's verdict, and its `plugin/` coverage, go with it | |
+| **D954** | A teammate who is not the owner runs `fugaro update`: what makes it reach the plugin? | **A machine-local stage is not blocked by a cloud stage that stopped.** `initflow` gains the marker the tree keeps by hand three times (`LocalUnderAgent`, `newMachineGuard`'s name list, `NeedsBilling`'s case list), the plugin stage implements it, `converge` runs it even after `stopped != ""` and says so in the stage's line, and `newMachineGuard` reads the marker instead of `initflow.Plugin` (spec §11, U8) | Move the plugin stage to just after `installation` (`init_stages.go:169`): a smaller diff, at the cost of a plugin stage's needs-you ending the run **before** the images, secrets and repository work the owner's run does today — and of a stage order the plan view and `docs/design/upgrade.md` show every reader | |
+| **D955** | Does the user-scope plugin install still need the checkout's repository authorised? | **No — the gate is the pin's.** The install half drops `authState`/`enrolling()` and the need for a checkout at all (outside one it prints the pin's snippet and skips today); the gate stays for the checkout write U5 adds, and for the pin's `--pin` path (spec §11, U8) | Keep the gate: every teammate is sent to `fugaro setup` — a second command — before their own machine's plugin is installed, for a write that is not the repository's, and a new machine's config lists no repositories anyway | |
 
 **Why these numbers.** The block was read by hand on 2026-11-01 (README's "Numbers this work holds"):
 `main`'s highest written number is **D900**, three open pull requests claim D901–D919 (#1481), D901–D920
 (#1485) and D920–D934 + reserved D935–D939 (#1487), so the first free number is **D940**. D940–D947 are
-the design's own decisions, D948–D953 the rulings' smaller ones; D954–D959 are reserved and unused. A
-later task takes D960 and re-checks rather than trusting this paragraph.
+the design's own decisions, D948–D953 the rulings' smaller ones, **D954–D955 this work's follow-up
+round** (§7, and the same directory, so nothing outside it could have taken them between the two
+commits); **D956–D959 stay reserved and unused**. A later task takes D960 and re-checks rather than
+trusting this paragraph.
 
 ## 4. The census: everything that names `fugaro upgrade`
 
 ```
-$ git grep -l 'fugaro upgrade' -- .    # 120 files
-$ git grep -o 'fugaro upgrade' -- . | wc -l    # 507 occurrences
+$ git grep -l 'fugaro upgrade' -- . | wc -l          # 119 files
+$ git grep -o 'fugaro upgrade' -- . | wc -l          # 531 occurrences
+$ git grep -l 'upgrade' -- . | wc -l                 # 276 files   (the bare word, for scale only)
+$ git grep -o 'upgrade' -- . | wc -l                 # 2059
 ```
 
-By area: `docs/` 54, `internal/` 53, `plugin/` 5, `website/` 4, `console/` 1, plus `README.md`,
-`CLAUDE.md` and `.claude/skills/new-release/SKILL.md`.
+By area (files): `docs/` 58, `internal/` 48, `plugin/` 5, `website/` 4, `console/` 1, plus `README.md`,
+`CLAUDE.md` and `.claude/skills/new-release/SKILL.md`. **Four of those 58 `docs/` files are this
+directory's own** (41 of the 531 occurrences are these four documents talking about the command they
+retire) — a census that does not say so reads as if the tree were busier than it is.
 
-The bare word `upgrade` is a much larger and mostly irrelevant set (**259 files, 1377 occurrences**),
-because it is also `brew upgrade`, `image_refresh.go`'s own name, a policy *version* upgrade and ordinary
-prose. **The command string is the census**; a task re-runs the two greps above and works from its own
-output, not from this list.
+| | at `3d6ed04d` (this file's first read) | on `28425eba` (2026-11-01, after #1495 and the merge) |
+| --- | --- | --- |
+| files naming `fugaro upgrade` | 120 | **119** |
+| occurrences | 507 | **531** |
+| `docs/plans/2026-10-08-upgrade.md` | 126 — and that count was **lines** (`git grep -c`), the 507 **occurrences** (`-o`): the two methods were mixed in one sentence | 126 lines, **147 occurrences** |
+| bare `upgrade` | 259 files, 1377 occurrences | **276 files, 2059 occurrences** |
+
+The counts moved because a commit landed on this branch's own line of work: **#1495** re-pointed the
+owner-facing messages at `fugaro update` (which *removed* files from the census and *added* occurrences
+to the tests that pin those strings), and these four documents themselves name the command heavily. The
+bare word `upgrade` stays irrelevant in bulk: it is `brew upgrade`, `image_refresh.go`'s own name, a
+policy *version* upgrade and ordinary prose. **The command string is the census**; a task re-runs the
+greps above, with `-l` for files and `-o` for occurrences and never the two mixed, and works from its own
+output rather than from this list.
 
 ### 4a. Three classes, and only one of them changes
 
@@ -169,3 +191,30 @@ docs_release_notes_test.go,docs_project_centric_test.go,docs_project_named_oauth
 **Counted, not read line by line:** the rest of §4's census. Each task re-runs the greps rather than
 trusting these counts, and a task that finds a cited symbol gone **stops and reports** rather than
 inventing a replacement — the rule `docs/plans/2026-10-08-upgrade.md` set for its own tasks.
+
+## 7. What the merged tree changed, and this round's answer (2026-11-01)
+
+The four documents above were written against `3d6ed04d`. The branch was then merged with `origin/main`,
+and two commits on it touch this work's own subject matter, so every citation and both counts were
+re-read on **`28425eba`** rather than trusted. What the re-read found:
+
+| This file said | On `28425eba` | Where it is fixed |
+| --- | --- | --- |
+| 120 files / 507 occurrences, and one sentence counting lines where the rest counted occurrences | **119 / 531**, and the two methods named separately | §4 |
+| `pluginwire.Fix` "stops naming `fugaro upgrade --local`" — as a task | **every state whose fix names a command already names `fugaro update`** (`status.go:49`, `:55`, `:57`; `Foreign` names none); the one line left naming `fugaro upgrade` is `Newer`'s (`:51`), which goes with the command (#1495, a commit on this branch's line of work) | [spec.md](spec.md) §6 |
+| `pluginFirstRun` / `pluginRefresh` are U1's sentences to rewrite | both already say **"Run fugaro update …"** (`init_plugin_stage.go:32`, `:41`) | [spec.md](spec.md) §6 |
+| `doctor_render.go:583`, `:690`, `doctor_render_test.go:722` | the class comment is `:75-117` (its "not here yet" note at `:88-91`), `doctorUpdatePrefixes` `:117`, `plugin-install` in `doctorMeasureIDs` `:203`, `doctorUpdateFixes` `:644` (`cli-version` `:653`, `plugin-pin` `:656`, `plugin-install` `:767-768`, `policy-newer-than-binary` `:781`), the pinned fix string `doctor_render_test.go:729` | [spec.md](spec.md) §6 |
+| `LocalUnderAgent()` at `init_checkout_upgrade.go:53`, the interface at `stage.go:337` | `:63` and `:349` | F1, [spec.md](spec.md) §2 |
+
+**What did not change, checked rather than assumed:** the stage order (`init_stages.go:169`, `:182`),
+`checkoutSteps` (`init_checkout_upgrade.go:39`), `converge`'s stop ("nothing after it runs",
+`initflow/loop.go:329`), `newMachineGuard`'s exemption by stage name (`init_new_machine.go:95`) and
+`cloudNotHere`'s sentence (`upgrade_cloud.go:80`). Those are what §11's answer rests on, so a later task
+re-reads them too before it cites them.
+
+**This round's contribution**, in one line each: **F23–F25** (§2) are the teammate who is not the owner —
+the stop before the plugin, the pin's gate on a machine install, and §8's own "the run continues" that
+the code does not do; **D954 and D955** (§3) are its two answers; and **U8**
+([implementation-plan.md](implementation-plan.md)) is the task, which the plan now puts **before U4**,
+because deleting `fugaro upgrade --local` before the one command reaches the plugin would leave the
+teammate with a sentence and no command ([spec.md](spec.md) §11, last paragraph).

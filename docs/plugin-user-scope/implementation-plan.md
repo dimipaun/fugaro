@@ -1,6 +1,6 @@
 # Implementation plan: one `fugaro update`, the plugin at user scope, a session-start nudge
 
-Eight tasks, one pull request each, in the order below, plus one external dependency. **Nothing here is
+Nine tasks, one pull request each, in the order below, plus one external dependency. **Nothing here is
 approved**, and no task starts before the owner answers the decision it carries
 ([reconciliation.md](reconciliation.md) §3). Each task's decision is named so a task whose answer came
 back the other way is redrawn before it is written, not after.
@@ -13,15 +13,21 @@ back the other way is redrawn before it is written, not after.
 | **U1** | The plugin step leaves the checkout stage and becomes `LocalUnderAgent` | U0 | D941, F12–F15 |
 | **U2** | The pin becomes opt-in: `fugaro update-skills --pin`, and `setup` writes no `.claude/settings.json` | U1 | D940, D944, D949 |
 | **U3** | doctor: the user-scope check, the classes, and `--offline` | U2 | D942, D945, D946, D951, D952 |
-| **U4** | One command: `fugaro upgrade` is removed and `update` takes `--check` | U1, U2, U3 | D948, D950, F16, F18 |
+| **U8** | The teammate who is not the owner: a machine-local stage is not blocked by a cloud stage that stopped, and the user-scope install stops asking about the repository | U1, U2 | D954, D955, F23–F25 |
+| **U4** | One command: `fugaro upgrade` is removed and `update` takes `--check` | U1, U2, U3, **U8** | D948, D950, F16, F18 |
 | **U5** | The migration of a repository carrying an old pin | U2, U4 | D943, F19 |
 | **U6** | The skills: the nudge, the `update` skill, and the `plugin/` gate that keeps gating | U3, U4 | D947, D953, F8 |
 | **U7** | The living documents, and the release that carries them | U1–U6 | the census's class 1 ([reconciliation.md](reconciliation.md) §4a) |
-| **E1** | The release | U0–U7 | the notes, the summary line, and **no operator step** |
+| **E1** | The release | U0–U8 | the notes, the summary line, and **no operator step** |
 
 **The order is a dependency, not a preference.** U1 must land before anything that assumes the plugin step
 is reachable in an agent session; U3's doctor fix strings must point at `fugaro update` **before** U4
-deletes `fugaro upgrade`; U5's migration has nothing to remove until U2 has made the pin opt-in.
+deletes `fugaro upgrade`; U5's migration has nothing to remove until U2 has made the pin opt-in. **One of
+these is a correctness condition rather than a preference: U8 lands before U4.** U4 deletes `fugaro
+upgrade` and with it `--local`, the only spelling that reached the plugin for a teammate who is not the
+owner today ([spec.md](spec.md) §11); U8 is what makes plain `fugaro update` reach it. A release in which
+U4 shipped first would leave every teammate with a sentence naming a command that no longer exists and no
+command that does the work it named.
 
 **What this plan does not own.** It does not touch `internal/runner/runner.go`, `internal/cli/root.go`,
 `internal/cli/api.go`, `website/**`, `plugin/**`, `console/**`, `mobile/**`, `shared/**`, `ee/**`,
@@ -290,9 +296,66 @@ both places.
 `npm run check` in `website/` for any website content. The backlog census is re-run and must still read
 its own count (it is not this work's to change).
 
+## U8. The teammate who is not the owner (D954, D955, F23–F25)
+
+**What it is.** The one command has to work for a reader who holds no owner's role: a teammate with the
+CLI, `gcloud auth application-default login` and a checkout. Three changes, one subject — the machine's
+own writes must not be stopped by the cloud's:
+
+1. **A machine-local stage is not blocked by a cloud stage that stopped (D954).** `initflow` gains the
+   marker the tree keeps by hand three times today (`LocalUnderAgent`, `newMachineGuard`'s name list,
+   `NeedsBilling`'s case list); the plugin stage implements it; `converge` runs such a stage even after
+   `stopped != ""` and reports it in the stage's own line; `newMachineGuard` reads the marker instead of
+   comparing `initflow.Plugin`. The loop's rule is otherwise untouched: everything after the stop is still
+   `blocked: waits for <stage>`, and the stage that ran says why it ran. **The marker's invariant is the
+   task's to keep true**: a marked stage reads no cloud and writes nothing outside the machine.
+2. **The user-scope install stops asking about the repository (D955).** The plugin stage's `authState`
+   gate and its need for a checkout belong to the pin; at user scope the install half drops both, and the
+   checkout's own gate (`namesAnotherProject`) still guards every checkout write, the removal of U5
+   included. A checkout outside a Fugaro project keeps skipping with its own line.
+3. **A pin the stage cannot move does not end the run (F25).** §8 says the run continues; the code stops
+   the loop. The three states that exist today (a fork's marketplace, a foreign marketplace, a file that
+   is not valid JSON) become `Outcome.Left` — the loop continues **and** the exit code says something is
+   left for the user (`internal/initflow/loop.go:439`) — and U5's new states take the same shape.
+
+**Files.** `internal/initflow/stage.go` (the marker and its rule; `NeedsBilling`'s case list if it can
+read the marker rather than the name), `internal/initflow/loop.go` (the one exception in `converge`, and
+the line it prints), `internal/cli/init_plugin_stage.go` (the marker, the install half's gates, the three
+non-stopping refusals), `internal/cli/init_new_machine.go` (the guard), and `internal/cli/init_stages.go`
+if the registration's comment names the marker; tests `internal/initflow/*_test.go`,
+`internal/cli/{init_plugin_stage_test.go,init_new_machine_test.go,init_converge_test.go,
+init_checkout_upgrade_test.go,init_test.go}`.
+
+**Interface.** Nothing on the wire: `update --json`'s stages and their members keep their meanings, and
+what changes is a `detail` string and which stages run. A stage's line may read
+`machine-local: ran although images waits for you`; the plan view is where a reader sees the exception.
+
+**Red step.** Three, one per change: a teammate-shaped converge (a new-machine run whose images stage
+returns needs-you) that still **applies** the plugin stage — failing today, where the stage is `blocked`;
+a plugin stage in a checkout whose repository the machine's config does not list, installing with no
+question and no line naming `fugaro setup` — failing today, where it is needs-you; a fork pin whose
+refusal is `left_for_you` **and** still lets the next stage run — failing today, where the loop stops.
+
+**Tests.** `GOFLAGS=-p=2 go test ./internal/cli/ -run
+'TestInitPluginStage|TestInitNewMachine|TestInitConverge|TestInitCheckoutUpgrade|TestLeftCommands'
+-count=1`, `go test ./internal/initflow/... -count=1`, `go test ./internal/claudeplugin/... -count=1`.
+
+**Docs and release notes.** **No `### For operators` entry**: the whole point is that the teammate runs
+the one documented command and nothing else. **The two documents that send a teammate to that command are
+not this task's to edit and may not be edited before it lands**: `README.md` (~line 46) and
+`website/data/install.yaml` (~line 119) say `fugaro upgrade --local` today, both paths belong to other
+runs, and U7 names them ([spec.md](spec.md) §11's last paragraph is the rule).
+
+**The open item this task does not close, and must not pretend to.** Whether a given teammate's ADC may
+read the state bucket's outputs, plan the installation or write Artifact Registry is decided by bindings
+in the project, not by anything the binary reads, so **which** cloud stage ends their run is not
+answerable in code. U8 makes the local half independent of where the cloud stops; it does not make the
+cloud stages succeed for a non-owner. A task that finds itself needing that answer has found a different
+task, and reports it rather than widening this one.
+
 ## E1. The release
 
-**What it is.** The release that carries U0–U7, through `scripts/release.sh X.Y.Z` from a clean clone: the
+**What it is.** The release that carries U0–U8, through `scripts/release.sh X.Y.Z` from a clean clone: the
 notes are `docs/releases/vX.Y.Z.md` plus one line in `website/data/release-summaries.yaml` (no backticks).
 
 **It carries no `### For operators` section, and that is a requirement, not a preference.** The HARD RULE
@@ -304,9 +367,10 @@ section: the release must not ship an operator step, and a step this plan cannot
 HARD RULE failing, which is reported, not documented.
 
 **Known limits the notes should state plainly** (they are [spec.md](spec.md) §10's, in the user's words):
-every teammate installs Fugaro on their own machine; a repository that wants the skills required keeps the
-opt-in pin; the plugin's marketplace follows the default branch, so the installed plugin can be newer than
-the CLI on `PATH`.
+every teammate installs Fugaro on their own machine, and for the one who is not the owner the run that
+does it reaches the plugin only with U8 in it ([spec.md](spec.md) §11); a repository that wants the skills
+required keeps the opt-in pin; the plugin's marketplace follows the default branch, so the installed plugin
+can be newer than the CLI on `PATH`.
 
 **The release that ships it also ships the version bump every other 0.15.0 run needs**, so E1's notes are
 written once, by whoever tags, from the branch that holds them all.
