@@ -333,7 +333,8 @@ This is rule 1 and rule 2 written as prohibitions. A workspace:
 ## 10. What this design leaves open
 
 - **The workspace's own creation.** Whether `fugaro setup` can create a workspace's Firebase project,
-  or whether it is an owner-run step beside `fugaro init`, is a task-level decision
+  or whether it is an owner-run step beside the installation's own first-run command, is a task-level
+  decision
   ([implementation-plan.md](implementation-plan.md) W3), not a design one: either way the workspace
   exists before a member joins it, and `fugaro update` converges it.
 - **The exchange's exact HTTP shape** — the endpoints, the well-known documents and the error
