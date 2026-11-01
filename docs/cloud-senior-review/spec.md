@@ -843,32 +843,41 @@ exfiltration path, the agent cannot rewrite the tree it is being checked against
 and the reviewer's environment and the network are no longer routes out. **Under O1 there is no token
 in that environment for the scrub to remove** — the environment route is closed by not mounting the
 token at all, and the scrub is what remains for the fallback — so what D891(a) still has to close is
-`/proc` and the network. **How egress is denied for a subprocess inside a Cloud Run container
-is UNVERIFIED** — a network namespace or `unshare` in gen2 has not been checked, and
-[reconciliation.md](reconciliation.md) §6's **U7** is where that is settled. **U7 asks about `/proc`
-in the same breath, because the two residuals have the same shape of answer:** if the child can be
-given **its own PID namespace with its own `/proc` mount, or run under a different uid**, then neither
-the parent's `/proc` nor the parent's environment is readable from the stage that runs the head's test;
-if neither can be done, `/proc` stays open and the design says so rather than assuming a fence. **So
-the answer is conditional, and the design says so:** if a child process cannot be fenced, D891(a)
-cannot be implemented as written, the fallback is the owner's **(b)** or **(c)**, and the owner is
-asked again — which is why **U7 is an owner-run live observation taken before CSR4b launches**, rather
-than an assumption the task starts on. **It is a standalone probe, and §8's step 6 is where it is
-written**: the question is a property of the deployed gen2 execution environment — can a child process
-be denied the network and given a `/proc` of its own — so it is asked directly, by a probe the owner
-runs on the sandbox installation, and **not** through `fugaro review --mutate`, which would need CSR2's
-command and CSR4b's mutation code to exist before the answer that decides whether CSR4b should exist.
-**What is left either way is the `/proc` read, and O1 is what makes it small:** with the token gone
-from the container, the best case for a process that reads `/proc` is the **one-hour, read-only
-installation token** the runner holds in its own memory, not the person's subscription token. That is
-a real reduction and not a closure, and only U7's fence moves it further.
+`/proc` and the network. **How egress is denied for a subprocess inside a Cloud Run container is U7, and U7 is ANSWERED
+(2026-11-01): both fences exist and both hold.** The owner ran the standalone probe §8's step 6 writes
+— **sandbox probe run `20261101-210556-146e`** on the sandbox installation, **kernel 6.9.12, Cloud Run
+gen2, uid 1000, no capabilities, `NoNewPrivs` 1** — and of the three outcomes the first is what it
+saw: a child fenced with `unshare -rn` or `unshare -rnpf --mount-proc` reaches no network, and one
+fenced with `unshare -rpf --mount-proc` or `unshare -rnpf --mount-proc` is given **a `/proc` of its
+own**; `unshare -n`, `setpriv` and `runuser` are refused in that environment. Unfenced, the same child
+reached the internet **and both metadata addresses** and read the parent's environment and
+`/proc/1/environ` — the exposure the fence is for. **So D891(a) is implemented as written, and the
+conditional tail is not taken:** the **(b)** and **(c)** fallbacks stay in §4 for the record, and
+neither is the design's answer, because the fence the answer assumed was measured and is there.
+**`/proc` was the same question asked in the same breath, and it is closed the same way:** the
+mutant's child is given **its own PID namespace with its own `/proc` mount**, so neither the parent's
+`/proc` nor the parent's environment is readable from the stage that runs the head's test. **U7's five
+caveats are recorded in [reconciliation.md](reconciliation.md) §6, and four of them shape this
+paragraph:** the mutant/test child **must** start with an explicit environment (`env -i` plus an
+allow-list), because a namespace stops it reading the parent's `/proc` and not the variables it was
+handed at start; **only the tool or test child can be fenced, never the agent**, because `unshare -rn`
+takes the loopback away and the agent's model calls go through the gateway on it; the claim that the
+parent's environ is denied inside the PID namespace is **partly an artifact** (`$PPID` reads 0 there),
+so the evidence is the drop in visible PIDs; and if **CSR7**'s review-only variant runs in a different
+execution environment, **§8's step 7 confirms again**. **What the fence leaves is what the agent's own
+stage is still handed, and O1 is what makes that small:** that stage cannot be fenced, so the best case
+for a process that reads `/proc` from it is the **one-hour, read-only installation token** the runner
+holds in its own memory, not the person's subscription token. That is a real reduction, and the
+`/proc` read from the mutant's fenced child is closed rather than merely reduced.
 
 What the design still buys, and it is worth having: a container that **did not run the coder**, a
 read-only forge scope, no App key in that container, a run whose whole purpose is the review — and,
 **under O1, no OAuth token in it at all**. What it does **not** buy is a container with nothing
 readable in it: no scrub and no egress rule reaches a process that can read `/proc`, and the honest
 statement of the residual is that what such a process can reach is the review job's own read-only,
-hour-long credential rather than the person's.
+hour-long credential rather than the person's. **U7's fence moves that read off the mutant's child —
+and not off the agent's own stage, which cannot be fenced (caveat 3 of §7's answer) — so the residual
+is that stage's and not the head's test's.**
 
 **The read-only forge scope is one scope among several, so the job holds no minting key — in the
 variant CSR7 adds.** The review job holds `{contents: read, pull_requests: read, metadata: read}` —
@@ -1042,27 +1051,36 @@ run by the owner in their own terminal.
    cost; the installation's caps are unchanged by it, and `fugaro budget show` shows no counted
    spend for it. This is the subscription-versus-gateway property from §1, observed rather than
    assumed.
-6. **Probe the execution environment's fence — the network and `/proc` both — and this is the one step
-   that runs *before* the task it decides.** **U7** ([reconciliation.md](reconciliation.md) §6) asks
-   whether a child process inside this deployment's gen2 execution can be denied the network at all
-   **and given a `/proc` of its own**, because D891(a) assumes the first and §7's residual is the
-   second. **The probe is standalone: it needs no `fugaro review`, no `--mutate` and no mutation code
-   from CSR4b** — those are the things whose existence depends on its answer, so asking the question
-   through them would be circular. On the sandbox installation, the owner runs a one-off execution of
-   the deployed job image whose entrypoint forks a child that (a) tries to reach a host on the
-   network **and the instance metadata server**, (b) tries to read the parent's environment through
-   `/proc`, and (c) is fenced — a network
-   namespace (`unshare -n` where the image has it, or the equivalent the platform allows), **and a PID
-   namespace with its own `/proc` mount, or a different uid, whichever the platform allows** — and
-   records what the child could do. **What is being observed is one of three things:** the child
-   cannot reach the network and cannot read the parent's `/proc` when fenced, and both fences are
-   available; a fence is unavailable in this execution environment; or a fence is available and does
-   not hold. The second and third amend D891's answer and the owner is asked again between **(b)** and
-   **(c)**; the design does not quietly fall back to `denyWeb`. **Why it is the owner's and not a
-   test:** whether a child process can be fenced is a property of the **deployed execution
-   environment**, and this repository's tests are hermetic — no network, no cloud, `t.TempDir()`.
-   **CSR4b does not start until this step has returned**, and nothing in CSR4b's file list is opened
-   before it does.
+6. **Probe the execution environment's fence — the network and `/proc` both — the one step that runs
+   *before* the task it decides. It has been run: U7 is ANSWERED (2026-11-01), and both fences exist
+   and both hold.** **U7** ([reconciliation.md](reconciliation.md) §6) asked whether a child process
+   inside this deployment's gen2 execution can be denied the network at all **and given a `/proc` of
+   its own**, because D891(a) assumes the first and §7's residual was the second. **The probe is
+   standalone: it needs no `fugaro review`, no `--mutate` and no mutation code from CSR4b** — those are
+   the things whose existence depends on its answer, so asking the question through them would be
+   circular. On the sandbox installation, the owner ran a one-off execution of the deployed job image
+   whose entrypoint forks a child that (a) tries to reach a host on the network **and the instance
+   metadata server**, (b) tries to read the parent's environment through `/proc`, and (c) is fenced — a
+   network namespace (`unshare -n` where the image has it, or the equivalent the platform allows),
+   **and a PID namespace with its own `/proc` mount, or a different uid, whichever the platform
+   allows** — and records what the child could do. **`20261101-210556-146e` is that run:** the
+   environment it recorded is kernel 6.9.12, Cloud Run gen2, uid 1000, no capabilities and
+   `NoNewPrivs` 1; the network fence holds under `unshare -rn` and `unshare -rnpf --mount-proc`, the
+   private `/proc` under `unshare -rpf --mount-proc` and `unshare -rnpf --mount-proc`, and
+   `unshare -n`, `setpriv` and `runuser` are refused there. **Of the three things this step observes, the first
+   is the recorded one:** the child cannot reach the network and cannot read the parent's `/proc` when
+   fenced, and both fences are available; unfenced, it reached the internet and both metadata
+   addresses and read the parent's environment and `/proc/1/environ`. **The second and third did not
+   happen, so D891's answer is not amended and the fallbacks are not taken** — had either, the owner
+   would have been asked again between **(b)** and **(c)**, and the design does not quietly fall back
+   to `denyWeb`. **Why it was the owner's and not a test:** whether a child process can be fenced is a
+   property of the **deployed execution environment**, and this repository's tests are hermetic — no
+   network, no cloud, `t.TempDir()`. **U7's five caveats are [reconciliation.md](reconciliation.md)
+   §6's**, and the one that re-opens this step is the fourth: the probe ran under the agent's shell in
+   an ordinary coding job, so **if CSR7's review-only variant runs in a different execution
+   environment, this step is run and confirmed again there** — and step 7 is the confirmation on the
+   path that actually uses the fence. **CSR4b no longer waits on this step**, and nothing in its file
+   list is held by it.
 7. **Run the mutation check once, and watch D891's answer hold.** On a security-sensitive pull
    request, `fugaro review --pr N --mutate <file:test>` and read `mutation_checks` in the artifact:
    the test ran, the mutant was applied, the observed result is recorded, and the worktree was
