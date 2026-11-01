@@ -2354,3 +2354,39 @@ span.coordinator-unread-retry {
     forced-color-adjust: none;
   }
 }
+
+/* ---- The checkout chooser (design section 2.1) -----------------------------
+ *
+ * One control drawn in two places -- the installation issue view's actions and
+ * the Graph's no-checkout card -- so it is one rule rather than two. A menu
+ * entry is a repository identity and a short directory (`renderCheckoutSelect`,
+ * `src/renderer/checkout.ts`), and neither string has a space to break at, so
+ * `max-width` bounds the control to the box it was drawn in rather than letting
+ * a deep path widen the panel; the browser elides the entry's own text.
+ *
+ * The button beside the menu keeps `button.installation-issue-checkout`'s rule
+ * in `base.css`: this block is the menu's, and a second rule for that button
+ * would be a second answer to what a checkout control looks like.
+ */
+select.installation-checkout-select {
+  max-width: 100%;
+  min-height: var(--row-height);
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* The appended block's own forced-colors rule, in a media block of its own so
+ * that the block above stays one appended section rather than an edit inside
+ * another feature's. Only the tone is written: a boundary's *colour* is forced
+ * by the system and its style and width are not, which is what the rule states
+ * for the button it sits beside (`base.css`, section 4.4's rule 1). */
+@media (forced-colors: active) {
+  select.installation-checkout-select {
+    border-color: CanvasText;
+  }
+}
