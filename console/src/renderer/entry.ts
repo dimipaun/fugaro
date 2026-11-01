@@ -121,6 +121,7 @@ import {
   QUEUE_SOURCES,
   TOTALS_SOURCES,
   buildCoordinatorModel,
+  coordinatorJobsControl,
   fillCoordinatorBlind,
   fillCoordinatorHead,
   fillCoordinatorQueuePart,
@@ -4549,24 +4550,35 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /**
-   * showCoordinator reads the screen's four documents and draws each section as
-   * its own answer lands: the action queue (`coordinator status`, `runs ls`,
-   * `plan status`, `budget show`), the fleet's totals (the same three), and the
-   * panel of repositories (`coordinator status` alone).
+   * showCoordinator reads the screen's documents and draws each section as its
+   * own answer lands: the action queue (`coordinator status`, `plan status`,
+   * `budget show`, and `runs ls` when the operator asks for the jobs), the
+   * fleet's totals (the stored view, the plans and the caps), and the panel of
+   * repositories (`coordinator status` alone).
    *
    * **The frame -- the source line and the console's sentence about the view's
-   * age -- is drawn in the click's frame**, and the four reads are started in
+   * age -- is drawn in the click's frame**, and the reads it makes are started in
    * that same turn, together: none of them is a consequence of another, and one
    * that waited for another would be the serialisation this rule exists to
    * remove. Each read paints its own part of the queue the moment it lands, so
-   * the operator reads the pull requests while the runs are still coming.
+   * the operator reads the pull requests while the plan tasks are still coming.
+   *
+   * **`runs ls --json` is the read that is not in the first paint at all** (rule
+   * 5 of §6.2's opening): jobs are the section of a screen that is fetched after
+   * the primary content and only when it is asked for, so the queue's jobs part
+   * carries the control that asks (`askForJobs`) until the operator presses it,
+   * and the read goes out then. The queue's count stands over the parts read and
+   * says nothing about a queue whose jobs have not been asked for: the head's
+   * "nothing is waiting for you" is held to a whole queue, and the jobs control
+   * is what names the part that is missing.
    *
    * **A section's mark belongs to the reads behind that section**: the queue
-   * settles when all four have answered (three, when the installation records no
-   * checkout and `plan status` is not read at all), the totals when the three
-   * they are built from have, and the panel of repositories when the stored view
-   * has. A refusal is drawn in the section that read owns, in the CLI's or the
-   * decoder's own words, and the reads that answered are not taken down for it.
+   * settles when every read this visit makes has answered (three, when the
+   * installation records no checkout and `plan status` is not read at all, and
+   * four once the jobs have been asked for), the totals when the three they are
+   * built from have, and the panel of repositories when the stored view has. A
+   * refusal is drawn in the section that read owns, in the CLI's or the decoder's
+   * own words, and the reads that answered are not taken down for it.
    *
    * **The summary is painted the moment the document lands, and each
    * repository's detail after it, one repository per chunk.** A document that
@@ -4623,6 +4635,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       plans: 0,
       budget: 0,
     }
+    /** jobsAsked is whether this visit has been asked for the queue's jobs.
+     * **`runs ls --json` is the one read this screen does not make on entry**
+     * (rule 5 of §6.2's opening): the console reads it when the operator presses
+     * the jobs control, and a Refresh re-reads it only once that has happened --
+     * a read nobody asked for is not one a Refresh has to repeat. */
+    let jobsAsked = false
     let queueToken = 0
     let totalsToken = 0
     let bodyToken = 0
@@ -4655,9 +4673,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     /** wants is whether this visit reads one source at all, and `again` is the
      * stamp's own Refresh: it reads every source again whatever this session
-     * holds. */
+     * holds.
+     *
+     * **The jobs are the exception, and it is rule 5's**: `runs ls --json` is
+     * read when the operator asks for it and not before, so this visit reads it
+     * only once `jobsAsked` is set. The other three are the tab's own first
+     * paint and go out together. */
     const wants = (source: CoordinatorQueueSource, again: boolean): boolean => {
-      if (source === 'runs') return true
+      if (source === 'runs') return jobsAsked
       if (source === 'plans') return checkout
       if (source === 'budget') return !capsHidden
       return again || storedOld
@@ -4750,6 +4773,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * (they are text, and rewritten text is the same text), and the parts are
      * hosts this file empties: a second landing would otherwise draw a second
      * copy of the rows.
+     *
+     * **The jobs part is the one that is not a read in flight but a read not
+     * made**: until the operator asks for it, its host carries the control that
+     * asks (`askForJobs`) rather than the empty part a pending read leaves, so
+     * the queue never looks like a screen that is still coming when it is
+     * waiting on a press.
      */
     const paintQueue = (): void => {
       const drawn = mount(false)
@@ -4761,6 +4790,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         const sentence = sentences[source]
         if (sentence !== undefined) {
           appendTo(host, refusedScreen(factory, refusalOperation[source], sentence, theme))
+          continue
+        }
+        if (source === 'runs' && runs === null) {
+          const control = coordinatorJobsControl(factory, jobsAsked)
+          appendTo(host, control)
+          surface.nodeOf(control).addEventListener('click', () => {
+            askForJobs()
+          })
           continue
         }
         fillCoordinatorQueuePart(factory, panel, source, host)
@@ -4782,6 +4819,29 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       }
       surface.nodeOf(drawn.blindHost).replaceChildren()
       fillCoordinatorBlind(factory, panel, drawn.blindHost)
+    }
+
+    /**
+     * askForJobs is what the queue's jobs control does: it is the one read this
+     * screen does not make on entry (rule 5 of §6.2's opening), and the press is
+     * what makes `runs ls --since 24h` go out.
+     *
+     * **It reads once**, whatever the operator presses: the flag is set before
+     * the read and the control is drawn expanded from then on, so a second press
+     * has nothing to ask. The queue's own mark goes up with the read, because a
+     * read is in flight for that section and the items land in the part the
+     * control is drawn in -- the operator's press is answered where they pressed
+     * rather than under a spinner somewhere else on the page.
+     */
+    const askForJobs = (): void => {
+      if (jobsAsked) return
+      jobsAsked = true
+      attempts.runs += 1
+      out.add('runs')
+      queueToken = coordinatorQueueRead.start()
+      paintQueue()
+      markPending(false)
+      void loadRuns(attempts.runs)
     }
 
     /** paintTotals fills the fleet's strip: the figures off the stored view and
@@ -4876,7 +4936,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     /** loadRuns makes the run-list read, which is the queue's job items: a run
      * that ended without succeeding. It is read for the day the console draws in
      * every case (`RUNS_SINCE`), because the queue is a screen of what is
-     * waiting *now*. */
+     * waiting *now*.
+     *
+     * **It is the one read `start` does not make** (rule 5 of §6.2's opening):
+     * `askForJobs` is its only caller on entry, and the press is what makes it
+     * go out. */
     const loadRuns = async (attempt: number): Promise<void> => {
       const answer = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
       if (attempts.runs !== attempt) return
@@ -4938,9 +5002,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     /**
      * start begins this visit's reads and puts the marks of the waiting
-     * sections up. Every wanted source is asked **in the same turn**: the four
-     * are independent documents, and asking for one after another answered would
-     * be the serialisation the owner's rule of 2026-10-31 forbids.
+     * sections up. Every wanted source is asked **in the same turn**: they are
+     * independent documents, and asking for one after another answered would be
+     * the serialisation the owner's rule of 2026-10-31 forbids. What `wants`
+     * leaves out is left out for a reason of its own -- the jobs until the
+     * operator asks, the plans without a checkout, the caps in the reduced mode
+     * -- and a source nobody reads is never in `out`, so its part is not waiting
+     * on a read that was never made.
      *
      * `again` is the stamp's Refresh: it asks every source again whatever this
      * session holds, which is the whole of what the control is for.

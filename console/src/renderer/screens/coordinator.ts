@@ -195,16 +195,29 @@ export const COORDINATOR_LIST_CAP = 20
 
 /** COORDINATOR_QUEUE_WORD is what the count beside the queue's head counts: the
  * items the console drew, which is a figure of the console's own and never one a
- * document carries. It is drawn only when every one of the queue's four reads has
- * answered -- a console does not count a queue it is still reading, and a count
- * drawn while a read is out would be a figure the operator cannot check. */
+ * document carries. It is drawn only when the three reads the tab always makes
+ * have answered -- a console does not count a queue it is still reading, and a
+ * count drawn while a read is out would be a figure the operator cannot check.
+ *
+ * The jobs are the one read that is **not** made on entry (rule 5 of §6.2's
+ * opening: `runs ls --json` is fetched only when the operator asks for it), so
+ * the count stands over the parts the console has read and the jobs control
+ * under it names the one it has not. The sentence for a queue that holds nothing
+ * is the stricter one and stays whole-only (COORDINATOR_QUEUE_EMPTY_WORD). */
 export const COORDINATOR_QUEUE_WORD = 'items need you'
 
-/** COORDINATOR_QUEUE_EMPTY_WORD is the head's answer when every read answered and
- * none of them is holding anything. It is a state and not a zero: `0` beside
- * `items need you` would be the same words a queue nobody finished reading
- * cannot say. */
+/** COORDINATOR_QUEUE_EMPTY_WORD is the head's answer when the **whole** queue --
+ * the jobs among them -- has been read and none of it is holding anything. It is
+ * a state and not a zero: `0` beside `items need you` would be the same words a
+ * queue nobody finished reading cannot say, and a queue whose jobs have not been
+ * asked for is exactly that queue. */
 export const COORDINATOR_QUEUE_EMPTY_WORD = 'nothing is waiting for you'
+
+/** COORDINATOR_QUEUE_JOBS_WORD is the queue's one control that is not an item's:
+ * the jobs are read when the operator asks for them and not before (rule 5), and
+ * this is what asks. It says what the press reads rather than naming the command,
+ * which is the queue's own rule for the words it draws. */
+export const COORDINATOR_QUEUE_JOBS_WORD = 'Load the jobs waiting on you'
 
 /** COORDINATOR_QUEUE_PR_WORD, COORDINATOR_QUEUE_JOB_WORD,
  * COORDINATOR_QUEUE_PLAN_WORD and COORDINATOR_QUEUE_BUDGET_WORD are the four
@@ -305,6 +318,11 @@ export const COORDINATOR_TOTALS_CLASS = 'coordinator-totals'
 export const COORDINATOR_QUEUE_HEAD_CLASS = 'coordinator-queue-head'
 export const COORDINATOR_QUEUE_PART_CLASS = 'coordinator-queue-part'
 export const COORDINATOR_BLIND_HOST_CLASS = 'coordinator-blind-host'
+
+/** COORDINATOR_QUEUE_JOBS_CLASS is the jobs control, drawn in the part the jobs
+ * would fill until the operator asks for them. It carries `aria-expanded` for
+ * the part it fills, the way the launch control's own button does for its form. */
+export const COORDINATOR_QUEUE_JOBS_CLASS = 'coordinator-queue-jobs'
 
 // ---------------------------------------------------------------------------
 // The elements.
@@ -558,9 +576,16 @@ export interface CoordinatorTotals {
 export interface CoordinatorModel {
   readonly source: string
   readonly queue: CoordinatorQueueParts
-  /** the console's own count of the items it drew, drawn only when all four
-   * reads have answered; `null` is "not known", which is drawn as nothing */
+  /** the console's own count of the items it drew, drawn once the three reads
+   * the tab always makes have answered; `null` is "not known", which is drawn as
+   * nothing */
   readonly queueCount: Reading | null
+  /** whether that count stands over the **whole** queue, the jobs read among
+   * them. The count is a floor until it does, and the sentence for a queue that
+   * holds nothing is drawn only over a queue that does: the jobs are read when
+   * the operator asks for them (rule 5), so a queue that has not been asked for
+   * is a queue the console may not call empty */
+  readonly queueWhole: boolean
   readonly blind: CoordinatorBlindSpot | null
   readonly totals: CoordinatorTotals | null
   readonly repos: readonly CoordinatorRepoPanel[] | null
@@ -889,13 +914,19 @@ function blindSpotOf(document: CoordinatorStatusView): CoordinatorBlindSpot | nu
  * string the *document* carried goes through `putText`, with the class its wire
  * key declares.
  *
- * **The queue's count is the console's own and is drawn only over a whole
- * queue.** It counts the items this page drew -- not what the documents hold:
- * the queue is what a person can act on here and now -- and it is `null` unless
- * all four of its reads have answered, because a count over three parts of a
- * queue is a figure the operator has no way to check. Where the plans or the
- * caps are not read at all (`checkout`, `capsHidden`), the head stays empty and
- * the part says why.
+ * **The queue's count is the console's own.** It counts the items this page drew
+ * -- not what the documents hold: the queue is what a person can act on here and
+ * now -- and it is `null` unless the three reads the tab always makes have
+ * answered, because a count over two parts of a queue is a figure the operator
+ * has no way to check. Where the plans or the caps are not read at all
+ * (`checkout`, `capsHidden`), the head stays empty and the part says why.
+ *
+ * The jobs are the fourth read and the one that is **not** made on entry (rule 5
+ * of §6.2's opening), so the count stands over the parts the console has read
+ * until the operator asks for them: it is a floor, and the jobs control in the
+ * queue's own body names the read it leaves out. `queueWhole` says whether the
+ * count covers everything, and it is what the head's "nothing is waiting" is
+ * held to -- a queue whose jobs have not been asked for may not be called empty.
  */
 export function buildCoordinatorModel(inputs: CoordinatorInputs): CoordinatorModel {
   const document = inputs.view
@@ -917,8 +948,8 @@ export function buildCoordinatorModel(inputs: CoordinatorInputs): CoordinatorMod
           : null
         : budgetQueuePart(caps),
   }
-  const whole =
-    document !== null && inputs.runs !== null && plans !== null && caps !== null
+  const counted = document !== null && plans !== null && caps !== null
+  const whole = counted && inputs.runs !== null
   const drawn = (['document', 'runs', 'plans', 'budget'] as const).reduce(
     (total, source) => total + (queue[source]?.items.length ?? 0),
     0,
@@ -926,7 +957,8 @@ export function buildCoordinatorModel(inputs: CoordinatorInputs): CoordinatorMod
   return {
     source: COORDINATOR_SOURCE_LINE,
     queue,
-    queueCount: whole ? measured(drawn) : null,
+    queueCount: counted ? measured(drawn) : null,
+    queueWhole: whole,
     blind: document === null ? null : blindSpotOf(document),
     totals:
       document === null
@@ -1227,21 +1259,46 @@ export function fillCoordinatorQueuePart(
  * sentence for an empty queue (`nothing is waiting for you`) is what says it: a
  * `0` and an empty sentence say the same thing twice, and the `0` would be the
  * one a reader mistakes for a figure off a document. The count is absent
- * altogether while a read is still out or refused, which is the whole rule --
- * the model only answers a count over a whole queue.
+ * altogether while the reads the tab makes are still out or refused.
  *
- * **Both are drawn over a whole queue and neither over a partial one**, which
- * the null count is exactly: `nothing is waiting for you` under a part that says
- * `runs.list` refused would be the page claiming a queue it could not read is a
- * queue that holds nothing, and the two are different facts.
+ * **The sentence is drawn over a whole queue and never over a partial one**:
+ * `nothing is waiting for you` under a part that says `runs.list` refused -- or
+ * under the jobs control, whose read the console has deliberately not made --
+ * would be the page claiming a queue it has not read is a queue that holds
+ * nothing, and the two are different facts. The count is the looser one, because
+ * it is a count of what the console has drawn and the control beside it names
+ * what it has not.
  */
 export function fillCoordinatorHead(model: CoordinatorModel, frame: DrawnCoordinatorFrame): void {
   const count = model.queueCount
-  const empty = count !== null && (count.value ?? 0) <= 0
-  if (count === null || empty) literal(frame.queueCount, '')
+  const zero = count !== null && (count.value ?? 0) <= 0
+  if (count === null || zero) literal(frame.queueCount, '')
   else putReading(frame.queueCount, count, 'count')
-  if (empty) literal(frame.queueEmpty, COORDINATOR_QUEUE_EMPTY_WORD)
+  if (zero && model.queueWhole) literal(frame.queueEmpty, COORDINATOR_QUEUE_EMPTY_WORD)
   else literal(frame.queueEmpty, '')
+}
+
+/**
+ * coordinatorJobsControl draws the queue's jobs control: the one press that
+ * makes the fourth read. It is drawn **in the part the jobs fill**, so the
+ * control and the items it brings are in the same place, and it is drawn by the
+ * entry and not by the frame because whether it is there at all is a fact about
+ * this visit -- the jobs are read when the operator asks, and a frame drawn
+ * again after a Refresh that already asked draws the part and not the control.
+ *
+ * It is a button and not a link, and it carries no `aria-controls`: the part it
+ * fills is the element it sits in, and an `id` for the relationship would be an
+ * id on a host the frame draws four of. `expanded` is the state the entry knows
+ * and this does not: the control is drawn while the jobs have no answer, which is
+ * both before the press and while the read the press made is out, and the two
+ * are told apart by the attribute rather than by a control that disappears.
+ */
+export function coordinatorJobsControl(factory: ScreenFactory, expanded: boolean): ScreenElement {
+  const button = make(factory, 'button', COORDINATOR_QUEUE_JOBS_CLASS)
+  button.setAttribute('type', 'button')
+  button.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+  literal(button, COORDINATOR_QUEUE_JOBS_WORD)
+  return button
 }
 /**
  * fillCoordinatorBlind draws the line under the queue: what this page cannot

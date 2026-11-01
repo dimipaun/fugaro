@@ -3697,8 +3697,9 @@ span.coordinator-unread-retry {
  * (a budget alert's Open Spend). They are real buttons, so they take the hit
  * area and the focus ring the shared blocks give every control, and the one
  * transition below is the pair of properties a hover moves -- the same shape
- * `button.console-stamp-refresh` has. Nothing else on this screen is a control:
- * a pull request's number is text, and K1 draws no link.
+ * `button.console-stamp-refresh` has. The queue's jobs button is the one other
+ * control here, and it is a disclosure rather than a door out of the page; the
+ * rest of the screen is text, and K1 draws no link.
  *
  * **No tone is the only channel here.** A kind is one of four words in a chip, a
  * budget alert's ground is a sentence beside it (`the kill switch is on`, `this
@@ -3707,8 +3708,9 @@ span.coordinator-unread-retry {
  * A rule that tinted one item's chip and not its neighbours' would be a state
  * only a reader who sees colour can read, so there is none.
  *
- * **Four rules below name no tag, and the renderer is why.** The screen draws
- * its two sections and the queue's head through exported constants
+ * **Five rules below name no tag, and the renderer is why.** The screen draws
+ * its two sections, the queue's head and the queue's jobs button through
+ * exported constants
  * (`COORDINATOR_QUEUE_CLASS` and its neighbours), which the selector scan reads
  * as a parameter and cannot pair with a tag, so a rule spelled
  * `section.coordinator-queue` would be refused as a tag nothing draws. The class
@@ -3861,6 +3863,31 @@ p.coordinator-queue-note {
   margin: 0;
   color: var(--text-3);
   font-size: var(--text-xs);
+}
+
+/* The queue's one control that is not an item's: the press that reads the jobs.
+ * It stands in the jobs' part while that part holds no items, so it takes the
+ * same hit area, hairline and hover as an item's button, and none of that
+ * button's push to the end of the row -- it is alone in its own. */
+.coordinator-queue-jobs {
+  min-height: var(--hit-min);
+  padding: 0 var(--space-md);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.coordinator-queue-jobs:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
 }
 
 /* What the page cannot reach, in one line under the items: the console's own

@@ -63,6 +63,7 @@ import {
   COORDINATOR_BUSY,
   COORDINATOR_NO_AGE_WORD,
   COORDINATOR_QUEUE_BUSY,
+  COORDINATOR_QUEUE_JOBS_WORD,
   COORDINATOR_QUEUE_NO_PLANS_WORD,
   COORDINATOR_SOURCE_LINE,
   COORDINATOR_THEMES,
@@ -602,7 +603,13 @@ test.describe('the Coordinator view in the dashboard', () => {
     // which part is which, part by part, rather than let one read's silence
     // stand in for another's answer.
     //
-    // What this case does NOT read is what the buttons do: that is
+    // The jobs are the one part this stub's first paint does not read: rule 5
+    // keeps `runs ls` out of a first paint, so its part carries the console's
+    // own button until a reader presses it. Both halves are read here: the
+    // refusal the button's press brings, and the four parts the first paint
+    // drew without it.
+    //
+    // What this case does NOT read is what the item buttons do: that is
     // `entry-wiring.test.ts`'s, where the launch confirmation's fields can be
     // read without a window (the queue is drawn here from a fixture with no run
     // list, so it holds no job to retry).
@@ -612,12 +619,24 @@ test.describe('the Coordinator view in the dashboard', () => {
     await expect(queue.locator('div.coordinator-queue-part')).toHaveCount(4)
     await expect(queue).not.toHaveAttribute('aria-busy', 'true')
 
-    // Each refusal names its own command, and the two that answered keep what
-    // they drew: a refusal is a part of the queue and not the whole of it.
+    // Each refusal names its own command, and the one that answered keeps what
+    // it drew: a refusal is a part of the queue and not the whole of it. The
+    // jobs are not refused here -- they have not been read yet.
+    await expect(queue.locator('div.coordinator-queue-part .unavailable-operation')).toHaveText([
+      'budget.show',
+    ])
+
+    // The part the jobs will fill draws the console's own button instead, saying
+    // that the ask has not been made. Its press is what reads `runs ls`.
+    const jobs = queue.locator('button.coordinator-queue-jobs')
+    await expect(jobs).toHaveText(COORDINATOR_QUEUE_JOBS_WORD)
+    await expect(jobs).toHaveAttribute('aria-expanded', 'false')
+    await jobs.click()
     await expect(queue.locator('div.coordinator-queue-part .unavailable-operation')).toHaveText([
       'runs.list',
       'budget.show',
     ])
+    await expect(queue.locator('button.coordinator-queue-jobs')).toHaveCount(0)
 
     // The plan read was not made -- the command walks a checkout this
     // installation does not record -- so its part says so rather than drawing a
@@ -625,9 +644,9 @@ test.describe('the Coordinator view in the dashboard', () => {
     await expect(queue.locator('p.coordinator-queue-note')).toHaveText(COORDINATOR_QUEUE_NO_PLANS_WORD)
 
     // And the head says nothing at all: no count, and no "nothing is waiting"
-    // either, because a queue two of whose parts refused is not a queue that
-    // holds nothing. The count is the console's own figure and is drawn only
-    // over a whole queue.
+    // either, because a queue whose parts refused is not a queue that holds
+    // nothing. The count is the console's own figure and is drawn only over a
+    // whole queue.
     await expect(queue.locator('span.coordinator-queue-count')).toHaveText('')
     await expect(queue.locator('span.coordinator-queue-empty')).toHaveText('')
 

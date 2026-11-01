@@ -1201,15 +1201,20 @@ and the pull requests whose host state no sweep could read. Regions in tree orde
 screen's source line → the console's sentence about the age the view does not carry →
 `section.coordinator-queue` (the head line: the count of what is waiting, the word it counts
 and, for a queue that holds nothing, the console's own sentence → one `coordinator-queue-part`
-per read, each holding its items or the note saying that read was not made → the blind-spot
+per read, each holding its items, the note saying that read was not made, or — in the jobs'
+part until they are asked for — the queue's one control that is not an item's → the blind-spot
 line) → `section.coordinator-totals` (the fleet's strip) → one `section.coordinator-repo` per
 repository (the head row: the name and which view the node is → the marker → the counter strip
 → what a bound left out → the records → the collisions → the unreads) — or, for an
 installation that lists no repository, the console's own empty sentence instead of the panels.
 **The screen reads four command lines** (`fugaro coordinator status --from-store --all
 --json`, `runs ls --json --since 24h`, `plan status --all --json` and `budget show --json`:
-one per independent document, and `report` is not read on this page at all), and it draws
-**one button per queue item** and nothing else: a control whose word is the console's own.
+one per independent document, and `report` is not read on this page at all). **Three of them
+are the tab's own first paint and go out together; the fourth is the jobs, and rule 5 of
+§6.2's opening keeps jobs out of a first paint** — the part they fill carries the console's
+one control that is not an item's (`Load the jobs waiting on you`), and `runs ls` goes out on
+that press. Otherwise the screen draws **one button per queue item** and nothing else: a
+control whose word is the console's own.
 
 **The action queue and the fleet's totals are console 0.118.0's K1**, and they are the two
 sections the screen gained above the panels: what is waiting for a person — a pull request
@@ -1257,8 +1262,8 @@ only ever says what it was told.
 | `coordinator-age`, `coordinator-empty` | `p` | the console's two sentences: the age the stored view does not carry, and an installation that lists no repository |
 | `section.coordinator-queue`, `section.coordinator-totals` | the queue's section and the fleet strip's | the screen's two K1 sections, on the frame the redesign gives a panel (§2.12's `section.coordinator-repo` below) |
 | `coordinator-queue-head` | `div` | the queue's own line: the count of what is waiting, the word it counts, the console's sentence for a queue that holds nothing, and the slot the section's busy mark is put in |
-| `coordinator-queue-count` | `span` | the count the console counted off the items it drew — drawn only when every one of the queue's four reads has answered, and as nothing rather than a `0`; a queue whose reads are still out, or refused, draws no count and no empty-state sentence either |
-| `coordinator-queue-word`, `coordinator-queue-empty` | `span`s | `items need you`, and the sentence a **whole** queue that holds nothing draws instead of a zero — a queue the console could not read draws neither, because a refusal in a part is not an empty part |
+| `coordinator-queue-count` | `span` | the count the console counted off the items it drew — drawn only when the three reads the tab always makes have answered, and as nothing rather than a `0`; before the jobs are asked for it is a floor, not the whole, and a queue whose reads are still out, or refused, draws no count at all |
+| `coordinator-queue-word`, `coordinator-queue-empty` | `span`s | `items need you`, and the sentence a **whole** queue that holds nothing draws instead of a zero — whole meaning every read the queue makes, the jobs' included, so a queue whose reads are still out, refused, or not yet asked for draws neither: a part the console did not read is not an empty part |
 | `coordinator-queue-part` | `div` | one read's part of the queue: its items, the count the cap left off, or the note saying that read was not made. A host, and it holds no state: the section's mark says the part is still being read |
 | `coordinator-queue-items` | `ul` | one part's items, each drawn only when the part holds one |
 | `li.coordinator-queue-item` | `li` | one thing waiting for a person |
@@ -1268,6 +1273,7 @@ only ever says what it was told.
 | `coordinator-queue-why` | `span` | why it is waiting, in the console's own words: the rule the queue applied, and for a budget alert which of the three grounds it stands on |
 | `button.coordinator-queue-button` | `button` | **the item's one control**: `Open run`, `Retry`, `Launch` or `Open Spend`. A button and never an anchor |
 | `coordinator-queue-note` | `p` | the console's sentence where a read was not made at all: an installation that records no checkout, or the reduced mode's withheld caps |
+| `coordinator-queue-jobs` | `button` | the queue's one control that is not an item's: the button whose press is what reads `runs ls` for the jobs' part, drawn only while that part holds no items — a `button` with no tag in the selector, because the class reaches the drawing through a constant |
 | `coordinator-blind` | `p` | the line under the items: the console's own sentence and the two counts of what the page cannot reach |
 | `coordinator-blind-word` | `span` | the introducing sentence of that line |
 | `coordinator-blind-stale`, `coordinator-blind-unread` | the line's two cells | repositories the sweep has not reconciled since, and pull requests a sweep could not read — hook names only: the rule that lays the line out is written on `coordinator-blind`, on the cell `coordinator-count` and on the reading inside it |
@@ -1313,17 +1319,18 @@ only ever says what it was told.
 **This screen emits no `data-*` of its own, so every rule for it is written against a
 class.** It holds no control, no state variant and no selection — the one attribute it
 stamps is the `data-theme` every screen's root carries — and a rule that wanted a `data-*`
-here would be inventing the state it keyed on. Seven of the hooks above are selected **without
+here would be inventing the state it keyed on. Eight of the hooks above are selected **without
 a tag**, in two groups. The first four are the screen's own `listCell` and `countCell`
 parameters (`coordinator-file`, `coordinator-service` and `coordinator-more`) and
 `coordinator-count-alert`, which the strip's call to `numberCell` passes the same way: the
 scan that pairs a selector with the tag the renderer draws cannot read a class that arrives
 through a parameter, and a bare class selector is the shape `degraded-num` already has. The
-other three are K1's own (`coordinator-queue`, `coordinator-totals` and
-`coordinator-queue-head`), and the reason is the same one step along: the screen draws its two
-new sections and the queue's head through exported constants
-(`COORDINATOR_QUEUE_CLASS` and its neighbours), which that scan reads as a parameter too, so
-`section.coordinator-queue` would be refused as a tag nothing draws. The three class names are
+other four are K1's own (`coordinator-queue`, `coordinator-totals`,
+`coordinator-queue-head` and `coordinator-queue-jobs`), and the reason is the same one step
+along: the screen draws its two new sections, the queue's head and the queue's jobs control
+through exported constants (`COORDINATOR_QUEUE_CLASS` and its neighbours), which that scan
+reads as a parameter too, so `section.coordinator-queue` would be refused as a tag nothing
+draws. The four class names are
 this screen's own, no rule competes for them and the tag would buy no specificity — the same
 ground `coordinator-count-alert` stands on.
 

@@ -53,6 +53,7 @@ import {
   COORDINATOR_QUEUE_CAP_WORD,
   COORDINATOR_QUEUE_CAPS_HIDDEN_WORD,
   COORDINATOR_QUEUE_EMPTY_WORD,
+  COORDINATOR_QUEUE_JOBS_WORD,
   COORDINATOR_QUEUE_JOB_WHY_WORD,
   COORDINATOR_QUEUE_JOB_WORD,
   COORDINATOR_QUEUE_KILL_WORD,
@@ -77,6 +78,7 @@ import {
   COORDINATOR_UNREAD_WORD,
   QUEUE_SOURCES,
   buildCoordinatorModel,
+  coordinatorJobsControl,
   queueRuns,
   renderCoordinator,
 } from '../../src/renderer/screens/coordinator'
@@ -1157,11 +1159,25 @@ describe('the action queue (K1)', () => {
 
   it('says a figure it has not read rather than a zero, and says the plan tasks are not known without a checkout', () => {
     // The rule the whole task is reviewed against: a number that is not in hand
-    // is absent, and a count over the items drawn is drawn only when all four
-    // reads were made and answered.
+    // is absent. The count is the console's own over the parts it has read, and
+    // the jobs are the one read it makes only when the operator asks for them
+    // (rule 5 of §6.2's opening), so a queue whose jobs have not been asked for
+    // draws the items it has with the count of those -- and the jobs control in
+    // the part they would fill is what names the read the figure leaves out.
     const waiting = drawsQueue({ runs: null })
     expect(textOf(waiting, 'coordinator-queue-count')).toBe('')
     expect(all(waiting, 'coordinator-queue-item')).toEqual([])
+
+    // The same queue holding what the three reads it does make can hold: the
+    // figure is drawn over those two items, and the sentence for a queue that
+    // holds nothing is **not** drawn beside it.
+    const floor = drawsQueue({
+      runs: null,
+      plans: plans([aTask('C2', 'ready')]),
+      caps: capsOf(aBudget({ repoKilled: true })),
+    })
+    expect(textOf(floor, 'coordinator-queue-count')).toBe('2')
+    expect(textOf(floor, 'coordinator-queue-empty')).toBe('')
 
     const noCheckout = drawsQueue({ checkout: false, plans: null })
     expect(textOf(noCheckout, 'coordinator-queue-count')).toBe('')
@@ -1175,8 +1191,11 @@ describe('the action queue (K1)', () => {
     // The head's sentence is about a queue that holds nothing, and a queue whose
     // refusals stand in for parts of it is not that: a read the console could not
     // make is a gap in what it knows, so the head says nothing at all and the
-    // parts say why. The count is `null` over every queue that is not whole,
-    // which is the same condition.
+    // parts say why. A queue whose jobs have not been asked for is the same gap
+    // by another route -- the read is one the console chose not to make (rule 5)
+    // -- so the sentence waits for the jobs the way it waits for a refusal. The
+    // queue here holds nothing at all, which is the only way the sentence would
+    // be drawn if the condition were the count alone.
     const refusedRuns = drawsQueue({ runs: null })
     expect(textOf(refusedRuns, 'coordinator-queue-empty')).toBe('')
     const noCheckout = drawsQueue({ checkout: false, plans: null })
@@ -1189,6 +1208,23 @@ describe('the action queue (K1)', () => {
     const quiet = drawsQueue({})
     expect(textOf(quiet, 'coordinator-queue-empty')).toBe(COORDINATOR_QUEUE_EMPTY_WORD)
     expect(textOf(quiet, 'coordinator-queue-count')).toBe('')
+  })
+
+  it('draws the control that asks for the jobs, and says with it whether the ask has been made', () => {
+    // The jobs are the queue's fourth read and the one the entry does not make on
+    // entry (rule 5), so the part they fill carries a button whose press is the
+    // read. It is drawn in both of the states that have no answer yet -- before
+    // the press and while the read the press made is out -- and `aria-expanded`
+    // is what tells them apart, so the press is answered where it happened.
+    const asked = coordinatorJobsControl(factory, true)
+    expect(asked.tag).toBe('button')
+    expect(asked.getAttribute('type')).toBe('button')
+    expect(asked.getAttribute('aria-expanded')).toBe('true')
+    expect(asked.textContent).toBe(COORDINATOR_QUEUE_JOBS_WORD)
+
+    const waiting = coordinatorJobsControl(factory, false)
+    expect(waiting.getAttribute('aria-expanded')).toBe('false')
+    expect(waiting.textContent).toBe(COORDINATOR_QUEUE_JOBS_WORD)
   })
 })
 
