@@ -92,6 +92,7 @@ import {
   NO_ACTIVE_INSTALLATION,
   REDUCED_REFUSAL,
   REDUCED_VIEW_OPERATIONS,
+  RUNS_LIST_MAX_LIMIT,
   SENDER_REFUSAL,
   assertReachableSurface,
   channelForOperation,
@@ -673,7 +674,11 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * DESIGN_ARGV is design section 5.1 rule 6's allow-list, written as the argv each
  * operation fixes: `RUN` and `--repo R` are arguments the schema carries, and
  * `--dir D` on doctor is main-process state rather than a renderer argument, so
- * both are absent from these strings.
+ * both are absent from these strings. `runs ls`'s two new arguments (D818,
+ * coordinator v2 C2) are absent for the same reason: `--limit=<n>` and
+ * `--after=<run id>` are keys of that operation's schema, so the row's own argv
+ * is still `runs ls --json` and rule 6's row carries the two words in its
+ * parenthetical.
  *
  * **It is sixteen argvs, and this surface is the same sixteen.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
@@ -1784,6 +1789,59 @@ describe('the closed sets', () => {
     expect(validateArguments('runs.list', { pr: 1 }).ok).toBe(true)
     for (const value of [0, -1, 1.5, '42', Number.NaN, Number.POSITIVE_INFINITY, 1e9, null]) {
       expect(validateArguments('runs.list', { pr: value }).ok, String(value)).toBe(false)
+    }
+  })
+
+  it('accepts a runs page size from 1 to the cap, and refuses every other shape', () => {
+    // `runs ls --limit N` is an `IntVar` (`internal/cli/runs.go:167`): the digits
+    // are what it reads. **`0` is refused here even though the CLI takes it**:
+    // zero means "every row of the window", which is what omitting the argument
+    // already means, so a payload that asks for it is asking for nothing --
+    // and the CLI's own negative branch (`--limit -1`) is the other refusal.
+    // The cap is the console's (`RUNS_LIST_MAX_LIMIT`): this surface draws a
+    // page, the page exists because the window is expensive, and a renderer
+    // that could ask for more rows than the cap is a renderer that could ask
+    // for the window.
+    expect(validateArguments('runs.list', { limit: 1 }).ok).toBe(true)
+    expect(validateArguments('runs.list', { limit: RUNS_LIST_MAX_LIMIT }).ok).toBe(true)
+    for (const value of [
+      0,
+      -1,
+      1.5,
+      RUNS_LIST_MAX_LIMIT + 1,
+      1e21,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      '50',
+      true,
+      null,
+    ]) {
+      expect(validateArguments('runs.list', { limit: value }).ok, String(value)).toBe(false)
+    }
+  })
+
+  it('accepts a run id as the runs cursor, and refuses a flag-shaped or malformed one', () => {
+    // `--after RUN-ID` is a cursor over the ids `runs ls --json` itself printed
+    // (`runview.Row.run_id`), so the grammar is the run id's and nothing else --
+    // a word that would read as a flag (`--watch`), a bare number, a truncated
+    // id, an upper-case tail, a path and a whitespace-run word are each refused
+    // before a child exists rather than by a spawned CLI's parser.
+    expect(validateArguments('runs.list', { after: '20261030-184402-31de' }).ok).toBe(true)
+    for (const value of [
+      '--watch',
+      '--after=20261030-184402-31de',
+      '-1',
+      '',
+      '20261030-184402',
+      '20261030-184402-31DE',
+      '20261030-184402-31deg',
+      'a b',
+      'runs ls',
+      '/etc/passwd',
+      null,
+      42,
+    ]) {
+      expect(validateArguments('runs.list', { after: value }).ok, String(value)).toBe(false)
     }
   })
 

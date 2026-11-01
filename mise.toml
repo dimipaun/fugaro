@@ -4,6 +4,7 @@
 # ci.yml's version.
 [tools]
 go = "1.27.1"
+node = "22"
 terraform = "1.16.4"
 
 [env]
