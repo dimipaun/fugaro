@@ -36,13 +36,13 @@ The two things this method cannot see, stated rather than left implied:
   suspected of that; it is a limit of the method.
 - **A lockfile says who is installed, not what ships.** The `dev` flag means "no production
   dependency path needs this", and that is not the same question as "is this in the artifact". The
-  console's lockfile marks 349 of its 414 packages `dev` — tooling, the test runners, the packer —
+  console's lockfile marks most of its 427 packages `dev` — tooling, the test runners, the packer —
   and `elkjs` is one of those `dev` packages whose file nevertheless ends up in the asar. Where the
   distinction matters below, it is called out.
 
 ## The console, `console/`
 
-414 packages, 10 of them direct, 8 in `devDependencies` and 2 in `dependencies`:
+427 packages, 11 of them direct, 9 in `devDependencies` and 2 in `dependencies`:
 
 | Licence | Packages |
 | --- | ---: |
@@ -61,6 +61,7 @@ The two things this method cannot see, stated rather than left implied:
 | Python-2.0 | 1 |
 | EPL-2.0 | 1 |
 | FSL-1.1-Apache-2.0 | 1 |
+| FSL-1.1-MIT | 9 |
 | **no licence declared** | **0** |
 
 What ships. `package.json`'s `build.files` packs an explicit list out of `dist/` plus `LICENSE.md`
@@ -84,9 +85,13 @@ runtime that electron-builder puts around it.
 
 Neither is copyleft, and neither is in the table below. What both bring in is a tree of their own,
 packed beside them and reproduced section by section in `console/THIRD_PARTY_NOTICES.md` — sixteen
-packages for the update client, fourteen for the crash reporter, and `has-flag` 4.0.0, which reaches
-the lockfile through the crash reporter's bundler subpath but is loaded at run time by the update
-client's own `debug`. Every version in those sections is the one the lockfile pins, and since
+packages for the update client and fourteen for the crash reporter, and **no section for
+`has-flag` 4.0.0**: the name reaches the lockfile through the crash reporter's bundler subpath, and
+the packer would hoist it (with `supports-color`) out of that excluded tree, because the update
+client's own `debug` does an optional `require('supports-color')` that nothing declares and that
+`debug` catches and survives. `build.files` refuses both by name, so neither is packed, neither is
+shipped and neither is described: **`has-flag` is excluded, not shipped** (fix round B of
+Task 2.1b, and `console/test/unit/build-files.test.ts` holds the exclusion). Every version in those sections is the one the lockfile pins, and since
 Task 2.1b's fix round A the file is no longer read off a machine: `console/test/unit/notices.test.ts`
 derives the shipped set from `package-lock.json` for each of the three targets the console is built
 for — darwin arm64 and x64 in the universal bundle, and linux x64 — and compares it with the file's
@@ -111,7 +116,7 @@ the vendored source's own header, which names `@opentelemetry/instrumentation-fs
 OpenTelemetry Authors and Apache-2.0, vendored from `opentelemetry-js-contrib@15ef750`. The
 notices file states that and points at the Apache-2.0 text it already reproduces.
 
-**One licence in the console's tree is not open source, and it is not in the package.** `sentry`
+**Two licences in the console's tree are not open source, and neither is in the package.** The second is `FSL-1.1-MIT`, nine packages: `@sentry/cli` 3.8.2 and its eight platform binaries, added by the crash reports run 2 for the build-time symbol upload. It is a `devDependency`, it is not in `build.files` (a test pins that), and no distributed artifact carries it. The first is `sentry`
 0.45.0 — declared `FSL-1.1-Apache-2.0`, the Functional Source License 1.1 with a two-year conversion
 to Apache-2.0 — arrives with `@sentry/bundler-plugins` 11.7.0, which `@sentry/node` depends on and
 which the console neither calls nor configures: nothing in `console/src/` bundles anything with
@@ -309,9 +314,10 @@ Collected, so nothing here is buried in the prose above:
   each release. Nothing in `console/src/` calls it, and `internal/eeboundary/licence_test.go`'s
   copyleft rule does not match the identifier. Task 2.1b's fix round A took it out of what ships —
   `build.files` excludes the bundler subpath's whole tree, so no distributed artifact carries it —
-  but it stays installed and in the lockfile as a dependency of `@sentry/node`, so whether a
-  FSL-1.1 package may sit in the build at all, and whether the crash reporter's dependency is
-  acceptable with it in the tree, is still counsel's call. Task 2.1b records it rather than deciding
+  but it stays installed and in the lockfile as a dependency of `@sentry/node`, and `@sentry/cli` 3.8.2
+  (`FSL-1.1-MIT`, a dev-only build tool for the symbol upload) joins it, so whether an
+  FSL-1.1 package may sit in the build at all, and whether the crash reporter's dependency and its
+  upload tool are acceptable with them in the tree, is still counsel's call. Task 2.1b records it rather than deciding
   it.
 - **Whether `node-forge`'s `(BSD-3-Clause OR GPL-2.0)` is read the way this audit reads it.** The
   audit takes BSD-3-Clause and records that in `copyleftAllowed`; if counsel reads the expression

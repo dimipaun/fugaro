@@ -206,6 +206,107 @@ directory — and both appear only after a download, are replaced or removed by 
 install, and hold no identifier (owner rulings D768 and D770; design sections
 5.1 rule 10, 7.3 and 7.4).
 
+## Crash reporting, and the switch that decides it (Tasks 2.1 and 2.2)
+
+The console sends nothing about a crash unless the person whose machine it is
+says so. That is the whole shape of the feature, and it is the one place this
+app's traffic differs from the update check's: an update is the console's own
+business, and a crash report is not.
+
+**The switch is per user, local, and off until it is ticked.** It is the
+application menu's **Send Crash Reports (applies at the next launch)**, beside
+**Check for Updates Automatically** and **Check for Updates Now**, on macOS and
+on Linux; its state is the one bare boolean `<userData>/crash.json` holds
+(`src/main/crashstore.ts`, over the shared bare-boolean store in
+`src/main/boolstore.ts` that `updatestore.ts` uses too). Off is the default and
+the safe direction: no file, a file that cannot be read, or a file that is not a
+JSON boolean all read as **off**, with one constant line
+(`the console could not read its crash-reporting setting, so nothing is sent`)
+and never a repair or a deletion. The file is read with the safe-open rules the
+other stores use — a regular file only, `O_NOFOLLOW | O_NONBLOCK`, eight bytes
+at most, so a symbolic link, a FIFO, a directory or an oversized file sends
+nothing — written atomically (`0600` in a `0700` directory, a temporary file and
+a `rename`) **only when the switch changes**, and never at all when the value
+already in it is the value asked for.
+
+**It applies at the next launch, and the label says so.** `src/main/index.ts`
+reads `crash.json` **before the app's first `await`** and starts the reporter
+only when that read answered `true`, so unticking the switch stops the run after
+the one in front of the person rather than that one. The menu says which, rather
+than leaving a reader to guess whether the tick did anything yet. A write that
+fails is caught, logged once (`the console could not write its crash-reporting
+setting, so the switch did not move`) and the menu is **redrawn from disk**, so
+the checkbox shows the value in force rather than the one the click asked for.
+
+**What is sent, and what is never sent.** The client is `@sentry/electron`
+`8.2.0` (`src/main/crash-electron.ts`, the only file that imports it; design
+§7.4). A report holds the **exception's type and the frames it was thrown
+from** — each an app-relative file with its function name, its line, its column
+and its `in_app` flag — and
+**no message, no path, no user name, no environment and no host name**. Nothing
+else is attached: no session, no breadcrumb, no minidump (`defaultIntegrations:
+false` installs none of the SDK's own, and two are named by hand below), no
+renderer event, no preload and no IPC channel; and a report that cannot be sent
+is **dropped rather than queued**, so the console keeps no crash file of its own
+under `userData`. The scrubbing is `beforeSend` (`scrubCrashEvent` in
+`src/main/crash.ts`) and it is the whole of the payload rule. The DSN is **one
+embedded public constant** in `src/main/crash-dsn.ts` — a Sentry client key can
+only send events, so it is not a secret and not a build input — and **the switch
+is the only gate**: a yes is a yes, and nothing else can refuse a report the
+person asked for.
+
+**Two captures, and neither decides anything else.** The two integrations named
+by hand are the SDK's own uncaught-exception and unhandled-rejection ones, and
+nothing is added beside them: no minidump, no session, no preload, no
+breadcrumbs. The Electron SDK's `onUncaughtExceptionIntegration` takes **no
+options at all** — it is not `@sentry/node`'s, whose
+`exitEvenIfOtherHandlersAreRegistered` and `onFatalError` are what would let a
+reporter call `process.exit` — and the rejection integration is installed with
+`mode: 'none'` against its `'warn'` default, so neither writes to the console
+nor ends the process. What happens after an uncaught error is what happened
+before the reporter existed: Electron's own handler, and the console's
+`reportAndQuit` for the paths it owns. `test/unit/crash-electron.test.ts` pins
+both absences.
+
+**A reporter that cannot start does not stop the console.** `index.ts` reaches
+the module through a lazy `import('./crash-electron.js')` behind the gate, and
+both that import and `startCrashReporting` are wrapped by
+`startCrashReportingSafely` (`src/main/crash.ts`): an import or an init that
+throws or rejects is caught, logged as one constant line
+(`the console could not start crash reporting, so this run sends nothing`) and
+answered with `null`, which leaves `crashReporting` unset and the app on its
+ready path. A crash reporter that took the console down with it would be the
+worst trade this feature could make.
+
+### The symbols, uploaded after a build and dormant until they are asked for
+
+`sentry-cli`'s debug files and the main process's source maps are what turn a
+scrubbed frame into a name and a line, and `scripts/upload-sentry-symbols.mjs`
+uploads them for a packaged build (`debug-files upload`, then `sourcemaps
+inject` and `sourcemaps upload`) to the `fugaro`/`fugaro-console` project in the
+EU region. Only the two `sourcemaps` commands carry the console version: a
+native debug file is matched by the debug id inside it, so `debug-files upload`
+takes the bundle and no release at all. It is **dormant by
+default**: with `SENTRY_AUTH_TOKEN` unset or empty it prints one constant line
+(`Sentry symbol upload skipped: no auth token configured`) and exits 0 without
+invoking the CLI at all: a checkout, a fork's CI and a release before the secret
+exists upload nothing and fail nothing, and nothing in this repository — not
+`npm run build`, not `npm run package` — runs the script except the staged
+release step and a person. The token is
+**never read, printed, logged or passed on an argv**: it reaches `sentry-cli`
+through the inherited environment and nowhere else, and the `sentry-cli` package
+is a **devDependency** — it is not a runtime dependency and `build.files` does
+not pack it, so no shipped app carries the uploader. **It needs no install step
+of its own**: the pinned `@sentry/cli` ships its binary as a per-platform
+optional dependency (`@sentry/cli-darwin` on the release runner), which its own
+launcher resolves at run time, so the job's `npm ci --ignore-scripts` — whose
+skipped postinstall is a download for platforms that package no binary — still
+leaves a `sentry-cli` that runs. The release workflow's step
+for it is staged in `docs/pending-workflows/console-release-symbols.yml`, which
+is the owner's to copy in over the staged `console-release.yml` and into
+`.github/workflows/` (the file's header carries the three commands); until the
+repository secret exists the step is a no-op.
+
 ## The hardened window (Task 1.1)
 
 The console's shell is one window, and everything it is allowed to do is
@@ -635,16 +736,21 @@ the last as scans over `console/src/`, so a screen, a source or an IPC handler
 that started reading it would fail a named test. It is what Check 59's
 assertion (4) reads and what Task 4.3's FACT commands read the key names from.
 
-**It is one of the two files the app ever writes to disk, and the other one is
-off by default too.** The other write in this task is a directory rather than a
-record: `privateWorkingDirectory()` creates an empty `0700` directory under the
-system temporary directory for an installation that has no checkout, so that
-`doctor --dir` is a directory and the child's `cwd` is not `/`. Section 5.1 rule
+**It is one of the four things the app ever writes to disk, and the two switches
+beside it are off by default too.** The other write in this task is a directory
+rather than a record: `privateWorkingDirectory()` creates an empty `0700`
+directory under the system temporary directory for an installation that has no
+checkout, so that `doctor --dir` is a directory and the child's `cwd` is not `/`.
+Section 5.1 rule
 10 is about *records* — no history, no cached document, no crash dump, nothing
-that outlives the process — and this holds nothing at all. The **other record**
-is the installation list, `installations.json`, which the owner ruled in on
-2026-10-18 (C8) and which is documented in its own section below: rule 10 was
-amended to name it rather than having it grow by accident.
+that outlives the process — and this holds nothing at all. The **other records**
+are the installation list, `installations.json`, which the owner ruled in on
+2026-10-18 (**C8**); the update off switch's one boolean, `<userData>/updates.json`
+(**D768**, 2026-10-30); and the crash-reporting switch's one boolean,
+`<userData>/crash.json` (the owner's ruling of 2026-10-31 and design §5.1 rule
+10's fourth write). Each is documented in its own section below, and each was
+named by rule 10 in the commit that added it rather than left to grow by
+accident.
 
 ### The spawn properties are tests, and each one fails under a mutation
 
