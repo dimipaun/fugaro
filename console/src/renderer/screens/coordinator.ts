@@ -133,8 +133,11 @@ export const COORDINATOR_COLLISION_WORD = 'in flight on the same files or servic
 export const COORDINATOR_DECLARED_WORD = 'declared by'
 
 /** COORDINATOR_RECORDS_WORD, COORDINATOR_IN_FLIGHT_COUNT_WORD and
- * COORDINATOR_COLLISIONS_WORD are what the three counts beside a repository's
- * name count, in the order they are drawn. */
+ * COORDINATOR_COLLISIONS_WORD are what the three cells of a repository's
+ * counter strip count, in the order they are drawn. Each is drawn inside its own
+ * cell, beside the figure, because the strip's one state -- a repository whose
+ * records are in flight on the same files -- is carried by the collisions cell
+ * and a cell marked by a tone alone would be a state a greyscale reader loses. */
 export const COORDINATOR_RECORDS_WORD = 'records'
 export const COORDINATOR_IN_FLIGHT_COUNT_WORD = 'in flight'
 export const COORDINATOR_COLLISIONS_WORD = 'collisions'
@@ -162,9 +165,11 @@ export const COORDINATOR_THEMES = Object.freeze(['light', 'dark'] as const)
 /** CoordinatorTheme is one of them. */
 export type CoordinatorTheme = (typeof COORDINATOR_THEMES)[number]
 
-/** COORDINATOR_LIST_CAP bounds one collision's drawn file or service list: a
- * pair that shares a thousand paths is a pair whose row is not a list of a
- * thousand, so the console draws the first `COORDINATOR_LIST_CAP` and says how
+/** COORDINATOR_LIST_CAP bounds one list this screen draws: a collision's files
+ * or services, and the runs behind one pull request. A pair that shares a
+ * thousand paths is a pair whose row is not a list of a thousand, and a pull
+ * request a hundred runs deep is a row of a hundred lines in a panel a reader is
+ * scanning -- so the console draws the first `COORDINATOR_LIST_CAP` and says how
  * many it did not draw rather than drawing a silent prefix. */
 export const COORDINATOR_LIST_CAP = 20
 
@@ -215,7 +220,8 @@ export interface CoordinatorRunPanel {
 /** CoordinatorRecordPanel is one record: a pull request with the runs behind it,
  * or the in-flight runs alone. `label` is the console's own name for the record
  * -- the pull request's number, or the newest run's id -- and `title` is the
- * untrusted text whoever opened the pull request wrote. */
+ * untrusted text whoever opened the pull request wrote. `runs` is already cut to
+ * `COORDINATOR_LIST_CAP` and `runsDropped` is the count that was cut. */
 export interface CoordinatorRecordPanel {
   readonly label: string
   readonly title: string
@@ -225,6 +231,7 @@ export interface CoordinatorRecordPanel {
   readonly release: string
   readonly inFlight: boolean
   readonly runs: readonly CoordinatorRunPanel[]
+  readonly runsDropped: number
 }
 
 /** CoordinatorCollisionPanel is one collision, with each list already cut to
@@ -256,7 +263,12 @@ export interface CoordinatorStalePanel {
  * console's own off the document's arrays, so a repository with no records reads
  * a measured zero rather than nothing -- the document said so. The two omission
  * counts are readings only when the document carried one: a document that
- * omitted nothing has no such count, which is not the same as a zero. */
+ * omitted nothing has no such count, which is not the same as a zero.
+ *
+ * `hasCollisions` is the strip's one state rather than a fourth count: it is
+ * true exactly when the collisions cell's figure is above zero, and it is what
+ * the drawing marks the cell with. It is derived here, beside the count it
+ * follows, so the drawing cannot mark a cell the count does not agree with. */
 export interface CoordinatorRepoPanel {
   readonly repo: string
   readonly stored: boolean
@@ -267,6 +279,7 @@ export interface CoordinatorRepoPanel {
   readonly recordCount: Reading
   readonly inFlightCount: Reading
   readonly collisionCount: Reading
+  readonly hasCollisions: boolean
   readonly omitted: Reading | null
   readonly omittedCollisions: Reading | null
 }
@@ -297,7 +310,7 @@ function recordLabel(record: CoordinatorRecord): string {
 
 /** cut is one list with its first `COORDINATOR_LIST_CAP` members and how many
  * were left off, so a row can say what it did not draw. */
-function cut(items: readonly string[]): { readonly drawn: readonly string[]; readonly dropped: number } {
+function cut<T>(items: readonly T[]): { readonly drawn: readonly T[]; readonly dropped: number } {
   return {
     drawn: items.slice(0, COORDINATOR_LIST_CAP),
     dropped: Math.max(0, items.length - COORDINATOR_LIST_CAP),
@@ -306,6 +319,7 @@ function cut(items: readonly string[]): { readonly drawn: readonly string[]; rea
 
 function recordPanel(record: CoordinatorRecord): CoordinatorRecordPanel {
   const pr = record.pr
+  const runs = cut(record.runs)
   return {
     label: recordLabel(record),
     title: pr === null ? '' : pr.title,
@@ -314,7 +328,7 @@ function recordPanel(record: CoordinatorRecord): CoordinatorRecordPanel {
     branch: record.branch,
     release: record.release,
     inFlight: record.inFlight,
-    runs: record.runs.map((run) => ({
+    runs: runs.drawn.map((run) => ({
       id: run.id,
       status: run.status,
       outcome: run.outcome,
@@ -327,6 +341,7 @@ function recordPanel(record: CoordinatorRecord): CoordinatorRecordPanel {
       inFlight: !run.terminal,
       filesTruncated: run.filesTruncated,
     })),
+    runsDropped: runs.dropped,
   }
 }
 
@@ -358,6 +373,7 @@ function repoPanel(repo: CoordinatorRepoView): CoordinatorRepoPanel {
     recordCount: measured(view.records.length),
     inFlightCount: measured(view.records.filter((record) => record.inFlight).length),
     collisionCount: measured(view.collisions.length),
+    hasCollisions: view.collisions.length > 0,
     omitted: view.omitted > 0 ? measured(view.omitted) : null,
     omittedCollisions: view.omittedCollisions > 0 ? measured(view.omittedCollisions) : null,
   }
@@ -483,27 +499,38 @@ function runCell(parent: ScreenElement, factory: ScreenFactory, run: Coordinator
   }
 }
 
+/** recordCell draws one pull request as a row: a head line carrying the number,
+ * the title and the state of the pull request, and the runs behind it nested
+ * under that line. A record with no run keeps the console's own sentence where
+ * the list would be, so the row says which of the two it is. */
 function recordCell(parent: ScreenElement, factory: ScreenFactory, record: CoordinatorRecordPanel): void {
   const row = cell(parent, factory, 'li', 'coordinator-record')
-  textCell(row, factory, 'span', record.label, 'label', 'records[].pr.number', 'coordinator-record-label')
+  const head = cell(row, factory, 'div', 'coordinator-record-head')
+  textCell(head, factory, 'span', record.label, 'label', 'records[].pr.number', 'coordinator-record-label')
   if (record.title !== '') {
     // The pull request's own words, written by whoever opened it: text, in the
     // class the wire key declares, and never a link (design section 5.1 rule 2).
-    textCell(row, factory, 'span', record.title, 'sentence', 'records[].pr.title', 'coordinator-record-title')
-  }
-  if (record.state !== '') {
-    textCell(row, factory, 'span', record.state, 'label', 'records[].pr.state', 'coordinator-record-state')
+    textCell(head, factory, 'span', record.title, 'sentence', 'records[].pr.title', 'coordinator-record-title')
   }
   if (record.branch !== '') {
-    textCell(row, factory, 'span', record.branch, 'branch', 'records[].branch', 'coordinator-record-branch')
+    textCell(head, factory, 'span', record.branch, 'branch', 'records[].branch', 'coordinator-record-branch')
   }
   if (record.release !== '') {
-    textCell(row, factory, 'span', record.release, 'label', 'records[].release', 'coordinator-record-release')
+    textCell(head, factory, 'span', record.release, 'label', 'records[].release', 'coordinator-record-release')
   }
-  if (record.draft) {
-    literal(cell(row, factory, 'span', 'coordinator-record-draft'), COORDINATOR_DRAFT_WORD)
+  // One chip for what the host says the pull request is: its state, and the
+  // console's own word beside it when the host files it as a draft. Both are
+  // words, so the chip's tone is never the only thing that says `draft`.
+  if (record.state !== '' || record.draft) {
+    const chip = cell(head, factory, 'span', 'coordinator-record-chip')
+    if (record.state !== '') {
+      textCell(chip, factory, 'span', record.state, 'label', 'records[].pr.state', 'coordinator-record-state')
+    }
+    if (record.draft) {
+      literal(cell(chip, factory, 'span', 'coordinator-record-draft'), COORDINATOR_DRAFT_WORD)
+    }
   }
-  const flight = cell(row, factory, 'span', 'coordinator-record-flight')
+  const flight = cell(head, factory, 'span', 'coordinator-record-flight')
   if (record.inFlight) literal(flight, COORDINATOR_IN_FLIGHT_WORD)
   else literal(flight, COORDINATOR_FINISHED_WORD)
   if (record.runs.length === 0) {
@@ -512,6 +539,11 @@ function recordCell(parent: ScreenElement, factory: ScreenFactory, record: Coord
   }
   const runs = cell(row, factory, 'ul', 'coordinator-runs')
   for (const run of record.runs) runCell(runs, factory, run)
+  if (record.runsDropped > 0) {
+    // A list holds list items, so this count is one rather than the span
+    // `countCell` makes: the figure is a reading like every other here.
+    putReading(cell(runs, factory, 'li', 'coordinator-more'), measured(record.runsDropped), 'count')
+  }
 }
 
 function collisionCell(parent: ScreenElement, factory: ScreenFactory, collision: CoordinatorCollisionPanel): void {
@@ -544,28 +576,35 @@ function unreadCell(parent: ScreenElement, factory: ScreenFactory, entry: Coordi
   }
 }
 
-/** repoSummary draws one repository's name, its state, its stale marker and its
- * counts -- everything the document answers about a repository without listing
- * what is in it -- and answers the element its detail belongs under. */
+/** repoSummary draws one repository's head -- its name and which view this node
+ * is -- then the strip of counts, the stale marker and the omissions --
+ * everything the document answers about a repository without listing what is in
+ * it -- and answers the element its detail belongs under. The head is drawn
+ * first, and its two facts are drawn together, so a reader meets the name and
+ * the source line before any figure: the figures of an unstored node are the
+ * runs' own counts and mean something different from a stored node's. */
 function repoSummary(
   parent: ScreenElement,
   factory: ScreenFactory,
   panel: CoordinatorRepoPanel,
 ): ScreenElement {
   const section = cell(parent, factory, 'section', 'coordinator-repo')
+  const head = cell(section, factory, 'div', 'coordinator-repo-head')
   // The repository's own name, which the CLI read out of the local config: text
   // in the class the wire key declares, and never a link or a path.
-  textCell(section, factory, 'h2', panel.repo, 'repository', 'repos[].repo', 'coordinator-repo-name')
-  const state = cell(section, factory, 'p', 'coordinator-repo-state')
+  textCell(head, factory, 'h2', panel.repo, 'repository', 'repos[].repo', 'coordinator-repo-name')
+  const state = cell(head, factory, 'p', 'coordinator-repo-state')
   if (panel.stored) literal(state, COORDINATOR_STORED_WORD)
   else literal(state, COORDINATOR_RUNS_WORD)
   if (panel.stale !== null) {
-    const stale = cell(section, factory, 'p', 'coordinator-repo-stale')
+    // A block rather than the line of prose it was: it carries three facts (the
+    // word, the stamp and the reason) and the omissions line stands with it.
+    const stale = cell(section, factory, 'div', 'coordinator-repo-stale')
     literal(cell(stale, factory, 'span', 'coordinator-stale-word'), COORDINATOR_STALE_WORD)
     textCell(stale, factory, 'span', panel.stale.since, 'sentence', 'stale.since', 'coordinator-stale-since')
     textCell(stale, factory, 'span', panel.stale.reason, 'sentence', 'stale.reason', 'coordinator-stale-reason')
   }
-  const counts = cell(section, factory, 'p', 'coordinator-counts')
+  const counts = cell(section, factory, 'div', 'coordinator-counts')
   numberCell(counts, factory, COORDINATOR_RECORDS_WORD, panel.recordCount, 'coordinator-count-records')
   numberCell(
     counts,
@@ -574,7 +613,11 @@ function repoSummary(
     panel.inFlightCount,
     'coordinator-count-inflight',
   )
-  numberCell(counts, factory, COORDINATOR_COLLISIONS_WORD, panel.collisionCount, 'coordinator-count-collisions')
+  // The cell's own word is what carries the state; the class only says which
+  // cell it is, so a reader who loses the tone still reads `collisions 2`.
+  const countClasses = ['coordinator-count-collisions']
+  if (panel.hasCollisions) countClasses.push('coordinator-count-alert')
+  numberCell(counts, factory, COORDINATOR_COLLISIONS_WORD, panel.collisionCount, ...countClasses)
   if (panel.omitted !== null || panel.omittedCollisions !== null) {
     const omitted = cell(section, factory, 'p', 'coordinator-omitted')
     literal(cell(omitted, factory, 'span', 'coordinator-omitted-word'), COORDINATOR_OMITTED_WORD)

@@ -33,16 +33,26 @@ import { SPAWN_COMMANDS, argvFor, assertSpawnSurface } from '../../src/main/spaw
 import type { SpawnCommand } from '../../src/main/spawn'
 import { putText } from '../../src/renderer/app'
 import {
+  COORDINATOR_CARRIED_WORD,
+  COORDINATOR_COLLISION_WORD,
+  COORDINATOR_COLLISIONS_WORD,
+  COORDINATOR_DRAFT_WORD,
+  COORDINATOR_IN_FLIGHT_COUNT_WORD,
   COORDINATOR_IN_FLIGHT_WORD,
+  COORDINATOR_LIST_CAP,
   COORDINATOR_NO_AGE_WORD,
+  COORDINATOR_OMITTED_WORD,
+  COORDINATOR_RECORDS_WORD,
   COORDINATOR_RUNS_WORD,
   COORDINATOR_STALE_WORD,
   COORDINATOR_STORED_WORD,
+  COORDINATOR_UNREAD_WORD,
   buildCoordinatorModel,
   renderCoordinator,
 } from '../../src/renderer/screens/coordinator'
 import type { ScreenElement, ScreenFactory } from '../../src/renderer/screens/coordinator'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
+import { PATH_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeCoordinatorStatus } from '../../src/shared/schema'
 import type { CoordinatorStatusView } from '../../src/shared/schema'
 
@@ -438,6 +448,263 @@ describe('the project view screen', () => {
     const node = renders({ repos: [STORED] })
     expect(drawn(node)).toContain(COORDINATOR_IN_FLIGHT_WORD)
     for (const element of all(node, 'coordinator-count-value')) expect(element.textContent).toBe('1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Flight Deck drawing (console redesign, step 7).
+// ---------------------------------------------------------------------------
+//
+// The restyling, and the facts it must not lose while it is restyled: one panel
+// per repository with its name and its source line at the head and its counter
+// strip under them, the collisions cell marked by a word beside its tone; the
+// amber stale banner and the values a bound left out; the collision callout and
+// the state-unread chip; and the pull request rows with the runs nested under
+// them, cut at the console's own cap with the count it did not draw.
+//
+// Every case below reads a hook the styling design's section 2.12 names, so the
+// rules in `flight-deck.css` and this drawing are the same set of elements.
+
+/** recordWithRuns is one record whose run list is longer than the console
+ * draws: the collision lists are not the only list this screen cuts. */
+function recordWithRuns(count: number): unknown {
+  return {
+    runs: Array.from({ length: count }, (_, at) => ({
+      id: `20261027-0300${String(at % 100).padStart(2, '0')}-aa${String(at).padStart(2, '0')}`,
+      status: 'running',
+      outcome: '',
+      terminal: false,
+      files: [],
+    })),
+    in_flight: true,
+    files: [],
+    services: [],
+  }
+}
+
+/** collisionWithFiles is one collision whose path list is longer than the
+ * console draws. */
+function collisionWithFiles(count: number): unknown {
+  return {
+    a: '#7',
+    b: '20261027-030000-aa01',
+    files: Array.from({ length: count }, (_, at) => `src/file-${String(at)}.go`),
+    services: [],
+  }
+}
+
+describe('the Coordinator screen in the Flight Deck look (console redesign, step 7)', () => {
+  it('draws one panel per repository, with its name and its source line at the head', () => {
+    const node = renders({ repos: [STORED, UNSTORED] })
+    const panels = all(node, 'coordinator-repo')
+    expect(panels, 'one panel per repository the document lists').toHaveLength(2)
+
+    const heads = all(node, 'coordinator-repo-head')
+    expect(heads, 'every panel opens with its own head row').toHaveLength(2)
+    for (const [at, word] of [
+      [0, COORDINATOR_STORED_WORD],
+      [1, COORDINATOR_RUNS_WORD],
+    ] as const) {
+      const panel = panels[at]
+      const head = heads[at]
+      if (panel === undefined || head === undefined) throw new Error('a panel has no head')
+      // The head is the panel's own first child: the name and which view the
+      // node is, above the counts and above everything the repository lists.
+      expect(panel.nodes[0], 'the head is not the panel’s first element').toBe(head)
+      expect(head.nodes[0], 'the name is not the head’s first element').toBe(one(head, 'coordinator-repo-name'))
+      expect(textOf(head, 'coordinator-repo-state')).toBe(word)
+    }
+  })
+
+  it('draws the counter strip: three labelled cells, in the console’s own words', () => {
+    const node = renders({ repos: [STORED] })
+    const strip = one(node, 'coordinator-counts')
+    const cells = all(strip, 'coordinator-count')
+    expect(cells, 'records, in flight and collisions').toHaveLength(3)
+    expect(cells.map((cell) => textOf(cell, 'coordinator-count-word'))).toEqual([
+      COORDINATOR_RECORDS_WORD,
+      COORDINATOR_IN_FLIGHT_COUNT_WORD,
+      COORDINATOR_COLLISIONS_WORD,
+    ])
+    // The figures are the console's own counts off the document's arrays, one
+    // reading per cell, and the word is drawn beside each of them.
+    expect(cells.map((cell) => textOf(cell, 'coordinator-count-value'))).toEqual(['1', '1', '1'])
+    for (const cell of cells) expect(all(cell, 'coordinator-count-value')).toHaveLength(1)
+  })
+
+  it('marks the collisions cell when there are any, by word and not by tone alone', () => {
+    // The strip's one state: a repository whose records collide is a repository
+    // a reader has to look at. The mark is a class on the cell and the cell's
+    // own word is beside it, which is what makes the tone redundant (design
+    // section 3.5) -- a greyscale reader loses the colour and not the fact.
+    const collided = all(renders({ repos: [STORED] }), 'coordinator-count-alert')
+    expect(collided, 'a repository with a collision marks one cell').toHaveLength(1)
+    const cell = collided[0]
+    if (cell === undefined) throw new Error('no alerted cell')
+    expect(cell.classes).toContain('coordinator-count-collisions')
+    expect(textOf(cell, 'coordinator-count-word')).toBe(COORDINATOR_COLLISIONS_WORD)
+    expect(textOf(cell, 'coordinator-count-value')).toBe('1')
+
+    // And a repository with none marks nothing: the tone follows the count the
+    // document gave, and a zero is not a state.
+    expect(all(renders({ repos: [UNSTORED] }), 'coordinator-count-alert')).toEqual([])
+  })
+
+  it('draws the stale marker as a banner, drawn only when the document carries one', () => {
+    const node = renders({ repos: [STORED] })
+    const banner = one(node, 'coordinator-repo-stale')
+    expect(banner.tag, 'the banner is a block and not a line of prose').toBe('div')
+    expect(textOf(banner, 'coordinator-stale-word')).toBe(COORDINATOR_STALE_WORD)
+    expect(textOf(banner, 'coordinator-stale-since')).toBe('2026-10-27T02:00:00Z')
+    expect(textOf(banner, 'coordinator-stale-reason')).toBe('the repository’s runs could not be read')
+    // It is the repository's own banner, inside the panel it is about.
+    expect(walk(one(node, 'coordinator-repo'))).toContain(banner)
+
+    // An unstored node carries no marker, and a repository with none draws no
+    // banner at all.
+    expect(all(renders({ repos: [UNSTORED] }), 'coordinator-repo-stale')).toEqual([])
+  })
+
+  it('keeps the values a bound left out, beside the banner that says why', () => {
+    // The document's own bound is the third thing this screen says and does not
+    // draw: the sweep left records and collisions out of the stored node. It
+    // stands next to the stale banner, because both are the panel saying what
+    // it is not showing.
+    const node = renders({ repos: [STORED] })
+    const omitted = one(node, 'coordinator-omitted')
+    expect(textOf(omitted, 'coordinator-omitted-word')).toBe(COORDINATOR_OMITTED_WORD)
+    expect(textOf(omitted, 'coordinator-omitted-records')).toBe('1')
+    expect(textOf(omitted, 'coordinator-omitted-collisions')).toBe('2')
+    expect(all(renders({ repos: [UNSTORED] }), 'coordinator-omitted')).toEqual([])
+  })
+
+  it('draws a collision as a callout: the pair, the word between them and the paths', () => {
+    const node = renders({ repos: [STORED] })
+    const callout = one(node, 'coordinator-collision')
+    expect(textOf(callout, 'coordinator-collision-a')).toBe('#7')
+    expect(textOf(callout, 'coordinator-collision-word')).toBe(COORDINATOR_COLLISION_WORD)
+    expect(textOf(callout, 'coordinator-collision-b')).toBe('20261027-030000-aa01')
+    // A path is drawn as the placeholder and never as the path itself: this
+    // console has no reason to draw one (design section 5.1 rule 3).
+    expect(all(callout, 'coordinator-file').map((path) => path.textContent)).toEqual([PATH_PLACEHOLDER])
+  })
+
+  it('cuts a shared path list at the console’s own cap and draws the count it left off', () => {
+    const node = renders({
+      repos: [
+        {
+          ...STORED,
+          view: { ...STORED.view, collisions: [collisionWithFiles(COORDINATOR_LIST_CAP + 3)] },
+        },
+      ],
+    })
+    const callout = one(node, 'coordinator-collision')
+    expect(all(callout, 'coordinator-file')).toHaveLength(COORDINATOR_LIST_CAP)
+    // The count that was not drawn is a reading like every other figure here,
+    // and the paths past the cap are not in the tree at all.
+    expect(textOf(callout, 'coordinator-more')).toBe('3')
+  })
+
+  it('cuts a record’s runs at the console’s own cap and draws the count it left off', () => {
+    // A pull request with two hundred runs is not a row of two hundred lines:
+    // the runs drawn under it are the first `COORDINATOR_LIST_CAP`, and the rest
+    // is a count rather than a silent prefix.
+    const node = renders({
+      repos: [
+        {
+          ...UNSTORED,
+          view: { ...UNSTORED.view, records: [recordWithRuns(COORDINATOR_LIST_CAP + 3)] },
+        },
+      ],
+    })
+    const row = one(node, 'coordinator-record')
+    const runs = all(row, 'coordinator-run')
+    expect(runs).toHaveLength(COORDINATOR_LIST_CAP)
+    expect(textOf(row, 'coordinator-more')).toBe('3')
+    // The first run the cap cut is not in the tree at all: the count above is
+    // what stands for it, and there is no silent twenty-first row.
+    const cut = `20261027-0300${String(COORDINATOR_LIST_CAP % 100).padStart(2, '0')}-aa${String(COORDINATOR_LIST_CAP).padStart(2, '0')}`
+    expect(runs.map((run) => textOf(run, 'coordinator-run-id'))).not.toContain(cut)
+  })
+
+  it('draws a pull request as a row: its number, chip, title, branch, version and state', () => {
+    const node = renders({ repos: [STORED] })
+    const row = one(node, 'coordinator-record')
+    const head = one(row, 'coordinator-record-head')
+    expect(head.nodes[0], 'the number does not open the row').toBe(one(head, 'coordinator-record-label'))
+    expect(textOf(head, 'coordinator-record-label')).toBe('#7')
+    expect(textOf(head, 'coordinator-record-title')).toBe('a title someone wrote')
+    expect(textOf(head, 'coordinator-record-branch')).toBe('feat/a-thing')
+    expect(textOf(head, 'coordinator-record-release')).toBe('1.4')
+    expect(textOf(head, 'coordinator-record-flight')).toBe(COORDINATOR_IN_FLIGHT_WORD)
+    // The host's own word for the pull request and the console's mark when it is
+    // a draft are one chip, and both are drawn when the document says both.
+    const chip = one(head, 'coordinator-record-chip')
+    expect(textOf(chip, 'coordinator-record-state')).toBe('open')
+    expect(textOf(chip, 'coordinator-record-draft')).toBe(COORDINATOR_DRAFT_WORD)
+  })
+
+  it('nests the runs behind a pull request under its row, and says when there is none', () => {
+    const node = renders({
+      repos: [
+        {
+          ...STORED,
+          view: {
+            ...STORED.view,
+            records: [
+              ...STORED.view.records,
+              {
+                pr: { number: 11, url: '', title: 'another title', branch: 'feat/b-thing', draft: false, state: 'open' },
+                runs: [],
+                branch: 'feat/b-thing',
+                release: '',
+                in_flight: false,
+                files: [],
+                services: [],
+              },
+            ],
+          },
+        },
+      ],
+    })
+    const rows = all(node, 'coordinator-record')
+    expect(rows).toHaveLength(2)
+    const [first, second] = rows
+    if (first === undefined || second === undefined) throw new Error('the two rows were not drawn')
+
+    // The runs are the row's own nested list, not a list beside it.
+    const runs = one(first, 'coordinator-runs')
+    expect(walk(first)).toContain(runs)
+    expect(textOf(runs, 'coordinator-run-id')).toBe('20261027-030000-aa01')
+
+    // The second record has no run behind it, and no draft chip either: the
+    // console's own sentence is drawn where the runs would be.
+    expect(textOf(second, 'coordinator-record-noruns')).toBe('no run behind it')
+    expect(all(second, 'coordinator-record-draft')).toEqual([])
+    expect(all(second, 'coordinator-runs')).toEqual([])
+  })
+
+  it('draws a pull request whose state no sweep could read as an amber chip, with the reason', () => {
+    const node = renders({ repos: [STORED] })
+    const chip = one(node, 'coordinator-unread')
+    expect(textOf(chip, 'coordinator-unread-word')).toBe(COORDINATOR_UNREAD_WORD)
+    expect(textOf(chip, 'coordinator-unread-number')).toBe('#9')
+    expect(textOf(chip, 'coordinator-unread-reason')).toBe('the host refused the read')
+    expect(textOf(chip, 'coordinator-unread-carried')).toBe(COORDINATOR_CARRIED_WORD)
+    // The stamp the sweep left for the retry, drawn as stored: the view carries
+    // no time of its own, so this is the only clock-shaped field on the chip.
+    expect(textOf(chip, 'coordinator-unread-retry')).toBe('2026-10-27T04:00:00Z')
+  })
+
+  it('keeps the header line about the age the view does not carry, above the panels', () => {
+    // Header-first (0.117.0), kept: the console's sentence about the time the
+    // stored view does not have is drawn once, before any repository panel.
+    const node = renders({ repos: [STORED] })
+    const order = walk(node)
+    const age = one(node, 'coordinator-age')
+    expect(age.textContent).toBe(COORDINATOR_NO_AGE_WORD)
+    const panel = one(node, 'coordinator-repo')
+    expect(order.indexOf(age)).toBeLessThan(order.indexOf(panel))
   })
 })
 
