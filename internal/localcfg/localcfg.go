@@ -355,6 +355,27 @@ type StageChoice struct {
 	ClaudeAccount string `yaml:"claude_account,omitempty"`
 }
 
+// choiceRefProblem is why name may not stand as the value of an account-choice
+// key here, or "" when it may: the name's own rule first, then whether this
+// file actually defines the account. An undefined name is refused in the
+// sentence config.ValidateProfileClaudeAccounts already gives the same name in
+// a profile, because the two are the same reference and a second wording for
+// one rule is a second rule; a name no run can use would leave the key silently
+// never applying, which is what the keys are specified to refuse.
+func (c *Config) choiceRefProblem(name string) string {
+	if msg := config.ValidClaudeAccountRef(name); msg != "" {
+		return msg
+	}
+	if name == config.DefaultClaudeAccount {
+		return ""
+	}
+	if _, ok := c.ClaudeAccounts[name]; ok {
+		return ""
+	}
+	return fmt.Sprintf("the account %q is not defined here: this key names an account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the key",
+		pluginwire.Printable(name), config.DefaultClaudeAccount, pluginwire.Printable(name))
+}
+
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
 // operator's own machine, one entry per pairing.
 type Mailbox struct {
@@ -1485,14 +1506,18 @@ func (c *Config) validate() error {
 	// definition's rule belongs to claude_accounts, which refuses it. Whether
 	// the named account is admitted for a repository is decided at launch
 	// against the account's own allow_data_to, where the repository is known.
+	// A name this file does not define is refused too (choiceRefProblem): the
+	// key would otherwise name an account no run can use, and a per-stage
+	// override that never applies is the state §11.1 refuses for a stage name
+	// that is not a stage.
 	if c.DefaultClaudeAccount != "" {
-		if msg := config.ValidClaudeAccountRef(c.DefaultClaudeAccount); msg != "" {
+		if msg := c.choiceRefProblem(c.DefaultClaudeAccount); msg != "" {
 			bad("default_claude_account: %s", msg)
 		}
 	}
 	for _, stage := range slices.Sorted(maps.Keys(c.ClaudeAccountStages)) {
 		if ref := c.ClaudeAccountStages[stage].ClaudeAccount; ref != "" {
-			if msg := config.ValidClaudeAccountRef(ref); msg != "" {
+			if msg := c.choiceRefProblem(ref); msg != "" {
 				bad("stages.%s.claude_account: %s", pluginwire.Printable(stage), msg)
 			}
 		}

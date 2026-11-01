@@ -324,6 +324,55 @@ func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 	}
 }
 
+// TestSettingsRefusesAPerStageAccountTheProjectDoesNotAllow is D873's
+// per-stage override held to the floor every rung of the chain stands on: an
+// account a run may use is one this file's claude_accounts defines, so a
+// per-stage key naming anything else is refused — before any write, with the
+// file byte-identical and no backup taken. A key accepted here would name an
+// account no run can use, and the stage would silently keep the account the
+// key was meant to replace.
+func TestSettingsRefusesAPerStageAccountTheProjectDoesNotAllow(t *testing.T) {
+	_, localPath := settingsWriteHomeWith(t, "\nclaude_accounts:\n  team-b:\n    allow_data_to: [acme/app]\n")
+	before := readFileString(t, localPath)
+
+	for _, tc := range []struct{ key, value string }{
+		{"stages.review.claude_account", "team-z"},
+		{"default_claude_account", "team-z"},
+	} {
+		_, _, err := execute(t, "settings", "set", tc.key, tc.value, "--layer", "local", "--yes")
+		if err == nil {
+			t.Fatalf("settings set %s %s was accepted, and no run can use that account", tc.key, tc.value)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("%s: exit %d, want a user error: %v", tc.key, ExitCode(err), err)
+		}
+		for _, want := range []string{tc.key, "is not defined here"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal does not say %q: %v", tc.key, want, err)
+			}
+		}
+	}
+	if after := readFileString(t, localPath); after != before {
+		t.Errorf("a refused account choice wrote the file:\n%s", after)
+	}
+	backups, err := filepath.Glob(localPath + ".bak-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Errorf("a refused account choice backed the file up: %v", backups)
+	}
+
+	// The same key with an account the file does define is written, so the
+	// refusal above is the account's and not the key's.
+	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "team-b", "--layer", "local", "--yes"); err != nil {
+		t.Fatalf("settings set stages.review.claude_account team-b: %v", err)
+	}
+	if readFileString(t, localPath) == before {
+		t.Error("a per-stage override naming a defined account was not written")
+	}
+}
+
 // TestAccountsAddPrintsNoValueShape: the command carries no flag that could
 // hold a token — in any spelling — and no --json, and nothing it prints is a
 // credential's value or a secret's name. The machine-readable surface stays
