@@ -988,7 +988,10 @@ func yarnValue(text, field string) string {
 func yarnComment(v string) string {
 	if len(v) > 0 && (v[0] == '"' || v[0] == '\'') {
 		if i := strings.IndexByte(v[1:], v[0]); i >= 0 {
-			return v[:i+1]
+			// i is the closing quote's index within v[1:], so it sits at
+			// i+1 in v and the quoted value is v[:i+2] — the quote the value
+			// ended at belongs to the value the caller is handed back.
+			return v[:i+2]
 		}
 		return v
 	}

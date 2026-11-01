@@ -687,6 +687,30 @@ reference = "private"
 	}
 }
 
+// TestYarnCommentEndsAQuotedValueAtItsClosingQuote: a quoted yarn.lock value
+// ends at its closing quote and only what follows that quote is a comment, so
+// the value handed back is the quoted text and not text missing the quote it
+// ended at. yarnValue's own trim hides the difference today, which is why the
+// helper is read here rather than through Reduce: the next caller would inherit
+// the malformed value, and a value cut one character short is text no file
+// wrote.
+func TestYarnCommentEndsAQuotedValueAtItsClosingQuote(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`"1.3.0"`, `"1.3.0"`},
+		{`"1.3.0" # a comment`, `"1.3.0"`},
+		{`"sha512-aa,bb"`, `"sha512-aa,bb"`},
+		// An unquoted value keeps a `#` that is part of it — Yarn 1 writes the
+		// archive's hash after the tarball's URL — and drops one whitespace
+		// starts.
+		{"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz#abcdef", "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz#abcdef"},
+		{"1.3.0 # a comment", "1.3.0"},
+	} {
+		if got := yarnComment(tc.in); got != tc.want {
+			t.Errorf("yarnComment(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestTOMLFieldsReadAValueHoldingAComma: a TOML value may hold a comma — a
 // directory or archive name, a URL — and a reader that splits the table on
 // every comma reads the second half of that value as a field of its own, so
