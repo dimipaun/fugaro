@@ -71,7 +71,12 @@ import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
-import { reducedModeHandlers, registerConsoleHandlers, startupCompatibility } from './ipc'
+import {
+  openPullRequestHandler,
+  reducedModeHandlers,
+  registerConsoleHandlers,
+  startupCompatibility,
+} from './ipc'
 import type { ConsoleHandlers, ValidatedArguments } from './ipc'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
@@ -438,16 +443,28 @@ const resolvedBinaries = new Map<string, string>()
 const boundSource = createBoundSource({ installation: activeBinding, appEnv: process.env })
 
 /**
- * openExternalFromShell is the surface's one operation that is not a read of the
- * CLI: it hands the URL to `openExternalValidated`, which is the console's one
+ * openExternalFromShell is the surface's operation that hands over a URL it was
+ * given: it passes it to `openExternalValidated`, which is the console's one
  * call to `shell.openExternal` and its own allow-list (`src/main/window.ts`). The
  * argument is narrowed here and validated there; a value that is not a string
  * cannot be a URL this console opens, so it is refused by the same function
  * rather than by a second check written here.
+ *
+ * `openPullRequestFromShell` is the other half, and the reason the two are not
+ * one operation: that one is handed a URL, and this one is handed the three
+ * fields a URL is built from. It passes the shell in as the opener, so the
+ * build and the refusal are `openPullRequestHandler`'s (`src/main/ipc.ts`) --
+ * a rule that security-sensitive is written where a test can reach it rather
+ * than in this file, which loads Electron's runtime and so cannot be imported
+ * under a test at all.
  */
 async function openExternalFromShell(raw: unknown): Promise<void> {
   await openExternalValidated(shell, typeof raw === 'string' ? raw : '')
 }
+
+/** openPullRequestFromShell is `link.openPullRequest`'s wiring: the built URL,
+ * and nothing else, reaches `openExternalValidated`. */
+const openPullRequestFromShell = openPullRequestHandler((url) => openExternalValidated(shell, url))
 
 /**
  * launchRequest narrows the operation's five validated fields to the launcher's
@@ -733,9 +750,11 @@ let launchRunner = createLaunchRunner({
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
  * `FugaroSource` lists them) -- over
  * `boundSource`, so each of them reaches the active installation's own binary
- * and nothing else), and `startup.compatibility` is joined in here because it is
- * the one operation whose answer is the console's own state rather than a read
- * (`CliBackedHandlers` in `src/source/source.ts` says so from the other side).
+ * and nothing else), and the three operations that are not reads of the CLI are
+ * joined in here -- `startup.compatibility`, whose answer is the console's own
+ * state, and the launch and the pull request link, which are the console's one
+ * write and its one built link (`CliBackedHandlers` in `src/source/source.ts`
+ * says so from the other side).
  *
  * `reducedModeHandlers` wraps the result in `registerHandlers` below rather than
  * here, so that what this constant holds is the surface and what the wrapper
@@ -771,6 +790,13 @@ const gated: ConsoleHandlers = {
   // declining launcher above answers every launch with `DECLINED_UNBUILT`, and
   // this operation has no way to a child at all.
   'run.launch': (args) => launchRunner.launch(launchRequest(args)),
+  // **The pull request link, and the one URL this console builds** (K2a, D814
+  // and D815). Joined here for the same reason the two above are: it reads no
+  // CLI, so `handlersFor` leaves it out. What it is handed is three fields of a
+  // document and no URL at all, and what reaches `shell.openExternal` is the
+  // URL `pullRequestUrl` built from them -- the first gate is the build, and
+  // `openExternalValidated` inside the opener is the second.
+  'link.openPullRequest': openPullRequestFromShell,
 }
 
 /**

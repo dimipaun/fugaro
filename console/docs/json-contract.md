@@ -966,7 +966,7 @@ opens `~/.config/fugaro` (§3.4 rule 7).
 
 **Who reads it.** Since the owner's design ruling of 2026-10-25 it is the
 installation rail's read: the dashboard's `installation.list` operation (one of
-the surface's twenty-four, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
+the surface's twenty-five, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
 the same dispatcher the picker window uses. The console reads two of the
 `warnings` lines by their wording, to mark the rail's rows
 (`src/main/installationstate.ts`): `<path> could not be read: <reason>`, matched
@@ -1839,9 +1839,9 @@ the console does not pass), `--json`, and the cloud flags `--project`,
 **Command:** `internal/cli/run.go` (`newRunCmd`), printed by `printLaunch` with
 `json.Encoder` and `SetIndent("", "  ")`: **one indented object**, the shape
 every command in the console's set prints (§9.2). **This is the one write in the
-whole console** — the operation `run.launch`, whose twenty-fourth row on the IPC
-allow-list V2.5.1a added (2026-10-28/29) — and the only document below that a
-launch produces rather than a read. The argv the console builds from the form's
+whole console** — the operation `run.launch`, the row V2.5.1a added to the IPC
+allow-list (2026-10-28/29), the surface's twenty-fourth — and the only document
+below that a launch produces rather than a read. The argv the console builds from the form's
 five fields, and the confirmation window the main process owns, are design §5.1
 rule 11's and are not repeated here; what this section settles is the shape of
 the answer those fields come back as.
@@ -1975,9 +1975,11 @@ table against the live constructors.
 1. **Every document in the console's set is read-only** — with **one exception,
    the launch** (§6.14, design §5.1 rule 11), which is the console's single
    write and whose confirmation window is the main process's own. The allow-list
-   is by exact argv (design §5.1 rule 6), and the write is on it: the
-   twenty-fourth operation is `run.launch` (V2.5.1a, 2026-10-28/29), and no other
-   argv that writes is reachable from a renderer. Two further commands this file
+   is by exact argv (design §5.1 rule 6), and the write is on it: `run.launch` is
+   the one operation of the surface that writes (V2.5.1a, 2026-10-28/29, the
+   surface's twenty-fourth; K2a's `link.openPullRequest` took the surface to
+   twenty-five and writes nothing), and no other argv that writes is reachable
+   from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1
    console spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service
