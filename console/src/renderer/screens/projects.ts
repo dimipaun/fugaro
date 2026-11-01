@@ -54,12 +54,9 @@
 //
 // **The dollars are not this screen's.** The Spend screen owns spend: this one
 // draws the *caps*, their binding scopes and the kill switches (the plan's
-// "caps, kill state"), and per-job cost only as the row's own ledger -- so two
-// screens cannot disagree about a dollar figure. The three accounts stay apart
-// here too: a job draws the **billed** part of its model figure as its model
-// dollars -- `model_usd` minus `model_notional_usd`, C1.16/P12 -- and
-// `~$` only when that part is the plan's whole figure, exactly as the
-// Live and Spend screens do.
+// "caps, kill state") and no figure of its own -- the reserve above the table is
+// the project's lease and every other number is a cap -- so two screens cannot
+// disagree about a dollar figure.
 //
 // Everything else is Task 2.0's two rules, unchanged: every number enters
 // through `readNumber` and is drawn through `putReading`, and every string from

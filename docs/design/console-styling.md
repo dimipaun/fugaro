@@ -592,29 +592,47 @@ exported: it is the sentence a row draws, not a vocabulary anything reads.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 
-Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
-(where there is one) `data-operation`: `caps`, `kill`, `repositories`, `jobs`, `accounts`,
+Seven panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
+(where there is one) `data-operation`: `caps`, `kill`, `repositories`, `accounts`,
 `secrets`, `policy`, `enrollment`. **The panel's state is a word as well as a frame**:
 `span.projects-state` draws `read`, `not read`, or the design's word for a card this CLI
 cannot read at all — `locked` — so no rule has to carry a state on a tone alone (§3.5).
 
+**The jobs panel is gone, and so is the second read behind it** (the owner's report of
+2026-10-31: that list "is slow and serves no purpose there"). `runs ls --json` is about
+248 KB and six seconds for a day of runs, and this screen started it before the caps —
+the whole of the panel's content — could be drawn, which is what made the tab about
+twenty seconds with nothing on screen. The screen makes **one** read, `budget show
+--json`; the jobs table, the `projects-jobs-*` hooks beside it, `data-operation="runs.list"`
+and the two repository claims the run list carried (the enrolled-and-seen split and the
+"seen, not enrolled" card) all leave the vocabulary with it. The repositories panel draws
+the cap document's own `repos` and says nothing about which of them have run: a repository
+enrolled with no run is not the same fact as a repository that ran with no cap row.
+
+**The screen's shell is `section.projects > div.projects-body > div.console-busy-slot`**,
+and the entry mounts it in the frame the tab is opened in. The mark, the skeleton and the
+`aria-busy` on `.projects-body` are `src/renderer/section.ts`'s (§2.11, and the console
+rule in `.claude/rules/console.md`): the section is dimmed while the read is out, never
+blanked, and says "still reading" after a quarter of a minute. A screen this session has
+already read is drawn at once, stamped `as of HH:MM` with a Refresh control.
+
 | Group | Class hooks |
 |---|---|
 | Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-state`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
-| Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches all three**, and the third is **unreachable today** — see below |
+| Notes | two hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches both**, and the second is **unreachable today** — see below. The jobs panel's own note went with the panel |
 | Caps | `projects-caps`, `projects-reserve`, `projects-reserve-word`, `projects-reserve-value`, `projects-cap-table`, `projects-cap-head`, `projects-cap`, `projects-cap-scope`, `projects-cap-cell`, `projects-cap-value`, `projects-cap-source` |
 | Kill | `projects-kills`, `projects-kill-list`, `projects-kill-row`, `projects-kill-scope`, `projects-kill-repo`, `projects-kill-state`, `projects-kill-action`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
-| Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-both`, `projects-only-enrolled-repo`, `projects-only-seen-repo`, `projects-repo-card-none`, `projects-repo-card-note`, `projects-repo-add` |
-| Jobs | `projects-jobs`, `projects-job-table`, `projects-job-head`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-started-by`, `projects-job-created`, `projects-job-mode`, `projects-job-mode-cell`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
 `read`, `unavailable`, `not-built`**; `data-operation`
-(`budget.show|runs.list|accounts.inventory|secrets.inventory`, absent on `policy` and
+(`budget.show|accounts.inventory|secrets.inventory`, absent on `policy` and
 `enrollment`); `data-scope` (`global|defaults|repo`, on a caps row and on a kill row);
 `data-slug` (the same two rows); `data-killed` (`true`|`false` on a kill row, and `true` on
-the banner a killed row carries); `data-kind` (`both|enrolled|seen`, on a repository card).
+the banner a killed row carries); `data-kind` (`enrolled` alone, on a repository card —
+the run list that carried the other two went with the jobs panel).
 
 The `not-built` state is the design's own honesty rule in the DOM: `policy` and
 `enrollment` carry `data-state="not-built"` and a `projects-because` sentence ("not
@@ -645,21 +663,15 @@ largest single lease the project has out (`span.projects-reserve-word` names it,
 only when the document has them, and nothing invented when it does not. The row's own action
 is drawn through `disabledWrite` (§5.1): `Kill` on a live row, `Revive` on a killed one.
 
-**The repositories are three cards**, `article.projects-repo-card`, one per state of the
-document: a repository with a cap row and a run (`data-kind="both"`), one with a cap row and
-no run yet (`data-kind="enrolled"`, saying so in `p.projects-repo-card-note`), and one that
-ran with no cap row (`data-kind="seen"`, in the warn tone, saying so, and the one card that
-draws an action: `Add cap`, through `disabledWrite`). A known but empty set says `none` in
-`p.projects-repo-card-none` rather than drawing an empty card or nothing at all. The panel's
-reason for an unread set stays `projects-because` (`repositoriesBecause`), so a set no
-document reported is never drawn as an empty one.
-
-**The jobs are a table**, `table.projects-job-table`: the run, the repository, the workflow,
-the status, the stage, the requester, the launcher, the timestamp, the mode where the column
-exists, and **the three cost accounts in three cells** — the subscription's model dollars
-(notional), the compute dollars (billed) and their total — each through `numberCell`, so
-every figure carries its own reading's state and a value the document does not carry is
-`n/a` and never `$0.00`.
+**The repositories are one card**, `article.projects-repo-card`, drawn from the cap
+document's own `repos`: `data-kind="enrolled"` and a title saying so, then one
+`li.projects-repo-enrolled` per repository. It was three cards, one per state of a document
+that also listed runs — a repository with a cap row and a run (`both`), one with a cap row
+and no run yet (`enrolled`), and one that ran with no cap row (`seen`, with the only action
+any card drew, `Add cap`) — and the two that needed a run went with the run list. A known
+but empty set says `none` in `p.projects-repo-card-none` rather than drawing an empty card
+or nothing at all. The panel's reason for an unread set stays `projects-because`
+(`repositoriesBecause`), so a set no document reported is never drawn as an empty one.
 
 The accounts and secrets panels draw their rows as lists (`ul.projects-account-list`,
 `ul.projects-secret-list`). **Neither read is wired in this build**, so the two panels are
@@ -677,20 +689,10 @@ hook is emitted by the code and reachable by no feed today; it becomes reachable
 `complete: true` and a non-empty `note` can arrive together, which is why it stays in the
 vocabulary rather than being deleted.
 
-Readings: money (`usd`) for the reserve, the caps and the job figures; counts for the panel
-counts, the jobs panel's dropped/total line and the secret versions. **No reading is a time
-on this screen** — every date is text.
-
-**`projects-job-mode` is the jobs row's rigor mode, and the column is conditional.** The
-cell, `td.projects-job-mode-cell`, draws the mode's word — the five §2.3 names — or the
-record's own value when this
-build does not know it, or `-` for a run whose record carries no block; and **no cell is
-drawn at all unless some listed run carries a block**, which is the rule `fugaro runs ls`
-writes for its own MODE column (`internal/cli/runs.go`'s `showMode`). A project whose runs
-all predate the field therefore draws the jobs list it drew before, and not a column of
-dashes. The cell is the mode and nothing else: the CLI's own cell appends the layer and the
-strictest matched area (`pro (repo payments +2)`), and the screen that has room for that
-whole answer is the run detail's Rigor row (§2.6).
+Readings: money (`usd`) for the reserve and the caps; counts for the panel counts and the
+secret versions. **No reading is a time on this screen** — every date is text, and no cell
+of this screen carries a rigor mode: the run detail owns that answer (§2.6), and the jobs
+row that used to repeat it went with the run list.
 
 ### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
@@ -990,6 +992,14 @@ worker's answer, written as SVG attributes because `style-src 'self'` admits no 
 style, §5.5) and a **list** that is the same model with every title whole. Regions in tree
 order: header → tabs → chips → canvas, or the list, never both.
 
+**The screen answers a control in the frame it was pressed in** (0.117.0). The refresh,
+the stream filter's tabs and the plan select are one section's controls, and
+`src/renderer/section.ts` puts the busy mark and `aria-busy` on `section.graph` for as long
+as the read it started is out — the canvas already drawn stays under the mark, dimmed and
+never blanked — and says it is still reading after a quarter of a minute. The canvas is
+drawn from the plan status alone and the run overlay decorates it when the run list lands,
+so a screen that waited for both reads would be the all-or-nothing wait this rule forbids.
+
 **The picture is read left to right** (console redesign, step 6a). The layout engine is
 asked for `elk.direction: 'RIGHT'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a task sits to
 the **left** of the tasks that need it, the layers it computes are the columns a reader
@@ -1132,6 +1142,14 @@ the console's own empty sentence instead of the panels. **The read is one comman
 (`fugaro coordinator status --from-store --all --json`) and the drawing adds no control, no
 link and no gesture: the screen is read-only, which is why no rule here needs a transition
 beyond the focus ring the shared blocks already carry.
+
+**What is already known is drawn before the read** (0.117.0): the source line and the
+console's age sentence are mounted in the frame the tab is opened in, and the body's own
+section is filled when the document arrives — the summary first, the per-PR and per-run
+detail after, in idle chunks or on the operator's expand. While the read is out the body
+carries `src/renderer/section.ts`'s busy mark, its `aria-busy` and a skeleton of the same
+shape, and a document this session has already read is drawn at once, stamped `as of
+HH:MM` with a Refresh control.
 
 | Hook | Drawn as | Note |
 |---|---|---|
@@ -1733,7 +1751,7 @@ the `ElementLike` interface is untouched (a media query is not a DOM write).
 | Panel / section title (`projects-title`, `run-panel-title`, `spend-account-title`) | `--font-size-md` (15px) | 600 | sans |
 | Table header (`projects-repos-label`, `run-log-time`, a column caption) | `--font-size-xs` (11px), uppercase, letter-spaced | 500 | sans |
 | Row text, labels, controls | `--font-size-sm` (12px) — the dense default | 400 | sans |
-| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the three Projects note hooks — `projects-note`, `projects-jobs-note`, `projects-accounts-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
+| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the two Projects note hooks — `projects-note`, `projects-accounts-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
 | **Every number, id, slug, path, timestamp and log line** | `--font-size-sm` | 400 | `--font-mono` with `font-variant-numeric: tabular-nums` |
 
 Money is always tabular and right-aligned, in mono, with the `$` inside the same cell —
