@@ -40,11 +40,11 @@ unwritten (**D1070**).
 The brief allowed either, and the folder is the recommendation, for three reasons that are about this
 repository rather than about taste:
 
-- **The documents have four different roles** — the design, the reconciliation against the code, the
-  decisions, and the ordered tasks — and every design written in this tree that carries decisions *and* a
-  plan keeps them apart in a folder of its own
+- **The documents have different roles** — the design, the reconciliation against the code, the
+  decisions, the ordered tasks, and the live check's own steps — and every design written in this tree
+  that carries decisions *and* a plan keeps them apart in a folder of its own
   ([docs/run-limit-carry-over/](../run-limit-carry-over/), [docs/accounts-add/](../accounts-add/),
-  [docs/cloud-senior-review/](../cloud-senior-review/)). One file would either be four documents in one
+  [docs/cloud-senior-review/](../cloud-senior-review/)). One file would either be five documents in one
   or would drop the reconciliation, which is the part a reviewer reads first.
 - **`docs/credentials-service/`'s own documents are pinned and parsed**: its `implementation-plan.md` is
   read by `TestPlanTestListsNamesOnlyTestsThatExist` (`internal/cli/docs_credentials_plan_tests_test.go`)
@@ -64,6 +64,7 @@ repository rather than about taste:
 | [spec.md](spec.md) | The design: the account classes, the two identities and their pairing, the read-only mint, the sign and verify endpoints, the key and its rotation, the threat model, the owner-run live check, the `fugaro update` story, and what the slice does not do |
 | [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `origin/main` (**F1–F14**, each Exists, Missing or Conflicts) and the owner decisions **D1062–D1074**, each written to the recommended answer first, with the cost of its alternative, and each answered by the owner on 2026-11-01 (D1063 as amended by ruling O1). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks **C3.9a–C3.9g** (at most 10 files each) with named tests, red steps, SEC flags and gates, the shared-files table, the named live check, and the release slot |
+| [live-check.md](live-check.md) | The live check's **register-shaped** entry — the shape read off Check 190, and §8's eleven steps one line each — so the task that takes the number derives neither. A stub: **NOT RUN**, and the number is the one free at C3.9g's merge, not this folder's to take |
 
 **How a `:line` in this folder reads.** A citation names a file and a symbol, and the number is the
 symbol's **declaration** line as it stood at `a38cfeec`; a line drifts the first time anyone edits the file
@@ -86,7 +87,7 @@ the fact in words.
    what a merger re-reads is the **inventory they sit in** — the open pull requests and the merged tree —
    and renumbers to the first free block if it has moved, in every file here that names a number.
 2. **Take the live check's number** ([spec.md](spec.md) §8): the task that writes it takes the number free
-   at **its** merge.
+   at **its** merge, and the row's shape and the eleven steps it fills in are [live-check.md](live-check.md).
 3. **Re-read the `:line` citations** against the tree being merged, under the convention above.
 
 **Before implementation, two things block, and neither is this folder's to clear by writing**: **CSR1** of

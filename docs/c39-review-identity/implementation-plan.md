@@ -201,6 +201,9 @@ repository caller, and a refusal for any other shape).
   `TestReviewMintRefusesARunIdentityWithABranch`, `TestReviewMintRefusesARunIdentityWithNoPullRequests`,
   `TestReviewMintRefusesARepositoryTheAccountIsNotAdmittedFor` (D1064's third step),
   `TestReviewMintRefusesBeforeReadingTheBundle` (the order), `TestRepositoryMintKeepsTheRunSet` (F5),
+  `TestRepositoryMintKeepsTheRunSetForAReviewShapedIdentity` (§4.2's third row read with the class
+  deciding: a repository-class account's call carrying the review identity's claim shape is served the run
+  set and is not the review class),
   `TestRepositoryMintKeepsNamingTheAccountsRepository` (F3), `TestMintRefusalsAreAuditedAndCarryNoToken`.
 
 ## C3.9c. The key's home: one entry per account, a closed key set, and a fail-closed read (D1069, F8, F9). **SEC**
@@ -298,8 +301,12 @@ spelling of them. What the route deliberately does not do is in [spec.md](spec.m
   to `credsPaths()`), `internal/cli/credentials_serve.go` (the writer wired from the database client the
   service already holds), `internal/cli/credentials_serve_test.go`.
 - **One signature per run, and the mark is taken before the answer** (D1074, §5.6 of [spec.md](spec.md)):
-  a **create-only** write — `PutIfMatch` with an absent ETag (`internal/rtdb/client.go:209`), the discipline
-  `ProbeLeases` uses for the probe lease (`internal/credsvc/probe.go:100`) — on one node per `(slug, run)`,
+  a **create-only** write, which is a pair of calls and not one — the node is read for its ETag
+  (`GetETag`, `internal/rtdb/client.go:178`) and written back under it with `PutIfMatch` (`:209`), and the
+  write is create-only because that ETag is the absent node's, so a node created in between fails
+  `ErrPrecondition`; `PutIfMatch` refuses an empty ETag, which is why the read comes first (`:211`), and the
+  pair is the discipline `ProbeLeases` uses for the probe lease (`internal/credsvc/probe.go:100`, read at
+  `:617`, write at `:627`) — on one node per `(slug, run)`,
   **`creds/review-signs/<slug>/<run>`**: a sibling of the probe lease's own `creds/probes` (`probe.go:112`),
   with each segment escaped the one way every node under `creds/` escapes one (`budget.Key`, `probe.go:182`).
   The property is the write's and not the rules': the service's own writes go through IAM and bypass the
@@ -324,7 +331,8 @@ spelling of them. What the route deliberately does not do is in [spec.md](spec.m
   `TestReviewRoutesNeverPrintEitherIdentityToken` drives the route with fixture values and asserts neither
   token reaches the answer, the audit line, a log line or the text of a refusal. C3.9f registers the
   verifier's one token itself, because its path is answered ahead of `RequestFromHTTP` and so never reaches
-  `readCall`.
+  `readCall` — and it names its own test for that, `TestVerifyRouteRegistersItsOwnIdentityTokenForRedaction`,
+  because this shared one drives the routes the shared parse reaches and not the verify path.
 - **The line carries the verified side and never the digest** (§5.5): the account, the repository slug and
   the run come from the identity the service verified, and the digest, the signature and the key's bytes
   reach no field, because a field that is a caller's bytes is what the closed field set exists to keep out.
@@ -368,6 +376,14 @@ not made for them.
   its refusal is the verifier class's own refusal with **its own audit line**.
   `TestVerifyRouteIsAnsweredAheadOfTheSharedParse` is the test that holds the ordering, and a route left
   behind the shared parse is a route no verifier can reach.
+- **That own read is also where the redaction is registered, and this task names its own test for it**
+  (§5.6, D1074): the route's `RequestFromHTTP` never runs, so the per-call scrub `readCall`
+  (`server.go:530`) builds is never built for it either — the handler therefore registers the one Google ID
+  token it carries, and only that one, with the same call-scoped scrub the model path and the sign route
+  use. `TestVerifyRouteRegistersItsOwnIdentityTokenForRedaction` asserts neither the verifier's token nor
+  its signature reaches the answer, the audit line, a log line or the text of a refusal;
+  `TestReviewRoutesNeverPrintEitherIdentityToken` (shared with C3.9e) drives the shared parse's routes and
+  is not a substitute, which is why this one exists.
 - **The caller class is configuration and it is empty by default** (D1068, F12): the request carries a
   Google ID token whose verified `email` is in `AuthConfig.VerifierAccounts`, checked by the same **token
   check** as a job token — audience, issuer, `email_verified`, expiry, not-issued-in-the-future, ASCII fold
@@ -416,7 +432,10 @@ not made for them.
   `TestVerifyRouteRefusesACallerOutsideTheVerifierList`,
   `TestVerifierIsNotGatedByTheSharedJobRule` (a verifier is not a job),
   `TestReviewAccountCannotUseTheVerifyRoute`, `TestVerifyRouteRefusesAnUnknownFieldAndAnOversizeBody`,
-  `TestReviewRoutesNeverPrintEitherIdentityToken` (shared with C3.9e),
+  `TestReviewRoutesNeverPrintEitherIdentityToken` (shared with C3.9e, and it drives the shared parse's
+  routes rather than this one),
+  `TestVerifyRouteRegistersItsOwnIdentityTokenForRedaction` (the verify path's own token, registered by its
+  own read because `readCall` never runs for it — §5.6),
   `TestVerifyRouteAuditsTheActAndNeverTheDigestOrTheSignature`.
 
 ## C3.9g. The verifier list's deployment, the amendment, the docs, and the named live check (D1063, D1070, F2)
@@ -439,18 +458,24 @@ Two halves: the one place this plan changes a deployment, and the documents.
   `internal/infra/tf/testdata/golden/installation-credentials.plan.json` (regenerated),
   `deploy/terraform/gcp/modules/installation/credentials.tf`, `internal/infra/tfvars.go`,
   `docs/credentials-service/implementation-plan.md` (the two edits of §"The amendment the implementing pull
-  request carries"), `docs/c39-review-identity/live-check.md` (new: the check written under the **name** in
-  §8 of [spec.md](spec.md), with its "NOT RUN" line and the number left to the merge).
+  request carries"), `docs/c39-review-identity/live-check.md` (in this folder already, as the design's
+  **stub** of the register row — its shape and §8's eleven steps one line each — which that task fills in
+  with the number it takes at its merge; §8 of [spec.md](spec.md) is the check itself).
 - **`fugaro update` owes nothing new**, and the release notes say so rather than leaving it to be inferred:
   no Terraform for the key, no new container, no new grant, no operator step beyond the service's own
   documented `creds set` for the key's bytes (§9 of [spec.md](spec.md)). The variable defaults to null, so an
   installation that never sets it is untouched; whoever wants the verify route reachable sets it and runs the
   one command, which is the HARD RULE's shape.
-- **The live-check register row is not this task's if the ruling stands.** `docs/gcp-live-checklist.md` is on
-  the do-not-touch list of the release window in flight (0.15.0's while this was written, and 0.16.0's now
-  that D1072 answers the slot), so the check is written in this folder and the register row is a merge-day act
-  or a follow-up run's; many `internal/cli/docs_*_test.go` pins read that file, so moving the row is not a
-  one-line edit.
+- **The live-check register row is not this design's, and the check's file already exists as a stub.**
+  `docs/gcp-live-checklist.md` is on the do-not-touch list of the release window in flight (0.15.0's while
+  this was written, and 0.16.0's now that D1072 answers the slot), so **this design PR writes no register
+  row, edits no file outside `docs/c39-review-identity/` and takes no number**; the row is a merge-day act
+  or a follow-up run's, and many `internal/cli/docs_*_test.go` pins read that file, so moving the row is not
+  a one-line edit. What the design does fix is the row's **shape**, so that whoever writes it copies one
+  rather than deriving it: [live-check.md](live-check.md) holds the register's own convention read off
+  Check 190 (the heading and its scope parentheses, the `NOT RUN` paragraph that carries no steps of its
+  own, and the four sections after it) and §8's eleven steps one line each under §8's own numbering — so
+  this task adds nothing to that file but the number it takes and the row it puts in the register.
 - **Red step:** the plan amendment has no red test of its own — it is prose in a file whose facts
   `TestPlanTestListsNamesOnlyTestsThatExist` (`internal/cli/docs_credentials_plan_tests_test.go`) parses, and
   which must stay green; the live check is red by being **NOT RUN** until CSR7 and CSR2 exist, which is the state

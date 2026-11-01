@@ -235,6 +235,20 @@ review needs. The choice is made from the verified side and nothing else:
 | review class | any other shape | **refused** — never the run set |
 | repository class | any | the run set, unchanged (`RunTokenPermissions`) |
 
+**The class is the account's, and the claim shape never moves a call between classes.** The row a call
+takes is decided by the pairing (§3.2) — which account serves it — so a **repository-class** caller is
+served the run set whatever its claims say, **including an identity shaped the review way** (non-empty
+`fpr`, no `fb`): it is served the run set and it is **not** the review class, and the shape alone could
+not decide it either, because a coding run's own identity legitimately carries both claims (`fb` and `fpr`
+are written when the run has them, `internal/budget/token/mint.go:57`, `:66`, `:69`). That is today's
+behaviour unchanged — the account class is what decides, and nothing here reads the claims on a
+repository-class call. §3.3's rule is an admission rule **inside** the review class: it refuses a
+review-class call whose claims fail it and never **downgrades** one to the run set, which is the direction
+that would lose the property the class exists for. C3.9b names
+`TestRepositoryMintKeepsTheRunSetForAReviewShapedIdentity` for the anomalous shape, beside
+`TestReviewMintRefusesARunIdentityWithABranch` and `TestReviewMintRefusesARunIdentityWithNoPullRequests`
+for the refusals.
+
 CSR1's set is **another work stream's symbol**, and it must be **a set of its own** rather than one composed
 out of the four — the reason `shadowTokenPermissions`'s own comment gives for its own duplicate: a later
 change to one set must not silently widen the other. This design serves it and declares no second spelling of
@@ -350,10 +364,17 @@ key id, no account echo, and no distinguisher between "wrong key" and "wrong byt
 service cannot answer the question at all is a **typed refusal** instead (`state_unavailable` for an
 unreadable key, `unverified_job_identity`/`unverified_run_identity` for the caller, `request_refused` for a
 body this contract does not read), so a caller can always separate "the artifact is not this account's" from
-"your call was bad" — which a bare `valid:false` would conflate. **The coordinator's rule is the one this
-distinction exists for, and it is stated here in one sentence: nothing but `{"valid":true}` ships.** A
-`valid:false` and every typed refusal mean the same thing to the merge path — *not ship* — and a refusal is
-never read as a reason to re-review on its own.
+"your call was bad" — which a bare `valid:false` would conflate. **An `account` the caller may not ask
+about is one of those typed refusals and never `valid:false`**: a name that is not a legal bundle
+credential name is `request_refused`, and a name this installation holds no review-signing entry for is
+the unreadable-key case (`state_unavailable`). A caller that asks about a nonexistent account therefore
+learns that **its call was bad**, not that the artifact is not that account's, and `valid:false` keeps its
+one meaning — the service recomputed the HMAC and it differs. C3.9f's
+`TestVerifyRouteRefusesAnAccountTheCallerMayNotAskAbout` is the test that holds it.
+
+**The coordinator's rule is the one this distinction exists for, and it is stated here in one sentence:
+nothing but `{"valid":true}` ships.** A `valid:false` and every typed refusal mean the same thing to the
+merge path — *not ship* — and a refusal is never read as a reason to re-review on its own.
 
 **The clock is the caller's, and the tolerance is not this route's to invent**: a verify request carries no
 timestamp, so there is no window to widen here, and the temporal rules that apply are exactly the two the
@@ -459,8 +480,14 @@ cases above and no others.
 **A review run gets exactly one signature**, and the service enforces that rather than trusting the caller to
 ask once. When it signs, the service writes a **mark** for the run, and it takes the mark **before** it
 answers: a mark that cannot be taken is a refusal, and no signature comes back. The mark is a **create-only**
-write — `PutIfMatch` (`internal/rtdb/client.go:209`) with an **absent** ETag, the discipline `ProbeLeases`
-already uses for the probe lease (`internal/credsvc/probe.go:100`) — on **one node per `(slug, run)`**:
+write, and create-only is a *pair* and not one call: the node is read for its ETag first (`GetETag`,
+`internal/rtdb/client.go:178`) and written back under that ETag with `PutIfMatch` (`:209`), which is
+create-only **because the ETag that came back is the absent node's** — a node created in between carries a
+different one and the write fails `ErrPrecondition`. The write cannot be made without the read: `PutIfMatch`
+refuses an empty ETag in as many words ("an empty etag is no precondition; read the node with `GetETag`
+first", `:211`). This is the discipline `ProbeLeases` already uses for the probe lease
+(`internal/credsvc/probe.go:100` — the read at `:617`, the conditional write at `:627`) — on **one node per
+`(slug, run)`**:
 `creds/review-signs/<slug>/<run>`, a sibling of `creds/probes` (the probe lease's own node, `probe.go:112`)
 and the other records under the subtree, with each segment escaped the one way every node under `creds/`
 escapes one (`budget.Key`, `probe.go:182`).
@@ -488,7 +515,13 @@ the model path makes, and the list the upstream request's body and headers and t
 scrubbed with (`cascade.go:517`). **It is not the auditor's own scrub**: `WithAuditScrub` is armed **once**,
 by the bundle loader, with its own scrub of the document it read (`probe.go:702`), and it is
 installation-wide — a route that leaned on it would be leaning on a scrub that never knew this call's
-tokens. This is the §7 asset sentence's mechanism, and the plan's C3.9e carries it as code.
+tokens. **The verify route's own token is registered by its own read** (§5.4): that path is answered ahead
+of `readCall` — a verifier holds no run identity, so the shared parse cannot run for it at all — and the
+handler therefore registers the one Google ID token it carries with the same per-call scrub itself. C3.9f's
+`TestVerifyRouteRegistersItsOwnIdentityTokenForRedaction` is the test that holds it;
+`TestReviewRoutesNeverPrintEitherIdentityToken` — shared with C3.9e — drives the routes the shared parse
+does reach, which is why the verify path needs one of its own. This is the §7 asset sentence's mechanism,
+and the plan carries it as code on both routes: C3.9e for the sign half, C3.9f for the verify one.
 
 A second sign for the same run is **refused** and audited like every other refusal — one line, the sign's
 purpose, the wire's existing `request_refused` status, because the status set is closed and this design does
@@ -718,6 +751,11 @@ sandbox pull request.
     refused on every route, and the **review account is refused the verify route**; the refusal's own
     sentence is what the owner reads. Then the check's own cost: the review run's spend, the artifact
     kept, and nothing created, enabled or deleted outside the sandbox.
+
+**The register-shaped entry this becomes is [live-check.md](live-check.md)** — the row's shape, read off
+the register's own Check 190, and the eleven steps above one line each with the numbering this section
+gives them, so the task that takes the number derives neither the shape nor the numbering at merge. That
+file is a rendering and this section is the check: **where the two disagree, this one governs.**
 
 ---
 
