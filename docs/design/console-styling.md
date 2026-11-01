@@ -990,10 +990,12 @@ fallback to `--font-mono`.
 The Graph draws one model twice: a **picture** (an `svg` whose geometry is the layout
 worker's answer, written as SVG attributes because `style-src 'self'` admits no inline
 style, §5.5) and a **list** that is the same model with every title whole. Regions in tree
-order: header → tabs → chips → canvas, or the list, never both.
+order: header (the heading and the toolbar) → chips → the stage, which holds the canvas or the
+list and, while a task is selected, the inspector beside it → the legend, under the canvas
+alone.
 
-**The screen answers a control in the frame it was pressed in** (0.117.0). The refresh,
-the stream filter's tabs and the plan select are one section's controls, and
+**The screen answers a control in the frame it was pressed in** (0.117.0). The refresh, the
+stream filter and the plan select are one section's controls, and
 `src/renderer/section.ts` puts the busy mark and `aria-busy` on `section.graph` for as long
 as the read it started is out — the canvas already drawn stays under the mark, dimmed and
 never blanked — and says it is still reading after a quarter of a minute. The canvas is
@@ -1039,15 +1041,60 @@ the reconciliation's F4, and GV4.1 is the slice that would add them).
 `svg.graph-canvas` and not an element: nothing is read from it, no state is carried by it,
 and a background needs no element to be drawn, sized or hidden from a reader.
 
-**The toolbar's stream filter, the inspector and the legend are not drawn yet: they are
-console redesign step 6b**, a later change, and this section will name their hooks when it
-lands. What step 6a restyles is the canvas and the cards, below.
+**The toolbar, the inspector and the legend are step 6b** (console redesign), and all three
+are **read-only**: no IPC, no preload and no spawn changed to draw them, and the two controls
+the design's panel asks for reach the code through what the screen already had — `Open run`
+is the door `showRun` the card's Enter already used, and `Pause task` is a write this release
+cannot make, so it is drawn `disabledWrite` with the console's own sentence and no listener at
+all.
+
+**The stream filter is a segmented control and not a tablist** (step 6b's one shape change).
+Its buttons are four controls of one screen and not four panels: nothing appears where a
+pressed button was, so each segment carries `aria-pressed` and the group is one
+`role="group"` with the one name the set shares (`streams`), rather than `role="tab"` and
+`aria-selected`. **Everything else about it is unchanged**: `data-tab` still keys a stream
+(`all`, `stream:<name>`), the roving `tabindex` still puts exactly the chosen segment in the
+tab order, and §4.3's keys — Left and Right, Home and End, each activating what it moves to —
+are the same keys, because a chosen stream *is* the graph that is drawn and there is no second
+key to press.
+
+**The chosen stream is removed from the model before the layout, and that is not the same as
+hiding it.** `buildGraphModel` builds its columns from the chosen tab alone, so the engine is
+asked for one stream's nodes and `GraphLayout` places the rows the model holds — a filter that
+merely hid the other streams' cards would leave their rows in the picture as empty bands,
+which is a graph with holes in it. The band under a row is drawn from the nodes placed **in
+that row**, so no empty band is drawn either way, and `graph.test.ts` counts the placement
+calls and the bands a filtered read draws.
+
+**The inspector is text, and it is the same facts the card draws.** A selected task opens a
+panel beside the canvas — the card's words again as chips, the stream it is in, its run, what
+it waits on and what waits on it — so a reader who cannot see the canvas, or who never looks
+at it, reads the whole of the selection. The two related-task lists are **buttons**: pressing
+one selects that task's card, which is how the panel lets a reader walk the graph, and each
+button draws the task's `Sanitized` title rather than spelling its id — an id is a key this
+screen joins two records on and never spells (`graph/model.ts`), and it travels in `data-key`
+for the entry. Escape closes the panel and puts the keyboard back on the card, and a task of a
+shut finished release — which has no card on the canvas — leaves the keyboard on the panel
+itself, which is why it carries `tabindex="-1"`. **Pause is `disabledWrite`**, the one shape
+this console draws a write it does not perform in: a real button, `aria-disabled="true"`, the
+sentence in `title` and `aria-label`, and nothing listening.
+
+**The legend is under the canvas and it is a key, not a second drawing.** One line per state a
+card can carry and one per kind of edge, each a swatch beside the word — the swatch is
+`aria-hidden`, so a reader hears the word once, and it is drawn as **the state's own boundary**
+(1 px neutral, 2 px for the four running words and for `halted`, 2 px dashed for `blocked`, and
+the live tint inside for `critical`, whose second channel on the canvas is the glow behind the
+card) and as **the line's own width** (2 px for a dependency, 3 px for the critical path). Nothing in it
+is a figure the graph computed: it is the console's own vocabulary, drawn even while the
+canvas has none of those states in it. It is drawn **only under the canvas** — the list spells
+every word already and carries neither kind of line.
 
 | Hook | Drawn as | Note |
 |---|---|---|
 | `section.graph` | the screen's root | carries `data-theme` like every other screen's |
-| `graph-header`, `graph-title` | `header`, `h1` | the title block, `--space-md` below it (§3.8) |
-| `graph-tabs`, `graph-tab` | `nav` + `button` | the tablist: `role="tab"` on each button, `aria-selected` on the chosen one, a roving `tabindex`, and §4.3's own keys — Left and Right, Home and End, each activating the tab it moves to |
+| `graph-header`, `graph-title` | `header`, `h1` | the heading line, `--space-sm` below it (§3.8) |
+| `graph-toolbar` | `div` | the screen's controls as one row: the stream filter and the three buttons beside it |
+| `graph-filter`, `graph-tab` | `div` + `button` | the segmented stream filter: `role="group"` with the set's one name on the `div`, `aria-pressed` on each button, a roving `tabindex`, and §4.3's own keys — Left and Right, Home and End, each activating the segment it moves to |
 | `graph-actions`, `graph-view`, `graph-refresh`, `graph-fit` | `div` + three `button`s | view switch, refresh, and fit — the last one is drawn only while the canvas is |
 | `graph-not-shown` | `p` | a bound dropped plans, tasks or needs: the console's own sentence, in `--warn` |
 | `graph-chips`, `graph-chip-group`, `graph-chip-stream` | `div`, `section`, `h2` | the finished releases, one group per stream |
@@ -1067,6 +1114,17 @@ lands. What step 6a restyles is the canvas and the cards, below.
 | `graph-node-word`, `graph-node-pr`, `graph-node-run`, `graph-node-mark` | `text` inside the card | one element per state word, the pull request number, the run and the reading's mark |
 | `graph-node-comet` | `rect` on the card's own border, `aria-hidden` | the light streak that travels a **running** card's border: GV2.4's motion, drawn only while the first word is one of the four a running task draws (`implementing`, `in review`, `fixing`, `queued`) |
 | `graph-node-pulse` | `rect` behind the card, `aria-hidden` | the glow a **critical** card draws: a filled, blurred wash of the same `--accent` the critical path is drawn in, a few pixels larger than the card so what a reader sees is the spill around it and never the card's own boundary, which keeps the state's tone |
+| `graph-stage` | `div` | the drawing and the inspector side by side: two grid columns, and the panel's column is zero wide while nothing is selected, so the canvas lays out as it did before the panel existed |
+| `graph-inspector` | `aside`, `tabindex="-1"` | the selected task's panel, drawn **only** while a task is selected: `aria-label` names it, and it is focusable so the press that selects a task the canvas does not draw — one of a shut finished release — has somewhere to land |
+| `graph-inspector-title`, `graph-inspector-words`, `graph-inspector-word` | `h2`, `div`, one `span` per word | the task's whole title, then the words its card draws one element each |
+| `graph-inspector-facts` | `dl` | the panel's label/value grid: (`dt`, `dd`) per fact, in the order stream, run, depends on, unblocks |
+| `graph-inspector-stream`, `graph-inspector-run` | `span` inside a `dd` | the stream's `Sanitized` label, and the run's suffix (monospaced, like every other id) or the console's own sentence when there is none to open |
+| `graph-inspector-needs`, `graph-inspector-unblocks` | `ul` inside a `dd` | the two ends of every dependency, one list each |
+| `graph-inspector-need`, `graph-inspector-unblock`, `graph-inspector-task-title` | `li` → `button` → `span` | one button per related task, drawing that task's `Sanitized` title with its layout key in `data-key`; pressing it selects that card |
+| `graph-inspector-none` | `span` inside a `dd` | the console's own word for a task with no dependency at that end |
+| `graph-inspector-actions`, `graph-inspector-open`, `graph-inspector-pause` | `div` + two `button`s | the panel's two controls: the run door (drawn only when the read found a run), and a `disabledWrite` Pause |
+| `graph-legend`, `graph-legend-title`, `graph-legend-list`, `graph-legend-item` | `div`, `h2`, `ul`, `li` | the key under the canvas, one line per state and per kind of edge |
+| `graph-legend-swatch`, `graph-legend-word` | `span`s inside a line | the state's own boundary (or the line's own width) as a swatch, `aria-hidden`, and the word beside it |
 | `graph-list`, `graph-list-plan`, `graph-list-title` | the list's `div`, one `section` and `h2` per plan | `role="list"` on the `div` |
 | `graph-list-release`, `graph-list-nodes`, `graph-row` | the list's per-release `h3`, `ul` and `li` | one row per task, with the whole title |
 | `graph-row-title`, `graph-row-mark`, `graph-row-pr`, `graph-row-run` | `span`s inside a row | the same five facts the card carries |
@@ -1077,16 +1135,18 @@ lands. What step 6a restyles is the canvas and the cards, below.
 
 | Attribute | Values | On |
 |---|---|---|
-| `data-state` | the node's **first** state word (§3.9's list) | `g.graph-node`, `li.graph-row` |
+| `data-state` | the node's **first** state word (§3.9's list), or the word a legend line stands for | `g.graph-node`, `li.graph-row`, `span.graph-legend-swatch` |
 | `data-selected` | `true` \| `false` | `g.graph-node`, `li.graph-row` — and, on `g.graph-edge`, whether either end is the selected one |
 | `data-critical` | `true` \| `false` | `g.graph-edge`, and `g.graph-node` — a card's first word cannot say it, because a critical task that is running says `implementing` there |
 | `data-cross` | `true` \| `false` | `g.graph-edge` |
-| `aria-selected` | `true` \| `false` | `button.graph-tab` (§2.1's hook, this screen's tablist) |
+| `aria-pressed` | `true` \| `false` | `button.graph-tab` (§2.1's hook, this screen's stream filter) |
 | `aria-expanded` | `true` \| `false` | `button.graph-chip` |
+| `data-edge` | `dependency` \| `critical` | `span.graph-legend-swatch` — the two kinds of line, and the only two |
 
 **The attributes no rule needs**, and §2's rule read the other way: the graph also emits
-eight. `data-key` (a card's and a row's layout key), `data-run-id` (the run a gesture would
-open), `data-tab` (the tablist's own value), `data-chip` (a chip's release key),
+eight. `data-key` (a card's, a row's and an inspector button's layout key), `data-run-id` (the
+run a gesture would open), `data-tab` (a filter segment's own value), `data-chip` (a chip's
+release key),
 `data-view` (the view switch's own value), `data-stream` (the stream a chip group **and a
 band** are drawn for), `data-release` (a box's key) and `data-word` (the word an element
 draws, beside the text it draws). They are the screen's own bookkeeping — the entry reads

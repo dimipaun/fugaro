@@ -3392,8 +3392,27 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     value: key,
   })
 
-  /** SELECTED_TAB is the graph's tablist's single tab stop. */
-  const SELECTED_TAB: FocusTarget = { classes: ['graph-tab'], attribute: 'aria-selected', value: 'true' }
+  /** SELECTED_TAB is the stream filter's own single stop: the segment of the
+   * stream the graph is showing. It is `aria-pressed` and not `aria-selected`
+   * from step 6b, which is where the tabs became a segmented control. */
+  const SELECTED_TAB: FocusTarget = { classes: ['graph-tab'], attribute: 'aria-pressed', value: 'true' }
+
+  /** INSPECTOR_PANEL is the graph's inspector itself -- the `aside` beside the
+   * canvas. It takes the keyboard when a press selects a task this drawing does
+   * not draw (a task of a shut finished release has no card on the canvas), and
+   * it is `tabindex="-1"` for exactly that. */
+  const INSPECTOR_PANEL: FocusTarget = { classes: ['graph-inspector'] }
+
+  /** DRAWING_STOP is the drawing's own roving stop: the card, chip or segment
+   * the screen put in the tab order. It is where the keyboard goes when the
+   * element a gesture named -- a card of a task the last read finished, say -- is
+   * not in the tree the gesture drew, because a reader left on `<body>` is a
+   * reader who cannot walk on (design section 4.3). */
+  const DRAWING_STOP: FocusTarget = {
+    classes: ['graph-node', 'graph-row', 'graph-chip', 'graph-tab'],
+    attribute: 'tabindex',
+    value: '0',
+  }
 
   /** chipStop is the chip of the release whose key it was drawn for: the button
    * the operator pressed, and the one the redraw draws back. */
@@ -3449,13 +3468,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * keyboard on `<body>`, and the reader who pressed an arrow key is no longer
    * anywhere (design section 4.3).
    */
-  const redraw = (element: SkewElement | null, focus: FocusTarget | null): void => {
+  const redraw = (element: SkewElement | null, focus: FocusTarget | null, instead: FocusTarget | null = null): void => {
     if (element === null) return
     replace(element)
     const next = element as Drawn
     graphTree = next
     wireGraph(next)
-    if (focus !== null) focusMatching(next, focus)
+    if (focus === null) return
+    if (!focusMatching(next, focus) && instead !== null) focusMatching(next, instead)
   }
 
   /** focusMatching moves the keyboard to the element of a freshly drawn tree
@@ -3464,8 +3484,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * element of one of `classes`. The roving `tabindex` is what makes the stop
    * reachable and the focus is what makes the ring follow it: a selection that
    * moved the attribute and left the keyboard where it was is a picture a
-   * keyboard reader cannot find their way around (design section 4.3). */
-  const focusMatching = (drawn: Drawn, target: FocusTarget): void => {
+   * keyboard reader cannot find their way around (design section 4.3).
+   *
+   * It answers whether it found one, so a caller with a second target for a tree
+   * that does not draw the first can take it (`redraw`'s `instead`). */
+  const focusMatching = (drawn: Drawn, target: FocusTarget): boolean => {
     for (const name of target.classes) {
       const found = classed(drawn, name).find(
         (element) => target.attribute === undefined || element.getAttribute(target.attribute) === target.value,
@@ -3473,8 +3496,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (found === undefined) continue
       const focusable = found as Drawn & { focus?(): void }
       focusable.focus?.()
-      return
+      return true
     }
+    return false
   }
 
   /**
@@ -3599,6 +3623,27 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       })
     }
 
+    /**
+     * chooseTask selects one task, from the picture and from the inspector alike.
+     *
+     * **The card it names may not be in the tree this draws.** A task of a shut
+     * finished release is off the canvas (`visibleNodes`), so a press on the
+     * panel's own list of what a task waits on can name a task with no card: the
+     * panel -- which is still drawn, and is now about the task just chosen -- is
+     * where the keyboard goes instead of nowhere (design section 4.3).
+     */
+    const chooseTask = (key: string): void => {
+      redraw(screen.change({ selected: key }), nodeStop(key), INSPECTOR_PANEL)
+    }
+
+    /** closeInspector is Escape's own gesture: the panel is closed and the
+     * keyboard goes back to the card it was opened from. */
+    const closeInspector = (): void => {
+      const selected = screen.current.selected
+      if (selected === null) return
+      redraw(screen.change({ selected: null }), nodeStop(selected), DRAWING_STOP)
+    }
+
     // A node and a list row are the same door: the card's `g` and the row's `li`
     // both carry `data-key` and both carry `data-run-id` when there is a run.
     const doors = [...classed(drawn, 'graph-node'), ...classed(drawn, 'graph-row')]
@@ -3608,20 +3653,29 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       const node = surface.nodeOf(door)
       node.addEventListener('click', () => {
         // The first click selects -- which is what highlights the edges that
-        // touch the task -- and a second click on the task already selected is
-        // the gesture that opens it. A card with no run is selected like any
-        // other and opens nothing, and its tooltip says why.
+        // touch the task, and what opens the inspector beside the canvas -- and a
+        // second click on the task already selected is the gesture that opens it.
+        // A card with no run is selected like any other and opens nothing, and
+        // its tooltip says why.
         if (screen.current.selected === key) {
           if (run !== null) void showRun(run)
           return
         }
-        redraw(screen.change({ selected: key }), nodeStop(key))
+        chooseTask(key)
       })
       keydownOn(node, (event: KeyEventLike) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          if (run === null) return
+        if (event.key === 'Escape') {
           event.preventDefault()
-          void showRun(run)
+          closeInspector()
+          return
+        }
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          // Enter opens the card's run where it has one and **selects** it where
+          // it has none: the keyboard's own way into the inspector, which a card
+          // with no run would otherwise not have at all.
+          if (run !== null) void showRun(run)
+          else chooseTask(key)
           return
         }
         const target = tabTarget(event.key, doors.indexOf(door), doors.length, 'y')
@@ -3631,6 +3685,38 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         const moved = wanted.getAttribute('data-key') ?? ''
         redraw(screen.change({ selected: moved }), nodeStop(moved))
       })
+    }
+
+    // The inspector is read-only apart from its two doors: the tasks the selected
+    // one waits on and the tasks that wait on it are buttons that select that
+    // card, and Open run is the picture's own door spelled out. Escape closes the
+    // panel wherever the keyboard is inside it -- the panel is focusable for the
+    // press that names a card the canvas does not draw, and a key inside it
+    // reaches this listener in a browser the same way it reaches a card's.
+    const panel = classed(drawn, 'graph-inspector')[0]
+    if (panel !== undefined) {
+      keydownOn(surface.nodeOf(panel), (event: KeyEventLike) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        closeInspector()
+      })
+    }
+    for (const button of [...classed(drawn, 'graph-inspector-need'), ...classed(drawn, 'graph-inspector-unblock')]) {
+      const key = button.getAttribute('data-key') ?? ''
+      const node = surface.nodeOf(button)
+      node.addEventListener('click', () => {
+        chooseTask(key)
+      })
+      keydownOn(node, (event: KeyEventLike) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        chooseTask(key)
+      })
+    }
+    const open = classed(drawn, 'graph-inspector-open')[0]
+    if (open !== undefined) {
+      const run = open.getAttribute('data-run-id')
+      if (run !== null) surface.nodeOf(open).addEventListener('click', () => void showRun(run))
     }
 
     const refresh = classed(drawn, 'graph-refresh')[0]
