@@ -257,6 +257,33 @@ func TestSetScalarFillsAKeyWrittenWithNoValue(t *testing.T) {
 	}
 }
 
+// TestSetScalarAppendsAfterTheLineThatEndsTheDocument pins where a new
+// top-level key goes when the document's last node is written with nothing at
+// all: on the line the last one ends, never on the empty line a trailing break
+// opens, which is text a block scalar keeping its breaks would fold back into
+// itself.
+func TestSetScalarAppendsAfterTheLineThatEndsTheDocument(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc, want string
+	}{
+		{"no line of its own to spare", "?\n>+\n", "?\n>+\n\"0\": 0\n"},
+		{"a blank line at the end stays", "?\n>+\n\n", "?\n>+\n\n\"0\": 0\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.SetScalar([]byte(tc.doc), []string{"0"}, "0")
+			if err != nil {
+				t.Fatalf("SetScalar: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			if v := at(t, got, "0"); !reflect.DeepEqual(v, 0) {
+				t.Fatalf("the result reads back %#v at 0, want 0", v)
+			}
+		})
+	}
+}
+
 // TestSetScalarRefusesToReplaceACollection pins the guard against losing a
 // whole block: a mapping or a sequence holds bytes, and comments, of its own, so
 // a scalar is not spliced over it. Removing the key, or writing a key inside it,

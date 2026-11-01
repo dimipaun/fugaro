@@ -520,7 +520,16 @@ func (d *doc) blockEnd(op string, n *yaml.Node) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return d.lines.contentEnd(d.lines.lineOf(end)), nil
+	line := d.lines.lineOf(end)
+	if line > 1 && d.lines.start(line) == d.lines.end {
+		// The last node of some documents ends on the empty line a trailing
+		// break opens — the value written with nothing beside an explicit key —
+		// and a line written at the text's end would land inside the block
+		// scalar above it, whose `+` keeps the empty line it added. The new
+		// line goes where the line above ends instead.
+		line--
+	}
+	return d.lines.contentEnd(line), nil
 }
 
 // removalEnd extends an offset to the end of the line it sits on, the line
