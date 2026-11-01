@@ -25,7 +25,7 @@ By default it lists the last 7 days of the configuration's repositories. Narrow 
 - `--since <duration>` (`36h`, `7d`, `0` for no bound)
 - `--batch <name>` for one batch
 - `--limit N` for the newest N runs only: theirs are the objects the listing reads, so a run outside the N costs nothing
-- `--state <state>` for one state (`unlaunched`, `launching`, `pending`, `running`, `succeeded`, `failed`, `halted`, `cancelled`, `infra_error`, `error`); it reads every run in the window before filtering, because a run's state is in its `result.json`
+- `--state <state>` for one state (`unlaunched`, `launching`, `pending`, `running`, `succeeded`, `failed`, `halted`, `cancelled`, `infra_error`, `error`); it reads every run in the window first, because only a finished run's own record says what its state is
 - `--pr N` for the runs on one pull request (needs one repository; the window is 90 days)
 
 The JSON has `project`, `runs`, `totals` and `warnings`. Each run has `run`, `repo`, `status`, `stage`, `reason`, `halt` (when halted), `pr_url`, `branch`, `outcome`, `created`, `cost`, `terminal`, `settled` and `launched_by` (who started it, when the launch recorded one; absent otherwise, never a value the CLI invents). Print `warnings` to the user: they say an image rebuild or the daily image check failed or is overdue. The plain text listing has a `BY` column for the same fact, in the short form a column has room for (the part before an address's `@`), with `-` where the record holds no launcher.
