@@ -2,7 +2,6 @@ package yamledit
 
 import (
 	"bytes"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -86,7 +85,7 @@ func (d *doc) addFlowMember(m *yaml.Node, open, close int, key, value string) []
 	switch {
 	case at > open+1 && d.src[at-1] == ',':
 		sep = " "
-	case at > open+1 && d.src[at-1] == ':' && !gluedColon(m):
+	case at > open+1 && d.src[at-1] == ':' && !d.gluedColon(m, at):
 		// The last member was written without a value, and a comma written
 		// straight after its colon would be read as part of the key it ends.
 		sep = " , "
@@ -95,16 +94,24 @@ func (d *doc) addFlowMember(m *yaml.Node, open, close int, key, value string) []
 	return splice(d.src, at, at, []byte(member))
 }
 
-// gluedColon reports whether the last member of a flow mapping carries its colon
-// as part of the key's own text. `{a:}` holds the key `a:`, whose colon a space
-// before the next comma would take away, while `{a: }` holds the key `a` and a
-// value written with nothing at all.
-func gluedColon(m *yaml.Node) bool {
+// gluedColon reports whether the byte before a flow mapping's closing padding is
+// the last byte of the last key's own text rather than the colon that introduces
+// its value. `{a:}` holds the key `a:`, whose colon a space before the next comma
+// would take away, while `{a: }` holds the key `a` and `{0:: }` the key `0:`,
+// where the colon the comma follows is a value indicator and needs that space.
+func (d *doc) gluedColon(m *yaml.Node, at int) bool {
 	if len(m.Content) < 2 {
 		return false
 	}
 	k := m.Content[len(m.Content)-2]
-	return k.Kind == yaml.ScalarNode && k.Style == 0 && strings.HasSuffix(k.Value, ":")
+	if k.Kind != yaml.ScalarNode || k.Style != 0 {
+		return false
+	}
+	start, err := d.offset(k)
+	if err != nil {
+		return false
+	}
+	return start+len(k.Value) == at
 }
 
 // flowMemberSpan returns the bytes one member of a flow mapping occupies,
@@ -232,6 +239,57 @@ func (d *doc) flowClose(op string, start int) (int, error) {
 		}
 	}
 	return 0, refuse(op, "", ReasonFlowCollection)
+}
+
+// sameFlowSiblings reports whether the members of the flow mapping the path names
+// a key in still read as they did, the key the edit names aside. A splice is
+// bytes this package places among bytes it did not write, and what a reader makes
+// of them is not always what the bytes spell: a comma that lands against a colon
+// turns the member `{0: }` into one keyed `0:`. A member beside the path that
+// reads differently afterwards is refused rather than handed back.
+func (d *doc) sameFlowSiblings(path []string, root *yaml.Node) bool {
+	if len(path) == 0 {
+		return true
+	}
+	parent := resolve(d.root, path[:len(path)-1])
+	if parent == nil || parent.Kind != yaml.MappingNode || parent.Style&yaml.FlowStyle == 0 {
+		return true
+	}
+	after := resolve(root, path[:len(path)-1])
+	if after == nil {
+		// The mapping went with the edit — a removal asked to drop the parents
+		// it leaves empty — so there is no member left beside the path.
+		return true
+	}
+	if after.Kind != yaml.MappingNode {
+		return false
+	}
+	name := path[len(path)-1]
+	for i := 0; i+1 < len(parent.Content); i += 2 {
+		if parent.Content[i].Value == name {
+			continue
+		}
+		if !sameNode(parent.Content[i+1], mapValue(after, parent.Content[i].Value)) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameNode reports whether two nodes hold the same value, node for node.
+func sameNode(a, b *yaml.Node) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Kind != b.Kind || a.Tag != b.Tag || a.Value != b.Value || len(a.Content) != len(b.Content) {
+		return false
+	}
+	for i := range a.Content {
+		if !sameNode(a.Content[i], b.Content[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // flowSeparator reports whether a byte ends a plain scalar inside a flow

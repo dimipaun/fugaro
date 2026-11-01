@@ -189,7 +189,7 @@ func SetScalar(src []byte, path []string, value string) ([]byte, error) {
 		return src, err
 	}
 	if err := verified(op, path, out, func(root *yaml.Node) bool {
-		return scalarIs(resolve(root, path), value)
+		return scalarIs(resolve(root, path), value) && d.sameFlowSiblings(path, root)
 	}); err != nil {
 		return src, err
 	}
@@ -221,7 +221,7 @@ func RemoveKeyWithOptions(src []byte, path []string, opts RemoveOptions) ([]byte
 		return src, err
 	}
 	if err := verified(op, path, out, func(root *yaml.Node) bool {
-		return resolve(root, path) == nil
+		return resolve(root, path) == nil && d.sameFlowSiblings(path, root)
 	}); err != nil {
 		return src, err
 	}
