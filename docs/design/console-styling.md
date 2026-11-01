@@ -1257,8 +1257,8 @@ only ever says what it was told.
 | `coordinator-age`, `coordinator-empty` | `p` | the console's two sentences: the age the stored view does not carry, and an installation that lists no repository |
 | `section.coordinator-queue`, `section.coordinator-totals` | the queue's section and the fleet strip's | the screen's two K1 sections, on the frame the redesign gives a panel (§2.12's `section.coordinator-repo` below) |
 | `coordinator-queue-head` | `div` | the queue's own line: the count of what is waiting, the word it counts, the console's sentence for a queue that holds nothing, and the slot the section's busy mark is put in |
-| `coordinator-queue-count` | `span` | the count the console counted off the items it drew — drawn only when every one of the queue's four reads has answered, and as nothing rather than a `0` |
-| `coordinator-queue-word`, `coordinator-queue-empty` | `span`s | `items need you`, and the sentence a queue that holds nothing draws instead of a zero |
+| `coordinator-queue-count` | `span` | the count the console counted off the items it drew — drawn only when every one of the queue's four reads has answered, and as nothing rather than a `0`; a queue whose reads are still out, or refused, draws no count and no empty-state sentence either |
+| `coordinator-queue-word`, `coordinator-queue-empty` | `span`s | `items need you`, and the sentence a **whole** queue that holds nothing draws instead of a zero — a queue the console could not read draws neither, because a refusal in a part is not an empty part |
 | `coordinator-queue-part` | `div` | one read's part of the queue: its items, the count the cap left off, or the note saying that read was not made. A host, and it holds no state: the section's mark says the part is still being read |
 | `coordinator-queue-items` | `ul` | one part's items, each drawn only when the part holds one |
 | `li.coordinator-queue-item` | `li` | one thing waiting for a person |

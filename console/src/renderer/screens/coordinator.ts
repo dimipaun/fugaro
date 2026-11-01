@@ -1229,11 +1229,16 @@ export function fillCoordinatorQueuePart(
  * one a reader mistakes for a figure off a document. The count is absent
  * altogether while a read is still out or refused, which is the whole rule --
  * the model only answers a count over a whole queue.
+ *
+ * **Both are drawn over a whole queue and neither over a partial one**, which
+ * the null count is exactly: `nothing is waiting for you` under a part that says
+ * `runs.list` refused would be the page claiming a queue it could not read is a
+ * queue that holds nothing, and the two are different facts.
  */
 export function fillCoordinatorHead(model: CoordinatorModel, frame: DrawnCoordinatorFrame): void {
   const count = model.queueCount
-  const empty = count === null || (count.value ?? 0) <= 0
-  if (empty) literal(frame.queueCount, '')
+  const empty = count !== null && (count.value ?? 0) <= 0
+  if (count === null || empty) literal(frame.queueCount, '')
   else putReading(frame.queueCount, count, 'count')
   literal(frame.queueEmpty, empty ? COORDINATOR_QUEUE_EMPTY_WORD : '')
 }

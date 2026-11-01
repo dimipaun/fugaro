@@ -1170,6 +1170,26 @@ describe('the action queue (K1)', () => {
     const reduced = drawsQueue({ capsHidden: true, caps: null })
     expect(textOf(reduced, 'coordinator-queue-note')).toBe(COORDINATOR_QUEUE_CAPS_HIDDEN_WORD)
   })
+
+  it('says nothing is waiting only over a whole queue, and never over one it could not read', () => {
+    // The head's sentence is about a queue that holds nothing, and a queue whose
+    // refusals stand in for parts of it is not that: a read the console could not
+    // make is a gap in what it knows, so the head says nothing at all and the
+    // parts say why. The count is `null` over every queue that is not whole,
+    // which is the same condition.
+    const refusedRuns = drawsQueue({ runs: null })
+    expect(textOf(refusedRuns, 'coordinator-queue-empty')).toBe('')
+    const noCheckout = drawsQueue({ checkout: false, plans: null })
+    expect(textOf(noCheckout, 'coordinator-queue-empty')).toBe('')
+    const reduced = drawsQueue({ capsHidden: true, caps: null })
+    expect(textOf(reduced, 'coordinator-queue-empty')).toBe('')
+
+    // And over a whole queue that holds nothing it is drawn, with no count
+    // beside it: the sentence is what a reader gets instead of a zero.
+    const quiet = drawsQueue({})
+    expect(textOf(quiet, 'coordinator-queue-empty')).toBe(COORDINATOR_QUEUE_EMPTY_WORD)
+    expect(textOf(quiet, 'coordinator-queue-count')).toBe('')
+  })
 })
 
 describe('the fleet totals and the blind spots (K1)', () => {
