@@ -470,11 +470,12 @@ met** (§6's **E7** and D893's own entry below say exactly what is missing).
   the two identities the service verified on the call** — the run's Firebase identity (`fr`) and the
   repository claim (`fs`) — concatenated in a fixed order with fixed separators, one signature per
   review run. A signature over a bare digest could be lifted from one review run to another wherever
-  two artifacts happen to hash alike; the frame binds *who asked* beside *what was asked about*. The
-  framing is a constant the artifact writer holds (**CSR3**'s), the service signs the bytes it is
-  given, and **the verifier re-frames from its own copy of the two claims** rather than from anything
-  the artifact or the caller asserts — the verify call presents the digest, the signature and the same
-  two claims, and the service answers yes or no.
+  two artifacts happen to hash alike; the frame binds *who asked* beside *what was asked about*. **The
+  artifact writer sends only the digest** (**CSR3**'s call); **the frame lives in the service**
+  (`internal/credsvc`, **C3.9e**, **D1073**), built from the `fs` and `fr` it verified — a sign request
+  that names a run or a repository is refused — and **the verifier re-frames from its own copy of the
+  two claims** rather than from anything the artifact or the caller asserts — the verify call presents
+  the digest, the signature and the same two claims, and the service answers yes or no.
   **What the key is exposed to, stated at its true size:** it is held by the **credentials service
   only** — a Secret Manager secret in the installation's project, **one per account**, read by the
   service's own service account and by nothing else (not the review variant, not the shared project
