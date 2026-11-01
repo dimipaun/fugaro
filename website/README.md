@@ -1162,7 +1162,7 @@ added or removed without this sentence moving fails there:
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
     page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
-    is 309; the privacy statement, at 1076, is the page the words-per-page ceiling itself is
+    is 309; the privacy statement, at 1175, is the page the words-per-page ceiling itself is
     derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
@@ -1310,7 +1310,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 1345 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1469 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1331,8 +1331,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **1076
-    words** — plus 25 %, rounded up, which is **1345**. The count moved six times since
+    site's pitch; the number is that page's own count on the gates' own build — **1175
+    words** — plus 25 %, rounded up, which is **1469**. The count moved eight times since
     G2.3: the campaign section took the page 988 → 1030, the owner's ruling of 2026-10-29 on
     the banner's wording — one question, worded for everything the site may load, with the
     refusal's reach stated in the consent card — took it 1030 → 1144, G2.4's sentence
@@ -1341,7 +1341,10 @@ added or removed without this sentence moving fails there:
     what a reader has to be told, took it 1213 → 1069, naming LinkedIn, whose insight
     tag the owner switched on with the Partner ID of 2026-10-31, took it 1069 → 1073, and
     naming Meta, whose pixel the owner switched on with the pixel id of 2026-10-31, took it
-    1073 → 1076.
+    1073 → 1076, and the console's crash-reporting paragraph, which states the switch, the
+    next launch and what an event carries, took it 1076 → 1171, and saying that a frame
+    carries its function name, which is what the console's scrubber sends, took it
+    1171 → 1175.
     `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
@@ -2237,7 +2240,11 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
+change `.github/workflows/`. `docs/pending-workflows/` now holds two pending workflows,
+`docs/pending-workflows/console-release-symbols.yml` — the console's release pipeline
+with the crash reporter's symbol upload added after the build, which runs at release time
+only rather than on a pull request, and whose step is a no-op until the owner adds its
+`SENTRY_AUTH_TOKEN` secret to the `console-release` environment — and
 `docs/pending-workflows/console-windows.yml` — the console's Windows
 installer pack, which runs at release time only rather than on a pull request, and is copied in
 only after the packer and the unit suite can pass on a Windows runner. It is not this

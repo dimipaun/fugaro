@@ -1017,3 +1017,117 @@ func TestInputTotalCapHasACeiling(t *testing.T) {
 		t.Fatalf("defaulted max_bytes: %v", problems)
 	}
 }
+
+// TestLevelsDecodeStrict: agent.levels is the block the task's review_levels
+// carries (config.ReviewLevels, L1.1), decoded by the same strict decoder as
+// every other fugaro.yaml key, because a level's settings decide which reviews
+// a run does and a key the decoder drops is a setting that looks applied and
+// is read by nobody (L1.3, D722). The levels are also held to the block's own
+// rules here — the same ReviewLevels.Validate the task's copy meets — and the
+// refusal of an effort outside config.Efforts has to be Fugaro's: Claude Code
+// takes a value it does not know without a word.
+func TestLevelsDecodeStrict(t *testing.T) {
+	const levels = `agent:
+  levels:
+    l1: { model: claude-haiku-4-5 }
+    l2: { none: true }
+    l3: { model: claude-opus-5-5, effort: xhigh, focus: the migration and its rollback }
+`
+	cfg, problems := Parse([]byte(minimalYAML + levels))
+	if len(problems) > 0 {
+		t.Fatalf("a fugaro.yaml carrying agent.levels is refused: %v", problems)
+	}
+	for _, tc := range []struct {
+		name   string
+		set    *LevelSetting
+		model  string
+		effort string
+		off    bool
+		focus  string
+	}{
+		{name: "l1", set: cfg.Agent.Levels.L1, model: "claude-haiku-4-5"},
+		{name: "l2", set: cfg.Agent.Levels.L2, off: true},
+		{name: "l3", set: cfg.Agent.Levels.L3, model: "claude-opus-5-5", effort: "xhigh", focus: "the migration and its rollback"},
+	} {
+		if tc.set == nil {
+			t.Fatalf("agent.levels.%s was decoded to nil: the key was dropped rather than read", tc.name)
+		}
+		got := struct {
+			model, effort, focus string
+			off                  bool
+		}{tc.set.Model, tc.set.Effort, tc.set.Focus, tc.set.Off}
+		want := struct {
+			model, effort, focus string
+			off                  bool
+		}{tc.model, tc.effort, tc.focus, tc.off}
+		if got != want {
+			t.Errorf("agent.levels.%s = %+v, want %+v", tc.name, got, want)
+		}
+	}
+
+	for _, tc := range []struct{ name, block, want string }{
+		{"an unknown level", "    l4: { model: claude-opus-5-5 }\n", "field l4 not found"},
+		{"an unknown key inside a level", "    l2: { rounds: 2 }\n", "field rounds not found"},
+		{"a level that is not a mapping", "    l1: claude-haiku-4-5\n", "cannot unmarshal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(minimalYAML + "agent:\n  levels:\n" + tc.block))
+			if !hasProblem(problems, "", tc.want, 0) {
+				t.Fatalf("want a problem ~%q, got %v", tc.want, problems)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, block, path, want string }{
+		{"an effort outside the closed set", "    l3: { effort: auto }\n", "agent.levels.l3", "effort \"auto\" must be one of low, medium, high, xhigh, max"},
+		{"none beside another key", "    l2: { none: true, model: claude-opus-5-5 }\n", "agent.levels.l2", "none: true beside another key"},
+		{"a focus over the bound", "    l3: { focus: " + strings.Repeat("a", MaxLevelFocusBytes+1) + " }\n", "agent.levels.l3", "focus is longer than 500 bytes"},
+		{"a focus with a control character", "    l1: { focus: \"two\\nlines\" }\n", "agent.levels.l1", "holds a character it may not carry"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(minimalYAML + "agent:\n  levels:\n" + tc.block))
+			if !hasProblem(problems, tc.path, tc.want, 0) {
+				t.Fatalf("want a problem at %q ~%q, got %v", tc.path, tc.want, problems)
+			}
+		})
+	}
+}
+
+// TestAdversarialRoundsDefaultAndBounds: agent.adversarial_rounds is review
+// level 3's one round knob (L1.3; the review of #1522 asked for exactly one),
+// and it is a default and not a ceiling: 1 to 10, and unset means the run's
+// rigor mode supplies the number (rigor.AdversarialDefault), so there is no
+// DefaultAdversarialRounds constant and no value applyDefaults writes here.
+func TestAdversarialRoundsDefaultAndBounds(t *testing.T) {
+	cfg, problems := Parse([]byte(minimalYAML))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if n := cfg.Agent.AdversarialRounds; n != 0 {
+		t.Errorf("unset agent.adversarial_rounds decoded to %d, want 0 (the mode supplies the number, not applyDefaults)", n)
+	}
+	cfg, problems = Parse([]byte(minimalYAML + "agent: { adversarial_rounds: 7 }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("agent.adversarial_rounds: 7 is refused: %v", problems)
+	}
+	if n := cfg.Agent.AdversarialRounds; n != 7 {
+		t.Errorf("agent.adversarial_rounds: 7 decoded to %d", n)
+	}
+	for _, n := range []string{"0", "-1", "11"} {
+		t.Run(n, func(t *testing.T) {
+			_, problems := Parse([]byte(minimalYAML + "agent: { adversarial_rounds: " + n + " }\n"))
+			if n == "0" {
+				if len(problems) > 0 {
+					t.Fatalf("0 is unset and must be accepted: %v", problems)
+				}
+				return
+			}
+			if !hasProblem(problems, "agent.adversarial_rounds", "must be between 1 and 10, or 0 (unset: the mode's default supplies it)", 0) {
+				t.Fatalf("%s: %v", n, problems)
+			}
+		})
+	}
+	if _, problems := Parse([]byte(minimalYAML + "agent: { adversarial_rounds: two }\n")); !hasProblem(problems, "", "cannot unmarshal", 0) {
+		t.Fatalf("a text value must be refused by the decoder: %v", problems)
+	}
+}

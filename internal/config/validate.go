@@ -143,6 +143,10 @@ func Validate(c *Config) []Problem {
 	if c.Agent.FirstLineRounds < 0 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
 		add("agent.first_line_rounds", "must be between 1 and %d, or 0 (unset: the mode's default supplies it)", MaxFirstLineRounds)
 	}
+	if c.Agent.AdversarialRounds < 0 || c.Agent.AdversarialRounds > 10 {
+		add("agent.adversarial_rounds", "must be between 1 and 10, or 0 (unset: the mode's default supplies it)")
+	}
+	ps = append(ps, levelProblems("agent.levels", &c.Agent.Levels)...)
 	if c.Agent.Recipe != "" && !recipe.NameRE.MatchString(c.Agent.Recipe) {
 		add("agent.recipe", "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 	}
@@ -775,6 +779,28 @@ func badUSD(v float64) bool { return v < 0 || math.IsNaN(v) || math.IsInf(v, 0) 
 // MaxOutputTokensLimit is the highest per-call output limit fugaro.yaml may
 // set: the most any current model produces.
 const MaxOutputTokensLimit = 128000
+
+// levelProblems are a review-level block's own rules (LevelSetting.validate,
+// the one set of them, which ReviewLevels.Validate applies to a task's
+// review_levels) as problems under path, one per level: a reader is told which
+// level of which file is wrong, and the three blocks that carry the type —
+// fugaro.yaml's agent.levels, the project layer's defaults.agent.levels and the
+// task's review_levels — refuse the same documents.
+func levelProblems(path string, r *ReviewLevels) []Problem {
+	var ps []Problem
+	for _, l := range []struct {
+		name string
+		set  *LevelSetting
+	}{{"l1", r.L1}, {"l2", r.L2}, {"l3", r.L3}} {
+		if l.set == nil {
+			continue
+		}
+		if err := l.set.validate(l.name); err != nil {
+			ps = append(ps, Problem{Path: path + "." + l.name, Message: err.Error()})
+		}
+	}
+	return ps
+}
 
 // validateAgentModels checks agent.models and the token limits, which hold
 // whether or not a budget is on (the pin rules are CheckPins).

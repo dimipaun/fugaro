@@ -676,11 +676,11 @@ func TestProjectLayerNeverEchoesCredentialsOrLongText(t *testing.T) {
 	}
 }
 
-// TestProjectLayerRefusesCheckoutSharedUntil0150: a profile is the other
-// way a workflow gets its checkout, so the corpus's shared profile, valid
-// only behind sharedShipped, is refused today with the sentence a
-// repository's own fugaro.yaml gets.
-func TestProjectLayerRefusesCheckoutSharedUntil0150(t *testing.T) {
+// TestProjectLayerRefusesCheckoutShared: a profile is the other way a
+// workflow gets its checkout, so the corpus's shared profile, valid only
+// behind sharedShipped, is refused today with the sentence a repository's
+// own fugaro.yaml gets.
+func TestProjectLayerRefusesCheckoutShared(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "valid", "checkout-shared-profile.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -771,5 +771,150 @@ defaults:
 		if !strings.Contains(ps[0].Message, want) {
 			t.Errorf("the refusal of defaults.rigor.areas[1] does not carry %q: %q", want, ps[0].Message)
 		}
+	}
+}
+
+// TestLayerLevelsOverlay: defaults.agent.levels and agent.adversarial_rounds
+// are settable in both layers (L1.3, D722), and the merge between them is the
+// per-key deep merge of docs/design/layered-config.md §4 — not a whole-block
+// replacement. A project that pins level 1's model and turns level 3 off
+// keeps both while a repository adds level 1's focus and level 2's model; a
+// repository writing one key of a level cannot drop the project's other keys
+// of that same level, which is what would happen if agent.levels were merged
+// as one leaf.
+func TestLayerLevelsOverlay(t *testing.T) {
+	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	layer := mustLayer(t, head+`defaults:
+  git: { provider: github }
+  agent:
+    levels:
+      l1: { model: claude-haiku-4-5, effort: low }
+      l3: { none: true }
+    adversarial_rounds: 4
+`)
+	repo := minimalRepo + `agent:
+  levels:
+    l1: { focus: the migration and its rollback }
+    l2: { model: claude-opus-5-5 }
+workflows:
+  default:
+    commands: { build: make, test: make test }
+`
+	c, res, ps := Resolve([]byte(repo), layer)
+	if len(ps) > 0 {
+		t.Fatalf("resolve problems: %s", problemsText(ps))
+	}
+	levels := c.Agent.Levels
+	if levels.L1 == nil || levels.L2 == nil || levels.L3 == nil {
+		t.Fatalf("agent.levels = %+v, want all three levels", levels)
+	}
+	if levels.L1.Model != "claude-haiku-4-5" || levels.L1.Effort != "low" || levels.L1.Focus != "the migration and its rollback" {
+		t.Errorf("agent.levels.l1 = %+v, want the project's model and effort beside the repository's focus", levels.L1)
+	}
+	if levels.L2.Model != "claude-opus-5-5" || levels.L2.Effort != "" {
+		t.Errorf("agent.levels.l2 = %+v, want the repository's model alone", levels.L2)
+	}
+	if !levels.L3.Off || levels.L3.Model != "" {
+		t.Errorf("agent.levels.l3 = %+v, want the project's none", levels.L3)
+	}
+	if n := c.Agent.AdversarialRounds; n != 4 {
+		t.Errorf("agent.adversarial_rounds = %d, want the project's 4", n)
+	}
+	for path, want := range map[string]string{
+		"agent.levels.l1.model":    SourceProject,
+		"agent.levels.l1.effort":   SourceProject,
+		"agent.levels.l1.focus":    SourceRepo,
+		"agent.levels.l2.model":    SourceRepo,
+		"agent.levels.l3.none":     SourceProject,
+		"agent.adversarial_rounds": SourceProject,
+	} {
+		if got := res.SourceOf(path); got != want {
+			t.Errorf("SourceOf(%s) = %q, want %q", path, got, want)
+		}
+	}
+
+	// The layer's copy of the block is held to the same rules as the
+	// repository's: the same config.ReviewLevels.Validate, refused at the
+	// layer's own path so the launcher is told which key of which file.
+	_, ps = ParseProjectLayer([]byte(head+`defaults:
+  agent:
+    levels:
+      l2: { effort: auto }
+    adversarial_rounds: 11
+`), testAnchor)
+	if !hasProblem(ps, "defaults.agent.levels.l2", `effort "auto" must be one of low, medium, high, xhigh, max`, 0) {
+		t.Errorf("defaults.agent.levels.l2 with effort: auto: %s", problemsText(ps))
+	}
+	if !hasProblem(ps, "defaults.agent.adversarial_rounds", "must be between 1 and 10", 0) {
+		t.Errorf("defaults.agent.adversarial_rounds: 11: %s", problemsText(ps))
+	}
+}
+
+// TestLayerLevelsNoneReplacesTheLevel: `none` is the one key of a review level
+// that is not merged key by key, in either direction. A level that is off has
+// no other keys — LevelSetting.validate refuses `none: true` beside one in a
+// single file — so a layer writing none: true is saying the level does not
+// run, and the model, effort and focus the layer below gives it are refused
+// beside it rather than merged into it: the level replaces the inherited one
+// whole. Read the other way, a layer that writes any other key is turning the
+// level back on, so an inherited `none: true` is cleared. A repository can
+// therefore turn a level the project set off, and turn one the project turned
+// off back on, which is what docs/multi-model.md §4 tells it it can do.
+func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
+	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	const workflows = "workflows:\n  default:\n    commands: { build: make, test: make test }\n"
+	for _, tc := range []struct {
+		name       string
+		level      string
+		layerLevel string
+		repoLevel  string
+		off        bool
+		model      string
+		effort     string
+		repoSource string
+		goneSource string
+	}{
+		{
+			name:       "the repository turns the project's level off",
+			level:      "l1",
+			layerLevel: "      l1: { model: claude-haiku-4-5, effort: low }\n",
+			repoLevel:  "    l1: { none: true }\n",
+			off:        true,
+			repoSource: "agent.levels.l1.none",
+			goneSource: "agent.levels.l1.model",
+		},
+		{
+			name:       "the repository turns the project's none back on",
+			level:      "l3",
+			layerLevel: "      l3: { none: true }\n",
+			repoLevel:  "    l3: { model: claude-opus-5-5, effort: xhigh }\n",
+			model:      "claude-opus-5-5",
+			effort:     "xhigh",
+			repoSource: "agent.levels.l3.model",
+			goneSource: "agent.levels.l3.none",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			layer := mustLayer(t, head+"defaults:\n  git: { provider: github }\n  agent:\n    levels:\n"+tc.layerLevel)
+			repo := minimalRepo + "agent:\n  levels:\n" + tc.repoLevel + workflows
+			c, res, ps := Resolve([]byte(repo), layer)
+			if len(ps) > 0 {
+				t.Fatalf("resolve problems: %s", problemsText(ps))
+			}
+			set := map[string]*LevelSetting{"l1": c.Agent.Levels.L1, "l2": c.Agent.Levels.L2, "l3": c.Agent.Levels.L3}
+			got := set[tc.level]
+			if got == nil {
+				t.Fatalf("agent.levels.%s is nil: %+v", tc.level, c.Agent.Levels)
+			}
+			if got.Off != tc.off || got.Model != tc.model || got.Effort != tc.effort {
+				t.Errorf("agent.levels.%s = %+v, want none=%v model=%q effort=%q", tc.level, got, tc.off, tc.model, tc.effort)
+			}
+			if src := res.SourceOf(tc.repoSource); src != SourceRepo {
+				t.Errorf("SourceOf(%s) = %q, want %q", tc.repoSource, src, SourceRepo)
+			}
+			if src := res.SourceOf(tc.goneSource); src != SourceDefault {
+				t.Errorf("SourceOf(%s) = %q, want %q: no layer set it, the key did not survive the merge", tc.goneSource, src, SourceDefault)
+			}
+		})
 	}
 }
