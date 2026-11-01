@@ -541,12 +541,12 @@ func TestRecordCheckoutSkipsLinkedWorktree(t *testing.T) {
 // TestConfigListRefusesARowUnderATempDir: the read refuses a row whose path is
 // under the machine's temporary directory, with the reason the contract
 // decides from the row's own strings and before anything touches the disk
-// (not_representable, console/docs/json-contract.md §6.8). No stat and no git
-// runs for such a row: the first path below is not there at all, so a read
-// that looked would call it missing, and the second is a live checkout of the
-// enrolled repository, so a read that looked would call it valid. Both are
-// refused for the one reason, and neither is dropped — the row stays for the
-// next write to prune.
+// (not_representable, the console's §6.8). No stat and no git runs for such a
+// row: the first path below is not there at all, so a read that looked would
+// call it missing, and the second is a live checkout of the enrolled
+// repository, so a read that looked would call it valid. Both are refused for
+// the one reason, and neither is dropped — the row stays for the next write to
+// prune.
 //
 // The list is the production one (prodCheckoutTempRoots), which this package's
 // tests otherwise turn off: a row under a temporary directory is what an older
