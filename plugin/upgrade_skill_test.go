@@ -5,16 +5,19 @@ import (
 	"testing"
 )
 
-// TestUpgradeSkill: the skill checks, runs the local half, hands over one
-// command for the cloud half, and stays inside its three commands (decision
-// U14: the bound is in the text, not in frontmatter).
+// TestUpgradeSkill: the skill checks, runs the local half, hands over the one
+// command that converges the installation and the checkout, and stays inside
+// its three commands (decision U14: the bound is in the text, not in
+// frontmatter).
 func TestUpgradeSkill(t *testing.T) {
 	skill := readRepoFile(t, "plugin/skills/upgrade/SKILL.md")
 	states := readRepoFile(t, "plugin/skills/upgrade/reference/states.md")
 	for _, want := range []string{
 		"`fugaro version`", "`fugaro upgrade --check`", "`fugaro upgrade --local`",
-		"```bash user-runs\nfugaro upgrade --yes\n```",
+		"```bash user-runs\nfugaro update\n```",
 		"A coding agent's session cannot apply cloud changes, by design",
+		"The handed-over command stays theirs.",
+		"never look for a flag or another command that would let this session apply those writes",
 		"Never edit `.claude/settings.json`", "brew upgrade dimipaun/tap/fugaro", "restart",
 		"Exit 1 means something is stale", "never pass `--allow-fork`",
 		"Nothing in this skill's frontmatter can limit which commands it runs: the three-command rule above is an instruction, not a permission, and the user's own Claude Code permission settings are what bound it.",

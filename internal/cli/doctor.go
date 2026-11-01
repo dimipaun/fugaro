@@ -1927,19 +1927,29 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			fmt.Sprintf("%s does not record the rules generation a policy is read under, so no run reads the node and no switch can be resolved from it", projectpolicy.PathRulesMarker()), layer))...)
 	case errors.As(err, &ve):
 		// P8's release skew, both directions: Decode refuses a node of any other
-		// version, and the two remedies are opposite. A newer node needs a newer
-		// Fugaro. An older one — a hand-written node, or one a release before
-		// this shape wrote — is the version *this* binary writes, so "upgrade
-		// Fugaro" is backwards there and the remedy is the one the publisher
-		// itself words (publishedPolicyOf): remove it, then publish.
+		// version, and the remedies are opposite. A newer node needs a newer
+		// Fugaro. An older one has two states, and the migration chain decides
+		// between them (projectpolicy.Migratable): a version the chain carries
+		// forward (3, which 0.9.0 wrote) is what the policy stage of the converge
+		// migrates in place (init_policy_migrate.go), so this line is the
+		// update's own (doctorUpdatePrefixes). A version below the chain's first
+		// step (1 or 2, which 0.8.0 and 0.8.5 wrote) is one no step reaches —
+		// the stage and a publish both refuse it with the delete-then-publish —
+		// and there the check keeps its own command (ownFix: the class is the
+		// ID's, and the state's move is not the class's).
 		if ve.Found > ve.Understood {
 			checks = append(checks, policyNewerThanBinaryCheck(ve, shared))
 			return append(checks, unreadRouting(doctorRoutingChecks(lc, nil,
 				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer))...)
 		}
-		checks = append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
-			Problem: fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood),
-			Fix:     fmt.Sprintf("fugaro project policy publish --delete removes it, then 'fugaro project policy publish' writes this Fugaro's version %d", ve.Understood)})
+		migrates := projectpolicy.Migratable(ve.Found)
+		problem := fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood)
+		fix := fmt.Sprintf("run `fugaro update`: its policy stage rewrites the node in place at this Fugaro's version %d, keeping the members the node carries, so nothing has to be deleted and published again", ve.Understood)
+		if !migrates {
+			fix = fmt.Sprintf("fugaro project policy publish --delete removes it, then 'fugaro project policy publish' writes this Fugaro's version %d: no migration step reaches version %d, and a publish rebuilds the node from this machine's config, so read the list out with `fugaro project policy show` first", ve.Understood, ve.Found)
+		}
+		checks = append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning", ownFix: !migrates,
+			Problem: problem, Fix: fix})
 		return append(checks, doctorRoutingChecks(lc, nil,
 			fmt.Sprintf("the node at %s is a policy of version %d, which no run applies, so no switch is in force", shared, ve.Found), layer)...)
 	case err != nil:

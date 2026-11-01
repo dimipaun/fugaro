@@ -5694,13 +5694,13 @@ func TestDocsDesktopConsoleContractStatesTheAccountAxis(t *testing.T) {
 // added to the fixture; a required key dropped; a key moved; a number made a
 // string.
 //
-// The one key the fixture may *lack* is `leased_usd`, and the reason is the
-// fixture's own subject: its header says the recording is 0.8.6's, so a
-// required key a later release added cannot be in it, and this file is
+// The keys the fixture may *lack* are `leased_usd` and `max_parallel`, and the
+// reason is the fixture's own subject: its header says the recording is 0.8.6's,
+// so a required key a later release added cannot be in it, and this file is
 // deliberately the old document the console must still read -- updating it to
 // the current shape would delete what it exists to prove. Lack is the only
-// allowance: a fixture that *carried* `leased_usd` would still be walked
-// against the struct like every other key.
+// allowance: a fixture that *carried* either key would still be walked against
+// the struct like every other key.
 func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(readDoc(t, "console/test/fixtures/normal.ndjson")), "\n")
 	if len(lines) < 2 {
@@ -5755,7 +5755,7 @@ func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
 
 // mayLackOldRecording are the keys a document recorded before the release that
 // added them may leave out: see TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes.
-var mayLackOldRecording = map[string]bool{"leased_usd": true}
+var mayLackOldRecording = map[string]bool{"leased_usd": true, "max_parallel": true}
 
 // checkJSONShape walks one JSON value against a struct type: keys in struct
 // order, required keys present (bar those in mayLack), recursing into nested

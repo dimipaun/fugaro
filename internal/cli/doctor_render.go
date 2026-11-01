@@ -62,17 +62,25 @@ const (
 // The list is what `fugaro update` does today, because the default view may
 // not name a command that will not do the work: the converge's own stages are
 // preflight, installation, Firebase, images, installation again, secrets,
-// plugin and the checkout's repository (init_stages.go), and a check whose
-// remedy is none of them is not an update item. Two the plan means to move
-// here are not here yet:
+// plugin and the checkout's repository, rules and policy (init_stages.go), and
+// a check whose remedy is none of them is not an update item. One the plan
+// means to move here is not here yet:
 //
-//   - policy-older-than-binary: its remedy today is `fugaro project policy
-//     publish --delete`, then a publish. projectpolicy.Migrate has no
-//     production caller, so `fugaro update` leaves the old node where it is.
 //   - plugin-install: what differs is the plugin Claude Code installed, and
 //     the converge's plugin stage rewrites the checkout's pin, not the
 //     installation: `fugaro upgrade --local` (or the marketplace command in
 //     Claude Code) is what installs it.
+//
+// policy-older-than-binary is here since the policy stage carries the
+// migration: a node in a version the chain reaches is what that stage rewrites
+// in place (init_policy_migrate.go), and it took `repository` — the stage in
+// front of it — admitting the checkout for the run to get there, which is what
+// policyReadOnce.exists now does. The line named `fugaro project policy
+// publish --delete` and a publish until then, because projectpolicy.Migrate
+// had no production caller. One state keeps that line (ownFix): a node below
+// the chain's first step, 1 or 2, which no step reaches and the update refuses
+// — the ID is in the class for the state the update does repair, and the line
+// is the state's.
 //
 // policy-rules-skew is here, and its line is the plain `fugaro update` in the
 // states that command repairs: the rules stage (init_rules_stage.go, the
@@ -94,6 +102,7 @@ var doctorUpdatePrefixes = []string{
 	"image-config-",
 	"policy-rules-skew",
 	"policy-vs-jobs",
+	"policy-older-than-binary",
 }
 
 // doctorSecurityPrefixes are the IAM and security sweep's checks: who may read
@@ -685,11 +694,12 @@ var doctorShorts = map[string]doctorShort{
 	"plugin-install": {"the installed Claude Code plugin is not the pinned one.",
 		"run `fugaro upgrade --local`, or install it in Claude Code"},
 	"base-image": {"no Fugaro base image is recorded, so image builds start from whatever the repository names.", ""},
-	// The published policy node is older than this binary, and nothing
-	// redeploys, migrates or deletes it: the remedy is the publisher's own two
-	// commands, not `fugaro update`.
-	"policy-older-than-binary": {"the published policy is older than this Fugaro, and no run applies it.",
-		"run `fugaro project policy publish --delete`, then `fugaro project policy publish`"},
+	// The published policy node is older than this binary. The command that
+	// migrates it is the class's own (`fugaro update`, the policy stage), so
+	// this entry carries no fix of its own: the delete-then-publish that does
+	// the same job by hand rebuilds the node from the config, and a line that
+	// offered it would be the lossy move in place of the one the update makes.
+	"policy-older-than-binary":          {"the published policy is older than this Fugaro, and no run applies it.", ""},
 	"policy-rules-skew":                 {"the deployed budget rules are older than the policy generation, so a published policy cannot be read.", ""},
 	"policy-vs-jobs":                    {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
 	"installation":                      {"no Fugaro installation is configured.", "run `fugaro setup`"},

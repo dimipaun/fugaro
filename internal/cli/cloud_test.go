@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,6 +127,33 @@ func (f *cloudFixture) appendConfig(t *testing.T, yaml string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, append(data, []byte(yaml)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setMaxParallel rewrites the fixture config's max_parallel from the default
+// of 2 the fixture writers give it (newCloudFixture here, newBudgetFixture in
+// budget_test.go): n >= 1 raises it, or lowers it for a test that means to
+// trigger the cap, and 0 drops the line, the shape a machine whose config
+// names no cap has — the config layer then resolves its own default (20). A
+// dropped line is asked for with 0 rather than a value of its own because
+// localcfg refuses max_parallel below 1, so no test can mean a cap of none.
+func setMaxParallel(t *testing.T, n int) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := ""
+	if n > 0 {
+		replacement = fmt.Sprintf("max_parallel: %d\n", n)
+	}
+	updated := strings.Replace(string(data), "max_parallel: 2\n", replacement, 1)
+	if updated == string(data) {
+		t.Fatal("max_parallel: 2 not found in the fixture's config")
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
