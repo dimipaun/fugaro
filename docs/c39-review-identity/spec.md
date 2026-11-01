@@ -384,14 +384,13 @@ nothing but `{"valid":true}` ships.** A `valid:false` and every typed refusal me
 merge path — *not ship* — and a refusal is never read as a reason to re-review on its own.
 
 **The clock is the caller's, and the tolerance is not this route's to invent**: a verify request carries no
-timestamp, so there is no window to widen here, and the temporal rules that apply are exactly the two the
-service already keeps for the caller's Google ID token — `verifyJob`'s (`auth.go:423`): expiry, an `iat` not
-in the future and a `nbf` not in the future, the last two against the one shared `clockSkew` the package
-declares (`auth.go:123`, used at `:489` and `:492`) — and for the run identity, `verifyRun`'s
-(`auth.go:516`), which applies **two** of them against the same constant: expiry (`:545`) and an `iat` not
-in the future (`:547`). It checks no `nbf` because a Firebase ID token carries none: that claim belongs to
-the Google-issued job token, and `verifyJob` is the rule that reads it (`:492`). Inventing a third check for
-the run identity would be a rule this design did not need to add. **`checkLive` (`auth.go:665`)
+timestamp, so there is no window to widen here, and what applies is what the service already checks on the
+two tokens the call presents. `verifyJob` (`auth.go:423`) checks expiry (`:482`), an `iat` not in the future
+(`:489`) and a `nbf` not in the future (`:492`), the last two against the one shared `clockSkew` the package
+declares (`auth.go:123`). `verifyRun` (`auth.go:516`) checks expiry (`:544`) and an `iat` not in the future
+(`:547`) — **two** of the three, and no `nbf`, because a Firebase ID token carries none: that claim belongs
+to the Google-issued job token, and `verifyJob` is the rule that reads it. Inventing a third check for the
+run identity would be a rule this design did not need to add. **`checkLive` (`auth.go:665`)
 has no tolerance of its own and reads no token's window**: it reads the run's write-once outcome, so the
 liveness rule is a fact about the run and not a clock comparison. **This design adds no third tolerance**,
 and the verifier's own token is held to the same three rules rather than to a second spelling of them.
@@ -427,8 +426,11 @@ the list is what an operator writes, and the path that reads it is new:
   differences, stated rather than implied: the address is matched against the verifier list rather than
   against the installation's job accounts, and the shared-job gate does not apply to a verifier, because a
   verifier is not a job of this installation's job set at all;
-- the list is **empty by default**, and an empty list means the route answers every call with the caller
-  class's refusal — an installation with no coordinator does not carry a route anybody can reach;
+- the list is **empty by default** — the variable's `env` entry is rendered only when the field is set, and
+  the service reads that name as an **optional** value outside the seven it requires, so an installation that
+  never sets it starts a service whose list is empty rather than one that refuses to start — and an empty
+  list means the route answers every call with the caller class's refusal: an installation with no coordinator
+  does not carry a route anybody can reach;
 - the coordinator's own account (`fugaro-coordinator`, `docs/coordinator/`) is added to the list by
   **that** work stream's deployment when it lands, which is why this plan adds no coordinator task;
 - the owner's own identity may be added for a manual verification; the design says so because the live
@@ -785,7 +787,13 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   set. The one Terraform change is the verify route's verifier list (C3.9g1): a variable beside the service's
   others, whose `env` entry is rendered **only when the field is set**, so the plan of an installation that
   never sets it is the plan it has today — the same seven names, held as an assertion by the tftest's unset
-  run. **Where that value comes from at `fugaro update` is D1075, recorded and not decided**
+  run. **Inert is a claim about the container too, and it is why the name is read as an optional value**:
+  `credentialsServiceEnvNames` is the list the service **requires** — `credentialsServiceConfig` refuses to
+  bind a port when any of its names is empty — so the verifier list's name stays out of it and is read
+  outside that loop, where an absent or empty value is an **empty verifier list**. An installation that never
+  sets the field therefore starts the same service it starts today, with a route that refuses every caller,
+  rather than one that refuses to start; Check 96's "the seven names the config builder reads" stays true.
+  **Where that value comes from at `fugaro update` is D1075, recorded and not decided**
   ([reconciliation.md](reconciliation.md) §3): the recommendation is the **configuration `fugaro update`
   already holds and publishes as the policy** — the source `internal/infra/tfvars.go`'s `Credentials()`
   (`:289`) and `CredentialsJobAccounts` (`:343`) already read — so naming verifiers is the publication the

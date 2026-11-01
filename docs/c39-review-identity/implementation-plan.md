@@ -459,12 +459,15 @@ not made for them.
 ## C3.9g1. The verifier list's variable, its types and its tests (D1063, D1070, F2)
 
 The one deployment change in the whole plan, and it is inert: a new `verifier_accounts` beside the service's
-other variables, **null by default**, so an installation that never sets it is untouched. Its second half is
+other variables, **null by default**, so an installation that never sets it is untouched — and still starts
+the service it starts today, because the name is read as an **optional** value (the allow-list bullet below).
+Its second half is
 C3.9g2, and the two are **one pull request and not two merges**: `TestCredentialsServiceEnvIsTheDeploymentsOwn`
 (`internal/cli/credentials_serve_test.go:386`) holds the module's own `FUGARO_*` names
-(`deploy/terraform/gcp/modules/installation/credentials.tf`) and the CLI's `credentialsServiceEnvNames`
-(`internal/cli/credentials_serve.go:177`) equal in **both** directions, so a merge that carried one side only
-would leave the tree red between them. The split is for review size, not for sequencing.
+(`deploy/terraform/gcp/modules/installation/credentials.tf`) against the CLI's lists in **both** directions —
+the seven **required** names and the one **optional** name C3.9g2 adds (the next section says why the two
+lists are two) — so a merge that carried one side only would leave the tree red between them. The split is
+for review size, not for sequencing.
 
 - **The variable, and the entry is conditional on it.** `variable "credentials_service"`
   (`deploy/terraform/gcp/modules/installation/variables.tf:336`) and the root's own pass-through
@@ -478,9 +481,18 @@ would leave the tree red between them. The split is for review size, not for seq
   reads the service's other fields from — the source `fugaro update` holds and publishes as the policy, the
   same one `CredentialsJobAccounts` (`:343`) reads the job table from — so the value is not an operator's
   new act. **D1075 is open** and records exactly this recommendation, with the alternatives' costs.
-- **Two allow-lists grow by exactly one, and each refuses a name it does not know**:
-  `internal/infra/tf/cover.go`'s `credentialsServiceEnv` (`:792`) and, on C3.9g2's side,
-  `internal/cli/credentials_serve.go`'s `credentialsServiceEnvNames` (`:177`).
+- **One allow-list grows by exactly one, and it refuses a name it does not know**:
+  `internal/infra/tf/cover.go`'s `credentialsServiceEnv` (`:792`), which is what one `fugaro update`
+  confirmation covers and which must name the entry the module can now render.
+  **`internal/cli/credentials_serve.go`'s `credentialsServiceEnvNames` (`:177`) does not grow, and this is
+  the one place the design could have shipped a service that never starts**: that list is the names the
+  service **requires** — `credentialsServiceConfig` (`:281`–`:285`) refuses to bind a port if any of them is
+  empty — and the verifier list is **null** on every installation that has not opted in, so a name added to
+  it would turn "an installation that never sets the field" into "a service that refuses to start". The
+  eighth name is therefore read as an **optional** value, outside that loop (C3.9g2), where an absent or
+  empty value is an empty verifier list. Check 96's own sentence — "the seven names the config builder
+  reads" — stays true, and so does the guard that reads it
+  (`internal/cli/docs_check96_test.go:436`–`:437`).
 - **The tests that hold it, and why they move together.** `TestGoldenCredentialsServiceCarriesItsSevenNames`
   (`internal/infra/tf/credentials_golden_test.go:95`) compares the golden plan's environment to
   `credentialsServiceEnv` in **both** directions, so the fixture that sets the field
@@ -513,16 +525,26 @@ would leave the tree red between them. The split is for review size, not for seq
 
 C3.9g1's half on the CLI side, and the documents. It lands with C3.9g1, for the reason stated there.
 
-- **The wiring.** `internal/cli/credentials_serve.go` reads the eighth name into the service's config and
-  carries it in `credentialsServiceEnvNames` (`:177`), which the file's own comments count as seven today
-  (`:54`, `:168`, `:208`, `:275`) and which move to eight with it — `TestCredentialsServeRefusesWithoutItsEnvironment`
-  (`internal/cli/credentials_serve_test.go:100`) is the test that keeps the refusal for a name that is
-  missing, and `TestCredentialsServiceEnvIsTheDeploymentsOwn` (`:386`) the one that keeps the two sides
-  equal.
+- **The wiring, and the eighth name is optional.** `internal/cli/credentials_serve.go` reads the verifier
+  list as an **optional** value **outside** `credentialsServiceEnvNames` (`:177`) — the loop that requires
+  every name it holds (`credentialsServiceConfig`, `:281`–`:285`) — and an absent or empty value is an
+  **empty verifier list**, which is the state §5.4 already designs for: the route answers every caller with
+  the class's typed refusal and the service starts. `credentialsServiceEnvNames` therefore stays the seven
+  required names, and the comments that count them (`:54`, `:168`, `:208`, `:275`) stay true for that list;
+  the comment that says an empty variable is "a deployment that is wrong rather than a deployment with a
+  default" (`:277`–`:279`) gains the one sentence it now needs, that the verifier list is the name the
+  service reads as optional and the rest are not. Three tests hold it: `TestCredentialsServeStartsWithoutTheVerifierList`
+  is the new one — the service binds a port with the name absent, and the route answers the class's refusal
+  rather than the process failing — `TestCredentialsServeRefusesWithoutItsEnvironment`
+  (`internal/cli/credentials_serve_test.go:100`) keeps the refusal for each of the **seven**, and does
+  **not** require the new name, and `TestCredentialsServiceEnvIsTheDeploymentsOwn` (`:386`) compares the
+  module's `FUGARO_*` names against the **required names plus the optional one**, in both directions.
 - **`fugaro update` owes nothing new**, and the release notes say so rather than leaving it to be inferred:
   no Terraform for the key, no new container, no new grant, and nothing beyond the service's own documented
   `creds set` for the key's bytes (§9 of [spec.md](spec.md)). The variable defaults to null, so an
-  installation that never sets it is untouched; whoever wants the verify route reachable gets the value from
+  installation that never sets it is untouched, and the service reads that name as an **optional** value, so
+  the same installation starts with an **empty verifier list** — a route that refuses every caller — rather
+  than a process that refuses to start; whoever wants the verify route reachable gets the value from
   the published policy and runs the one command, which is the HARD RULE's shape.
 - **The live-check register row is not this design's, and the check's file already exists as a stub.**
   `docs/gcp-live-checklist.md` is on the do-not-touch list of the release window in flight (0.15.0's while
@@ -534,16 +556,19 @@ C3.9g1's half on the CLI side, and the documents. It lands with C3.9g1, for the 
   Check 190 (the heading and its scope parentheses, the `NOT RUN` paragraph that carries no steps of its
   own, and the four sections after it) and §8's eleven steps one line each under §8's own numbering — so
   this task adds nothing to that file but the number it takes and the row it puts in the register.
-- **Files (4):** `internal/cli/credentials_serve.go` (the name, the config and the allow-list),
-  `internal/cli/credentials_serve_test.go`, `docs/credentials-service/implementation-plan.md` (the two edits
+- **Files (4):** `internal/cli/credentials_serve.go` (the optional read, the config field and the one comment
+  it needs), `internal/cli/credentials_serve_test.go` (the new start test, and the two the change touches),
+  `docs/credentials-service/implementation-plan.md` (the two edits
   of §"The amendment the implementing pull request carries"), and `docs/c39-review-identity/live-check.md`
   (in this folder already, as the design's **stub** of the register row — its shape and §8's eleven steps
   one line each — which that task fills in with the number it takes at its merge; §8 of [spec.md](spec.md)
   is the check itself).
-- **Red step:** the plan amendment has no red test of its own — it is prose in a file whose facts
-  `TestPlanTestListsNamesOnlyTestsThatExist` (`internal/cli/docs_credentials_plan_tests_test.go`) parses, and
-  which must stay green; the live check is red by being **NOT RUN** until CSR7 and CSR2 exist, which is the state
-  the check itself records.
+- **Red step:** `TestCredentialsServeStartsWithoutTheVerifierList` fails while the name is one the config
+  requires — the process refuses to start with it absent — and `TestCredentialsServiceEnvIsTheDeploymentsOwn`
+  fails while the module's names and the CLI's two lists disagree. The plan amendment has no red test of its
+  own — it is prose in a file whose facts `TestPlanTestListsNamesOnlyTestsThatExist`
+  (`internal/cli/docs_credentials_plan_tests_test.go`) parses, and which must stay green; the live check is
+  red by being **NOT RUN** until CSR7 and CSR2 exist, which is the state the check itself records.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Backlog' -count=1 -timeout 40m`;
   `GOFLAGS=-p=2 go test ./internal/cli/ -run 'CredentialsServe|CredentialsServiceEnv' -count=1`; and
   `GOFLAGS=-p=2 go test ./internal/cli/ -run 'PlanTestListsNamesOnlyTestsThatExist|DocsCredentials' -count=1`.
@@ -585,7 +610,7 @@ different reason has taken a wrong turn.
 | `internal/credsvc/verdict.go` | C3.9e, C3.9f | e: creates it — the frame builder, the sign handler and the mark; f: the verify handler, the constant-time compare and the caller class's own shape checks |
 | `internal/credsvc/audit.go` | C3.9e, C3.9f | one purpose each, `ValidPurpose` in the first of the two, and the credential-without-tier exemption of `checked` (`:442`, `:448`) grown to the sign purpose and, by f, once more to the verify purpose; f carries the verify purpose's other two relaxations as well — `Caller` without `Job` (`:438`) and a `StatusOK` line with no `Run` and no `Job` (`:462`–`:473`) |
 | `internal/credsvc/bundle.go` | C3.9c, read by C3.9e/C3.9f | c: the kind, the key set, the accessor; the routes only call the accessor |
-| `internal/cli/credentials_serve.go` | C3.9a, C3.9e, C3.9g2 | a: the review set and the repository table; e: the create-only writer's wiring; g2: the verifier list's name, the config field and the allow-list |
+| `internal/cli/credentials_serve.go` | C3.9a, C3.9e, C3.9g2 | a: the review set and the repository table; e: the create-only writer's wiring; g2: the verifier list's **optional** read and the config field, outside `credentialsServiceEnvNames`, which stays the seven required names |
 | `internal/credsvc/*_test.go` | many | each task adds its own file where it can; the four existing files it extends (`auth_test.go`, `sharedjobs_test.go`, `forward_test.go`, `bundle_test.go`) are named in the task |
 
 ## Live checks
