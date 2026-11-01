@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -75,11 +77,14 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 	diff := settingsEditDiff(e.Old, e.New)
 
-	// The refusal comes before the confirmation and before anything is read
-	// or written (SD9). A session outside a repository writes nothing at all,
-	// `--yes` included; a session inside one writes the file it could edit
-	// anyway, except when the edit is the typed one — the owner's own hand,
-	// whose file decides the ceiling of every run the branch starts.
+	// The refusal comes before the confirmation and before anything is
+	// written (SD9). The bytes are the caller's — it read them to build the
+	// diff this prints — so what is refused here is the write and the
+	// confirmation, never the read. A session outside a repository writes
+	// nothing at all, `--yes` included; a session inside one writes the file
+	// it could edit anyway, except when the edit is the typed one — the
+	// owner's own hand, whose file decides the ceiling of every run the
+	// branch starts.
 	if marker := agentMarker(os.Getenv); marker != "" && (!e.InsideRepo || e.Typed) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
@@ -88,11 +93,32 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 
 	fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 	if e.Typed {
+		// The widening is named before the prompt and not only in the
+		// refusal a session with no terminal gets: the confirmation a person
+		// reads is one block, and the sentence saying what makes this edit
+		// different from the ordinary y/N is part of it.
+		fmt.Fprintf(out, "%s\n", e.TypedWhy)
 		if err := confirmTypedStrict(cmd, lc, e.TypedWhy, e.What); err != nil {
 			return err
 		}
 	} else if err := confirmSettingsWrite(cmd, lc, e.Path, e.Yes, e.What); err != nil {
 		return err
+	}
+
+	// The file may have moved since the caller read it — another writer, or
+	// this same person in another terminal — and writing the bytes built from
+	// the older read would silently discard that edit. The comparison is the
+	// whole of the compare-and-swap: a file that changed is a refusal with
+	// nothing written, so the person repeats the edit against what is there.
+	// A file inside a checkout is re-read through config.ReadRegular, the
+	// reader the caller's own read used, so a swap for a symlink is refused
+	// here too rather than written through.
+	current, err := readSettingsCurrent(e)
+	if err != nil {
+		return userErr("re-reading %s before writing it: %v", e.Path, err)
+	}
+	if !bytes.Equal(current, e.Old) {
+		return userErr("%s changed since it was read: nothing was written; read it again and repeat the edit", e.Path)
 	}
 
 	backup, err := backupFile(e.Path, e.Old, time.Now())
@@ -104,6 +130,18 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 	fmt.Fprintf(out, "wrote %s (backup at %s)\n", e.Path, backup)
 	return nil
+}
+
+// readSettingsCurrent re-reads the file one edit is about to overwrite, for
+// the comparison that refuses an edit built on bytes that have moved. A file
+// inside a checkout is read the way the caller read it — config.ReadRegular,
+// which refuses a symlink, a FIFO or an oversized file — so the swap it guards
+// against cannot be made with one.
+func readSettingsCurrent(e settingsEdit) ([]byte, error) {
+	if e.InsideRepo {
+		return config.ReadRegular(e.Path, config.LayerMaxBytes)
+	}
+	return os.ReadFile(e.Path)
 }
 
 // confirmSettingsWrite is the ordinary y/N confirmation: --yes answers it, a

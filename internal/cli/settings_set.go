@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -44,6 +45,57 @@ var settingsFamilyCommands = map[string]string{
 	"project":     "fugaro project",
 }
 
+// settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
+// set` writes, and the whole of them. It is an allowlist and not a list of the
+// families to refuse because the registry grows: a key a later task adds is
+// refused here until someone decides, deliberately, that the generic path owns
+// it, where a denylist would hand every new row to `settings set` by omission.
+//
+// The names are spec §4.4's. The project layer's own block is spelled with the
+// `layer.` prefix (SD14), so §4.4's `default_profile` is `layer.default_profile`
+// in the registry and its `defaults.git.*` is `layer.defaults.git.*`; the
+// registry's spelling is the one listed, because a name the registry does not
+// hold is refused before this list is reached. §4.4's list omits `budget.mode`
+// and `budget.per_day_usd`, which the registry holds as scalars of the same
+// block the audit (docs/settings-commands/audit.md:81) names as user settings
+// and which no family writes; they are here, and nothing else is.
+var settingsGenericKeys = map[string]bool{
+	"budget.mode":              true,
+	"budget.per_run_usd":       true,
+	"budget.per_day_usd":       true,
+	"budget.max_run_tokens":    true,
+	"budget.allowed_models":    true,
+	"budget.unreachable_grace": true,
+	"base_branch":              true,
+	"max_parallel":             true,
+	"update_check":             true,
+	"commit_name":              true,
+	"commit_email":             true,
+	"layer.default_profile":    true,
+}
+
+// settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
+// whole. A prefix covers the block's scalars and string lists; a key with a
+// varying segment is still refused below, so no entry here can reach a map.
+var settingsGenericPrefixes = []string{
+	"agent.", "git.", "followup.", "governance.", "watch.",
+	"defaults.", "layer.defaults.", "layer.governance.",
+	"credentials.", "clone_urls.",
+}
+
+// settingsGenericKey reports whether spec §4.4 gives the generic path the key.
+func settingsGenericKey(key string) bool {
+	if settingsGenericKeys[key] {
+		return true
+	}
+	for _, p := range settingsGenericPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // settingsWriteOptions are the flags `set` and `unset` share.
 type settingsWriteOptions struct {
 	layer  string
@@ -72,6 +124,9 @@ type settingsTarget struct {
 	keyPath    []string
 	insideRepo bool
 	anchor     config.LayerAnchor
+	// project is the selected project's name: a repository's fugaro.yaml is
+	// refused when it is anchored to another one.
+	project string
 }
 
 // newSettingsGetCmd is `fugaro settings get KEY`: the read narrowed to one key.
@@ -169,20 +224,32 @@ Every write ends with one line: next: fugaro update.`,
 	return cmd
 }
 
-// settingsWriteRow finds the row a write names and refuses the two things the
-// generic path never writes: a key a dedicated family owns, and a key with a
-// varying segment, which is a map entry and has no generic form (D853).
+// settingsWriteRow finds the row a write names and refuses what the generic
+// path never writes: a key marked Sensitive, whose value the diff would print;
+// a key a dedicated family owns (D853); a key with a varying segment, which is
+// a map entry and has no generic form; and every key spec §4.4 does not hand
+// the generic path.
+//
+// The map-entry refusal comes before the allowlist on purpose: §4.2 step 1
+// says a map-valued key has no generic form *always*, so `workflows.*.commands.
+// test` is refused as a map entry and not as a key nobody listed.
 func settingsWriteRow(key string) (settings.Row, error) {
 	row, ok := settings.Lookup(key)
 	if !ok {
 		return settings.Row{}, userErr("%s: no setting has that name; the nearest are %s",
 			key, strings.Join(nearestSettings(key, settings.Rows()), ", "))
 	}
+	if row.Sensitive {
+		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
+	}
 	if family, ok := settingsFamilyCommands[row.Owner]; ok {
 		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential or clone URL", key, family)
 	}
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
+	}
+	if !settingsGenericKey(key) {
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
 }
@@ -234,7 +301,7 @@ func settingsResolveTarget(ctx context.Context, row settings.Row, o settingsWrit
 		if o.repo != "" {
 			return settingsTarget{}, userErr("--repo names a repository, so it goes with --layer repo")
 		}
-		return settingsTarget{layer: layer, kind: settingsDocLocal, path: sel.Path, keyPath: strings.Split(row.Key, ".")}, nil
+		return settingsTarget{layer: layer, kind: settingsDocLocal, path: sel.Path, keyPath: strings.Split(row.Key, "."), project: lc.Name}, nil
 	case settingsLayerProject:
 		if o.repo != "" {
 			return settingsTarget{}, userErr("--repo names a repository, so it goes with --layer repo")
@@ -252,13 +319,14 @@ func settingsResolveTarget(ctx context.Context, row settings.Row, o settingsWrit
 			path:    path,
 			keyPath: strings.Split(strings.TrimPrefix(row.Key, "layer."), "."),
 			anchor:  config.LayerAnchor{Project: lc.Name, GCPProject: lc.GCPProject},
+			project: lc.Name,
 		}, nil
 	default:
 		path, err := settingsRepoFile(ctx, o.repo, lc.Name)
 		if err != nil {
 			return settingsTarget{}, err
 		}
-		return settingsTarget{layer: layer, kind: settingsDocRepo, path: path, keyPath: strings.Split(row.Key, "."), insideRepo: true}, nil
+		return settingsTarget{layer: layer, kind: settingsDocRepo, path: path, keyPath: strings.Split(row.Key, "."), insideRepo: true, project: lc.Name}, nil
 	}
 }
 
@@ -293,10 +361,36 @@ func settingsRepoFile(ctx context.Context, repo, project string) (string, error)
 // one with a message that names what to do rather than creating it: a
 // fugaro.yaml or a layer file written from nothing would lack the anchors its
 // own loader requires.
+//
+// It reads a checkout's files through config.ReadRegular, the one reader of
+// them (readFugaroYAML and readLayerFile use it too), so a symlink, a FIFO or
+// an oversized file is refused rather than written through; the local project
+// config stays on os.ReadFile, which is how every other reader of it in this
+// package reads the person's own file, symlinked dotfile and all. A
+// repository's fugaro.yaml is additionally held to the selected project:
+// `--layer repo` writes the selected project's own repository, and a checkout
+// of another project's repository is a file this command has no business
+// editing.
 func settingsReadDocument(t settingsTarget) ([]byte, error) {
-	data, err := os.ReadFile(t.path)
+	var data []byte
+	var err error
+	if t.kind == settingsDocLocal {
+		data, err = os.ReadFile(t.path)
+	} else {
+		data, err = config.ReadRegular(t.path, config.LayerMaxBytes)
+	}
 	if err != nil {
 		return nil, userErr("reading %s: %v", t.path, err)
+	}
+	if t.kind == settingsDocRepo {
+		cfg, ps := config.Parse(data)
+		if len(ps) > 0 {
+			return nil, userErr("%s: %s", t.path, ps[0].String())
+		}
+		if cfg.Project != t.project {
+			return nil, userErr("%s is anchored to project %s, and %s is the selected project: --layer repo writes the selected project's own repository, so nothing was written",
+				t.path, cfg.Project, t.project)
+		}
 	}
 	return data, nil
 }
@@ -388,8 +482,23 @@ func settingsListGoneOrEmpty(data []byte, path []string) bool {
 
 // settingsCeilingKey is the prefix test D846 names: budget.* and governance.*
 // are the keys whose loosening crosses the boundary the typed name guards.
+// The project layer's own block is the same setting under the `layer.` prefix
+// (SD14), so `layer.governance.review_ratio` is typed exactly as
+// `governance.review_ratio` is: the file it would edit decides the ceiling of
+// every run the project's branches start, which is the fact D846 guards.
 func settingsCeilingKey(key string) bool {
+	key = strings.TrimPrefix(key, "layer.")
 	return strings.HasPrefix(key, "budget.") || strings.HasPrefix(key, "governance.")
+}
+
+// settingsTrue is the value a followup key is turned on with: a YAML boolean
+// in any of the spellings the config decoder reads as true (`true`, `True`,
+// `TRUE`, `yes`, `on`, and the rest), not the one string the command line
+// happens to use. It is the decoder's own answer rather than a second table,
+// so a spelling the loader reads as true is one this check reads as true.
+func settingsTrue(value string) bool {
+	var b bool
+	return yaml.Unmarshal([]byte(value), &b) == nil && b
 }
 
 // settingsModeRank orders budget.mode's values loosest first, so a write that
@@ -405,10 +514,31 @@ func settingsModeRank(mode string) int {
 	}
 }
 
+// settingsCeilingBase is the value a ceiling write is compared against (D846):
+// the value a run gets today, from the read's own resolver — the shared or
+// published node, the project layer's defaults and the local file, whichever
+// decides — and the file's own bytes only when no layer resolves one.
+//
+// The file's raw value alone is not enough. A first write of a ceiling a layer
+// below already set tighter raises what a run gets, and a comparison against
+// the raw value would read it as a first write and skip the typed name the
+// widening asks for. budget.go's clear compares the effective caps the same
+// way, for the same reason.
+func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) string {
+	r, err := readSettings(ctx, settingsOptions{offline: true}, time.Now())
+	if err != nil {
+		return raw
+	}
+	s := r.projectRow(row)
+	if s.Wins == settings.LayerDefault {
+		return raw
+	}
+	return s.Value
+}
+
 // settingsLoosens reports whether newValue is looser than oldValue for a
-// ceiling key: a larger cap, a weaker mode, or a wider model list. A key the
-// document does not set has nothing to loosen, so a first write is never the
-// typed form.
+// ceiling key: a larger cap, a weaker mode, or a wider model list. A key no
+// layer sets has nothing to loosen, so a first write is never the typed form.
 func settingsLoosens(key, oldValue, newValue string) bool {
 	if oldValue == "" {
 		return false
@@ -463,7 +593,7 @@ func settingsTypedWrite(key, oldValue, newValue, mode string) (bool, string) {
 			}
 		}
 	}
-	if strings.HasPrefix(key, "followup.") && mode == "set" && newValue == "true" {
+	if strings.HasPrefix(key, "followup.") && mode == "set" && settingsTrue(newValue) {
 		return true, followupWhy
 	}
 	return false, ""
@@ -552,7 +682,11 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
 		return nil
 	}
-	typed, why := settingsTypedWrite(key, settingsValueIn(old, target.keyPath), value, mode)
+	oldValue := settingsValueIn(old, target.keyPath)
+	if settingsCeilingKey(key) {
+		oldValue = settingsCeilingBase(cmd.Context(), row, oldValue)
+	}
+	typed, why := settingsTypedWrite(key, oldValue, value, mode)
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:       target.path,
 		Old:        old,
