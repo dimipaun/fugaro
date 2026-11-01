@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -400,6 +403,121 @@ func TestCoordinatorReposInParallelKeepOrder(t *testing.T) {
 		if !slices.Equal(labels, []string{run[v.Repo]}) {
 			t.Errorf("%s's view = %v, want the run seeded for it, %s", v.Repo, labels, run[v.Repo])
 		}
+	}
+}
+
+// peakRequestTransport is the database a width test reads through: it counts
+// the requests a pass has in flight at once, and holds each open until want of
+// them are open at the same time — one past the width under test — or hold
+// passes, so a pass that widens past its bound is measured widening and a pass
+// at the bound is measured sitting at it rather than at whatever the scheduler
+// happened to overlap.
+type peakRequestTransport struct {
+	inner http.RoundTripper
+	want  int
+	hold  time.Duration
+
+	mu      sync.Mutex
+	open    int
+	peak    int
+	calls   int
+	reached bool
+	gate    chan struct{}
+}
+
+// peakOpen is the most requests that were ever in flight at once, and calls is
+// how many the pass made in all.
+func (p *peakRequestTransport) peakOpen() (calls, peak int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls, p.peak
+}
+
+func (p *peakRequestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	p.mu.Lock()
+	p.open++
+	p.calls++
+	if p.open > p.peak {
+		p.peak = p.open
+	}
+	// One request widened it, so one closes it: the flag is set in the critical
+	// section the reading of it is in.
+	widened := p.open >= p.want && !p.reached
+	p.reached = p.reached || widened
+	waiting := !p.reached && p.hold > 0
+	p.mu.Unlock()
+	switch {
+	case widened:
+		close(p.gate)
+	case waiting:
+		select {
+		case <-p.gate:
+		case <-time.After(p.hold):
+		}
+	}
+	p.mu.Lock()
+	p.open--
+	p.mu.Unlock()
+	return p.inner.RoundTrip(r)
+}
+
+// TestCoordinatorStatusFromStoreAllWithinCoordinatorViewRepos: --all reads the
+// repositories' stored views a few at a time, and no more than
+// coordinatorViewRepos of them at once. That width is the one multiplied by
+// what a single repository's read costs — a repository with nothing stored
+// falls back to its runs, read at lsWorkers — so it is the number that decides
+// what a project with twenty repositories asks of the bucket and the database
+// at any moment. A width is also the half a peak of one cannot show: a pass
+// with no bound reads every repository at once.
+//
+// Measured at the database, where the read of a stored view is: the requests
+// the pass has in flight are the repositories it is reading.
+// Mutations caught: reading the repositories one at a time (a peak of 1), and
+// dropping the bound (a peak that reaches coordinatorViewRepos+1, which opens
+// the gate and lets the rest through).
+func TestCoordinatorStatusFromStoreAllWithinCoordinatorViewRepos(t *testing.T) {
+	repos := []string{"acme/a", "acme/b", "acme/c", "acme/d", "acme/e", "acme/f", "acme/g", "acme/h"}
+	if len(repos) != coordinatorViewRepos*2 {
+		t.Fatalf("this test seeds %d repositories, want twice the width under test (%d)", len(repos), coordinatorViewRepos)
+	}
+	var seeds []coordinatorRunSeed
+	for i, repo := range repos {
+		seeds = append(seeds, coordinatorRunSeed{
+			id: fmt.Sprintf("20261013-1%04d-%04x", i, i), repo: repo,
+			who: "someone@example.com", status: runstore.StatusRunning, base: "main",
+		})
+	}
+	f := newCoordinatorStoreFixture(t, seeds)
+	fixtureRepos(t, f.cloudFixture, repos...)
+	noStoreOpens(t)
+	peek := &peakRequestTransport{inner: http.DefaultTransport, want: coordinatorViewRepos + 1, hold: 200 * time.Millisecond, gate: make(chan struct{})}
+	prev := openCoordinatorStore
+	openCoordinatorStore = func(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
+		db, err := rtdb.New(lc.Budget.RTDBURL, rtdb.Auth{IDToken: func() string { return "" }}, rtdb.WithHTTPClient(&http.Client{Transport: peek}))
+		if err != nil {
+			return nil, err
+		}
+		return coordinator.NewStore(db), nil
+	}
+	t.Cleanup(func() { openCoordinatorStore = prev })
+
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--all", "--since", "0", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	var got coordinator.StoredProjectView
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(got.Repos) != len(repos) {
+		t.Fatalf("--all read %d repositories, want %d: the width test measured a pass that read something else", len(got.Repos), len(repos))
+	}
+	calls, peak := peek.peakOpen()
+	if calls < len(repos) {
+		t.Fatalf("the pass made %d database reads for %d repositories: the width test measured a pass that read something else", calls, len(repos))
+	}
+	if peak != coordinatorViewRepos {
+		t.Errorf("--all read %d repositories' views at once, want exactly coordinatorViewRepos (%d): the pass fans out over the project's repositories, within its bound", peak, coordinatorViewRepos)
 	}
 }
 

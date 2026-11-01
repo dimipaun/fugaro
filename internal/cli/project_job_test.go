@@ -1373,3 +1373,106 @@ func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
 		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s, never the Bitbucket profile's %s, which no installation deploys", len(calls), calls, perRepo, never)
 	}
 }
+
+// Item 2: a launch of a repository from outside its checkout cannot tell
+// which workflow it is about — the working tree's fugaro.yaml is where a
+// workflow's checkout: kind and its profile are read — so, for a project
+// that has published profiles, it refuses rather than silently guessing the
+// per-repository job, which is the wrong job for a clone workflow. The
+// remedy is named: run it from the repository's own checkout.
+//
+// Mutation (run, restore): return nil, nil where this refuses (the
+// per-repository path) — the launch goes through, on a job the run may not
+// belong to.
+func TestRunRepoWithoutItsCheckoutErrorsClearly(t *testing.T) {
+	newProjectJobFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"acme/app", "checkout", "fugaro run"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
+// Item 2's other half: from the repository's own checkout nothing changes —
+// the launch still reads the workflow's checkout: and profile there, and
+// targets the shared project job.
+func TestRunRepoFromItsCheckoutUnchanged(t *testing.T) {
+	f := newProjectJobFixture(t)
+	projectJobCheckout(t)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "Add a feature"); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job", profile, provider)
+	}
+}
+
+// checkoutParse answers nil both for a working directory outside the
+// repository's checkout and for the repository's own checkout when its
+// fugaro.yaml cannot be read, so the refusal has to name the second cause:
+// a message naming only the first is wrong where the file is what is
+// missing, and sends the user to look for a checkout they are already in.
+func TestRunRepoInItsCheckoutWithUnreadableFugaroYAML(t *testing.T) {
+	newProjectJobFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.WriteFiles(t, dir, map[string]string{"README.md": "nothing to configure yet\n"})
+	testutil.Git(t, dir, "add", "README.md")
+	testutil.Git(t, dir, "commit", "-q", "-m", "no fugaro.yaml yet")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"acme/app", "fugaro.yaml", "fugaro validate", "checkout"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
+// With no profiles published the per-repository job is not a guess — it is
+// the only job there is — so a launch from outside the checkout still takes
+// it. Both shapes of "no profiles" are pinned: an installation that has
+// published no policy at all, and one whose policy defines no profile.
+func TestRunRepoWithoutItsCheckoutKeepsThePerRepositoryJob(t *testing.T) {
+	perRepo := gcp.JobName(appSlug, "web")
+	for _, tc := range []struct {
+		name  string
+		build func(t *testing.T) *launchBudgetFixture
+	}{
+		{"no policy published", func(t *testing.T) *launchBudgetFixture {
+			return newLaunchBudget(t, "enforce")
+		}},
+		{"a policy that defines no profiles", func(t *testing.T) *launchBudgetFixture {
+			f := newProjectJobFixture(t)
+			publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"]}`)
+			return f.launchBudgetFixture
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := tc.build(t)
+			isolateCache(t)
+			testutil.IsolateGit(t)
+			t.Chdir(t.TempDir())
+			if _, _, err := execute(t, "run", "--repo", "acme/app", "Add a feature"); err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+			calls := f.run.RunRequests()
+			if len(calls) != 1 || calls[0].Job != perRepo {
+				t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s", len(calls), calls, perRepo)
+			}
+		})
+	}
+}

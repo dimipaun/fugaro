@@ -71,6 +71,76 @@ func rigorLayer(t *testing.T, mode rigor.Mode) *config.ProjectLayer {
 	return &config.ProjectLayer{Defaults: config.LayerDefaults{Rigor: config.LayerRigor{Default: mode}}}
 }
 
+// openRound is the review round the section cases below leave open: the last
+// senior review, a `changes` verdict, three findings, which are the ones the
+// mode's own table splits.
+var openRound = runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 3}
+
+// modeBase is a repository whose base branch pins one mode and declares no
+// area rule, so the run's own paths match nothing and the mode it resolves at
+// finalize is exactly the one the file names (D22's third moment reads the
+// run's diff, and a matching rule would outrank the default). An empty block
+// is a repository that configures no rigor at all, which is D19's case.
+func modeBase(t *testing.T, block string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	const head = "version: 1\nproject: aurora\ngit: { provider: github }\n"
+	const tail = "workflows:\n  server: { commands: { build: make, test: make test } }\n"
+	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": head + block + tail})
+}
+
+// modeRun is one run at finalize, cloned from a remote of its own whose base
+// pins mode, and resolved from its own work. It returns the run and the path
+// of the remote it pushes to.
+func modeRun(t *testing.T, mode string, reviews ...runstore.ReviewSummary) (*run, string) {
+	t.Helper()
+	block := ""
+	if mode != "" {
+		block = "rigor: { default: " + mode + " }\n"
+	}
+	remote := modeBase(t, block)
+	return runAtFinalize(t, remote, "fugaro/x", "20261024-120000-abcd", reviews...), remote
+}
+
+// runAtFinalize is a run at finalize in a checkout cloned from remote, on
+// branch, with the run's own work committed and the mode resolved from it: a
+// run whose record carries the reviews given, which is what the status
+// section under test reads. runID is the run's own id, which the work is
+// named after so that the diff the mode is resolved from is this run's.
+func runAtFinalize(t *testing.T, remote, branch, runID string, reviews ...runstore.ReviewSummary) *run {
+	t.Helper()
+	testutil.IsolateGit(t)
+	repo, err := gitops.OpenOrClone(context.Background(), filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := repo.CheckoutNewBranch(ctx, "main", branch); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{filepath.Join("internal/payments", runID+".go"): "package payments\n"})
+	if _, err := repo.CommitAll(ctx, "the run's work"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Git.BaseBranch = "main"
+	r := &run{
+		repo: repo, cfg: cfg, spec: &task.Spec{RequestedBy: "octocat"},
+		rec: &runstore.Record{
+			Version: 1, RunID: runID, Branch: branch, BaseBranch: "main",
+			Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone, Reviews: reviews,
+		},
+		d: Deps{Log: slog.New(slog.DiscardHandler)},
+	}
+	// The clock is injected rather than read, so the section a case pins
+	// carries the same time on every machine.
+	r.d.Now = func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) }
+	r.bootstrapRigor(ctx)
+	r.recordChangedFiles(ctx)
+	r.finalizeRigor()
+	return r
+}
+
 // TestBootstrapRigorReadsTheBaseBranchNotTheBranchUnderReview is D25, and it is
 // the reason this field exists at all: a run that could take its mode from its
 // own tree could set itself to POC in the same pull request it wants merged.
@@ -322,7 +392,7 @@ func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
   default: startup
   areas:
     - { name: payments, match: "internal/payments/**", mode: critical }
-    - { name: ledgers, match: "internal/payments/**", mode: startup }
+    - { name: ledgers, match: "internal/**", mode: startup }
 `
 	for _, tc := range []struct {
 		name  string
@@ -336,7 +406,7 @@ func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
 		{"two matching rules, the strictest named", twoAreas, "rigor: critical (area payments +1)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := filedRunAt(t, modeBase(t, tc.block), "fugaro/x", "20261024-120000-abcd", openRound)
+			r := runAtFinalize(t, modeBase(t, tc.block), "fugaro/x", "20261024-120000-abcd", openRound)
 
 			section := r.finalSection(false, "review round 2 still has 3 findings", nil)
 
