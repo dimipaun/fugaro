@@ -160,9 +160,12 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 const SPEC = 'graph.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen,
- * the three modules of the picture (the model, the cache and the worker client)
- * and the three shared modules those reach. `shared/schema.js` is here because
- * the fixture is decoded in the window rather than in this file: the screen is
+ * the three modules of the picture (the model, the cache and the worker client),
+ * the section helper the screen's refresh and its stream tabs answer through
+ * (`renderer/section.js`, with the reading words and skeleton shapes it
+ * requires), and the three shared modules those reach. `shared/schema.js` is
+ * here because the fixture is decoded in the window rather than in this file:
+ * the screen is
  * handed a document the console's own decoder admitted, which is the shape the
  * entry hands it. Nothing else may be reachable -- the registry below refuses a
  * specifier that is not a relative path, so a bundle that grew an import of
@@ -175,6 +178,9 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/graph/model.js',
   'renderer/graph/layout-client.js',
   'renderer/graph/layout.js',
+  'renderer/skeleton.js',
+  'renderer/screens/reading.js',
+  'renderer/section.js',
   'renderer/screens/graph.js',
 ])
 

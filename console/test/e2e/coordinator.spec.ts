@@ -101,6 +101,9 @@ const SPEC = 'coordinator.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen,
  * the writers in `renderer/app.js`, and the shared modules those reach.
+ * `renderer/section.js` is here because the screen's body is a section: it draws
+ * its busy mark, its skeleton and its stamp through that helper, and the helper
+ * requires the reading words and the skeleton shapes beside it.
  * `shared/schema.js` is here because the fixture is decoded in the window rather
  * than in this file: the screen is handed a document the console's own decoder
  * admitted, which is the shape the entry hands it. Nothing else may be
@@ -114,6 +117,9 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',
+  'renderer/skeleton.js',
+  'renderer/screens/reading.js',
+  'renderer/section.js',
   'renderer/screens/coordinator.js',
 ])
 

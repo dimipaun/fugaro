@@ -124,7 +124,12 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/app.js',
   // The placeholder and the busy mark the screen’s two sections are drawn with
   // (console 0.116.1): `renderSpendFrame` puts a busy slot in each section, so
-  // the screen requires the helper and the words it is drawn with.
+  // the screen requires the helper, the words it is drawn with, and the skeleton
+  // shape those words sit in: `renderer/section.js` requires
+  // `renderer/screens/reading.js` and `renderer/skeleton.js` in turn. The last
+  // two were left out of this list when the helper landed, and the hand-built
+  // registries guard in modules-registry.spec.ts is what found them.
+  'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
   'renderer/screens/spend.js',

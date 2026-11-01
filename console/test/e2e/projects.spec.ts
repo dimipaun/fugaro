@@ -129,15 +129,17 @@ const SPEC = 'projects.spec.ts'
  * use. The list follows the compiled `require` calls and nothing else -- the
  * section helper the screen draws its busy mark through (`renderer/section.js`)
  * and the reading words and skeleton beside it are here for that reason, while
- * `shared/launcher.js`, `shared/rigor.js` and `shared/notice.js` are gone with
- * the run list that used them. `src/main/ipc.ts` is imported by the screen for a
- * **type** only, which the compiler erases, so nothing of the main process is
- * reachable from here -- and the registry below refuses a specifier that is not
- * a relative path, so a bundle that grew an import of `node:` or of a package
- * fails here rather than in a window with no Node in it. */
+ * `shared/launcher.js` and `shared/rigor.js` are gone with the run list that
+ * used them -- `shared/notice.js` stays, because `shared/version.js` reads the
+ * reduced-mode notice it carries. `src/main/ipc.ts` is imported by the screen
+ * for a **type** only, which the compiler erases, so nothing of the main
+ * process is reachable from here -- and the registry below refuses a specifier
+ * that is not a relative path, so a bundle that grew an import of `node:` or of
+ * a package fails here rather than in a window with no Node in it. */
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/notice.js',
   'shared/version.js',
   'renderer/app.js',
   'renderer/skeleton.js',
