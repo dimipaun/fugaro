@@ -1,73 +1,79 @@
 package rigor
 
-// The review-round ceiling each mode puts on a run's fix rounds (D7b,
-// docs/rigor-modes/implementation-plan.md T3.2). It is the mode's own number,
-// held beside the threshold table (table.go) so the run loop reads one table
-// rather than a condition inside itself.
+// The loop counts each mode runs by default: the inner (first-line) rounds and
+// the senior rounds a run of that mode spends when nothing else sets them
+// (the owner's ruling of 2026-10-31, which answers O3 —
+// docs/rigor-command/reconciliation.md §4).
 //
-// The ceiling only ever lowers. The review step's rounds come from F6's
-// precedence first — the task's Overrides.ReviewRounds, else the recipe's
-// max_rounds, else the repository's agent.review_rounds — and the ceiling is spent
-// under that answer, never above, so no mode buys a run more rounds than its
-// own configuration asked for.
+// They are **defaults, not caps**. The number a run's review step actually
+// runs comes from the precedence first — the task's Overrides.ReviewRounds,
+// else the recipe's max_rounds, else the repository's agent.review_rounds,
+// else the project layer's — and the mode's row supplies the number only where
+// none of the four set one, up or down. A task override of one round is one
+// round at Critical too, and a repository's `agent.review_rounds: 8` is eight
+// at POC; the recipe's own bounds (recipe.MaxFirstLineRounds,
+// recipe.MaxReviewRounds) are the only ceiling either number is held under.
 //
-// POC and Hotfix would each spend a single round, the two modes the spec puts
-// cheapest and fastest. Whether a mode may go below today's default of two is
-// the owner's open question O3 (docs/rigor-modes/reconciliation.md), and until
-// it is answered the table keeps that number and minRoundCeiling clamps it —
-// here, so the answer is one edit in one place.
+// That is why the names say "default" and not "ceiling": the table this
+// replaced (roundCeilings, whose rows only ever lowered the precedence) meant
+// something else, and a name never changes meaning.
 
-// minRoundCeiling is O3's floor: no mode spends fewer than today's default of
-// two rounds while the owner's question stands.
-const minRoundCeiling = 2
-
-// roundCeilings is the table, one row per mode, on the axis the modes sit on:
-// the cheaper the mode, the fewer the rounds it will spend. Critical's row is
-// the whole scale — widestRoundCeiling — which is what keeps a Critical run the
-// run main produced (plan §5). A mode the table does not hold — the zero Mode,
-// a name outside the vocabulary — takes widestRoundCeiling too, the way
-// table.go blocks everything for a mode it cannot place: a value this code
-// cannot read must never be the lenient answer.
-var roundCeilings = map[Mode]int{
-	POC:      1,
-	Startup:  2,
-	Pro:      3,
-	Critical: widestRoundCeiling,
-	Hotfix:   1,
+// Rounds is one mode's loop counts: Inner is the first-line review's rounds,
+// Senior the senior review's.
+type Rounds struct {
+	// Inner is the rounds of the first-line loop — review level 1, the
+	// coder's own model (agent.first_line_rounds).
+	Inner int
+	// Senior is the rounds of the senior review and its fixes — review level
+	// 2, the reviewer's model (agent.review_rounds).
+	Senior int
 }
 
-// widestRoundCeiling is the most review rounds a step may carry at all, and
-// what RoundCeiling answers for a mode it cannot place: recipe.MaxReviewRounds,
-// pinned to it by this package's TestRoundCeilingRowsAreWithinTheRecipeBound
-// and TestRoundCeilingNeverLowersABelowTheRecipeBound, so a mode can never
-// reach above the recipe's own bound.
-const widestRoundCeiling = 10
+// roundDefaults is the table, one row per mode, on the axis the modes sit on:
+// the stricter the mode, the more rounds it spends by default. Hotfix is off
+// that axis (spec.md) and takes the cheapest row, the same one POC takes: it
+// is the run with the least room to spend, and the ruling puts it beside POC.
+//
+// Critical's row is the whole scale, which is what keeps a Critical run the
+// run main produced where a repository left the knobs alone (plan §5).
+var roundDefaults = map[Mode]Rounds{
+	POC:      {Inner: 1, Senior: 1},
+	Startup:  {Inner: 2, Senior: 2},
+	Pro:      {Inner: 3, Senior: 3},
+	Critical: {Inner: 3, Senior: 5},
+	Hotfix:   {Inner: 1, Senior: 1},
+}
 
-// RoundCeiling is the most review rounds mode m allows: the table's number,
-// held under O3's floor (minRoundCeiling) and inside the recipe's bound
-// (widestRoundCeiling). A row below the first would be a mode spending fewer
-// rounds than today's default before the owner has answered O3; one above the
-// second would be a mode raising what a recipe may carry.
-func RoundCeiling(m Mode) int {
-	n, ok := roundCeilings[m]
-	if !ok {
-		return widestRoundCeiling
+// DefaultRounds is the loop counts mode m supplies when no other layer, the
+// recipe or the task set either number.
+//
+// A mode the table does not hold — the zero Mode, a name outside the
+// vocabulary — takes the strictest row there is, the way table.go blocks
+// everything for a mode it cannot place: a value this code cannot read must
+// never be the lenient answer. The resolution path only ever answers a known
+// mode (Resolve checks Known before it reads a layer or a request), so this is
+// the guard behind it rather than a run's behaviour, and the rows it can reach
+// are inside the recipe's bounds either way.
+func DefaultRounds(m Mode) Rounds {
+	if r, ok := roundDefaults[m]; ok {
+		return r
 	}
-	return min(max(n, minRoundCeiling), widestRoundCeiling)
+	return roundDefaults[Critical]
 }
 
-// AdversarialCeiling is the most rounds the adversarial step — review level 3 —
-// may carry for mode m (D726, L2.2).
+// AdversarialDefault is the rounds the adversarial step — review level 3 —
+// supplies for mode m when nothing else sets them (D726, L2.2).
 //
-// It is held at minRoundCeiling for every mode while rigor O3 is open: the
-// adversarial pass runs after the review, on the same budget, and the owner's
-// question is the same one the review's own floor answers, so a mode cannot
-// spend on it what no mode may spend on the review. It is stated as the
-// minimum of the two rather than as the constant so that the day O3 is
-// answered above, a Critical run takes its own review ceiling and this
-// function follows the table instead of drifting from it. A mode the table
-// cannot place takes RoundCeiling's widest answer, which the minimum lowers
-// like any other — an unplaced mode raises nothing either.
-func AdversarialCeiling(m Mode) int {
-	return min(RoundCeiling(m), minRoundCeiling)
+// It is the mode's own senior row: the ruling gives the modes' loop counts two
+// cells, and the adversarial pass is a review pass on the same axis, run after
+// the senior one on the same budget, so the number a mode starts from is the
+// one it already spends on the review it follows. A step's own max_rounds, the
+// repository's agent.adversarial_rounds and the project layer still set another
+// number, up or down, as they do for the senior loop: this is a default and
+// not a ceiling, and the recipe's bounds are what holds it.
+//
+// A mode the table cannot place takes DefaultRounds' answer for it, which is
+// the strictest row — an unplaced mode raises nothing and drops nothing.
+func AdversarialDefault(m Mode) int {
+	return DefaultRounds(m).Senior
 }
