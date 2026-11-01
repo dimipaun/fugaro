@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,17 @@ import (
 // list --json`, and written by nothing else. These are the tests for the
 // recording path and for the read-only property the console's allow-listed
 // reads turn on; config_list_test.go holds the tests for the document itself.
+
+// The temporary-directory rule is off for this package's tests, and it has to
+// be: every checkout a test can make is under the machine's temporary
+// directory (t.TempDir()), so with the real list (checkoutTempRoots) nothing
+// here would be recorded at all and the tests below would pass for a reason
+// that has nothing to do with what they mean — the console guard's own test
+// would stop failing when the guard is dropped, which is what makes a mutation
+// test worth having. The rule itself is tested where the list is a fact of the
+// test (internal/localcfg/checkouts_test.go), and this package's own half of it
+// — that a checkout is remembered at all — is TestACommandInACheckoutRecordsIt.
+func init() { checkoutTempRoots = func() []string { return nil } }
 
 // checkoutsYAML is a fugaro.yaml that validates cleanly, so the recording
 // tests run a command that succeeds and can only fail by what it does beside
@@ -59,11 +72,14 @@ func checkoutsAt(t *testing.T, dir, yaml, origin string) string {
 }
 
 // checkoutsRemember records a checkout exactly as a command running in it
-// does, and returns the identity it was recorded under.
+// does, and returns the identity it was recorded under. The temporary-root
+// list is the one the recording path passes (checkoutTempRoots, empty in this
+// binary), so a test that records through this helper and a command that
+// records on its own are the same write.
 func checkoutsRemember(t *testing.T, project, path, origin string) localcfg.CheckoutIdentity {
 	t.Helper()
 	id := localcfg.CheckoutIdentity{Provider: "github", Repo: strings.TrimSuffix(strings.TrimPrefix(origin, "https://github.com/"), ".git")}
-	if err := localcfg.RecordCheckout(os.Getenv, project, id, path, time.Now()); err != nil {
+	if err := localcfg.RecordCheckout(os.Getenv, project, id, path, time.Now(), checkoutTempRoots()); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -406,5 +422,170 @@ func TestARewrittenOriginIsNeverRecorded(t *testing.T) {
 	}
 	if len(known.Projects["aurora"]) != 0 {
 		t.Errorf("aurora's checkouts = %+v, want none: the origin is rewritten", known.Projects)
+	}
+}
+
+// TestRecordCheckoutSkipsLinkedWorktree: a linked git worktree — `git worktree
+// add`, which is the scratchpad a coding agent makes — is not remembered,
+// while the checkout it was made from is. The two are the same repository, on
+// the same project, enrolled the same way, and the worktree's own fugaro.yaml
+// is the committed one: nothing but the worktree relation tells them apart.
+//
+// Both live under the machine's temporary directory, which is why this
+// package's tests turn the temporary-directory rule off (see init): with it on
+// the worktree would be skipped for the wrong reason and the control below —
+// the main checkout, recorded by the same call — would fail. The worktree
+// relation is the only thing that can skip a path here.
+func TestRecordCheckoutSkipsLinkedWorktree(t *testing.T) {
+	dir := checkoutsFixture(t)
+	main := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	testutil.Git(t, main, "add", "-A")
+	testutil.Git(t, main, "commit", "--quiet", "-m", "the repository")
+	linked := filepath.Join(dir, "src", "scratch")
+	testutil.Git(t, main, "worktree", "add", "--quiet", linked)
+	if got, known := linkedWorktree(context.Background(), linked); !known || !got {
+		t.Fatalf("the fixture is not a linked worktree: linked=%v known=%v", got, known)
+	}
+	if got, known := linkedWorktree(context.Background(), main); !known || got {
+		t.Fatalf("the fixture's main checkout reads as a linked worktree: linked=%v known=%v", got, known)
+	}
+
+	if _, err := checkoutProject(context.Background(), linked); err != nil {
+		t.Fatal(err)
+	}
+	known, err := localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(known.Projects["aurora"]) != 0 {
+		t.Errorf("aurora's checkouts = %+v, want none: a linked worktree is not a checkout this machine works in", known.Projects)
+	}
+
+	// The control, in the same fixture and by the same call: the checkout the
+	// worktree was made from is remembered as it always was.
+	if _, err := checkoutProject(context.Background(), main); err != nil {
+		t.Fatal(err)
+	}
+	known, err = localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := known.Projects["aurora"]["github/acme/app"]
+	if !ok || len(r.Paths) != 1 || r.Paths[0].Path != main {
+		t.Errorf("aurora's checkouts = %+v, want the main checkout %q recorded", known.Projects, main)
+	}
+}
+
+// TestConfigListNeverWrites: the pruning is the writer's, and the read is
+// where the console sees what this machine remembers. A read re-validates
+// every path and reports what it finds — a stale path is still there for the
+// operator to see, and still there if the directory comes back — and it drops
+// nothing and writes nothing, not even the rows the next write is going to
+// prune. A state file that does not exist stays that way.
+func TestConfigListNeverWrites(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	statePath, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(co)
+	if _, _, err := execute(t, "config", "list", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("config list created the remembered checkouts (stat %s: %v)", statePath, err)
+	}
+
+	// Hand-written state holding exactly the two rows the next write would
+	// prune: a live checkout under the machine's temporary directory (a
+	// scratchpad), and a path gone for longer than the grace.
+	scratch := checkoutsAt(t, filepath.Join(dir, "src", "scratch"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	configListWriteState(t, `{"version": 1, "projects": {"aurora": {"github/acme/app": {`+
+		`"provider": "github", "repo": "acme/app", "recorded_at": "`+stamp+`", "paths": [`+
+		`{"path": "`+scratch+`", "recorded_at": "`+stamp+`"},`+
+		`{"path": "/src/gone/app", "recorded_at": "`+stamp+`", "missing_since": "`+old+`"}]}}}}`+"\n")
+	before := configListState(t)
+
+	doc, _ := configListJSON(t)
+	got := configListCheckoutsOf(t, doc, "aurora")
+	if len(got) != 2 {
+		t.Fatalf("aurora's checkouts = %+v, want both rows: the read reports what it finds and drops nothing", got)
+	}
+	byPath := map[string]configListCheckout{}
+	for _, c := range got {
+		byPath[c.Path] = c
+	}
+	if c := byPath[scratch]; !c.Valid || c.Reason != "" {
+		t.Errorf("the row under a temporary directory = %+v, want it reported as it stands: the temporary-directory rule is the writer's", c)
+	}
+	if c := byPath["/src/gone/app"]; c.Valid || c.Reason != checkoutMissing {
+		t.Errorf("the long-missing row = %+v, want valid false and reason %q", c, checkoutMissing)
+	}
+	if after := configListState(t); after != before {
+		t.Errorf("config list rewrote the remembered checkouts:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+// TestCheckoutsJSONShapeUnchanged: the document the console reads is the same
+// document it read before any of this. The state file grew one field (the
+// clock a missing path is dropped by, localcfg.CheckoutPath.MissingSince) and
+// nothing of it reaches the contract: the keys at every level are the ones the
+// console's §6.8 table names, read off the JSON rather than off the Go types,
+// so a field added to the document is caught here however it got there.
+func TestCheckoutsJSONShapeUnchanged(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	checkoutsRemember(t, "aurora", co, "https://github.com/acme/app.git")
+	// And a row the next write would prune, so the shape is checked on a
+	// document that holds one: the field that decides it is the state file's.
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	configListWriteState(t, `{"version": 1, "projects": {"aurora": {"github/acme/app": {`+
+		`"provider": "github", "repo": "acme/app", "recorded_at": "`+stamp+`", "paths": [`+
+		`{"path": "`+co+`", "recorded_at": "`+stamp+`"},`+
+		`{"path": "/src/gone/app", "recorded_at": "`+stamp+`", "missing_since": "`+old+`"}]}}}}`+"\n")
+
+	_, out := configListJSON(t)
+	var top map[string]any
+	if err := json.Unmarshal([]byte(out), &top); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if k := keysOf(t, top); !reflect.DeepEqual(k, goldenKeys(t, "config_list_keys.golden")) {
+		t.Errorf("config list --json top-level keys = %v", k)
+	}
+	var inst map[string]any
+	for _, v := range top["installations"].([]any) {
+		if m, _ := v.(map[string]any); m["name"] == "aurora" {
+			inst = m
+		}
+	}
+	if inst == nil {
+		t.Fatalf("aurora is not in the document:\n%s", out)
+	}
+	if k := keysOf(t, inst); !reflect.DeepEqual(k, goldenKeys(t, "config_list_installation_keys.golden")) {
+		t.Errorf("config list --json installations[] keys = %v", k)
+	}
+	rows, _ := inst["checkouts"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("aurora's rows = %v, want the two", rows)
+	}
+	full := goldenKeys(t, "config_list_checkout_keys.golden")
+	for _, v := range rows {
+		row, _ := v.(map[string]any)
+		want := full
+		if row["valid"] == true {
+			// reason is omitted when there is none, which is the one key the
+			// contract lets a row carry fewer of.
+			want = []string{"base_branch", "enrolled", "path", "repository", "valid"}
+		}
+		if k := keysOf(t, row); !reflect.DeepEqual(k, want) {
+			t.Errorf("a checkout row's keys = %v, want %v", k, want)
+		}
+	}
+	if strings.Contains(out, "missing_since") {
+		t.Errorf("config list --json carries the state file's own clock:\n%s", out)
 	}
 }
