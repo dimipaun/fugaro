@@ -50,7 +50,10 @@ func refusedByTheOwnershipCheck(t *testing.T, what string, err error, declined s
 		t.Fatalf("%s: exit %d, want 1 (a refusal, not an outage): %v", what, ExitCode(err), err)
 	}
 	if !strings.Contains(err.Error(), declined) {
-		t.Errorf("%s: the refusal does not say what was not done (%q): %v", what, declined, err)
+		// Fatal, like the checks above: a caller goes on to assert that nothing
+		// was written, and an error that is a refusal of some other kind is not
+		// one those assertions can be read against.
+		t.Fatalf("%s: the refusal does not say what was not done (%q): %v", what, declined, err)
 	}
 }
 
@@ -147,12 +150,20 @@ func TestPolicyPublishRefusesAnotherInstallationsDatabase(t *testing.T) {
 		t.Error("the refused publish rewrote the policy node with the mark removed")
 	}
 
+	// The node the two refusals above left alone is the one the delete door is
+	// about to be refused over — what it may not remove is this value and no
+	// other — so the same assertion is made after the delete as well, and
+	// neither of the two can hide a node the other one removed.
+	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
+		t.Fatalf("the policy node did not survive the refusals above: %v, want %v", f.db.Value(projectpolicy.PathShared()), own)
+	}
+
 	// The delete door is the same opener: it writes exactly as much.
 	f.db.Set(budget.PathMark, birchMark())
 	_, _, err = execute(t, "project", "policy", "publish", "--delete", "--yes")
 	refusedByTheOwnershipCheck(t, "project policy publish --delete", err, "nothing was published")
-	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Error("the refused delete removed the policy node")
+	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
+		t.Errorf("the refused delete changed the policy node: %v, want %v", f.db.Value(projectpolicy.PathShared()), own)
 	}
 }
 
@@ -202,6 +213,12 @@ func TestEnrollRefusesAnotherInstallationsDatabase(t *testing.T) {
 		t.Fatalf("project sync on the installation's own marked database was refused: %v\n%s", err, out)
 	}
 	own := f.db.Value(projectpolicy.PathShared())
+	// How many times the sync of the installation's own database read the
+	// App's key. Both refusals below are held to that same count rather than
+	// to a fixed one: what says "the refusal comes before the read" is a count
+	// that did not move, which a key read and written back to a net-zero change
+	// cannot produce.
+	readsBeforeRefused := len(g.reads)
 
 	f.db.Set(budget.PathMark, birchMark())
 	_, _, err := execute(t, "project", "sync", "--github-app-id", "12345", "--github-app-key")
@@ -212,8 +229,8 @@ func TestEnrollRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
 		t.Error("the refused sync rewrote the policy node")
 	}
-	if len(g.reads) != 1 {
-		t.Errorf("the App's key was read %d times, want once (the refusal comes before the read)", len(g.reads))
+	if len(g.reads) != readsBeforeRefused {
+		t.Errorf("the App's key was read %d more times, want none (the refusal comes before the read)", len(g.reads)-readsBeforeRefused)
 	}
 
 	// Data and no mark at all: the same answer, from the other half.
@@ -222,6 +239,9 @@ func TestEnrollRefusesAnotherInstallationsDatabase(t *testing.T) {
 	refusedByTheOwnershipCheck(t, "project sync", err, "nothing was added to the allow-list")
 	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
 		t.Error("the refused sync rewrote the policy node with the mark removed")
+	}
+	if len(g.reads) != readsBeforeRefused {
+		t.Errorf("the App's key was read %d more times, want none (the refusal comes before the read)", len(g.reads)-readsBeforeRefused)
 	}
 }
 
