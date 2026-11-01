@@ -337,6 +337,20 @@ func TestEveryOlderVersionHasAMigratorOrARefusal(t *testing.T) {
 		if migrates == refused {
 			t.Errorf("policy version %d: a migrator is %v and a too-old refusal is %v — every version below %d needs exactly one of the two", v, migrates, refused, Version)
 		}
+		// Migratable is the same answer as the tables, in the question form the
+		// remedies outside this package turn on: `fugaro doctor` names `fugaro
+		// update` for a node the chain carries and the publisher's
+		// delete-then-publish for one below its first step, and a predicate that
+		// disagreed with the walk would send an operator to a command that stops.
+		if got := Migratable(v); got != migrates {
+			t.Errorf("Migratable(%d) = %v, and migrators[%d] exists = %v: the walk and the answer doctor branches on must be one answer", v, got, v, migrates)
+		}
+	}
+	if !Migratable(Version) {
+		t.Errorf("Migratable(%d) = false: a node already at this version is one nothing has to be migrated from", Version)
+	}
+	if Migratable(Version + 1) {
+		t.Errorf("Migratable(%d) = true: a node ahead of this Fugaro is refused before the walk, and its move is a newer binary", Version+1)
 	}
 	for v := 1; v < Version; v++ {
 		raw := []byte(`{"version":` + itoa(v) + `,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`)

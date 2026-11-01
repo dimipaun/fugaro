@@ -55,7 +55,7 @@ func doctorOwnerCase(t *testing.T) []doctorCheck {
 			Fix:     "run fugaro update to repin the plugin"},
 		{ID: "policy-older-than-binary", Severity: "warning",
 			Problem: "config/policy/shared holds a policy of version 2, and this Fugaro writes version 4: no run applies it, and publishing over it is refused",
-			Fix:     "fugaro project policy publish --delete removes it, then 'fugaro project policy publish' writes this Fugaro's version 4"},
+			Fix:     "run `fugaro update`: its policy stage rewrites the node in place at this Fugaro's version 4, keeping the members the node carries, so nothing has to be deleted and published again"},
 		{ID: "project-layer-copy", Severity: "warning",
 			Problem: "the repository's copy of the project layer (sha256 1a2b3c4d) is not the published one (5e6f7a8b): its daily image check resolves against the old one, so a workflow whose image settings the layer changed is checked against settings it no longer carries and the drift stays invisible until a run fails on an image the layer no longer describes",
 			Fix:     "run fugaro config publish again, or fugaro image build in this checkout"},
@@ -201,6 +201,17 @@ func doctorSecurityOutput(t *testing.T, checks []doctorCheck) string {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&buf)
 	_ = emitDoctor(cmd, doctorOutput{Checks: checks}, false, doctorView{security: true})
+	return buf.String()
+}
+
+// doctorAllOutput is --all: one line per check, the informational and audit
+// lines included, with every check's own text whole.
+func doctorAllOutput(t *testing.T, checks []doctorCheck) string {
+	t.Helper()
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	_ = emitDoctor(cmd, doctorOutput{Checks: checks}, false, doctorView{all: true})
 	return buf.String()
 }
 
@@ -609,7 +620,7 @@ func TestDoctorAllPrintsEveryCheck(t *testing.T) {
 func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 	updateIDs := []string{
 		"cli-version", "plugin-pin", "base-image", "image-config-web",
-		"policy-rules-skew", "policy-vs-jobs",
+		"policy-rules-skew", "policy-vs-jobs", "policy-older-than-binary",
 	}
 	for _, id := range updateIDs {
 		c := doctorCheck{ID: id, Severity: "warning",
@@ -687,15 +698,28 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		}
 	}
 
+	// policy-older-than-binary joined the class with the policy stage: the node
+	// is migrated in place by the same run (init_policy_migrate.go), so its line
+	// is the plain command like the rest — and the check's own long text, which
+	// the class's line exists to replace, is what --all still prints.
+	older := doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
+		Problem: "config/policy/shared holds a policy of version 3, and this Fugaro writes version 4: no run applies it, and publishing over it is refused",
+		Fix:     "run `fugaro update`: its policy stage rewrites the node in place at this Fugaro's version 4, keeping the members the node carries, so nothing has to be deleted and published again"}
+	if line := doctorItemLine(t, older); !strings.HasSuffix(line, "run `fugaro update`") {
+		t.Errorf("policy-older-than-binary's line, for the state the update migrates, is not the plain command: %q", line)
+	}
+	if all := doctorAllOutput(t, []doctorCheck{older}); !strings.Contains(all, "rewrites the node in place") {
+		t.Errorf("--all does not carry the check's own text:\n%s", all)
+	}
+
 	// A check `fugaro update` does not put right is not an update item, and its
 	// line names the command that does the work: a line that sends the reader
 	// to a command which leaves the warning standing is worse than a longer one
-	// that works (the review's finding: projectpolicy.Migrate has no production
-	// caller, and the converge's plugin stage writes the pin rather than
-	// installing the plugin).
+	// that works (the review's finding: what differs for plugin-install is the
+	// installed plugin, and the converge's plugin stage writes the pin rather
+	// than installing it).
 	for id, want := range map[string]string{
-		"policy-older-than-binary": "`fugaro project policy publish --delete`",
-		"plugin-install":           "`fugaro upgrade --local`",
+		"plugin-install": "`fugaro upgrade --local`",
 	} {
 		c := doctorCheck{ID: id, Severity: "warning", Problem: "what is wrong here",
 			Fix: "a fix long enough that the default view prints the short form instead: " + strings.Repeat("and its own words ", 10)}
@@ -1072,6 +1096,28 @@ func doctorItemLine(t *testing.T, c doctorCheck) string {
 	var buf bytes.Buffer
 	printDoctorItem(&buf, c)
 	return strings.Join(strings.Fields(buf.String()), " ")
+}
+
+// doctorHumanItem is one item of a rendered default view, looked up by its
+// head: the head line, and — for an item whose fix did not fit beside it — the
+// line the fix went to (printDoctorItem indents it by two spaces). Reading the
+// human view this way is how a test sees the line a reader gets rather than the
+// check's fields, which is the difference ownFix makes.
+func doctorHumanItem(t *testing.T, out, head string) string {
+	t.Helper()
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(l, head) {
+			continue
+		}
+		item := l
+		if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "  ") {
+			item += " " + strings.TrimSpace(lines[i+1])
+		}
+		return item
+	}
+	t.Fatalf("the default view prints no item whose head is %q:\n%s", head, out)
+	return ""
 }
 
 // TestDoctorJSONKeepsEveryCheckAndClassifiesIt: --json is the complete and
