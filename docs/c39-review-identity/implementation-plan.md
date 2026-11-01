@@ -39,7 +39,7 @@ them and renames none of them.
   because a review job's model calls come to the service ([spec.md](spec.md) §1). That is CSR7's module to
   change and no task here touches it.
 - **E7, the service enabled for the installation**: `fugaro update --provision-credentials`, the App key in
-  the bundle, and the review variant deployed. C3.9a–C3.9g2 change nothing about that deployment; they make
+  the bundle, and the review variant deployed. C3.9a–C3.9g3 change nothing about that deployment; they make
   the service **admit** what E7 deploys.
 - **The coordinator** (`docs/coordinator/`): the verify route is built and its caller class configured
   empty. The component that calls it, and the merge path that acts on a verified verdict, is that work
@@ -56,7 +56,7 @@ them and renames none of them.
 | 1 | C3.9b | C3.9a, and **CSR1 merged** (the set it serves) |
 | 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074) |
 | 3 | C3.9f | C3.9a, C3.9c, C3.9e (the frame the verify route recomputes) |
-| 4 | C3.9g1, C3.9g2 | C3.9e, C3.9f; the two are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
+| 4 | C3.9g1, C3.9g2, C3.9g3 | C3.9e, C3.9f; the three are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1), and g3 is g1's source (see C3.9g3); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
 
 ## Where each decision lands
 
@@ -68,7 +68,7 @@ them and renames none of them.
 | D1065 which token set | C3.9b | D1071 who generates the bytes | C3.9d |
 | D1066 the repository, and the table | C3.9a (the table), C3.9b (the mint's use) | D1072 the release slot | §"Release slot" |
 | D1067 what is signed | C3.9e | D1073 the framed message | C3.9e (built), C3.9f (recomputed) |
-| D1074 one signature per run, and U7 | C3.9e | D1075 the verifier list's value (**answered**: the published policy) | C3.9g1 (the field), C3.9g2 (the wiring) |
+| D1074 one signature per run, and U7 | C3.9e | D1075 the verifier list's value (**answered**: the published policy) | C3.9g3 (the published field), C3.9g1 (the variable and the type), C3.9g2 (the wiring) |
 
 ## Where each finding lands
 
@@ -285,6 +285,18 @@ package's own test code by design (D885) and the metadata server is where a Goog
 service account comes from. If a child cannot be fenced, the task stops and the owner is asked again; there
 is no weaker fallback and no `denyWeb`-shaped substitute.
 
+**The subprocess starts from an explicit environment, and that requirement is this task's** (U7's caveat 1,
+which `docs/cloud-senior-review/` records and #1550 cross-references as a requirement on this task): the
+child the route's own tests start — the mutant subprocess of the mutation check — is started from `env -i`
+plus an allow-list of the variables it needs, so a credential this design keeps out of the review
+container's environment is not inherited by a child either. **Two tasks own the two halves, and the split
+is stated here so neither reads as the other's:** the **route's unreachability from that environment** is
+this task's, held by `TestSignRouteIsUnreachableFromTheMutantEnvironment` (the live check §8 step 9
+re-observes it), while the **environment's own emptiness** — that the subprocess carries no token in its
+environment at all — is **CSR4b's**, held by `TestMutationSubprocessCarriesNoTokenInItsEnvironment`
+(`docs/cloud-senior-review/implementation-plan.md:480`). This task does not restate CSR4b's pin and does
+not weaken it: it starts its child the way that test does, and asserts what its own route owes.
+
 `POST /v1/review/sign` takes a digest and answers the HMAC-SHA-256 of the **framed message** under the
 account's key, lowercase hex, with the algorithm named in the answer. The frame is `v1\n<slug>\n<run>\n<digest>`
 over the identity's own verified `fs` and `fr` (D1073) — the request never names either field — and the task
@@ -367,7 +379,8 @@ spelling of them. What the route deliberately does not do is in [spec.md](spec.m
   `TestSignRouteAuditsTheActAndNeverTheDigest`,
   `TestSignLineCarriesACredentialAndNoTier` (the sign purpose's `checked` exemption, `audit.go:442`/`:448`:
   the key has no tier, and a tier on the sign line is still refused),
-  `TestServiceHasNoAdminRoutes` (extended), `TestValidPurposeNamesTheReviewSignPurpose`.
+  `TestServiceHasNoAdminRoutes` (extended), `TestValidPurposeNamesTheReviewSignPurpose`,
+`TestSignRouteIsUnreachableFromTheMutantEnvironment` (the explicit environment, U7's caveat 1).
 
 ## C3.9f. The verify route and its caller class (D1068, F7, F12). **SEC**
 
@@ -482,7 +495,9 @@ for review size, not for sequencing.
   reads the service's other fields from — the source `fugaro update` holds and publishes as the policy, the
   same one `CredentialsJobAccounts` (`:343`) reads the job table from — so the value is not an operator's
   new act. **D1075 is answered** (2026-11-01) as exactly this derivation — the published policy, so **no
-  operator step** — and it records the two rejected readings with their costs.
+  operator step** — and it records the two rejected readings with their costs. **The field itself is C3.9g3's**, below: it is
+the node key this bullet's writer reads, and this task's nine files are already at the cap this plan holds
+a task to.
 - **One allow-list grows by exactly one, and it refuses a name it does not know**:
   `internal/infra/tf/cover.go`'s `credentialsServiceEnv` (`:792`), which is what one `fugaro update`
   confirmation covers and which must name the entry the module can now render.
@@ -522,6 +537,45 @@ for review size, not for sequencing.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/infra/tf/ -run 'Credentials' -count=1`; `go test -tags terraform
   ./internal/infra/...`; and `terraform fmt -check -recursive deploy/terraform` with the installation root's
   own `validate` and `test`, which is where the tftest runs.
+
+## C3.9g3. The published field the verifier list comes from (D1063, D1070, F2)
+
+C3.9g1's source, and the one field this slice adds to a published format. C3.9g1's nine files are at the cap
+this plan holds a task to, so the field is a task of its own; the three land as **one pull request**, for
+the reason C3.9g1 gives for g2 being one change with g1.
+
+- **What the operator writes, and where it is published.** The local configuration's top-level
+  `verifier_accounts` — the shape `bitbucket_api_roots` already has (`internal/localcfg/localcfg.go:184`),
+  and for the same reason: it is the owner's list, it travels to the policy node, and the node "is written
+  only by the owner and the runner fails closed on it, while the shared file is writable by any launcher"
+  (`internal/localcfg/shared.go`). `fugaro update`'s policy stage copies it into `config/policy/shared` as
+  the **top-level key of the same name** — the stage that publishes the node "built from the local config
+  and written by the one command the user runs" (`internal/cli/init_policy_publish.go`) — which is what
+  makes D1075's "no operator step" true: the act is the config edit the owner already makes and the command
+  is the one the HARD RULE names.
+- **Each entry is an address and not an IAM member.** The list is matched against a Google ID token's
+  `email` claim (§5.4), so it holds bare addresses — `fugaro-coordinator@<gcp-project>.iam.gserviceaccount.com`,
+  the owner's own address — and never the `user:`/`serviceAccount:` member spellings `launchers`,
+  `operators` and `budget_admins` are written with, which are IAM bindings rather than identity claims
+  (`internal/infra/tfvars.go:59`). A misspelt entry is refused where the operator can see it, rather than
+  read as a list that admits nobody.
+- **No `Version` bump, and no schema file.** The key is **top-level**, so a reader older than the field
+  lists it in `Policy.UnknownKeys` and decodes past it (`internal/projectpolicy/policy.go:255`–`268`,
+  `:724`, P8); `Version` is the one field that refuses a node and it moves for what a reader must
+  **enforce** (`internal/projectpolicy/version.go:9`–`15`, `:36`–`45`), and nothing enforces this key from
+  the node — the service reads its own environment, and C3.9g1 keeps that read optional and inert.
+  `schemas/` gains nothing: the policy node is not one of the JSON Schemas there (they pin `fugaro.yaml`
+  and the project layer, the task, the result, the recipe and the settings), and its members are held by
+  `internal/projectpolicy`'s own decode, which is where the key is added.
+- **Files (5):** `internal/localcfg/localcfg.go` (the member and its shape check),
+  `internal/projectpolicy/policy.go` (the key, its member list and its validation),
+  `internal/cli/init_policy_publish.go` (the copy from the config into the node),
+  `internal/projectpolicy/policy_test.go` and `internal/cli/init_policy_publish_test.go` (the round trip,
+  the older-reader case that must decode past it, and the copy).
+- **Red step:** the round-trip test fails while the config's member has no node key to land in, and the
+  copy test fails while the node is built without it.
+- **Tests:** `GOFLAGS=-p=2 go test ./internal/projectpolicy/ -count=1`; `GOFLAGS=-p=2 go test ./internal/cli/
+  -run 'Policy|Publish' -count=1`.
 
 ## C3.9g2. The `credentials_serve` wiring, the amendment, the docs, and the named live check (D1063, D1070, F2)
 
@@ -624,7 +678,7 @@ chose on 2026-11-01: the register's highest **written** section is **Check 190**
 above it, and the register's own rule is that a claim above the highest written section is settled at its
 merge. So the task that writes this check (C3.9g2) takes the number free at **its** merge. The check is
 [spec.md](spec.md) §8: **eleven steps**, owner-run, **no agent performs any step of it**, and **NOT RUN**
-until C3.9a–C3.9g2 ship and the review work's **CSR7** and **CSR2** are on `main` — because step 3 launches a
+until C3.9a–C3.9g3 ship and the review work's **CSR7** and **CSR2** are on `main` — because step 3 launches a
 review with `fugaro review --pr N`, which is CSR2, on the variant CSR7 deploys.
 
 Step 8 is the one that needs a configuration act rather than a fact, and the check says so: the owner's own
@@ -643,7 +697,7 @@ created, enabled or deleted outside the sandbox.
   0.15.0 and the owner moved it). CSR7 is the
   variant whose account C3.9a admits, CSR2 is the command that launches it, and this work is what makes the
   launch possible: a release that shipped CSR7 with **no** service admission would ship exactly the failure
-  E7 and D893 (c) exist to prevent. The order inside the window is C3.9a–C3.9g2, then CSR7 and CSR2.
+  E7 and D893 (c) exist to prevent. The order inside the window is C3.9a–C3.9g3, then CSR7 and CSR2.
 - **`fugaro update` carries it whole.** An opted-in installation converges with the one documented command:
   the image pin moves, the classes and the routes arrive in the code, and the key is the credentials
   service's own documented `creds set` step, named by `doctor` and by the service's refusal when it is

@@ -65,7 +65,7 @@ repository rather than about taste:
 | --- | --- |
 | [spec.md](spec.md) | The design: the account classes, the two identities and their pairing, the read-only mint, the sign and verify endpoints, the key and its rotation, the threat model, the owner-run live check, the `fugaro update` story, and what the slice does not do |
 | [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `origin/main` (**F1–F14**, each Exists, Missing or Conflicts) and the owner decisions **D1062–D1075**, each written to the recommended answer first and with the cost of its alternative, and **all answered** by the owner on 2026-11-01 (D1063 as amended by ruling O1; D1075 as the published policy's derivation). **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Tasks **C3.9a–C3.9g2** (at most 10 files each) with named tests, red steps, SEC flags and gates, the shared-files table, the named live check, and the release slot |
+| [implementation-plan.md](implementation-plan.md) | Tasks **C3.9a–C3.9g3** (at most 10 files each) with named tests, red steps, SEC flags and gates, the shared-files table, the named live check, and the release slot |
 | [live-check.md](live-check.md) | The live check's **register-shaped** entry — the shape read off Check 190, and §8's eleven steps one line each — so the task that takes the number derives neither. A stub: **NOT RUN**, and the number is the one free at C3.9g2's merge, not this folder's to take |
 
 **How a `:line` in this folder reads.** A citation names a file and a symbol, and the number is the

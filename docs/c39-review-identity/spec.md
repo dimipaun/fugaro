@@ -435,7 +435,13 @@ the list is what an operator writes, and the path that reads it is new:
 - the coordinator's own account (`fugaro-coordinator`, `docs/coordinator/`) is added to the list by
   **that** work stream's deployment when it lands, which is why this plan adds no coordinator task;
 - the owner's own identity may be added for a manual verification; the design says so because the live
-  check uses it (§8), and records what it costs in §7.
+  check uses it (§8), and records what it costs in §7;
+- **the list is the operator's, written where the policy node is built from**: the local configuration's
+  top-level `verifier_accounts`, which `fugaro update`'s policy stage copies into `config/policy/shared` as
+  the key of the same name (C3.9g3) — the pattern `bitbucket_api_roots` already travels by, and for the
+  same reason: the node is written only by the owner while the published shared config is writable by any
+  launcher. Each entry is a bare address (the `email` claim this list is matched against), never an IAM
+  member spelling. One config edit, the same publication the owner already makes, and no second command.
 
 ### 5.5 What the audit line says
 
@@ -796,7 +802,8 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   rather than one that refuses to start; Check 96's "the seven names the config builder reads" stays true.
   **Where that value comes from is answered, and it costs the upgrade no operator step** (**D1075**,
   answered by the owner on 2026-11-01; [reconciliation.md](reconciliation.md) §3): the verifier list is
-  **derived** from the published project policy `fugaro update` already reads — the source
+  **derived** from the published project policy `fugaro update` already reads — the node's top-level
+  `verifier_accounts`, copied from the local configuration by update's own policy stage (C3.9g3) — the source
   `internal/infra/tfvars.go`'s `Credentials()` (`:289`) and `CredentialsJobAccounts` (`:343`) already read —
   so naming verifiers is the publication the owner already makes and not a new act. Nothing is added to the
   upgrade for it: no command, no flag and no second local configuration file, and an installation whose
@@ -815,9 +822,18 @@ is *another command*. This slice's reading of it, stated because a reviewer must
 - **The review job cannot be launched before the key exists**, because CSR6's doctor check and CSR2's launcher
   refuse the launch rather than shipping one the service refuses. That is the same posture E7's other half
   has, and it is why no user meets a half-configured review.
-- **A version gate, not a silent ignore**: this slice adds no `fugaro.yaml`, task or wire *field*, so
-  `internal/cli/recipes_skew.go`'s `…Since` gates are not needed for it — the two routes are new paths and
-  an older job image never calls them. Where the review work adds fields, E6 is that work's rule.
+- **A version gate, not a silent ignore — and the one field this slice adds needs none**: this slice adds
+  no `fugaro.yaml`, task or run-record *field*, so `internal/cli/recipes_skew.go`'s `…Since` gates are not
+  needed for it: the two routes are new paths and an older job image never calls them. The one field it
+  adds is the verifier list's, on the **published policy node** (`verifier_accounts`, C3.9g3), and it is a
+  **top-level** key of that node for a reason that is the whole of its skew answer: a reader older than the
+  field merely lists a top-level key it does not know in `Policy.UnknownKeys` and decodes past it
+  (`internal/projectpolicy/policy.go:255`–`268`, `:724`, P8), so the key is additive for a reader; and
+  `Version` is the field that refuses a node and it moves for what a reader must **enforce**
+  (`internal/projectpolicy/version.go:9`–`15`, `:36`–`45`), which nothing does from the node — the service
+  reads its own **environment** (C3.9g1). `schemas/` gains nothing: the policy node is not one of the JSON
+  Schemas there, and its members are held by `internal/projectpolicy`'s own decode. Where the review work
+  adds fields, E6 is that work's rule.
 - **The review variant's own environment is CSR7's, and this slice asks for one change in it**: under ruling
   O1 the variant carries the service's URL (§4.3) and **no** model token, so CSR7 mounts nothing where it
   would have mounted the account's Claude token. That is a change to CSR7's module and not to `fugaro update`:
