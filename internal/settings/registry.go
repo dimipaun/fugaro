@@ -213,7 +213,7 @@ var yamlMeta = map[string]Row{
 	"workflows.*.commands.probe":           {Default: unset("none")},
 	"workflows.*.commands.rerun_failed":    {Default: unset("none")},
 	"workflows.*.commands.reports": {
-		Default: value(strings.Join(config.DefaultReports, ", "), "config.DefaultReports"),
+		Default: value(strings.Join(config.DefaultReports(), ", "), "config.DefaultReports"),
 	},
 	"workflows.*.cache":                     {Default: unset("none")},
 	"workflows.*.secrets":                   {Default: unset("none")},
@@ -271,13 +271,18 @@ func buildRows() []Row {
 }
 
 // yamlRow is the registry's row for a fugaro.yaml key: its key and layers come
-// from config.Scopes, everything else from yamlMeta, whose own fallback is the
-// ordinary rule.
+// from config.Scopes, everything else from yamlMeta.
+//
+// A key yamlMeta does not hold takes the ordinary rule for every field: a
+// missed lookup answers the zero Row, and the assignments below are what turn
+// that into one — the merge rule Replace, the default `unset = none`, the owner
+// `settings set` and docs/project-layer.md. They cover every field a yamlMeta
+// entry can leave empty, Key and Layers being written here either way and
+// Sensitive by buildRows, so a Row field added without a fallback below is a
+// field a yamlMeta-less key would carry as its zero value. That is the contract
+// this comment records, and why there is no branch for the miss itself.
 func yamlRow(s config.ScopeRow) Row {
-	r, ok := yamlMeta[s.Key]
-	if !ok {
-		r = Row{}
-	}
+	r := yamlMeta[s.Key]
 	r.Key = s.Key
 	r.Layers = scopeLayers(s.In)
 	if sharedWithLocal[s.Key] {

@@ -27,7 +27,7 @@ func TestDefaultConstantsAreThePromisedValues(t *testing.T) {
 		{"workflows.*.resources.cpu", strconv.Itoa(DefaultCPU), "4"},
 		{"workflows.*.resources.memory", DefaultMemory, "8Gi"},
 		{"workflows.*.checkout", CheckoutBaked, "baked"},
-		{"workflows.*.commands.reports", strings.Join(DefaultReports, ", "), "**/junit*.xml, **/build/test-results/**/*.xml"},
+		{"workflows.*.commands.reports", strings.Join(DefaultReports(), ", "), "**/junit*.xml, **/build/test-results/**/*.xml"},
 	}
 	for _, v := range values {
 		if v.got != v.want {
@@ -43,13 +43,13 @@ func TestDefaultConstantsAreThePromisedValues(t *testing.T) {
 // a duplicate, which is how a run stops collecting one of its reports.
 func TestDefaultReportsAreDistinct(t *testing.T) {
 	seen := map[string]bool{}
-	for _, g := range DefaultReports {
+	for _, g := range DefaultReports() {
 		if seen[g] {
 			t.Errorf("%q: listed twice", g)
 		}
 		seen[g] = true
 	}
-	if slices.Contains(DefaultReports, "") {
+	if slices.Contains(DefaultReports(), "") {
 		t.Error("an empty glob collects the whole checkout")
 	}
 }

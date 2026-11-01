@@ -77,11 +77,19 @@ const (
 	AuthCascade = "cascade"
 )
 
+// defaultReports is the list itself; DefaultReports answers a copy.
+var defaultReports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
+
 // DefaultReports are the report globs a workflow collects when it names none,
 // the files a run's artifacts step reads back (artifact-runs.md). It is the
 // settings registry's row for workflows.*.commands.reports that reads it, so
 // the DEFAULT column and a real run cannot part company.
-var DefaultReports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
+//
+// A slice is the one default that cannot be a const, and it is read by two
+// packages, so it answers a copy: a caller that appends to the result changes
+// nothing for the next one (the rule PaidCommandNames and BudgetScopes follow
+// in internal/cli).
+func DefaultReports() []string { return slices.Clone(defaultReports) }
 
 // RigorBudgetStageFloorUSD is the least model spend one stage can be granted:
 // the budget gateway's own lease floor (internal/budget's minLease, $0.25).
@@ -253,7 +261,7 @@ func applyDefaults(c *Config) {
 	}
 	for name, w := range c.Workflows {
 		if len(w.Commands.Reports) == 0 {
-			w.Commands.Reports = slices.Clone(DefaultReports)
+			w.Commands.Reports = DefaultReports()
 		}
 		if w.Resources.CPU == 0 {
 			w.Resources.CPU = DefaultCPU

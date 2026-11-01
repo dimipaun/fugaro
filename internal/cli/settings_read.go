@@ -83,6 +83,12 @@ func (s setting) matches(re *regexp.Regexp) bool {
 
 // settingsNow is the clock the read times its layers with. A seam, like
 // doctorNow and lsNow: a test pins a duration exactly rather than racing one.
+//
+// It is a package-level variable rather than a field of settingsRead because
+// the test that needs it drives the command itself — execute builds the read,
+// so there is no seam to hand a clock to. That is also what a test replacing it
+// has to respect: the value is the package's, one at a time, as doctorNow's and
+// lsNow's are, so such a test must not be parallel.
 var settingsNow = time.Now
 
 // settingsCloudLayers is the read's cloud half: the shared config's refresh,

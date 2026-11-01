@@ -6039,9 +6039,11 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	// into `no JUnit reports found under ...`. They are the vocabulary the
 	// fixture scan pins the glob slot to (VERIFY_REPORT_GLOBS), so a change to
 	// the defaults that the scrub did not follow would make the scan refuse a
-	// recording the CLI itself wrote.
+	// recording the CLI itself wrote. The list is read at its own declaration
+	// (`defaultReports`), because the exported name is a function answering a
+	// copy of it.
 	sameSet(t, "verify report glob", quoted(sourceValues(t, "internal/config/defaults.go",
-		readDoc(t, "internal/config/defaults.go"), `DefaultReports = \[\]string\{([^}]*)\}`)[0]),
+		readDoc(t, "internal/config/defaults.go"), `defaultReports = \[\]string\{([^}]*)\}`)[0]),
 		tsList(t, scrub, `VERIFY_REPORT_GLOBS = \[([^\]]*)\]`, "VERIFY_REPORT_GLOBS"))
 
 	// The connection states, the healths and the deadlines: three inline tables

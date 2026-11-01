@@ -148,10 +148,10 @@ func (l *ProjectLayer) SetsDefault(key string) bool {
 	for _, part := range strings.Split(key, ".") {
 		m, ok := cur.(map[string]any)
 		if !ok {
-			// The text writes a leaf here, and the path goes on: only a list
-			// has keys under it, and a list is one key. A scalar has none.
-			n, _ := cur.(*yaml.Node)
-			return n != nil && n.Kind != yaml.ScalarNode
+			// The text writes a leaf here and the path goes on, so the answer
+			// is whether a list sits at it: a list is one key, and a scalar has
+			// no keys under it.
+			return listUnderLeaf(cur)
 		}
 		next, ok := m[part]
 		if !ok || next == nil {
@@ -160,6 +160,20 @@ func (l *ProjectLayer) SetsDefault(key string) bool {
 		cur = next
 	}
 	return true
+}
+
+// listUnderLeaf answers the walk's leaf case: the path reached a value that is
+// not a mapping and goes on past it, which only a list survives — a list is one
+// key, so `defaults.rigor.areas.name` is set by the list `areas` writes
+// (Resolution.Sources' own rule), where a scalar has no keys under it at all.
+//
+// The value is a *yaml.Node and not a decoded Go value, because that is what
+// nodeTree keeps every non-mapping as — a copy of the node, so marshalling
+// writes back the text and tag it was written with. A null is nil there and
+// never reaches this, so the kind is what tells a list from a scalar.
+func listUnderLeaf(v any) bool {
+	n, ok := v.(*yaml.Node)
+	return ok && n.Kind != yaml.ScalarNode
 }
 
 // LayerRigor is defaults.rigor: the same two keys the repository's own
