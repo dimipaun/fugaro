@@ -42,7 +42,7 @@ carries `Mode`, `PerRunUSD`, `PerDayUSD`, `MaxRunTokens`, the two output limits,
 launch/chain layer is **not** free. It needs a `Layer` member per new dimension and its own name in
 `layerName`, or `runs show` would print a chain limit whose source reads `branch` — a source that is not
 where the number came from. L3's `merge.go` entry is therefore unconditional, not conditional on a search
-(spec §2, D904, spec §7).
+(spec §2, D1044, spec §7).
 
 **F5: Exists. The halt vocabulary.** `runstore.HaltReason` (`internal/runstore/runstore.go:44`) holds
 `run_cap`, `repo_daily_cap`, `global_daily_cap`, `no_cap`, `kill_switch`, `token_cap`, the budget- and
@@ -55,7 +55,7 @@ reason is added by this work.
 (`internal/gateway/lease.go:20`), sized between `minLease` and `maxLease` (`internal/budget/lease.go:18-19`) by `:107`.
 `Session.Admit` refuses a run whose database has no cap at all, with `no_cap` or a kill switch
 (`internal/budget/session.go:501`). *Consequence:* the chain budget changes nothing here; it hands the
-gateway a smaller cap (spec §4, D919).
+gateway a smaller cap (spec §4, D1059).
 
 **F7: Exists. The run record carries the chain's shape, and it is the fallback ledger.** `Record`
 (`internal/runstore/runstore.go:610`) carries `cost_usd` (`:655`), `cost` with `model_usd` and the compute
@@ -63,7 +63,7 @@ split (`internal/runstore/cost.go:12`), `stages[]` with `model_usd` and `duratio
 `budget.granted_micros` and `released_micros` (`:847`), `reviews[].round` (`:146`), `halt` (`:684`),
 `follow_up.pr` and `.previous_run` (`:922`), `started_at` and `deadline` (`:667`), and `policy.sources` /
 `.ignored` (`:859-865`). *Consequence:* the record is where the chain's **links**, its **rounds**, its
-**clock** and its **halt** come from — but not where its money does (D906, spec §4). It is the fallback
+**clock** and its **halt** come from — but not where its money does (D1046, spec §4). It is the fallback
 ledger only when the budget is off, and then the chain is **UNENFORCED** (F20).
 
 **F8: Missing. The record carries no *whole-run* token total — but the ledger does.** The budget database's
@@ -74,12 +74,12 @@ token figure in `result.json`: `schemas/result.schema.json:97-98` has `cache_rea
 `cache_write_tokens` only, and those are gateway-only cache sums that exclude the input and output tokens a
 cap counts, while the runner's own total (`r.tokens`, `internal/runner/halt.go:139`) is in memory and never
 written. *Consequence:* the **fallback** ledger cannot enforce a token limit and must say so rather than
-approximate one (spec §4, §7, D911). No wire format is extended by this work.
+approximate one (spec §4, §7, D1051). No wire format is extended by this work.
 
 **F9: Missing. `fugaro runs` has no `show`.** `newRunsCmd` adds `ls`, `stats` and `digest`
 (`internal/cli/runs.go:107-112`); `diagnose` is the failure view of one run
 (`internal/cli/diagnose.go:126-129`). *Consequence:* the used-vs-remaining view needs a new subcommand, or
-a new block on `diagnose` (spec §7, D915).
+a new block on `diagnose` (spec §7, D1055).
 
 **F10: Exists. The PR link is already resolved from the runs bucket.** A follow-up's task gets `branch`,
 `pr`, `previous_run`, `ref`, `workflow`, `task`, `requested_by`, `batch` and `overrides.total_timeout`
@@ -89,19 +89,19 @@ the PR chain's root run id is already derivable (`fugaro/<run-id>`) with no new 
 **F11: Exists. `--retry` and `--attempts` are already exclusive.** `--retry` launches a stored task as it
 is and takes none of the task flags (`internal/cli/run.go:327-334`); `--attempts` refuses `--pr`,
 `--run-id` and `--retry` (`:284`, `:300-308`). *Consequence:* a retry cannot carry new limits and a batch
-cannot be a chain (spec §6, D913).
+cannot be a chain (spec §6, D1053).
 
 **F12: Exists. The console's launch is one exact argv with a closed never-table.**
 `docs/design/desktop-console.md:211` is the launch row; `:220` is the never-table that names `--retry`,
 `--pr`, `--attempts`, `--batch`, `--no-budget-check`, `--token`, `--mode`, `--total-timeout` and every
 other `run` argv. *Consequence:* the console passes none of the new flags and no console task is in this
-plan (spec §7, D915).
+plan (spec §7, D1055).
 
 **F13: Exists. The coordinator's launch path is the intent writer, and it is advisory.**
 `launchRun` calls the same writer `fugaro coordinator report` uses, so a launch declares itself without a
 second command (`ee/coordinator/intent.go:20`), and the writer "takes nothing back… verifies nothing and
 authorises nothing by" the declared string (`:34`). *Consequence:* the limits ride the launch, not the
-intent, and `ee/coordinator/` is untouched (spec §6, D914).
+intent, and `ee/coordinator/` is untouched (spec §6, D1054).
 
 **F14: Exists. The daily and project caps are the database's, and the sweeper errs high.**
 `GlobalCaps`, `DefaultCaps`, `RepoCaps` and `Caps.PerRun()` (`internal/budget/model.go:208-294`) hold the
@@ -116,7 +116,7 @@ whatever the chain read says, and the unknown-usage case takes the sweeper's own
 2 and `widestRoundCeiling` 10. So the table's numbers are **not** the ceilings a mode runs at: the effective
 ceilings today are **POC 2, Startup 2, Pro 3, Critical 10, Hotfix 2** — every row below the floor is lifted
 to it. *Consequence:* `--max-review-rounds` composes under the **clamped** figure, and the refusal names the
-clamped figure, not the table's row (spec §8, D917). A design that quoted "POC 1, Hotfix 1" as the ceiling
+clamped figure, not the table's row (spec §8, D1057). A design that quoted "POC 1, Hotfix 1" as the ceiling
 would refuse a launch the engine would run.
 
 **F16: Missing on `main`. The cloud senior review is an open design, not code.** `docs/cloud-senior-review/`
@@ -124,7 +124,7 @@ is on **PR #1472** only, holding D880–D899 and claiming **Check 125**; it adds
 named account, and its review-fix loop is a second reviewer round. This is a *placement* finding rather than
 a gap in what this work needs: nothing here depends on it. *Consequence:* per the owner's answer of
 2026-11-01, that job **joins the PR's chain** rather than opening a chain of its own, and the chain's
-`--max-review-rounds` is what bounds its review-fix loop (spec §8, D918).
+`--max-review-rounds` is what bounds its review-fix loop (spec §8, D1058).
 
 **F17: Exists. A halted run still writes back.** `finalize` makes no model call, and `writeback`
 (`internal/runner/lockcache.go:315`) sets `stage: writeback` and saves the record before the session and
@@ -157,7 +157,7 @@ rules' own identity test (`RUN`, `internal/budget/rules/rules.go:581-582`) requi
 for. *Consequence, and it is the load-bearing one:* `max(Spent, Reserved − Released)` **cannot be pushed
 below `Spent` by any writer holding a run's identity**, because every leaf is increase-only and a release is
 capped at `reserved − spent`. The settled figure is a floor nobody can lower. That is what makes the ledger
-the right source (spec §4, §9, D906).
+the right source (spec §4, §9, D1046).
 
 **F21: Conflicts. Who can write the run record, and who can write the ledger, are different questions.**
 The launcher's grant is `roles/storage.objectUser` on the runs bucket conditioned on `runs/` **and**

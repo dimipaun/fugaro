@@ -1,9 +1,10 @@
 # Per-launch limits and a chain budget: implementation plan
 
-**The decisions are open; nothing here is approved.** This plan is written to the *recommended* answer of
-each decision (D901–D920, [reconciliation.md](reconciliation.md) §3). A decision answered the other way
-changes the tasks that cite it. Each task touches at most 12 files, names its tests, starts with a red step
-and ends at the gates below.
+**The owner has answered every decision; nothing here is approved to build.** This plan is written to the
+owner's answers (D1041–D1061, [reconciliation.md](reconciliation.md) §3), all of them as recommended. A
+decision answered the other way changes the tasks that cite it. Each task touches at most 12 files, names
+its tests, starts with a red step and ends at the gates below. **L1 carries a pre-work step**: one question
+(U4) must be settled against the database rules before any code is written.
 
 ## Order, and what this plan does not own
 
@@ -14,8 +15,9 @@ and ends at the gates below.
   `DisallowUnknownFields`). There is nothing for `fugaro update` to converge here: no job environment
   changes (F3), so the gate is the whole story.
 - **External dependency E2 (the cloud senior reviewer):** `docs/cloud-senior-review/` is open PR #1472 and
-  not on `main`. L0–L8 do not depend on it. The one thing L4 gives it for free is `--continues`, which is
-  what a review job that must not outspend a chain would pass (D918).
+  not on `main`. L0–L9 do not depend on it. What this work gives it is the **link** (D1058): a review job on
+  PR N joins the PR's chain by its `--pr`, and the chain's `--max-review-rounds` counts senior-review
+  iterations, which is what bounds that design's review-fix loop (L4; the flag's meaning is L3's).
 - **Files other work owns:** registering the `runs show` subcommand is inside `internal/cli/runs.go`, which
   this work owns for that purpose; the generated `website/content/cli-reference.md`, the plugin skills and
   every `console/**` file are owned elsewhere. L8 names them and the task that touches them waits for the
@@ -23,29 +25,30 @@ and ends at the gates below.
 
 | Level | Tasks | Needs |
 | --- | --- | --- |
-| 0 | L0, L1, L2 | nothing |
+| 0 | L0, L1, L2 | nothing (L0's tests use L1's reader interface, with a fake) |
 | 1 | L3 | L1, L2 |
-| 2 | L4, L5 | L3 (L5 also L0) |
+| 2 | L4, L5 | L3 (L5 also L0, L1) |
 | 3 | L6, L7 | L0, L5 |
-| 4 | L8 | L1–L7; E1 merged in the same release |
+| 4 | L8, L9 | L1–L7; E1 merged in the same release |
 
 ## Where each decision lands
 
-Every decision D901–D920 has one owning task, so a reviewer can follow a ruling to the work that carries
+Every decision D1041–D1061 has one owning task, so a reviewer can follow a ruling to the work that carries
 it. A decision answered the other way changes that task and the spec paragraph that names it.
 
 | Decision | Task | Decision | Task |
 | --- | --- | --- | --- |
-| D901 carrier in `task.json` | L2 | D911 the record's `tokens` | L1 |
-| D902 one flag per dimension | L3 | D912 `--pr` inheritance | L4 |
-| D903 loosening is refused | L3 | D913 `--retry` / `--attempts` | L4 (retry), L3 (batch) |
-| D904 merged twice | L3, L5 | D914 the orchestrator and the coordinator | none — nothing in `ee/` changes |
-| D905 what a chain is | L0, L4 | D915 `runs show` and the display | L6 |
-| D906 the ledger is the records | L0 | D916 the JSON additions | L1, L2, L6, L7 |
-| D907 `remaining` from settled | L0, L5 | D917 under the rigor ceiling | L3 |
-| D908 `--used-*` may only raise | L4 | D918 the cloud senior reviewer | none — nothing here changes for it |
-| D909 unreadable is unknown | L0, L4 | D919 the gateway and the day caps | none — nothing in the gateway changes |
-| D910 the halted-run writeback | L5 | D920 clock skew | L0 |
+| D1041 carrier in `task.json` | L2, and the gate in L3 | D1052 `--pr` inheritance | L4 |
+| D1042 one flag per dimension | L3 | D1053 `--retry` / `--attempts` | L4 (retry), L3 (batch) |
+| D1043 loosening is refused | L3 | D1054 the orchestrator and the coordinator | none — nothing in `ee/` changes |
+| D1044 merged twice | L3, L5 | D1055 `runs show` and the display | L6 |
+| D1045 what a chain is | L0, L4 | D1056 the JSON additions | L2, L6, L7 |
+| D1046 the ledger is the source | L0, L1, L5 | D1057 under the rigor ceiling | L3 |
+| D1047 `remaining` from used | L0, L5 | D1058 review jobs join the PR's chain | L4 (the link), L3 (the flag's meaning) |
+| D1048 `--used-*` may only raise | L4 | D1059 the gateway and the day caps | none — nothing in the gateway changes |
+| D1049 unreadable is unknown | L0, L1, L4 | D1060 clock skew | L0 |
+| D1050 the halted-run writeback | L5 | D1061 the operator-only raise | L9 |
+| D1051 the token dimension | L0, L1 | | |
 
 ## Gates (every task)
 
@@ -54,43 +57,64 @@ it. A decision answered the other way changes that task and the spec paragraph t
 Docs -count=1 -timeout 40m` when a doc changed; `go test ./internal/eeboundary/... -count=1`. Never the whole
 `internal/cli` or `internal/runner` package.
 
-## L0. The chain read: resolve a link and sum what the chain used (D905, D906, D907, D920)
+## L0. The chain read: resolve a link and sum what the chain used (D1045, D1046, D1047, D1049, D1051, D1060)
 
-The engine's one read of "what the chain already spent". No new store: the records are the ledger (F7).
+The engine's one read of "what the chain already spent". No new store and no new node: the budget database's
+per-run ledger is the source (F20, spec §4), and the run records are the fallback only when the budget is
+off, where the chain is **UNENFORCED**.
 
-- **Files (5):** `internal/runstore/chain.go` (new: `Chain` with `Root`, `Runs []Record`; `ResolveChain`,
-  `Used(dimension)`, `Remaining(limit, dimension)`), `internal/runstore/chain_test.go` (new),
-  `internal/runstore/runstore.go` (the record's `Tokens` member lands here with L1; this task reads it),
-  `internal/runstore/testdata/chain/` (new: placeholder run ids only), `internal/runview/runview.go` (the
-  still-running time read, `now − started_at`, off `Row`).
-- **Interface:** `Used` returns dollars from `cost.model_usd` (settled, never `budget.granted_micros`),
-  tokens from the record's `tokens`, time as `max(finished−started, Σ stages[].duration_s)`, and rounds as
-  `len(reviews)`.
-- **Red step:** `TestChainUsedSumsTheRecords` fails while `ResolveChain` does not exist; a chain whose
-  second record is unreadable makes `TestChainUnreadableRecordIsUnknownNotZero` fail with a zero total
-  (D909).
-- **Tests:** `TestChainUsedSumsTheRecords`, `TestChainUsedReadsSettledDollarsNotTheLease`,
-  `TestChainTimeTakesTheLargerOfRecordAndStages` (D920), `TestChainUnreadableRecordIsUnknownNotZero`,
-  `TestChainOfAPRFollowsPreviousRun` (F10), `TestChainOfARetryIsTheStoredRunID`,
-  `TestChainRefusesAContinuesItCannotConfirm`.
+- **Files (5):** `internal/runstore/chain.go` (new: `Chain` with `Root` and `Runs []string`; `ResolveChain`,
+  `Used(dimension)`, `Remaining(limit, dimension)`; the ledger reads arrive through the one-method
+  `LedgerReader` interface L1 fills), `internal/runstore/chain_test.go` (new, with a fake reader),
+  `internal/budget/model.go` (the used figure as a method beside `Outstanding()` `:351` and `Unsettled()`
+  `:355` — the `max` is the budget's own rule, not the reader's; L1 owns its test rows),
+  `internal/runview/runview.go` (the still-running time read, `now − started_at`, off `Row`, `:74`),
+  `internal/runstore/testdata/chain/` (new: placeholder run ids only; no secret-shaped literal).
+- **The ids come from the link, not from a listing.** The job's account is bound to `runs/<slug>/` and "the
+  runner never lists" (`docs/design/v1.md` §6.1, F21), so **the launcher resolves the chain's run ids** —
+  from the PR link or from the root run it was given — and the **runner reads each record by name** (L5).
+- **Interface:** `Used` takes dollars and tokens from the ledger (`Spent`, or
+  `max(Spent, Reserved − Released)` while it is unclosed or `Crashed`; the `tokens` leaf), time as
+  `max(finished−started, Σ stages[].duration_s)`, and rounds as `len(reviews)` — the last two from the
+  records, because a clock and a round count are not money (spec §4).
+- **Red step:** `TestChainUsedSumsTheLedgers` fails while `ResolveChain` does not exist;
+  `TestChainUnreadableLedgerIsUnknownNotZero` fails with a zero total (D1049).
+- **Tests:** `TestChainUsedSumsTheLedgers`, `TestChainUsedTakesTheHeldAmountWhenTheLedgerIsOpen`,
+  `TestChainUsedCannotBeLoweredByARelease` (T3), `TestChainUsedIgnoresAForgeableRecord` (T2),
+  `TestChainTokenDimensionIsTheLedgersTokens` (D1051), `TestChainTimeTakesTheLargerOfRecordAndStages`
+  (D1060), `TestChainUnreadableLedgerIsUnknownNotZero`, `TestChainOfAPRFollowsPreviousRun` (F10),
+  `TestChainOfARetryIsTheStoredRunID`, `TestChainIdsComeFromTheLinkNotAListing` (F21).
 
-## L1. The run record's token total (D911, D916)
+## L1. Reading a chain's ledger nodes, and with whose credential (D1046, D1049, D1051). **SEC**
 
-The one wire addition this work needs (F8): `result.json` gains `tokens`, within version 1.
+**Pre-work, before any code (U4):** settle whether a run's token may read a **sibling** run's ledger node.
+As the rules stand it may not — `runs/$slug/$run` is readable on `RUN` alone
+(`internal/budget/rules/rules.json.tmpl:56-57`), and `RUN` requires `auth.token.fs == $slug &&
+auth.token.fr == $run` (`internal/budget/rules/rules.go:581-582`), so a token speaks for one run; the `USER`
+claim reaches `spend/<day>/runs/$slug/$run` and nothing under `runs/`. The plan therefore reads the chain
+with the identity that may: the **launcher**, which already holds the budget-admin read that `fugaro budget
+set` uses, reading each id **by name**. The runner holds its **own** run's token, so it re-reads its own
+ledger (the writeback case, §5) and the chain's records, and merges only **downward**: a figure it cannot
+read is the launch layer's, never a larger one. If the rules turn out to allow the sibling read, the read
+moves into the runner and **no figure and no test changes**.
 
-- **Files (5):** `internal/runstore/runstore.go` (`Tokens *TokenTotal` on `Record`, with the input/output/
-  cache split), `schemas/result.schema.json` (the new object, additive), `schemas/schemas_test.go` (the
-  schema still loads and a record with `tokens` validates), `internal/runner/cost.go` (the write, beside the
-  gateway cache totals it already sets at `:115`), `internal/runner/cost_internal_test.go` (new).
-- **Red step:** `TestRecordWritesTheTokenTotal` fails while the field is absent; `TestResultSchemaAcceptsTokens`
-  fails while the schema does not declare it.
-- **Tests:** `TestRecordWritesTheTokenTotal`, `TestRecordOmitsTokensWhenTheRunMadeNoCall`,
-  `TestResultSchemaAcceptsTokens`, `TestResultSchemaStillRefusesAnUnknownMember`.
+- **Files (4):** `internal/budget/ledger.go` (new: `ReadLedger(ctx, slug, run) (RunLedger, bool, error)` —
+  one named get, `found` and `unreadable` kept apart because D1049 turns on the difference),
+  `internal/budget/ledger_test.go` (new), `internal/budget/model.go` and `internal/budget/model_test.go`
+  (the `Settled` method L0 calls, and its rows). `internal/rtdb/` is **read, not changed**: `Client.Get`
+  already reads a named path (`internal/rtdb/client.go:171`) and `budget.PathRun` already builds it
+  (`internal/budget/model.go:55`).
+- **Red step:** `TestReadLedgerReadsANamedRun` fails while the function does not exist;
+  `TestReadLedgerKeepsUnreadableApartFromAbsent` fails while both collapse into one error.
+- **Tests:** `TestReadLedgerReadsANamedRun`, `TestReadLedgerKeepsUnreadableApartFromAbsent`,
+  `TestReadLedgerRefusesAnEmptyRunID` (the path builder's own guard), `TestSettledIsSpentWhenTheLedgerClosed`
+  (D1046), `TestSettledIsTheHeldAmountWhileOpen` (D1050 case 3).
 
-## L2. The four `overrides` members (D901, D916)
+## L2. The four `overrides` members (D1041, D1042, D1056)
 
 `task.json`'s `overrides` gains `max_usd`, `max_tokens`, `max_time`, `max_review_rounds`
-(`internal/task/task.go:753`), additive within version 1.
+(`internal/task/task.go:753`), additive within version 1. A task that carries none carries no chain limit at
+all (D1041).
 
 - **Files (4):** `internal/task/task.go` (the four members on `Overrides`), `internal/task/task_test.go`
   (decode, and a task with them round-trips), `schemas/task.schema.json` (the four members, additive),
@@ -99,51 +123,68 @@ The one wire addition this work needs (F8): `result.json` gains `tokens`, within
 - **Tests:** `TestTaskDecodesTheLaunchLimits`, `TestTaskRejectsANegativeLimit`,
   `TestTaskSchemaAcceptsTheLaunchLimits`, `TestTaskSchemaStillRefusesAnUnknownMember`.
 
-## L3. The four flags, and the tighten-only refusal (D902, D903, D904, D913). **SEC**
+## L3. The four flags, the tighten-only refusal, and the layer they merge as (D1041, D1042, D1043, D1044, D1057, D1058). **SEC**
 
 The launcher resolves the effective policy before the launch and refuses a value that would loosen, naming
 both numbers and the layer that set the lower one (F4). It gates the launch behind a new `*Since` constant
-(E1).
+(E1), and it writes the batch half of D1053: a `--max-*` on a batch applies to **every** attempt, and the
+batch is N chains, not one.
 
-- **Files (7):** `internal/cli/run.go` (the four flags on `newRunCmd`; the resolve-then-merge before the
+- **Files (9):** `internal/cli/run.go` (the four flags on `newRunCmd`; the resolve-then-merge before the
   write, beside the gates at `:727-801`), `internal/cli/run_limits_test.go` (new),
   `internal/cli/recipes_skew.go` (the new `*Since` constant, beside `governanceSince` `:531`),
   `internal/cli/recipes_skew_test.go` (the gate refuses an older image and names `fugaro image refresh`),
-  `internal/cli/launch_budget.go` (the resolve helper the pre-check and the merge share),
-  `internal/cli/launch_budget_test.go`, `internal/policy/merge.go` (only if the four dimensions need a
-  `Layer` member the existing one does not carry; search before adding).
+  `internal/cli/launch_budget.go` (the resolve helper the pre-check and the merge share), `internal/cli/
+  launch_budget_test.go`, `internal/policy/policy.go` (the two members `Layer` lacks — a wall-time one and a
+  review-rounds one; the dollars and tokens reuse `PerRunUSD` and `MaxRunTokens`), `internal/policy/merge.go`
+  (**unconditional**: the chain layer's own source name, so `layerName` `:27-35` stops calling it `branch`)
+  plus `internal/policy/merge_test.go`.
+- **The merged layer is not a `branch`.** A launch/chain layer merged at index ≥ 2 would be printed as
+  `branch` by `layerName`, a place the number did not come from (F4, D1055). The new source name (`chain`)
+  is what `runs show` prints.
+- **Rigor (D1057):** the refusal is against the **chain's own** limit, never the mode's; per run the rounds
+  are `min(recipe, the mode's clamped ceiling, the chain's remaining)`, and a refusal names the clamped
+  figure — POC 2, Startup 2, Pro 3, Critical 10, Hotfix 2, because `RoundCeiling`
+  (`internal/rigor/rounds.go:51-56`) is `min(max(n, minRoundCeiling=2), widestRoundCeiling=10)` and the
+  table's rows sit below the floor (F15).
 - **Red step:** `TestRunRefusesALooseningLimit` fails while `--max-usd` does not exist;
   `TestRunGatesTheLimitsOnTheImage` fails while the gate is absent.
 - **Tests:** `TestRunRefusesALooseningLimit` (both numbers and the layer named),
-  `TestRunRefusesAMaxReviewRoundsAboveTheModeCeiling` (D917), `TestRunAcceptsATighteningLimit`,
+  `TestRunRefusesALooseningMaxTimeAgainstTotalTimeout` (F18), `TestRunAcceptsATighteningLimit`,
   `TestRunGatesTheLimitsOnTheImage`, `TestRunWritesNoLimitWhenNoneIsGiven` (the task is byte-identical),
-  `TestRunTotalTimeoutAndMaxTimeComposeAsMin` (D903, F18).
+  `TestRunTotalTimeoutAndMaxTimeComposeAsMin` (D1043), `TestRunBatchLimitsEveryAttempt` (D1053),
+  `TestMergeNamesTheChainLayer` (D1055), `TestRunLimitNeverAboveTheModeCeiling` (D1057),
+  `TestRunClampedRoundsRefusalNamesTheFigure` (D1057, F15).
 
-## L4. `--continues RUN-ID`, `--used-*`, and what a chain is (D905, D908, D909, D912, D913)
+## L4. `--continues RUN-ID`, `--used-*`, and what a chain is (D1045, D1048, D1049, D1052, D1053, D1058)
 
-The link for a chain with no PR — a halted run that opened nothing — and the caller's one honest knob,
-`--used-*`, which may only raise the charge (D908).
+The link for a chain with no PR — a halted run that opened nothing — the caller's one honest knob,
+`--used-*`, which may only raise the charge (D1048), and the **PR link that makes a review job part of the
+chain it reviews** (D1058).
 
 - **Files (4):** `internal/cli/run.go` (the `--continues` and `--used-*` flags, and the follow-up path where
-  a `--pr` launch inherits the chain's remaining, D912; refused with `--pr`, `--retry` and `--attempts`, as
-  `--attempts` already refuses its three at `:284`), `internal/cli/run_continues_test.go` (new),
-  `internal/cli/runs.go` (the message when `--pr` finds no run and `--continues` is the way, F9),
-  `internal/cli/runs_test.go` (D913's retry half: a retry is the stored task's chain, computed at its own
-  launch, and it takes no new limits). D913's batch half — a `--max-*` on a batch applies to every attempt
-  and the batch is N chains, not one — is L3's, where the flags are parsed.
+  a `--pr` launch inherits the chain's remaining, D1052; **`--continues` is refused with `--pr`, `--retry`
+  and `--attempts`**, as `--attempts` already refuses its three at `:284`), `internal/cli/run_continues_test.go`
+  (new), `internal/cli/runs.go` (the message when `--pr` finds no run and `--continues` is the way, F9),
+  `internal/cli/runs_test.go` (D1053's retry half: a retry is the stored task's chain, computed at its own
+  launch, and it takes no new limits). D1053's batch half is L3's, where the flags are parsed.
+- **The links are three and the engine derives the chain id from them** (the root run id): the PR, the stored
+  task, and the run `--continues` names. A fifth `--chain ID` string is not added (F10, F11).
 - **Red step:** `TestRunContinuesAHaltedChain` fails while the flag does not exist;
   `TestRunFollowUpInheritsRemaining` fails while a follow-up starts from the full cap.
-- **Tests:** `TestRunContinuesAHaltedChain`, `TestRunRefusesAContinuesItCannotConfirm` (T3),
-  `TestRunRefusesAContinuesWithNoUsableRecordWithoutUsed` (D909),
-  `TestRunContinuesWithAUsedFigureThatRaises` (D908),
-  `TestRunRefusesAUsedFigureBelowWhatTheEngineRead` (D908),
-  `TestRunFollowUpInheritsRemaining`, `TestRunFollowUpMergesItsLimitUnderTheRemaining`,
-  `TestRunRetryIsTheSameChain` (D913), `TestRunBatchIsNChainsNotOne` (D913, L3's flag parsing).
+- **Tests:** `TestRunContinuesAHaltedChain`, `TestRunRefusesAContinuesWithPR`, `TestRunRefusesAContinuesWithRetry`,
+  `TestRunRefusesAContinuesWithAttempts`, `TestRunRefusesAContinuesItCannotConfirm` (T4),
+  `TestRunRefusesAContinuesWithAnUnreadableLedgerWithoutUsed` (D1049),
+  `TestRunContinuesWithAUsedFigureThatRaises` (D1048),
+  `TestRunRefusesAUsedFigureBelowWhatTheEngineRead` (D1048), `TestRunFollowUpInheritsRemaining`,
+  `TestRunFollowUpMergesItsLimitUnderTheRemaining` (D1052), `TestRunRetryIsTheSameChain` (D1053),
+  `TestReviewJobJoinsThePRChain` (D1058).
 
-## L5. The runner applies `remaining` at bootstrap (D907, D919)
+## L5. The runner applies `remaining` at bootstrap (D1044, D1047, D1050)
 
-The runner reads the chain's records, computes `remaining`, and merges it as the last tighten-only layer, so
-the gateway's cap *is* `remaining` and nothing in the gateway changes.
+The runner reads the chain's **records by name** (the ids the launcher resolved, F21), computes `remaining`
+with L0, and merges it as the last tighten-only layer, so the gateway's cap *is* `remaining` and nothing in
+the gateway changes (D1059). The ledger figures it can read are its own run's (L1).
 
 - **Files (5):** `internal/runner/policy.go` (`resolvePolicy`, `:65`), `internal/runner/policy_test.go`,
   `internal/runner/spend.go` (the cap the resolved policy yields, `:93`), `internal/runner/spend_test.go`,
@@ -151,10 +192,11 @@ the gateway's cap *is* `remaining` and nothing in the gateway changes.
 - **Red step:** `TestPolicyMergesTheChainRemaining` fails while the merge does not consult the chain;
   `TestPolicyChainRemainingCannotLoosen` fails while a hand-written task's looser value survives.
 - **Tests:** `TestPolicyMergesTheChainRemaining`, `TestPolicyChainRemainingCannotLoosen`,
-  `TestSpendCapIsTheRemaining`, `TestTokenCapIsTheRemaining`, `TestChainZeroRemainingRefusesAtLaunch`
-  (D910).
+  `TestChainRecordsAreReadByNameNotListed` (F21), `TestSpendCapIsTheRemaining`,
+  `TestTokenCapIsTheRemaining`, `TestChainZeroRemainingRefusesAtLaunch` (D1050 case 1),
+  `TestHaltedOpenLedgerChargesTheHeldAmount` (D1050 case 3).
 
-## L6. `fugaro runs show` and the `diagnose` block (D915, D916)
+## L6. `fugaro runs show` and the `diagnose` block (D1055, D1056)
 
 - **Files (7):** `internal/cli/runs_show.go` (new), `internal/cli/runs_show_test.go` (new),
   `internal/cli/runs.go` (the subcommand registered beside `ls`, `stats`, `digest` at `:107`),
@@ -162,10 +204,11 @@ the gateway's cap *is* `remaining` and nothing in the gateway changes.
   `schemas/runs-show.schema.json` (new), `schemas/schemas_test.go`.
 - **Red step:** `TestRunsShowPrintsTheChainLimits` fails while the subcommand does not exist.
 - **Tests:** `TestRunsShowPrintsTheChainLimits` (chain, each dimension's limit/used/remaining and source),
-  `TestRunsShowJSONMatchesTheSchema`, `TestRunsShowNamesTheHalt`, `TestDiagnoseShowsTheChainForAHaltedRun`,
-  `TestRunsShowRefusesARunThatIsNotInThisRepository`.
+  `TestRunsShowNamesTheChainLayerAsChainSource` (F4, D1055), `TestRunsShowMarksABudgetOffChainUnenforced`
+  (D1046), `TestRunsShowJSONMatchesTheSchema`, `TestRunsShowNamesTheHalt`,
+  `TestDiagnoseShowsTheChainForAHaltedRun`, `TestRunsShowRefusesARunThatIsNotInThisRepository`.
 
-## L7. The launch reply's `chain` and `limits[]` (D916)
+## L7. The launch reply's `chain` and `limits[]` (D1056)
 
 `launchResult` (`internal/cli/run.go:73`) gains `chain` (the root run id) and `limits[]`, the same shape
 `runs show --json` prints. The console's decoder ignores keys it does not know, so this is additive.
@@ -175,19 +218,38 @@ the gateway's cap *is* `remaining` and nothing in the gateway changes.
   chain only when one exists).
 - **Red step:** `TestLaunchJSONCarriesTheChain` fails while the members do not exist.
 - **Tests:** `TestLaunchJSONCarriesTheChain`, `TestLaunchJSONLimitsMatchRunsShow`,
-  `TestLaunchJSONOmitsTheChainForAFirstRun`.
+  `TestLaunchJSONOmitsTheChainForAFirstRun`, `TestLaunchJSONMarksAnUnenforcedChain` (D1046).
 
 ## L8. Documentation, skill and release notes
 
 - **Files (5):** `docs/design/v1.md` §4.4 and §4.5 (the follow-up's inheritance and the halt's writeback,
   owned elsewhere — see "Order"), `plugin/skills/working/SKILL.md` (a launch with a limit; owned elsewhere),
   `docs/releases/vX.Y.Z.md` (`### For operators`: "run `fugaro update`" and what it will ask; no new
-  operator step is introduced by this work, E1 is a gate and not a command), the generated
-  `website/content/cli-reference.md` (regenerated, not hand-edited), `website/data/release-summaries.yaml`.
+  operator step is introduced by this work, E1 is a gate and L9's command is used only by choice), the
+  generated `website/content/cli-reference.md` (regenerated, not hand-edited),
+  `website/data/release-summaries.yaml`.
 - **Red step:** the plugin's command test fails while the skill names `--max-usd` before L3 is merged; it
   turns green on L3's branch.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs`, the plugin tests, `npm run check` in
   `website/`.
+
+## L9. Raising a chain that has spent its limit: operator only (D1061). **SEC**
+
+The launcher's own number is a launcher's number, so when a chain exhausts one there is nobody above the
+launcher who can move it (F22). The raise is a **budget-database** write on the chain's ledger node by the
+identity class that owns `fugaro budget set`, with a reason recorded; a launcher's credential and a run's
+own token are both refused. No `fugaro run` flag reaches it: a launch that carries a raise-shaped flag is a
+`userErr` (spec §4).
+
+- **Files (4):** `internal/cli/budget_chain.go` (new: the subcommand, beside the budget family, calling the
+  admin write path), `internal/cli/budget_chain_test.go` (new: the write, the reason, and the two refusals),
+  `internal/budget/ledger.go` (the write half L1's file already owns, gated on the admin identity),
+  `internal/budget/ledger_test.go`.
+- **Red step:** `TestChainRaiseRefusesALauncherCredential` fails while the subcommand does not exist;
+  `TestChainRaiseRefusesARunToken` fails while the write is reachable from a run's token.
+- **Tests:** `TestChainRaiseRefusesALauncherCredential`, `TestChainRaiseRefusesARunToken`,
+  `TestChainRaiseRecordsAReason`, `TestChainRaiseRefusesAnEmptyReason`,
+  `TestRunRefusesARaiseShapedFlag` (no launcher-reachable raise).
 
 ## Shared files
 
@@ -195,8 +257,9 @@ A file that more than one task writes, and what each writes there.
 
 | File | Tasks | What each writes |
 | --- | --- | --- |
-| `internal/runstore/runstore.go` | L0, L1 | L1 adds the record's `Tokens` member; L0 reads it |
-| `schemas/schemas_test.go` | L1, L2, L6 | one row per new schema or new member |
+| `internal/budget/model.go` | L0, L1 | L0 calls the used figure; L1 adds `Settled` and the named read beside the path builder (`:55`) |
+| `internal/budget/ledger_test.go` | L1, L9 | L1 the read, L9 the admin-gated raise |
+| `schemas/schemas_test.go` | L2, L6 | one row per new schema or new member |
 | `internal/cli/run.go` | L3, L4, L7 | L3 the four flags, L4 `--continues` and the follow-up inheritance, L7 the reply's members |
 | `internal/cli/runs.go` | L4, L6 | L4 the `--pr`-found-nothing hint, L6 the `runs show` subcommand registration |
 | `internal/task/task.go` | L2, and read by L3 | L2 adds the four `Overrides` members; L3 writes them |
@@ -216,4 +279,5 @@ project and a real spend, and is not part of any task above.
 - **Implementation** is recommended for **0.16.0**: L3 changes what `fugaro run` writes into a task, and E1's
   gate means the release must also carry the new `*Since` constant and the `fugaro image refresh` path. A
   release that carried L3 without E1 would ship a launch that fails in the container, which the HARD RULE
-  forbids. Nothing here needs a `### For operators` step beyond "run `fugaro update`".
+  forbids. L9 adds a command, not a step: `fugaro update` still converges an installation on its own, and
+  nothing in this work asks an operator to run anything.
