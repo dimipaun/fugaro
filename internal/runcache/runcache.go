@@ -63,13 +63,21 @@ const (
 	// entries nobody has read for longest are dropped.
 	MaxBytes = 64 << 20
 
-	// maxObject caps one entry. Every object this cache holds is one a run
-	// listing reads under runstore's own record cap, so an entry larger than
-	// that is not one the bucket handed out -- a file of another version, or
-	// one put there by hand -- and serving it would have the CLI decode an
-	// object the bucket itself refuses (runstore.ErrTooLarge), past the bound
-	// that keeps a run's own object from exhausting the operator's memory.
+	// maxObject caps one entry's object. Every object this cache holds is one
+	// a run listing reads under runstore's own record cap, so an entry whose
+	// object is larger than that is not one the bucket handed out -- a file
+	// of another version, or one put there by hand -- and serving it would
+	// have the CLI decode an object the bucket itself refuses
+	// (runstore.ErrTooLarge), past the bound that keeps a run's own object
+	// from exhausting the operator's memory.
 	maxObject = runstore.MaxRecordBytes
+
+	// maxEntry is the largest file an entry within maxObject can be. The
+	// object's bytes are base64 in the JSON envelope, so the file is a third
+	// larger than the object, and the rest is the fixed fields that place it.
+	// A file past this is refused on its size alone, before a byte of it is
+	// read: what the bucket bounds at the read, the cache bounds at the stat.
+	maxEntry = maxObject/3*4 + 64<<10
 )
 
 // Cache is one project's run-object cache: a directory of entries, each holding
@@ -126,16 +134,27 @@ func Open(getenv func(string) string, project, bucket string) (*Cache, error) {
 // Get answers the bytes of the object name at generation gen, when the cache
 // holds them. Every other answer is a miss with no error: another generation,
 // another object, another bucket, a file that is not an entry at all, an
-// entry past the read cap (maxObject), and a cache that could not be placed.
-// A miss always means the caller reads the bucket -- and the caller's own
-// read is what enforces the cap, so an entry larger than it is answered the
-// way the bucket answers the object: with a read of the bucket, never with
-// bytes no read of the bucket would have handed out.
+// entry whose object is past the read cap (maxObject), a file past the size
+// any entry can be (maxEntry), and a cache that could not be placed. A miss
+// always means the caller reads the bucket -- and the caller's own read is
+// what enforces the cap, so an entry larger than it is answered the way the
+// bucket answers the object: with a read of the bucket, never with bytes no
+// read of the bucket would have handed out.
+//
+// The size is the one the filesystem reports, read before the file is: a
+// file too large to be an entry is refused without being read into memory,
+// which is the bound the bucket keeps on its own reads. What the file holds
+// is what decides the entry, so the object inside is measured again once it
+// has been read.
 func (c *Cache) Get(name string, gen int64) ([]byte, bool) {
 	if c == nil {
 		return nil, false
 	}
 	path := c.path(name)
+	info, err := os.Stat(path)
+	if err != nil || info.Size() > maxEntry {
+		return nil, false
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false

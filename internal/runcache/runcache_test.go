@@ -143,6 +143,42 @@ func TestAnEntryOfAnotherBucketIsNotAnswered(t *testing.T) {
 	}
 }
 
+// TestAnOversizedFileIsRefusedWithoutBeingRead: an entry is refused on the
+// size the filesystem reports, before its bytes are read into memory. The
+// file below is a perfectly good entry -- one object, under every cap, with
+// trailing space after it, which json.Unmarshal ignores -- in a file larger
+// than any entry can be. What refuses it is the file's size alone, so the
+// refusal costs no read of a file that could be arbitrarily large; the
+// object inside a file that is read is measured again
+// (TestAnEntryPastTheReadCapIsNotServed).
+func TestAnOversizedFileIsRefusedWithoutBeingRead(t *testing.T) {
+	c, _ := testCache(t, t.TempDir(), "aurora", "fugaro-runs")
+	name := "runs/app/20261018-090000-0000/result.json"
+	c.Put(name, 3, []byte(`{"version":1,"repo":"owner/repo-a"}`))
+	whole, err := os.ReadFile(c.path(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded := append(whole, bytes.Repeat([]byte(" "), maxEntry)...)
+	if len(padded) <= maxEntry {
+		t.Fatalf("the padded entry is %d bytes, want one past the %d any entry can be", len(padded), maxEntry)
+	}
+	if err := os.WriteFile(c.path(name), padded, filePerm); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := c.Get(name, 3); ok {
+		t.Errorf("a file of %d bytes answered %q: an entry past what any entry can be is refused on its size", len(padded), got)
+	}
+	// The same bytes without the padding are the entry they always were: the
+	// object is the entry's own, under every cap.
+	if err := os.WriteFile(c.path(name), whole, filePerm); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := c.Get(name, 3); !ok || !bytes.Contains(got, []byte("owner/repo-a")) {
+		t.Errorf("the unpadded entry answered %q, %v", got, ok)
+	}
+}
+
 // TestACorruptEntryIsRebuilt: an entry the cache cannot read is a miss, and
 // the read that follows rewrites it. The whole directory is rebuildable, so
 // a torn file -- a killed process, a full disk, a hand-edit -- costs one
