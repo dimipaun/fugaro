@@ -104,8 +104,15 @@ import type {
   SpendReader,
 } from './screens/spend'
 import { CACHE_FRESH_MS, CACHE_LIMIT, cacheKey, renderStamp, resultCache, sectionRead } from './section'
-import { PROJECTS_SHAPE, SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE } from './skeleton'
-import { buildCoordinatorModel, renderCoordinator } from './screens/coordinator'
+import { COORDINATOR_SHAPE, PROJECTS_SHAPE, SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE } from './skeleton'
+import {
+  COORDINATOR_BUSY,
+  buildCoordinatorModel,
+  fillCoordinatorSummary,
+  renderCoordinatorFrame,
+  repoDetail,
+} from './screens/coordinator'
+import type { CoordinatorModel, DrawnCoordinatorFrame } from './screens/coordinator'
 import { PROJECTS_BUSY, buildProjectsModel, fillProjects, renderProjectsFrame } from './screens/projects'
 import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
@@ -2689,6 +2696,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * know. */
   let leaveSpend: () => void = () => undefined
 
+  /** leaveCoordinator is the same door for the Coordinator screen, and it also
+   * stops the chunks the screen's detail is drawn in: a repository that has not
+   * been drawn yet belongs to a tab nobody is looking at. */
+  let leaveCoordinator: () => void = () => undefined
+
   /** leaveProjects is the same door for the Projects screen's one section:
    * `showProjects` sets it. */
   let leaveProjects: () => void = () => undefined
@@ -2715,6 +2727,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // screen nobody is looking at is left armed.
     if (id !== 'spend') leaveSpend()
     if (id !== 'projects') leaveProjects()
+    if (id !== 'coordinator') leaveCoordinator()
     if (id === 'live') {
       maybeRefreshRigor()
       // A console that opened on an issue has made no Live read yet.
@@ -3989,6 +4002,37 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   // ---- Coordinator ------------------------------------------------------
 
+  /** coordinatorViews is what this session already read for the Coordinator
+   * screen: the stored view of every repository of one installation. It is
+   * memory and nothing else, and `forgetLive` empties it, so a view read for one
+   * installation is never drawn under another. */
+  const coordinatorViews = resultCache<CoordinatorModel>(CACHE_LIMIT)
+
+  /** coordinatorRead is the screen's own read lifecycle: one busy mark, one
+   * sequence token, one refusal -- the read is one document, the stored view of
+   * every repository at once. */
+  const coordinatorRead = sectionRead({ factory, theme })
+
+  /** coordinatorChunk is the timer the detail is drawn on. It is held here
+   * rather than inside a visit because leaving the tab has to stop it: the
+   * chunks draw into a tree the operator has left. */
+  let coordinatorChunk: ReturnType<typeof setTimeout> | null = null
+
+  /** stopCoordinatorChunks cancels the detail still to be drawn. */
+  const stopCoordinatorChunks = (): void => {
+    if (coordinatorChunk === null) return
+    clearTimeout(coordinatorChunk)
+    coordinatorChunk = null
+  }
+
+  /** leaveCoordinator ends the section's busy state and stops its chunks when the
+   * operator moves to another tab: nothing is in flight for a screen nobody is
+   * looking at. */
+  leaveCoordinator = () => {
+    stopCoordinatorChunks()
+    coordinatorRead.end()
+  }
+
   /**
    * showCoordinator reads the project view: one document, the coordinator's
    * stored view for every repository of the installation
@@ -4005,22 +4049,139 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * document this build cannot read is drawn with the skew's own sentence --
    * never as a view with nothing in it, which is the one reading a strict reader
    * exists to prevent.
+   *
+   * **The tab answers in the frame it was opened in** (the owner's rule of
+   * 2026-10-31). This is the longest read the console makes -- about 724 KB and
+   * thirteen seconds on the owner's installation -- so the frame goes up at once
+   * and the count of what the read is made of is on it: the source line and the
+   * console's sentence about the view's age are the console's own words and need
+   * no document. Under the frame's mark the body holds the shape of what is
+   * coming, and what the last visit drew stays dimmed rather than blanked.
+   *
+   * **The summary is painted the moment the document lands, and each
+   * repository's detail after it, one repository per chunk.** A document that
+   * lists hundreds of pull requests with their runs is the larger half of the
+   * drawing, so making all of it in the frame the decode returned in would
+   * freeze the window for as long as the drawing took; the chunks let the
+   * operator scroll and read the summary while the rest arrives. The sequence
+   * token is checked in every chunk as well as at the end of the read, so a
+   * repository drawn late never lands under another installation or another
+   * visit.
+   *
+   * **What this session already read is drawn instantly**, stamped `as of
+   * HH:MM` with a Refresh control, and a view older than `CACHE_FRESH_MS` is
+   * read again at once rather than served silently.
    */
   const showCoordinator = async (): Promise<void> => {
     const mine = claim()
-    placeReading('coordinator', mine)
-    const answer = documentOf(await bridge.coordinatorStatus({}))
-    if (stale(mine)) return
-    if (!answer.ok) {
-      refuse('coordinator.status', answer.sentence)
-      return
+    const project = railNow.find((row) => row.open)?.project ?? ''
+    const key = cacheKey([project, 'coordinator'])
+    const held = coordinatorViews.get(key)
+    let frame: DrawnCoordinatorFrame | null = null
+    let token = 0
+
+    /** mount draws the shell if it is not up yet, and answers it. The mark of a
+     * read that is still out goes up here, which is the only moment it can be
+     * drawn: the panel held another view's content until this call. */
+    const mount = (busy: boolean): DrawnCoordinatorFrame => {
+      if (frame !== null) return frame
+      const drawn = renderCoordinatorFrame(factory, theme)
+      frame = drawn
+      replace(drawn.root)
+      if (busy) coordinatorRead.mark(token, drawn.body, drawn.slot, COORDINATOR_BUSY, COORDINATOR_SHAPE)
+      return drawn
     }
-    const decoded = decodeCoordinatorStatus(answer.data, 'coordinator.status')
-    if (!decoded.ok) {
-      refuse('coordinator.status', decoded.skew.because)
-      return
+
+    /**
+     * paint draws the whole screen from a document: the summary in this frame,
+     * and one repository's detail per chunk after it.
+     *
+     * `cached` is whether this view came out of the session cache rather than
+     * out of a read made now: a cached view carries the console clock it was
+     * read at and the one control that reads it again.
+     */
+    const paint = (model: CoordinatorModel, at: number, cached: boolean): void => {
+      stopCoordinatorChunks()
+      const drawn = mount(false)
+      clearSection(drawn.body, drawn.slot)
+      if (cached) {
+        const stamp = renderStamp(factory, at)
+        appendTo(drawn.body, stamp.root)
+        surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+          start()
+        })
+      }
+      const details = fillCoordinatorSummary(factory, model, drawn.body)
+      let next = 0
+      const step = (): void => {
+        coordinatorChunk = null
+        // The chunk is a drawing of a view this visit may no longer own: the
+        // operator can have left the tab, or opened another installation, while
+        // it was queued. Laid out per repository anyway, because `details` is
+        // the order the summary drew them in and a detail must land under its
+        // own summary.
+        if (stale(mine)) return
+        const detail = details[next]
+        next += 1
+        if (detail === undefined) return
+        repoDetail(detail.host, factory, detail.panel)
+        if (next < details.length) coordinatorChunk = setTimeout(step, 0)
+      }
+      if (details.length > 0) coordinatorChunk = setTimeout(step, 0)
     }
-    replace(renderCoordinator(factory, buildCoordinatorModel({ view: decoded.value }), theme))
+
+    /** load makes the one read and paints it when it is still the latest. */
+    const load = async (readToken: number): Promise<void> => {
+      const answer = documentOf(await bridge.coordinatorStatus({}))
+      // The token is checked before anything is taken down, so a read from an
+      // earlier visit cannot end the *current* visit's mark.
+      if (!coordinatorRead.settle(readToken)) return
+      if (stale(mine)) return
+      if (!answer.ok) {
+        stopCoordinatorChunks()
+        const drawn = mount(false)
+        clearSection(drawn.body, drawn.slot)
+        appendTo(drawn.body, refusedScreen(factory, 'coordinator.status', answer.sentence, theme))
+        return
+      }
+      const decoded = decodeCoordinatorStatus(answer.data, 'coordinator.status')
+      if (!decoded.ok) {
+        stopCoordinatorChunks()
+        const drawn = mount(false)
+        clearSection(drawn.body, drawn.slot)
+        appendTo(drawn.body, refusedScreen(factory, 'coordinator.status', decoded.skew.because, theme))
+        return
+      }
+      const model = buildCoordinatorModel({ view: decoded.value })
+      const at = Date.now()
+      coordinatorViews.put(key, model, at)
+      paint(model, at, false)
+    }
+
+    /** start takes the sequence token for one read, puts the mark up in the
+     * frame's own section when the shell is already drawn, and makes the read. */
+    const start = (): void => {
+      token = coordinatorRead.start()
+      if (frame === null) mount(true)
+      else coordinatorRead.mark(token, frame.body, frame.slot, COORDINATOR_BUSY)
+      void load(token)
+    }
+
+    // The view this screen opens on, if this session has already read it, is
+    // drawn before anything is awaited -- which is the whole point of the cache.
+    // A view older than `CACHE_FRESH_MS` is stamped **and** read again at once
+    // rather than served silently. The frame is drawn either way, so the tab is
+    // never a blank panel while that read runs.
+    if (held === null) start()
+    else {
+      paint(held.value, held.at, true)
+      // The mark goes up **after** the drawing, and only for a view old enough to
+      // be read again: `paint` empties the section down to its slot, so a mark
+      // drawn before it would go out with the slot's own contents. A view still
+      // inside `CACHE_FRESH_MS` is served as it is, with its stamp and its
+      // Refresh, and no read at all.
+      if (Date.now() - held.at >= CACHE_FRESH_MS) start()
+    }
   }
 
   // ---- Run detail -------------------------------------------------------
@@ -4261,6 +4422,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // The Projects screen's view is the same kind of fact: it is this
     // installation's caps, and a cached one carries its figures.
     projectsViews.clear()
+    // And the Coordinator's: the stored view is one installation's own
+    // repositories, so a view read for another one is never drawn under it.
+    coordinatorViews.clear()
     // The graph is a picture of **one installation's** plan, laid out by a worker
     // this console started for it: both are dropped here, so the next
     // installation is drawn from its own document by its own engine rather than

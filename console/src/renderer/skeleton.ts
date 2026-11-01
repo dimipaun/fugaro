@@ -109,6 +109,23 @@ export const PROJECTS_SHAPE: SkeletonShape = Object.freeze({
   blocks: Object.freeze<SkeletonBlock[]>(['line', 'line', 'row', 'row', 'row', 'row', 'row', 'row']),
 })
 
+/**
+ * COORDINATOR_SHAPE is the shape of what the Coordinator screen's body holds
+ * while its read is out: a repository's name and counts, then the rows of the
+ * records and collisions under them. The header above that body -- the source
+ * line and the console's sentence about the view's age -- is drawn before the
+ * read answers, so it is not part of this shape: a skeleton over content that is
+ * already on screen would be a second drawing of the same section.
+ *
+ * It is one repository's shape and not one per repository, because the document
+ * says how many there are only once it lands; the shape is what the panel looks
+ * like while that is still unknown.
+ */
+export const COORDINATOR_SHAPE: SkeletonShape = Object.freeze({
+  section: 'coordinator',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row', 'row']),
+})
+
 /** SkeletonTab is the five views of the navigation, which is the whole list of
  * tabs a skeleton can be drawn for -- the same five `reading.ts`'s
  * `READING_WORDS` names and `entry.ts`'s `VIEWS` offers. It is declared here and

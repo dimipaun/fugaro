@@ -122,7 +122,16 @@ import {
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
 } from '../../src/renderer/section'
-import { SKELETON_BLOCK_CLASS, SKELETON_CLASS, SKELETON_SHAPES } from '../../src/renderer/skeleton'
+import {
+  COORDINATOR_SHAPE,
+  PROJECTS_SHAPE,
+  SKELETON_BLOCK_CLASS,
+  SKELETON_CLASS,
+  SKELETON_SHAPES,
+} from '../../src/renderer/skeleton'
+import { COORDINATOR_BUSY } from '../../src/renderer/screens/coordinator'
+import { PROJECTS_BUSY } from '../../src/renderer/screens/projects'
+import type { SkeletonShape } from '../../src/renderer/skeleton'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
   LAUNCH_FORM_CLASS,
@@ -2825,14 +2834,17 @@ describe('the placeholder a tab switch draws', () => {
     // The defect this fix is for: `show` marked the tab and started its read,
     // and the panel kept the Graph's refusal -- a screen naming one read, under
     // a tab that asked for another -- for as long as the new read took.
+    const runs = holding()
     const budget = holding()
     const report = holding()
-    const runs = holding()
     const coordinator = holding()
     const { bridge } = graphBridge({
       planStatus: () => ({ ok: false, reason: GRAPH_REFUSAL }),
       showBudget: () => budget.reply(),
       runReport: () => report.reply(),
+      // The run list is **held and never released**: no tab of this case may
+      // read it, so a screen that did would answer its own refusal below rather
+      // than the sentence this case is about.
       listRuns: () => runs.reply(),
       coordinatorStatus: () => coordinator.reply(),
       statsRuns: () => ({ ok: false, reason: REPORT_REFUSAL }),
@@ -2865,27 +2877,34 @@ describe('the placeholder a tab switch draws', () => {
     expect(holdsText(panelOf(document), READING_STILL)).toBe(false)
 
     // ---- Projects --------------------------------------------------------
+    // Projects draws its own frame in the click's frame and reads one document,
+    // `budget show` -- which this session has already refused, so the refusal is
+    // the whole of what the tab has to draw. What matters here is that the
+    // Graph's sentence is not on it and that the run list is not one of the reads
+    // it names (`the Projects screen reads` below holds the read it makes).
     buttonFor(document, 'projects').click()
     await flush()
-    expect(readingOf(document)).toContain('Reading Projects…')
-    expect(operationOf(document)).toBe(null)
-    await vi.advanceTimersByTimeAsync(READING_STILL_MS)
-    expect(readingOf(document)).toContain(READING_STILL)
-
-    runs.release({ ok: false, reason: RUNS_REFUSAL })
-    await flush()
-    expect(readingOf(document), 'the Projects screen never landed').toBe(null)
-    expect(holdsText(panelOf(document), RUNS_REFUSAL), 'the run list’s own sentence is missing').toBe(true)
+    expect(operationOf(document), 'the Projects screen drew no refusal of its own').toBe('budget.show')
+    expect(holdsText(panelOf(document), BUDGET_REFUSAL)).toBe(true)
     expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
     // The panel names the reads the screen made and no other read.
     expect(holdsText(panelOf(document), 'plan.status')).toBe(false)
+    expect(holdsText(panelOf(document), 'runs.list'), 'the run list is not a read of this screen').toBe(
+      false,
+    )
 
     // ---- Coordinator -----------------------------------------------------
+    // The Coordinator is the one tab of these whose read is still out: its frame
+    // -- the source line and the console's sentence about the view's age -- is up
+    // in the click's frame, with its section's mark over the shape of what is
+    // coming.
     buttonFor(document, 'coordinator').click()
     await flush()
-    expect(readingOf(document)).toContain('Reading Coordinator…')
+    expect(busyLabels(document), 'the Coordinator drew no mark of its own').toContain(COORDINATOR_BUSY)
+    expect(operationOf(document), 'the Graph’s refusal outlived its tab').toBe(null)
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
     await vi.advanceTimersByTimeAsync(READING_STILL_MS)
-    expect(readingOf(document)).toContain(READING_STILL)
+    expect(holdsText(panelOf(document), READING_STILL), 'the mark never said the read was slow').toBe(true)
 
     coordinator.release({ ok: false, reason: COORDINATOR_REFUSAL })
     await flush()
@@ -3032,6 +3051,20 @@ describe('the skeleton a tab draws while its data is on its way', () => {
     vi.unstubAllGlobals()
   })
 
+  /** ownShape is the one section of a tab that draws **its own frame** in the
+   * click's frame rather than the panel's placeholder: Projects (`budget show`)
+   * and the Coordinator (the stored view), which have something true to draw
+   * before their read answers -- the command the panel is reading and, for the
+   * Coordinator, the console's sentence about the view's age -- so a placeholder
+   * standing in for the whole screen would be a shape over a header the console
+   * already knows. The other three wait as a panel, and their sections are
+   * `SKELETON_SHAPES[tab]`. */
+  const ownShape = (tab: string): SkeletonShape | null => {
+    if (tab === 'projects') return PROJECTS_SHAPE
+    if (tab === 'coordinator') return COORDINATOR_SHAPE
+    return null
+  }
+
   it('draws each tab’s sections, in the order the tab draws them, in the click’s own frame', async () => {
     for (const tab of Object.keys(READING_WORDS) as readonly (keyof typeof READING_WORDS)[]) {
       const { bridge } = everyReadHeld()
@@ -3040,16 +3073,33 @@ describe('the skeleton a tab draws while its data is on its way', () => {
       // **Nothing is awaited**: the whole point of the shape is that it is up in
       // the frame the click happened in, not a turn later when the read the
       // click started has already answered in a test.
+      const own = ownShape(tab)
       expect(skeletonsOf(document), `the ${tab} tab drew no skeleton in the click’s own frame`).toEqual(
-        SKELETON_SHAPES[tab].map((shape) => shape.section),
+        own === null ? SKELETON_SHAPES[tab].map((shape) => shape.section) : [own.section],
       )
       // The sentence a reader is told is still drawn -- visually hidden beside
       // the shapes rather than printed over them -- and the blocks hold the shape
-      // of the section they stand in for.
-      expect(readingOf(document), `the ${tab} placeholder lost its sentence`).toContain(
-        `Reading ${READING_WORDS[tab]}…`,
-      )
-      for (const shape of SKELETON_SHAPES[tab]) {
+      // of the section they stand in for. A tab that draws its own frame says
+      // what it is reading in that frame's own mark instead: the mark's label is
+      // the sentence, and the frame's source line is above it.
+      if (own === null) {
+        expect(readingOf(document), `the ${tab} placeholder lost its sentence`).toContain(
+          `Reading ${READING_WORDS[tab]}…`,
+        )
+      } else {
+        expect(busyLabels(document), `the ${tab} tab drew no mark of its own`).toContain(
+          tab === 'projects' ? PROJECTS_BUSY : COORDINATOR_BUSY,
+        )
+        const root = classed(panelOf(document), tab)[0]
+        expect(root, `the ${tab} tab drew no screen of its own`).toBeDefined()
+        expect(
+          everyNode(root as FakeNode).some(
+            (node) => node.attributes.get(BUSY_BUSY_ATTRIBUTE) === 'true',
+          ),
+          `the ${tab} screen’s own section is not marked busy`,
+        ).toBe(true)
+      }
+      for (const shape of own === null ? SKELETON_SHAPES[tab] : [own]) {
         expect(blocksOf(document, shape.section), `${tab}'s ${shape.section} drew the wrong blocks`).toEqual([
           ...shape.blocks,
         ])
@@ -3828,9 +3878,15 @@ describe('a read that lands after the operator left its tab', () => {
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, view).click()
     await flush()
-    expect(readingOf(document), `the ${view} tab drew no placeholder: the case proves nothing`).toContain(
-      'Reading',
-    )
+    // The non-vacuity guard: the tab the case opens has drawn something of its
+    // own before the late read lands -- the panel's placeholder for a tab that
+    // waits that way, or the screen's own frame with a section marked busy for
+    // one that draws its frame in the click's frame (Projects, the Coordinator).
+    const drew =
+      readingOf(document) !== null ||
+      everyNode(panelOf(document)).some((node) => node.attributes.get(BUSY_ATTRIBUTE) === 'true') ||
+      operationOf(document) !== null
+    expect(drew, `the ${view} tab drew nothing of its own: the case proves nothing`).toBe(true)
     buttonFor(document, 'live').click()
     await flush()
     const chosen = panelOf(document).children[0] as FakeNode
@@ -3853,15 +3909,19 @@ describe('a read that lands after the operator left its tab', () => {
   })
 
   it('never draws the Projects screen over the tab the operator moved to', async () => {
-    const runs = holding()
+    // The read is `budget show` and it is the tab's **only** one: the run list
+    // this case used to hold is not a read of this screen any more (the owner's
+    // report of 2026-10-31), so what can land after the operator has moved on is
+    // the budget's own answer.
+    const budget = holding()
     const { bridge } = graphBridge({
       subscribeLive: () => snapshotReply(liveFrame()),
-      listRuns: () => runs.reply(),
+      showBudget: () => budget.reply(),
     })
     const { document, chosen } = await leftBehind(bridge, 'projects')
-    runs.release(runsReply())
+    budget.release({ ok: true, data: { document: {} } })
     await flush()
-    expect(panelOf(document).children[0], 'a late run list replaced the view on screen').toBe(chosen)
+    expect(panelOf(document).children[0], 'a late budget read replaced the view on screen').toBe(chosen)
   })
 
   it('never draws the plan over the tab the operator moved to', async () => {
@@ -4039,9 +4099,9 @@ describe('a read that lands after the operator left its tab', () => {
     await flush()
     const chosen = panelOf(document).children[0] as FakeNode
     expect(
-      chosen.attributes.get('data-kind'),
-      'the Projects tab drew no placeholder: the case proves nothing',
-    ).toBe('reading')
+      chosen.attributes.get('class'),
+      'the Projects tab drew nothing of its own: the case proves nothing',
+    ).toBe('projects')
 
     diagnosis.release({ ok: true, data: { document: {} } })
     await flush()
@@ -4074,9 +4134,9 @@ describe('a read that lands after the operator left its tab', () => {
     await flush()
     const chosen = panelOf(document).children[0] as FakeNode
     expect(
-      chosen.attributes.get('data-kind'),
-      'the Projects tab drew no placeholder: the case proves nothing',
-    ).toBe('reading')
+      chosen.attributes.get('class'),
+      'the Projects tab drew nothing of its own: the case proves nothing',
+    ).toBe('projects')
 
     link.release({ ok: true, data: 'https://logs.example/one-run' })
     await flush()
