@@ -428,12 +428,13 @@ func tempRootsOf(tempRoots [][]string) []string {
 
 // InTempRoots reports whether path is one of roots or inside one: the rule
 // that says a path is the machine's own scratch space rather than a checkout
-// this machine remembers or reads from. The writer refuses such a path
-// (RecordCheckout), the pruning drops a row under one, and the read reports one
-// invalid (internal/cli/config_list.go) — one rule, so the three cannot drift.
+// this machine remembers. The writer refuses such a path (RecordCheckout) and
+// the pruning drops a row under one — one rule, so the two cannot drift. The
+// read refuses a row under one as well, from the row's own string and without
+// resolving anything (InTempRootsAsWritten).
 //
-// Both sides are judged twice, as written and as they resolve, and either
-// verdict is enough:
+// The path is judged twice, as written and as it resolves, and either verdict
+// is enough:
 //
 //   - As written, because a path that is a link out of a temporary directory
 //     is still a path under it. An agent's scratchpad is made in the temporary
@@ -443,9 +444,7 @@ func tempRootsOf(tempRoots [][]string) []string {
 //   - As it resolves, because on darwin the temporary directory is reached
 //     through a link: os.TempDir() is /var/folders/... while git answers with
 //     /private/var/folders/..., so a path recorded in one spelling and a root
-//     named in the other are the same directory and must compare equal. The
-//     same holds for a root: it is resolved too, and both of its spellings are
-//     compared (a test names its own roots, and one of them may be a link).
+//     named in the other are the same directory and must compare equal.
 //
 // A path that is gone is compared as it is written, since a link cannot be
 // resolved once what it points at is gone — which is why the caller's list
@@ -457,6 +456,25 @@ func InTempRoots(path string, roots []string) bool {
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	return err == nil && underAnyRoot(resolved, roots)
+}
+
+// InTempRootsAsWritten is the same rule judged without resolving the path: no
+// link is followed and nothing of the row itself is looked at, so the verdict
+// costs the row no filesystem access at all and a path that is not there is
+// refused exactly like one that is. It is what the read decides a row by
+// (internal/cli/config_list.go), where the row is a string this machine did
+// not write and the reason is the contract's first: the row is refused for
+// what it says, before anything is stat'ed and before any git runs in it.
+//
+// It is enough there because a scratchpad an agent made is a path *in* the
+// temporary directory, which is a fact of the string. The writer judges the
+// resolved path too (InTempRoots) — it must not record a link out of a
+// temporary directory either — and no row it refuses can be written again, so
+// the two differ only about a row already in the file that names a link into
+// the temporary directory from outside it, which neither this build nor the
+// one before it ever recorded.
+func InTempRootsAsWritten(path string, roots []string) bool {
+	return underAnyRoot(path, roots)
 }
 
 // underAnyRoot is the comparison itself: path, cleaned, against every root,

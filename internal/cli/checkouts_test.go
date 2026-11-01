@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,15 @@ import (
 // test (internal/localcfg/checkouts_test.go), and this package's own half of it
 // — that a checkout is remembered at all — is TestACommandInACheckoutRecordsIt.
 func init() { checkoutTempRoots = func() []string { return nil } }
+
+// prodCheckoutTempRoots is the list a real binary's recording path passes,
+// captured here because the init above replaces the variable for the whole
+// package: a package-level variable is initialised before any init function
+// runs, so this holds the CLI's own list (tempxdg.go's tempRoots) rather than
+// the test's empty one. Without it the production list — the thing the
+// temporary-directory rule actually stands on — would be unpinned in this
+// package, where every test either passes its own list or none.
+var prodCheckoutTempRoots = checkoutTempRoots
 
 // checkoutsYAML is a fugaro.yaml that validates cleanly, so the recording
 // tests run a command that succeeds and can only fail by what it does beside
@@ -141,6 +151,54 @@ func TestACommandInACheckoutRecordsIt(t *testing.T) {
 	r, ok := known.Projects["aurora"]["github/acme/app"]
 	if !ok || len(r.Paths) != 1 || r.Paths[0].Path != co {
 		t.Fatalf("aurora's checkouts = %+v, want the checkout validate ran in", known.Projects)
+	}
+}
+
+// TestTheProductionTempRootsCoverTheMachinesTempDirs: the list a real binary
+// passes names the temporary directories a checkout can be made in on this
+// platform, so a scratchpad is refused wherever the machine puts it. The fixed
+// /tmp and /private/tmp are in it on purpose: TMPDIR can point somewhere else
+// entirely, and a list that read only $TMPDIR would remember a checkout under
+// /tmp. An empty list would leave every scratchpad remembered, and nothing
+// else in this package would notice — the tests here pass their own list.
+func TestTheProductionTempRootsCoverTheMachinesTempDirs(t *testing.T) {
+	roots := prodCheckoutTempRoots()
+	if len(roots) == 0 {
+		t.Fatal("the CLI's temporary roots are empty: a scratchpad would be remembered")
+	}
+	paths := []string{filepath.Join(os.TempDir(), "scratch", "app")}
+	if runtime.GOOS != "windows" {
+		// /tmp and /private/tmp are one directory on macOS, and neither is a
+		// temporary directory on Windows.
+		paths = append(paths, "/tmp/scratch/app", "/private/tmp/scratch/app")
+	}
+	for _, p := range paths {
+		if !localcfg.InTempRoots(p, roots) {
+			t.Errorf("%s is not under %v, want the list a real binary passes to cover it", p, roots)
+		}
+	}
+}
+
+// TestACommandInATempDirRecordsNothing: the whole recording path, with the
+// list a real binary passes rather than a test's own. Every checkout a test
+// can make is under the machine's temporary directory, so this is the
+// scratchpad case as it happens in production: a command runs in a checkout of
+// an enrolled repository, and the state file is not even created.
+func TestACommandInATempDirRecordsNothing(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	statePath, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := checkoutTempRoots
+	checkoutTempRoots = prodCheckoutTempRoots
+	t.Cleanup(func() { checkoutTempRoots = restore })
+	if _, err := checkoutProject(context.Background(), co); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a command in a temporary directory wrote %s (stat: %v)", statePath, err)
 	}
 }
 
@@ -480,12 +538,65 @@ func TestRecordCheckoutSkipsLinkedWorktree(t *testing.T) {
 	}
 }
 
+// TestConfigListRefusesARowUnderATempDir: the read refuses a row whose path is
+// under the machine's temporary directory, with the reason the contract
+// decides from the row's own strings and before anything touches the disk
+// (not_representable, console/docs/json-contract.md §6.8). No stat and no git
+// runs for such a row: the first path below is not there at all, so a read
+// that looked would call it missing, and the second is a live checkout of the
+// enrolled repository, so a read that looked would call it valid. Both are
+// refused for the one reason, and neither is dropped — the row stays for the
+// next write to prune.
+//
+// The list is the production one (prodCheckoutTempRoots), which this package's
+// tests otherwise turn off: a row under a temporary directory is what an older
+// fugaro recorded, before the writer refused them, and this is the read
+// catching it. It is what the console is offered as an installation's working
+// directory, and a live scratchpad an agent made is exactly what must not be.
+func TestConfigListRefusesARowUnderATempDir(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	restore := checkoutTempRoots
+	checkoutTempRoots = prodCheckoutTempRoots
+	t.Cleanup(func() { checkoutTempRoots = restore })
+
+	gone := filepath.Join(os.TempDir(), "scratch-not-there", "app")
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	configListWriteState(t, `{"version": 1, "projects": {"aurora": {"github/acme/app": {`+
+		`"provider": "github", "repo": "acme/app", "recorded_at": "`+stamp+`", "paths": [`+
+		`{"path": "`+gone+`", "recorded_at": "`+stamp+`"},`+
+		`{"path": "`+co+`", "recorded_at": "`+stamp+`"}]}}}}`+"\n")
+	before := configListState(t)
+
+	doc, _ := configListJSON(t)
+	got := configListCheckoutsOf(t, doc, "aurora")
+	byPath := map[string]configListCheckout{}
+	for _, c := range got {
+		byPath[c.Path] = c
+	}
+	if c, ok := byPath[gone]; !ok || c.Valid || c.Reason != checkoutNotRepresentable {
+		t.Errorf("the row for a path under a temporary directory that is not there = %+v, want valid false and reason %q: the read never looks at it", c, checkoutNotRepresentable)
+	}
+	if c, ok := byPath[co]; !ok || c.Valid || c.Reason != checkoutNotRepresentable {
+		t.Errorf("the row for a live checkout under a temporary directory = %+v, want valid false and reason %q", c, checkoutNotRepresentable)
+	}
+	if after := configListState(t); after != before {
+		t.Errorf("config list rewrote the remembered checkouts:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
 // TestConfigListNeverWrites: the pruning is the writer's, and the read is
 // where the console sees what this machine remembers. A read re-validates
 // every path and reports what it finds — a stale path is still there for the
 // operator to see, and still there if the directory comes back — and it drops
 // nothing and writes nothing, not even the rows the next write is going to
 // prune. A state file that does not exist stays that way.
+//
+// The scratchpad row is reported as it stands here because this package's
+// tests turn the temporary-directory rule off (see init), so this row is
+// looked at like any other: what this test shows about it is that the read
+// does not drop it, which is the subject here. What the read says about one is
+// TestConfigListRefusesARowUnderATempDir, where the rule is on.
 func TestConfigListNeverWrites(t *testing.T) {
 	dir := checkoutsFixture(t)
 	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
@@ -523,7 +634,7 @@ func TestConfigListNeverWrites(t *testing.T) {
 		byPath[c.Path] = c
 	}
 	if c := byPath[scratch]; !c.Valid || c.Reason != "" {
-		t.Errorf("the row under a temporary directory = %+v, want it reported as it stands: the temporary-directory rule is the writer's", c)
+		t.Errorf("the row under a temporary directory = %+v, want it reported as it stands: this read drops nothing, whatever the next write would prune", c)
 	}
 	if c := byPath["/src/gone/app"]; c.Valid || c.Reason != checkoutMissing {
 		t.Errorf("the long-missing row = %+v, want valid false and reason %q", c, checkoutMissing)
