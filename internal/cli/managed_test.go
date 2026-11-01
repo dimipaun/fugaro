@@ -737,6 +737,13 @@ var propertyAgentSites = map[string]string{
 	// The policy stage refuses a marker itself rather than leaning on the
 	// loop's gate: it is SelfConfirming, so the loop would call it.
 	"init_policy_migrate.go Apply": "TestUpdatePolicyMigrationRefusedInAgentSession",
+	// The re-pin is not a confirmation and refuses nothing: it SKIPS under a
+	// marker, because the engine stages are planned in an agent's session and
+	// the run continues. What must not happen there is cosign and the registry
+	// running with the operator's ADC, and that is what the first test drives.
+	// The second one drives the same function WITHOUT a marker, so the two
+	// together say the skip is the marker's and not a site that does nothing.
+	"init_stages.go pinCredentialsImage": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate (with none)",
 }
 
 // outsideAgentSites are the agent-marker sites the property does not cover,
