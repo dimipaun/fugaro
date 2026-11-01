@@ -32,18 +32,10 @@ func TestMain(m *testing.M) {
 // package starts from a clean git config environment, harness or not.
 func dropInheritedGitConfig() {
 	for _, kv := range os.Environ() {
-		if k, _, _ := strings.Cut(kv, "="); isGitConfigEnv(k) {
+		if k, _, _ := strings.Cut(kv, "="); testutil.IsGitConfigEnv(k) {
 			os.Unsetenv(k)
 		}
 	}
-}
-
-// isGitConfigEnv reports whether k is a name git reads configuration from the
-// environment under (git-config(1)): the count and its numbered pairs, and the
-// GIT_CONFIG_PARAMETERS git's own -c builds.
-func isGitConfigEnv(k string) bool {
-	return k == "GIT_CONFIG_COUNT" || k == "GIT_CONFIG_PARAMETERS" ||
-		strings.HasPrefix(k, "GIT_CONFIG_KEY_") || strings.HasPrefix(k, "GIT_CONFIG_VALUE_")
 }
 
 // TestGitConfigEnvironmentIsInheritedNoMore: a test in this package runs git
@@ -59,7 +51,7 @@ func isGitConfigEnv(k string) bool {
 func TestGitConfigEnvironmentIsInheritedNoMore(t *testing.T) {
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if isGitConfigEnv(k) {
+		if testutil.IsGitConfigEnv(k) {
 			t.Errorf("%s is in the environment of a test in this package: git reads it in every call the test makes", k)
 		}
 	}
