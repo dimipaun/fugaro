@@ -16,9 +16,10 @@
 //     one the design's allow-list admits fails the test named for it;
 //   - a mutating command missing from `NEVER_REACHABLE` fails the completeness
 //     test named for it, so the never table cannot fall behind the CLI tree;
-//   - `--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch`,
-//     `--plain`, `--poll`, `--ascii` or `--no-color` fixed by an operation
-//     fails the flag tests; `--url` together with `--json` fails the pairing
+//   - `--follow`, `--check-github-app`, `--check-bitbucket-token`, `--strict`,
+//     `--csv`, `--watch`, `--plain`, `--poll`, `--ascii` or `--no-color` fixed
+//     by an operation fails the flag tests; `--url` together with `--json`
+//     fails the pairing
 //     test; and each of those flags has a test *named for it* that fails when
 //     its never-table row is renamed away, so a row cannot be deleted quietly;
 //   - an event from any frame but the console's own top frame -- a subframe, a
@@ -887,6 +888,9 @@ describe("the allow-list's read-only invariant", () => {
     expect(isNeverReachable({ command: 'doctor', flags: ['--json', '--check-github-app'] })?.value).toBe(
       '--check-github-app',
     )
+    expect(
+      isNeverReachable({ command: 'doctor', flags: ['--json', '--check-bitbucket-token'] })?.value,
+    ).toBe('--check-bitbucket-token')
     expect(isNeverReachable({ command: 'logs', flags: ['--json', '--follow'] })?.value).toBe('--follow')
     expect(isNeverReachable({ command: 'runs ls', flags: ['--json', '--watch'] })?.value).toBe('--watch')
     // `runs ls` is not `run`: the command rows match exactly, and the allow-list
@@ -1024,7 +1028,7 @@ describe('the never-reachable table', () => {
   // One test per flag row, named for the flag: the loop at the top of this
   // describe iterates the table, so a row *deleted* from it takes its test with
   // it and the suite stays green. These fail instead.
-  for (const flag of ['--follow', '--check-github-app', '--strict', '--csv', '--watch', '--plain', '--poll', '--ascii', '--no-color']) {
+  for (const flag of ['--follow', '--check-github-app', '--check-bitbucket-token', '--strict', '--csv', '--watch', '--plain', '--poll', '--ascii', '--no-color']) {
     it(`carries a never-table row for ${flag}`, () => {
       const row = NEVER_REACHABLE.find((candidate) => candidate.shape === 'flag' && candidate.value === flag)
       expect(row, flag).toBeDefined()

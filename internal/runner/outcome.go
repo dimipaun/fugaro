@@ -53,11 +53,15 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		return false, "no review verdict"
 	case last.Verdict == "none":
 		// A review round that produced no parseable verdict, after the retry
-		// the loop gives it (seniorLoop): it is recorded and let through, so a
-		// reviewer that answered nothing does not fail a run whose work is
-		// otherwise complete. It is not a tolerance of findings — there are
-		// none — so the mode has no say in it and the reason says so.
-		return true, fmt.Sprintf("review round %d returned no parseable verdict: tolerated", last.Round)
+		// the loop gives it (seniorLoop), is not a tolerance of findings: it
+		// asked for nothing, so nothing is fabricated into a blocker, no fix
+		// round is spent on it and the mode has no say in it. It is not a
+		// review either, and a run nobody read is not one this rule marks
+		// ready — the round's answer comes from a diff the run's own coder
+		// wrote, and a coder that can make the reviewer answer nothing twice
+		// would otherwise have its work shipped unread. The pull request stays
+		// a draft and the reason says which round it was (reviewsPart).
+		return false, fmt.Sprintf("review round %d returned no parseable verdict after a retry", last.Round)
 	case last.Verdict != "ship":
 		if pol.tolerates(last) && !pol.raisedAfterReview() {
 			return true, fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode)

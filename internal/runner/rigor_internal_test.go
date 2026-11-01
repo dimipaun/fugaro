@@ -392,7 +392,7 @@ func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
   default: startup
   areas:
     - { name: payments, match: "internal/payments/**", mode: critical }
-    - { name: ledgers, match: "internal/payments/**", mode: startup }
+    - { name: ledgers, match: "internal/**", mode: startup }
 `
 	for _, tc := range []struct {
 		name  string

@@ -25,7 +25,8 @@ seven steps:
 Steps 1, 2, 5 and 6 are the four the owner called out: two files edited by hand, and two commands that
 are not `fugaro update`. Steps 3 and 4 are Anthropic's login and Fugaro's own store, which the owner
 wants **merged into one act** ("a `--claude` flag that runs `claude setup-token`, captures the token and
-sets it").
+sets it"). **The answer is §3, and it is not a capture:** `--claude` is two acts — the login in the
+owner's own terminal, then one hidden paste (D862, answered 2026-10-31).
 
 Everything below replaces those seven with one invocation.
 
@@ -70,12 +71,15 @@ and the definition differ, and this command is the definition.
   account is declared and its token stored, and the command says in one line that no project job serves
   it (a per-repository job that selects it by `agent.oauth_token` is served by its own repository's
   root, §2.5).
-- **`--claude`** — take the token from Anthropic's own login instead of a paste (§3).
+- **`--claude`** — run Anthropic's own `claude setup-token` login in the owner's own terminal first,
+  and then take the token from the hidden paste (§3). It changes nothing about how the token is read:
+  the hidden prompt is still the only source.
 - **`--token-stdin`** — take the token from stdin, exactly as `fugaro secrets set <name>` does
   (`readSecret`, `internal/cli/secrets.go`). It exists for the owner's own scripts; it is never a value
   on the command line, and the flag carries no value.
-- **`--yes`** — skip the confirmation of the printed diff (§2.6). It never replaces a typed
-  confirmation, and it never applies in a coding agent's session (§2.4).
+- **`--yes`** — answer the one confirmation for everything the command is about to write (§2.6),
+  including a widening of `allow_data_to`. It does not apply in a coding agent's session: that refusal
+  stands, and the command never works around it (§2.4).
 - There is **no `--json`**: the command's whole output is a diff a person reads at a terminal, and it is
   refused where no person is (§2.4). The machine-readable surface stays `fugaro accounts ls --json`
   (`accountsListDoc`, `internal/cli/accounts.go`).
@@ -99,8 +103,9 @@ stopped:
    the profile's list, naming each repository the account is missing and the `--repos` that would
    include it. The alternative — widening the account silently — is the one thing the subset rule
    exists to prevent.
-3. **Read the token.** The hidden prompt, stdin, or the login (§3). Nothing is written before this
-   succeeds.
+3. **Read the token.** The hidden prompt, or stdin. With `--claude`, act one runs the login first, in
+   the owner's own terminal, and this step is the one paste that follows it (§3) — the login's output
+   is never a source. Nothing is written before this succeeds.
 4. **Write the local config.** `claude_accounts.<name>.allow_data_to`, then the profile's
    `claude_accounts` list, through the shared comment-preserving editor (§2.3). The old file is backed
    up and the new one written atomically, through the update package's own helpers (§2.6).
@@ -192,6 +197,27 @@ Three consequences the implementation must hold:
 
 ### 2.6 What it prints, and what it never prints
 
+**The confirmation (D868).** Before anything is written — before the local config, the secret and the
+stages — the command prints the facts below as one confirmation, and this is the text **`--yes` stands
+for**:
+
+```console
+$ fugaro accounts add team-a --repos owner/repo-a,owner/repo-b
+This will, for account team-a:
+  declare   claude_accounts.team-a.allow_data_to = [owner/repo-a, owner/repo-b]
+  profile   profiles.standard.claude_accounts += team-a
+  secret    write a new version of claude-oauth-token-team-a (project-wide)
+  publish   policy node: accounts.team-a.allow_repos = [github/owner/repo-a, github/owner/repo-b]
+  deploy    + standard/github/team-a (and its service account)
+  allow     a launcher that may start a run on owner/repo-b can have that run print team-a's token
+Write these changes? [y/N]
+```
+
+The last line is printed **only when `allow_data_to` gains a repository beyond the default** (the
+checkout the command runs in), because that is the widening the typed confirmation used to gate; the
+rest of the block is always shown, so a confirmation is never a bare `y`. The command proceeds on `y`
+and writes nothing on anything else.
+
 ```console
 account   team-a            claude-oauth-token-team-a (project-wide, version 2)
 repos     owner/repo-a      claude_accounts.team-a.allow_data_to
@@ -205,132 +231,121 @@ Nothing else to run: fugaro run --token team-a is ready.
 
 - The diff of the local config file is printed as a line diff, through the update package's own
   `lineDiff`, `backupFile` (`<file>.bak-<timestamp>`, mode 0600) and `writeFileAtomic`.
-- **The token is not printed on any path**, and no line of the output is derived from it. The secret's
-  line carries the name and the version, which is what `fugaro secrets set` prints today.
+- **Fugaro prints the token on no path of its own**, and no line of its output is derived from it. The
+  secret's line carries the name and the version, which is what `fugaro secrets set` prints today. (The
+  one place a token is printed is Anthropic's login in act one of `--claude`, on the owner's own
+  terminal; §3.2 says what that does and does not promise.)
 - The last line is the whole point of the command: it names the *one* thing the owner does next, and it
   is a `fugaro run`, not a `fugaro update`.
-- `--yes` replaces the confirmation and changes nothing else; the diff is still printed.
+- `--yes` answers the confirmation above, the widening line included, and changes nothing else; the
+  diff is still printed.
 
-## 3. `--claude`: Anthropic's own login, captured
+## 3. `--claude`: Anthropic's own login, then one paste
 
-### 3.1 What Fugaro does
+`--claude` puts Anthropic's own login into the command without Fugaro ever reading the login's output.
+It is **two acts**, and the second is the path the command already has:
 
-`fugaro accounts add <name> --claude` runs `claude setup-token` for the owner and takes the token out of
-its output, so the owner reads nothing back and pastes nothing:
+1. **Act one — the login, in the owner's own terminal.** Fugaro finds the binary, confirms it, and runs
+   `claude setup-token` as a child that **inherits the owner's own stdin, stdout and stderr**. Nothing
+   sits between the owner and the login: no pseudo-terminal, no copier, no raw-mode switch, no parse of
+   what it prints. The owner answers whatever Anthropic asks — a browser, a code, a prompt — exactly as
+   if they had typed `claude setup-token` themselves, because that is what is running.
+2. **Act two — one paste.** When the login has printed the token and returned, the command asks for it
+   at the **hidden prompt** it uses without `--claude` (§2.2 step 3). What the owner pastes there is
+   the only token the command ever stores.
+
+This is the owner's answer to D862 (alternative (a)): the capture — the pty child, the line-copier, the
+raw-mode terminal and the token-run guard — is gone, with its dependency (E5) and its unverified
+premise. Its cost is stated where it falls: the login prints the token on the owner's own terminal, and
+the owner performs two acts rather than one.
+
+### 3.1 Act one: the login
 
 1. **Find the binary.** `claudeplugin.Find`'s own rule (`internal/claudeplugin/claudeplugin.go`):
    `exec.LookPath("claude")`, refusing `exec.ErrDot` and refusing anything not absolute. The resolved
    absolute path is printed and confirmed before it runs. The binary is executed **directly, with an
    argument vector** — never through a shell, never with `-c`.
-2. **Allocate a pseudo-terminal** and run the child on it, in its own session, with its stdin, stdout
-   and stderr all on the pty. A login that decides it is not talking to a terminal behaves differently
-   (or refuses), so the pty is not an optimisation; it is the contract. The pty is allocated **only**
-   when the owner's own stdin and stdout are terminals: `--claude` with a redirected stdin is refused
-   (use `--token-stdin`).
-3. **Two copiers, and the owner's terminal in raw mode.** Owner's terminal → pty master, so the owner
-   answers whatever the login asks; pty master → Fugaro's stdout, so the owner sees the URL and the
-   progress — **through the guard below**. The owner's terminal is put into **raw mode** for the
-   duration and restored on every exit path (including a signal), and the child runs in **its own
-   session** with the pty as its controlling terminal. Raw mode is what makes Ctrl-C work as the login
-   expects: the terminal stops turning it into a signal for *Fugaro*, the byte reaches the child through
-   the pty, and the child's own handling decides — which is also why Fugaro does not exit on Ctrl-C
-   while the login runs, and why the restore runs before it would. §3.4 item 5 is the check that
-   settles what the child does with it.
-4. **The environment is the owner's, minus anything Fugaro added.** In particular the child is not
+2. **Require a terminal.** The login is interactive and the paste that follows is hidden, so `--claude`
+   is refused when the owner's stdin or stdout is not a terminal, and the refusal names `--token-stdin`
+   for the case that is genuinely scripted. Nothing else about the command needs a terminal; this flag
+   does.
+3. **The environment is the owner's, minus anything Fugaro added.** In particular the child is not
    given the token (it does not exist yet) and no variable is set for it. Two variables are *checked*
    first and, when either is present, the command stops and says so: an exported
    `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` decides which account a login lands on, and a login
    that lands on the wrong account is a token the owner did not mean to store. This is a check, not a
-   deletion: the command does not edit the owner's environment, it declines to guess.
-5. **Wait, then decide.** Exit status non-zero, or no candidate found: nothing is stored (§3.3).
+   deletion: the command does not edit the owner's environment, it declines to guess, and **no child
+   runs at all**.
+4. **Run it, and let it own the interaction.** The child is an ordinary child of Fugaro's own process,
+   in the same process group and on the same terminal, so what the owner types reaches the login
+   directly and the terminal's own signals reach it too. Fugaro holds its own `SIGINT` for the duration
+   — it does not die on the owner's Ctrl-C and does not restore anything afterwards, because it changed
+   nothing — so the login's own handling of a cancel decides, and Fugaro reads the exit status once the
+   child is gone.
+5. **Wait, then hand over to act two.** A non-zero exit stores nothing: the command reports the child's
+   exit status and still offers the hidden prompt (§3.3), so a login the owner cancelled or that failed
+   costs one paste rather than the command. Whatever the child printed is the login's own business:
+   Fugaro keeps none of it — not a line, not a copy, not a buffer.
 
-### 3.2 The guard: no token on the terminal, no token in a log
+### 3.2 Act two: the one paste, and the value's whole lifetime
 
-What `claude setup-token` prints, and on what line, is **unverified** — the design's U2 has never been
-run ([docs/design/named-oauth-tokens.md](../design/named-oauth-tokens.md) §7, and
-[Check 35](../gcp-live-checklist.md)). So the guard does not parse a shape it has not seen. It is a
-*withholding* rule over the stream:
+**The hidden prompt is the only token path.** On every path — with `--claude`, without it, after a
+failed or cancelled login — the value is read by `readHidden` / `readHiddenLine`
+(`internal/cli/secrets.go`), the echo-free terminal read the rest of the CLI already uses, and it is
+the same read `fugaro secrets set <name>` performs. The login's output is never a source: Fugaro does
+not parse it, does not capture it and keeps no copy of it.
 
-- The copier works a **line at a time, and flushes a partial line once the child goes idle**. A line is
-  not forwarded until its terminator arrives, so the prompts and the URL appear promptly — but a prompt
-  printed *without* a newline (`paste the code`, a spinner's frame) would otherwise be held back until
-  the child writes again, and the child is waiting for the owner's answer, so the login would hang with
-  an empty screen. After a short idle window with no byte from the child, the partial line is flushed to
-  the terminal **through this same guard** — withheld runs included — and the buffer is *kept*, so the
-  line's remaining bytes are still guarded against the whole line when its terminator arrives. The flush
-  is display only: the capture reads completed lines, never a flush, so a run split across two writes is
-  offered once and whole. LC2 is what settles whether a prompt needs it, and how long the idle window
-  must be.
-- In each forwarded line, every **maximal run of at least 40 characters from the token alphabet**
-  (ASCII letters, digits, `-`, `_`) is replaced by a marker before the line reaches the terminal. Every
-  such run is *offered to the capture*, not only the guarded ones, so a token printed inside a sentence
-  is taken as readily as one on a line of its own — the one exception is the URL line, next. A run is
-  offered when its line completes, never from a flush.
-- **A run on a line that contains `://` is never a candidate, and no run on such a line is withheld.**
-  The login's authorize URL carries runs of 40 or more characters from the very alphabet this guard
-  captures — the PKCE `code_challenge` is 43 characters, and `state` is another long run — so a guard
-  that offered them to the capture could **store the `code_challenge` as the account's token**: not a
-  credential at all, accepted by the store, and failing only when a run tried to use it. That is the
-  worse error of the two, so the URL line is exempt. The exemption's cost is the other error: a token
-  printed *on* a `://` line is not captured, and the command falls back to the hidden prompt with
-  nothing stored. **LC1 is what tests the exemption's premise**, and if it shows the token is printed
-  inside a URL the exemption is narrowed to the login's own authorize URL rather than every `://` line
-  (D872) — not quietly widened back.
-- **More than one distinct candidate stores nothing.** If the capture reaches the end of the login
-  holding candidates that differ from one another, the command stores nothing and falls back to the
-  hidden prompt (§3.3), saying how many it saw and that it will not choose. One candidate is the common
-  case; "the last one wins" is D871's alternative, and it would let a run of the login's own output —
-  a progress line, an echo of something the owner pasted, a decoy from a hostile binary (§6(c)) —
-  become the stored credential simply by coming later.
-- The captured candidate is held in a `[]byte`, `clear`ed after the store
-  (`internal/cli/secrets.go`'s own idiom), and never converted to a `string` — a `string` copy cannot be
-  zeroed and would sit in the heap until the GC moved it.
-- The guard is applied to the **pty stream only**. Nothing else in the command writes the token
-  anywhere: not to a file, not to the local config, not to an error, not to a log.
+- The value is held in a `[]byte`, `clear`ed after the store (`internal/cli/secrets.go`'s own idiom),
+  and never converted to a `string` — a `string` copy cannot be zeroed and would sit in the heap until
+  the GC moved it.
+- Fugaro writes the token nowhere: not to a file, not to the local config, not to an error, not to a
+  log, not to an argument, not to an environment variable. Its own output carries names and versions.
 - Every error path from the store runs the value through `agent.Redact`, exactly as `storeSecret` does,
   because a server may echo back what it received.
+- **What this path does not promise.** Act one is the login printing the token on the owner's **own
+  terminal**, so the token is visible there — that is the price D862's answer accepted. What Fugaro
+  holds is the paste at the hidden prompt, which is not echoed; what the terminal displayed, its
+  scrollback and anything recording that terminal are the owner's, and Fugaro neither captured nor
+  copied them. The design does not pretend the token never touched the terminal: it says where it did,
+  which is act one, by the owner's own command.
 
-### 3.3 The fallback, which is always available and always named
+### 3.3 The login is never a gate
 
-When the child exits zero but no candidate was captured — the output's shape differed, the token was
-shorter than the guard's floor, or the login printed it somewhere the guard did not look — the command
-**does not store anything** and says, in one line, that it could not read a token from the login, and
-offers the hidden prompt. `fugaro accounts add <name>` with no `--claude` is the same command for the
-owner who would rather paste; it is not a lesser path and its sentences do not say it is.
+The paste is the command's own path, not a fallback from a failed capture, so nothing about the login
+can leave the owner stuck:
 
-A login that exits non-zero stores nothing and reports the child's exit status, never its output tail.
+- A login that exits non-zero stores nothing, and the command reports the child's exit status — never
+  its output tail — and still asks for the hidden paste. A cancelled login costs one paste.
+- The login is a convenience for finding the token, and `fugaro accounts add <name>` without
+  `--claude` is the same command for the owner who already has one or would rather mint it elsewhere.
+  It is not a lesser path and its sentences do not say it is.
 
 ### 3.4 What is unverified, and what the live check settles
 
-Five things are Anthropic's behaviour, not this repository's, and none of them is decided here:
+Three things are Anthropic's behaviour, not this repository's, and none of them is decided here. None
+of them can change the code, because the code no longer reads the login's output — they decide the
+**docs'** wording, and LC1 and LC2 are what settle it:
 
-1. **How the token is printed** — on its own line, inside a sentence, with a label, or wrapped. §3.2's
-   guard is built to survive every answer, including "in a sentence".
-2. **Whether a browser is needed**, and whether a code is pasted back. The pty copier is what lets the
-   owner answer whatever it asks; the design does not need the answer, but LC2 records **what the
-   prompt looks like** — whether it ends with a newline, and how long the child is silent before it
-   prints one — because that is what §3.2's idle flush is sized against. A prompt that never prints a
-   newline and a prompt that prints one are the same code path with a different window.
-3. **Whether it logs out an existing login**, and whether it takes an account/profile flag. This is
-   U2, and its answer decides the **docs' warning text** — what the page tells an owner who already has
-   another account on the machine — and nothing in the code.
-4. **The token's length and alphabet**, which the guard's floor (40) and character class are guesses
-   about. A token longer than 40 characters from that class is captured; nothing here depends on it
-   being shorter than Secret Manager's 64 KiB ceiling, which `validateSecret` still applies.
-5. **The exit status of a cancelled login.** The owner's Ctrl-C is a byte on the pty, not a signal to
-   Fugaro (§3.1 step 3: raw mode, the child in its own session), so what the child does with it is
-   Anthropic's behaviour. Every non-zero exit is "store nothing", and Fugaro restores the terminal
-   before it reports.
+1. **What the login prints and asks** — whether a browser opens, whether a URL is printed, whether a
+   code is pasted back, what each prompt says. This decides what `docs/project-claude-accounts.md`
+   tells the owner to expect around act one; the code is indifferent, since the owner answers the login
+   directly on their own terminal.
+2. **Whether it logs out an existing login**, and whether it takes an account/profile flag. This is
+   U2, and its answer is the page's **warning text** for an owner who already has another account on
+   the machine.
+3. **The exit status of a cancelled login.** The owner's Ctrl-C reaches the child directly (§3.1 step
+   4), so what it does with it is Anthropic's behaviour. Every non-zero exit is "store nothing, still
+   ask for the paste" (§3.3), and Fugaro has no terminal state to restore.
 
 ### 3.5 Platforms
 
-- **Linux and macOS**: the pty path. The tests that need a real terminal are behind
-  `//go:build darwin || linux`, the tag `internal/cli/init_gate_pty_test.go` already uses.
-- **Windows**: `--claude` is **refused**, with a sentence that names the hidden prompt and Anthropic's
-  own command for the owner to run by hand. The pty package the tree carries (`github.com/creack/pty`,
-  `go.mod`) has no Windows support, and ConPTY is a dependency this design does not ask for. Windows
-  keeps the whole of `fugaro accounts add <name>`: only the capture is refused.
-- A terminal that cannot allocate a pty for any other reason is the same refusal, not an error.
+**Every platform the CLI runs on**, Windows included. There is no pseudo-terminal to allocate, no
+build tag and no ConPTY: the child inherits the owner's terminal, which is the one thing every
+platform already has. D863 (the Windows refusal) is **moot** with D862's answer, and so is E5; the
+`go.mod` note that called the pty package test-only stays true — nothing here touches it.
+
+The only requirement is a terminal, for the login and for the hidden paste (§3.1 step 2), and a
+missing one is a named refusal, not an error.
 
 ## 4. `fugaro accounts rm <name>`
 
@@ -347,7 +362,10 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    `accounts rm` is the first door to it. Leaving a live credential in Secret Manager with only the
    owner's admins able to read it is not what "remove the account" can mean, and Secret Manager's own
    delete is reversible within its grace period, which is the recovery an owner actually wants. The
-   secret's ID is named in the confirmation before it goes. A repository whose committed `fugaro.yaml`
+   secret's ID is named in the confirmation before it goes, and the command **says plainly that
+   deleting the secret does not revoke the token at the provider**: the token stays valid until it
+   expires or the owner revokes it in Anthropic's own console, which no command here reaches (D866).
+   A repository whose committed `fugaro.yaml`
    still names the account in `agent.oauth_token` is **warned about**, naming the repository and the
    run that will fail at launch — the shape D783 chose for `fugaro models rm`, and for the same reason:
    the owner's own edit should not be blocked by a file the command cannot see.
@@ -374,7 +392,7 @@ Nothing is removed, and nothing changes meaning:
 ## 6. Threat model
 
 **(a) The token in memory only.** The value lives in a `[]byte` for the length of one command: read
-(hidden prompt, stdin, or the login's captured run), handed to `gcp.Secrets.Set`, and `clear`ed. It is
+at the hidden prompt or from stdin, handed to `gcp.Secrets.Set`, and `clear`ed. It is
 never a `string` (a `string` cannot be zeroed), never a file, never an argument, never an environment
 variable, so it reaches no shell history — `fugaro accounts add team-a --claude` is the whole command
 line, and it carries no value.
@@ -393,29 +411,36 @@ login lands on, and a token minted for the wrong account is a token the owner di
 The check is a **refusal, not a deletion**: when either variable is set the command stops and **no child
 runs at all**, so there is never an environment Fugaro has edited for the child to make its own
 decisions in.
-The child is `claude`'s process, on its own pty and in its own session; Fugaro's Ctrl-C handling and the
-child's are not shared state.
+The child is `claude`'s process, on the owner's own terminal and in Fugaro's process group, so the
+owner's keystrokes and the terminal's signals reach it directly; Fugaro holds its own `SIGINT` for the
+duration, so the login's handling of a cancel decides and Fugaro only reads the exit status.
 
 **(c) A hostile `claude` binary on `PATH`.** This is the sharpest one, and the mitigation is
 `claudeplugin.Find`'s, unchanged: the binary must resolve through `PATH` to an **absolute** path, a
 relative `PATH` entry (`exec.ErrDot`) is refused, and the resolved path is **printed and confirmed**
 before it runs. Fugaro runs it with an argument vector, never a shell. Beyond that, the design is honest
 about what it cannot do: a hostile `claude` on the owner's `PATH` can already steal anything the owner's
-`claude` can reach — it is the owner's own binary, run as the owner — and this command hands it one
-*specific* power, which is the ability to print a token-shaped string that Fugaro would then store as
-the account's credential. The confirmation of the path, and the fact that the guard stores a candidate
-only when it saw **exactly one distinct** one (D871) — two token-shaped strings, one of them a decoy,
-means the command stores nothing and falls back to the paste — are the whole of the defence. An owner
-who does not trust `PATH` runs
-`fugaro accounts add <name>` and pastes, which never executes anything.
+`claude` can reach — it is the owner's own binary, run as the owner. **The capture's power is gone with
+the capture (D862 (a)):** the command stores only what the owner pastes at the hidden prompt, so a
+hostile binary cannot make Fugaro store a token-shaped string it printed. What is left is the
+**deception** channel, which the design does not pretend to close: a hostile login can print a decoy
+token on the owner's terminal, in the hope that the owner copies that instead of the real one, and the
+value the owner pastes is stored because the owner is the authority. The confirmation of the resolved
+path — printed before the child runs, at an absolute path, through an argument vector, never a shell —
+is the whole of the defence, and it is the same defence it always was. An owner who does not trust
+`PATH` runs `fugaro accounts add <name>` and pastes a token they minted themselves, which never
+executes anything.
 
 **(d) Tokens in crash reports.** The token reaches no stream Fugaro writes, so it reaches no crash
 report: the console's crash reporter is dormant behind its DSN gate
 (`console/src/main/crash.ts`, guarded on that side by `console/test/unit/secret-hygiene.test.ts`) and it can only
-report what the console saw, which is the CLI's stdout and stderr. The command's output carries names
-and versions, never a value; a `--claude` run whose guard withheld a run is the one place a value is
-*discarded* rather than printed. Any error from the store is passed through `agent.Redact` before it is
-shown or logged, because a server may echo back what it was sent.
+report what the console saw, which is the CLI's stdout and stderr. Fugaro's own output carries names
+and versions, never a value, and the hidden prompt is not echoed — so a recorded terminal session
+holds no token from Fugaro. The one place a token is visible is **act one of `--claude`**: Anthropic's
+login prints it on the owner's own terminal, so it reaches that terminal's scrollback and whatever
+else records it, which is the price D862's answer accepted (§3.2). Fugaro never captures that output,
+so it is not a place Fugaro can leak from. Any error from the store is passed through `agent.Redact`
+before it is shown or logged, because a server may echo back what it was sent.
 
 **(e) `allow_data_to` and who may widen it.** The default is the checkout the command runs in; `--repos`
 widens it; the profile's own `allow_repos` is the ceiling the subset rule checks the widening against,
@@ -429,8 +454,9 @@ implied.
 [SECURITY.md](../../SECURITY.md) states under **Known limits** as "The account is the blast radius, not
 the repository", and the page's own §1 — and a launcher that may start a run on an account job can have
 that run print the token (design D2). Widening `allow_data_to` therefore widens who may
-reach that token's account, and it is the one step of this command whose confirmation is **typed**, not
-a `y` (D868). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see #1472, F3).
+reach that token's account, and the confirmation's own text names it, with what it means (D868,
+answered: `--yes` covers everything, so the warning is carried by the sentence rather than by a typed
+gate; §2.6). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see #1472, F3).
 
 ## 7. Owner-only boundaries
 
@@ -469,20 +495,20 @@ this design PR**.
 ## 9. The live check (owner-run, nothing secret typed into a chat)
 
 [Check 35](../gcp-live-checklist.md) is **U2, written and never run**, and it is this check's second
-half. Its first four parts are new. Every part is run by the owner on the owner's machine, in the
-owner's own terminal; **no command here prints a token**, and any answer recorded in this repository is
-a *shape* (length, alphabet, which line) and never a value.
+part. Every part is run by the owner on the owner's machine, in the owner's own terminal; **Fugaro
+prints no token on any path**, and any answer recorded in this repository is a *shape* — what the login
+asks, what a prompt says, whether a value was echoed — and never a value.
 
 | # | What it settles | How |
 | --- | --- | --- |
-| **LC1** | how `claude setup-token` prints the token, **and whether it prints it inside a URL** | On a machine that has never run it: run it, and record only (a) whether the token stands alone on its line, (b) its length, (c) its alphabet, (d) whether anything precedes or follows it on the line, and (e) **whether the line it is on contains `://`**. **Never the token.** This is what §3.2's guard is checked against, and (e) is what settles the URL exemption: a token on a `://` line narrows the exemption (D872), a token off one leaves the rule as written |
-| **LC2** | the browser, the code, and **the shape of each prompt** | The same run: whether a browser opens, whether a URL is printed, whether a code is pasted back, what the child prints between them, and **for every prompt the owner has to answer: whether it ends with a newline, and how long the child is silent before it prints one**. That last pair is what §3.2's idle flush is sized against — a prompt that never prints a newline is the case the flush exists for, and the silence before it is the window |
-| **LC3** | multi-account (U2, Check 35) | On a machine already holding another account's login: whether `claude setup-token` logs out, whether it takes an account or profile flag (`claude setup-token --help` is the authority), and what it says about the existing login. This decides the **warning text** in `docs/project-claude-accounts.md`, nothing in the code |
-| **LC4** | the guard, end to end | `fugaro accounts add <name> --claude` on a throwaway installation, in the owner's terminal: confirm the token never appears on the terminal, that `~/.bash_history` holds only `fugaro accounts add <name> --claude`, that nothing under `~/.config/fugaro/` holds a value, and that a run with `--token <name>` starts |
-| **LC5** | the deploy half | After LC4: `gcloud run jobs describe` the new account's job and confirm exactly one account-token `secret_env` entry, beside the profile's own mounts (which include `github-app-key`), its service account holds `secretAccessor` on that secret and **no other account's**, and `fugaro doctor` is green |
+| **LC1** | what the login prints and asks | On a machine that has never run it: run `claude setup-token` in a plain terminal and record only (a) whether a browser opens, (b) whether a URL is printed and whether a code is pasted back, (c) what each prompt says, and (d) whether the token it prints stands alone on its line or sits inside a sentence — so the page can tell the owner what to copy. **Never the token.** This is what the page's act-one wording is written against; the code reads none of it (§3.4) |
+| **LC2** | multi-account (U2, Check 35) | On a machine already holding another account's login: whether `claude setup-token` logs out, whether it takes an account or profile flag (`claude setup-token --help` is the authority), and what it says about the existing login. This decides the **warning text** in `docs/project-claude-accounts.md`, nothing in the code |
+| **LC3** | the two acts, and the hidden prompt | `fugaro accounts add <name> --claude` on a throwaway installation, in the owner's terminal: confirm the login **runs in that terminal** and answers the owner directly, that the one paste that follows is asked at the hidden prompt, that the prompt **does not echo** the value, that Fugaro's own output never holds it, that `~/.bash_history` holds only `fugaro accounts add <name> --claude`, that nothing under `~/.config/fugaro/` holds a value, and that a run with `--token <name>` then starts |
+| **LC4** | the deploy half | After LC3: `gcloud run jobs describe` the new account's job and confirm exactly one account-token `secret_env` entry, beside the profile's own mounts (which include `github-app-key`), its service account holds `secretAccessor` on that secret and **no other account's**, and `fugaro doctor` is green |
 
-LC4 and LC5 are the ones that can falsify the design rather than the code: if the guard's floor or
-alphabet is wrong for the real token, LC1 says so before anyone writes the guard.
+LC3 and LC4 are the ones that can falsify the design rather than the code: the whole of `--claude` now
+rests on the login taking the owner's own terminal and on one hidden paste being enough, and LC3 is
+where a login that needed more, or a prompt that echoed, would show up.
 
 ## 10. The console and the mobile app
 

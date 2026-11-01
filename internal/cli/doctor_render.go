@@ -25,7 +25,7 @@ const (
 	doctorLineLimit       = 160
 )
 
-// The classes a check falls in. Only the last three reach the default view.
+// The classes a check falls in. Only the last four reach the default view.
 const (
 	// doctorClassActionable is something is wrong and the reader fixes it: one
 	// sentence, one command or one action.
@@ -51,7 +51,26 @@ const (
 	// which is the safe default — so a short output is never read as a clean
 	// one, and a check added later is never hidden by omission.
 	doctorClassAudit = "audit"
+	// doctorClassSecurity is the one class the default view both prints and
+	// counts: an item with its fix, and a count in the "N security findings"
+	// pointer the screen ends with. The owner's ruling of 2026-11-01 put the
+	// model key in the agent's reach there — a credential in a workflow's own
+	// environment is a fact the reader acts on now, not an audit line to
+	// review later — while keeping it a security finding, so the pointer line
+	// still says the sweep has something. Every other check lands in exactly
+	// one bucket; this one is deliberately in two.
+	doctorClassSecurity = "security"
 )
+
+// doctorShownSecurityIDs are the security sweep's checks the default view
+// prints as items and counts (doctorClassSecurity). It is a list rather than
+// the whole sweep because what the class asks is whether the reader acts on
+// the line now: the sweep's other findings — a grant doctor could not derive,
+// a provider setting nobody can read from here — are the ones the pointer line
+// exists for.
+var doctorShownSecurityIDs = map[string]bool{
+	"model-key-in-agent": true,
+}
 
 // doctorUpdatePrefixes are the checks whose remedy is `fugaro update` itself
 // (CLAUDE.md's hard rule: the one documented command brings the installation,
@@ -62,17 +81,26 @@ const (
 // The list is what `fugaro update` does today, because the default view may
 // not name a command that will not do the work: the converge's own stages are
 // preflight, installation, Firebase, images, installation again, secrets,
-// plugin and the checkout's repository (init_stages.go), and a check whose
-// remedy is none of them is not an update item. Two the plan means to move
-// here are not here yet:
+// plugin and the checkout's repository, rules and policy (init_stages.go), and
+// a check whose remedy is none of them is not an update item. One the plan
+// means to move here is not here yet:
 //
-//   - policy-older-than-binary: its remedy today is `fugaro project policy
-//     publish --delete`, then a publish. projectpolicy.Migrate has no
-//     production caller, so `fugaro update` leaves the old node where it is.
 //   - plugin-install: what differs is the plugin Claude Code installed, and
 //     the converge's plugin stage rewrites the checkout's pin, not the
-//     installation: `fugaro upgrade --local` (or the marketplace command in
-//     Claude Code) is what installs it.
+//     installation: `fugaro update` writes that pin, and Claude Code installs
+//     the plugin from it (the marketplace command in Claude Code being the
+//     same move by hand).
+//
+// policy-older-than-binary is here since the policy stage carries the
+// migration: a node in a version the chain reaches is what that stage rewrites
+// in place (init_policy_migrate.go), and it took `repository` — the stage in
+// front of it — admitting the checkout for the run to get there, which is what
+// policyReadOnce.exists now does. The line named `fugaro project policy
+// publish --delete` and a publish until then, because projectpolicy.Migrate
+// had no production caller. One state keeps that line (ownFix): a node below
+// the chain's first step, 1 or 2, which no step reaches and the update refuses
+// — the ID is in the class for the state the update does repair, and the line
+// is the state's.
 //
 // policy-rules-skew is here, and its line is the plain `fugaro update` in the
 // states that command repairs: the rules stage (init_rules_stage.go, the
@@ -94,6 +122,7 @@ var doctorUpdatePrefixes = []string{
 	"image-config-",
 	"policy-rules-skew",
 	"policy-vs-jobs",
+	"policy-older-than-binary",
 }
 
 // doctorSecurityPrefixes are the IAM and security sweep's checks: who may read
@@ -105,7 +134,9 @@ var doctorUpdatePrefixes = []string{
 // The exception is the rule that binds them: a security finding that is a
 // warning is never hidden. One of these IDs reports both a measurement (info)
 // and a finding (warning), and a warning one is an item of the default view
-// like any other.
+// like any other. The other exception is the class, not the severity: a check
+// in doctorShownSecurityIDs is printed by the default view whatever its
+// severity, and counted in the same pointer line.
 var doctorSecurityPrefixes = []string{
 	"token-signers",
 	"secret-readers-unexpected",
@@ -119,6 +150,14 @@ var doctorSecurityPrefixes = []string{
 	// line, so today it reaches the default view either way; naming it here is
 	// what keeps it in the sweep if it ever gains a measurement.
 	"batch-launcher-iam",
+	// model-key-in-agent is the owner's ruling: a model credential that reaches
+	// a workflow's agent (budget off, or no credentials service) is a security
+	// finding, not a measurement. It is the sweep's only info half that the
+	// default view prints as an item as well as counts (doctorClassSecurity,
+	// the owner's correction of 2026-11-01): the installation that runs without
+	// the budget is a legitimate choice, but a credential in the agent's own
+	// reach is a fact the reader acts on now rather than reviews later.
+	"model-key-in-agent",
 }
 
 // doctorDecisionIDs are the checks whose state is the owner's to choose: doctor
@@ -193,6 +232,17 @@ var doctorMeasureIDs = map[string]bool{
 	"secret-readers-unexpected":     true,
 	"credentials-service-deployers": true,
 	"batch-artifact-boundary":       true,
+	// The standing note about require_zdr: what the flag prices, and that
+	// whether an account's calls are held under zero data retention is a
+	// privacy setting Fugaro reads nowhere. It is emitted on every
+	// installation whose route the catalog prices (require_zdr is on by
+	// default), so a class that counted it would put a pointer on a screen
+	// with nothing wrong in it — and nothing is: the note names no fact about
+	// this installation that a reader could act on. --all and --json carry it
+	// whole. The check sets no unread marker for the same reason: the fact it
+	// cannot read is the provider's account setting, not a read of this
+	// installation that did not answer.
+	"provider-zdr-unverified": true,
 	// The Batch sweep's "not checked: this is a test configuration" line, one
 	// per API it does not read there. The warning variant of the same ID is a
 	// read that failed.
@@ -233,8 +283,14 @@ func doctorClassOf(c doctorCheck) string {
 	// prints "everything checked is ok" beside an exit code 1.
 	finding := !c.OK && c.Severity != "info"
 	switch {
-	case c.OK && c.Severity == "":
-		// doctor's own bookkeeping: nothing prints it, in any view.
+	case c.OK && c.Severity == "" && !c.unread:
+		// doctor's own bookkeeping: nothing prints it, in any view. A check that
+		// is ok AND carries the unread marker is not bookkeeping: its own line
+		// says a fact could not be read, and "ok" beside "could not be read" is
+		// the silent pass the class rules exist to keep out of the view (the
+		// marker is set by a read that did not answer, and the two fields are
+		// written by different branches of a check). It falls through to the
+		// unread arm below and is counted, never dropped.
 		return ""
 	case finding && doctorHasPrefix(c.ID, doctorUpdatePrefixes):
 		return doctorClassUpdate
@@ -242,6 +298,13 @@ func doctorClassOf(c doctorCheck) string {
 		// A decision is the owner's whatever its severity, and the default
 		// view names the command for each choice: it is never a measurement.
 		return doctorClassDecision
+	case doctorShownSecurityIDs[c.ID]:
+		// A security finding the one screen prints and counts: the item first
+		// (the check's own fix is what the reader runs), the count after it, so
+		// a reader who skims the pointer still learns the sweep has something
+		// and a reader who reads the item is not sent to --security to find
+		// what the screen in front of them already says.
+		return doctorClassSecurity
 	case c.unread && !finding:
 		// A check whose own line says a fact could not be read, or is unknown.
 		// It is never a measurement whatever its ID: an unknown filed as a
@@ -326,24 +389,36 @@ type doctorView struct {
 }
 
 // doctorAuditHeld are the audit findings a view left out of its lines: the
-// security sweep's, and the rest of the audit class. Only a check that is not
-// ok is a finding, and only a finding is counted: the measurements are what
-// doctor read and found nothing in, and a pointer to them on every clean run
-// is how a reader learns to skip the line (the owner's rule of 2026-10-31: an
-// installation with nothing wrong prints one line and no pointer).
+// security sweep's, and the rest of the audit class. Only a finding
+// (doctorIsFinding) is counted: the measurements are what doctor read and found
+// nothing in, and a pointer to them on every clean run is how a reader learns
+// to skip the line (the owner's rule of 2026-10-31: an installation with
+// nothing wrong prints one line and no pointer).
 type doctorAuditHeld struct {
 	security int
 	other    int
 }
 
+// doctorIsFinding is the one question every hidden class has to answer no to:
+// is this something the reader has to know about? A check that fails doctor is
+// one (checksFail: not ok, severity not "info"), and so is a check carrying the
+// unread marker — a read that did not answer leaves a fact unknown whether the
+// check's own result field says ok or not. The marker is what a check that
+// could not read something sets, and a hidden check that carries it may not be
+// dropped: the alternative is an unknown counted as a measurement, which is the
+// silent pass in the one shape nobody can see.
+func doctorIsFinding(c doctorCheck) bool {
+	return !c.OK || c.unread
+}
+
 // doctorAuditFindingCount is how many of these lines are findings: an audit
-// check that is not ok. The count exists for the verdict line, which is
-// printed above the sweep --security prints, and may not call an installation
-// ok directly above a finding of its own.
+// check the reader has to know about (doctorIsFinding). The count exists for
+// the verdict line, which is printed above the sweep --security prints, and may
+// not call an installation ok directly above a finding of its own.
 func doctorAuditFindingCount(cs []doctorCheck) int {
 	n := 0
 	for _, c := range cs {
-		if !c.OK && doctorClassOf(c) == doctorClassAudit {
+		if doctorIsFinding(c) && doctorClassOf(c) == doctorClassAudit {
 			n++
 		}
 	}
@@ -354,7 +429,8 @@ func doctorAuditFindingCount(cs []doctorCheck) int {
 // items, the audit half of the security sweep when --security asked for it, and
 // the audit findings the view left out, counted by kind. An audit line is never
 // dropped in silence: the counts are what the pointer lines at the end of the
-// default screen are made of.
+// default screen are made of. A doctorClassSecurity check is the one that is
+// both an item and a count, so it appears in shown and in held.security.
 func doctorVisible(checks []doctorCheck, v doctorView) (shown, auditSecurity []doctorCheck, held doctorAuditHeld) {
 	for _, c := range checks {
 		class := doctorClassOf(c)
@@ -373,13 +449,20 @@ func doctorVisible(checks []doctorCheck, v doctorView) (shown, auditSecurity []d
 			}
 		case class != doctorClassAudit:
 			shown = append(shown, c)
+			if class == doctorClassSecurity && !v.security {
+				// The one class in two buckets: the item above, and the count
+				// the pointer line is made of. Under --security the reader has
+				// already asked for the sweep, so the count would point at the
+				// flag they just passed; the item is on the screen either way.
+				held.security++
+			}
 		case v.all:
 			// printDoctorReport hands --all to printDoctorChecks whole.
 		case security && v.security:
 			auditSecurity = append(auditSecurity, c)
-		case !c.OK && security:
+		case doctorIsFinding(c) && security:
 			held.security++
-		case !c.OK:
+		case doctorIsFinding(c):
 			held.other++
 		}
 	}
@@ -680,22 +763,28 @@ var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
 	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
 	// The plugin Claude Code installed is not the checkout's pin, and the
-	// converge's plugin stage writes the pin: installing is the upgrade's own
-	// step (its refusal text and pluginwire.Fix both name it).
+	// converge's plugin stage writes the pin: `fugaro update` is the command
+	// the line names (CLAUDE.md's hard rule), and the install that follows the
+	// pin is Claude Code's own.
 	"plugin-install": {"the installed Claude Code plugin is not the pinned one.",
-		"run `fugaro upgrade --local`, or install it in Claude Code"},
+		"run `fugaro update`, or install it in Claude Code"},
 	"base-image": {"no Fugaro base image is recorded, so image builds start from whatever the repository names.", ""},
-	// The published policy node is older than this binary, and nothing
-	// redeploys, migrates or deletes it: the remedy is the publisher's own two
-	// commands, not `fugaro update`.
-	"policy-older-than-binary": {"the published policy is older than this Fugaro, and no run applies it.",
-		"run `fugaro project policy publish --delete`, then `fugaro project policy publish`"},
-	"policy-rules-skew":                 {"the deployed budget rules are older than the policy generation, so a published policy cannot be read.", ""},
-	"policy-vs-jobs":                    {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
-	"installation":                      {"no Fugaro installation is configured.", "run `fugaro setup`"},
-	"fugaro-yaml":                       {"this checkout's fugaro.yaml is not valid.", "fix what `fugaro validate` prints"},
-	"gcp-project-line":                  {"this checkout's fugaro.yaml has no gcp_project: line, so a run cannot tell which project it belongs to.", "run `fugaro update --anchor`"},
-	"policy-newer-than-binary":          {"the published policy is newer than this Fugaro, so no run reads it.", "run `fugaro upgrade`"},
+	// The published policy node is older than this binary. The command that
+	// migrates it is the class's own (`fugaro update`, the policy stage), so
+	// this entry carries no fix of its own: the delete-then-publish that does
+	// the same job by hand rebuilds the node from the config, and a line that
+	// offered it would be the lossy move in place of the one the update makes.
+	"policy-older-than-binary": {"the published policy is older than this Fugaro, and no run applies it.", ""},
+	"policy-rules-skew":        {"the deployed budget rules are older than the policy generation, so a published policy cannot be read.", ""},
+	"policy-vs-jobs":           {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
+	"installation":             {"no Fugaro installation is configured.", "run `fugaro setup`"},
+	"fugaro-yaml":              {"this checkout's fugaro.yaml is not valid.", "fix what `fugaro validate` prints"},
+	"gcp-project-line":         {"this checkout's fugaro.yaml has no gcp_project: line, so a run cannot tell which project it belongs to.", "run `fugaro update --anchor`"},
+	// The node is newer than this binary, and the move is two of them: the
+	// release that understands the node is not installed yet, so the upgrade
+	// comes first, and the update behind it is what brings the installation and
+	// the checkout to that release.
+	"policy-newer-than-binary":          {"the published policy is newer than this Fugaro, so no run reads it.", "upgrade Fugaro (`brew upgrade fugaro`), then run `fugaro update`"},
 	"policy-unknown-keys":               {"an unknown key in the published policy stops every reader from reading it.", "remove the key `fugaro project policy show` prints"},
 	"allow-list-empty":                  {"the published policy admits no repository, so every run stops before it starts.", "run `fugaro project repos add owner/name`"},
 	"project-secret-stored":             {"a secret this checkout's jobs mount has no stored version.", "run `fugaro secrets set NAME`"},
@@ -729,15 +818,29 @@ var doctorShorts = map[string]doctorShort{
 	// has and these checks report both a grant doctor could not derive and a
 	// read that did not happen.
 	"secret-readers-unexpected": {"a secret this checkout's jobs mount grants a reader Fugaro cannot place, or could not be read.", ""},
-	"launcher-jobs":             {"which Cloud Run jobs a launcher can start could not be checked.", ""},
-	"launcher-jobs-public":      {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
-	"launcher-jobs-unread":      {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
-	"batch-launcher-iam":        {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
-	"allow-list-uncovered":      {"the published policy does not admit a repository this machine's config names.", ""},
-	"creds-broken":              {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
-	"creds-unknown-state":       {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
-	"creds-rules":               {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
-	"token-signers":             {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	// The secrets-brokering checks (B1.9), the same shape: an ID reports both a
+	// state a reader has to act on and a read that did not answer, so each
+	// sentence covers its ID's states and leaves the names (the repository, the
+	// workflow, the service) to --all and --json. The fix stays the check's own:
+	// it names the container or the repository the command needs. The two whose
+	// only state is information (bundle-bitbucket-token with nothing proxied,
+	// bitbucket-direct before the flip) are counted rather than printed, so
+	// their entries are here for the warning state beside them.
+	"credentials-service-deployed": {"the credentials service's callers could not be checked, or a job account it should admit cannot invoke it.", ""},
+	"secret-rotation-age":          {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
+	"bundle-bitbucket-token":       {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
+	"bitbucket-token-valid":        {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},
+	"bitbucket-direct":             {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
+	"model-key-in-agent":           {"a model credential reaches a workflow's agent's own environment.", ""},
+	"launcher-jobs":                {"which Cloud Run jobs a launcher can start could not be checked.", ""},
+	"launcher-jobs-public":         {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
+	"launcher-jobs-unread":         {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
+	"batch-launcher-iam":           {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
+	"allow-list-uncovered":         {"the published policy does not admit a repository this machine's config names.", ""},
+	"creds-broken":                 {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
+	"creds-unknown-state":          {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
+	"creds-rules":                  {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
+	"token-signers":                {"who can sign the budget database's sign-in tokens could not be read.", ""},
 }
 
 // doctorShortsByPrefix are the short forms for the checks doctor emits once

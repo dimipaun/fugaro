@@ -679,6 +679,76 @@ func TestLaunchClassifiesAnUnreachablePolicyReadAsRemote(t *testing.T) {
 	}
 }
 
+// policyExists reads the published node the way planRepo does — the memoized
+// read, then exists — for a gate that only asks whether something is there.
+func policyExists(t *testing.T, f *projectFixture, node any) (bool, error) {
+	t.Helper()
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), node)
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var once policyReadOnce
+	return once.exists(context.Background(), lc)
+}
+
+// A node written in an older version is published: the gate planRepo passes
+// readies the repository's jobs to read a policy, and the policy stage of the
+// same `fugaro update` migrates that node in place. Classifying it as "no
+// policy, but an error" is what stopped the run at the repository stage, one
+// stage before the migration, with the delete-and-publish remedy — a second
+// command for a node this one was about to rewrite.
+func TestPolicyExistsCountsAnOlderVersionNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	found, err := policyExists(t, f, v3Node(nil))
+	if err != nil {
+		t.Fatalf("an older published node was refused, so the gates before the policy stage stop the run: %v", err)
+	}
+	if !found {
+		t.Error("an older published node was read as no policy at all, so Readiness's D11 gate would ready the jobs for a project with no policy to read")
+	}
+}
+
+// The direction that stays a refusal: a node ahead of the binary is one no
+// stage of this run can read or migrate, so the gate still stops it — with the
+// remedy that fits it (upgrade Fugaro), not with a node this binary could
+// write over.
+func TestPolicyExistsRefusesANewerNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	found, err := policyExists(t, f, map[string]any{"version": projectpolicy.Version + 1})
+	if err == nil {
+		t.Fatal("a node written by a newer Fugaro was accepted as one this binary can go on with")
+	}
+	if found {
+		t.Error("the refusal reports the node as an ordinary published policy")
+	}
+	if !strings.Contains(err.Error(), "upgrade Fugaro") {
+		t.Errorf("the refusal does not carry the remedy for a node ahead of the binary: %v", err)
+	}
+}
+
+// And a node no version words is not an older node: nothing migrates it, so
+// the gate keeps refusing it, naming the node.
+func TestPolicyExistsRefusesAMalformedNode(t *testing.T) {
+	for name, node := range map[string]json.RawMessage{
+		"not a JSON object":                json.RawMessage(`["budget"]`),
+		"no version at all":                json.RawMessage(`{"budget":{"mode":"enforce"}}`),
+		"a version that is not an integer": json.RawMessage(`{"version":"three"}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			found, err := policyExists(t, f, node)
+			if err == nil || found {
+				t.Fatalf("found = %v, err = %v, want a refusal", found, err)
+			}
+			if !strings.Contains(err.Error(), projectpolicy.PathShared()) {
+				t.Errorf("the refusal does not name the node to fix: %v", err)
+			}
+		})
+	}
+}
+
 func TestMintedTokenNotInJobsRunRequest(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	var env map[string]string
@@ -805,7 +875,7 @@ func TestPrecheckLowHeadroomRefuses(t *testing.T) {
 // single run; two attempts need $0.50.
 func TestRunAttemptsBudgetPrecheckCountsAllAtOnce(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_750_000}) // $0.25 left
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "task")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "repo_daily_cap") || !strings.Contains(err.Error(), "needs headroom for all 2") {
@@ -829,7 +899,7 @@ func TestRunAttemptsBudgetPrecheckCountsAllAtOnce(t *testing.T) {
 // the launch carries the 80% warning too, and it is counted the same way.
 func TestRunAttemptsBudgetNotesPrintOncePerBatch(t *testing.T) {
 	f := newLaunchBudget(t, "observe")
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	f.db.Set("config/mode", "observe")
 	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_900_000})
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "3", "task")
@@ -853,7 +923,7 @@ func TestRunAttemptsBudgetNotesPrintOncePerBatch(t *testing.T) {
 // TestRunAttemptsBudgetNotesPrintOncePerBatch's --no-budget-check half.
 func TestRunAttemptsBudgetNoBudgetCheckWarnsOnce(t *testing.T) {
 	newLaunchBudget(t, "enforce")
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "3", "--no-budget-check", "task")
 	if err != nil {
 		t.Fatal(err)

@@ -490,9 +490,10 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 			return fmt.Sprintf("first-line review round %d: skipped, no verdict", last.Round)
 		}
 		// A senior round is never skipped: this is one whose answer carried no
-		// parseable verdict, retried once and then let through (seniorLoop,
-		// Decide), and the line is the reason Decide gave for it.
-		return fmt.Sprintf("%sreview round %d returned no parseable verdict: tolerated", who, last.Round)
+		// parseable verdict, retried once and then left the run with no verdict
+		// at all (seniorLoop), and the line is the reason Decide gave for
+		// keeping the pull request a draft.
+		return fmt.Sprintf("%sreview round %d returned no parseable verdict after a retry", who, last.Round)
 	}
 	return fmt.Sprintf("%sreview round %d: %s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last))
 }

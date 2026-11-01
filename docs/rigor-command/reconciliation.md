@@ -218,12 +218,19 @@ R4 and R5**, so a `set` task cannot be built without the stage that publishes wh
 HARD RULE held mechanically, not by a paragraph — and R1 itself sits at position 4 of the README's
 joint order, before the shared write half (settings S5) and the commands that call it.
 
-## 3. Decisions D830–D839
+## 3. Decisions D830–D839, and D900
 
 The recommendation comes first; the alternative and **its cost** are the second column. **All ten are
-answered.** D830 and D831 by the owner's SD4 ruling of 2026-10-31, and **D832–D839 on 2026-10-31,
-every one as recommended** — the answer column of each row below says so. The spec and the plan are
-written to those answers, and a task here may start.
+answered, and D900 is answered with them.** D830 and D831 by the owner's SD4 ruling of 2026-10-31, and
+**D832–D839 on 2026-10-31, every one as recommended** — the answer column of each row below says so.
+The spec and the plan are written to those answers, and a task here may start.
+
+**D900 is this design's one later decision, and the owner has answered it too.** The ruling of
+2026-10-31 is that the setup wizard asks the project's rigor mode **explicitly**: the key decides how
+much review a whole project's runs get, and a wizard that never names it is the state the ruling
+exists to end. Its task is the plan's **W** ([implementation-plan.md](implementation-plan.md)), and
+the block it was taken from was re-checked the same day and is recorded in the
+[README](README.md) §"Numbers this work holds".
 
 **One decision this design cites is not its own — D854 — and the owner has answered it: the
 generation is recorded.** It is the settings design's: whether the object generation the `Layer`
@@ -258,6 +265,7 @@ ruling and nothing local to this folder.
 | **D837** | What does `unset` write? | **It removes the key or the rule, so the layer below decides again** — and a no-op with a sentence, exit 0, when there is nothing to remove. | **Write the built-in default (`pro`) in place of the key:** freezes Fugaro's own default into the owner's file, indistinguishable from a deliberate pin, and it silently becomes wrong the day the built-in default changes. **Error when there is nothing to remove:** makes an idempotent script fail, for a state that is already what the caller asked for | **Answered 2026-10-31: the recommendation.** |
 | **D838** | How is an area rule addressed, and what does `--area` require? | **By its glob.** `set --area GLOB` replaces that rule's mode; a glob the layer does not carry adds a rule and then **requires `--name`** (it is what the run record and the pull request print); `--name` on an existing rule renames it. A second rule with the same glob in one layer is refused (F14). | **Address by name:** names are not unique, the loader does not enforce uniqueness, and a rename would silently retarget the command. **Derive the name from the glob:** writes a name the owner never chose into three surfaces a person reads, and two globs can derive one name | **Answered 2026-10-31: the recommendation.** |
 | **D839** | Where does `show` read each repository's own block? | **The remembered local checkouts, at the base branch, with no fetch** (F16); a repository with no checkout is shown as unknown (spec §2.3 pins the text and the JSON) and is never guessed. | **Read through the git provider's API:** a network call with a credential on the developer's machine, for a listing — and it would still be stale against the branch the run will read. **Resolve only the project layer for such a repository:** prints a mode that may be neither the right value nor the right reason, with nothing saying so | **Answered 2026-10-31: the recommendation.** |
+| **D900** | Does the setup wizard (`fugaro setup`, the `fugaro:setup` skill, the docs, the console's onboarding) **ask the project's rigor mode explicitly**, and what happens when the run cannot answer? | **Yes — a required question of the wizard's own question phase**: a row of `setupQuestions` (`internal/cli/setup.go`), asked by `wizardStage` with the wizard's other questions, so a run that cannot ask — `--non-interactive`, a pipe, `--json`, `--yes` — is refused with the question's own text (`--rigor <mode>`) in the one error `initflow.Run` builds from `InputStage.Missing()`. The four project modes `poc`, `startup`, `pro` and `critical`, each with **one line on what it costs and what review it runs** (`internal/rigor/levels.go`, `internal/rigor/rounds.go`), the **recommended answer first** — `pro`, the built-in default (`rigor.Default`), "what a project that says nothing already runs" — and **no silent default**: the prompt carries no suggestion, so Enter answers nothing and an empty line asks again. The answer is written into the one conventional local layer file (`defaults.rigor.default`) by R1's `Layer` stage, through R2's `EditRigor` over `internal/yamledit` and the shared write helper settings S5 lands (`internal/cli/settings_write.go`) — the same two helpers `fugaro rigor set` calls — and **published by the same run** (F18's HARD RULE), so the owner's answer needs no second command. `hotfix` is **not offered and not writable** (D834 unchanged): it is a per-run mode, and `--rigor hotfix` is refused with the sentence `set` refuses with, naming `fugaro run --mode hotfix`. An existing project's `update` **asks nothing** and **shows the current mode in its summary**, in `rigor show`'s own words with `rigor.Resolve`'s source word, so a key nobody set reads as the built-in default rather than as a choice. The console and the mobile app ask nothing (D836; the console's onboarding names the command and the operator runs it in their own terminal), and no console or mobile task is added. | **(b) Take the built-in default (`pro`) when no answer comes and say so:** the one key that decides how much review a whole project's runs get is then chosen by omission on every scripted or hurried first run — the state the owner's ruling exists to end — and the sentence saying so is read after the runs have already been reviewed at a level nobody chose. **(c) Ask it only in the `fugaro:setup` skill:** the skill runs after the wizard, on one repository, in an agent's session, and it cannot answer a project-wide decision the user must own; the wizard is the one surface asked once per project, at the user's own terminal. **(d) Leave it where it is (a hand edit, published by `fugaro config publish FILE`):** the second command the HARD RULE forbids (F18) and the reason this design exists. **(e) Ask it in the console:** the console asks the operator for nothing and runs no setup. | **Answered 2026-10-31 (the owner's ruling): ask it explicitly — recommended first, no silent default; the alternatives above are what that ruling refuses.** |
 
 ## 4. Noticed while reconciling, and not this work's
 
@@ -268,15 +276,17 @@ Reported rather than fixed, because each needs its own decision and its own revi
   `schemas/fugaro.schema.json`, no row in `internal/config/scope.go`, nothing that reads one. What
   `hotfix` **does** today, once something resolves it, is in three places and is not nothing:
   `internal/rigor/label.go` gives it the security gate alone (every other band is tolerated),
-  `internal/rigor/filing.go` files one backlog item for what it deferred, and its levels and rounds
-  are **Pro's** — `internal/rigor/levels.go`'s row is Pro's set (**O10**, the other design's ruling:
+  `internal/rigor/filing.go` files one backlog item for what it deferred, its levels are **Pro's**
+  — `internal/rigor/levels.go`'s row is Pro's set (**O10**, the other design's ruling:
   `docs/review-levels-ab-jobmax/reconciliation.md` §4, taken by the owner on 2026-10-30 — hotfix
   takes Pro's levels, L2 on with L1 as Pro has it, because the spec set defaults for POC, Startup,
-  Pro and Critical only) and `internal/rigor/rounds.go` gives it 1 round, which `minRoundCeiling`
-  clamps to today's default of 2 while **O3** is open (the rigor-modes design's own open item,
-  `docs/rigor-modes/reconciliation.md` — whether a mode may reduce the round ceiling). So a
-  hand-written `rigor.default: hotfix` in a layer or in a `fugaro.yaml` already reaches a mode that
-  tolerates almost everything, with no gate at all, while `fugaro run --mode hotfix` cannot take
+  Pro and Critical only) and `internal/rigor/rounds.go`'s table gives it a ceiling of **1**, which is
+  the number it spends: **O3 is answered** (2026-10-31) — a mode **may** go below today's default of
+  two — so hotfix is **1/1**, and the answer sets the per-mode loop defaults to **POC 1/1, Startup
+  2/2, Pro 3/3, Critical 3/5, Hotfix 1/1**, each pair being the first-line (inner) rounds and the senior rounds the mode runs **by default** — a default, not a cap: a task override, the recipe, the repository or the project layer can set either number higher or lower within the recipe's bounds (inner 1–3, senior 1–10). The `minRoundCeiling` clamp to two goes with the answer, in the task that implements the loop-defaults ruling (which also renames the ceiling names in `internal/rigor/rounds.go`, because a field never changes meaning), whose `Depends on O3` line the answer unblocks (`docs/rigor-modes/implementation-plan.md`) — so until that
+  task lands the code still clamps, and this paragraph is the ruling rather than a reading of `main`.
+  So a hand-written `rigor.default: hotfix` in a layer or in a `fugaro.yaml` already reaches a mode
+  that tolerates almost everything, with no gate at all, while `fugaro run --mode hotfix` cannot take
   effect (raise-only, D6). This design refuses to *write* hotfix as a default — a different check,
   owed on its own terms (D834) — and it does not close that gate: R7 does, and its first step is a
   question to the owner rather than code (see the plan).

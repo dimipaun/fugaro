@@ -12,8 +12,10 @@ import (
 )
 
 // binaryScanBytes is how much of a file is read to decide whether it is text:
-// git's own test, a NUL byte in the first 8000 bytes, which is also how this
-// repository reads a diff (reviewinput.go).
+// git's own test, a NUL byte in the first 8000 bytes. The window is what makes
+// the test cheap — one read, never the whole file — and 8000 is where a
+// compiler's output declares itself: a binary format's magic or a header's
+// first padding puts a NUL well inside it.
 const binaryScanBytes = 8000
 
 // strayArtifact is a file finalize refuses to commit, with the signal that
@@ -37,12 +39,14 @@ type strayArtifact struct {
 // leaves out is text that happens to be executable, which is a file a reviewer
 // can read and judge.
 //
-// Only untracked files are read, and only the ones git itself would add
-// (gitops.Untracked): a file the run's base commit already holds is the run's
-// own — a binary it edited, an icon it replaced — and an ignored file can never
-// reach a commit, whatever it holds.
+// Only the files a commit would carry that no commit has are read
+// (gitops.NewPaths): the untracked ones and the ones the agent staged itself,
+// because a file `git add`-ed and never committed is a build's artifact just
+// the same and `git add -A` puts it in the commit. A file the run's base commit
+// already holds is the run's own — a binary it edited, an icon it replaced —
+// and an ignored file can never reach a commit, whatever it holds.
 func (r *run) strayArtifacts(ctx context.Context) ([]strayArtifact, error) {
-	paths, err := r.repo.Untracked(ctx)
+	paths, err := r.repo.NewPaths(ctx)
 	if err != nil {
 		return nil, err
 	}

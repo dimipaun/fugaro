@@ -2666,11 +2666,12 @@ func (r *run) agentLoop(ctx context.Context) {
 //
 // A round whose answer carries no parseable verdict is asked once more
 // (seniorRound) and, failing that, recorded as the `none` a skipped review is
-// recorded as and let through: a reviewer that answered nothing asked for
-// nothing, so it is not a finding, and no fix round and no phantom blocker are
-// spent on it (D4's rule is about a round that names what it wants). The run
-// then carries on to finalize, where the record and the pull request status say
-// what happened (Decide, reviewsPart).
+// recorded as: a reviewer that answered nothing asked for nothing, so it is not
+// a finding, and no fix round and no phantom blocker are spent on it (D4's rule
+// is about a round that names what it wants). The run then carries on to
+// finalize, where the record and the pull request's status say what happened
+// and the run ends a draft — a round with no verdict is not a review the run
+// can be called ready on (Decide, reviewsPart).
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
 	for round := 1; ; round++ {
 		v, parsed, ok := r.seniorRound(ctx, round, reviewPrompt)
@@ -2681,7 +2682,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.lastSenior = seniorRound{Round: round}
 			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none"})
 			r.save(ctx)
-			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on without one", "round", round)
+			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
 			return
 		}
 		// The round is kept whole as well as counted: the mode's threshold
@@ -2721,9 +2722,18 @@ const noVerdictRetries = 1
 // The retry is a stage of its own, in a session of its own, exactly as another
 // round would be: the reviewer is asked the same question again rather than
 // reminded of the answer that did not parse, because what the run needs is a
-// verdict, not a repair of the one it got.
+// verdict, not a repair of the one it got. Being a stage, it is not run once
+// the run has crossed its token cap (capReached): a round that costs more than
+// the cap allows is where the review stops.
 func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (Verdict, bool, bool) {
 	for attempt := 1; attempt <= noVerdictRetries+1; attempt++ {
+		// The retry is a stage the run pays for, and the cap that stops it is
+		// the runner's own: the gateway enforces the dollar cap, and nothing
+		// else in this loop reads the token one between two attempts of the
+		// same round.
+		if attempt > 1 && r.capReached() {
+			return Verdict{}, false, false
+		}
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 		// The review's own session is saved like a work stage's (C1.17,
@@ -3477,6 +3487,12 @@ func (r *run) finalize(ctx context.Context) error {
 	// A build's artifact the run left in the tree is never this commit's
 	// (stray.go): it is refused by name, and held out of the commit, so what
 	// the branch carries is the run's work and no compiled file beside it.
+	//
+	// The refusal is a failure and not a stop, like every other failure at this
+	// point of a run: finalize carries on, and what a refused run leaves is the
+	// same draft a failed run leaves — the work pushed, the pull request open,
+	// the reason naming the file. That is what makes it actionable; a run that
+	// returned here would put nothing on the branch and open nothing.
 	strays, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
