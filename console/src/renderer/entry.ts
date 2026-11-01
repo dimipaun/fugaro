@@ -4526,6 +4526,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // its own until the record answers, and a refusal is not a section.
       surface.nodeOf(drawn.mainSlot).replaceChildren()
       if (!answer.ok) {
+        // Only the record's own parts come down here. `arrivals` is the log
+        // read's -- the replay panel drawn with the window it replays -- and a
+        // refused diagnosis has no say over what that read already put on
+        // screen: the two reads answer in an order nobody chooses, and this one
+        // refusing is not a reason to take the other's panel away.
         before = []
         diagnosisDrawn = false
         appendTo(drawn.mainSlot, refusedScreen(factory, 'run.diagnose', answer.sentence, theme))

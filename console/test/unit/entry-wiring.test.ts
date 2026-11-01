@@ -634,6 +634,9 @@ describe('the dashboard the entry mounts', () => {
     expect(classed(panel, 'run-stages'), 'the empty ledger was drawn under a refused diagnosis').toEqual([])
     expect(classed(panel, 'unavailable-operation').map((node) => node.textContent)).toEqual(['run.diagnose'])
     expect(classed(panel, 'run-log-line')).toHaveLength(1)
+    // The log read answered, so its replay panel is up -- the refused diagnosis
+    // is the record's and has no say over what the window's read drew.
+    expect(classed(panel, 'run-replay')).toHaveLength(1)
     expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
   })
 
@@ -716,6 +719,9 @@ describe('the dashboard the entry mounts', () => {
       })
       await flush()
       expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      // The replay panel is the log read's own arrival, drawn with the window it
+      // replays: it is up as soon as that read lands, before the record's has.
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
       expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
       expect(classed(panel, 'run-main')[0]?.attributes.get('data-busy')).toBe('true')
       expect(classed(panel, 'console-busy-label').map((node) => node.textContent)).toEqual([
@@ -729,6 +735,9 @@ describe('the dashboard the entry mounts', () => {
       expect(classed(panel, 'run-stages')).toHaveLength(1)
       expect(classed(panel, 'run-log-line')).toHaveLength(1)
       expect(classed(panel, 'run-tolerated-absent')).toHaveLength(1)
+      // And the record's fill left the other read's replay panel exactly where
+      // the log read drew it: one panel, never two.
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
       // Neither section is reading any more, and neither kept a placeholder.
       expect(classed(panel, 'console-busy-label')).toEqual([])
       expect(classed(panel, 'console-skeleton')).toEqual([])
@@ -739,6 +748,35 @@ describe('the dashboard the entry mounts', () => {
       crumb.click()
       await flush()
       expect((panel.children[0] as FakeNode).attributes.get('class')).toBe('live')
+    })
+
+    it('keeps the log read’s replay panel when the diagnosis refuses after it', async () => {
+      // The replay panel is what the *log* read draws, and the diagnosis is the
+      // record read's: a record that refuses says nothing about the window that
+      // arrived before it, so the panel stays under it. The log read answers
+      // first here, so the refusal is landing on a column that already holds it.
+      const diagnosis = holding()
+      const { panel } = await opened({
+        diagnoseRun: diagnosis.reply,
+        readRunLogs: () => ({
+          ok: true,
+          data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+        }),
+        runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+      })
+      await flush()
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
+
+      diagnosis.release({ ok: false, reason: 'no such run 20261015-120000-aa01' })
+      await flush()
+      expect(classed(panel, 'unavailable-operation').map((node) => node.textContent)).toEqual(['run.diagnose'])
+      expect(classed(panel, 'run-stages'), 'the timeline was drawn under a refused diagnosis').toEqual([])
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      expect(
+        classed(panel, 'run-replay'),
+        'the refused diagnosis took the log read’s replay panel with it',
+      ).toHaveLength(1)
     })
 
     it('rewrites the window’s sentence when the transcript link lands after it', async () => {
