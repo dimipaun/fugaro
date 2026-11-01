@@ -84,9 +84,13 @@ runtime that electron-builder puts around it.
 
 Neither is copyleft, and neither is in the table below. What both bring in is a tree of their own,
 packed beside them and reproduced section by section in `console/THIRD_PARTY_NOTICES.md` — sixteen
-packages for the update client, fourteen for the crash reporter, and `has-flag` 4.0.0, which reaches
-the lockfile through the crash reporter's bundler subpath but is loaded at run time by the update
-client's own `debug`. Every version in those sections is the one the lockfile pins, and since
+packages for the update client and fourteen for the crash reporter, and **no section for
+`has-flag` 4.0.0**: the name reaches the lockfile through the crash reporter's bundler subpath, and
+the packer would hoist it (with `supports-color`) out of that excluded tree, because the update
+client's own `debug` does an optional `require('supports-color')` that nothing declares and that
+`debug` catches and survives. `build.files` refuses both by name, so neither is packed, neither is
+shipped and neither is described: **`has-flag` is excluded, not shipped** (fix round B of
+Task 2.1b, and `console/test/unit/build-files.test.ts` holds the exclusion). Every version in those sections is the one the lockfile pins, and since
 Task 2.1b's fix round A the file is no longer read off a machine: `console/test/unit/notices.test.ts`
 derives the shipped set from `package-lock.json` for each of the three targets the console is built
 for — darwin arm64 and x64 in the universal bundle, and linux x64 — and compares it with the file's
