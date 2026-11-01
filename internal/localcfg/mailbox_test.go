@@ -175,6 +175,36 @@ func TestMailboxRefusesAMalformedUID(t *testing.T) {
 	}
 }
 
+// TestMailboxRefusesJunkBeforePrefix: the uid's shape is anchored at both ends,
+// so a key with anything at all in front of the prefix is refused rather than
+// read as that prefix's uid. A rule that looked for the prefix anywhere in the
+// key would admit "x p~…" and " m~…", and the entry `fugaro mailbox` reads a
+// pairing's item from is the key itself — `pair revoke` matches a device by it
+// too — so a key nothing looks up is a line the operator recorded for nothing.
+func TestMailboxRefusesJunkBeforePrefix(t *testing.T) {
+	pairBody, deviceBody := strings.Repeat("A", 43), strings.Repeat("A", 22)
+	for _, uid := range []string{
+		"xp~" + pairBody,
+		"xm~" + deviceBody,
+		" p~" + pairBody,
+		" m~" + deviceBody,
+		"uid-m~" + deviceBody,
+	} {
+		t.Run(uid, func(t *testing.T) {
+			// The key is quoted: a plain YAML key would silently lose the
+			// leading space that is half of what this case is about.
+			block := mailboxBlock("    \"" + uid + "\": \"fugaro-mailbox-aurora\"\n")
+			_, err := Parse([]byte(sample + block))
+			if err == nil {
+				t.Fatalf("mailbox.keychain_item accepted %q as a pairing's uid", uid)
+			}
+			if !strings.Contains(err.Error(), "is not a pairing's uid") {
+				t.Errorf("refusal %q does not say the key is not a pairing's uid", err)
+			}
+		})
+	}
+}
+
 // TestKeychainItemOldSingleShapeRefused: decision 9 widened the block from one
 // item name to one per pairing, and a config written before it holds a scalar
 // there. There is no shim (pre-1.0): a single name names no pairing, so the

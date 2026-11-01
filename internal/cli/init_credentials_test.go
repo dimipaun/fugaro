@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -31,13 +33,18 @@ import (
 
 // credentialsStageRig is the images rig plus the credentials service's own
 // pieces: the released image, the budget backend and its marker.
-func credentialsStageRig(t *testing.T) *imagesRig {
+func credentialsStageRig(t *testing.T) *imagesRig { return credentialsStageRigAt(t, "1.2.3") }
+
+// credentialsStageRigAt is credentialsStageRig for a CLI that is another
+// release: the rig whose credentials image is published under version, which
+// is what an upgrade BETWEEN two releases is tested with.
+func credentialsStageRigAt(t *testing.T, version string) *imagesRig {
 	t.Helper()
-	r := newImagesRig(t, "1.2.3")
+	r := newImagesRig(t, version)
 	// The released image, and the nightly-immune "-pinned" tag a release
 	// publishes beside the plain version tag.
-	r.src.publish("dimipaun/fugaro-credentials", "1.2.3")
-	r.src.tags["dimipaun/fugaro-credentials:1.2.3-pinned"] = r.src.tags["dimipaun/fugaro-credentials:1.2.3"]
+	r.src.publish("dimipaun/fugaro-credentials", version)
+	r.src.tags["dimipaun/fugaro-credentials:"+version+"-pinned"] = r.src.tags["dimipaun/fugaro-credentials:"+version]
 	// The database the stage reads the marker from: a project config with a
 	// budget backend is what update --firebase-project writes. Its firebase_project is
 	// the one the credentials service's own environment carries
@@ -51,16 +58,72 @@ func credentialsStageRig(t *testing.T) *imagesRig {
 
 // credentialsDigest is the digest the fake source published the credentials
 // image under: what the stage's resolve-and-verify step returns.
-func (r *imagesRig) credentialsDigest() string {
-	return r.src.tags["dimipaun/fugaro-credentials:1.2.3"]
+func (r *imagesRig) credentialsDigest() string { return r.credentialsDigestAt("1.2.3") }
+
+// credentialsDigestAt is credentialsDigest for another release.
+func (r *imagesRig) credentialsDigestAt(version string) string {
+	return r.src.tags["dimipaun/fugaro-credentials:"+version]
 }
 
 // credentialsRef is the reference the stage must write for
 // credentials_service.image: the remote repository's path, the version as a
 // tag, and the verified digest.
-func (r *imagesRig) credentialsRef() string {
+func (r *imagesRig) credentialsRef() string { return r.credentialsRefAt("1.2.3") }
+
+// credentialsRefAt is credentialsRef for another release of the same source.
+func (r *imagesRig) credentialsRefAt(version string) string {
 	return "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry +
-		"/dimipaun/fugaro-credentials:1.2.3@" + r.credentialsDigest()
+		"/dimipaun/fugaro-credentials:" + version + "@" + r.credentialsDigestAt(version)
+}
+
+// oldCredentialsRef is the reference an installation that opted in under an
+// EARLIER release holds: that release's version in the tag and a digest the
+// rig never published — an installation's own record, which is what makes an
+// update have to resolve the running release's image rather than read one.
+func oldCredentialsRef(version string) string {
+	return "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry +
+		"/dimipaun/fugaro-credentials:" + version + "@sha256:" + strings.Repeat("ab", 32)
+}
+
+// seedCredentialsService writes the installation root's tfvars as a run of an
+// earlier release left them: an installation that has opted in, on that
+// release's credentials image, with the entry's other facts exactly what the
+// credentials stage writes (infra.Credentials).
+func seedCredentialsService(t *testing.T, r *imagesRig, image string) {
+	t.Helper()
+	doc := map[string]any{"credentials_service": map[string]any{
+		"account_id":       infra.CredentialsAccountID,
+		"service":          infra.CredentialsServiceName,
+		"image":            image,
+		"bundle_secret":    "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358",
+		"firebase_project": fpID,
+		"rtdb_url":         r.db.URL,
+		"job_accounts": []any{map[string]any{
+			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
+		"url": credentialsServiceURL,
+	}}
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(r.root(), infra.VarsFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// credentialsServiceEntry is the credentials_service entry the installation
+// root's tfvars carry after a run.
+func credentialsServiceEntry(t *testing.T, r *imagesRig) map[string]any {
+	t.Helper()
+	svc, _ := r.tfvars(t)["credentials_service"].(map[string]any)
+	if svc == nil {
+		t.Fatalf("the installation's tfvars carry no credentials_service: %v", r.tfvars(t))
+	}
+	return svc
 }
 
 // A coding agent's session applies nothing, and the credentials service is
@@ -490,6 +553,19 @@ func TestInitCredentialsStageRefusedWhenTheMarkerCannotBeRead(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), rules.PathCredsRulesMarker()) {
 		t.Errorf("the refusal does not name the node that could not be read: %v\n%s", err, s)
+	}
+	// The refusal has to be the READ's and not the missing marker's: both fail
+	// closed, and only this arm says which of the two the database answered, so
+	// a run told "the database carries no marker" would go looking for a node
+	// that is there. The transport's own message is in it for the same reason
+	// ("the database answered nothing" is what the fake refused with).
+	for _, want := range []string{"reading the credentials rules marker at", "the database answered nothing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say the read itself failed (%q): %v\n%s", want, err, s)
+		}
+	}
+	if strings.Contains(err.Error(), "carries no credentials rules marker") {
+		t.Errorf("a read that failed is reported as a database with no marker: %v\n%s", err, s)
 	}
 	if r.resolveCalls != 0 {
 		t.Errorf("a digest was resolved before the rules gate answered (%d calls)", r.resolveCalls)
@@ -1097,4 +1173,363 @@ func TestInitCredentialsStageTakesTheKeyBackWhenTheNoChangeRunVerifiesNothing(t 
 	if _, ok := r.tfvars(t)["credentials_service"]; ok {
 		t.Errorf("a run that applied nothing and enabled nothing left the opt-in in the tfvars: the next ordinary init carries it forward and applies the service with none of this stage's typed confirmation:\n%s", s)
 	}
+}
+
+// The upgrade's own step (0.15.0). An installation that has opted in runs the
+// credentials image of the release that pinned it and no other, and until this
+// task NOTHING moved it: the credentials stage is registered only under
+// --provision-credentials, and an ordinary run rewrites the tfvars from a spec
+// that never carries the key and carries the PREVIOUS document's entry forward
+// verbatim (infra.CarriedCredentialsService, init.go's prepare) — image and
+// all. So an installation that opted in under an earlier release stayed on that
+// release's image for ever, and every later release's behavior that the image
+// decides (0.15.0's: the process serves HTTP/2 cleartext, so the module names
+// the container's port h2c and Check 190's large push stops being cut at the
+// HTTP/1 body limit) never reached it. CLAUDE.md's hard rule is that the
+// upgrade carries its own migration and `fugaro update` is the whole of it.
+//
+// Mutation (verified, run and restored): return from pinCredentialsImage before
+// it resolves (the carry this test exists to replace): the tfvars keep 1.2.2's
+// image and this test fails.
+func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an opted-in installation failed: %v\n%s", err, s)
+	}
+	svc := credentialsServiceEntry(t, r)
+	if got := svc["image"]; got != r.credentialsRef() {
+		t.Errorf("credentials_service.image = %v, want %s: an ordinary update left the installation on the image of the release it opted in under, so the release's own process never reaches it\n%s", got, r.credentialsRef(), s)
+	}
+	// The digest is the resolve-and-verify step's own and not a value this run
+	// composed: the release's "-pinned" tag, its signature, and the read-back
+	// through the remote repository all happened, once for the run.
+	if r.resolveCalls != 1 || r.arCalls != 1 {
+		t.Errorf("resolve calls %d, read-backs %d, want one of each: the image is pinned only through the step that verifies the signature of the digest it names", r.resolveCalls, r.arCalls)
+	}
+	// Everything else the entry holds is what the earlier run wrote: the
+	// re-pin is a change of the ONE value, not a rebuild of the service's
+	// facts.
+	for k, want := range map[string]any{
+		"account_id": infra.CredentialsAccountID, "service": infra.CredentialsServiceName,
+		"firebase_project": fpID, "url": credentialsServiceURL,
+		"bundle_secret": "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358",
+	} {
+		if svc[k] != want {
+			t.Errorf("credentials_service.%s = %v, want %v: the re-pin rewrote a fact of the service it does not own", k, svc[k], want)
+		}
+	}
+	if apps := r.ran(t, "apply"); len(apps) != 1 {
+		t.Errorf("applies = %v, want the installation root's alone", apps)
+	}
+
+	// The next ordinary update is the converged one, and it asks the registry
+	// nothing: the reference already names this release, so there is no image
+	// to move and no reason to reach the network — which is also why an owner
+	// whose registry is briefly unreachable updates as they did before this
+	// migration existed.
+	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("the update after the re-pin failed: %v\n%s%s", err, out, errOut)
+	}
+	if r.resolveCalls != 1 || r.arCalls != 1 {
+		t.Errorf("the converged update resolved %d image(s) and read %d back, want the first run's one and one: the re-pin is needed once per release and not once per run", r.resolveCalls, r.arCalls)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("the converged update's image = %v, want %s", got, r.credentialsRef())
+	}
+
+	// An installation that has NOT opted in is untouched: nothing is resolved,
+	// no credentials_service is written, and the release's image is not pinned
+	// onto an installation whose owner never asked for the service.
+	plain := credentialsStageRig(t)
+	plain.setPlanAt(t, "installation", change("module.installation.google_storage_bucket.runs", "update"))
+	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("an ordinary update of an installation without the service failed: %v\n%s%s", err, out, errOut)
+	}
+	if plain.resolveCalls != 0 || plain.arCalls != 0 {
+		t.Errorf("an installation without the credentials service resolved %d image(s) and read %d back: the opt-in is what the re-pin is for, and an installation that never opted in is byte for byte the run it was", plain.resolveCalls, plain.arCalls)
+	}
+	if _, ok := plain.tfvars(t)["credentials_service"]; ok {
+		t.Errorf("an ordinary update wrote credentials_service into an installation that never opted in: %v", plain.tfvars(t)["credentials_service"])
+	}
+}
+
+// update --firebase-project re-pins too. The flag moves the installation's
+// first apply into the Firebase stage (the installation stage skips: "applied
+// as the first step of the firebase backend"), so newFirebaseStage is where an
+// opted-in owner's only re-pin happens on this path — and the hard rule's one
+// command has to converge them here as it does without the flag, or the
+// installation with the Firebase backend stays on the previous release's
+// credentials image and the h2c port this release's module names is never what
+// the service runs.
+func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
+	r := credentialsStageRig(t)
+	// The mark the door wrote when the installation was set up: the Firebase
+	// stage refuses a database that holds data and is not this installation's,
+	// and an installation that can be updated is one it already wrote.
+	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	// The Firestore database the installation was set up with: the rig starts
+	// without one (a fresh Firebase project has none), and the stage asks the
+	// owner for a location and creates it when it finds none — which is a setup
+	// question, not the update this test is about.
+	r.fs.SetDatabase("us-east5")
+	// The installation root's outputs as this path reads them: what
+	// credentialsOutputs answers with, AND the history account the Firebase
+	// stage reads back. credentialsOutputs replaces the rig's script rather
+	// than adding to it, and this is the one test that needs both objects from
+	// the same run, so the two are composed here.
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"history_service_account": historyAccount,
+		"history_job":             nil,
+	})}
+	r.save(t)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("update --firebase-project of an opted-in installation failed: %v\n%s", err, s)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("credentials_service.image = %v, want %s: update --firebase-project skipped the re-pin, so an installation whose first apply is the Firebase stage never reaches this release's image\n%s", got, r.credentialsRef(), s)
+	}
+	if r.resolveCalls != 1 || r.arCalls != 1 {
+		t.Errorf("resolve calls %d, read-backs %d, want one of each: the image is pinned only through the step that verifies the signature of the digest it names, once for the run", r.resolveCalls, r.arCalls)
+	}
+}
+
+// The upgrade between the two releases this one follows: ONE `fugaro update`
+// takes an installation that opted in under the previous release to this
+// release's credentials image — the one whose process serves HTTP/2 cleartext,
+// which is the release the module's own local counts as the first h2c-serving
+// one and the tftest fixtures name as the pair (the run that asserts the port
+// is named h2c, and the run before it that asserts no port at all).
+//
+// This is the migration CLAUDE.md's hard rule is about, and it is one run: the
+// owner upgrades the CLI and runs the one documented command. The entry's other
+// facts converge too — a re-pin that rebuilt them from the flag-less spec would
+// drop the audience the service's callers mint their ID tokens for, which
+// admits nobody.
+func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *testing.T) {
+	r := credentialsStageRigAt(t, "0.15.0")
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("0.14.2"))
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one update from the previous release failed: %v\n%s", err, s)
+	}
+	svc := credentialsServiceEntry(t, r)
+	if got, want := svc["image"], r.credentialsRefAt("0.15.0"); got != want {
+		t.Errorf("credentials_service.image = %v, want %s: one update from the previous release must reach this release's verified image, or the installation keeps serving the previous release's process and the h2c port the module names for this one is never what it runs\n%s", got, want, s)
+	}
+	if svc["url"] != credentialsServiceURL || svc["rtdb_url"] != r.db.URL {
+		t.Errorf("the converged entry lost a fact the previous release wrote (%v): the re-pin changes the image and nothing else", svc)
+	}
+	if r.resolveCalls != 1 {
+		t.Errorf("resolve calls %d, want 1: one update is one resolve, and it is the release's own signed image the run pins", r.resolveCalls)
+	}
+}
+
+// The re-pin fails, and the opt-in survives it (the review's finding 1). The
+// resolve reaches cosign and the registry, so it fails for reasons that have
+// nothing to do with the installation: no cosign on PATH, a wrong-identity
+// signature, a registry blip. What must NOT happen is the trap the workdir
+// order sets: PrepareWorkdir rebuilds the installation's tree (deleting the
+// tfvars) before the installation stage runs, so a run that errors between
+// that rebuild and prepare's rewrite leaves NO tfvars file at all — and the
+// next run reads that as "never opted in", plans the service, its account, its
+// grant and its bundle away, and the bundle container's prevent_destroy
+// refuses the plan. The installation could then never be updated again without
+// --provision-credentials: a transient registry failure would have cost the
+// owner an operator step, and CLAUDE.md's hard rule says the upgrade leaves
+// none.
+//
+// The refusal is the other half of the same finding, and the reason this test
+// exists rather than a softer one: the resolve failing must FAIL the run, not
+// be swallowed into "the image did not move, carry on" (a silent return nil
+// here applies the installation with the previous release's image and reports
+// the service as moved), and never a digest nothing verified.
+func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	seeded, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.resolveErr = errors.New("the signature of dimipaun/fugaro-credentials:1.2.3-pinned did not verify")
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("an update whose credentials image could not be resolved reported success: the installation is applied on the previous release's image while the run says it moved the service\n%s", s)
+	}
+	if !strings.Contains(err.Error(), "did not verify") {
+		t.Errorf("the run failed with %v, want the resolve's own refusal — an update that cannot reach the registry cannot report the service as moved either\n%s", err, s)
+	}
+	// The write-back is not a half-built document an aborted run left behind:
+	// nothing removes a workdir on the error path (the next run's PrepareWorkdir
+	// is what replaces the tree), so these bytes are what the installation is
+	// left holding, and what every reader of this file reads next — prepare and
+	// --print-vars carry the keys this run's spec never holds forward FROM them,
+	// and installationFenceRecorded reads the managed deployer's fence out of
+	// them. They are the earlier run's document entire, so the file and the
+	// snapshot the next run takes agree, and no clean-up step is owed here: a
+	// deletion would be the finding this test exists for.
+	after, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
+	if err != nil {
+		t.Fatalf("the failed update left no tfvars to read back: %v\n%s", err, s)
+	}
+	if string(after) != string(seeded) {
+		t.Errorf("the failed update left tfvars that are not the document it started from: %s, want %s\n%s", after, seeded, s)
+	}
+	// The opt-in is where it was, image and all: the run wrote the document
+	// the carry is about to use back before it resolved, so the file the next
+	// run reads carries the service.
+	doc := credentialsVarsOnDisk(t, r)
+	if doc == nil {
+		t.Fatalf("the failed update left the installation with no tfvars at all: the next run carries no credentials_service forward, plans the service's removal, and the bundle container's prevent_destroy refuses that plan — the installation is stuck until --provision-credentials\n%s", s)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		t.Fatalf("the failed update left tfvars carrying no credentials_service: the next run reads that as never having opted in\n%s", s)
+	}
+	if svc["image"] != oldCredentialsRef("1.2.2") {
+		t.Errorf("credentials_service.image = %v, want the previous pin %s kept: nothing was applied, so nothing may say the service moved", svc["image"], oldCredentialsRef("1.2.2"))
+	}
+
+	// The next update, this time with the registry reachable, still finds the
+	// opt-in and converges — the whole point: one transient failure costs one
+	// retry and not an operator step.
+	r.resolveErr = nil
+	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("the update after the failed re-pin did not converge: %v\n%s%s", err, out, errOut)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("credentials_service.image = %v after the retry, want %s: the opt-in the failed run kept is what the retry re-pinned", got, r.credentialsRef())
+	}
+}
+
+// An installation whose recorded image names a release NEWER than this CLI's is
+// left alone (the review's finding 2). Two machines of one installation are
+// upgraded at different times, so the older CLI meets a service that a newer
+// release's update already moved: the release in the reference is this
+// release's future, and re-pinning it "down" to the version the older binary
+// knows would put the previous process back — and the two machines would flip
+// the service back and forth on every update, each one undoing the other. It
+// is the base image's own rule (init_images.go's baseIsCurrent, which compares
+// with newer and never moves a pin back).
+func TestUpdateKeepsANewerRecordedCredentialsImage(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	ahead := oldCredentialsRef("1.2.4")
+	seedCredentialsService(t, r, ahead)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an update whose installation already runs a later release's image failed: %v\n%s", err, s)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != ahead {
+		t.Errorf("credentials_service.image = %v, want %s untouched: a CLI older than the release the installation runs must not pin the service back to its own\n%s", got, ahead, s)
+	}
+	if r.resolveCalls != 0 || r.arCalls != 0 {
+		t.Errorf("the update resolved %d image(s) and read %d back, want none: there is nothing to move when the recorded release is ahead of this binary's", r.resolveCalls, r.arCalls)
+	}
+}
+
+// An image that names NO release is replaced by this release's (the review of
+// the fix round): the "never move it down" rule compares two releases, and a
+// reference that names none — an operator's hand-written digest, pinned by
+// digest so the module's validation admits it, and naming no version at all —
+// has nothing to compare. It is the case the operators line describes ("an
+// operator's hand-written image digest is replaced by the release image"), and
+// the re-pin must reach it rather than read it as "a release newer than mine".
+//
+// The release in the rig is 0.15.0, which is what makes this test the one that
+// catches the trap: newer(a, b) splits both sides on "." and atoi's every part,
+// so an empty operand reads as one zero part and compares EQUAL to a release
+// whose major is 0 — every release this program has cut so far. At 1.2.3 the
+// comparison happens to answer "newer" for the wrong reason, which is why the
+// rig at what will be the current release is the one that pins this.
+func TestUpdateReplacesACredentialsImageThatNamesNoRelease(t *testing.T) {
+	r := credentialsStageRigAt(t, "0.15.0")
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seeded := "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry +
+		"/dimipaun/fugaro-credentials@sha256:" + strings.Repeat("ab", 32)
+	seedCredentialsService(t, r, seeded)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an update of an installation whose image names no release failed: %v\n%s", err, s)
+	}
+	if got, want := credentialsServiceEntry(t, r)["image"], r.credentialsRefAt("0.15.0"); got != want {
+		t.Errorf("credentials_service.image = %v, want %s: a reference that names no release is the release this installation runs nobody knows, and leaving it there is an installation stuck on an operator's hand-written digest\n%s", got, want, s)
+	}
+	if r.resolveCalls != 1 || r.arCalls != 1 {
+		t.Errorf("resolve calls %d, read-backs %d, want one of each: the replacement image is the release's, and it is written only through the step that verified it", r.resolveCalls, r.arCalls)
+	}
+}
+
+// A coding agent's session pins nothing (the review's finding 3). The engine
+// stages are PLANNED in such a session rather than skipped, so an ordinary
+// `fugaro update` from one does reach the installation stage — and without
+// this the re-pin there would run cosign and the registry with the operator's
+// own ADC and write the resolved image into the workdir's tfvars. That is the
+// resolve and the write the credentials stage's own agent refusal exists to
+// keep out of a session (TestInitCredentialsStageRefusedInAgent: "no digest
+// resolved, no tfvars written"), and a plan-only run that did them would have
+// the operator's credentials spent on a registry read the owner never asked
+// for.
+//
+// The installation stage really ran: the tfvars this test reads are the ones
+// prepare wrote, which no earlier stage of an agent's run reaches.
+func TestUpdateInAnAgentSessionPinsNoCredentialsImage(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	t.Setenv("CLAUDECODE", "1")
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil && !strings.Contains(s, "left for you") {
+		t.Fatalf("an ordinary update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
+	}
+	if r.resolveCalls != 0 || r.arCalls != 0 {
+		t.Errorf("an agent's session resolved %d image(s) and read %d back: the session plans the installation, so a re-pin there spends the operator's ADC on cosign and the registry for a run that applies nothing", r.resolveCalls, r.arCalls)
+	}
+	if got := credentialsServiceEntry(t, r)["image"]; got != oldCredentialsRef("1.2.2") {
+		t.Errorf("credentials_service.image = %v, want the recorded %s: nothing of the re-pin may run in an agent's session\n%s", got, oldCredentialsRef("1.2.2"), s)
+	}
+}
+
+// credentialsVarsOnDisk is the installation root's tfvars as the workdir
+// holds them now, or nil when the workdir holds none — the difference the
+// failed re-pin turns on, which is why this read is not init_test.go's
+// tfvars (that one fails the test when the file is missing).
+func credentialsVarsOnDisk(t *testing.T, r *imagesRig) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("the workdir's %s is not a document: %v\n%s", infra.VarsFile, err, b)
+	}
+	return doc
 }

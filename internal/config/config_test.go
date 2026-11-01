@@ -33,7 +33,10 @@ func TestParseAppliesDefaults(t *testing.T) {
 	if cfg.Git.BaseBranch != "main" {
 		t.Errorf("base_branch = %q, want main", cfg.Git.BaseBranch)
 	}
-	if cfg.Agent.Auth != "vertex" || cfg.Agent.ReviewRounds != 2 || cfg.Agent.MaxBudgetUSD != 25 {
+	// The two round knobs are 0 here on purpose: their default is per rigor
+	// mode, which no layer of this file knows, so the unset value is what
+	// travels to the run (applyDefaults, rigor.DefaultRounds).
+	if cfg.Agent.Auth != "vertex" || cfg.Agent.ReviewRounds != 0 || cfg.Agent.FirstLineRounds != 0 || cfg.Agent.MaxBudgetUSD != 25 {
 		t.Errorf("agent defaults = %+v", cfg.Agent)
 	}
 	w := cfg.Workflows["server"]

@@ -33,7 +33,7 @@ A reserved number is never reused and never renumbered.
 ## Related
 
 - [docs/recipes.md](../recipes.md) and [docs/design/recipes.md](../design/recipes.md): the recipe format the spec's §3 and §4 run into — reserved keys, `max_rounds`, by-role models, and the readiness rule the spec's §6 would change.
-- [docs/dogfooding.md](../dogfooding.md): the standing posture the spec's §2 goal changes — "the run's own review is a smoke check, not independent review: keep the real review **outside** the loop … A run's own `ship` never replaces it."
+- [docs/dogfooding.md](../dogfooding.md): the standing posture the spec's §2 goal changes — "the in-loop reviewer is a different, stronger model than the coder, but it is still not independent review: keep the real review **outside** the loop … A run's own `ship` never replaces it."
 - [docs/design/mixed-credentials.md](../design/mixed-credentials.md) and the held [docs/plans/2026-10-14-oauth-reviewer-stage.md](../plans/2026-10-14-oauth-reviewer-stage.md): what "one job, two model credentials" costs, and what is parked.
 - [docs/credentials-service/](../credentials-service/README.md): the owner's newer credential direction, which supersedes the parked design's per-call credential switching and gates any work that depends on it.
 - [docs/design/budget-token-channel.md](../design/budget-token-channel.md) and [docs/design/project-centric.md](../design/project-centric.md) §6.2: the spend side of running Opus reviewers in a job.

@@ -59,7 +59,7 @@ func idle(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, e
 
 func TestStagePinsPerRole(t *testing.T) {
 	h := newGW(t, pinnedConfig(t), "observe", "").harness
-	if _, err := h.run(t, implement("feature"), review("revise", 1), idle, review("ship", 0)); err != nil {
+	if _, err := h.run(t, implement("feature"), review("changes", 1), idle, review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.agent.calls) != 4 {
@@ -122,7 +122,7 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 			return inner(t, ctx, req)
 		}
 	}
-	if _, err := h.run(t, read(implement("feature")), read(review("revise", 1)), read(idle), read(review("ship", 0))); err != nil {
+	if _, err := h.run(t, read(implement("feature")), read(review("changes", 1)), read(idle), read(review("ship", 0))); err != nil {
 		t.Fatal(err)
 	}
 	if len(seen) != 4 {
@@ -182,7 +182,10 @@ func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 // carries the web tools alone and the review assertions fail. Mutation (a
 // constant review=true): the implement and fix assertions fail.
 func TestManagedSettingsDenyBinaryReadsInReviewStages(t *testing.T) {
-	g := newGW(t, gwConfig(t, "  first_line_review: on\n"), "observe", "")
+	// first_line_rounds comes with first_line_review: this case scripts one
+	// cheap round, and an unset knob takes the resolved mode's row instead
+	// (internal/rigor's DefaultRounds).
+	g := newGW(t, gwConfig(t, "  first_line_review: on\n  first_line_rounds: 1\n"), "observe", "")
 	h := g.harness
 	var denies [][]string
 	read := func(inner step) step {

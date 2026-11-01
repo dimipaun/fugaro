@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,9 +16,20 @@ import (
 	"github.com/dimipaun/fugaro/ee/coordinator"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pool"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
+
+// coordinatorViewRepos is how many repositories' views this read holds open at
+// once. A repository's read is not only the database's: one with nothing
+// stored falls back to its runs, which reads the runs bucket at lsWorkers —
+// the listing's own width, 32 — so this width is multiplied by that one, and
+// the product is what the bucket is asked for at any moment. Four keeps it
+// within the same order as the single repository a project without the
+// coordinator pays for anyway, and still overlaps the handful of repositories
+// a project has.
+const coordinatorViewRepos = 4
 
 // `fugaro coordinator status --from-store` (D364): the read of the view the
 // sweep already stored, which is what makes the project view the same for
@@ -68,14 +80,35 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	if err != nil {
 		return err
 	}
-	warn := cmd.ErrOrStderr()
-	views := make([]coordinator.RepoView, 0, len(repos))
-	for _, repo := range repos {
-		view, err := coordinatorStoredView(ctx, env, store, repo, coordinatorSince(window), warn)
+	// Every repository's view is read in one pass, a few at a time: a project
+	// with twenty of them costs one repository's read per round rather than
+	// their sum, which is the whole of this command's cost. Each read writes
+	// its own slot, so the document is in the repository order coordinatorRepos
+	// names whatever order they finish in, and the first failure in that order
+	// is the one reported.
+	//
+	// What a read warns about is buffered per repository rather than written as
+	// it is made: written as it is made, twenty reads at once put one
+	// repository's line between two of another's in whatever order they
+	// happened to finish, so the warning a person needs is the one they cannot
+	// find. The buffers are flushed below, in that same order.
+	warns := make([]bytes.Buffer, len(repos))
+	views := make([]coordinator.RepoView, len(repos))
+	errs := make([]error, len(repos))
+	pool.Run(len(repos), coordinatorViewRepos, func(i int) {
+		views[i], errs[i] = coordinatorStoredView(ctx, env, store, repos[i], coordinatorSince(window), &warns[i])
+	})
+	// The flush stops at the first failure, and stops there for good: the
+	// repository that failed is one the read did not finish, so neither its own
+	// warnings nor any later repository's are about anything a person can act
+	// on, and the error it returns is what the command says instead.
+	for i, err := range errs {
 		if err != nil {
 			return err
 		}
-		views = append(views, view)
+		// stderr is best effort everywhere else in this path, and a terminal
+		// that would not take a warning is not a failed read.
+		_, _ = cmd.ErrOrStderr().Write(warns[i].Bytes())
 	}
 	out := cmd.OutOrStdout()
 	if o.all {
@@ -108,6 +141,11 @@ func coordinatorStoredView(ctx context.Context, env *fcli.Cloud, store *coordina
 	if err != nil {
 		return coordinator.RepoView{}, coordinatorStoredErr(env.Config(), err)
 	}
+	// The provider is the caller's answer and not the read's: the node is
+	// keyed by a slug of it, so the node cannot give it back, and a reader
+	// that needed one for a pull request's URL would otherwise have to take
+	// it from the URL the sweep stored.
+	view.Provider = env.RepoProvider(repo, fcli.CheckoutOf(ctx, repo)())
 	if view.Stored {
 		return view, nil
 	}

@@ -648,6 +648,10 @@ test.describe('the renderer entry, in the real window', () => {
     }
     const again = await launch(stub.env)
     try {
+      // The card is drawn before the boot's `listInstallations` round trip and
+      // the header's chip after it, so `domcontentloaded` alone can see the one
+      // without the other.
+      await expect(again.page.locator('button.console-reduced-chip')).toHaveCount(1)
       const drawn = await again.page.evaluate(() => ({
         hidden: document.querySelector('section.console-skew')?.hasAttribute('hidden') ?? null,
         chips: document.querySelectorAll('button.console-reduced-chip').length,
@@ -700,7 +704,7 @@ test.describe('the renderer entry, in the real window', () => {
             : [
                 ['version'],
                 ['watch', '--json', '--project', 'e2e'],
-                ['runs', 'ls', '--json', '--project', 'e2e'],
+                ['runs', 'ls', '--json', '--since', '24h', '--project', 'e2e'],
               ]
         // The watch is written by the entry's *first poll*, which is a message
         // round and a spawn behind the window's `domcontentloaded` -- so a mode
@@ -789,7 +793,7 @@ test.describe('the renderer entry, in the real window', () => {
         'Live',
         'Graph',
         'Spend',
-        'Projects',
+        'Project',
         'Coordinator',
       ])
       await expect(
@@ -958,6 +962,8 @@ test.describe('the renderer entry, in the real window', () => {
           'runs',
           'ls',
           '--json',
+          '--since',
+          '24h',
           '--project',
           'e2e',
         ])

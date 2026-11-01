@@ -41,11 +41,15 @@ const (
 )
 
 // NeedsBilling is whether a stage needs the GCP project to have billing: every
-// stage but the ones before the project's own and the plugin wiring, which
-// writes a local file only.
+// stage but the ones before the project's own and the ones that write local
+// files only — the plugin wiring, and the checkout's own steps, whose pin and
+// plugin write the checkout's settings and the user's own Claude Code. The
+// checkout's cloud step is the part of that stage that needs billing, and it is
+// the step that says so: waiting for billing on the stage would leave the two
+// local writes unmoved over a build that is asked for after both.
 func NeedsBilling(name string) bool {
 	switch name {
-	case Preflight, Project, Plugin:
+	case Preflight, Project, Plugin, Checkout:
 		return false
 	}
 	return true
@@ -64,6 +68,16 @@ const (
 	Secrets       = "secrets"
 	Plugin        = "plugin"
 	Repository    = "repository"
+	// Rules is the deployed security rules generation
+	// (internal/cli/init_rules_stage.go): the document a project policy is
+	// read under, and its marker. It comes after the repository stage and
+	// BEFORE the policy stage, because the policy stage's write is gated on
+	// that marker — a policy written under rules that predate the policy
+	// model is a policy no run reads — so a run that migrates the node
+	// without deploying the rules first refuses its own work and leaves the
+	// whole upgrade for a second command (the owner's rule of 2026-10-30:
+	// fugaro update is the whole upgrade).
+	Rules = "rules"
 	// Credentials is the owner-run stage that applies the credentials service
 	// (docs/credentials-service, D146; C1.20). It is the only writer of the
 	// installation's credentials_service variable, it is always typed at a
@@ -74,6 +88,30 @@ const (
 	// service — an apply that ran first would plan that grant against a
 	// resource that is not there yet.
 	Credentials = "credentials"
+	// Policy is the published policy node's migration in place
+	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
+	// fugaro update is the whole upgrade). It comes after the repository
+	// stage because the node it reads and rewrites is what those jobs'
+	// runs are admitted by, and it is the one stage whose change is a
+	// document rather than an installation.
+	Policy = "policy"
+	// Layer is the published project layer and the one local layer file the
+	// owner edits (internal/cli/init_layer_stage.go, D830/D831): the stage
+	// seeds the file from the published object when it is absent, publishes
+	// the file when it differs, and records the generation the file was
+	// written from (D854). It comes after the policy stage and BEFORE the
+	// checkout stage, and Checkout needs it: the checkout stage refreshes
+	// the checkout's images off the project layer, so a layer that changed
+	// commands or image settings has to be published before that refresh, or
+	// the run builds from the layer the owner just replaced.
+	Layer = "layer"
+	// Checkout is what `fugaro upgrade` does for the checkout `fugaro update`
+	// is run in, as a stage of the converge itself (internal/cli/
+	// init_checkout_upgrade.go, the owner's rule of 2026-10-30: fugaro update
+	// is the whole upgrade, so the two front doors may not be two commands).
+	// It comes after the repository stage, whose onboarding is what the
+	// images it refreshes belong to, and before compute, which stays last.
+	Checkout = "checkout"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
@@ -114,6 +152,27 @@ var order = []slot{
 	// output and grant each job's account an invoker on it.
 	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
+	// The rules generation is what the policy node is READ under, so it is
+	// deployed before the node that depends on it: the policy stage's write
+	// holds the publisher's gate, which refuses a node under rules that
+	// predate the policy model, and a run whose rules are stale would refuse
+	// its own migration and leave the upgrade unfinished.
+	{name: Rules, needs: []string{Repository}},
+	// The policy node is what every run of the project is admitted by, and
+	// the repository stage is the last writer of the installation those runs
+	// read it against.
+	{name: Policy, needs: []string{Repository, Rules}},
+	// The layer is what the checkout's images are built from, so it is
+	// published before the refresh that reads it: the checkout stage's cloud
+	// step builds this checkout's images off the layer that applies, and a
+	// layer published after it would leave the run building from the one the
+	// owner just replaced.
+	{name: Layer, needs: []string{Repository}},
+	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
+	// run after the repository stage: the images the cloud step refreshes are
+	// that repository's, and the onboarding the repository stage does is what
+	// the refresh builds for.
+	{name: Checkout, needs: []string{Repository, Layer}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.
@@ -124,9 +183,10 @@ var order = []slot{
 // covers (design m11 §9, "one confirmation"): the Terraform applies of the
 // installation, the Firebase root, the history job and the repository, and
 // what goes with them (the state bucket, the Viewer-read removal, the
-// Firestore marks and rules, the image copies that add tags, the local
-// config). Everything else is never covered by it: the project's creation and
-// billing, a secret, and the plugin wiring (its own y/N).
+// Firestore marks and rules, the deployed security rules generation, the image
+// copies that add tags, the local config). Everything else is never covered by
+// it: the project's creation and billing, a secret, and the plugin wiring (its
+// own y/N).
 //
 // The map answers for WHOLE STAGES, and that is the whole of what it says. A
 // step finer than its stage — the Firestore database's location inside
@@ -137,7 +197,7 @@ var order = []slot{
 // only place that knows which front door is running and so which steps that
 // door owns.
 var runCovered = map[string]bool{
-	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true,
+	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true,
 }
 
 // RunCovers reports whether the run's one confirmation may cover the stage's
@@ -242,6 +302,13 @@ type Plan struct {
 type Outcome struct {
 	Changed bool   // false: the stage found nothing to do ("No changes")
 	Detail  string // one line
+	// Left is a step the stage applied what it could without: something of
+	// its work this session may not do (the checkout's cloud half in a coding
+	// agent's session, where every write must be on this machine —
+	// LocalUnderAgent). The loop records it as left-for-you beside the
+	// stage's line, so the run reports the step and exits 1 rather than
+	// reporting a stage that skipped half of itself as done.
+	Left *Left
 }
 
 // Stage is one step of the converge. Check, Plan and Verify only read;
@@ -282,6 +349,20 @@ type InputStage interface {
 type SelfConfirming interface {
 	SelfConfirming()
 }
+
+// LocalUnderAgent marks a stage whose writes are all on this machine: in a
+// coding agent's session it still applies, and it refuses there whatever
+// reaches outside the machine. Nothing else checks that for it, so the refusal
+// is the stage's own, and it must have one: a stage that implements this and
+// then writes to the cloud would do it.
+//
+// It exists for one stage, the checkout's inside fugaro update (internal/cli/
+// init_checkout_upgrade.go). A marker stops a run from doing what only a
+// person should confirm; the pin in the checkout's settings and the plugin in
+// the user's own Claude Code are neither — they are the same two writes the
+// user's own session makes with fugaro upgrade, on files it reads anyway — and
+// the cloud half of that stage keeps its refusal, in the step that makes it.
+type LocalUnderAgent interface{ LocalUnderAgent() }
 
 // StageError is a failure that carries the one-line fix.
 type StageError struct {

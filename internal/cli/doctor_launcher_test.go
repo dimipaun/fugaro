@@ -108,8 +108,9 @@ func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 	}
 }
 
-// The line a person reads: the launcher reach is an *info* line and it is
-// printed. printDoctorChecks prints every check that is not OK, and an OK one
+// The line a person reads: the launcher reach is an *info* line and --all
+// prints it (it is an audit line, so the default view leaves it out).
+// printDoctorChecks prints every check that is not OK, and an OK one
 // too when it carries a Severity; what it prints nothing for is an OK check
 // with no Severity, which is doctor's own bookkeeping (`if c.OK &&
 // c.Severity == "" { continue }`, doctor.go). So this check is *not ok* and
@@ -137,7 +138,9 @@ func TestDoctorPrintsTheLauncherReach(t *testing.T) {
 	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
 		Members: []string{"user:a@example.com"}})
 
-	out, errOut, err := execute(t, "doctor", "--dir", t.TempDir())
+	// --all: the launcher reach is an audit line, so the default view leaves it
+	// out and this test names the view that shows it.
+	out, errOut, err := execute(t, "doctor", "--all", "--dir", t.TempDir())
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
@@ -361,6 +364,12 @@ func TestDoctorLauncherReachAsAPlainLauncher(t *testing.T) {
 	if !strings.Contains(c.Problem, "you can start 1 of them: "+project) {
 		t.Errorf("does not report the job the caller can start (with overrides, as fugaro run launches): %s", c.Problem)
 	}
+	// And it is an unread state, not a measurement: every policy was refused,
+	// so the grants were never read, and a measurement here would print beside
+	// "everything checked is ok" on an installation nobody looked at.
+	if c.Class != doctorClassAudit {
+		t.Errorf("launcher-jobs on a surface nobody could read is classed %q, want %q", c.Class, doctorClassAudit)
+	}
 }
 
 // When not one job's policy could be read — every read failed, so not even a
@@ -420,6 +429,45 @@ func TestDoctorLauncherReachSaysWhatItsCountsLeaveOut(t *testing.T) {
 	}
 }
 
+// A partial withheld read is a read that did not happen too, and the review of
+// #1428 found the marker set only when every policy had been refused: doctor
+// then printed "1 grant(s) over 1 job(s)" for a listing where the second job's
+// policy was refused as well, filed as a measurement — a count over a partial
+// read, with the jobs it leaves out said beside it, on a screen that counts
+// findings and says nothing about this one. Any withheld policy sets the marker.
+func TestDoctorLauncherReachPartialWithheldIsCounted(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.AddJob("fugaro-acme-app-hid", "2", "2Gi")
+	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
+		Members: []string{"user:a@example.com"}})
+	// 403 is a refusal, not a failure: the check falls back to
+	// testIamPermissions for that job, which the fake answers with nothing held,
+	// so the job is counted as withheld and the listing is read in part.
+	r.run.FailPolicyOf = map[string]int{"fugaro-acme-app-hid": 403}
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
+	if !found {
+		t.Fatal("doctor reports no launcher reach")
+	}
+	if c.OK || c.Severity != "info" {
+		t.Fatalf("check = %+v, want an info line", c)
+	}
+	if !strings.Contains(c.Problem, "can start 1 of them: fugaro-acme-app-web") {
+		t.Errorf("the readable job is not reported: %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "1 of the location's 2 job(s) are not in that count: 1 whose policy your credentials may not read") {
+		t.Errorf("the count does not say which job it leaves out: %s", c.Problem)
+	}
+	// The class is the marker's visible half, and launcher-jobs is on the
+	// measurement list: only a check carrying the unread marker reaches the audit
+	// class, so this one line pins both — a partial read counted in the pointer.
+	if c.Class != doctorClassAudit {
+		t.Errorf("a partial read is classed %q, want %q: the pointer has to count it", c.Class, doctorClassAudit)
+	}
+}
+
 // The two informational checks doctor builds — the launcher reach over the
 // Cloud Run jobs, and the project's Claude account jobs with the repositories
 // each token may be used by — are OK checks with a Severity, and the printer
@@ -436,7 +484,7 @@ func TestDoctorPrintsItsInformationLines(t *testing.T) {
 		r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
 		r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
 			Members: []string{"user:a@example.com"}})
-		out, _, _ := execute(t, "doctor")
+		out, _, _ := execute(t, "doctor", "--all")
 		if !strings.Contains(out, "info launcher-jobs: ") || !strings.Contains(out, "can start 1 of them: fugaro-acme-app-web") {
 			t.Fatalf("the launcher reach is not in the printed output:\n%s", out)
 		}
@@ -445,7 +493,7 @@ func TestDoctorPrintsItsInformationLines(t *testing.T) {
 		r := projectAccountRig(t)
 		putProjectSecret(t, r.sm, "aurora", "claude-oauth-token-acme-personal", []byte("fake-token-0123456789"))
 		putProjectSecret(t, r.sm, "aurora", "claude-oauth-token", []byte("fake-token-9876543210"))
-		out, _, _ := execute(t, "doctor")
+		out, _, _ := execute(t, "doctor", "--all")
 		if !strings.Contains(out, "info project-account-stored: ") ||
 			!strings.Contains(out, "repositories acme/app in claude_accounts.acme-personal.allow_data_to") {
 			t.Fatalf("the project accounts' reach is not in the printed output:\n%s", out)

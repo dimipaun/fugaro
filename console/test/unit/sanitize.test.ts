@@ -81,6 +81,7 @@ import {
   TOKEN_SHAPES,
   URL_PLACEHOLDER,
   isMarkerText,
+  nameableText,
   punycodeDecode,
   safeUrl,
   sanitizeRefusal,
@@ -1274,6 +1275,22 @@ describe('the markers this layer can read', () => {
     expect(isMarkerText('ana@example.invalid')).toBe(false)
     expect(isMarkerText('')).toBe(false)
     expect(isMarkerText('slug-6A7C7D06')).toBe(false)
+  })
+
+  it('names somebody only when the attribution has somebody to name', () => {
+    // The owner's ruling of 2026-10-31: when there is no one to name, the whole
+    // phrase goes. `nameableText` is the one rule behind "declared by ..." and
+    // "KILLED by ...".
+    expect(nameableText('ana@example.invalid')).toBe(true)
+    expect(nameableText('Ana')).toBe(true)
+    for (const nobody of ['', '   ', '[redacted]', 'redacted@example.invalid', 'r-4c25cf20', 'person-2f9a4c1e', '@example.invalid']) {
+      expect(nameableText(nobody), nobody).toBe(false)
+    }
+    // And an address with nothing before its `@` is refused however much
+    // whitespace it arrives with: `' @example.invalid'` names nobody either, and
+    // a bare `startsWith('@')` would have drawn the sentence over it.
+    expect(nameableText(' @example.invalid')).toBe(false)
+    expect(nameableText('\t@example.invalid')).toBe(false)
   })
 })
 

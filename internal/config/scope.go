@@ -26,7 +26,7 @@ type ScopeRow struct {
 
 const (
 	whyAnchor     = "it identifies the repository and anchors the project layer"
-	whyBranch     = "a project-wide base branch would let a bucket writer point image builds at an unreviewed branch"
+	whyBranch     = "a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead"
 	whyPeople     = "reviewers are people of one repository"
 	whyFiles      = "it names a file in the repository"
 	whyPolicy     = "it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it"

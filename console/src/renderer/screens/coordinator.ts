@@ -44,7 +44,9 @@
 
 import { measured } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
+import { nameableText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
+import { BUSY_SLOT_CLASS } from '../section'
 import type {
   CoordinatorRecord,
   CoordinatorRepoView,
@@ -64,6 +66,12 @@ import type { ElementLike } from '../app'
  * `repos` wrapper) and `--json`, and a screen has no control that turns any of
  * them off (`src/main/spawn.ts`). */
 export const COORDINATOR_SOURCE_LINE = 'fugaro coordinator status --from-store --all --json'
+
+/** COORDINATOR_BUSY is what the screen's section mark says it is reading. The
+ * read is the longest one this console makes -- the stored view of every
+ * repository at once -- so the mark names it rather than saying "reading", and
+ * the section around the mark is where the figures already drawn stay. */
+export const COORDINATOR_BUSY = 'Reading the coordinator’s stored view…'
 
 /** COORDINATOR_STORED_WORD labels a repository the database held a view for. It
  * says *last stored* and not "stored": the console cannot tell a coordinator
@@ -130,6 +138,22 @@ export const COORDINATOR_DECLARED_WORD = 'declared by'
 export const COORDINATOR_RECORDS_WORD = 'records'
 export const COORDINATOR_IN_FLIGHT_COUNT_WORD = 'in flight'
 export const COORDINATOR_COLLISIONS_WORD = 'collisions'
+
+/** COORDINATOR_BODY_CLASS is the element the screen's body is filled into: the
+ * summary (a repository's name, its state and its counts) the moment the read
+ * answers, and each repository's per-pull-request, per-run detail after it --
+ * one chunk per repository (`entry.ts`). The header above it -- the source line
+ * and the console's sentence about the view's age -- is drawn before the read
+ * answers at all, which is what gives the tab something to paint in the frame it
+ * was opened in. */
+export const COORDINATOR_BODY_CLASS = 'coordinator-body'
+
+/** COORDINATOR_DETAIL_CLASS is one repository's detail host: the element the
+ * records, the collisions and the unread markers of that repository are filled
+ * into, after the summary. It is a `div` of the console's own making and not a
+ * disclosure control: the detail is the same view of the same repository, so
+ * hiding it behind a click would be hiding the answer. */
+export const COORDINATOR_DETAIL_CLASS = 'coordinator-detail'
 
 /** COORDINATOR_THEMES is the two themes the screen draws in, declared per screen
  * like every sibling's. */
@@ -294,7 +318,12 @@ function recordPanel(record: CoordinatorRecord): CoordinatorRecordPanel {
       id: run.id,
       status: run.status,
       outcome: run.outcome,
-      declaredBy: run.declaredBy,
+      // The owner's ruling of 2026-10-31: the phrase is drawn only when there
+      // is somebody to name. `nameableText` is that rule -- empty, a redaction
+      // the CLI made, an address with nothing before the `@` and a pseudonym
+      // are not names -- and an unnameable value becomes `''` here so `runCell`
+      // draws no words at all rather than `declared by @x`.
+      declaredBy: nameableText(run.declaredBy) ? run.declaredBy : '',
       inFlight: !run.terminal,
       filesTruncated: run.filesTruncated,
     })),
@@ -515,7 +544,14 @@ function unreadCell(parent: ScreenElement, factory: ScreenFactory, entry: Coordi
   }
 }
 
-function repoCell(parent: ScreenElement, factory: ScreenFactory, panel: CoordinatorRepoPanel): void {
+/** repoSummary draws one repository's name, its state, its stale marker and its
+ * counts -- everything the document answers about a repository without listing
+ * what is in it -- and answers the element its detail belongs under. */
+function repoSummary(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  panel: CoordinatorRepoPanel,
+): ScreenElement {
   const section = cell(parent, factory, 'section', 'coordinator-repo')
   // The repository's own name, which the CLI read out of the local config: text
   // in the class the wire key declares, and never a link or a path.
@@ -547,42 +583,127 @@ function repoCell(parent: ScreenElement, factory: ScreenFactory, panel: Coordina
       countCell(omitted, factory, panel.omittedCollisions, 'coordinator-omitted-collisions')
     }
   }
+  return cell(section, factory, 'div', COORDINATOR_DETAIL_CLASS)
+}
+
+/** repoDetail draws the part of one repository the summary does not: a record
+ * per pull request with the runs behind it, the collisions and the pulls a sweep
+ * could not read. It is a drawing of its own so the entry can make it in a chunk
+ * of its own (`entry.ts`), after the summary is on screen. */
+export function repoDetail(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  panel: CoordinatorRepoPanel,
+): void {
   if (panel.records.length > 0) {
-    const records = cell(section, factory, 'ul', 'coordinator-records')
+    const records = cell(parent, factory, 'ul', 'coordinator-records')
     for (const record of panel.records) recordCell(records, factory, record)
   }
   if (panel.collisions.length > 0) {
-    const collisions = cell(section, factory, 'ul', 'coordinator-collisions')
+    const collisions = cell(parent, factory, 'ul', 'coordinator-collisions')
     for (const collision of panel.collisions) collisionCell(collisions, factory, collision)
   }
   if (panel.unread.length > 0) {
-    const unread = cell(section, factory, 'ul', 'coordinator-unreads')
+    const unread = cell(parent, factory, 'ul', 'coordinator-unreads')
     for (const entry of panel.unread) unreadCell(unread, factory, entry)
   }
 }
 
+/** CoordinatorDetail is one repository's detail: the panel to draw and the host
+ * the entry fills it into. */
+export interface CoordinatorDetail {
+  readonly panel: CoordinatorRepoPanel
+  readonly host: ScreenElement
+}
+
+/** DrawnCoordinatorFrame is the screen's shell: the root, the body the summary
+ * and the details are filled into, and the slot the busy mark goes in. */
+export interface DrawnCoordinatorFrame {
+  readonly root: ScreenElement
+  readonly body: ScreenElement
+  readonly slot: ScreenElement
+}
+
 /**
- * renderCoordinator draws the project view: a `section` stamped with the theme
- * it was drawn for, the read's own source line, the console's sentence about the
- * view's missing age, and one section per repository.
+ * renderCoordinatorFrame draws everything the screen can say before the read
+ * answers: the section stamped with its theme, the read's own source line (which
+ * is a constant of the console's) and the console's sentence about the view's
+ * missing age.
  *
- * The theme stamp is the drawing's *record* and not a read of the machine (the
- * one value set ships, dark -- design section 3.6), which is why it is written
- * here rather than looked up.
+ * **It is drawn in the frame the tab was opened in.** The read behind it is
+ * `coordinator status --from-store --all --json`, a document of about 724 KB on
+ * the owner's installation and the longest read of any tab, so a screen that
+ * waited for it before drawing anything was a tab that answered a click with
+ * nothing at all -- the owner's complaint of 2026-10-31. What it draws is what
+ * is true before the answer: which command the panel is reading, and that the
+ * console claims no age for the view.
+ *
+ * The body is empty but for the slot the busy mark is put in, so the entry can
+ * fill it -- summary first, each repository's detail after -- without taking
+ * anything down.
+ */
+export function renderCoordinatorFrame(
+  factory: ScreenFactory,
+  theme: CoordinatorTheme,
+): DrawnCoordinatorFrame {
+  const root = make(factory, 'section', 'coordinator')
+  root.setAttribute('data-theme', theme)
+  literal(cell(root, factory, 'p', 'coordinator-source'), COORDINATOR_SOURCE_LINE)
+  literal(cell(root, factory, 'p', 'coordinator-age'), COORDINATOR_NO_AGE_WORD)
+  const body = cell(root, factory, 'div', COORDINATOR_BODY_CLASS)
+  const slot = cell(body, factory, 'div', BUSY_SLOT_CLASS)
+  return { root, body, slot }
+}
+
+/**
+ * fillCoordinatorSummary draws one repository section per repository: the
+ * repository's name, what the document says about its state, and its counts.
+ *
+ * **It answers one detail host per repository rather than drawing the detail
+ * itself**, because the two halves are drawn at different times: this one the
+ * moment the document lands (it is a handful of lines per repository), and each
+ * repository's records and collisions after it, in a chunk of their own -- a
+ * document that lists hundreds of pull requests is half a megabyte of drawing,
+ * and a screen that made all of it in one turn would freeze the window it is
+ * being drawn into.
+ *
+ * The guard for a document that names no repository is drawn here, in the
+ * console's own words: `--all` on a config that lists none is refused by the CLI
+ * (`coordinatorRepos`' `userErr`), so what this branch draws is a state the
+ * console cannot read rather than one it can, and a screen that drew nothing for
+ * it would be indistinguishable from a read that failed.
+ */
+export function fillCoordinatorSummary(
+  factory: ScreenFactory,
+  model: CoordinatorModel,
+  host: ScreenElement,
+): readonly CoordinatorDetail[] {
+  if (model.repos.length === 0) {
+    literal(cell(host, factory, 'p', 'coordinator-empty'), COORDINATOR_EMPTY_WORD)
+    return []
+  }
+  return model.repos.map((panel) => ({ panel, host: repoSummary(host, factory, panel) }))
+}
+
+/**
+ * renderCoordinator draws the whole screen at once: the frame, the summary and
+ * every repository's detail.
+ *
+ * It is what a caller that has the document in hand draws -- the goldens'
+ * mount, and the cases that assert on the tree -- and the entry does **not**
+ * use it: the entry draws the frame first and fills the two halves as they
+ * arrive, which is the owner's rule of 2026-10-31. Both paths draw the same
+ * elements in the same order, so what a case asserts about this function is
+ * true of the screen on an operator's display.
  */
 export function renderCoordinator(
   factory: ScreenFactory,
   model: CoordinatorModel,
   theme: CoordinatorTheme,
 ): ScreenElement {
-  const section = make(factory, 'section', 'coordinator')
-  section.setAttribute('data-theme', theme)
-  literal(cell(section, factory, 'p', 'coordinator-source'), COORDINATOR_SOURCE_LINE)
-  literal(cell(section, factory, 'p', 'coordinator-age'), COORDINATOR_NO_AGE_WORD)
-  if (model.repos.length === 0) {
-    literal(cell(section, factory, 'p', 'coordinator-empty'), COORDINATOR_EMPTY_WORD)
-    return section
+  const frame = renderCoordinatorFrame(factory, theme)
+  for (const detail of fillCoordinatorSummary(factory, model, frame.body)) {
+    repoDetail(detail.host, factory, detail.panel)
   }
-  for (const panel of model.repos) repoCell(section, factory, panel)
-  return section
+  return frame.root
 }

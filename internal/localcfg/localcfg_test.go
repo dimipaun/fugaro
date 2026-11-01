@@ -14,6 +14,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -1419,7 +1421,7 @@ func TestProjectBaseBranchValidated(t *testing.T) {
 // not know refuses the whole document — so the list is unreadable until the
 // field exists. It is carried as it is written, and it is dropped from the
 // published shared config: the rule a root is held to is the node's
-// (projectpolicy.validBitbucketAPIRoots), applied where the node is built
+// (projectpolicy.ValidBitbucketAPIRoots), applied where the node is built
 // (the publish calls projectpolicy.Decode through checkPolicyBytes), so there
 // is no second copy of it here to drift from that one.
 func TestBitbucketAPIRootsParse(t *testing.T) {
@@ -1440,5 +1442,249 @@ func TestBitbucketAPIRootsParse(t *testing.T) {
 	}
 	if c.BitbucketAPIRoots == nil {
 		t.Error("Shared() cleared the receiver's own list")
+	}
+}
+
+// TestSecretRotationRecordRefused: the operator's rotation record — the period
+// doctor measures against and the dates it reports — is refused at load rather
+// than at doctor. A period or a date this file cannot use would turn into a
+// check that silently says nothing: doctor reads a malformed date as a name it
+// has no fact about, so the secret the operator recorded would drop out of the
+// sweep without a word. Whether the name exists is doctor's to find; the shape
+// is this document's, beside the other shape rules, and the refusal names the
+// entry it read.
+func TestSecretRotationRecordRefused(t *testing.T) {
+	c, err := Parse([]byte(sample + "secret_rotation_days: 30\nsecret_expires:\n  bitbucket-token: \"2026-11-05\"\n"))
+	if err != nil {
+		t.Fatalf("the operator's own record was refused: %v", err)
+	}
+	if c.SecretRotationDays != 30 || c.SecretExpires["bitbucket-token"] != "2026-11-05" || len(c.SecretExpires) != 1 {
+		t.Errorf("the record read as %d day(s) and %v", c.SecretRotationDays, c.SecretExpires)
+	}
+	// Zero is how the record says "no period", and it is what an absent key says
+	// too: only a period doctor could measure against a negative age is refused.
+	for _, ok := range []string{"secret_rotation_days: 0\n", ""} {
+		c, err := Parse([]byte(sample + ok))
+		if err != nil || c.SecretRotationDays != 0 {
+			t.Errorf("%q: (%d, %v), want no period and no error", ok, c.SecretRotationDays, err)
+		}
+	}
+	for _, tc := range []struct{ name, body, want string }{
+		{"a negative period", "secret_rotation_days: -1\n", "secret_rotation_days must be zero or more days"},
+		{"a period no age is outside", "secret_rotation_days: -30\n", "secret_rotation_days must be zero or more days"},
+		{"a date in the operator's own spelling", "secret_expires:\n  bitbucket-token: \"05/11/2026\"\n", `secret_expires.bitbucket-token "05/11/2026" is not a date (YYYY-MM-DD)`},
+		{"a date with a one-digit day", "secret_expires:\n  bitbucket-token: \"2026-11-5\"\n", "is not a date"},
+		{"a date that does not exist", "secret_expires:\n  bitbucket-token: \"2026-02-30\"\n", "is not a date"},
+		{"a date that is a number", "secret_expires:\n  bitbucket-token: 20261105\n", "is not a date"},
+		{"a name with nothing in it", "secret_expires:\n  \"\": \"2026-11-05\"\n", "secret_expires has an entry with no secret name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(sample + tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse = (%+v, %v), want an error naming %q", c, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestReviewFloorDecodeStrict is D722's owner half: the floor is a closed
+// vocabulary twice over — the modes rigor names and the three levels — and
+// both are refused at load, never dropped. A misspelt mode or level read as
+// "no floor for that mode" would be a run that reviews less than the owner
+// asked for, and nothing downstream can tell the misspelling from a mode the
+// owner meant to leave alone.
+func TestReviewFloorDecodeStrict(t *testing.T) {
+	c, err := Parse([]byte(sample + "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string][]string{"pro": {"l2"}, "critical": {"l2", "l3"}}; !reflect.DeepEqual(c.ReviewFloor, want) {
+		t.Fatalf("ReviewFloor = %v, want %v", c.ReviewFloor, want)
+	}
+	floor, err := c.ReviewFloorPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2}, rigor.Critical: {policy.LevelL2, policy.LevelL3}}; !reflect.DeepEqual(floor, want) {
+		t.Errorf("ReviewFloorPolicy = %v, want %v", floor, want)
+	}
+	if none, err := Parse([]byte(sample)); err != nil {
+		t.Fatal(err)
+	} else if f, err := none.ReviewFloorPolicy(); err != nil || f != nil {
+		t.Errorf("a config that sets no floor gives (%v, %v), want (nil, nil)", f, err)
+	}
+
+	// The key written with no mode under it is the other way to say "none",
+	// and it is the spelling `fugaro project policy publish` reads as "take
+	// the node's floor away on purpose" — an absent key keeps the node's floor
+	// (internal/cli's buildProjectPolicy). The two differ in the field and not
+	// in the floor: a written empty object is a non-nil empty map, an absent
+	// key a nil one, and both parse to no floor.
+	if empty, err := Parse([]byte(sample + "review_floor: {}\n")); err != nil {
+		t.Fatal(err)
+	} else if empty.ReviewFloor == nil {
+		t.Error("a written empty object read as an absent key, so a publish cannot tell 'drop the floor' from silence about it")
+	} else if f, err := empty.ReviewFloorPolicy(); err != nil || f != nil {
+		t.Errorf("review_floor: {} gives (%v, %v), want (nil, nil)", f, err)
+	}
+
+	// Every name the vocabulary does not hold, and every shape of a floor that
+	// says nothing, is a load error.
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"an unknown mode", "review_floor:\n  prod: [l2]\n", "is not a rigor mode"},
+		{"a mode in another case", "review_floor:\n  Pro: [l2]\n", "is not a rigor mode"},
+		{"an unknown level", "review_floor:\n  pro: [l4]\n", "is not a review level"},
+		{"a level in another case", "review_floor:\n  pro: [L2]\n", "is not a review level"},
+		{"a level that is a number", "review_floor:\n  pro: [2]\n", "is not a review level"},
+		{"a repeated level", "review_floor:\n  pro: [l2, l2]\n", "is listed twice"},
+		{"a mode with no level", "review_floor:\n  pro: []\n", "a floor with no level in it says nothing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(sample + tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse = (%v, %v), want an error naming %q", c, err, tc.want)
+			}
+			// And the refusal is the loader's, not the node's: the same value
+			// never reaches the publisher, which would otherwise write a floor
+			// the runner then reads as a smaller one.
+			if c != nil {
+				if f, err := c.ReviewFloorPolicy(); err == nil {
+					t.Errorf("ReviewFloorPolicy = (%v, nil), want the same refusal", f)
+				}
+			}
+		})
+	}
+}
+
+// TestReviewFloorNotInShared: the floor is the owner's, and it reaches a run
+// through the policy node — which only the owner writes and the runner fails
+// closed on — never through the shared config a launcher can write. Shared()
+// drops it the way it drops update_check and base_branch, and MergeShared
+// never takes it back from a published object: a floor in the runs bucket's
+// shared file would be the launcher the floor exists to bind, setting it
+// (docs/design/bucket-iam.md §10 L1, L2).
+func TestReviewFloorNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "review_floor:\n  pro: [l2]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := c.Shared(); s.ReviewFloor != nil {
+		t.Errorf("Shared() carries review_floor = %v, and it is published through the policy node instead", s.ReviewFloor)
+	}
+	if c.ReviewFloor == nil {
+		t.Error("Shared() cleared the receiver's own floor")
+	}
+	published, err := Parse([]byte(sample + "review_floor:\n  critical: [l3]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The published object is the other machine's: its floor is dropped by
+	// Shared before the merge sees it, so it cannot come back either.
+	if merged := MergeShared(published, c); merged.ReviewFloor != nil {
+		t.Errorf("MergeShared carried review_floor = %v from the published object", merged.ReviewFloor)
+	}
+	if b, err := c.Shared().Marshal(); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(b), "review_floor") {
+		t.Errorf("the published file names review_floor:\n%s", b)
+	}
+}
+
+// TestLayerFileIsTheProjectNameUnderProjects: the one local layer file is the
+// project's own name, with .layer.yaml, beside its config (D830) — the path is
+// a convention and nothing records it.
+func TestLayerFileIsTheProjectNameUnderProjects(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	p, err := LayerFile(get, "aurora")
+	if err != nil || p != filepath.Join(dir, "xdg", "fugaro", "projects", "aurora.layer.yaml") {
+		t.Fatalf("LayerFile = %q, %v", p, err)
+	}
+	// A name that is not a single path element would put the file, which
+	// `fugaro update` writes as the owner's own layer, anywhere on the
+	// machine — the same refusal ProjectPath makes.
+	for _, name := range []string{"../x", "a/b", "", "Aurora", "-x", "x-", strings.Repeat("a", 41)} {
+		if _, err := LayerFile(get, name); err == nil {
+			t.Errorf("LayerFile accepted %q", name)
+		}
+	}
+}
+
+// TestTheLayerFileIsNeverAProject: the layer file sits in the projects/
+// directory beside the project configs, so an installation that ends `fugaro
+// update` with one must still hold exactly one project. A project name cannot
+// contain a dot (config.ProjectNameRE), and the file's stem has one.
+func TestTheLayerFileIsNeverAProject(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	projects, err := ProjectsDir(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "aurora.yaml"), []byte("name: aurora\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	layer, err := LayerFile(get, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layer, []byte("version: 1\nproject: aurora\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Projects(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "aurora" {
+		t.Errorf("Projects = %q with a layer file beside the project config, want [aurora]", got)
+	}
+}
+
+// TestAProjectNamedLayerIsNotTheLayerFile: `foo-layer` is a project name, so
+// project foo's layer file must not be project `foo-layer`'s config — nor the
+// other way round, with `foo-layer`'s own layer file read as project `foo`'s.
+func TestAProjectNamedLayerIsNotTheLayerFile(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	projects, err := ProjectsDir(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "foo-layer.yaml"), []byte("name: foo-layer\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Projects(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "foo-layer" {
+		t.Fatalf("Projects = %q, want [foo-layer]", got)
+	}
+	foo, err := LayerFile(get, "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := LayerFile(get, "foo-layer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foo == named || foo == filepath.Join(projects, "foo-layer.yaml") {
+		t.Errorf("project foo's layer file is %q, which is project foo-layer's config", foo)
+	}
+	if named != filepath.Join(projects, "foo-layer.layer.yaml") {
+		t.Errorf("project foo-layer's layer file is %q", named)
 	}
 }

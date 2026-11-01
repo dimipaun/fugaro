@@ -207,7 +207,10 @@ func TestRoutedSwitchKeepsTheFirstLineLoop(t *testing.T) {
 	// gwConfig pins coder and reviewer to sonnet; the reviewer moves to opus,
 	// a Claude ID the route below does not claim, so `auto` has one claimed pin
 	// and one unclaimed one — the state FirstLineOn reads as "on".
-	cfg := strings.Replace(gwConfig(t, "  first_line_review: auto\n"), "reviewer: "+sonnet, "reviewer: "+opus, 1)
+	// first_line_rounds comes with the first line: this case scripts one cheap
+	// round, and an unset knob would take the resolved mode's row instead
+	// (internal/rigor's DefaultRounds).
+	cfg := strings.Replace(gwConfig(t, "  first_line_review: auto\n  first_line_rounds: 1\n"), "reviewer: "+sonnet, "reviewer: "+opus, 1)
 	if !strings.Contains(cfg, "reviewer: "+opus) {
 		t.Fatal("the fixture did not take the reviewer model: this test's premise is gone")
 	}
