@@ -1194,17 +1194,36 @@ figure animates anywhere (§3.9).
 
 ### 2.12 Coordinator — `console/src/renderer/screens/coordinator.ts`
 
-The Coordinator draws the project view: one panel per repository the installation's config
-lists, each with the sweep's own marker, the three counts beside the repository's name, the
-records with the runs behind them, the collisions, and the pull requests whose host state no
-sweep could read. Regions in tree order: the read's source line → the console's sentence
-about the age the view does not carry → one `section.coordinator-repo` per repository (the
-head row: the name and which view the node is → the marker → the counter strip → what a bound
-left out → the records → the collisions → the unreads) — or, for an installation that lists
-no repository, the console's own empty sentence instead of the panels. **The read is one
-command line** (`fugaro coordinator status --from-store --all --json`) and the drawing adds
-no control, no link and no gesture: the screen is read-only, which is why no rule here needs
-a transition beyond the focus ring the shared blocks already carry.
+The Coordinator draws the project view: the action queue, the fleet's totals, and one panel
+per repository the installation's config lists, each with the sweep's own marker, the three
+counts beside the repository's name, the records with the runs behind them, the collisions,
+and the pull requests whose host state no sweep could read. Regions in tree order: the
+screen's source line → the console's sentence about the age the view does not carry →
+`section.coordinator-queue` (the head line: the count of what is waiting, the word it counts
+and, for a queue that holds nothing, the console's own sentence → one `coordinator-queue-part`
+per read, each holding its items or the note saying that read was not made → the blind-spot
+line) → `section.coordinator-totals` (the fleet's strip) → one `section.coordinator-repo` per
+repository (the head row: the name and which view the node is → the marker → the counter strip
+→ what a bound left out → the records → the collisions → the unreads) — or, for an
+installation that lists no repository, the console's own empty sentence instead of the panels.
+**The screen reads four command lines** (`fugaro coordinator status --from-store --all
+--json`, `runs ls --json --since 24h`, `plan status --all --json` and `budget show --json`:
+one per independent document, and `report` is not read on this page at all), and it draws
+**one button per queue item** and nothing else: a control whose word is the console's own.
+
+**The action queue and the fleet's totals are console 0.118.0's K1**, and they are the two
+sections the screen gained above the panels: what is waiting for a person — a pull request
+open and not a draft, a halted or failed run, a plan task `ready` to launch, a budget alert —
+with **exactly one button each** (`Open run` opens the run; `Retry` and `Launch` open the
+launch confirmation of §2.13 with the item's repository and plan task filled in, which is
+rule 11's window and rule 11's argv and no second write; `Open Spend` navigates to the Spend
+screen, and nothing here calls `budget kill` or `budget resume`), and the fleet's own figures
+off the same three documents plus `budget show`. A pull request's number is **text** in K1 and
+never a link: the renderer builds no destination out of wire text. The screen's first
+paragraph above is 0.117.0's and stays — the source line and the console's age sentence are
+mounted in the frame the tab is opened in — and what K1 changes is that the drawing is no
+longer read-only, so the one transition in this block is the pair of properties a hover moves
+on a queue button, beside the focus ring the shared blocks give every control.
 
 **The panel, the strip, the banner and the row are console redesign step 7.** The markup this
 step draws replaces the markup `screens.css`'s Coordinator block met, and that block is
@@ -1236,6 +1255,23 @@ only ever says what it was told.
 | `section.coordinator` | the screen's root | carries `data-theme` like every other screen's |
 | `coordinator-source` | `p` | the read's own command line, in the console's words |
 | `coordinator-age`, `coordinator-empty` | `p` | the console's two sentences: the age the stored view does not carry, and an installation that lists no repository |
+| `section.coordinator-queue`, `section.coordinator-totals` | the queue's section and the fleet strip's | the screen's two K1 sections, on the frame the redesign gives a panel (§2.12's `section.coordinator-repo` below) |
+| `coordinator-queue-head` | `div` | the queue's own line: the count of what is waiting, the word it counts, the console's sentence for a queue that holds nothing, and the slot the section's busy mark is put in |
+| `coordinator-queue-count` | `span` | the count the console counted off the items it drew — drawn only when every one of the queue's four reads has answered, and as nothing rather than a `0` |
+| `coordinator-queue-word`, `coordinator-queue-empty` | `span`s | `items need you`, and the sentence a queue that holds nothing draws instead of a zero |
+| `coordinator-queue-part` | `div` | one read's part of the queue: its items, the count the cap left off, or the note saying that read was not made. A host, and it holds no state: the section's mark says the part is still being read |
+| `coordinator-queue-items` | `ul` | one part's items, each drawn only when the part holds one |
+| `li.coordinator-queue-item` | `li` | one thing waiting for a person |
+| `coordinator-queue-kind` | `span` | which of the four kinds the item is, in the console's own word (`PR`, `JOB`, `PLAN`, `BUDGET`) |
+| `coordinator-queue-subject` | `span` | the item's own id — a pull request's number, a run's id, a task's id — and empty for a fleet-wide alert, which draws no not-available mark in its place |
+| `coordinator-queue-scope`, `coordinator-queue-repo`, `coordinator-queue-title` | `span`s | where the subject sits (a branch, the plan a task belongs to, the plan task a run recorded), the repository, and the untrusted title whoever wrote the thing wrote, each drawn only when the document carries one |
+| `coordinator-queue-why` | `span` | why it is waiting, in the console's own words: the rule the queue applied, and for a budget alert which of the three grounds it stands on |
+| `button.coordinator-queue-button` | `button` | **the item's one control**: `Open run`, `Retry`, `Launch` or `Open Spend`. A button and never an anchor |
+| `coordinator-queue-note` | `p` | the console's sentence where a read was not made at all: an installation that records no checkout, or the reduced mode's withheld caps |
+| `coordinator-blind` | `p` | the line under the items: the console's own sentence and the two counts of what the page cannot reach |
+| `coordinator-blind-word` | `span` | the introducing sentence of that line |
+| `coordinator-blind-stale`, `coordinator-blind-unread` | the line's two cells | repositories the sweep has not reconciled since, and pull requests a sweep could not read — hook names only: the rule that lays the line out is written on `coordinator-blind`, on the cell `coordinator-count` and on the reading inside it |
+| `coordinator-total-repos`, `coordinator-total-inflight`, `coordinator-total-collisions`, `coordinator-total-plans`, `coordinator-total-counted`, `coordinator-total-cap` | the fleet strip's six cells | which figure each cell is — hook names only, like the two blind cells above |
 | `section.coordinator-repo` | the repository's panel | one per repository the config lists, on the frame the redesign gives a panel (§2.3's `section.live-fleet`, the same ground, hairline and radius) |
 | `coordinator-repo-head` | `div` | the panel's first element: the name and the source line on one line, which folds rather than shrinking either |
 | `h2.coordinator-repo-name` | `h2` | the repository's own name, read out of the local config, and the head row's first element |
@@ -1277,20 +1313,30 @@ only ever says what it was told.
 **This screen emits no `data-*` of its own, so every rule for it is written against a
 class.** It holds no control, no state variant and no selection — the one attribute it
 stamps is the `data-theme` every screen's root carries — and a rule that wanted a `data-*`
-here would be inventing the state it keyed on. Four of the hooks above are selected **without
-a tag** (`coordinator-file`, `coordinator-service` and `coordinator-more`, which the screen's
-own `listCell` and `countCell` pass through a `...classes` parameter, and
-`coordinator-count-alert`, which the strip's call to `numberCell` passes the same way): the
+here would be inventing the state it keyed on. Seven of the hooks above are selected **without
+a tag**, in two groups. The first four are the screen's own `listCell` and `countCell`
+parameters (`coordinator-file`, `coordinator-service` and `coordinator-more`) and
+`coordinator-count-alert`, which the strip's call to `numberCell` passes the same way: the
 scan that pairs a selector with the tag the renderer draws cannot read a class that arrives
-through a parameter, and a bare class selector is the shape `degraded-num` already has.
+through a parameter, and a bare class selector is the shape `degraded-num` already has. The
+other three are K1's own (`coordinator-queue`, `coordinator-totals` and
+`coordinator-queue-head`), and the reason is the same one step along: the screen draws its two
+new sections and the queue's head through exported constants
+(`COORDINATOR_QUEUE_CLASS` and its neighbours), which that scan reads as a parameter too, so
+`section.coordinator-queue` would be refused as a tag nothing draws. The three class names are
+this screen's own, no rule competes for them and the tag would buy no specificity — the same
+ground `coordinator-count-alert` stands on.
 
-**Five hooks the stylesheet does not select**, and §2's rule read the other way:
+**Fifteen hooks the stylesheet does not select**, and §2's rule read the other way:
 `coordinator-count-records`, `coordinator-count-inflight`, `coordinator-count-collisions`,
 `coordinator-omitted-records` and `coordinator-omitted-collisions` say *which* count each
 cell is, and the rules that lay the counts out and colour the sentence that introduces them
 are written on the cell, on the reading inside it and on the sentence rather than on the
-five. They are the screen's own bookkeeping, and a rule that wants one adds it to the table
-above first.
+five. K1's ten join them: `coordinator-queue-part` is the host one read's part of the queue is
+filled into, `coordinator-blind-host` is the host the blind-spot line is drawn into, and
+`coordinator-blind-stale`, `coordinator-blind-unread` and the fleet strip's six
+`coordinator-total-*` hooks say *which* reading each cell is. They are the screen's own
+bookkeeping, and a rule that wants one adds it to the table above first.
 
 **Two readings take `--warn` and one takes `--danger`, and each carries its own word**: the
 sweep's stale marker and a pull request whose state no sweep could read are `--warn`, whose
