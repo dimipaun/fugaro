@@ -92,6 +92,7 @@ import {
   openExternalValidated,
   openStartupWindow,
   openWindowFor,
+  PULL_REQUEST_PROVIDERS,
   pullRequestUrl,
   runVersionHandshake,
   startupWindow,
@@ -497,6 +498,12 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
 describe('a pull request link is built from three fields and never read (D814, D815)', () => {
   it('builds the GitHub form from the provider, the repository and the number', () => {
     expect(pullRequestUrl('github', 'owner/repo-a', 1458)).toBe('https://github.com/owner/repo-a/pull/1458')
+  })
+
+  it('knows exactly the two providers, and no third', () => {
+    // The set the IPC schema's own `gitProvider` kind is read from, so the two
+    // cannot drift: a third provider here would be one the schema admits.
+    expect(PULL_REQUEST_PROVIDERS).toEqual(['github', 'bitbucket'])
   })
 
   it('builds the Bitbucket form from the same three fields', () => {

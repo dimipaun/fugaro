@@ -405,6 +405,14 @@ const PULL_REQUEST_ROUTES: ReadonlyMap<string, { readonly host: string; readonly
 const PULL_REQUEST_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**
+ * PULL_REQUEST_PROVIDERS is the closed set of provider names, read off the
+ * routes above so that the IPC schema's own kind and this builder cannot drift:
+ * a provider the schema admits is one this function has a host for, and one it
+ * refuses never reaches the builder at all.
+ */
+export const PULL_REQUEST_PROVIDERS: readonly string[] = Object.freeze([...PULL_REQUEST_ROUTES.keys()])
+
+/**
  * pullRequestUrl builds the one URL this console opens that comes from a
  * document's own fields (D814, D815), and it builds it **from three fields
  * rather than reading it**: a pull request document carries a `url`, and that
