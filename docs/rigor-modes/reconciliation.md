@@ -721,7 +721,7 @@ stale has found a merge that did not.
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
 | `docs/plans` sections whose heading the deferral pattern matches | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
-| Item files under `docs/backlog/` filed by hand | 2 | `grep -l '^filed-in: hand$' docs/backlog/[0-9]*.md \| wc -l` |
+| Item files under `docs/backlog/` | 2 | `ls docs/backlog/[0-9]*.md 2>/dev/null \| wc -l` |
 
 Every one of those commands prints the number in the Count column and nothing
 else on stdout, so a reader — and this folder's guard — can re-run the row rather
@@ -759,16 +759,9 @@ and names the fourth list whose lower-case heading keeps it out of the figure);
 and **0** item files existed under `docs/backlog/`, which was that
 amendment's own claim about itself: it changed documents and nothing else. Plan
 T4.3 moved that row to the two items it filed and the pin-count row above with
-it, in its own commit. **The row counts the item files a person filed** —
-`filed-in: hand`, the format's own word for it — and not every item file, and
-that is what keeps it a figure a run cannot move: a run files one item for each
-finding its mode tolerates (D30's table, D9's ledger), so a count of the whole
-folder is a count that changes whenever a run leaves a finding open, and a row
-pinned to it would fail a run for doing its job. The total is the index's own
-`N items:` line, which is generated from the items and pinned by that folder's
-guard (`internal/cli/docs_backlog_test.go`). The row counts item files alone — a
-name that starts with the id's first digit — so the folder's `FORMAT.md` and its
-generated index are not items and are not counted as ones. A slice that adds
+it, in its own commit, and the row's command counts the item files alone — a
+name that starts with the id's first digit — so the folder's `FORMAT.md` and
+its generated index are not items and are not counted as ones. A slice that adds
 a top-level key, a scope row or a member of the project layer's `defaults:` moves
 the row that counts it in the same commit for the same reason: the figure and the
 command beside it are read together, and the command reads the tree the slice

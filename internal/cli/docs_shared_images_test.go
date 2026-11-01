@@ -89,12 +89,22 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		"That convention is the one place the key rests on a file it does not read",
 		// Round 3's follow-up: a `@registry:` key names a registry rather than a
 		// version and is a source like the other pnpm markers, and a lock older
-		// than the two sections — pnpm 5 and earlier — states its whole resolved
-		// set where the reducer does not look, so it is refused rather than read
-		// as one that holds nothing.
+		// than the two sections states its whole resolved set where the reducer
+		// does not look, so it is refused rather than read as one that holds
+		// nothing.
 		"`@patch:` or `@registry:`",
-		"a pnpm 5 or earlier lock writes each",
+		"a pnpm lock older than the `packages` map writes each",
 		"is refused rather than read as one that holds nothing (§2.5)",
+		// The review's last four: each key form is named by the lockfileVersion that
+		// writes it — the leading `/` is lockfileVersion 6.0's, and a
+		// lockfileVersion 5.x lock's `/name/version` key is refused rather than
+		// read as a package whose name holds the version's own text — and a
+		// source line is read as a URL, whose host is the one its authority
+		// names.
+		"with the leading `/` a lockfileVersion 6.0 lock (pnpm 8) writes",
+		"so reading one would key a fact for a package like `react-dom/18.0.0_react`",
+		"lockfileVersion 5.x lock (pnpm 5, 6 and 7) writes `/name/version` there, hanging the peer suffixes",
+		"the host is the one the URL's authority names",
 		// §3.1's entries are the three quoted literals, quotes and all.
 		"a package entry is the fact's three quoted literals",
 		"\"\\\"left-pad\\\" \\\"1.3.0\\\" \\\"sha512-aaa\\\"\"",

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/url"
 	"path"
 	"slices"
 	"strconv"
@@ -522,16 +523,21 @@ var npmRegistries = []string{"registry.npmjs.org", "registry.yarnpkg.com"}
 // fact with no integrity needs (D618): a URL at any other host is a registry
 // the ecosystem's default one did not serve, so nothing beside the name and
 // the version says which artifact the version is.
+//
+// The URL is parsed rather than cut at its first slash and colon: everything
+// before the host's `/` is the authority, and an authority holding userinfo —
+// `https://registry.npmjs.org:x@evil.example/left-pad.tgz` — puts the text of
+// the default registry in front of the host that actually served the artifact,
+// so a reading that looks for the host there takes a file from `evil.example`
+// for the default registry's. Only the parsed host counts, and a URL stating
+// userinfo at all is refused: whatever host follows it, the entry's own text
+// is not the URL of an artifact the default registry served.
 func defaultRegistryURL(value string, hosts ...string) bool {
-	rest, ok := strings.CutPrefix(value, "https://")
-	if !ok {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.User != nil {
 		return false
 	}
-	host, _, _ := strings.Cut(rest, "/")
-	if h, _, ok := strings.Cut(host, ":"); ok {
-		host = h
-	}
-	return slices.Contains(hosts, host)
+	return slices.Contains(hosts, u.Hostname())
 }
 
 // pnpmEntry is one packages or snapshots entry: the package its key names, and
@@ -564,8 +570,8 @@ func (e pnpmEntry) merged(o pnpmEntry) pnpmEntry {
 // reducePnpmLock reduces pnpm-lock.yaml. Its packages and snapshots maps hold
 // one entry per resolved package, and the entries are the reduction: the
 // importers' specifiers are ranges, not versions. A package's integrity is in
-// its packages entry's resolution — pnpm 6 and 7 write `resolution: {integrity:
-// sha512-…}` — and its source is in the key itself or in that resolution line.
+// its packages entry's resolution line — `resolution: {integrity: sha512-…}` —
+// and its source is in the key itself or in that same line.
 func reducePnpmLock(rel string, data []byte) ([]string, error) {
 	set := newSet(rel)
 	entries := map[string]pnpmEntry{}
@@ -579,9 +585,11 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 	// integrity at all.
 	resolutionIndent := -1
 	// unreadDependencies is a top-level dependency section stating resolved
-	// versions in the shape the locks before the packages map use: pnpm 5 and
-	// earlier name each package against a bare version there.
+	// versions in the shape a lock older than the packages map uses: it names
+	// each package against a bare version there, and holds no packages or
+	// snapshots entry this reader can read.
 	unreadDependencies := false
+	var err error
 	eachLine(data, func(indent int, text string) bool {
 		if text == "" || strings.HasPrefix(text, "#") {
 			return true
@@ -634,14 +642,19 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 			key = text[:i]
 		} else if i := strings.LastIndexByte(text, ':'); i >= 0 {
 			key = text[:i]
-		} else {
-			unplaced = true
-			return true
 		}
 		e, ok := pnpmEntryAt(key)
 		if !ok {
-			unplaced = true
-			return true
+			// The line sits where this section writes its keys and is not one
+			// this reader can read as a package: it names no version, or it is
+			// a lockfileVersion 5.x lock's `/name/version` key, whose last @ is
+			// the separator of the peer suffix and whose version's text ends up
+			// in the name (pnpmKey). It is refused here rather than left to the
+			// checks below, which see such a line only when the section yields
+			// no entry at all: one of them beside entries this reader does read
+			// would leave the lock silently short of a package its set holds.
+			err = set.fail(UnkeyedUnreadable, fmt.Sprintf("the %s section states %q, which this reader cannot read as a package key", section, text))
+			return false
 		}
 		// The entries are keyed by the package the key names and not by the
 		// text of the key: a v9 snapshot key carries the peer suffixes its
@@ -658,6 +671,9 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 		entries[key] = entries[key].merged(e)
 		return true
 	})
+	if err != nil {
+		return nil, err
+	}
 	// The entries are read in the order their keys sort, so the entry a refusal
 	// names is a function of the lockfile rather than of the order Go's map
 	// iteration happened to visit it in.
@@ -683,12 +699,12 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 		return nil, set.fail(UnkeyedUnreadable, "the packages section states no entry at the indent this reads")
 	}
 	// A lock that states its dependencies as bare versions under a top-level
-	// section of their own — pnpm 5 and earlier, which has no packages or
-	// snapshots map at all — keeps every one of them outside the two sections
-	// this reads, and the empty set would key this repository as one that
-	// depends on nothing.
+	// section of their own and holds no entry of the two sections this reads —
+	// the locks older than the packages map — keeps every one of them where
+	// this reader does not look, and the empty set would key this repository as
+	// one that depends on nothing.
 	if set.count == 0 && unreadDependencies {
-		return nil, set.fail(UnkeyedUnreadable, "the lock states its dependencies outside the packages and snapshots sections, as pnpm 5 and earlier writes them")
+		return nil, set.fail(UnkeyedUnreadable, "the lock states its dependencies outside the packages and snapshots sections, as the locks older than the packages map write them")
 	}
 	return set.pairs(), nil
 }
@@ -763,10 +779,21 @@ func pnpmResolution(text string) pnpmEntry {
 	return e
 }
 
-// pnpmKey reads a packages or snapshots key. pnpm 6 wrote the registry path's
-// leading slash and pnpm 7 and later write a peer suffix in parentheses; the
-// name is everything before the last @, which is the separator a scoped name's
-// own @ is not.
+// pnpmKey reads a packages or snapshots key. The key of the versions this reads
+// is `/name@version` — lockfile 6.0, pnpm 8, writes the registry path's leading
+// slash — with a peer suffix in parentheses where the entry's resolution was
+// made under one, and the name is everything before the last @, which is the
+// separator a scoped name's own @ is not.
+//
+// The shape before that one — lockfileVersion 5.x, pnpm 5, 6 and 7 — keys each
+// entry `/name/version` instead, with the peer suffixes appended to the
+// version's own text. The two shapes share the leading slash and nothing else,
+// and the name is what tells them apart: a package name holds no slash but the
+// one between a scope's @ and its name, so a key whose name says otherwise is
+// no package key. Reading one as the other keys a fact whose name is the
+// version's text — `/react-dom/18.0.0_react@18.0.0` reads as the package
+// `react-dom/18.0.0_react` — and the entry then stands for a package that does
+// not exist rather than for the set the lock states.
 func pnpmKey(raw string) (name, version string, ok bool) {
 	s := strings.Trim(strings.TrimSpace(raw), `"'`)
 	s = strings.TrimPrefix(s, "/")
@@ -777,7 +804,11 @@ func pnpmKey(raw string) (name, version string, ok bool) {
 	if i <= 0 || i == len(s)-1 {
 		return "", "", false
 	}
-	return s[:i], s[i+1:], true
+	name, version = s[:i], s[i+1:]
+	if slash := strings.Count(name, "/"); slash > 1 || (slash == 1 && !strings.HasPrefix(name, "@")) {
+		return "", "", false
+	}
+	return name, version, true
 }
 
 // yarnSpec is one yarn.lock entry while it is being read: the name its header

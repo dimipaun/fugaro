@@ -103,10 +103,13 @@ ecosystem's default registry** (D618, as the reviewer's probes of 2026-10-31 ref
 version then say which artifact it is, because that registry serves one artifact per version of a
 package. A source the file states that is *not* the default registry — a private index, a mirror, a
 second registry — is fine beside an integrity, since the integrity is of the artifact whatever host
-served it; what it cannot be is the only thing an entry has. Where the format's own convention says a
-source belongs and the file states none — a Bundler `GEM` block with no `remote:` line, a composer
-entry with neither a `dist.shasum` nor a `source.reference` — the entry is not the default
-registry's either, and it leaves the repository unkeyed:
+served it; what it cannot be is the only thing an entry has. A source is read as a URL and not as
+text: the host is the one the URL's authority names, so a source that states the default registry's
+name in userinfo (`https://registry.npmjs.org:x@evil.example/x.tgz`, whose host is `evil.example`)
+is not the default registry's, and a source stating userinfo at all is never read as its. Where the
+format's own convention says a source belongs and the file states none — a Bundler `GEM` block with
+no `remote:` line, a composer entry with neither a `dist.shasum` nor a `source.reference` — the
+entry is not the default registry's either, and it leaves the repository unkeyed:
 
 | Ecosystem | The default registry, and what the format writes for it |
 | --- | --- |
@@ -162,7 +165,7 @@ Each file's own reduction:
 | --- | --- |
 | `package-lock.json` | every entry of `packages` with a `version` (the root `""` entry is skipped: it is the repository, not a dependency), as its `name` (the path after the last `node_modules/`, or the entry's own name for a workspace member's entry, which is written under the member's path) and `version`, transitives included |
 | `npm-shrinkwrap.json` | `package-lock.json`'s reduction: one format under the two names npm writes it under, and a repository's lockfile is whichever of them npm wrote |
-| `pnpm-lock.yaml`, `pnpm-lock.yml` | every `packages` / `snapshots` key, split at the last `@` into name and version, with pnpm 6's leading `/` and a peer suffix in parentheses (pnpm 7 and later) neither part of the name nor of the version: the two sections name the same packages and are keyed by the package a key names, so a v9 snapshot key written with its peers (`x@1.0.0(react@18.0.0)`) and the `packages` entry for the same x are one package and one fact, and neither the peer suffix nor the section a key is written in adds a fact of its own. A `resolution:` written as a block — the field on its own line with `integrity:` or `tarball:` under it, which older locks write — is read like the one-line form, and a `resolution:` with an empty body is refused rather than keyed with no source and no integrity beside it; a `resolution` field's value is read with the commas inside its quotes left alone, so an integrity or a URL holding one is the value the lock states. A lock older than both sections — pnpm 5 and earlier, which writes each dependency against a bare version under a top-level `dependencies:`, `devDependencies:` or `optionalDependencies:` — is refused rather than read as one that holds nothing (§2.5) |
+| `pnpm-lock.yaml`, `pnpm-lock.yml` | every `packages` / `snapshots` key, split at the last `@` into name and version, with the leading `/` a lockfileVersion 6.0 lock (pnpm 8) writes and a peer suffix in parentheses neither part of the name nor of the version: the two sections name the same packages and are keyed by the package a key names, so a v9 snapshot key written with its peers (`x@1.0.0(react@18.0.0)`) and the `packages` entry for the same x are one package and one fact, and neither the peer suffix nor the section a key is written in adds a fact of its own. A `resolution:` written as a block — the field on its own line with `integrity:` or `tarball:` under it, which older locks write — is read like the one-line form, and a `resolution:` with an empty body is refused rather than keyed with no source and no integrity beside it; a `resolution` field's value is read with the commas inside its quotes left alone, so an integrity or a URL holding one is the value the lock states. A key no package name and version can be read from is refused rather than keyed from the text of its key: a lockfileVersion 5.x lock (pnpm 5, 6 and 7) writes `/name/version`, hanging the peer suffixes on the version's own text, so reading one would key a fact for a package like `react-dom/18.0.0_react`, a name no registry holds, and every 5.x lock is unkeyed (§2.5). A lock older than both sections, which states its dependencies against bare versions under a top-level `dependencies:`, `devDependencies:` or `optionalDependencies:` and holds no `packages` or `snapshots` map at all, is refused rather than read as one that holds nothing (§2.5) |
 | `yarn.lock` | every entry header line `"name@range":` — **every** range it lists, not only the first, since a header whose second descriptor is a git or file specifier states a source no registry served — with its `version` field, which Yarn 1 writes after a space and Berry after a colon; the `__metadata` block is the lock's own header and is ignored |
 | `go.sum`, `go.work.sum` | every `module version` line, with a `/go.mod`-suffixed line merged into the module it names rather than a second fact, so each module@version appears once; the integrity is the module's own hash, from the line that is not the `/go.mod` one where the file states both. Where the file states **two** `h1:` lines for one module at one version — the go command appends a line for every hash it verifies — both are joined into one integrity, **sorted and deduplicated**: keeping the last line alone would make the fact, and so the key, depend on the order the file happened to write them in, and the same two lines in the other order would be another key |
 | `requirements.txt`, `requirements*.txt` | every `name==version` pin, with the name as PEP 503 normalises it and any extras dropped from the name, and with the `--hash` values it carries as its integrity; its environment marker and a full-line comment are the pin's own and are not facts. pip-tools and `uv pip compile --universal` write the marker and the continuation together (`name==1.0 ; python_version < "3.11" \`), so the backslash ends the marker and the hashes after it belong to that pin. A line that is not a pin — `-r`, a URL, an editable install, an option, an unpinned name — makes the repository **unkeyed**, because the file then does not state what pip would install |
@@ -218,13 +221,17 @@ A key file that cannot be read in full makes the repository unkeyed for the same
 than 8 MiB, or holding more than 200 000 entries, is refused rather than truncated, because a set
 read in part is a different set and it would take another repository's key. The same holds for a
 file whose named section — a pnpm `packages`/`snapshots`, a Bundler `specs:` list, a lockfile entry —
-holds a line at an indent the reducer cannot place and yields no entry, and for a file that states its
-whole resolved set in a shape the reducer does not read at all: a pnpm 5 or earlier lock writes each
-dependency against a bare version under a top-level `dependencies:`, `devDependencies:` or
-`optionalDependencies:` section of its own and has no `packages` or `snapshots` map at all, so the
-empty set either file would otherwise return is not "no dependencies" but "read nothing", and every
-such repository would take one key. A section with no line in it at all does state no dependencies,
-and is read as that.
+holds a line at an indent the reducer cannot place and yields no entry, and for a line written where
+such a section writes its keys that no package name and version can be read from. A pnpm
+lockfileVersion 5.x lock (pnpm 5, 6 and 7) writes `/name/version` there, hanging the peer suffixes
+on the version's own text, and a reader that took what follows the last `@` for a version would read
+a package name no registry holds and key a fact for it out of a lock it read only in part. A file
+that states its whole resolved set in a shape the reducer does not read at all is refused for the
+same reason: a pnpm lock older than the `packages` map writes each dependency against a bare version
+under a top-level `dependencies:`, `devDependencies:` or `optionalDependencies:` section of its own
+and has no `packages` or `snapshots` map at all, so the empty set such a file would otherwise return
+is not "no dependencies" but "read nothing", and every such repository would take one key. A section
+with no line in it at all does state no dependencies, and is read as that.
 `internal/imagecheck/reduce.go` is this table: `Reduce(name, bytes)` returns the facts; nothing,
 which is the exemption above and the only way a file contributes nothing; or the reason the file
 leaves the repository unkeyed.

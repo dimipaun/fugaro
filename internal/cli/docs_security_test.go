@@ -51,6 +51,11 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		// from a line in the file: pnpm's bare key, whose registry `.npmrc`
 		// configures and the key never reads.
 		"**One ecosystem's empty integrity rests on a convention the file does not state.**",
+		// And the other half of it: the lines it does read are read as URLs,
+		// where the host is the one the authority names and not the text before
+		// the first slash — a source stating the default registry as userinfo
+		// is another host's artifact.
+		"is read as a URL and not as text",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)
