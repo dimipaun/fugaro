@@ -33,20 +33,23 @@ account's subscription token on the shared project job, which is what `agent.oau
 job that does not. When the coder has pushed its branch and opened its pull request, the
 **coordinator** (the owner's own session, the console, or a script) launches that second job: the
 **review job**, in review mode, on a **review-only job variant that mounts no GitHub App key**, on the
-account the owner named, whose forge credential is a **read-only** installation token **minted where a
-key exists — the credentials service or the coordinator, never the launcher, which holds none** (F16,
-D883, spec §2), and whose only outputs are a run record and an artifact under
-`runs/<slug>/<review-run>/`. The artifact — `review.json` with a
+account the owner named, whose forge credential is a **read-only** installation token **the credentials
+service mints and the job fetches by name — nothing is handed in, and the launcher, which holds no
+key, is on no path** (F16, D883, **D893 (c)**, spec §2), and whose only outputs are a run record and an
+artifact under `runs/<slug>/<review-run>/`. The artifact — `review.json` with a
 `schema_version` plus a human-readable `review.md` — carries the verdict `ship`, `fix first` or
-`reject`, and one entry per issue with a severity, a `file:line`, a class and a suggested fix. The
-coordinator reads that artifact by the review run's own id: `ship` means merge, `fix first` launches
-a fix round whose brief **is** the findings, and `reject` means no fix round and a person decides.
+`reject`, one entry per issue with a severity, a `file:line`, a class and a suggested fix, and **a
+signature over its own bytes** (**D892 (a)**), which the coordinator verifies before it acts: `ship`
+means merge, `fix first` launches a fix round whose brief **is** the findings, and `reject` means no
+fix round and a person decides. **The whole chain requires the credentials service to be enabled for
+the installation, and it ships dormant** — D893(c)'s precondition, which is also what keeps R7, R2 and
+the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
 
 ## Numbers this work holds
 
 | Block | State |
 | --- | --- |
-| **D880–D899** | **this work's block: D880–D893 written — D880–D891 answered (D891 by the owner, option (a)), and D892 and D893 open questions for the owner, both raised by the review of this branch's fix round — with D894–D899 reserved and unused.** Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
+| **D880–D899** | **this work's block: D880–D893 written and answered — D891 by the owner with option (a), D892 with option (a) (the review job signs its verdict) and D893 with option (c) (the read-only token comes from the credentials service, by name) — with D894–D899 reserved and unused.** D892 and D893 were raised by the review of this branch's fix round; the owner has since answered both. **D893(c) is a precondition of the whole design, not a channel**, so it is the block's own open edge rather than a settled question: see [spec.md](spec.md) §2 and **E7** in [reconciliation.md](reconciliation.md) §5. Taken above every number on `main`, whose highest written is now **D872** — the tail of the `accounts add` design's D860–D872, which **merged** as #1470 and reserved **D873–D879** unused, so **D880 is still the next free number** and this block is unchanged — and above every open pull request's numbers, none of which reserves a decision above D872. The reading was taken on 2026-10-31 against `origin/main` at `48754c01` and re-read against the merged accounts design at `d558dace`; it is re-checked at launch, and the block recorded again if it moved |
 | **Check 125** | **claimed here, and not written in the register.** The register's own sentence is *"Check 124 is the Cloud Batch backend's own, and it is the next number free above 123"*: it reads **124 as a number the Cloud Batch backend took**, in four written parts (**124a–124d**), not as one still free — so the highest number in use is **124**, and the number free above it, which this work claims for the owner-run live check in [spec.md](spec.md) §8, is **125**. The register's own file is another work stream's (`docs/gcp-live-checklist.md` is not this task's to touch), so the row and the `## Check 125` section are written by the task that implements the check, under the number free at **that** merge — the register's rule that whichever of two open claims merges second renumbers itself. A reserved number is never reused and never renumbered |
 
 ## What this design does not do
@@ -58,7 +61,10 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
   `stage_auth`, because its reviewer is a separate job execution whose credential the coder's job
   never holds. See [spec.md](spec.md) §4 and decision **D881**.
 - It invents no credential. The named account is the one `fugaro accounts add` stores; the review
-  job mounts that account's token and no other secret it does not need.
+  job mounts that account's Claude token and the **review-signing key D892(a) adds** (one per account,
+  its own accessor grant, none on the App key) and no other secret it does not need. The read-only
+  installation token it works with is the **credentials service's** to mint, and it is fetched rather
+  than mounted.
 - It changes no existing behaviour: an installation that launches no review job sees the tree it has
   today.
 - It writes no pull request and no comment of its own on any path: the review job's verdict is an
@@ -69,29 +75,44 @@ a fix round whose brief **is** the findings, and `reject` means no fix round and
   **Bash is denied for the rest of the review stage**, the mutant being run by the runner rather than
   by the agent's shell. What is left is the `/proc` read, which §7 states as the residual and which
   only the separate container reduces. **R4 is unblocked and carries that machinery, subject to one
-  gate:** no network namespace or `unshare` in Cloud Run's gen2 has been checked (**U7**), so **R4's
-  first step is that measurement**, and if a child process cannot be fenced the answer falls back to
-  **(b)** or **(c)** and the owner is asked again — the design does not assume a fence it has not
-  seen.
+  gate:** no network namespace or `unshare` in Cloud Run's gen2 has been checked (**U7**), and that
+  question **cannot be measured hermetically** — it is a property of the deployed execution
+  environment — so **it is an owner-run live observation taken before R4 launches** (Check 125's step
+  6), not the task's first step; if a child process cannot be fenced the answer falls back to **(b)**
+  or **(c)** and the owner is asked again — the design does not assume a fence it has not seen.
 - **It does not launch on a job that already exists.** The shared project job of
   `(profile, provider, account)` mounts the GitHub App key, so a read-only scope on it would be a
   comment on the launcher's intent rather than a boundary; the design adds a **review-only job variant
-  and service account per account, with no App key** (**R7**), and it says who mints the read-only
-  token — never the launcher, which holds no key.
-- **It does not settle the verdict's provenance, and it says so.** Ordering keeps a *coder* from
-  forging its own review (spec §6), but another job on the same shared project job can write under the
-  review run's prefix; the mitigation — a signature, a narrower prefix, or accepting the reach — is
-  **D892, still open**, and until the owner answers **this design relies on none of the three**.
-- **It does not settle how the minted read-only token reaches the job either.** That is **D893, still
-  open**: the design recommends a per-launch secret over the execution override (a plain value there
-  is readable by any project member holding `run.viewer`), and **R7 implements whichever the owner
-  names, claiming no channel of its own before then**.
+  and service account per account, with no App key** (**R7**), and the read-only token is **minted by
+  the credentials service and fetched by the job by name** — the launcher, which holds no key, is on
+  no path (**D893 (c)**).
+- **It settles the verdict's provenance with a signature, and says what that does not close.**
+  Ordering keeps a *coder* from forging its own review (spec §6), but another job on the same shared
+  project job can write under the review run's prefix. **D892 is answered — option (a):** the review
+  job **signs `review.json` with a per-account HMAC key held in Secret Manager**, read only by the
+  review variant's service account and the coordinator, and **the coordinator verifies the signature
+  before it acts** — a forged or unsigned verdict is refused. What it does not close is an injected
+  *reviewer* writing a dishonest verdict inside its own run, which is why the verdict is still advice.
+- **It does not make the read-only token's channel free — it makes it a precondition.** **D893 is
+  answered — option (c):** the job fetches the token from the **credentials service, by name**, so
+  nothing is handed in and no value sits in an execution object. **The service ships dormant**, so the
+  cloud senior reviewer **requires it to be enabled for the installation** (`fugaro update
+  --provision-credentials`, the App key in the bundle), **and requires the service to admit the review
+  job's own account** — a project-scoped job, which the service refuses today (its Global Constraint
+  6; **C3.9**, unscheduled, is the task that lifts it). **No `fugaro update` can supply that half**,
+  so **R7, R2 and the coordinator's `ship` → merge path stay blocked** until it lands; the check that
+  says so is R6's, and **E7** records the dependency.
 
 ## Related
 
 - [docs/accounts-add/](../accounts-add/README.md) (**merged** as #1470, design only): the one command
   that makes a named account usable end to end. It is the **dependency** this design waits on, and its
   remaining tasks — the command itself — are still unbuilt.
+- [docs/credentials-service/](../credentials-service/README.md) (**plan only, the service ships
+  dormant**): the service **D893(c)** makes a precondition. Its mint endpoint and keyless fetch path
+  are already in the tree (`internal/credsvc/github.go`, `internal/gitprov/github`'s `ServiceTokens`);
+  what is missing is the **opt-in**, its **Global Constraint 6 / C3.9** admission of a
+  project-scoped job, and a **read-only** set for a review identity.
 - [docs/project-claude-accounts.md](../project-claude-accounts.md): where the account, its secret,
   its job and its `allow_data_to` are described today.
 - [docs/design/mixed-credentials.md](../design/mixed-credentials.md) §6: the four mitigations, of

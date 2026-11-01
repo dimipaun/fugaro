@@ -46,8 +46,8 @@ number **written** on `main` is now **D872**, the tail of the `accounts add` des
 (merged as #1470), which reserved **D873–D879** and left them unused; below it sit the `settings`
 design's D840–D859 (merged as #1464). No open pull request reserves a decision above D872. **D880 is
 therefore still the next free number**, and this work's block is **D880–D899**, of
-which **D880–D893 are written** — D880–D891 answered (D891 by the owner, option (a)) and **D892 and
-D893 open questions for the owner** — and **D894–D899 are reserved**. `D800` in `docs/` is the false positive the
+which **D880–D893 are written and answered** — D891 by the owner with option (a), **D892 with option
+(a)** and **D893 with option (c)** — and **D894–D899 are reserved and unused**. `D800` in `docs/` is the false positive the
 `docs/models-commands/` README records (`U+D800` inside a quoted value), not a decision. The check
 register reads **124 as the next free number above 123** and the Cloud Batch backend took it, so this
 work claims **Check 125**.
@@ -208,8 +208,10 @@ says so.** `docs/design/bucket-iam.md` §2.1 and §10: a project job account hol
 prefix, **no slug**, `gcp.ProjectBucketCondition`), and the owner ruled on 2026-10-17 to **accept**
 that reach — a profile is a secret boundary, not a bucket one. **Consequence:** a review job that
 runs on a shared job can write any run's node, so §6's integrity argument is the **ordering** (the
-review run's id is minted after the coder's job ended) and **not** a boundary. §6 says this, and this
-finding is why it must keep saying it.
+review run's id is minted after the coder's job ended) and **not** a boundary — which is exactly the
+gap **D892** was raised for, and its answered **(a)** is what closes it for the coordinator: a
+signature over the artifact, verified before a verdict is acted on. §6 says this, and this finding is
+why it must keep saying it.
 
 **F16. `Rule` — the minting precedent an earlier draft leaned on is not one, because every mint in
 this tree happens where the App key is mounted.** `internal/cli/gitcred.go:92`'s `mintBuildToken`
@@ -217,13 +219,15 @@ reads `FUGARO_GITHUB_APP_ID`/`FUGARO_GITHUB_APP_PRIVATE_KEY` **from its own envi
 called by the build it serves; `internal/cli/imagecheck.go:530`'s `jobGitEnv` does the same inside a
 check job. `github.BuildTokenPermissions` is the exported spelling of the set, not a way to mint
 without a key. **A launcher on the owner's laptop holds no App key and must not be given one.**
-**Consequence:** F3's fix needs a **mint site**, and there are two candidates — the **credentials
-service** (its bundle already holds the App key for exactly this, where the installation has opted
-into one) or the **coordinator** (which already holds the write credential). It also needs a
-**hand-in**: the launch path gives a job its per-run variables through a Cloud Run execution override
-(`internal/backend/gcp/run.go:169`, `ContainerOverrides[].Env`), whose values are plain values in the
-execution object and readable by anyone who can read that execution. Whether that is acceptable, or
-whether the token has to be a short-lived mounted secret instead, is **UNVERIFIED-2** in §6.
+**Consequence:** F3's fix needs a **mint site**, and the owner's **D893** answer is **(c)**: the
+**credentials service** mints it — its bundle already holds the App key for exactly this, and the
+keyless path (`github.ServiceTokens`, `POST /v1/github/installation-token`) is already in the tree.
+**There is no hand-in to design:** nothing is handed to the job, so neither the launch's execution
+override (`internal/backend/gcp/run.go:169`, `ContainerOverrides[].Env`, whose values are plain
+values in the execution object) nor a per-launch secret is on any path. The cost of (c) is a
+**precondition rather than a channel** — the service must be enabled, must admit a project-scoped job
+and must mint the read-only set — and D893's own entry in §4 states it; the row that used to hold
+this question, **UNVERIFIED-2** in §6, is closed by that answer.
 
 **F17. `Gap` — the coding run has no way to say "review me after I finish".** Nothing in
 `internal/runner` launches a second job; a run's last act is its pull request
@@ -333,12 +337,17 @@ usage windows are shared with the owner's own interactive work.
 ## 4. Owner decisions
 
 Recommendation first in each, with the cost of the alternative. **D880–D893 are this work's block;
-D894–D899 are reserved and unused.** **D880–D891 are answered** — D891 the last, with option (a) —
-and **D892 and D893 are open questions for the owner**, raised by the review of this branch's fix
-round because each one decides something the design cannot decide for itself: whether a coordinator
-may **act** on a verdict at all (D892), and whether the review job's token can reach it without being
-left in plain sight (D893). **R4 is unblocked, subject to U7's gate**, and the plan carries the
-machinery D891(a) names.
+D894–D899 are reserved and unused.** **D880–D893 are all answered now.** D891 was answered first, with
+option (a); the review of this branch's fix round then raised **D892** and **D893** — whether a
+coordinator may **act** on a verdict at all, and how the review job's read-only token reaches it — and
+the owner has answered both: **D892 with option (a)** (the review job signs its verdict and the
+coordinator verifies the signature) and **D893 with option (c)** (the token comes from the credentials
+service, by name — not the per-launch secret this design recommended). **R4 is unblocked, subject to
+U7's owner-run live observation**, and the plan carries the machinery D891(a) names. **D893(c) makes
+the credentials service a hard precondition of the whole design**, and because that service ships
+dormant and does not yet admit a project-scoped job, **R7, R2 and the coordinator's `ship` → merge
+path stay blocked until it is met** (§6's **E7** and D893's own entry below say exactly what is
+missing).
 
 - **D891 (ANSWERED by the owner, option (a)). May the review job's reviewer run repository code —
   Bash, and D885's mutation test — in the container that holds the person's token?** *The owner's
@@ -362,43 +371,95 @@ machinery D891(a) names.
   token and runs an untrusted diff's code — which is the same exposure the coder's job already has on
   that account, so the separate job's value would be *context* and *scope*, not containment.
 
-- **D892 (OPEN). How does the coordinator know a verdict is the review job's, given that another job
-  on the same shared project job can write under the review run's own prefix?** The gap is real and
-  §6 states it: the ordering argument covers the reviewed pull request's own coder and **not** a
-  concurrent run on the same shared job, whose account holds `objectUser` on the whole of `runs/`
-  (F15), can `storage.objects.list`, and can therefore write a forged `review.json` under a prefix it
-  can see. *Recommended:* **(a) sign the artifact with a per-account review-signing secret mounted
-  only on R7's variant, and have the coordinator verify it before it acts on a verdict** — the secret
-  is one more per-account secret (its own accessor grant, none on the App key), the review job
-  computes an HMAC over the artifact's bytes as it writes them, and a concurrent job cannot forge it
-  because it cannot read that secret. Honest about what it does and does not do: it stops **another
-  job** forging a verdict; it does not stop an injected *reviewer* from writing a dishonest one inside
-  its own run, which is the §7 residual no signature closes. *Cost of the alternatives* — **(b)
-  narrow the bucket so only the review job's account can write a review run's prefix**: the strongest
-  answer and no key material, and it is a bucket-layout change with an IAM migration, which the
-  owner's 2026-10-17 ruling accepted the opposite of (**F15**) and which belongs to the project-job
-  work, not here; **(c) accept it and make it the coordinator's rule that a verdict never merges on
-  its own**: no machinery at all, and the design then has to say that its "the coordinator merges on
-  `ship`" path is not a path — every merge keeps the owner's own look, which is what happens today by
-  hand. **Until the owner answers, §6 says which of the three the design relies on (none) and the
-  coordinator acts on a verdict only as advice.**
-- **D893 (OPEN). How does the minted read-only installation token reach the review job?** This is the
-  question **UNVERIFIED-2** used to hold, and the review of this branch's fix round is right that it
-  is a credential-handling decision rather than an implementation detail: the launcher holds no App
-  key (F16), so the token is minted elsewhere and then **handed in**, and the obvious channel leaves
-  it readable. *Recommended:* **(a) a per-launch Secret Manager secret** — the minter writes a
-  version, grants R7's variant service account `secretAccessor` on it, hands the launcher the **name**
-  alone, and the run's own cleanup deletes the secret version when the review ends, so nothing
-  plaintext sits in an execution object and the grant is one secret wide. *Cost of the alternatives*
-  — **(b) the launch's execution override** (`internal/backend/gcp/run.go:169`,
-  `ContainerOverrides[].Env`): the simplest channel, no new secret, and the token is a **plain value
-  in the execution object**, readable by anyone in the project who can read that execution;
-  **(c) the job fetches it from the credentials service by name at boot** (the service already holds
-  the App key): no plaintext anywhere and no per-launch secret, and it works only where the
-  installation has opted into the service, which is optional and ships dormant. **The cost (a) has to
-  be paid honestly**: a Secret Manager write and delete per review, an accessor grant, and a cleanup
-  that has to work when a run is killed — R7's task, not a later one. **Until the owner answers, the
-  design claims no channel**, and R7's first step is the owner's answer.
+- **D892 (ANSWERED by the owner, option (a)). How does the coordinator know a verdict is the review
+  job's, given that another job on the same shared project job can write under the review run's own
+  prefix?** The gap is real and §6 states it: the ordering argument covers the reviewed pull request's
+  own coder and **not** a concurrent run on the same shared job, whose account holds `objectUser` on
+  the whole of `runs/` (F15), can `storage.objects.list`, and can therefore write a forged
+  `review.json` under a prefix it can see. *The owner's answer:* **(a) the review job signs its verdict
+  with an HMAC key kept in Secret Manager, one per account, and the coordinator verifies the signature
+  before it acts on `ship`; a forged or unsigned `review.json` is refused.** Where the key lives and
+  who can read it: **one Secret Manager secret per account** in the installation's project, whose only
+  two readers are (1) the **review job variant's own service account**, which mounts it as the
+  variant's second `secret_env` entry — R7's, with `secretAccessor` on that secret and none on the App
+  key — and (2) **the coordinator**, which reads it with the operator's own credentials, the same read
+  `fugaro doctor --check-github-app` makes of the App key. Nothing else reads it: not the shared
+  project job, not the coder's job, not the coding run's account. **What the job does with it:** the
+  artifact writer (R3) computes an HMAC over `review.json`'s bytes as it writes them and stores it
+  beside them, and the coordinator recomputes it from the object's own bytes before it acts, so a
+  concurrent job that can write under the prefix cannot produce a verdict the coordinator accepts,
+  because it cannot read that secret. **The refusal is tested, not asserted:** R3 ships the signer and
+  the verifier as one pair of functions in `internal/runner/reviewartifact.go`, and
+  `TestVerifyRefusesAForgedArtifact`, `TestVerifyRefusesAnUnsignedArtifact` and
+  `TestReviewArtifactIsSignedWithTheAccountsKey` are its tests; the coordinator calls the same
+  verifier rather than writing a second one. **Honest about what it does and does not do:** it stops
+  **another job** forging a verdict; it does not stop an injected *reviewer* from writing a dishonest
+  one inside its own run, which is the §7 residual no signature closes, and which is why the verdict
+  is still advice, the CI still runs and the owner's own look is still the last step. *The
+  alternatives the owner did not take, kept for the record* — **(b) narrow the bucket so only the
+  review job's account can write a review run's prefix**: the strongest answer and no key material,
+  and it is a bucket-layout change with an IAM migration, which the owner's 2026-10-17 ruling accepted
+  the opposite of (**F15**) and which belongs to the project-job work, not here; **(c) accept it and
+  make it the coordinator's rule that a verdict never merges on its own**: no machinery at all, and the
+  design would then have to say that its "the coordinator merges on `ship`" path is not a path — every
+  merge keeps the owner's own look, which is what happens today by hand.
+- **D893 (ANSWERED by the owner, option (c)). How does the read-only installation token reach the
+  review job?** This is the question **UNVERIFIED-2** used to hold, and the review of this branch's
+  fix round was right that it is a credential-handling decision rather than an implementation detail:
+  the launcher holds no App key (F16), so the token is minted elsewhere and then reaches the job, and
+  the obvious channels leave it readable. *The owner's answer:* **(c) the job fetches it from the
+  credentials service, by name** — nothing is handed in at all: no per-launch secret and no value in
+  an execution object. The design recommended (a); the owner took (c), which is the stronger channel
+  where it works and carries a **precondition the reviewer cannot ship without** (below).
+  **How it works, on the code that is already there.** The keyless path exists and is wired:
+  `internal/gitprov/github.ServiceTokens` (`apptoken.go:377` onward) is the `gitprov.TokenSource` a
+  provider installs when the job's environment carries `FUGARO_CREDENTIALS_SERVICE_URL` — the fact
+  `internal/cli/run.go`'s `credentialsServiceLaunchEnv` puts on an opted-in installation's execution —
+  and `ServiceTokens.mint` makes one `POST /v1/github/installation-token` carrying the App ID and
+  **nothing else**: the repository is never the caller's to name, and the service mints for the one
+  the calling job account is bound to (`internal/credsvc/github.go:245`, `JobAccount.Repo`). R7's
+  variant therefore carries that variable like any other job of the installation, and its runner mints
+  nothing in-job and mounts no key. **How the job authenticates:** with the two identities the service
+  already verifies on every call — the job service account's Google ID token, which Cloud Run IAM
+  admits for `run.invoker` and whose `email` claim the service checks against the installation's job
+  accounts (so the IAM bit says *an* authorised identity called and the email says *which*), and the
+  **run's own budget identity**, the Firebase ID token for `r~<slug>~<run>` the launcher minted,
+  verified against Google's keys, with `fp` checked against the project and the run's liveness read
+  from the write-once outcome. **Who authorizes it, and for which repositories:** the service, from
+  those two verified identities and from nothing the caller sent — and the repository is the one the
+  identity names (`fs`). The review run's identity is the natural fit for this and already exists in
+  the model: a review identity carries `fpr` (the pull requests it reviews) and **no `fb`** (it pushes
+  nothing, `docs/secrets-brokering/implementation-plan.md`'s G6), which is exactly the shape a
+  read-only mint is for. **The token's lifetime:** GitHub's own installation token — one hour — minted
+  on demand and refreshed by the same `Token(ctx, minValid)` contract the in-job source holds; it
+  lives in the process's memory for the run's length, is never mounted and never written down.
+  **What the service has to grow, and it is not built:** the mint hard-codes the run's own set
+  (`RunTokenPermissions`, `credsvc/github.go:263`), so a review identity must be served **R1's fourth,
+  read-only set**, and the choice must be made from the verified identity's own claims (no `fb` → a
+  run that pushes nothing) rather than from any field a caller could send. **The precondition, said
+  plainly:** the cloud senior reviewer **requires the credentials service to be enabled for the
+  installation**. The service **ships dormant**, and (c) turns that from an option into a
+  requirement, so: the installation must have opted in (`fugaro update --provision-credentials`, the
+  owner's own typed confirmation at a real terminal, and the bundle must hold the App key the mint
+  signs with, `fugaro creds set github-app-key` — both of which are the credentials service's own
+  documented steps, not new ones this design adds); **and the service must admit the review job's own
+  account**, which is a **project-scoped** job: today the service refuses a caller whose account
+  belongs to a shared project job (**Global Constraint 6** of
+  [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md),
+  whose **C3.9** in Slice 3 — *unscheduled* — is the task that lifts it), and it does not know the
+  read-only set at all. **No `fugaro update` can do that half**, which is the honest form of this
+  design's HARD-RULE problem: the reviewer is blocked on another work stream's task, and the design
+  says so rather than shipping a launch that is refused by the service. So **R7, R2 and the
+  coordinator's `ship` → merge path stay blocked until the precondition is met**; the check that tells
+  an operator so is R6's (`doctor`/`validate`), and **E7** in §5 records the dependency. *The
+  alternatives the owner did not take, kept for the record* — **(a) a per-launch Secret Manager
+  secret** (the design's own recommendation): the minter writes a version, grants R7's variant
+  `secretAccessor`, hands the launcher the name alone and the run's cleanup deletes it — no dependency
+  on the service at all, and it costs a Secret Manager write and delete per review, an accessor grant,
+  and a cleanup that has to work when a run is killed; **(b) the launch's execution override**
+  (`internal/backend/gcp/run.go:169`, `ContainerOverrides[].Env`): the simplest channel, and the token
+  is a **plain value in the execution object**, readable by anyone in the project who can read that
+  execution.
 
 - **D880. The trigger is a new command, `fugaro review --pr N`.** *Recommended:* a command, because
   the review job is a different job with a different account and a different token scope, and only a
@@ -435,10 +496,10 @@ machinery D891(a) names.
   launcher posts nothing on its behalf.** *Recommended:* a **fourth permission set**
   `{contents: read, pull_requests: read, metadata: read}` on a job that is a **new per-account
   variant with no `github-app-key` in its `secret_env` and no accessor on that key** (**F2**, **F3**,
-  **F16**, **R7**), the read-only token minted where a key exists — the credentials service or the
-  coordinator, **never the launcher**, which holds no key — and handed in through the launch
-  override (**F16**, **UNVERIFIED-2**); the job posts no comment, no review and no label, and the
-  verdict is an artifact. *Cost of the alternative:* launch on the **existing shared project job** —
+  **F16**, **R7**), the read-only token minted by the **credentials service** — never the launcher,
+  which holds no key — and **fetched by the job from the service by name, with nothing handed in**
+  (**F16**, **D893 (c)**); the job posts no comment, no review and no label, and the verdict is an
+  artifact. *Cost of the alternative:* launch on the **existing shared project job** —
   no new infra, no new deploy step, and it mounts the App key with `secretAccessor`, so the container
   that runs the untrusted diff can mint a token with `contents: write` and `pull_requests: write`
   however narrow the token the launcher handed it; the read-only set would then be a comment on the
@@ -513,6 +574,7 @@ machinery D891(a) names.
 | **E4** | `website/content/cli-reference.md` (generated by `ee/clidoc`) and `website/**` | it must **not** hand-edit it: the task that adds `fugaro review` regenerates the page, and if the page is outside its scope it records that in its own pull request (F22) | with R2 |
 | **E5** | review levels L1.1/L4.3 (PR #1424, #1407) — the effort key, the L3 adversarial level | nothing for correctness: this design **records** the effort it sets and works with no key, and its security-sensitive checklist overlaps L3 without depending on it | independent |
 | **E6** | `internal/cli/recipes_skew.go`'s `…Since` gate precedent | it must copy the shape (an unshipped constant, a release-checklist line, a refusal naming the release) for every new task field or recipe construct it adds | with R1/R6/R7 |
+| **E7** | **the credentials service, enabled and admitting a project-scoped job** ([docs/credentials-service/](../credentials-service/implementation-plan.md): the `--provision-credentials` opt-in, the App key in the bundle, **Global Constraint 6** and its **C3.9** in Slice 3, *unscheduled*; and the read-only set its mint must serve) | nothing structurally — the keyless fetch path is already in the tree — but **D893(c) makes it a precondition, not an option**: without it the review job cannot fetch the head at all. It is another work stream's task and this plan adds no task for it | **blocks R7, R2 and the coordinator's `ship` → merge path** |
 
 ## 6. UNVERIFIED
 
@@ -524,7 +586,7 @@ machinery D891(a) names.
 | **U4** | Does a truncated verdict output announce itself (a Claude Code `result` event, a non-zero exit) or does it look like a short answer? | **D886**'s "truncated is a failed review" needs an observation to hang on; the implementation task's test is a fake agent returning a clipped result, and Check 125's step 3 is the live one |
 | **U5** | Does the review job's transcript carry the token if the reviewer echoes its environment? | `redact.go` and `r.addSecret` say it should not; the observation is Check 125's step 2 ("its log must name no token value") plus a hermetic test in the implementing task |
 | **U6** | Can a launched review job be told the head SHA the coordinator observed, so a head that moved between the coordinator's read and the job's fetch is refused rather than silently reviewed? | `FetchPRHead` resolves the head at bootstrap today and records it (`ReviewedPR.SHA`); whether to pass the expected SHA in is **not decided here** and is left to the implementing task with the owner's D880 answer in hand |
-| **U7** | **How is egress denied for a subprocess inside a Cloud Run container?** D891(a) answers that the mutation test runs with the token scrubbed and **egress denied**, and no network namespace or `unshare` in gen2 has been checked — Cloud Run's second-generation execution environment may not permit the one, and the job's own egress is the job's, not a child process's | **R4**'s first step: measure it in a hermetic harness where it can be measured, and observe it in **Check 125's step 6** (the mutation check, with the container's egress watched). If it turns out a child cannot be fenced, that is an amendment to D891's answer and the owner is asked again — the design does not quietly fall back to `denyWeb` |
-| **UNVERIFIED-2** | **Closed by D893.** How does the minted read-only installation token **reach** the review job, and is the channel acceptable? The launch path passes per-run variables as a Cloud Run execution override (`internal/backend/gcp/run.go:169`), whose value is a **plain value in the execution object**, readable by anyone who can read that execution; a mounted short-lived secret would not be. | It is a **decision, not an observation**, and the review of this branch's fix round was right to say it cannot be left to the implementing task: **D893** puts the three channels to the owner (a per-launch secret, the execution override, the credentials service by name) and **R7 implements the answer** — the grant, and the cleanup that has to work when a run is killed, are that task's |
+| **U7** | **How is egress denied for a subprocess inside a Cloud Run container?** D891(a) answers that the mutation test runs with the token scrubbed and **egress denied**, and no network namespace or `unshare` in gen2 has been checked — Cloud Run's second-generation execution environment may not permit the one, and the job's own egress is the job's, not a child process's | **An owner-run live observation taken before R4 launches — not the task's first step, and not a hermetic test.** It cannot be measured hermetically: the plan's rule is hermetic tests only (`t.TempDir()`, no network, no cloud), and whether a child process can be fenced is a property of the **deployed execution environment**, which no test in this repository can hold. So it is **Check 125's step 6** — the mutation check run once on the sandbox installation with the container's egress watched — run by the owner in their own terminal, and **R4 does not start until it returns**. If it turns out a child cannot be fenced, that is an amendment to D891's answer and the owner is asked again — the design does not quietly fall back to `denyWeb` |
+| **UNVERIFIED-2** | **Answered by D893 (c): the token is never handed in.** How does the minted read-only installation token **reach** the review job, and is the channel acceptable? The launch path passes per-run variables as a Cloud Run execution override (`internal/backend/gcp/run.go:169`), whose value is a **plain value in the execution object**, readable by anyone who can read that execution; a mounted short-lived secret would not be. | It was a **decision, not an observation**, and the owner has taken it: **(c) the job fetches the token from the credentials service, by name** — no per-launch secret, no value in an execution object, and **R7 wires the variant to the service** rather than handing it anything. What the answer costs is not a channel but a **precondition** (the service enabled, admitting a project-scoped job, and minting R1's read-only set), and D893's entry in §4 states it in full |
 
 Nothing above is approved by being written down. Answering a decision is not approving a task.
