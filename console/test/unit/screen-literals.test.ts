@@ -212,6 +212,21 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       'a pull request number the model read as a positive integer (`prNumberAt`), drawn as **text**: design section 5.1 rule 2 and its gap 7 leave the console no URL to build, so the number is the whole of it and its `title` carries `GRAPH_PR_NO_LINK_REASON` -- the treatment `live.ts` and `run.ts` give the same field',
     '`run …${node.run.text}`':
       'the run suffix as the model\'s `Sanitized` `run` value, which `suffixRefusal` refuses unless it is four characters, under this file\'s own "run …" label -- so the interpolation is a sanitized four-character suffix and never a run id or a path',
+    'door.because': {
+      within: 'inspector',
+      reason:
+        '`doorFor`\'s own sentence for a task whose run nothing opens -- the same sentence the card carries in a tooltip, drawn in the panel as its run line because the panel is text and a tooltip is not',
+    },
+    label: {
+      within: 'fact',
+      reason:
+        'the `fact` helper\'s own label parameter; every call site passes one of this file\'s four fact words (`GRAPH_STREAM_FACT`, `GRAPH_RUN_FACT`, `GRAPH_DEPENDS_ON`, `GRAPH_UNBLOCKS`)',
+    },
+    spelling: {
+      within: 'legendItem',
+      reason:
+        'one line of the legend: a word of `GRAPH_LEGEND_WORDS` (`graph/model.ts`\'s own `STATE_WORDS`, which is one exhaustive function over the closed `PlanState` union, less the unreachable `stuck`), or `GRAPH_DEPENDS_ON`/`GRAPH_CRITICAL_PATH` for the two kinds of line -- this file\'s own vocabulary and never a document string',
+    },
   },
   'run.ts': {
     UNAVAILABLE_MARK:
@@ -501,9 +516,19 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'picture.state.view': { within: 'header', reason: '`GraphViewName`, the closed `GRAPH_VIEWS` tuple' },
     'GRAPH_VIEW_NAMES[picture.state.view]': { within: 'header', reason: 'this file\'s own table of what each drawing is called, keyed by the same closed union' },
     'tabKey(option.tab)': {
-      within: 'tabs',
+      within: 'filter',
       reason:
         '`tabKey` spells a `GraphTab` as one string -- `all` for the All tab, `stream:<name>` otherwise -- so the attribute tells a stream called `all` from the All tab, which `tabOf` reads back',
+    },
+    'nodeKey(plan.id, task.id)': {
+      within: 'related',
+      reason:
+        'the layout key of one of the two lists the inspector draws, built the same way a card\'s own key is -- ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key` and never drawn; the text beside it is the task\'s `Sanitized` title',
+    },
+    value: {
+      within: 'legendItem',
+      reason:
+        'the value of one legend line\'s `data-state` or `data-edge`: a word of `GRAPH_LEGEND_WORDS` (the model\'s own `STATE_WORDS`, less `stuck`) or one of the two literal kinds this file\'s `legend` passes -- the console\'s own vocabulary either way, and never a document string',
     },
     'group.stream': {
       within: 'chips',

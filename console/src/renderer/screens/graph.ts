@@ -1334,7 +1334,7 @@ function legend(factory: ScreenFactory): ScreenElement {
 function legendItem(
   factory: ScreenFactory,
   list: ScreenElement,
-  word: string,
+  spelling: string,
   attribute: 'data-state' | 'data-edge',
   value: string,
 ): void {
@@ -1342,7 +1342,7 @@ function legendItem(
   const swatch = cell(item, factory, 'span', 'graph-legend-swatch')
   swatch.setAttribute('aria-hidden', 'true')
   swatch.setAttribute(attribute, value)
-  literal(cell(item, factory, 'span', 'graph-legend-word'), word)
+  literal(cell(item, factory, 'span', 'graph-legend-word'), spelling)
 }
 
 /**
