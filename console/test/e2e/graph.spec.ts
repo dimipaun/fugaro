@@ -181,6 +181,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
+  'renderer/writes.js',
   'renderer/screens/graph.js',
 ])
 
