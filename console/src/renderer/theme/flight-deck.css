@@ -3238,6 +3238,15 @@ span.graph-legend-swatch[data-state='blocked'] {
   border-style: dashed;
 }
 
+/* A critical card's second channel is the glow behind it, and its line of the
+ * legend draws the same fact: the swatch's own interior is the live tint the
+ * card's glow is a blurred wash of, so the line reads as a card with something
+ * lit behind it rather than as one more neutral boundary. The critical **path**
+ * is the last line of the legend, drawn as its own 3 px line. */
+span.graph-legend-swatch[data-state='critical'] {
+  background: var(--live-tint);
+}
+
 /* The two kinds of line are swatches too, and they are drawn as lines: a
  * dependency is 2 px of `--decor` and the critical path 3 px of `--live`, the
  * same two facts the canvas draws, with the **width** carrying the difference

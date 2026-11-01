@@ -1082,8 +1082,9 @@ sentence in `title` and `aria-label`, and nothing listening.
 **The legend is under the canvas and it is a key, not a second drawing.** One line per state a
 card can carry and one per kind of edge, each a swatch beside the word — the swatch is
 `aria-hidden`, so a reader hears the word once, and it is drawn as **the state's own boundary**
-(1 px neutral, 2 px for the four running words and for `halted`, 2 px dashed for `blocked`) and
-as **the line's own width** (2 px for a dependency, 3 px for the critical path). Nothing in it
+(1 px neutral, 2 px for the four running words and for `halted`, 2 px dashed for `blocked`, and
+the live tint inside for `critical`, whose second channel on the canvas is the glow behind the
+card) and as **the line's own width** (2 px for a dependency, 3 px for the critical path). Nothing in it
 is a figure the graph computed: it is the console's own vocabulary, drawn even while the
 canvas has none of those states in it. It is drawn **only under the canvas** — the list spells
 every word already and carries neither kind of line.
