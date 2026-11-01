@@ -21,6 +21,11 @@ agent:
   review_rounds: 2            # review → fix rounds before the PR is opened
   # first_line_review: auto   # auto | on | off: the coder's model reviews (and fixes) before the senior review; auto is on only with a provider coder
   # first_line_rounds: 1      # 1 to 3, apart from review_rounds
+  # levels:                   # each review level's own settings, merged key by key with the project layer's defaults.agent.levels (fugaro 0.16.0)
+  #   l1: { model: claude-haiku-4-5 }   # the first line of review; without it, the coder's own model
+  #   l2: { effort: high }              # the senior round; effort is low | medium | high | xhigh | max
+  #   l3: { none: true }                # the adversarial round; none: true turns a level off, beside no other key
+  # adversarial_rounds: 3     # review level 3's rounds, 1 to 10, apart from review_rounds; unset takes the rigor mode's own default
   # recipe: default           # the task loop: default | solo | standard | a .fugaro/recipes/ or project recipe (fugaro 0.5.0 or later; the catalog's other recipes need 0.7.0)
   max_budget_usd: 25          # per stage, passed to claude --max-budget-usd
   # models:                   # a model per stage role; a role left out uses agent.model
