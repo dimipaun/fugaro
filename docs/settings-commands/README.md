@@ -37,7 +37,7 @@ This work adds:
 1. **`fugaro settings`**, a read over every layer — default, repository `fugaro.yaml`, project
    layer, profile, local project config, shared config, published policy node, Realtime Database
    caps and kills, environment variables — as one row per (key, scope) with the columns
-   `KEY VALUE WINS DEFAULT STATE`, and with `--why`, `--changed`, `--repo`, `--all-repos`,
+   `KEY SCOPE VALUE WINS DEFAULT STATE`, and with `--why`, `--changed`, `--repo`, `--all-repos`,
    `--layer`, `--grep`, `--offline` and a versioned `--json`.
 2. **A key and defaults registry**, one machine-readable row per setting, which is where the
    DEFAULT column, `--changed`, the JSON Schema `default` keywords and the scope table all come

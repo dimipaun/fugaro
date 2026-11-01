@@ -342,6 +342,93 @@ func TestDigestStepFirstOnly(t *testing.T) {
 	}
 }
 
+// TestAdversarialStepOrder: review level 3 is one step kind of its own,
+// adversarial, legal at most once and only after the review step — the shape
+// is ... review, adversarial, with nothing after it. Its knobs are its own
+// max_rounds (1 to 10, the review step's range) and an optional bounce.
+func TestAdversarialStepOrder(t *testing.T) {
+	r := mustParse(t, "version: 1\nname: x\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - adversarial: { max_rounds: 3, bounce: first_line }\n")
+	want := []Step{{Kind: StepFirstLine}, {Kind: StepReview, Bounce: true}, {Kind: StepAdversarial, MaxRounds: 3, Bounce: true}}
+	if !slices.Equal(r.Steps, want) {
+		t.Fatalf("steps = %+v", r.Steps)
+	}
+	if !UsesAdversarial(r) {
+		t.Error("UsesAdversarial = false, want true")
+	}
+	// A bounce is optional, and the step is present without one.
+	r = mustParse(t, "version: 1\nname: x\nsteps:\n  - review: {}\n  - adversarial: {}\n")
+	if !slices.Equal(r.Steps, []Step{{Kind: StepReview}, {Kind: StepAdversarial}}) {
+		t.Fatalf("steps = %+v", r.Steps)
+	}
+	if !UsesAdversarial(r) {
+		t.Error("UsesAdversarial = false for a bare adversarial step, want true")
+	}
+	none := mustParse(t, "version: 1\nname: x\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n")
+	if UsesAdversarial(none) {
+		t.Error("UsesAdversarial = true for a recipe without the step, want false")
+	}
+	for _, tc := range []struct{ name, steps, path, want string }{
+		{"before review", "steps:\n  - adversarial: {}\n  - review: {}\n", "steps[0]", "adversarial must come after review"},
+		{"twice", "steps:\n  - review: {}\n  - adversarial: {}\n  - adversarial: {}\n", "steps[2]", "adversarial may appear at most once"},
+		{"rounds 11", "steps:\n  - review: {}\n  - adversarial: { max_rounds: 11 }\n", "steps[1].adversarial.max_rounds", "between 1 and 10"},
+		{"rounds 0", "steps:\n  - review: {}\n  - adversarial: { max_rounds: 0 }\n", "steps[1].adversarial.max_rounds", "between 1 and 10"},
+		{"unknown knob", "steps:\n  - review: {}\n  - adversarial: { rounds: 2 }\n", "steps[1].adversarial.rounds", "is not a recipe key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte("version: 1\nname: x\n" + tc.steps))
+			if !problemsHave(ps, tc.path, tc.want) {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+	// The step is not a step of the two modes that pin their own steps.
+	_, ps := Parse([]byte("version: 1\nname: x\nmode: review\nsteps:\n  - review: {}\n  - adversarial: {}\n"))
+	if !problemsHave(ps, "steps", "mode: review allows exactly one review step and nothing else") {
+		t.Fatalf("mode: review problems = %v", ps)
+	}
+	_, ps = Parse([]byte(artifactHead + artifactOutputs + "steps:\n  - adversarial: {}\n  - render: {}\n"))
+	if !problemsHave(ps, "steps[0].adversarial", "is not a step of mode: artifact") {
+		t.Fatalf("mode: artifact problems = %v", ps)
+	}
+	// The report run's shape stays exactly digest then review: a third step
+	// would loop over a report no model wrote.
+	_, ps = Parse([]byte("version: 1\nname: x\nsteps:\n  - digest: {}\n  - review: {}\n  - adversarial: {}\n"))
+	if !problemsHave(ps, "steps[0]", "digest must be followed by one review step") {
+		t.Fatalf("digest problems = %v", ps)
+	}
+}
+
+// TestAdversarialBounceTarget: adversarial's bounce is first_line only, the
+// same single target review.bounce has, and it needs a first_line step to
+// bounce back to.
+func TestAdversarialBounceTarget(t *testing.T) {
+	_, ps := Parse([]byte("version: 1\nname: x\nsteps:\n  - review: {}\n  - adversarial: { bounce: first_line }\n"))
+	if !problemsHave(ps, "steps[1]", "bounce: first_line needs a first_line step before the adversarial step") {
+		t.Fatalf("no first_line problems = %v", ps)
+	}
+	_, ps = Parse([]byte("version: 1\nname: x\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - adversarial: { bounce: review }\n"))
+	if !problemsHave(ps, "steps[2].adversarial.bounce", "bounce can only be first_line") {
+		t.Fatalf("bad target problems = %v", ps)
+	}
+	_, ps = Parse([]byte("version: 1\nname: x\nsteps:\n  - review: {}\n  - adversarial: { bounce: true }\n"))
+	if !problemsHave(ps, "steps[1].adversarial.bounce", "must be a string") {
+		t.Fatalf("non-string bounce problems = %v", ps)
+	}
+}
+
+// TestAdversarialRoundsDefault: a step without max_rounds is left at 0 by the
+// parser, so the reader applies the rounds a step that writes none takes, as
+// it does for a first_line or review step. That reader is the rigor mode's own
+// senior row (rigor.AdversarialDefault, the owner's ruling of 2026-10-31):
+// this package holds no default of its own to alias, which is why
+// StageBound takes the number from its caller.
+func TestAdversarialRoundsDefault(t *testing.T) {
+	r := mustParse(t, "version: 1\nname: x\nsteps:\n  - review: {}\n  - adversarial: {}\n")
+	if r.Steps[1].MaxRounds != 0 {
+		t.Fatalf("MaxRounds = %d, want 0 (the default is the reader's)", r.Steps[1].MaxRounds)
+	}
+}
+
 // TestDigestStepNeedsReview: the report run hands its pull request to the one
 // senior review, so a digest step is followed by exactly one review step and
 // nothing else, and only a mode: implement recipe may hold it (T3.1).

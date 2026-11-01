@@ -1137,12 +1137,14 @@ main p {
  * is a percentage in an attribute). What the rules below paint is colour, weight
  * and dashes.
  *
- * **The picture's own rules are not here** (console redesign, step 6a). The
- * canvas's ground, the stream bands, the release box, the edges and the cards are
+ * **The picture's own rules are not here** (console redesign, step 6a), and
+ * neither is the screen's chrome (step 6b). The canvas's ground, the stream
+ * bands, the release box, the edges, the cards, the heading, the stream filter
+ * and the three controls beside it, the stage's inspector and the legend are
  * painted in `flight-deck.css`, in the redesign's tokens; the markup they meet is
  * the same markup this file used to draw them for, so there is one rule per hook
  * and it is in one place. What is left here is the **chrome** the redesign has not
- * restyled yet -- the header, the tabs, the view switch, the chips of the finished
+ * restyled yet -- the not-shown sentence, the chips of the finished
  * releases and the list -- the screen's motion, whose keyframes and both arms stay
  * in one block in this file (design section 3.9's amendment, and
  * `graph-motion.test.ts` reads them here), and the theme's one `forced-colors` arm,
@@ -1165,64 +1167,6 @@ main p {
 section.graph {
   display: block;
   color: var(--text);
-}
-
-header.graph-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-sm);
-}
-
-h1.graph-title {
-  font-size: var(--font-size-lg);
-  font-weight: var(--weight-semibold);
-  margin: 0 0 var(--space-md);
-}
-
-/* The tabs are a tablist: `aria-selected` is the machine-readable half and the
- * accent is the drawn one, the treatment the navigation's own buttons get in
- * `base.css` (design sections 2.1 and 4.3). */
-nav.graph-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2xs);
-}
-
-button.graph-tab {
-  padding: var(--space-2xs) var(--space-xs);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  transition: color var(--duration-fast) var(--ease-out);
-}
-
-button.graph-tab:hover {
-  color: var(--text);
-}
-
-button.graph-tab[aria-selected='true'] {
-  color: var(--accent-ink);
-  border-color: var(--accent);
-  font-weight: var(--weight-medium);
-}
-
-div.graph-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2xs);
-  margin-left: auto;
-}
-
-button.graph-view,
-button.graph-refresh,
-button.graph-fit {
-  padding: var(--space-2xs) var(--space-xs);
-  font-size: var(--font-size-sm);
-  color: var(--text);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
 }
 
 /* A bound that dropped tasks says so in the console's own sentence; the tone is
@@ -2361,10 +2305,25 @@ span.coordinator-unread-retry {
     animation: none;
   }
 
-  section.graph button.graph-tab[aria-selected='true'],
+  /* The chosen stream segment keeps a mark here: the system takes the raised
+   * ground the redesign gives it, so what is left of the choice is this border
+   * and the `aria-pressed` the button carries. */
+  section.graph button.graph-tab[aria-pressed='true'],
   section.graph button.graph-chip[aria-expanded='true'] {
     border-color: Highlight;
   }
+
+  /* **The inspector and the legend take no rule here, and that is a decision
+   * rather than an omission.** The panel is drawn in the same tokens as every
+   * other panel of this theme -- a surface, a boundary, text and one refused
+   * write whose refusal is its words and its description, exactly as
+   * `button.live-halt` refuses under this mode in `base.css` -- and the system
+   * forces the surface, the boundary and every text tone over on its own. The
+   * legend is made of the two channels this mode **keeps**: a swatch's width
+   * (2 px and 3 px against 1) and a blocked swatch's dash, neither of which is a
+   * colour (§4.4's rule 1), and its colours are forced with the rest. A rule
+   * restating either would be a rule this mode already applies. */
+
 
   /* Only the tone is written here: a border's *style* is not forced by the
    * system, so the blocked row's dashed left edge survives with the amber

@@ -96,8 +96,8 @@ func stepsSummary(steps []stepView) string {
 			if s.Autofix {
 				parts[i] += ", autofix"
 			}
-		case recipe.StepReview:
-			parts[i] = "review"
+		case recipe.StepReview, recipe.StepAdversarial:
+			parts[i] = s.Kind
 			if s.Bounce {
 				parts[i] += " (bounce: first_line)"
 			}

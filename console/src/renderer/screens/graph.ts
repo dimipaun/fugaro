@@ -68,8 +68,9 @@ import { LayoutClient } from '../graph/layout-client'
 import type { LayoutGraph, LayoutRequest, Positions, RouteSection, WorkerLike } from '../graph/layout-client'
 import { WORKER_URL } from '../graph/layout-client'
 import { GraphLayout, edgeKey, nodeKey } from '../graph/layout'
-import { buildGraphModel } from '../graph/model'
-import type { GraphModel, GraphNode, GraphPlan, GraphRelease, GraphTab, StateWord } from '../graph/model'
+import { STATE_WORDS, buildGraphModel } from '../graph/model'
+import type { GraphColumn, GraphModel, GraphNode, GraphPlan, GraphRelease, GraphTab, StateWord } from '../graph/model'
+import { disabledWrite } from '../writes'
 
 // ---------------------------------------------------------------------------
 // The factory
@@ -220,6 +221,54 @@ export const GRAPH_CANVAS_LABEL = 'the dependency graph, drawn as boxes and edge
 
 /** GRAPH_LIST_LABEL is the list's own name, for the same reason. */
 export const GRAPH_LIST_LABEL = 'the dependency graph, drawn as a list'
+
+/** GRAPH_FILTER_LABEL names the stream filter's group: the four things the
+ * toolbar holds are nameless buttons and a set of streams, and a set of buttons
+ * a reader hears one by one needs the one name they share. */
+export const GRAPH_FILTER_LABEL = 'streams'
+
+/** GRAPH_OPEN_RUN_LABEL is the inspector's own door to the run the selected task
+ * is on -- the same door a card's second press opens, spelled out. */
+export const GRAPH_OPEN_RUN_LABEL = 'Open run'
+
+/** GRAPH_PAUSE_LABEL is the inspector's one write. Pausing a task is a control
+ * the design's panel asks for and an operation this release's allow-lists do not
+ * carry, so it is drawn `disabledWrite` and does nothing (design §2.11). */
+export const GRAPH_PAUSE_LABEL = 'Pause task'
+
+/** GRAPH_INSPECTOR_LABEL is the panel's accessible name: it is an `aside` beside
+ * the canvas and nothing else on the screen says which task it is about. */
+export const GRAPH_INSPECTOR_LABEL = 'the selected task'
+
+/** GRAPH_STREAM_FACT, GRAPH_RUN_FACT, GRAPH_DEPENDS_ON and GRAPH_UNBLOCKS are
+ * the four facts the panel lists, in the console's own words. */
+export const GRAPH_STREAM_FACT = 'stream'
+export const GRAPH_RUN_FACT = 'run'
+export const GRAPH_DEPENDS_ON = 'depends on'
+export const GRAPH_UNBLOCKS = 'unblocks'
+
+/** GRAPH_INSPECTOR_NONE is what one of those two lists says when it is empty: a
+ * heading with nothing under it is a reader wondering whether the panel failed to
+ * draw. */
+export const GRAPH_INSPECTOR_NONE = 'none'
+
+/** GRAPH_LEGEND_TITLE is the legend's heading, and GRAPH_CRITICAL_PATH is the
+ * second kind of line it names: the first is `GRAPH_DEPENDS_ON`, the word the
+ * panel's own fact carries. */
+export const GRAPH_LEGEND_TITLE = 'legend'
+export const GRAPH_CRITICAL_PATH = 'critical path'
+
+/**
+ * GRAPH_LEGEND_WORDS is every state a card can carry, in the model's own order.
+ *
+ * **`stuck` is left out, and that is the one exclusion.** It is a word of the
+ * model's list (`STATE_WORDS`) that no reading reaches -- `plan status` writes it
+ * for no state this console draws -- and a legend line for a word no card ever
+ * spells is a line about nothing.
+ */
+export const GRAPH_LEGEND_WORDS: readonly StateWord[] = Object.freeze(
+  STATE_WORDS.filter((word) => word !== 'stuck'),
+)
 
 /**
  * GRAPH_NODE_TITLE_LINE_CODE_POINTS is how much of a node's title one **line of a
@@ -978,13 +1027,18 @@ export function tabOf(key: string): GraphTab {
 // The drawing's parts
 // ---------------------------------------------------------------------------
 
-/** header draws the heading, the tabs, the three controls and the note. */
+/** header draws the heading, the toolbar and the note. */
 function header(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
   const element = make(factory, 'header', 'graph-header')
   literal(cell(element, factory, 'h1', 'graph-title'), GRAPH_TITLE)
-  element.append(tabs(factory, picture))
 
-  const actions = cell(element, factory, 'div', 'graph-actions')
+  // The toolbar is the screen's controls in one row: the stream filter, and the
+  // three buttons beside it. It is one region because that is what it is -- a
+  // reader who tabs into it meets the filter and then the controls, and the
+  // stylesheet lays the four out as one line.
+  const toolbar = cell(element, factory, 'div', 'graph-toolbar')
+  toolbar.append(filter(factory, picture))
+  const actions = cell(toolbar, factory, 'div', 'graph-actions')
   const view = cell(actions, factory, 'button', 'graph-view')
   view.setAttribute('type', 'button')
   view.setAttribute('data-view', picture.state.view)
@@ -1013,22 +1067,33 @@ function header(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
   return element
 }
 
-/** tabs draws one tab per stream, then All (the addendum's own order: the
- * document's streams, then everything at once). */
-function tabs(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
-  const nav = make(factory, 'nav', 'graph-tabs')
-  nav.setAttribute('role', 'tablist')
+/**
+ * filter draws one segment per stream, then All (the addendum's own order: the
+ * document's streams, then everything at once).
+ *
+ * **It is a segmented control and not a tablist** (console redesign, step 6b).
+ * The four buttons the toolbar holds are four controls of one screen, and a tab
+ * promises a panel that appears where the tab was: nothing here is a panel, so
+ * each segment says `aria-pressed` and the group is one `role="group"` with the
+ * one name the set shares. The roving `tabindex` and §4.3's keys stay exactly as
+ * they were -- Left and Right, Home and End, each activating what it moves to --
+ * because a chosen stream *is* the graph that is drawn: there is no second key to
+ * press and no panel to wait for.
+ */
+function filter(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
+  const group = make(factory, 'div', 'graph-filter')
+  group.setAttribute('role', 'group')
+  group.setAttribute('aria-label', GRAPH_FILTER_LABEL)
   for (const option of picture.model.tabs) {
-    const button = cell(nav, factory, 'button', 'graph-tab')
+    const button = cell(group, factory, 'button', 'graph-tab')
     button.setAttribute('type', 'button')
-    button.setAttribute('role', 'tab')
     button.setAttribute('data-tab', tabKey(option.tab))
-    const selected = option.tab === picture.model.tab
-    button.setAttribute('aria-selected', selected ? 'true' : 'false')
-    button.setAttribute('tabindex', selected ? '0' : '-1')
+    const chosen = option.tab === picture.model.tab
+    button.setAttribute('aria-pressed', chosen ? 'true' : 'false')
+    button.setAttribute('tabindex', chosen ? '0' : '-1')
     drawInto(button, option.label)
   }
-  return nav
+  return group
 }
 
 /**
@@ -1088,6 +1153,219 @@ function planOf(model: GraphModel, id: string): GraphPlan | null {
     for (const plan of column.plans) if (plan.id === id) return plan
   }
   return null
+}
+
+/**
+ * stage puts the drawing and the inspector beside one another: the picture is
+ * what the panel is about, and a panel drawn over the canvas -- or under it, out
+ * of sight -- would be a reader losing one to read the other.
+ *
+ * **The panel is drawn only while a task is selected**, so the stage of a graph
+ * nobody has selected anything in holds one child and lays out exactly as it did
+ * before the panel existed. The list is a drawing like the canvas: a row is
+ * selected the same way a card is, and the panel answers for the task either
+ * drawing shows.
+ */
+function stage(factory: ScreenFactory, picture: GraphPicture, drawing: ScreenElement): ScreenElement {
+  const element = make(factory, 'div', 'graph-stage')
+  element.append(drawing)
+  const panel = inspector(factory, picture)
+  if (panel !== null) element.append(panel)
+  return element
+}
+
+/**
+ * inspector draws the panel beside the drawing for the task in hand: the task's
+ * title, the words its card carries, the stream it is in, its run, what it waits
+ * on and what it unblocks, and the two controls the design's panel asks for.
+ *
+ * **Everything here is text.** The card is a picture and the panel is the same
+ * facts spelled out: a reader who cannot see the tone of a boundary, or who never
+ * looks at the canvas at all, reads the state, the stream and both ends of every
+ * dependency as words.
+ *
+ * **A related task is a button, and the button draws that task's title.** A task
+ * id is a key this screen joins two records on and never spells (the model's own
+ * rule), so what a reader reads is the title the model already sanitized for the
+ * card; the key is carried in `data-key` for the entry, which selects that card
+ * on a press. A need the plan names but the model does not hold -- a bound
+ * dropped it -- is not drawn: there is no title to draw and no card to select.
+ *
+ * Pause is `disabledWrite`: a control the design asks for and this release cannot
+ * make (no allow-list names it), drawn so the panel is the shape the design asks
+ * for and drawn disabled, with the console's own sentence in `title` and no
+ * listener at all.
+ */
+function inspector(factory: ScreenFactory, picture: GraphPicture): ScreenElement | null {
+  const found = selectedTask(picture)
+  if (found === null) return null
+  const { plan, column, node } = found
+  const door = doorFor(node, picture.runs)
+  const panel = make(factory, 'aside', 'graph-inspector')
+  panel.setAttribute('aria-label', GRAPH_INSPECTOR_LABEL)
+  // The panel itself is focusable, and that is for the press that selects a task
+  // the drawing does not draw: a task of a shut finished release has no card on
+  // the canvas, and the keyboard has to land on the panel rather than on `<body>`
+  // (design section 4.3). It is not in the tab order: `-1` is reachable by a
+  // script and by nothing else.
+  panel.setAttribute('tabindex', '-1')
+  drawn(panel, factory, 'h2', node.title, 'graph-inspector-title')
+
+  const words = cell(panel, factory, 'div', 'graph-inspector-words')
+  for (const word of node.words) markWord(cell(words, factory, 'span', 'graph-inspector-word'), word)
+
+  const facts = cell(panel, factory, 'dl', 'graph-inspector-facts')
+  drawn(fact(facts, factory, GRAPH_STREAM_FACT), factory, 'span', column.label, 'graph-inspector-stream')
+  const run = fact(facts, factory, GRAPH_RUN_FACT)
+  // The suffix the plan wrote when there is one, and the console's own sentence
+  // about why nothing opens when there is not: the card says the second half in a
+  // tooltip, and the panel -- which is text -- spells it out.
+  if (node.run.ok && node.run.text !== '') drawn(run, factory, 'span', node.run, 'graph-inspector-run')
+  else literal(cell(run, factory, 'span', 'graph-inspector-run'), door.because)
+  needsOf(facts, factory, plan, node)
+  unblocksOf(facts, factory, plan, node)
+
+  const actions = cell(panel, factory, 'div', 'graph-inspector-actions')
+  if (door.run !== null) {
+    const open = cell(actions, factory, 'button', 'graph-inspector-open')
+    open.setAttribute('type', 'button')
+    open.setAttribute('data-run-id', door.run)
+    open.setAttribute('title', GRAPH_RUN_OPENS)
+    literal(open, GRAPH_OPEN_RUN_LABEL)
+  }
+  actions.append(disabledWrite(factory, 'graph-inspector-pause', GRAPH_PAUSE_LABEL))
+  return panel
+}
+
+/** fact is one row of the panel's own list: the console's own label, and the
+ * value that answers it. It answers the `dd` and not the `dt`, because every
+ * caller draws its value there. */
+function fact(facts: ScreenElement, factory: ScreenFactory, label: string): ScreenElement {
+  literal(cell(facts, factory, 'dt'), label)
+  return cell(facts, factory, 'dd')
+}
+
+/** needsOf draws what the selected task waits on: one button per task, and the
+ * console's own word when the plan gives it none. */
+function needsOf(facts: ScreenElement, factory: ScreenFactory, plan: GraphPlan, node: GraphNode): void {
+  const tasks = node.needs.map((id) => nodeOf(plan, id)).filter((each): each is GraphNode => each !== null)
+  related(facts, factory, plan, GRAPH_DEPENDS_ON, 'needs', tasks)
+}
+
+/** unblocksOf draws what waits on the selected task -- the same edges read the
+ * other way round. Nothing in the model carries them: `needs` is a task's own
+ * list, so the plan is walked once and every task that names this one is drawn. */
+function unblocksOf(facts: ScreenElement, factory: ScreenFactory, plan: GraphPlan, node: GraphNode): void {
+  const tasks = plan.nodes.filter((each) => each.needs.includes(node.id))
+  related(facts, factory, plan, GRAPH_UNBLOCKS, 'unblocks', tasks)
+}
+
+/** RelatedSide is which end of a dependency a list draws: what the task waits
+ * on, or what waits on it. The two are the same edges read the other way round,
+ * and they differ only in their words and their hooks. */
+type RelatedSide = 'needs' | 'unblocks'
+
+/** related draws one of those two lists under its own label. The hooks are
+ * chosen here as literals rather than handed in, so a reader of this file -- and
+ * the scan that pairs every rule with the element it draws -- sees the class a
+ * list and its buttons carry. */
+function related(
+  facts: ScreenElement,
+  factory: ScreenFactory,
+  plan: GraphPlan,
+  label: string,
+  side: RelatedSide,
+  tasks: readonly GraphNode[],
+): void {
+  const value = fact(facts, factory, label)
+  if (tasks.length === 0) {
+    literal(cell(value, factory, 'span', 'graph-inspector-none'), GRAPH_INSPECTOR_NONE)
+    return
+  }
+  const waiting = side === 'needs'
+  const list = cell(value, factory, 'ul', waiting ? 'graph-inspector-needs' : 'graph-inspector-unblocks')
+  for (const task of tasks) {
+    const button = cell(
+      cell(list, factory, 'li'),
+      factory,
+      'button',
+      waiting ? 'graph-inspector-need' : 'graph-inspector-unblock',
+    )
+    button.setAttribute('type', 'button')
+    button.setAttribute('data-key', nodeKey(plan.id, task.id))
+    drawn(button, factory, 'span', task.title, 'graph-inspector-task-title')
+  }
+}
+
+/** nodeOf is a task of a plan by its id, or `null` for an id the model does not
+ * hold -- `plan status` writes a need for a task this read's bound dropped. */
+function nodeOf(plan: GraphPlan, id: string): GraphNode | null {
+  for (const node of plan.nodes) if (node.id === id) return node
+  return null
+}
+
+/** selectedTask is the task the state names, with the plan and the column it was
+ * drawn from: the panel's own lookup, and `null` while nothing is selected and
+ * for a key this model no longer holds (a read can drop the task a selection was
+ * made on). */
+function selectedTask(picture: GraphPicture): { plan: GraphPlan; column: GraphColumn; node: GraphNode } | null {
+  const selected = picture.state.selected
+  if (selected === null) return null
+  for (const column of picture.model.columns) {
+    for (const plan of column.plans) {
+      for (const node of plan.nodes) {
+        if (nodeKey(plan.id, node.id) === selected) return { plan, column, node }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * legend names what the picture draws, under it: every state a card can carry,
+ * and the two kinds of line.
+ *
+ * **It is a key to the drawing and not a second drawing of it.** The word is the
+ * fact (§3.5: no state is a colour alone) and the swatch beside it is the shape a
+ * reader scans for -- the boundary a state's card is drawn with. Nothing here is
+ * a figure the graph computed: it is the console's own vocabulary, which is why
+ * it is drawn even while the canvas has nothing in it.
+ */
+function legend(factory: ScreenFactory): ScreenElement {
+  const element = make(factory, 'div', 'graph-legend')
+  literal(cell(element, factory, 'h2', 'graph-legend-title'), GRAPH_LEGEND_TITLE)
+  const list = cell(element, factory, 'ul', 'graph-legend-list')
+  for (const word of GRAPH_LEGEND_WORDS) legendItem(factory, list, word, { state: word })
+  legendItem(factory, list, GRAPH_DEPENDS_ON, { edge: 'dependency' })
+  legendItem(factory, list, GRAPH_CRITICAL_PATH, { edge: 'critical' })
+  return element
+}
+
+/** LegendKey is which kind of mark a line of the legend stands for: a state a
+ * card can carry, or one of the two kinds of edge. */
+type LegendKey = { readonly state: StateWord } | { readonly edge: string }
+
+/** legendItem is one line of it: the swatch, then the word it stands for. The
+ * word is the line and the swatch is `aria-hidden`, or a reader who hears the
+ * legend hears every state twice.
+ *
+ * **The swatch's attribute is written by name and not from the key.** A state's
+ * swatch and an edge's are two different facts under two different attributes,
+ * and the stylesheet draws them differently (a boundary and a line); a name
+ * assembled from a parameter would be a name a reader of this file -- and the
+ * scan that reads every attribute a screen writes -- cannot see. */
+function legendItem(
+  factory: ScreenFactory,
+  list: ScreenElement,
+  spelling: string,
+  key: LegendKey,
+): void {
+  const item = cell(list, factory, 'li', 'graph-legend-item')
+  const swatch = cell(item, factory, 'span', 'graph-legend-swatch')
+  swatch.setAttribute('aria-hidden', 'true')
+  if ('state' in key) swatch.setAttribute('data-state', key.state)
+  else swatch.setAttribute('data-edge', key.edge)
+  literal(cell(item, factory, 'span', 'graph-legend-word'), spelling)
 }
 
 /**
@@ -1581,18 +1859,21 @@ export function renderGraph(factory: GraphFactory, picture: GraphPicture, theme:
     return root
   }
   if (picture.state.view === 'list') {
-    root.append(list(factory, picture))
+    root.append(stage(factory, picture, list(factory, picture)))
     return root
   }
   const drawnCanvas = canvas(factory, picture)
   if (drawnCanvas !== null) {
-    root.append(drawnCanvas)
+    root.append(stage(factory, picture, drawnCanvas))
+    // The legend is the canvas's key and is drawn only under it: the list spells
+    // every word already, and neither kind of line is in it.
+    root.append(legend(factory))
     return root
   }
   // The canvas is the only thing lost when the worker did not place the graph,
   // and the list is still true: it is drawn instead, saying why.
   literal(cell(root, factory, 'p', 'graph-empty'), GRAPH_NO_CANVAS)
-  root.append(list(factory, picture))
+  root.append(stage(factory, picture, list(factory, picture)))
   return root
 }
 

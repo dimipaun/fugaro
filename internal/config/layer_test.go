@@ -60,6 +60,51 @@ func TestParseProjectLayer(t *testing.T) {
 	}
 }
 
+// TestSetsDefaultReadsTheLeafsKind pins the three shapes the walk of a key can
+// end on. A path that runs out of parts is set; a path that reaches a list is
+// set too, because a list is one key (`rigor.areas.name` is set by the list
+// `areas` writes, Resolution.Sources' own rule); a path that runs past a scalar
+// is not, because a scalar has no keys under it. The last of the three reads
+// the YAML node's kind — what nodeTree keeps every non-mapping as — and a null,
+// which nodeTree keeps as nil, is a key the layer does not set either way.
+func TestSetsDefaultReadsTheLeafsKind(t *testing.T) {
+	l := mustLayer(t, `version: 1
+project: acme
+gcp_project: acme-fugaro
+defaults:
+  agent:
+    model: claude-sonnet-5
+  git:
+    provider: github
+    pr: { labels: null }
+  rigor:
+    areas:
+      - name: docs
+        match: docs/**
+        mode: pro
+`)
+	for _, tc := range []struct {
+		key  string
+		want bool
+	}{
+		{"agent", true},
+		{"agent.model", true},
+		{"agent.model.extra", false},
+		{"git.provider", true},
+		{"git.pr.labels", false},
+		{"git.pr.labels.x", false},
+		{"rigor.areas", true},
+		{"rigor.areas.name", true},
+		{"rigor.areas.0.name", true},
+		{"agent.recipe", false},
+		{"profiles", false},
+	} {
+		if got := l.SetsDefault(tc.key); got != tc.want {
+			t.Errorf("SetsDefault(%q) = %v, want %v", tc.key, got, tc.want)
+		}
+	}
+}
+
 // TestProfileCheckout pins that a profile may set checkout: (scope
 // InProfile|InRepo, design generic-tool.md §2, G3): it decodes onto
 // Profile.Checkout rather than failing the strict decode as an unknown

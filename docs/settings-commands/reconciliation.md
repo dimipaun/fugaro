@@ -289,7 +289,7 @@ it needs is here:
   decision for its consumers, not a fix this design may slip in.
 - **`fugaro config layer` requires a git checkout**, so an owner outside a repository cannot read
   the layer through that command (audit §7). This design's read does not inherit that: the layer has
-  a file of its own, `~/.config/fugaro/projects/<project>-layer.yaml` (`localcfg.LayerFile`, which the
+  a file of its own, `~/.config/fugaro/projects/<project>.layer.yaml` (`localcfg.LayerFile`, which the
   `rigor` design's R0 adds and which is not on `main` today), and a
   published object, so `fugaro settings --layer project` answers outside a checkout. Whether the
   `rigor` design's R0 lifts the requirement for `config layer` itself is its decision; nothing here

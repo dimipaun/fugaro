@@ -67,8 +67,8 @@ func TestDefaultLevelsLeaveL1ToFirstLineReview(t *testing.T) {
 // TestDefaultLevelsUnknownModeErrs: a mode outside the vocabulary is refused
 // rather than answered with a default. A run this package cannot place a level
 // for must not silently get one mode's levels, the way table.go blocks a
-// finding it cannot read and RoundCeiling answers a mode it cannot place with
-// the widest ceiling.
+// finding it cannot read and DefaultRounds answers a mode it cannot place with
+// the strictest row.
 func TestDefaultLevelsUnknownModeErrs(t *testing.T) {
 	for _, m := range []Mode{"", "Critical", "poc ", "fast"} {
 		got, err := DefaultLevels(m)

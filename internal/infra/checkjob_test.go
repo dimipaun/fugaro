@@ -671,28 +671,40 @@ func TestApplyWorkflowJobChangesOnlyImage(t *testing.T) {
 }
 
 // A checkout: shared workflow's job (the design's route A, shared-images.md
-// §6) carries FUGARO_CHECKOUT=shared and clones the source at launch, so its
-// image moves the way a clone job's does: fugaro image refresh puts a shared
-// dependency-layer image on it (shared-images.md §10). The update writes the
-// image and leaves the shape alone.
-func TestCheckJobMovesASharedJobsImage(t *testing.T) {
+// §6) carries FUGARO_CHECKOUT=shared, and no fugaro update writes that mark
+// before the release that ships shared images: validateCheckout refuses a
+// config that declares the kind while config.SharedCheckoutShipped is false,
+// so no job update wrote carries it, and moving such a job's image would leave
+// a hand-edited job on a shared dependency-layer image no build produces. It
+// is refused the way any other shape update did not write is, and nothing is
+// written.
+//
+// A shared job is clone-shaped — it clones its own source at launch — so the
+// acceptance is gated rather than gone: the release that flips
+// config.SharedCheckoutShipped accepts the mark, and this test's expectation
+// moves with that flip.
+func TestCheckJobRefusesASharedJobsImageUntilSharedImagesShip(t *testing.T) {
+	if config.SharedCheckoutShipped() {
+		t.Fatal("this build ships shared images: PlanWorkflowJob accepts the mark now, and this test expects the refusal of a build that does not")
+	}
 	f, _, ws, owner := workflowJobCloud(t, func(j map[string]any) {
 		envEntry(j)["value"] = config.CheckoutShared
 	})
 	ctx := context.Background()
 	u, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
-	if err != nil || u == nil || !u.Changes() || u.OldImage() != oldBase || u.NewImage() != newBase {
-		t.Fatalf("plan: %v %+v", err, u)
+	if !errors.Is(err, ErrCheckJobShape) || u != nil {
+		t.Fatalf("plan: %v %+v, want a shape refusal", err, u)
 	}
-	if err := ApplyWorkflowJob(ctx, f.c, u); err != nil {
-		t.Fatal(err)
+	for _, want := range []string{CheckoutEnv + "=" + config.CheckoutShared, config.SharedCheckoutSince} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q does not say %q", err, want)
+		}
 	}
-	after := f.run.JobJSON("proj-1234", "us-east5", ws.Job)
-	if img := container(after)["image"]; img != newBase {
-		t.Fatalf("after: image = %v, want %s", img, newBase)
+	if len(f.run.Patches()) != 0 {
+		t.Fatal("a refused plan wrote to the job")
 	}
-	if v := envEntry(after)["value"]; v != config.CheckoutShared {
-		t.Fatalf("after: %s = %v, want %s: the update moves the image and keeps the shape", CheckoutEnv, v, config.CheckoutShared)
+	if img := container(f.run.JobJSON("proj-1234", "us-east5", ws.Job))["image"]; img != oldBase {
+		t.Fatalf("image = %v, want %s left alone", img, oldBase)
 	}
 }
 

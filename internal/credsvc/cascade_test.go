@@ -508,6 +508,19 @@ func TestServiceNeverEchoesTheCredentialInTheAnswerBody(t *testing.T) {
 // the usage-limit scanner still reads the upstream's own bytes, which is why
 // the limit event below is still found with the credential redacted around it.
 func TestServiceRedactsAStreamedAnswerBody(t *testing.T) {
+	redactsStreamedAnswerBody(t, false)
+}
+
+// TestServiceRedactsAStreamedAnswerBodyOverH2C is the same pin over the
+// protocol the deployment speaks to the container (B1.0): the redaction wraps
+// the writer the pump writes through, and over HTTP/2 that writer is a stream
+// of DATA frames, so this is where a credential echoed by an upstream could
+// reach a run if the wrapper were attached to the HTTP/1.1 path alone.
+func TestServiceRedactsAStreamedAnswerBodyOverH2C(t *testing.T) {
+	redactsStreamedAnswerBody(t, true)
+}
+
+func redactsStreamedAnswerBody(t *testing.T, overH2C bool) {
 	cred := fakeCred(t, "default")
 	s := newSvcWith(t, func(s *svc, _ *Config) {
 		s.src.docs = [][]byte{[]byte(config.ClaudeOAuthToken + ": " + cred + "\n")}
@@ -519,12 +532,19 @@ func TestServiceRedactsAStreamedAnswerBody(t *testing.T) {
 			{Name: "error", Data: `{"type":"error","error":{"type":"` + rateLimitEventType + `","message":"you sent me ` + cred + `"}}`},
 		},
 	}}
-	resp := s.post(t, MessagesPath, callBody("stream-echo"), func(r *http.Request) {
+	post := s.post
+	if overH2C {
+		post = s.postH2C
+	}
+	resp := post(t, MessagesPath, callBody("stream-echo"), func(r *http.Request) {
 		r.Header.Set("Accept", "text/event-stream")
 	})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the answer is %d, want 200", resp.StatusCode)
+	}
+	if overH2C && resp.ProtoMajor != 2 {
+		t.Fatalf("the answer arrived over HTTP/%d.%d: this is meant to be an h2c call", resp.ProtoMajor, resp.ProtoMinor)
 	}
 	stream, err := io.ReadAll(resp.Body)
 	if err != nil {

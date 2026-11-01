@@ -1,7 +1,7 @@
 {
   "name": "fugaro-console",
   "private": true,
-  "version": "0.116.0",
+  "version": "0.117.0",
   "license": "SEE LICENSE IN LICENSE.md",
   "description": "The Fugaro desktop console: the Electron application under console/, never published to npm and never importable by the Go module. Every specifier here is an EXACT version (desktop-console plan Task 1.0, design section 5.2), enforced by test/unit/pinning.test.ts; Electron in particular is pinned on purpose and bumped on purpose, with the toolchain task, exactly as internal/budget/rules/emulator/package.json pins firebase-tools.",
   "homepage": "https://fugaro.dev",
@@ -16,7 +16,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.bundle-renderer.json && node .bundle-renderer/index.js",
     "test:unit": "vitest run --dir test/unit",
-    "test:e2e": "npm run build && playwright test --pass-with-no-tests",
+    "test:e2e": "npm run build && npm run check:packed && playwright test --pass-with-no-tests",
+    "check:packed": "node scripts/check-packed-notices.mjs",
     "typecheck": "tsc --noEmit",
     "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
     "screenshots": "npm run build && tsc -p tsconfig.screenshots.json && node .screenshots/tools/screenshots/capture.js",
@@ -57,7 +58,24 @@
       "dist/bundle/index.html",
       "dist/bundle/installations.html",
       "dist/bundle/installations.js",
-      "dist/bundle/refusal.html"
+      "dist/bundle/refusal.html",
+      "!node_modules/@jridgewell/sourcemap-codec/**",
+      "!node_modules/@oxc-parser/**",
+      "!node_modules/@oxc-project/**",
+      "!node_modules/@sentry/bundler-plugins/**",
+      "!node_modules/balanced-match/**",
+      "!node_modules/brace-expansion/**",
+      "!node_modules/dotenv/**",
+      "!node_modules/glob/**",
+      "!node_modules/has-flag/**",
+      "!node_modules/lru-cache/**",
+      "!node_modules/magic-string/**",
+      "!node_modules/minimatch/**",
+      "!node_modules/minipass/**",
+      "!node_modules/oxc-parser/**",
+      "!node_modules/path-scurry/**",
+      "!node_modules/sentry/**",
+      "!node_modules/supports-color/**"
     ],
     "afterPack": "dist/main/fuses.js",
     "publish": null,
@@ -114,6 +132,7 @@
     "vitest": "5.0.5"
   },
   "dependencies": {
+    "@sentry/electron": "8.2.0",
     "electron-updater": "6.8.10"
   }
 }

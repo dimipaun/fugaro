@@ -123,7 +123,7 @@ fourth hand-kept copy (F12).
   `internal/cli/root.go` (registration; owned elsewhere, see "Order"), `internal/settings/registry.go`
   (only if a row the read prints is missing).
 - **Interface:** `fugaro settings [KEY|GLOB ...] [--repo R | --all-repos] [--layer ...] [--grep RE]
-  [--changed] [--why] [--offline] [--json]`, columns `KEY VALUE WINS DEFAULT STATE` (spec §2).
+  [--changed] [--why] [--offline] [--json]`, columns `KEY SCOPE VALUE WINS DEFAULT STATE` (spec §2).
 - **Red step:** `TestSettingsPrintsKeyValueWinsDefaultState` fails while the command does not exist.
 - **Tests:** `TestSettingsPrintsKeyValueWinsDefaultState`,
   `TestSettingsShowsTheDefaultWhenNoLayerSetsIt`, `TestSettingsChangedShowsOnlyNonDefaults`,
@@ -237,7 +237,7 @@ ETag-guarded write as `add`, and the only refusal any of them carries today is
 
 ## S4. The layer side of the read (SD4, D845)
 
-The read side only: the layer's local file has a path — `~/.config/fugaro/projects/<project>-layer.yaml`,
+The read side only: the layer's local file has a path — `~/.config/fugaro/projects/<project>.layer.yaml`,
 resolved by `localcfg.LayerFile` — and a local file that differs from the published object is
 `unpublished`. The stage itself is E2 and is not written here. **`localcfg.LayerFile` is not on
 `main`**: the rigor design's R0 lands it (its E2 above), so this task's red step is red against a

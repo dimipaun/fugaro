@@ -219,6 +219,28 @@ func sharedShipped(t *testing.T) {
 	t.Cleanup(func() { sharedCheckoutShipped = was })
 }
 
+// TestSharedCheckoutShippedIsTheGateValidationRefusesBy: internal/infra reads
+// the exported accessor to decide whether a job whose environment carries
+// FUGARO_CHECKOUT=shared may have its image moved, so it has to be the same
+// flag validateCheckout refuses a config by. An accessor reading anything else
+// would let the cloud side accept the mark while the release that builds the
+// image has not run, or refuse it after the flip.
+func TestSharedCheckoutShippedIsTheGateValidationRefusesBy(t *testing.T) {
+	if SharedCheckoutShipped() {
+		t.Fatal("this build ships shared images; this test pins the gate while it is off and moves with the flip")
+	}
+	if _, problems := Parse([]byte(sharedYAML)); !hasProblem(problems, "workflows.web.checkout", SharedCheckoutRefusal, 0) {
+		t.Fatalf("problems = %v, want the refusal the gate names", problems)
+	}
+	sharedShipped(t)
+	if !SharedCheckoutShipped() {
+		t.Error("the accessor did not follow the flag")
+	}
+	if _, problems := Parse([]byte(sharedYAML)); len(problems) > 0 {
+		t.Fatalf("problems = %v, want the gated rules to accept it", problems)
+	}
+}
+
 // TestValidateCheckoutSharedAllowsDependencyKeys (design
 // forge-authorship-images/shared-images.md §6, route A): checkout: shared
 // runs a shared dependency-layer image — one image per resolved dependency

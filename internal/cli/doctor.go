@@ -665,6 +665,12 @@ func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 // so every pin that already exists was verified when it was written, and
 // only the next one needs the binary.
 //
+// The credentials service's image is resolved the same way and through the
+// same binary, and since 0.15.0 an ordinary `fugaro update` re-pins it
+// (init_stages.go's pinCredentialsImage): an installation that opted in needs
+// cosign on PATH for an upgrade that names no flag, which is why the message
+// names that path as well.
+//
 // Informational, like doctorOpenProvidersCheck and the tool-availability
 // branches of doctorCLIVersion: an absent binary is not a wrong state and
 // not this repository's business to fail CI over (--strict is the GitHub
@@ -677,10 +683,10 @@ func doctorCosign(lc *localcfg.Config) doctorCheck {
 	if basepin.CosignPath() != "" {
 		return doctorCheck{ID: id, OK: true}
 	}
-	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image is pinned at the digest its cosign signature was verified for, so fugaro update --base and fugaro image refresh refuse without it"
+	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image and the credentials service's image are pinned at the digest their cosign signature was verified for, so fugaro update --base, fugaro image refresh, and an ordinary fugaro update of an installation that opted in with --provision-credentials all refuse without it"
 	fix := "install cosign (https://docs.sigstore.dev/cosign/installation/), or name a base image explicitly with --base-image KIND=IMAGE"
 	if lc.BaseImage(config.BaseKind) == "" {
-		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it"
+		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it, and so does an ordinary fugaro update of an installation that opted in with --provision-credentials"
 	}
 	return doctorCheck{ID: id, OK: false, Severity: "info", Problem: problem, Fix: fix}
 }

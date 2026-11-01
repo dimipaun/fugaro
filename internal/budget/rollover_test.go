@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -344,6 +346,38 @@ func TestMidnightRunComputeOnStartDay(t *testing.T) {
 	}
 	if e.doc(d+1, rollSlug) != nil && e.doc(d+1, rollSlug)["runs"] != int64(0) {
 		t.Fatalf("the run was also counted on d+1: %v", e.doc(d+1, rollSlug))
+	}
+}
+
+// TestRolloverJoinsABatchRunQueuedAcrossMidnight: the rollover reads a day's
+// facts from the window [d-1, d], so a run that started on d-1 is joined from
+// the day before the one being written — and on Cloud Batch it may have been
+// minted hours before that window opened, sitting in the region's queue. Joined
+// it says the run is not this day's; not listed, the spend and the outcome
+// written on d, where the run finished, are counted on d: a day the record says
+// it did not start on, in the document the rollover writes and finalizes.
+// Mutation caught: Cloud Run's thirty minutes for every backend.
+func TestRolloverJoinsABatchRunQueuedAcrossMidnight(t *testing.T) {
+	e := newRollEnv(t)
+	d := e.today() - 2
+	id, rec := queuedBatchRun(d - 1)
+	e.seedDay(d, rollSlug, 3_000_000, id)
+	_, driver := factsBuckets(t, []factsRun{{slug: rollSlug, id: id, rec: rec}})
+	e.r.Facts = budget.BucketFacts{Bucket: blob.NewBucket(driver), Backend: backend.CloudBatch}
+
+	e.mustRoll(budget.RolloverOptions{})
+	if driver.reads() != 1 {
+		t.Fatalf("the pass read %d records: the run that sat on the queue across the midnight this window opened on was not listed", driver.reads())
+	}
+	m := e.doc(d, rollSlug)
+	if m == nil {
+		t.Fatal("no document for the day")
+	}
+	if m["runs"] != int64(0) || m["computeMicros"] != int64(0) {
+		t.Fatalf("day %d doc = %v: the run's record starts on the day before, so it is not a run of this day", d, m)
+	}
+	if outs, _ := m["outcomes"].(map[string]any); outs["succeeded"] != int64(0) {
+		t.Fatalf("outcomes = %v: the outcome was written on the day the run finished, but the run started on the day before", m["outcomes"])
 	}
 }
 

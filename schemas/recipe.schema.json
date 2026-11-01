@@ -27,6 +27,10 @@
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }], "items": false, "minItems": 2 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 2 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }], "items": false, "minItems": 3 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/reviewNoBounce" }, { "$ref": "#/$defs/adversarialNoBounce" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }, { "$ref": "#/$defs/adversarialBounce" }], "items": false, "minItems": 3 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/reviewNoBounce" }, { "$ref": "#/$defs/adversarialNoBounce" }], "items": false, "minItems": 3 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }, { "$ref": "#/$defs/adversarialBounce" }], "items": false, "minItems": 4 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/digest" }, { "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 2 },
         { "$ref": "#/$defs/artifactSteps" }
       ]
@@ -116,6 +120,16 @@
     "reviewModeReview": {
       "type": "object", "additionalProperties": false, "required": ["review"],
       "properties": { "review": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "const": 1 } } } }
+    },
+    "adversarialNoBounce": {
+      "type": "object", "additionalProperties": false, "required": ["adversarial"],
+      "properties": { "adversarial": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "type": "integer", "minimum": 1, "maximum": 10 } } } },
+      "description": "Review level 3's step (recipe.StepAdversarial): at most once, only after the review step, and last. Absent max_rounds means the rigor mode's senior row (rigor.AdversarialDefault): 1 at poc and hotfix, 2 at startup, 3 at pro, 5 at critical. This is the shape for a recipe with no first_line step, where a bounce has nothing to bounce back to."
+    },
+    "adversarialBounce": {
+      "type": "object", "additionalProperties": false, "required": ["adversarial"],
+      "properties": { "adversarial": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "type": "integer", "minimum": 1, "maximum": 10 }, "bounce": { "const": "first_line" } } } },
+      "description": "The adversarial step beside a firstLine step: bounce is optional (as it is in reviewBounce) and first_line is its only value, so a rejection runs the fix and then another first-line loop. recipe.Parse refuses the bounce when no first_line step precedes the step, which is why the oneOf pairs this def with firstLine."
     },
     "check": {
       "type": "object", "additionalProperties": false, "required": ["check"],
