@@ -1,5 +1,5 @@
-ff7b60dfdcca7f6bf5f15961d6ee09f3b9c5548156230f46b32e944723f2c002  Fugaro Console-0.116.0-universal.dmg
-03cef493b7a67315963b9a49ce2bf7cbd1c52b4e5ebcd1c774416ba8efcc86b1  Fugaro Console-0.116.0-universal-mac.zip
-0e81e4115755350c9550ebb51380fa66bf2a7797557b2c9f8ad6342e8d7c474d  latest-mac.yml
-d8f3d5caed57a3ee2f433464c05ae61b19b24a4095710afc4e8fa049e4d8f581  Fugaro.Console-0.116.0-linux-x86_64.AppImage
-da5f17eba3c212e53c1622b7befc35e82225d4c339fbe2f66de5b889af479ce4  Fugaro.Console-0.116.0-linux-amd64.deb
+971c7ea1d0d95bd01d53be62b21e6b573cb591eb883409c589ed8cd989a3c013  Fugaro Console-0.117.0-universal.dmg
+037fb31a04b5c4fe6ead26352101fd307b750d9182dc92e46cc4367469190b7a  Fugaro Console-0.117.0-universal-mac.zip
+12d2eba0335342db11fea39132648701229d36bcd3f41b2fdd15b286324ce637  latest-mac.yml
+248e6d3970c1e0b5c328a9f58c7216c32924396f44e6ec6af5f2abf75ac5a660  Fugaro.Console-0.117.0-linux-x86_64.AppImage
+835ae61b0422281245d2d7dd75e2af6eef83e9974aae37a8eb8e9671a3c6046d  Fugaro.Console-0.117.0-linux-amd64.deb
