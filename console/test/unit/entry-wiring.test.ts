@@ -137,6 +137,7 @@ import {
 } from '../../src/renderer/skeleton'
 import {
   COORDINATOR_BUSY,
+  COORDINATOR_LAUNCH_WORD,
   COORDINATOR_NO_AGE_WORD,
   COORDINATOR_OPEN_SPEND_WORD,
   COORDINATOR_QUEUE_BUSY,
@@ -2246,8 +2247,10 @@ function railBridge(
 
 /**
  * queueBridge is the fake bridge for the Coordinator's action queue (console
- * 0.118.0, K1): one open installation that records a checkout and offers
- * `QUEUE_OFFER`, and the runs, plan and budget reads answered by the case.
+ * 0.118.0, K1): one open installation that records a checkout and offers the
+ * repositories the case gives it -- `QUEUE_OFFER` alone unless a case about the
+ * prefill's match needs another -- and the runs, plan and budget reads answered
+ * by the case.
  *
  * **Every call is recorded in the order it was made**, which is what lets a case
  * say that the queue's four reads went out in the turn the tab was opened in --
@@ -2255,12 +2258,15 @@ function railBridge(
  * console's one write and is recorded here too, so "the queue spawned nothing"
  * is a claim about the same list.
  */
-function queueBridge(answers: Readonly<Record<string, AReply>>): FakeBridge {
+function queueBridge(
+  answers: Readonly<Record<string, AReply>>,
+  repositories: readonly string[] = [QUEUE_OFFER],
+): FakeBridge {
   const base = railBridge([
     {
       ...listRow('acme', { open: true }),
       checkout: '/home/operator/src/acme',
-      repositories: [QUEUE_OFFER],
+      repositories,
     },
   ])
   // The base's list is the same array its own reads append to; it is typed
@@ -4655,11 +4661,17 @@ const BUDGET_DOC = Object.freeze({
   warnings: [],
 })
 
-/** QUEUE_OFFER is the one repository identity the open installation offers, and
- * it is the identity a queue item's own documents name: an item whose repository
- * the form does not offer is not written into it, so a case about the prefill
- * has to have the two agree. */
+/** QUEUE_OFFER is the one repository identity the open installation offers: the
+ * `<provider>/<owner>/<name>` string the launch form's `select` holds as an
+ * option's value, and the value the form sends. */
 const QUEUE_OFFER = 'github/owner/repo-a'
+
+/** QUEUE_REPO is how the queue's **own documents** spell that repository, and it
+ * is deliberately not `QUEUE_OFFER`: `runs ls --json` and `plan status` both
+ * carry a repository as `owner/name`, with no provider, while the form offers
+ * the installation's identity. The two are different strings for the same
+ * repository, and joining them is the whole of what the prefill does. */
+const QUEUE_REPO = 'owner/repo-a'
 
 /** QUEUE_RUN_ID and QUEUE_RUN_PLAN_TASK are the two strings the run the queue
  * offers to retry carries: the id the console draws and opens, and the plan task
@@ -4671,7 +4683,7 @@ const QUEUE_RUN_PLAN_TASK = 'plans/2026-10-01-a/task-one'
  * ended without succeeding, with the plan task its launch recorded. */
 const QUEUE_RUN: Readonly<Record<string, unknown>> = {
   run: QUEUE_RUN_ID,
-  repo: QUEUE_OFFER,
+  repo: QUEUE_REPO,
   status: 'failed',
   terminal: true,
   title: 'the job that did not finish',
@@ -4683,12 +4695,12 @@ const QUEUE_RUN: Readonly<Record<string, unknown>> = {
 const QUEUE_PLAN_TASK = 'plans/2026-10-01-example-graph/task-three'
 
 /** QUEUE_PLAN is the plan read's own document -- the committed plan-status
- * fixture, with the repository the queue's Launch offers made the identity this
- * installation offers. Its `task-three` is the CLI's own `state == "ready"`, so
- * it is one item of the queue and one press of Launch. */
+ * fixture, with its repository the one `QUEUE_REPO` names, spelled the way the
+ * read spells it. Its `task-three` is the CLI's own `state == "ready"`, so it is
+ * one item of the queue and one press of Launch. */
 const QUEUE_PLAN: unknown = {
   ...(PLAN_STATUS as Record<string, unknown>),
-  repo: QUEUE_OFFER,
+  repo: QUEUE_REPO,
 }
 
 describe('the frame a tab answers in, and the read it does not wait for', () => {
@@ -4949,6 +4961,64 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       task: 'try the nightly job again',
       planTask: QUEUE_RUN_PLAN_TASK,
     })
+  })
+
+  it('clears the repository when two of the installation’s identities name the item’s repository', async () => {
+    // The same repository can be recorded on two providers -- a provider is part
+    // of the identity and not of the `owner/name` the documents carry -- and
+    // there is then no one identity the item's repository is. The choice the
+    // prefill may not make is the operator's earlier one: a Retry that kept the
+    // GitHub identity standing would launch on a host nobody asked for, with
+    // this item's plan task.
+    const { bridge } = queueBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        listRuns: () => ({ ok: true, data: { document: { runs: [QUEUE_RUN] } } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      ['github/owner/repo-a', 'bitbucket/owner/repo-a'],
+    )
+    const document = await boot(bridge, new FakeDocument())
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, 'github/owner/repo-a')
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the form kept a repository the item’s own document does not single out',
+    ).toBe('')
+    // The rest of the item is still handed over: it is the repository that has
+    // no single answer, and the operator is left to choose one.
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_RUN_PLAN_TASK)
+  })
+
+  it('clears the repository when the item names one the installation does not record', async () => {
+    // A queue item's repository is not re-validated against the installation's
+    // own list: the plan read is the one the session opened on, and the run list
+    // is the installation's runs, but neither is a promise that this form has an
+    // option for what the item carries. Nothing is written for a repository the
+    // form does not offer -- and what the select held is cleared rather than
+    // kept, for the reason above.
+    const elsewhere: unknown = { ...(PLAN_STATUS as Record<string, unknown>), repo: 'someone-else/repo-z' }
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: {} } }),
+      planStatus: () => planStatusReply(elsewhere),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, QUEUE_OFFER)
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    buttonLabelled(panelOf(document), COORDINATOR_LAUNCH_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the form kept the repository of an item it has no option for',
+    ).toBe('')
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_PLAN_TASK)
   })
 
   it('answers a budget alert by opening Spend, and names the ground the alert stands on', async () => {

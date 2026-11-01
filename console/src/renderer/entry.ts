@@ -525,6 +525,55 @@ function setValueOf(surface: DomSurface, element: SkewElement, value: string): v
   ;(surface.nodeOf(element) as unknown as { value: string }).value = value
 }
 
+/**
+ * asciiLower folds A–Z and nothing else, which is the fold the CLI compares
+ * repository names with (`task.ASCIILower`, behind `CanonicalRepo`).
+ * `toLowerCase` is not it: it turns a Kelvin sign into an ASCII "k" and "İ" into
+ * "i" plus a combining dot, so a console that folded with it would call two
+ * repositories the same that Fugaro keeps apart.
+ */
+function asciiLower(text: string): string {
+  let folded = ''
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    folded += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : text[index]
+  }
+  return folded
+}
+
+/** ownerNameOf is the `owner/name` part of one installation repository identity.
+ * An identity is `<provider>/<owner>/<name>` (`LaunchNow.view.repositories`), and
+ * every document that names a repository names it `owner/name`, so the last two
+ * segments are the part the two spellings have in common. An identity that is
+ * already two segments is its own `owner/name`. */
+function ownerNameOf(identity: string): string {
+  const segments = identity.split('/')
+  return segments.length <= 2 ? identity : segments.slice(-2).join('/')
+}
+
+/**
+ * identityForRepo answers which of the installation's own identities names
+ * `repo`, and `null` when it is not exactly one of them.
+ *
+ * The queue's items carry a repository the way the CLI's documents spell it, and
+ * the launch form's options are the installation's identities: the two are never
+ * the same string, and a `select` written with the wrong one would leave the form
+ * refusing a launch the operator asked for. **Exactly one** identity has to name
+ * it -- one repository recorded on two providers is two different places to
+ * launch, and choosing between them here would be the console picking a host
+ * nobody asked for.
+ */
+function identityForRepo(repositories: readonly string[], repo: string): string | null {
+  const wanted = asciiLower(repo)
+  let found: string | null = null
+  for (const identity of repositories) {
+    if (asciiLower(ownerNameOf(identity)) !== wanted) continue
+    if (found !== null) return null
+    found = identity
+  }
+  return found
+}
+
 /** INSTALLATION_UNREADABLE is the console's sentence for an answer to
  * `installation.current` it will not draw from. */
 export const INSTALLATION_UNREADABLE = 'the console could not read which installation it is showing'
@@ -4924,10 +4973,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * form, the operator reads them in the existing confirmation window, and the
      * run id is minted there, on Submit, by main: this file has no argv, no run
      * id and no new call, and the click on Submit is the same click it has always
-     * been. A repository the form does not offer is not written into it -- its
-     * `select` holds the installation's own identities, and a value that is not
-     * one of them would leave the form refusing a launch the operator asked for
-     * from the queue.
+     * been.
+     *
+     * The repository is the one field the item's own spelling cannot fill: an
+     * item carries `owner/name` and the `select` holds the installation's
+     * `<provider>/<owner>/<name>` identities, so the item's repository is written
+     * as the identity that names it (`identityForRepo`) and **the select is
+     * cleared when there is no single such identity**. It is never left as it
+     * was: whatever the select held belongs to the operator's earlier business,
+     * and a Retry on one repository's run that kept another repository's choice
+     * would launch the wrong one with this item's plan task.
      */
     const prefillLaunch = (action: {
       readonly repo: string
@@ -4938,9 +4993,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (control === null) return
       const { fields, form, open: opener } = control.control
       if (fields === null || form === null) return
-      if (control.view.repositories.includes(action.repo)) {
-        setValueOf(surface, fields.repository, action.repo)
-      }
+      setValueOf(surface, fields.repository, identityForRepo(control.view.repositories, action.repo) ?? '')
       setValueOf(surface, fields.planTask, action.planTask)
       // The form is drawn hidden and the wiring reveals it: filling a form
       // nobody can see would be a click that appears to do nothing.
