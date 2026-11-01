@@ -59,6 +59,7 @@
 // draw, and `graph.test.ts` holds the three equal.
 
 import { UNAVAILABLE_MARK, formatReading } from '../../shared/availability'
+import { BUSY_SLOT_CLASS } from '../section'
 import { sanitizeText } from '../../shared/sanitize'
 import type { Sanitized } from '../../shared/sanitize'
 import type { PlanNodeView, PlanStatusView, RunView } from '../../shared/schema'
@@ -1564,6 +1565,14 @@ function listRow(
 export function renderGraph(factory: GraphFactory, picture: GraphPicture, theme: GraphTheme): ScreenElement {
   const root = make(factory, 'section', 'graph')
   root.setAttribute('data-theme', theme)
+  // The section's busy slot, and the first child of every drawing: the Graph's
+  // own controls (a stream tab, the refresh) start reads of their own, and a
+  // read that answers in twenty seconds needs somewhere to say so **above** the
+  // picture rather than under a canvas nobody scrolls to (`renderer/section.ts`).
+  // It is empty until a mark or a cache stamp is appended into it, and the
+  // stylesheet takes an empty slot out of the layout entirely, so a drawing of a
+  // graph nobody is re-reading is the drawing it always was.
+  cell(root, factory, 'div', BUSY_SLOT_CLASS)
   root.append(header(factory, picture))
   const group = chips(factory, picture)
   if (group !== null) root.append(group)
@@ -1655,6 +1664,28 @@ export class GraphScreen {
     this.feed = []
     this.drawnStages = ''
     return this.build()
+  }
+
+  /**
+   * decorate attaches the console's run list to the picture already on screen
+   * and answers the drawing it makes.
+   *
+   * **It is the second half of the read, and it is deliberately not part of
+   * `load`.** `runs ls --json` is a read of its own -- several seconds and a
+   * quarter of a megabyte for a day of runs on the owner's installation -- and
+   * the plan is the graph: a canvas that waited for the run list before drawing
+   * anything was a Graph tab that took both reads to answer at all. The list is
+   * what a node's door is resolved against (four characters of a run id), so it
+   * **decorates** a picture that is already true without it.
+   *
+   * Nothing is asked of the layout: the run list is not in the structure hash,
+   * and the drawing it answers is the same graph with more doors in it. The
+   * positions the last `build` answered with are reused as they are, which is
+   * what makes this free.
+   */
+  decorate(runs: readonly string[]): ScreenElement | null {
+    this.runs = runs
+    return this.redraw()
   }
 
   /**

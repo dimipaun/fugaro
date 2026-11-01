@@ -93,6 +93,39 @@ export const SPEND_REPORT_SHAPE: SkeletonShape = Object.freeze({
   blocks: Object.freeze<SkeletonBlock[]>(['line', 'chip', 'row', 'row', 'row', 'row', 'row']),
 })
 
+/**
+ * PROJECTS_SHAPE is the Projects screen's one section, and it is the whole
+ * screen's shape: this tab's content is a single read (`budget show`), so the
+ * section the entry marks is the screen, and the blocks below are the header,
+ * the caps table and a row per panel after it.
+ *
+ * The counts are approximate on purpose -- the panels' heights come from a
+ * document the read has not answered with yet -- and they are here so the page
+ * does not jump when it lands: the header line, then the caps table's own
+ * heading and rows, then one block per panel the screen draws below it.
+ */
+export const PROJECTS_SHAPE: SkeletonShape = Object.freeze({
+  section: 'projects',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'line', 'row', 'row', 'row', 'row', 'row', 'row']),
+})
+
+/**
+ * COORDINATOR_SHAPE is the shape of what the Coordinator screen's body holds
+ * while its read is out: a repository's name and counts, then the rows of the
+ * records and collisions under them. The header above that body -- the source
+ * line and the console's sentence about the view's age -- is drawn before the
+ * read answers, so it is not part of this shape: a skeleton over content that is
+ * already on screen would be a second drawing of the same section.
+ *
+ * It is one repository's shape and not one per repository, because the document
+ * says how many there are only once it lands; the shape is what the panel looks
+ * like while that is still unknown.
+ */
+export const COORDINATOR_SHAPE: SkeletonShape = Object.freeze({
+  section: 'coordinator',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row', 'row']),
+})
+
 /** SkeletonTab is the five views of the navigation, which is the whole list of
  * tabs a skeleton can be drawn for -- the same five `reading.ts`'s
  * `READING_WORDS` names and `entry.ts`'s `VIEWS` offers. It is declared here and
@@ -119,11 +152,7 @@ export const SKELETON_SHAPES: Readonly<Record<SkeletonTab, readonly SkeletonShap
     Object.freeze({ section: 'cards', blocks: Object.freeze<SkeletonBlock[]>(['card', 'card', 'card']) }),
   ]),
   spend: Object.freeze([SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE]),
-  projects: Object.freeze([
-    Object.freeze({ section: 'caps', blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row']) }),
-    Object.freeze({ section: 'kill', blocks: Object.freeze<SkeletonBlock[]>(['row']) }),
-    Object.freeze({ section: 'repos', blocks: Object.freeze<SkeletonBlock[]>(['card', 'card', 'card']) }),
-  ]),
+  projects: Object.freeze([PROJECTS_SHAPE]),
   coordinator: Object.freeze([
     Object.freeze({ section: 'head', blocks: Object.freeze<SkeletonBlock[]>(['line', 'chip']) }),
     Object.freeze({ section: 'rows', blocks: Object.freeze<SkeletonBlock[]>(['row', 'row', 'row', 'row']) }),
