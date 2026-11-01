@@ -53,9 +53,7 @@ func IsolateGit(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if k == "GIT_CONFIG_COUNT" || k == "GIT_CONFIG_PARAMETERS" ||
-			strings.HasPrefix(k, "GIT_CONFIG_KEY_") || strings.HasPrefix(k, "GIT_CONFIG_VALUE_") ||
-			strings.HasPrefix(k, "FUGARO_STAMP_") {
+		if IsGitConfigEnv(k) || strings.HasPrefix(k, "FUGARO_STAMP_") {
 			// t.Setenv records the value to restore at cleanup; Unsetenv
 			// leaves the test with the variable absent, as outside a run.
 			t.Setenv(k, "")
@@ -70,6 +68,20 @@ func IsolateGit(t *testing.T) {
 	for _, k := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
 		t.Setenv(k, "test@example.invalid")
 	}
+}
+
+// IsGitConfigEnv reports whether k is one of the names git reads configuration
+// from the environment under (git-config(1)): the count, the numbered key and
+// value pairs it counts, and the GIT_CONFIG_PARAMETERS git's own -c builds.
+//
+// The list is here, rather than written at each call site, because the two
+// callers need the same names with different lifetimes: IsolateGit drops them
+// for the test that calls it and restores them at cleanup, and a package whose
+// tests run git before they reach any harness drops them once, for the whole
+// test binary, in its TestMain.
+func IsGitConfigEnv(k string) bool {
+	return k == "GIT_CONFIG_COUNT" || k == "GIT_CONFIG_PARAMETERS" ||
+		strings.HasPrefix(k, "GIT_CONFIG_KEY_") || strings.HasPrefix(k, "GIT_CONFIG_VALUE_")
 }
 
 // Git runs git in dir and returns its trimmed stdout, failing the test on
