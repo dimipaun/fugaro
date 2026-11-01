@@ -1,12 +1,13 @@
 # `fugaro accounts add`: the implementation plan
 
-**The decisions are answered (2026-10-31, and D873–D875 on 2026-11-01), except D876, which is open;
-nothing here is built yet.** Every task is written to the owner's answers in
-[reconciliation.md](reconciliation.md) §4 — D860–D875, with **D862 answered as the alternative (a)** and
-**D868 answered `--yes` covers everything** — and a decision answered the other way changes the task, not
-just a sentence. **D876** (the run record's one account cannot name a stage's account, spec §11.5) is
-**open**: it is carried as a named follow-up on A2 and A7 and nothing is built on it. Where this plan and
-[spec.md](spec.md) disagree, [reconciliation.md](reconciliation.md) wins.
+**The decisions are answered (2026-10-31, and D873–D876 on 2026-11-01); nothing here is built yet.** Every
+task is written to the owner's answers in [reconciliation.md](reconciliation.md) §4 — D860–D875, with
+**D862 answered as the alternative (a)** and **D868 answered `--yes` covers everything** — and a decision
+answered the other way changes the task, not just a sentence. **D876** (the run record's one account
+cannot name a stage's account, spec §11.5) is **answered**: the record gains an additive
+`stage_accounts` field, added by **A2** and written by A2 and **A7**, which is what both tasks' file
+lists and tests below carry. Where this plan and [spec.md](spec.md) disagree,
+[reconciliation.md](reconciliation.md) wins.
 
 Every task states its files (at most 12), the tests that name it, the **red step** that has to fail
 first, and whether it carries a **SEC** flag — a flag that means the change needs an independent review
@@ -118,17 +119,33 @@ invokes is the one that builds the node from the local config, so the node gains
 beside `accounts.<name>.allow_repos` — published by that stage and by no second writer, exactly as
 `accounts.<name>.allow_repos` already is. And the account a run used is *named*: the record's
 `OAuthAccount` (the runner's own field, `result.json`'s `oauth_account`, `fugaro diagnose`'s
-`row.oauth_account`), which this task asserts rather than adds — no field is new, and none changes
-meaning. **The limit that assertion runs into is D876, and this task carries it rather than closing it**
-(spec §11.2, §11.5): `OAuthAccount` is one scalar, assigned by `recordCredential`
-(`internal/runner/runner.go:775`), so a run that used a per-stage key or that failed over under `auto`
-records only the account it used last. **The recommendation is a new additive `stage_accounts` field**,
-and if the owner rules it in, it lands here — where the record's account is already asserted — or in A7,
-where a stage's account is chosen at all. **Until then this task adds no field**: it asserts the
-existing one, and its test asserts what that field can actually say.
+`row.oauth_account`), which this task asserts and whose meaning it does not move — `OAuthAccount` stays
+one scalar, assigned by `recordCredential` (`internal/runner/runner.go:775`), so it names the account the
+run used *last*.
 
-*Files (≤5):* `internal/cli/accounts_add.go`, `internal/cli/accounts_add_converge.go`,
-`internal/cli/accounts_add_converge_test.go`, `internal/cli/accounts_add_converge_fake_test.go`.
+**D876's answer lands here** (spec §11.5): the run record gains a **new, additive** field beside that
+scalar, `StageAccounts map[string]string` under `json:"stage_accounts,omitempty"` in
+`runstore.Record`, with the same property declared in `schemas/result.schema.json`. This task **adds the
+field** and records the account each stage used for the **explicit chain** of spec §11.2 — a per-stage
+override (`stages.<stage>.claude_account`) or the project default (`default_claude_account`) — while
+**A7** writes each `auto` failover's new account into the same field. It is additive in both senses the
+format rules care about: no version moves (`result.json`'s `version` stays 1, and the schema's
+`additionalProperties: false` is satisfied because the property is declared), and `oauth_account` keeps
+its meaning, so no reader draws a wrong figure.
+
+The decoders that read the record are a **closed set**, and each is a place the field is added to or
+checked against: `internal/runstore`'s `Record` and its `ReadRecord`, `internal/runview`'s `Row` and `internal/watch`'s
+`JSONRun` — what `fugaro runs ls`, `fugaro watch --json` and `fugaro diagnose`'s `row` are built from —
+`console/src/shared/schema.ts`'s record decoder, whose `RECORD_KEYS` is pinned to `runview.Row` by
+`console/test/unit/schema.test.ts`, and `console/src/source/redact.ts`'s field-name list, which
+classifies `oauth_account` as person-shaped and is where the new field's account names would be
+classified the same way. **`shared/`, `mobile/` and `ee/` name no `oauth_account` reader**, so none of
+them has a decoder to extend.
+
+*Files (≤8):* `internal/cli/accounts_add.go`, `internal/cli/accounts_add_converge.go`,
+`internal/cli/accounts_add_converge_test.go`, `internal/cli/accounts_add_converge_fake_test.go`,
+`internal/runstore/runstore.go`, `internal/runstore/runstore_test.go`,
+`schemas/result.schema.json`.
 *Named tests:* `TestAccountsAddLeavesNothingToRun` (**the red step**: after the command returns, the
 published node carries `accounts.<name>.allow_repos` for the named repositories **and** the job set
 carries `<profile>/<provider>/<name>` with `secretAccessor` on that account's secret and no other account's, and
@@ -147,7 +164,16 @@ wrote, through the `Policy` stage and no other writer),
 `TestRunRecordNamesTheAccountTheRunUsed` (the record's `OAuthAccount` is the account the launch
 resolved, and `fugaro diagnose` prints it as `row.oauth_account` — D873's read-back, asserted rather
 than added; **it asserts the scalar's own limit too**, that a run which used a per-stage key records the
-account it used last and not a stage's, which is D876's stated limit rather than a wish).
+account it used last and not a stage's, which is why `stage_accounts` below is a second field and not a
+second meaning),
+`TestRunRecordsStageAccountsForAPerStageOverride` (D876: a run whose stage's account comes from
+`stages.<stage>.claude_account` — and one whose account comes from `default_claude_account` — records
+that account **under that stage's name** in `stage_accounts`, while `oauth_account` names the account the
+run used last exactly as before),
+`TestStageAccountsIsAdditive` (D876: a `result.json` written **without** `stage_accounts` still decodes —
+the record before the field, and the record's `version` still 1 — `schemas/result.schema.json` accepts a
+record that carries it, and `oauth_account` still carries the meaning it had: one scalar, the account the
+run used last, never a stage's).
 *Red step:* `TestAccountsAddLeavesNothingToRun`, written before the converge exists, fails at the
 published node — which is precisely what would happen to the owner if the converge were dropped, and
 what F18 records that nothing in the tree notices today.
@@ -262,10 +288,12 @@ scope — a stage is served only by the accounts its own job exists for, so a `r
 §11.2's chain already gives, and which is the shipped behaviour. It comes after A2 because the keys (A1)
 and the node that carries them (A2) have to exist before there is a list to walk.
 
-*Files (≤4):* `internal/runner/accountchoice.go`, `internal/runner/accountchoice_test.go`,
+*Files (≤5):* `internal/runner/accountchoice.go`, `internal/runner/accountchoice_test.go`,
 `internal/runner/runner.go` (the stage-start hook — **the one writer across both 0.15.0 planners**, so
-this task keeps the edit to that file as small as it can and says so in its PR), and the task's own
-`internal/runner/accountchoice_fake_test.go` if the walk needs a fake node.
+this task keeps the edit to that file as small as it can and says so in its PR), the task's own
+`internal/runner/accountchoice_fake_test.go` if the walk needs a fake node, and
+`internal/runstore/runstore.go` (D876's answer: the `StageAccounts` field A2 adds — every failover writes
+the account that took over into it under the stage's name).
 *Named tests:* `TestAutoWalksTheAccountsInTheListOrder` (**the red step**: with `auto` on, a stage whose
 first account rate-limits makes its next attempt on the second, and the failover line names both),
 `TestAutoNeverChoosesADisallowedAccount` (an account the repository is not admitted to is never chosen,
@@ -278,7 +306,11 @@ scope from collapsing back into the repository's allow-list),
 `TestAutoOffMeansExplicitOnly` (with the switch off the walk never runs,
 the account is the chain's own, and the record names one account), `TestAutoNeverSwitchesMidStage` (a
 rate limit inside a stage ends that attempt: the stage's transcript, its cost and its verdict are one
-account's), `TestAutoLogsEveryFailover`.
+account's), `TestAutoLogsEveryFailover`,
+`TestAutoFailoverRecordsTheNewStagesAccount` (D876: the failover's line names the stage and both accounts
+**and** the record's `stage_accounts` carries the stage's new account — the field is what a command reads
+afterwards, the line what the run's log shows as it happens; the record's `oauth_account` moves to the
+account that answered, as it already does).
 *Red step:* `TestAutoWalksTheAccountsInTheListOrder` is written first and fails against a first cut with
 no walk at all — the account is the launch's single account and the second is never reached, which is
 exactly the behaviour D875 makes the default.
@@ -295,9 +327,11 @@ cloud-senior-review work deploys per `(profile, account)`
 a second one, and it says so if the set is not reachable where the walk runs. And **which job serves a
 stage whose account differs from the job's own**: a project job mounts one account's token (LC4), so the
 mismatch is a refusal and not a silent fallback, and this task is where that refusal is written (with the
-cloud-senior-review work, which owns the reviewer's own job). **D876 is not this task's to settle**: if
-the owner rules the recommended `stage_accounts` field in, it lands here or in A2, and until then this
-task writes the failover log line and no record field.
+cloud-senior-review work, which owns the reviewer's own job). **D876 is answered, and half of it lands
+here** (spec §11.5): A2 adds the record's `stage_accounts` field, and this task writes **each failover's
+new account into it** under the stage's name, beside the log line it already writes — the field is what
+`fugaro diagnose` reads afterwards, the line what the run's log shows as it happens, and neither is asked
+to do the other's job.
 
 ### Handoffs (this work reports them; it does not write them)
 
@@ -323,7 +357,8 @@ task writes the failover log line and no record field.
 | `docs/project-claude-accounts.md` | #1464's docs work, possibly | the page and its pins | Keep the pinned facts, change the wording, and run the Docs filter |
 | `internal/cli/testdata/init_commands.golden`, `internal/cli/testdata/init_retire.golden`, `internal/infra/testdata/repo_root_addresses.golden`, `internal/infra/testdata/repo_root_credentials_addresses.golden` | whoever changes the init flow | the new next-step lines | Regenerated by their own `-update` flags; never hand-edited |
 | `docs/gcp-live-checklist.md`, `docs/releases/**`, `website/**` | reserved | LC1–LC4, the operator line, the CLI reference | Handoffs, above |
-| `deploy/terraform/**`, `schemas/**` | — | **nothing** | No `.tf` file and no schema changes: the job set is computed by `infra.ProjectJobs` and the policy node has no schema (spec §8). If A2 ever needs a `cover.go` entry, that is a new resource type and a stop-and-report, not a table widening |
+| `deploy/terraform/**` | — | **nothing** | No `.tf` file: the job set is computed by `infra.ProjectJobs`, and the policy node has no schema (spec §8). If A2 ever needs a `cover.go` entry, that is a new resource type and a stop-and-report, not a table widening |
+| `schemas/result.schema.json` | — | the one additive property D876's answer needs, `stage_accounts` (spec §11.5), added and written by A2 | Add that property and nothing else: no other field, no `version` move, no new schema file. The record's schema only grows, exactly as the wire contract's rule says |
 
 ## Gates
 
