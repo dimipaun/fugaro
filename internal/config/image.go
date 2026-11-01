@@ -216,12 +216,20 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 	}
 }
 
-// SharedCheckoutSince is the first fugaro release that builds and refreshes a
-// shared dependency-layer image: the release validateCheckout refuses
-// checkout: shared until. It is a different fact from internal/cli's
-// sharedSince, which names the release whose *runner* clones for a shared job
-// (0.14.0): the runner half landed first, and the image such a job runs does
-// not exist before this release.
+// SharedCheckoutSince records the release shared dependency-layer images
+// were to arrive in, and it is stale: 0.15.0 shipped without them, so no
+// release builds or refreshes one and nothing gates on this number. The
+// gate is sharedCheckoutShipped below, a flag the release that actually
+// builds these images flips. The value stays at 0.15.0 because two readers
+// still name it — internal/infra's job-shape refusal and docs/release.md's
+// bullet for internal/cli's sharedSince, which TestSharedSinceHasAReleaseBullet
+// holds to it — so the release that ships them moves this to its own tag.
+// SharedCheckoutRefusal names no release at all, so a stale number here
+// cannot reach a repository.
+//
+// It is a different fact from internal/cli's sharedSince, which names the
+// release whose *runner* clones for a shared job (0.14.0): the runner half
+// landed first, and the image such a job runs does not exist yet.
 const SharedCheckoutSince = "0.15.0"
 
 // sharedCheckoutShipped is false until the release that actually builds and
@@ -248,7 +256,14 @@ func SharedCheckoutShipped() bool { return sharedCheckoutShipped }
 // launch, which reads the checkout's fugaro.yaml leniently, can find it among
 // that file's problems and refuse with this sentence rather than with
 // whatever later step trips over the config it could not use.
-const SharedCheckoutRefusal = "shared images arrive in " + SharedCheckoutSince + ": no release builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch"
+//
+// It names no release. It used to promise "shared images arrive in 0.15.0",
+// and that release shipped without them, so a version here is a promise
+// either already broken or made about a slot nobody has scheduled; what
+// lifts the refusal is sharedCheckoutShipped, not a number — so the sentence
+// says what is true today and names the two kinds that work in it.
+// TestSharedCheckoutRefusalNamesNoReleaseAsAFutureArrival holds it that way.
+const SharedCheckoutRefusal = "no released fugaro builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch"
 
 // validateCheckout checks a workflow's checkout: (design generic-tool.md §2,
 // G3). clone runs the installation's base image directly, with no build, so

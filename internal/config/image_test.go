@@ -208,11 +208,12 @@ const sharedYAML = webYAML + `    checkout: shared
       skip_build_scripts: true
 `
 
-// sharedShipped turns the 0.15.0 launch gate on for the duration of one test
+// sharedShipped turns the launch gate on for the duration of one test
 // and restores it: validation refuses every checkout: shared today
-// (TestValidateRefusesCheckoutSharedUntil0150), so the rules the release that
-// ships shared images will apply are reachable only behind the flag. The
-// release that flips sharedCheckoutShipped makes these tests run it open.
+// (TestValidateRefusesCheckoutSharedUntilTheImagesShip), so the rules the
+// release that ships shared images will apply are reachable only behind the
+// flag. The release that flips sharedCheckoutShipped makes these tests run
+// it open.
 func sharedShipped(t *testing.T) {
 	t.Helper()
 	was := sharedCheckoutShipped
@@ -291,15 +292,15 @@ func TestSharedCheckoutRefusalNamesNoReleaseAsAFutureArrival(t *testing.T) {
 // including for a workflow that also declares the dependency-layer keys,
 // which are the ones only this kind accepts and so the ones a reader
 // reaches for first.
-func TestValidateRefusesCheckoutSharedUntil0150(t *testing.T) {
+func TestValidateRefusesCheckoutSharedUntilTheImagesShip(t *testing.T) {
 	for _, tc := range []struct{ name, yaml string }{
 		{"bare", webYAML + "    checkout: shared\n"},
 		{"with the dependency-layer keys", sharedYAML},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, problems := Parse([]byte(tc.yaml))
-			if !hasProblem(problems, "workflows.web.checkout", "shared images arrive in 0.15.0", 0) {
-				t.Fatalf("problems = %v, want a refusal at workflows.web.checkout naming 0.15.0", problems)
+			if !hasProblem(problems, "workflows.web.checkout", SharedCheckoutRefusal, 0) {
+				t.Fatalf("problems = %v, want the refusal at workflows.web.checkout", problems)
 			}
 			for _, want := range []string{"checkout: baked", "checkout: clone"} {
 				if p := problems[0]; !strings.Contains(p.Message, want) {

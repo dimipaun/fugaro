@@ -126,8 +126,8 @@ func TestLaunchRefusesSharedJobOnOldRunner(t *testing.T) {
 	}
 }
 
-// TestRunRefusesSharedWorkflowBefore0150 is the same repository driven the
-// way an operator meets it, and in 0.14.0 it stops before the gate above:
+// TestRunRefusesSharedWorkflowUntilTheImagesShip is the same repository
+// driven the way an operator meets it, and it stops before the gate above:
 // validation refuses checkout: shared until the release that builds a
 // shared image (config/image.go's sharedCheckoutShipped), so the launch has
 // no workflow to read the kind from and never starts a job — not even on an
@@ -137,7 +137,7 @@ func TestLaunchRefusesSharedJobOnOldRunner(t *testing.T) {
 // the refused file itself (it leaves no config to read the workflow's kind
 // from). The sharedSince gate keeps its own test above, which a launch
 // cannot reach until the flag flips.
-func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
+func TestRunRefusesSharedWorkflowUntilTheImagesShip(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
 	other := mustSlug("github", "acme/other")
@@ -154,7 +154,7 @@ func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("a run of a checkout: shared workflow = %v, want refused", err)
 	}
-	if want := "workflows.svc.checkout: shared images arrive in " + config.SharedCheckoutSince; !strings.Contains(err.Error(), want) {
+	if want := "workflows.svc.checkout: " + config.SharedCheckoutRefusal; !strings.Contains(err.Error(), want) {
 		t.Errorf("the launch's refusal = %v, want it to carry %q, the sentence fugaro validate prints, not whatever later step trips over the refused file", err, want)
 	}
 	if n := len(f.run.Requests()); n != 0 {
@@ -164,7 +164,7 @@ func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
 	if err == nil {
 		t.Fatalf("fugaro validate accepted a checkout: shared workflow:\n%s%s", out, errOut)
 	}
-	for _, want := range []string{"workflows.svc.checkout", "shared images arrive in " + config.SharedCheckoutSince} {
+	for _, want := range []string{"workflows.svc.checkout", config.SharedCheckoutRefusal} {
 		if !strings.Contains(out+errOut+err.Error(), want) {
 			t.Errorf("the refusal does not carry %q:\nstdout:\n%s\nstderr:\n%s\n%v", want, out, errOut, err)
 		}
@@ -186,7 +186,7 @@ func TestRunRefusesSharedCheckoutWhenLocalConfigNamesTheRepo(t *testing.T) {
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\nworkflows:\n" +
 		"  web: { checkout: shared, commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
-	want := "workflows.web.checkout: shared images arrive in " + config.SharedCheckoutSince
+	want := "workflows.web.checkout: " + config.SharedCheckoutRefusal
 	for _, args := range [][]string{
 		{"run", "A task"},
 		{"run", "--pr", "7", "A follow-up"},
