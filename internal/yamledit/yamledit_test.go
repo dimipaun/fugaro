@@ -1113,8 +1113,8 @@ func TestRefusals(t *testing.T) {
 			yamledit.ReasonNotAMapping,
 		},
 		{
-			"a flow mapping to splice into",
-			"a: {b: 1}\n",
+			"a flow mapping written across lines, to splice into",
+			"a: {b: 1,\n  c: 2}\n",
 			func(d []byte) ([]byte, error) { return yamledit.SetScalar(d, []string{"a", "b"}, "2") },
 			yamledit.ReasonFlowCollection,
 		},

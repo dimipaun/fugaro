@@ -249,12 +249,20 @@ func leadingSpaces(line []byte) int {
 }
 
 // expectMapping refuses a path that crosses anything but a block mapping. A
-// flow mapping is refused too: an edit inside `{...}` would have to reformat
-// bytes this package promises to leave alone.
+// flow mapping is refused too: a step through one is a step through bytes the
+// edit is not splicing into, and there may be no line under it to measure.
 func (d *doc) expectMapping(op string, n *yaml.Node, path string) error {
 	if n.Style&yaml.FlowStyle != 0 {
 		return refuse(op, path, ReasonFlowCollection)
 	}
+	return d.mappingHolding(op, n, path)
+}
+
+// mappingHolding refuses anything but a mapping, which is the mapping an edit
+// names a key in. A flow mapping is one of those: what is written inside it is
+// spliced in place, so the path stops here rather than refusing the collection
+// it stops on.
+func (d *doc) mappingHolding(op string, n *yaml.Node, path string) error {
 	if n.Kind != yaml.MappingNode {
 		return refuse(op, path, ReasonNotAMapping)
 	}
@@ -366,22 +374,29 @@ func (d *doc) valueSpan(op string, v *yaml.Node) (int, int, error) {
 // scalarText returns the length of the written scalar at the start of rest,
 // which is on one line only when it re-parses as exactly this node.
 func (d *doc) scalarText(v *yaml.Node, rest []byte) (int, bool) {
-	var n int
-	switch {
-	case v.Style&yaml.DoubleQuotedStyle != 0:
-		n = quotedEnd(rest, '"', '\\')
-	case v.Style&yaml.SingleQuotedStyle != 0:
-		n = quotedEnd(rest, '\'', '\'')
-	default:
-		n = len(plainComment(rest))
-		for n > 0 && (rest[n-1] == ' ' || rest[n-1] == '\t') {
-			n--
-		}
-	}
+	n := scalarLength(v, rest)
 	if n <= 0 || n > len(rest) {
 		return 0, false
 	}
 	return n, d.sameScalar(v, rest[:n])
+}
+
+// scalarLength returns the number of bytes a scalar of this node's style
+// occupies at the start of rest, without asking whether those bytes are the
+// node: which text a value was written with is decided by the context it sits
+// in, and the two callers read it back in different ones.
+func scalarLength(v *yaml.Node, rest []byte) int {
+	switch {
+	case v.Style&yaml.DoubleQuotedStyle != 0:
+		return quotedEnd(rest, '"', '\\')
+	case v.Style&yaml.SingleQuotedStyle != 0:
+		return quotedEnd(rest, '\'', '\'')
+	}
+	n := len(plainComment(rest))
+	for n > 0 && (rest[n-1] == ' ' || rest[n-1] == '\t') {
+		n--
+	}
+	return n
 }
 
 // quotedEnd returns the length of a quoted scalar, closing quote included, or 0
@@ -415,6 +430,30 @@ func (d *doc) sameScalar(v *yaml.Node, text []byte) bool {
 		return false
 	}
 	c := n.Content[0]
+	return c.Kind == yaml.ScalarNode && c.Tag == v.Tag && c.Value == v.Value
+}
+
+// sameFlowScalar reports whether text, written as the value of a member of a
+// flow mapping, reads back as the node v. The same bytes are not always the same
+// scalar in both places: alone on a line `-` is an empty document, while between
+// braces it is the string "-". A value read out of a flow mapping is therefore
+// read back between braces.
+func (d *doc) sameFlowScalar(v *yaml.Node, text []byte) bool {
+	if len(text) == 0 {
+		return false
+	}
+	var n yaml.Node
+	if err := yaml.Unmarshal(append(append([]byte("k: {v: "), text...), '}'), &n); err != nil {
+		return false
+	}
+	if n.Kind != yaml.DocumentNode || len(n.Content) != 1 {
+		return false
+	}
+	m := mapValue(n.Content[0], "k")
+	if m == nil || m.Kind != yaml.MappingNode || len(m.Content) != 2 {
+		return false
+	}
+	c := m.Content[1]
 	return c.Kind == yaml.ScalarNode && c.Tag == v.Tag && c.Value == v.Value
 }
 
