@@ -426,31 +426,68 @@ func tempRootsOf(tempRoots [][]string) []string {
 	return []string{filepath.Clean(os.TempDir())}
 }
 
-// inTempRoots reports whether path is one of roots or inside one, after
-// resolving symlinks: on darwin a temporary directory is reached through one
-// (/tmp is /private/tmp, /var/folders is /private/var/folders), so a
-// comparison of the strings alone would remember a path under a temporary
-// directory reached the other way. A path that is gone is compared as it is
-// written — a symlink cannot be resolved once what it points at is gone — and
-// that is why the caller's list names the fixed temporary directories in the
-// spelling the platform writes them.
-func inTempRoots(path string, roots []string) bool {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
+// InTempRoots reports whether path is one of roots or inside one: the rule
+// that says a path is the machine's own scratch space rather than a checkout
+// this machine remembers or reads from. The writer refuses such a path
+// (RecordCheckout), the pruning drops a row under one, and the read reports one
+// invalid (internal/cli/config_list.go) — one rule, so the three cannot drift.
+//
+// Both sides are judged twice, as written and as they resolve, and either
+// verdict is enough:
+//
+//   - As written, because a path that is a link out of a temporary directory
+//     is still a path under it. An agent's scratchpad is made in the temporary
+//     directory and the link can be re-pointed after the row is written, while
+//     the row is what the console is offered a working directory from — so
+//     /tmp/x counts as temporary however x resolves today.
+//   - As it resolves, because on darwin the temporary directory is reached
+//     through a link: os.TempDir() is /var/folders/... while git answers with
+//     /private/var/folders/..., so a path recorded in one spelling and a root
+//     named in the other are the same directory and must compare equal. The
+//     same holds for a root: it is resolved too, and both of its spellings are
+//     compared (a test names its own roots, and one of them may be a link).
+//
+// A path that is gone is compared as it is written, since a link cannot be
+// resolved once what it points at is gone — which is why the caller's list
+// names the fixed temporary directories in the spelling the platform writes
+// them (internal/cli/tempxdg.go's tempRoots).
+func InTempRoots(path string, roots []string) bool {
+	if underAnyRoot(path, roots) {
+		return true
 	}
+	resolved, err := filepath.EvalSymlinks(path)
+	return err == nil && underAnyRoot(resolved, roots)
+}
+
+// underAnyRoot is the comparison itself: path, cleaned, against every root,
+// cleaned and — where it resolves — resolved.
+func underAnyRoot(path string, roots []string) bool {
 	path = filepath.Clean(path)
 	for _, r := range roots {
-		r = filepath.Clean(r)
-		if !filepath.IsAbs(r) {
-			// "" and "." are not directories this machine is under, and a
-			// relative root would make every relative path temporary.
-			continue
-		}
-		if path == r || strings.HasPrefix(path, r+string(filepath.Separator)) {
-			return true
+		for _, root := range rootSpellings(r) {
+			if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// rootSpellings is a root as it is written and, when it resolves to something
+// else, as it resolves: on darwin /tmp is /private/tmp, and either spelling
+// names the same temporary directory.
+func rootSpellings(root string) []string {
+	root = filepath.Clean(root)
+	if !filepath.IsAbs(root) {
+		// "" and "." are not directories this machine is under, and a relative
+		// root would make every relative path temporary.
+		return nil
+	}
+	out := []string{root}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil && resolved != root {
+		out = append(out, resolved)
+	}
+	return out
 }
 
 // pathGone reports whether the directory a row names is not there: the same
@@ -472,9 +509,10 @@ func pathGone(path string) bool {
 // every path it reads and drops nothing — a stale path is still there for the
 // operator to see, and still there if the directory comes back — while the
 // state file is what the console offers working directories from, so a row
-// nothing wants any more is the writer's to remove. It is therefore the
-// writer that a temp row is dropped by, and it is dropped whatever its age and
-// whether it is still there: a scratchpad worktree an agent left behind is a
+// nothing wants any more is the writer's to remove. A temp row is the reader's
+// to refuse and this loop's to remove: config_list.go reports one invalid and
+// leaves the dropping to here, and here it is dropped whatever its age and
+// whether it is still there — a scratchpad worktree an agent left behind is a
 // live checkout, and the live one is exactly the row the console would
 // otherwise offer.
 //
@@ -489,7 +527,7 @@ func (c *Checkouts) prune(now time.Time, roots []string) bool {
 			kept := r.Paths[:0]
 			for _, p := range r.Paths {
 				switch {
-				case inTempRoots(p.Path, roots):
+				case InTempRoots(p.Path, roots):
 					changed = true
 					continue
 				case pathGone(p.Path):
@@ -536,12 +574,12 @@ func (c *Checkouts) prune(now time.Time, roots []string) bool {
 // tempRoots is the caller's list of the machine's temporary directories, and
 // it is a caller's statement rather than this package's because the machine's
 // temporary directories are the caller's knowledge (the CLI's tempRoots, the
-// list its own XDG warnings read). A path under one of them — after resolving
-// symlinks — is not recorded at all, and a row already under one is dropped
-// from the document (see prune): a checkout an agent made in a scratchpad is
-// not a checkout the operator works in, and a remembered path is what the
-// console offers as a working directory. A caller that names none gets
-// os.TempDir().
+// list its own XDG warnings read). A path under one of them, as it is written
+// or as it resolves (see InTempRoots), is not recorded at all, and a row
+// already under one is dropped from the document (see prune): a checkout an
+// agent made in a scratchpad is not a checkout the operator works in, and a
+// remembered path is what the console offers as a working directory. A caller
+// that names none gets os.TempDir().
 //
 // A path already recorded for that repository is left as it is: the file is
 // written only when there is something new to write, so a command in a
@@ -564,7 +602,7 @@ func RecordCheckout(getenv func(string) string, project string, id CheckoutIdent
 		return fmt.Errorf("%q is not an absolute checkout path", path)
 	}
 	roots := tempRootsOf(tempRoots)
-	if inTempRoots(path, roots) {
+	if InTempRoots(path, roots) {
 		// Not an error and not a word anywhere: the caller's command did its
 		// own work, and a path this machine must not remember is a path it
 		// does not remember. Nothing is written, so the pruning below is not
