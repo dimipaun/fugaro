@@ -68,6 +68,18 @@ func TestSetScalarInsideAFlowMapping(t *testing.T) {
 			[]string{"budget", "mode"}, "enforce",
 		},
 		{
+			"a key added beside a member written with no value",
+			"budget: { per_run_usd: 5, mode: }\n",
+			"budget: { per_run_usd: 5, mode: , rigor: pro }\n",
+			[]string{"budget", "rigor"}, "pro",
+		},
+		{
+			"a key added beside a member whose colon belongs to its key",
+			"budget: { per_run_usd: 5, note:}\n",
+			"budget: { per_run_usd: 5, note:, rigor: pro}\n",
+			[]string{"budget", "rigor"}, "pro",
+		},
+		{
 			"a key added beside a trailing comma",
 			"budget: { per_run_usd: 5, }\n",
 			"budget: { per_run_usd: 5, mode: enforce }\n",

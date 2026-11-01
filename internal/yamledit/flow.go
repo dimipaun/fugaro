@@ -2,6 +2,7 @@ package yamledit
 
 import (
 	"bytes"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -40,7 +41,7 @@ func (d *doc) setFlowKey(op string, m *yaml.Node, key, value, path string) ([]by
 		if len(m.Content) == 0 {
 			return nil, refuse(op, path, ReasonFlowCollection)
 		}
-		return d.addFlowMember(open, close, key, value), nil
+		return d.addFlowMember(m, open, close, key, value), nil
 	}
 	if err := d.anchorFree(op, e, path); err != nil {
 		return nil, err
@@ -50,26 +51,60 @@ func (d *doc) setFlowKey(op string, m *yaml.Node, key, value, path string) ([]by
 		return nil, err
 	}
 	want := []byte(renderFlowValue(value, e.value.Style))
+	if start == end {
+		return splice(d.src, start, end, d.emptySlotText(start, want)), nil
+	}
 	if bytes.Equal(d.src[start:end], want) {
 		return d.src, nil
 	}
 	return splice(d.src, start, end, want), nil
 }
 
+// emptySlotText is the text that writes a value into a member written without
+// one. The bytes already at the empty slot say what it takes: a space is there
+// to be written into, a colon needs one after it or the value reads as part of
+// the key, and a key written without a colon needs that too.
+func (d *doc) emptySlotText(at int, value []byte) []byte {
+	switch {
+	case at > 0 && (d.src[at-1] == ' ' || d.src[at-1] == '\t'):
+		return value
+	case at > 0 && d.src[at-1] == ':':
+		return append([]byte(" "), value...)
+	}
+	return append([]byte(": "), value...)
+}
+
 // addFlowMember writes a new member into a flow mapping that already has one:
 // the separator goes in front of it, and the spacing the author left before the
 // closing brace stays where it is.
-func (d *doc) addFlowMember(open, close int, key, value string) []byte {
+func (d *doc) addFlowMember(m *yaml.Node, open, close int, key, value string) []byte {
 	at := close - 1
 	for at > open+1 && (d.src[at-1] == ' ' || d.src[at-1] == '\t') {
 		at--
 	}
 	sep := ", "
-	if at > open+1 && d.src[at-1] == ',' {
+	switch {
+	case at > open+1 && d.src[at-1] == ',':
 		sep = " "
+	case at > open+1 && d.src[at-1] == ':' && !gluedColon(m):
+		// The last member was written without a value, and a comma written
+		// straight after its colon would be read as part of the key it ends.
+		sep = " , "
 	}
 	member := sep + renderFlowKey(key) + ": " + renderFlowValue(value, 0)
 	return splice(d.src, at, at, []byte(member))
+}
+
+// gluedColon reports whether the last member of a flow mapping carries its colon
+// as part of the key's own text. `{a:}` holds the key `a:`, whose colon a space
+// before the next comma would take away, while `{a: }` holds the key `a` and a
+// value written with nothing at all.
+func gluedColon(m *yaml.Node) bool {
+	if len(m.Content) < 2 {
+		return false
+	}
+	k := m.Content[len(m.Content)-2]
+	return k.Kind == yaml.ScalarNode && k.Style == 0 && strings.HasSuffix(k.Value, ":")
 }
 
 // flowMemberSpan returns the bytes one member of a flow mapping occupies,
