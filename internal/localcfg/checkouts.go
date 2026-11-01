@@ -462,17 +462,20 @@ func InTempRoots(path string, roots []string) bool {
 // link is followed and nothing of the row itself is looked at, so the verdict
 // costs the row no filesystem access at all and a path that is not there is
 // refused exactly like one that is. It is what the read decides a row by
-// (internal/cli/config_list.go), where the row is a string this machine did
-// not write and the reason is the contract's first: the row is refused for
-// what it says, before anything is stat'ed and before any git runs in it.
+// (internal/cli/config_list.go): the row is a string this machine did not
+// write, and it is refused for what it says — nothing of it is stat'ed and no
+// git runs in it, whether or not it is there and whatever it is a checkout of.
 //
 // It is enough there because a scratchpad an agent made is a path *in* the
 // temporary directory, which is a fact of the string. The writer judges the
-// resolved path too (InTempRoots) — it must not record a link out of a
-// temporary directory either — and no row it refuses can be written again, so
-// the two differ only about a row already in the file that names a link into
-// the temporary directory from outside it, which neither this build nor the
-// one before it ever recorded.
+// resolved path as well (InTempRoots) — it must not record a link out of a
+// temporary directory either — so the two rules part company about one row: a
+// row already in the file whose path is written outside every root and is a
+// link into one. The read reports that row as it finds it, and the next write
+// takes it away (the prune judges the resolved path). The read is left
+// string-only on purpose: its refusal is the contract's first reason, which is
+// the one decided from the row's own strings before anything touches the disk,
+// and a read that resolved the path would be deciding it by following a link.
 func InTempRootsAsWritten(path string, roots []string) bool {
 	return underAnyRoot(path, roots)
 }
