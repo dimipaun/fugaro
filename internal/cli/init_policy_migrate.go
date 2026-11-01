@@ -78,6 +78,13 @@ type policyMigration struct {
 	// empty when the run holds no such file, and the publish half then writes
 	// nothing rather than recording a baseline in a file it was not built from.
 	path string
+	// record is the generation this run records in this machine's file when it
+	// writes no node at all: the file and the node agree, and the generation the
+	// file records as the one its policy keys were written from is not the node's
+	// own. It is empty whenever the run writes the node — the record then follows
+	// that write (recordGeneration) — and when the file is not this installation's
+	// to write (path empty) or already records the node's generation.
+	record string
 	// reseeded is set when the run answered the generation refusal by re-seeding
 	// this machine's file and wrote no node at all: Verify then has nothing of
 	// its own to read back.
@@ -229,6 +236,17 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	// refusal after the typed confirmation would be a document they confirmed
 	// and did not get.
 	writes := moved != nil || m.pub != nil
+	// The generation record belongs to the agreement between the file and the
+	// node, not to this run's write: a run that writes no node — the file
+	// already states what the node carries — still refreshes it when the
+	// generation the file records is not the node's own. Without that, a record
+	// left behind by a migration-only write, by the explicit door or by a
+	// hand-fixed re-seed refusal would refuse the operator's next legitimate edit
+	// and offer to re-seed the file over it, which is the overwrite D854 exists
+	// to prevent, one round later.
+	if !writes && m.generations == nil && m.path != "" && lc.PolicyGeneration != etag {
+		m.record = etag
+	}
 	if writes {
 		if err := requirePolicyRules(ctx, db, lc); err != nil {
 			return nil, true, err
@@ -237,7 +255,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 			return nil, true, err
 		}
 	}
-	if !writes && m.generations == nil {
+	if !writes && m.generations == nil && m.record == "" {
 		return nil, true, nil
 	}
 	return m, true, nil
@@ -305,15 +323,26 @@ func policyMigrationRefusal(err error) error {
 // What each door does around it is its own: the agent-session refusal and the
 // absent node's detail, and how a failure is worded where the door reports one.
 func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer) error {
+	// The in-flight refusal is about the NODE this run rewrites, and it is asked
+	// before the branch below: D854's re-seed carries a pending migration with it
+	// (confirmReseed writes the re-seeded file and then the migrated node), and a
+	// re-seed that answered its own confirmation and re-seeded the operator's
+	// file before asking about the run in flight would move that file under a
+	// write this refusal exists to stop — and would ask the operator to confirm
+	// the re-seed of a run that a plain --yes cannot then finish.
+	if err := m.refuseRunsInFlight(ctx, yes); err != nil {
+		return err
+	}
 	if m.generations != nil {
 		return m.confirmReseed(ctx, cmd, yes, w)
 	}
-	inflight, err := runsInFlight(ctx, m.db, m.lc)
-	if err != nil {
-		return err
-	}
-	if inflight > 0 && !yes {
-		return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+	if !m.writesNode() {
+		// The one write of this run is the generation record in this machine's
+		// file: there is no node to rewrite and so nothing for the operator to
+		// confirm by name — the file is backed up and replaced the same way, and
+		// the two lines the caller prints say what was recorded and where the
+		// backup is.
+		return m.recordGeneration(ctx, cmd)
 	}
 	m.print(w)
 	if err := confirmRemoval(cmd, m.lc, yes, m.what()+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
@@ -324,6 +353,30 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	}
 	return m.recordGeneration(ctx, cmd)
 }
+
+// refuseRunsInFlight is the refusal both doors hold before a node write: a run
+// that is mid-flight read the policy this write replaces, so it is refused
+// without --yes, and --yes is the way past it once the operator has read what
+// the write does (the same reading `publish --delete` has). A run that writes no
+// node — D854's re-seed alone, or the generation record alone — asks nothing: no
+// run in flight reads this machine's file.
+func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool) error {
+	if !m.writesNode() {
+		return nil
+	}
+	inflight, err := runsInFlight(ctx, m.db, m.lc)
+	if err != nil {
+		return err
+	}
+	if inflight > 0 && !yes {
+		return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+	}
+	return nil
+}
+
+// writesNode is whether this run's confirmation ends in a write to the published
+// node: the migration, the publish, or both in one write.
+func (m *policyMigration) writesNode() bool { return m.moved != nil || m.pub != nil }
 
 // what names this run's write as the confirmation and the outcome read it: the
 // migration and the publish are one write and are worded as one, and either
@@ -359,28 +412,32 @@ func (m *policyMigration) doneDetail() string {
 		return "published the node the local config states"
 	case m.generations != nil:
 		return fmt.Sprintf("re-seeded %s from the published policy node", m.path)
-	default:
+	case m.writesNode():
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)
+	default:
+		return fmt.Sprintf("recorded the published policy's generation in %s", m.path)
 	}
 }
 
-// recordGeneration writes the generation the local config's policy keys are now
-// written from, after the node write landed and never before: the generation is
-// the one the node carries now (its ETag, read back here), which is what makes
-// the next run able to tell this machine's own edit from another machine's
-// publish (D854). It is a no-op for a run that published nothing.
+// recordGeneration is the tail of every write this stage makes: the generation
+// this machine's file is written from, written into the file. A run that wrote
+// the node records the generation it wrote — read back and checked against the
+// document, never assumed (recordPublishedGeneration) — and a run that wrote no
+// node records the generation the node it already agrees with is at (m.record).
+// The record belongs to the agreement between the file and the node rather than
+// to the write: a record left behind at an older generation is what refuses the
+// operator's own next edit, and hands them a re-seed that reverts it.
+//
+// It is a no-op for a run with nothing of its own to record, which is the run
+// whose file already records the generation the node is at.
 func (m *policyMigration) recordGeneration(ctx context.Context, cmd *cobra.Command) error {
-	if m.pub == nil {
+	if m.writesNode() {
+		return recordPublishedGeneration(ctx, cmd.OutOrStdout(), m.db, m.lc, m.path, m.payload())
+	}
+	if m.record == "" {
 		return nil
 	}
-	etag, found, _, err := readPolicyNode(ctx, m.db, m.lc)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return errors.New("the published policy is gone")
-	}
-	return policyGenerationRecord(cmd.OutOrStdout(), m.path, m.lc, etag)
+	return policyGenerationRecord(cmd.OutOrStdout(), m.path, m.lc, m.record)
 }
 
 // confirmReseed is D854's remedy: the operator reads the three-way state and, on
@@ -399,7 +456,7 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 		return err
 	}
 	fmt.Fprintf(w, "re-seeded %s from the published policy node: %s\n", m.path, strings.Join(written, ", "))
-	if m.moved == nil {
+	if !m.writesNode() {
 		// Nothing was written to the node, so the generation recorded is the one
 		// the file's policy keys now come from: the node as this run read it, and
 		// nothing of this run's own may move it.
@@ -409,6 +466,11 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 	if err := m.write(ctx); err != nil {
 		return err
 	}
+	// The migration is the write that moved the generation: the one recorded is
+	// the node this run has just written, read back, and not the one the file was
+	// re-seeded from — recording the generation the node was at before the write
+	// would leave the file refusing the operator's own next edit against the node
+	// this very run wrote.
 	return m.recordGeneration(ctx, cmd)
 }
 
@@ -418,7 +480,7 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 func (m *policyMigration) printGenerationState(w io.Writer) {
 	fmt.Fprintf(w, "%s has moved past the generation this machine's config was written from, so publishing from here would replace it with an older file: %s\n",
 		projectpolicy.PathShared(), m.generations.text())
-	printPolicyDrift(w, m.drift)
+	printReseedDrift(w, m.drift)
 	fmt.Fprintf(w, "  re-seeding writes the published node's values into %s instead (the file is backed up first); publishing stays yours to do afterwards\n", m.path)
 }
 
@@ -571,6 +633,18 @@ func (m *policyMigration) print(w io.Writer) {
 	}
 	if m.pub != nil {
 		printPolicyPublishDiff(w, m.pub.drift, m.pub.sources)
+		if m.pub.adopted {
+			// D854's other half: an installation that records no generation has
+			// no baseline to compare against, so this run adopts the node it is
+			// publishing from instead of asking a question with no information in
+			// it — and it says so, because "adopted" is what the operator has to
+			// know to read the record that appears in their file afterwards.
+			fmt.Fprintf(w, "  this machine's config records no generation for its policy keys, so this run adopts the one it publishes as the generation the file is written from\n")
+		}
+	}
+	if m.record != "" {
+		fmt.Fprintf(w, "%s carries what the local config states, so nothing is published; this run records its generation (%s) in %s, which is what the next edit of the config is read against\n",
+			projectpolicy.PathShared(), m.record, m.path)
 	}
 }
 
@@ -650,6 +724,9 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
 	case m.generations != nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy at %s has moved past the generation this machine's config was written from (%s)", projectpolicy.PathShared(), m.generations.text())}, nil
+	case m.record != "":
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy node carries what the local config states, and the config records %s as the generation its policy keys were written from: this run records %s in %s",
+			generationText(s.e.lc.PolicyGeneration), m.record, m.path)}, nil
 	case m.moved == nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local config states what the published policy does not carry: %s", memberListText(m.drift))}, nil
 	}
@@ -696,6 +773,8 @@ func (m *policyMigration) planDetail() string {
 	switch {
 	case m.generations != nil:
 		return fmt.Sprintf("re-seed %s from the published policy node, after your confirmation", m.path)
+	case m.record != "":
+		return fmt.Sprintf("record the published policy node's generation (%s) in %s", m.record, m.path)
 	case m.moved == nil:
 		return "publish the node the local config states, after your confirmation"
 	case m.pub == nil:

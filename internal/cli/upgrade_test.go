@@ -275,7 +275,7 @@ func TestUpgradeRunsTheRulesStepBeforeThePolicyItGates(t *testing.T) {
 		}
 		for _, want := range []string{
 			"rules: done: deployed the security rules (generation " + strconv.Itoa(projectpolicy.RulesVersion) + ") and recorded it",
-			"policy: done: the published policy was migrated from version 3 to " + strconv.Itoa(projectpolicy.Version) + " in place",
+			"policy: done: migrated the published policy from version 3 to " + strconv.Itoa(projectpolicy.Version) + " in place",
 			"The security rules of the Firebase project " + initProject + ":",
 		} {
 			if !strings.Contains(out, want) {

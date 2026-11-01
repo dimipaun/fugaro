@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
@@ -178,8 +180,8 @@ func printPolicyPublishDiff(w io.Writer, drift []policyDrift, sources map[string
 	}
 }
 
-// printPolicyDrift is the three-way state: this machine's file, and the node as
-// it stands now, member by member.
+// printPolicyDrift is the three-way state of a publish: this machine's file, and
+// the node as it stands now, member by member.
 func printPolicyDrift(w io.Writer, drift []policyDrift) {
 	for _, d := range drift {
 		switch {
@@ -189,6 +191,27 @@ func printPolicyDrift(w io.Writer, drift []policyDrift) {
 			fmt.Fprintf(w, "  %s: (not set in the config) -> %s\n", d.Member, d.Node)
 		default:
 			fmt.Fprintf(w, "  %s: %s (this machine) -> %s (published)\n", d.Member, d.File, d.Node)
+		}
+	}
+}
+
+// printReseedDrift is printPolicyDrift for D854's re-seed, where the arrow points
+// the other way: a publish writes this machine's values INTO the node, and a
+// re-seed writes the node's values INTO this machine's file. The publish's
+// wording on a re-seed would tell the operator their file is about to be
+// published over the node — which is the one thing the re-seed exists to stop —
+// when what the run does is the reverse.
+func printReseedDrift(w io.Writer, drift []policyDrift) {
+	for _, d := range drift {
+		switch {
+		case d.File == "" && d.Node == "":
+			fmt.Fprintf(w, "  %s differs\n", d.Member)
+		case d.File == "":
+			fmt.Fprintf(w, "  %s: (not set in the config) re-seeded from %s (published)\n", d.Member, d.Node)
+		case d.Node == "":
+			fmt.Fprintf(w, "  %s: %s (this machine), which the published node does not carry\n", d.Member, d.File)
+		default:
+			fmt.Fprintf(w, "  %s: %s (this machine) re-seeded from %s (published)\n", d.Member, d.File, d.Node)
 		}
 	}
 }
@@ -258,6 +281,88 @@ func policyGenerationRecord(w io.Writer, path string, lc *localcfg.Config, gen s
 	fmt.Fprintf(w, "recorded the published policy node's generation in %s (backup at %s)\n", path, backup)
 	lc.PolicyGeneration = gen
 	return nil
+}
+
+// recordPublishedGeneration records the generation of the node a run has just
+// written, in the local config file the run built that node from. Both doors
+// take it — the policy stage after its write and `fugaro project policy publish`
+// after its own — so the record follows every write and not only the stage's.
+//
+// The ETag is read back and checked against the document the run wrote before it
+// is recorded: the write is conditional on the ETag the run read, and a writer
+// that landed between it and this read holds the node now. Recording THAT
+// generation would leave this machine's file claiming a node it never wrote,
+// which is the one state D854 then cannot catch — the next edit of the file would
+// look like this machine's own publish and would overwrite the newer node. So
+// nothing is recorded, and the refusal says what happened and where the node is
+// read.
+func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client, lc *localcfg.Config, path string, payload []byte) error {
+	if path == "" {
+		// A run that holds no local config file — the shared config has none, and
+		// a config elsewhere was not built from this file — has nothing to record
+		// the generation in, and the node it wrote is not refused for it.
+		return nil
+	}
+	etag, found, raw, err := readPolicyNode(ctx, db, lc)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("the published policy is gone")
+	}
+	if !sameNode(raw, payload) {
+		return userErr("the policy node at %s was written and then changed again before the generation could be recorded in %s: another writer published in between, so nothing was recorded there and the config still records the generation from before this write. Read what the node holds now with 'fugaro project policy show': the next %s refuses to publish from a file the node has moved past, and offers to re-seed the file from the node instead",
+			projectpolicy.PathShared(), path, selfCommand()+" update")
+	}
+	return policyGenerationRecord(w, path, lc, etag)
+}
+
+// sameNode is whether two documents are the same node: the values they hold
+// rather than the bytes they are spelled with, because the database is free to
+// hand an object back with its keys in another order, a number spelled another
+// way or a member written as null gone entirely — a member the database stores
+// no value for is not a member (the real database drops it, and this machine's
+// policy carries one: budget.allowed_models is written null when the file
+// names no models). Numbers are read into float64 on both sides
+// (json.Unmarshal's default), a null member is dropped, and objects are
+// marshalled with sorted keys, so the two sides are compared as the values they
+// are.
+func sameNode(a, b []byte) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	ja, err := json.Marshal(dropNullMembers(x))
+	if err != nil {
+		return false
+	}
+	jb, err := json.Marshal(dropNullMembers(y))
+	return err == nil && string(ja) == string(jb)
+}
+
+// dropNullMembers is a document with every object member whose value is null
+// removed, recursively. A null inside a list is a value and is left alone: what
+// the database drops is a member, not a position.
+func dropNullMembers(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, m := range t {
+			if m == nil {
+				continue
+			}
+			out[k] = dropNullMembers(m)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, m := range t {
+			out[i] = dropNullMembers(m)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // reseedPolicyKeys writes the published node's policy values back into the local

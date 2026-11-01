@@ -161,7 +161,12 @@ func nodeCeiling(t *testing.T, f *projectFixture) float64 {
 
 // TestUpdatePolicyStageWritesNothingWhenTheNodeMatches: a node that carries
 // what the local config states is left exactly as it is, down to the bytes —
-// the stage is not a publisher that rewrites the document every run.
+// the stage is not a publisher that rewrites the document every run — and a
+// file that already records the node's own generation is left as it is too.
+// What the stage must not do is record nothing at all here: the record belongs
+// to the agreement between the file and the node, so a stale or absent one is
+// refreshed even when no node is written (see
+// TestUpdatePolicyStageRecordsTheGenerationWhenTheNodeMatches).
 func TestUpdatePolicyStageWritesNothingWhenTheNodeMatches(t *testing.T) {
 	f := newProjectFixture(t, "")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
@@ -171,7 +176,19 @@ func TestUpdatePolicyStageWritesNothingWhenTheNodeMatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The explicit door records the generation of its own write, so the update
+	// stage meets a file and a node that agree, with the generation already
+	// recorded: the reference the stage must leave alone.
+	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
+		t.Fatalf("the publish recorded %q, want the node's own generation %q", gen, want)
+	}
+	// The rig writes the installation's firebase_project into the file, so the
+	// reference for "the stage wrote nothing" is the file as the rig leaves it.
 	h := newMigrationRig(t, f, &initOptions{})
+	fileBefore, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	st, err := h.s.Check(t.Context())
 	if err != nil {
@@ -190,8 +207,15 @@ func TestUpdatePolicyStageWritesNothingWhenTheNodeMatches(t *testing.T) {
 	if string(before) != string(after) {
 		t.Errorf("the node was rewritten:\nbefore %s\nafter  %s", before, after)
 	}
-	if gen := recordedGeneration(t, f); gen != "" {
-		t.Errorf("a run with nothing to publish recorded a generation (%q): the record belongs to a write", gen)
+	fileAfter, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(fileBefore) != string(fileAfter) {
+		t.Errorf("a run with nothing to publish wrote the file:\nbefore %s\nafter  %s", fileBefore, fileAfter)
+	}
+	if gen := recordedGeneration(t, f); gen != nodeETag(t, f) {
+		t.Errorf("the file records %q and the node is at %q: the run left the record disagreeing with the node", gen, nodeETag(t, f))
 	}
 }
 

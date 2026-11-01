@@ -444,8 +444,9 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	// so it is a writer like `policy publish` and takes the same two refusals —
 	// the shared config is not an operator's own installation (and its repos:
 	// map is not the one a bare owner/name resolves against), and the database
-	// must be this project's.
-	lc, db, err := openProjectBudget(ctx, o.cloud)
+	// must be this project's. The config's path is not this command's business:
+	// editing the allow-list moves no generation of the node's policy keys.
+	lc, db, _, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
@@ -812,7 +813,7 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	if m := agentMarker(os.Getenv); m != "" {
 		return userErr("nothing was written: fugaro project sync adds to the published allow-list, which is what admits a repository to the project, and --github-app-key reads the App's private key with your own credentials to ask GitHub which repositories the App is installed on: %s", initflow.AgentRefusal(m))
 	}
-	lc, db, err := openProjectBudget(ctx, o.cloud)
+	lc, db, _, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
