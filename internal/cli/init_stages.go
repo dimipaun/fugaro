@@ -383,6 +383,95 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	return initflow.Outcome{Changed: true, Detail: "applied"}, nil
 }
 
+// pinCredentialsImage moves an installation that opted in under an earlier
+// release onto THIS release's credentials service image, before the stage that
+// plans the installation root. It is what makes an ordinary `fugaro update` the
+// whole upgrade for such an installation: the opt-in is carried forward by
+// init.go's prepare (CarriedCredentialsService) and the image inside it with
+// it, so without this the recorded reference keeps naming the release the
+// service was turned on with, and the module's own decisions that read the
+// release out of that reference — credentials.tf's credentials_image_release,
+// which names the Cloud Run container port h2c at and above the release that
+// serves HTTP/2 — stay where they were. The owner is then left with an
+// operator step (re-running `fugaro update --provision-credentials`, the only
+// other path that pins) that the upgrade is not allowed to leave them.
+//
+// It pins through resolveCredentialsImage, the same step the credentials stage
+// pins through: the release's signed "-pinned" image, its signature verified
+// and its digest read back through the installation's remote repository. A
+// digest nothing verified is never written, and a resolve that fails returns
+// the error rather than leaving the installation on an older image silently —
+// an update that cannot reach the registry cannot report the service as moved
+// either.
+//
+// Three things it deliberately does not do:
+//
+//   - It leaves an installation that never opted in alone, whole. No
+//     credentials_service entry in the tfvars is no service to move, and it
+//     reports that without a registry call at all, so the overwhelming majority
+//     of updates are byte-for-byte the run they were.
+//   - It resolves nothing for an installation already on this release's image.
+//     The re-pin is needed once per release, and a run that finds the release
+//     in the reference has nothing to ask the registry.
+//   - It makes no database call. The budget backend's ownership gate is the
+//     credentials stage's (requireCredsRules), and only a run that TURNS THE
+//     SERVICE ON has to answer for it.
+func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
+	ver := releaseVersion()
+	if ver == "" {
+		// A development build resolves no released image (resolveCredentialsImage
+		// refuses it), so there is nothing here for it to pin: the recorded
+		// reference is left as it stands rather than made an error of.
+		return nil
+	}
+	doc, image, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil {
+		return err
+	}
+	if infra.CredentialsServiceImageRelease(image) == ver {
+		return nil
+	}
+	pinned, err := resolveCredentialsImage(ctx, e)
+	if err != nil {
+		return err
+	}
+	updated, err := infra.SetCredentialsServiceImage(doc, pinned)
+	if err != nil {
+		return userErr("setting the credentials service's image in the installation's %s: %v", infra.VarsFile, err)
+	}
+	if err := e.wd.WriteVars(updated); err != nil {
+		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
+	}
+	return nil
+}
+
+// recordedCredentialsImage is the installation root's tfvars as they carry the
+// credentials service, and the image in them: nil when the installation never
+// opted in.
+//
+// The document is the one prepare (init.go) reads its carry from — the tfvars
+// the workdir holds NOW, else the snapshot PrepareWorkdir took before it
+// rebuilt the tree — so the two agree about which entry this run is working
+// on. In an ordinary update the workdir is fresh and only the snapshot has it;
+// in a run that also carries --provision-credentials the stage has already
+// written its own, and the newer document is the one to move.
+func (e *initEngine) recordedCredentialsImage() ([]byte, string, error) {
+	now, err := e.wd.Vars()
+	if err != nil {
+		return nil, "", userErr("reading the installation's tfvars: %v", err)
+	}
+	for _, doc := range [][]byte{now, e.wd.PrevVars} {
+		image, ok, err := infra.CredentialsServiceImageOf(doc)
+		if err != nil {
+			return nil, "", userErr("reading the installation's tfvars: %v", err)
+		}
+		if ok {
+			return doc, image, nil
+		}
+	}
+	return nil, "", nil
+}
+
 // newInstallationStage is stage 3: init's installation engine. With
 // --firebase-project the installation is the Firebase engine's first apply, so the
 // stage is skipped.
@@ -408,6 +497,9 @@ func newInstallationStage(e *initEngine) *engineStage {
 				if err := e.defaultMembers(ctx); err != nil {
 					return err
 				}
+			}
+			if err := e.pinCredentialsImage(ctx); err != nil {
+				return err
 			}
 			return e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old)
 		},
@@ -448,6 +540,9 @@ func newFirebaseStage(e *initEngine) *engineStage {
 						return err
 					}
 				}
+			}
+			if err := e.pinCredentialsImage(ctx); err != nil {
+				return err
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},

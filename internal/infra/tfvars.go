@@ -258,6 +258,15 @@ const (
 // a tfvars rather than in the plan.
 var credsImageRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$`)
 
+// credsImageReleaseRE is the release an image reference names, and it is the
+// module's own pattern for the same question
+// (deploy/terraform/gcp/modules/installation/credentials.tf's
+// credentials_image_release, which reads this same ":<version>@sha256:" out of
+// the reference to decide whether the process inside it serves h2c). The two
+// must move together: a reference whose version one side can read and the
+// other cannot is an installation whose image and port disagree.
+var credsImageReleaseRE = regexp.MustCompile(`:([0-9]+\.[0-9]+\.[0-9]+)@sha256:`)
+
 // Credentials is the credentials service's spec for lc: the names the module
 // uses, the bundle container the loader also derives, the image the caller
 // verified, and the four facts the process is configured with (C1.14) — the
@@ -409,6 +418,85 @@ func SetCredentialsServiceURL(vars []byte, url string) ([]byte, error) {
 	svc["url"] = url
 	doc["credentials_service"] = svc
 	return sortedJSON(doc)
+}
+
+// CredentialsServiceImageOf returns the image the installation root's tfvars
+// carry for the credentials service, and false when they carry no service at
+// all (the installation has not opted in, D147) or one with no image.
+//
+// It is the read an ordinary `fugaro update` makes to learn that this
+// installation runs the service: the credentials stage is registered only
+// under --provision-credentials and every other run rewrites these tfvars from
+// a spec that never carries the key (init.go's prepare), so the document is
+// the only thing in the run that knows. An entry with no image answers false
+// rather than pinning onto it: the module refuses a reference that is not
+// digest-pinned, so the plan is already the refusal, and writing an image into
+// an entry whose other facts are missing would describe half a service.
+func CredentialsServiceImageOf(vars []byte) (image string, ok bool, err error) {
+	if vars == nil {
+		return "", false, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return "", false, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		return "", false, nil
+	}
+	image, _ = svc["image"].(string)
+	if image == "" {
+		return "", false, nil
+	}
+	return image, true, nil
+}
+
+// SetCredentialsServiceImage returns vars with the credentials service's image
+// replaced by image, and every other entry — of the document and of the
+// service's own entry — byte-for-byte what it was.
+//
+// The read-modify-write is the same one SetCredentialsService makes and for a
+// sharper reason: the service's remaining facts (its account, its bundle, the
+// Firebase database it reads, the job accounts it binds a caller to, the
+// audience its callers mint their ID tokens for) are the installation's own
+// record, written by the run that turned the service on, and a re-pin that
+// rebuilt them from a spec would replace the audience with the module's
+// placeholder and stop admitting every call.
+//
+// A document with no service is refused rather than given one: the image is a
+// release's, and writing it here would turn the service on — account, bundle,
+// grant and all — for an installation whose owner never opted in.
+func SetCredentialsServiceImage(vars []byte, image string) ([]byte, error) {
+	if !credsImageRE.MatchString(image) {
+		return nil, fmt.Errorf("the credentials service's image %q must be pinned by digest (ending in @sha256: and 64 lower-case hex digits)", image)
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no credentials_service to set the image of")
+	}
+	svc["image"] = image
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
+}
+
+// CredentialsServiceImageRelease returns the release the credentials service's
+// image reference image names, and "" when it names none.
+//
+// It is the module's own reading of the same string — credentials.tf's
+// credentials_image_release, which is what decides whether the container's
+// port is named h2c — kept as the same pattern on purpose: the two sides must
+// agree about which release an installation runs, or a re-pin would move the
+// image and leave the port behind.
+func CredentialsServiceImageRelease(image string) string {
+	m := credsImageReleaseRE.FindStringSubmatch(image)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // SetCredentialsService returns the installation root's tfvars vars — as
