@@ -12,12 +12,17 @@ flags (`internal/cli/run.go:271-289`). There is **no flag for a USD cap, a token
 cap**, and `taskFlags` (`:292`) is the list a `--pr` follow-up excludes. *Consequence:* the four flags of
 spec §2 are new; `--total-timeout` is the only one that exists and it keeps its meaning.
 
-**F2: Exists. Two of the four dimensions already have a wire home.** `task.Overrides`
-(`internal/task/task.go:753`) carries `review_rounds`, `max_budget_usd`, `model` and `total_timeout`.
-Two of them have **no flag that writes them**: `review_rounds` is set by a recipe's `max_rounds` and the
-repository's `agent.review_rounds`, and `max_budget_usd` is a stage-level `claude --max-budget-usd`
-(`docs/design/v1.md` §4.5). *Consequence:* the spec's `--max-usd` and `--max-review-rounds` write
-`overrides` members that already exist, which is smaller than adding four new ones.
+**F2: Conflicts. Two existing `overrides` members look like two of the four, and mean something else.**
+`task.Overrides` (`internal/task/task.go:753`) carries `review_rounds`, `max_budget_usd`, `model` and
+`total_timeout`, and `Spec.Apply` (`internal/task/task.go:1177-1184`) writes the first two into the running
+config: `review_rounds` becomes `c.Agent.ReviewRounds`, **this run's** review-round count, and
+`max_budget_usd` becomes `c.Agent.MaxBudgetUSD`, the **per-stage** `claude --max-budget-usd`
+(`internal/agent/agent.go:102`). Neither has a flag that writes it, and neither has the scope this design
+needs — a per-**run** round count and a per-**stage** dollar ceiling, not a per-**chain** limit. *Consequence:*
+the four new members take **new names** (`max_usd`, `max_tokens`, `max_time`, `max_review_rounds`), because
+reusing `max_budget_usd` or `review_rounds` for a chain-scoped number would change a field's meaning under
+the rule that a field whose meaning must change gets a new name. The plan already does this (L2). The two
+existing members keep their meaning and their readers untouched.
 
 **F3: Conflicts. The per-run dollar cap is the job's environment, not a launch argument.**
 `MaxRunUSDEnv` is `FUGARO_MAX_RUN_USD` (`internal/runner/spend.go:23`), read by `spendFromEnv` (`:93`), and
@@ -98,10 +103,11 @@ whatever the chain read says, and the unknown-usage case takes the sweeper's own
 (`docs/rigor-modes/reconciliation.md:2126`). *Consequence:* `--max-review-rounds` composes under the mode's
 number and never above it (spec §8, D917).
 
-**F16: Exists. The cloud senior review is an open design, not code.** `docs/cloud-senior-review/` is on
-**PR #1472** only, holding D880–D899 and claiming **Check 125**; it adds a second job with its own named
-account. *Consequence:* nothing here depends on it; its job is a separate chain unless the owner rules
-otherwise (spec §8, D918).
+**F16: Missing on `main`. The cloud senior review is an open design, not code.** `docs/cloud-senior-review/`
+is on **PR #1472** only, holding D880–D899 and claiming **Check 125**; it adds a second job with its own
+named account. This is a *placement* finding rather than a gap in what this work needs: nothing in this
+design depends on it. *Consequence:* its job is a separate chain unless the owner rules otherwise
+(spec §8, D918).
 
 **F17: Exists. A halted run still writes back.** `finalize` makes no model call, and `writeback`
 (`internal/runner/lockcache.go:315`) sets `stage: writeback` and saves the record before the session and

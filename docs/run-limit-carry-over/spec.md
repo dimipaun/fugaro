@@ -94,8 +94,11 @@ remaining(dimension) = chain_limit(dimension) − Σ over the chain's records of
   `result.json` as a new member (`tokens`, an object of input/output/cache totals); a member is only ever
   added within version 1 (the no-semantic-field-changes rule), and the schema gains it in the same task
   (D911).
-- **time**: `finished_at − started_at` for a settled run, and `now − started_at` for a run still running
-  (the launcher reads it from the row it already has, `internal/runview/runview.go:74`).
+- **time**: the **larger** of the record's own elapsed time and the sum of its stages' `duration_s`, so a
+  doctored `started_at` cannot shrink the figure (D920). The record's own elapsed time is
+  `finished_at − started_at` for a settled run, and `now − started_at` for a run still running (the
+  launcher reads it from the row it already has, `internal/runview/runview.go:74`), and each stage's
+  `duration_s` is already in the record (`internal/runstore/runstore.go:531`).
 - **review rounds**: the count of `reviews[]` entries, whose `round` the runner already writes
   (`internal/runstore/runstore.go:146`).
 

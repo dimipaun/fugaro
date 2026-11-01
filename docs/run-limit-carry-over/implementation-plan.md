@@ -29,6 +29,24 @@ and ends at the gates below.
 | 3 | L6, L7 | L0, L5 |
 | 4 | L8 | L1–L7; E1 merged in the same release |
 
+## Where each decision lands
+
+Every decision D901–D920 has one owning task, so a reviewer can follow a ruling to the work that carries
+it. A decision answered the other way changes that task and the spec paragraph that names it.
+
+| Decision | Task | Decision | Task |
+| --- | --- | --- | --- |
+| D901 carrier in `task.json` | L2 | D911 the record's `tokens` | L1 |
+| D902 one flag per dimension | L3 | D912 `--pr` inheritance | L4 |
+| D903 loosening is refused | L3 | D913 `--retry` / `--attempts` | L4 (retry), L3 (batch) |
+| D904 merged twice | L3, L5 | D914 the orchestrator and the coordinator | none — nothing in `ee/` changes |
+| D905 what a chain is | L0, L4 | D915 `runs show` and the display | L6 |
+| D906 the ledger is the records | L0 | D916 the JSON additions | L1, L2, L6, L7 |
+| D907 `remaining` from settled | L0, L5 | D917 under the rigor ceiling | L3 |
+| D908 `--used-*` may only raise | L4 | D918 the cloud senior reviewer | none — nothing here changes for it |
+| D909 unreadable is unknown | L0, L4 | D919 the gateway and the day caps | none — nothing in the gateway changes |
+| D910 the halted-run writeback | L5 | D920 clock skew | L0 |
+
 ## Gates (every task)
 
 `go build ./... && gofmt -l . && go vet ./...` (gofmt prints nothing); the task's named tests with
@@ -81,7 +99,7 @@ The one wire addition this work needs (F8): `result.json` gains `tokens`, within
 - **Tests:** `TestTaskDecodesTheLaunchLimits`, `TestTaskRejectsANegativeLimit`,
   `TestTaskSchemaAcceptsTheLaunchLimits`, `TestTaskSchemaStillRefusesAnUnknownMember`.
 
-## L3. The four flags, and the tighten-only refusal (D902, D903, D904). **SEC**
+## L3. The four flags, and the tighten-only refusal (D902, D903, D904, D913). **SEC**
 
 The launcher resolves the effective policy before the launch and refuses a value that would loosen, naming
 both numbers and the layer that set the lower one (F4). It gates the launch behind a new `*Since` constant
@@ -101,21 +119,26 @@ both numbers and the layer that set the lower one (F4). It gates the launch behi
   `TestRunGatesTheLimitsOnTheImage`, `TestRunWritesNoLimitWhenNoneIsGiven` (the task is byte-identical),
   `TestRunTotalTimeoutAndMaxTimeComposeAsMin` (D903, F18).
 
-## L4. `--continues RUN-ID` (D905, D909, D912)
+## L4. `--continues RUN-ID`, `--used-*`, and what a chain is (D905, D908, D909, D912, D913)
 
-The link for a chain with no PR — a halted run that opened nothing.
+The link for a chain with no PR — a halted run that opened nothing — and the caller's one honest knob,
+`--used-*`, which may only raise the charge (D908).
 
-- **Files (5):** `internal/cli/run.go` (the flag; refused with `--pr`, `--retry` and `--attempts`, as
+- **Files (4):** `internal/cli/run.go` (the `--continues` and `--used-*` flags, and the follow-up path where
+  a `--pr` launch inherits the chain's remaining, D912; refused with `--pr`, `--retry` and `--attempts`, as
   `--attempts` already refuses its three at `:284`), `internal/cli/run_continues_test.go` (new),
-  `internal/cli/run.go`'s follow-up path (a `--pr` launch inherits the chain's remaining, D912),
   `internal/cli/runs.go` (the message when `--pr` finds no run and `--continues` is the way, F9),
-  `internal/cli/runs_test.go`.
+  `internal/cli/runs_test.go` (D913's retry half: a retry is the stored task's chain, computed at its own
+  launch, and it takes no new limits). D913's batch half — a `--max-*` on a batch applies to every attempt
+  and the batch is N chains, not one — is L3's, where the flags are parsed.
 - **Red step:** `TestRunContinuesAHaltedChain` fails while the flag does not exist;
   `TestRunFollowUpInheritsRemaining` fails while a follow-up starts from the full cap.
 - **Tests:** `TestRunContinuesAHaltedChain`, `TestRunRefusesAContinuesItCannotConfirm` (T3),
   `TestRunRefusesAContinuesWithNoUsableRecordWithoutUsed` (D909),
+  `TestRunContinuesWithAUsedFigureThatRaises` (D908),
+  `TestRunRefusesAUsedFigureBelowWhatTheEngineRead` (D908),
   `TestRunFollowUpInheritsRemaining`, `TestRunFollowUpMergesItsLimitUnderTheRemaining`,
-  `TestRunRetryIsTheSameChain`.
+  `TestRunRetryIsTheSameChain` (D913), `TestRunBatchIsNChainsNotOne` (D913, L3's flag parsing).
 
 ## L5. The runner applies `remaining` at bootstrap (D907, D919)
 
@@ -175,6 +198,7 @@ A file that more than one task writes, and what each writes there.
 | `internal/runstore/runstore.go` | L0, L1 | L1 adds the record's `Tokens` member; L0 reads it |
 | `schemas/schemas_test.go` | L1, L2, L6 | one row per new schema or new member |
 | `internal/cli/run.go` | L3, L4, L7 | L3 the four flags, L4 `--continues` and the follow-up inheritance, L7 the reply's members |
+| `internal/cli/runs.go` | L4, L6 | L4 the `--pr`-found-nothing hint, L6 the `runs show` subcommand registration |
 | `internal/task/task.go` | L2, and read by L3 | L2 adds the four `Overrides` members; L3 writes them |
 
 ## Live checks
