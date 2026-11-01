@@ -356,13 +356,56 @@ func instructionRank(p string) string {
 // otherwise contribute a rule to a session that reads a pull request's own
 // head. It is called once, before the review stage, and every other stage of
 // a run keeps the home it has.
+//
+// The toolchain's own locations go back to the paths they had before the swap
+// (reviewToolchainVars), which is what keeps the reviewer able to build and
+// test: a fresh home with no mise data in it is a fresh home where the `go`
+// and `node` shims fail.
 func (r *run) useReviewHome() error {
 	home, err := agent.ReviewHome(r.d.StateDir)
 	if err != nil {
 		return err
 	}
-	r.env = gitops.WithVars(r.env, map[string]string{"HOME": home})
+	vars := reviewToolchainVars(r.parentEnv()["HOME"])
+	vars["HOME"] = home
+	r.env = gitops.WithVars(r.env, vars)
 	return nil
+}
+
+// reviewToolchainVars are the locations the toolchains resolve through HOME,
+// each at the path it had before the review stage's home was swapped: the
+// image's mise setup reads its config, its data and its cache through it
+// (images/derived/Dockerfile.tmpl installs the repository's runtimes into
+// ~/.local/share/mise, with ~/.cache/mise as the download cache and
+// ~/.config/mise/config.toml as the global config image.tools writes), and
+// Go and npm keep their caches under it too. Without these the shims are on
+// PATH but find nothing, and the reviewer cannot build or test the change it
+// is reading — measured in the job image: `HOME=$(mktemp -d) mise which go`
+// answers "go is not a mise bin", and the same command with MISE_DATA_DIR
+// set answers the installed path.
+//
+// home is the runner's own environment's HOME — the image's, or the
+// operator's — and never anything read from the checkout: a path taken from
+// the reviewed head would be the head configuring the session again, one
+// level down. The other locations the image sets are already absolute
+// (COREPACK_HOME, PLAYWRIGHT_BROWSERS_PATH, images/base/Dockerfile's ENV), so
+// they do not move with HOME and are left as they are.
+func reviewToolchainVars(home string) map[string]string {
+	if home == "" {
+		// Nothing to resolve against: the variables would name paths under
+		// a home this run does not know.
+		return map[string]string{}
+	}
+	return map[string]string{
+		"MISE_DATA_DIR":           filepath.Join(home, ".local", "share", "mise"),
+		"MISE_CONFIG_DIR":         filepath.Join(home, ".config", "mise"),
+		"MISE_GLOBAL_CONFIG_FILE": filepath.Join(home, ".config", "mise", "config.toml"),
+		"MISE_CACHE_DIR":          filepath.Join(home, ".cache", "mise"),
+		"GOCACHE":                 filepath.Join(home, ".cache", "go-build"),
+		"GOPATH":                  filepath.Join(home, "go"),
+		"GOMODCACHE":              filepath.Join(home, "go", "pkg", "mod"),
+		"npm_config_cache":        filepath.Join(home, ".npm"),
+	}
 }
 
 // reviewModePrompt is the review stage's prompt: ReviewPrompt for a single

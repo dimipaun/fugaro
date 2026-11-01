@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -2107,6 +2108,67 @@ func TestReviewStageRefusesProjectHooksAndMCP(t *testing.T) {
 				t.Errorf("the review stage's home is not fresh: %v", entries)
 			}
 		})
+	}
+}
+
+// TestReviewStageKeepsTheToolchainsOriginalPaths: the fresh HOME the review
+// stage runs with moves every location a toolchain resolves through $HOME,
+// and the image's runtimes live under the image's own home — mise's installs
+// and its cache, and the Go and npm caches beside them. The review stage's
+// environment therefore names each of them at the path it had before the
+// swap, so the reviewer can still build and test the change it is reading:
+// the shims are on PATH absolutely, but mise resolves `go` through
+// $MISE_DATA_DIR, and under a fresh home it answers "go is not a mise bin"
+// (measured in the job image; see reviewToolchainVars).
+//
+// Every path is under the runner's own HOME and none is under the review
+// home: the paths come from the runner's environment and never from the
+// checkout, because the reviewed head is exactly what the whole posture keeps
+// out, and a path the head could name would put it back in, one level down.
+//
+// Mutation (drop the reviewToolchainVars call, keeping only the HOME swap):
+// this test fails, MISE_DATA_DIR being unset while the shims resolve their
+// installs through the fresh home.
+func TestReviewStageKeepsTheToolchainsOriginalPaths(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	original := envValue(h.deps.Env, "HOME")
+	if original == "" {
+		t.Fatal("the harness gives the runner no HOME to resolve the toolchains against")
+	}
+	var env []string
+	read := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		env = req.Env
+		return reviewVerdictStep("ship", nil)(t, ctx, req)
+	}
+	if _, err := h.run(t, read); err != nil {
+		t.Fatal(err)
+	}
+	home := envValue(env, "HOME")
+	if home == "" || home == original {
+		t.Fatalf("the review stage's HOME is %q, want a home of its own", home)
+	}
+	want := map[string]string{
+		"MISE_DATA_DIR":           filepath.Join(original, ".local", "share", "mise"),
+		"MISE_CONFIG_DIR":         filepath.Join(original, ".config", "mise"),
+		"MISE_GLOBAL_CONFIG_FILE": filepath.Join(original, ".config", "mise", "config.toml"),
+		"MISE_CACHE_DIR":          filepath.Join(original, ".cache", "mise"),
+		"GOCACHE":                 filepath.Join(original, ".cache", "go-build"),
+		"GOPATH":                  filepath.Join(original, "go"),
+		"GOMODCACHE":              filepath.Join(original, "go", "pkg", "mod"),
+		"npm_config_cache":        filepath.Join(original, ".npm"),
+	}
+	for _, k := range slices.Sorted(maps.Keys(want)) {
+		got := envValue(env, k)
+		if got != want[k] {
+			t.Errorf("the review stage's %s is %q, want the original %q", k, got, want[k])
+		}
+		if strings.HasPrefix(got, home+string(filepath.Separator)) || got == home {
+			t.Errorf("the review stage's %s is %q, inside the review home %q", k, got, home)
+		}
 	}
 }
 
