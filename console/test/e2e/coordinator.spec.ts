@@ -112,7 +112,11 @@ const SPEC = 'coordinator.spec.ts'
  * requires the reading words and the skeleton shapes beside it.
  * `shared/schema.js` is here because the fixture is decoded in the window rather
  * than in this file: the screen is handed a document the console's own decoder
- * admitted, which is the shape the entry hands it. Nothing else may be
+ * admitted, which is the shape the entry hands it. `renderer/screens/spend.js`
+ * is here because K1's queue reads a budget document beside the screen's own:
+ * the rules that decide whether a repository is at its cap are the Spend
+ * screen's, and importing them is what keeps one reading of a cap in the
+ * console rather than two. Nothing else may be
  * reachable -- the registry below refuses a specifier that is not a relative
  * path, so a bundle that grew an import of `node:` or of a package fails here
  * rather than in a window with no Node in it. */
@@ -126,6 +130,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
+  'renderer/screens/spend.js',
   'renderer/screens/coordinator.js',
 ])
 
@@ -210,7 +215,7 @@ var coordinator = load('/renderer/screens/coordinator.js');
 var decoded = schema.decodeCoordinatorStatus(${JSON.stringify(document)}, 'the committed coordinator document');
 if (!decoded.ok) return { error: 'the decoder refused the fixture: ' + decoded.skew.because };
 var factory = domFactory();
-var model = coordinator.buildCoordinatorModel({ view: decoded.value });
+var model = coordinator.buildCoordinatorModel({ view: decoded.value, runs: null, plans: null, caps: null, checkout: true, capsHidden: false });
 var tree = coordinator.renderCoordinator(factory, model, ${JSON.stringify(theme)});
 var previous = document.getElementById('coordinator-mount');
 if (previous) previous.remove();
