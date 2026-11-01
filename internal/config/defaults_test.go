@@ -21,8 +21,6 @@ func TestDefaultConstantsAreThePromisedValues(t *testing.T) {
 		want string
 	}{
 		{"git.base_branch", DefaultBaseBranch, "main"},
-		{"agent.review_rounds", strconv.Itoa(DefaultReviewRounds), "2"},
-		{"agent.first_line_rounds", strconv.Itoa(DefaultFirstLineRounds), "1"},
 		{"agent.first_line_review", FirstLineAuto, "auto"},
 		{"agent.auth", DefaultAgentAuth, "vertex"},
 		{"agent.max_budget_usd", strconv.Itoa(DefaultMaxBudgetUSD), "25"},

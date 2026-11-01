@@ -63,15 +63,13 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 	}
 
 	readers := map[string]func() string{
-		"git.base_branch":     func() string { return plain.Git.BaseBranch },
-		"git.pr.early_draft":  func() string { return strconv.FormatBool(*plain.Git.PR.EarlyDraft) },
-		"agent.auth":          func() string { return plain.Agent.Auth },
-		"agent.review_rounds": func() string { return strconv.Itoa(plain.Agent.ReviewRounds) },
+		"git.base_branch":    func() string { return plain.Git.BaseBranch },
+		"git.pr.early_draft": func() string { return strconv.FormatBool(*plain.Git.PR.EarlyDraft) },
+		"agent.auth":         func() string { return plain.Agent.Auth },
 		"agent.max_budget_usd": func() string {
 			return strconv.FormatFloat(plain.Agent.MaxBudgetUSD, 'f', -1, 64)
 		},
 		"agent.first_line_review":      func() string { return plain.Agent.FirstLineReview },
-		"agent.first_line_rounds":      func() string { return strconv.Itoa(plain.Agent.FirstLineRounds) },
 		"workflows.*.checkout":         func() string { return web.Checkout },
 		"workflows.*.resources.cpu":    func() string { return strconv.Itoa(web.Resources.CPU) },
 		"workflows.*.resources.memory": func() string { return web.Resources.Memory },

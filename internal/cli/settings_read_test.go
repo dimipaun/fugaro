@@ -198,16 +198,19 @@ func TestSettingsPrintsKeyValueWinsDefaultState(t *testing.T) {
 // the text table names the scope of each, so two repositories' values are not
 // two identical-looking rows.
 func TestSettingsTableSeparatesTheScopes(t *testing.T) {
+	// The key is one whose value has no spaces: the table is read here by
+	// fields, and a default that is a sentence (an unset knob's) would put only
+	// its first word in the VALUE column.
 	home := settingsFixture(t, "repos:\n  owner/repo-b: {}\n")
-	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML("agent:\n  review_rounds: 3\n"))
-	out, _, err := execute(t, "settings", "agent.review_rounds", "--all-repos")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML("agent:\n  max_budget_usd: 7\n"))
+	out, _, err := execute(t, "settings", "agent.max_budget_usd", "--all-repos")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	seen := map[string]string{}
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n")[1:] {
 		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "agent.review_rounds" {
+		if len(fields) < 2 || fields[0] != "agent.max_budget_usd" {
 			t.Fatalf("row = %q, want the key first", line)
 		}
 		if _, dup := seen[fields[1]]; dup {
@@ -218,14 +221,14 @@ func TestSettingsTableSeparatesTheScopes(t *testing.T) {
 	if len(seen) != 3 {
 		t.Fatalf("scopes = %v, want the project and its two repositories", seen)
 	}
-	if seen["project"] != "2" {
-		t.Errorf("the project scope's value = %q, want the default 2", seen["project"])
+	if seen["project"] != "25" {
+		t.Errorf("the project scope's value = %q, want the default 25", seen["project"])
 	}
-	if seen["repo:owner/repo-a"] != "3" {
-		t.Errorf("the repository scope's value = %q, want the checkout's 3", seen["repo:owner/repo-a"])
+	if seen["repo:owner/repo-a"] != "7" {
+		t.Errorf("the repository scope's value = %q, want the checkout's 7", seen["repo:owner/repo-a"])
 	}
-	if seen["repo:owner/repo-b"] != "2" {
-		t.Errorf("the unchecked-out repository's value = %q, want its default 2", seen["repo:owner/repo-b"])
+	if seen["repo:owner/repo-b"] != "25" {
+		t.Errorf("the unchecked-out repository's value = %q, want its default 25", seen["repo:owner/repo-b"])
 	}
 }
 
@@ -411,8 +414,15 @@ func TestSettingsAllReposShowsUnknownWithoutACheckout(t *testing.T) {
 	if row.State != "unknown (no checkout on this machine)" {
 		t.Errorf("state = %q, want the unknown sentence", row.State)
 	}
-	if row.Value == nil || *row.Value != row.Default.Value {
-		t.Errorf("value = %q, default = %q: a repository that was not read is not guessed", deref(row.Value), row.Default.Value)
+	// The default is either a value or the sentence saying what unset means
+	// (spec §2.4), and agent.review_rounds' is the second since #1483: the
+	// number depends on the rigor mode a run resolves.
+	want := row.Default.Value
+	if want == "" {
+		want = row.Default.Unset
+	}
+	if row.Value == nil || *row.Value != want {
+		t.Errorf("value = %q, default = %q: a repository that was not read is not guessed", deref(row.Value), want)
 	}
 }
 
@@ -935,8 +945,9 @@ func TestSettingsRepoScopeNamesTheProfileThatDecidedAValue(t *testing.T) {
 // project scope reports the value a run gets from them. The keys the fixture's
 // defaults do not carry still read as defaults: the decoded fields cannot tell
 // `review_rounds: 0` from an unset key, so a read that took the block for the
-// answer would print a 0 for agent.review_rounds and its 25-dollar default for
-// agent.max_budget_usd.
+// answer would print a 0 for agent.review_rounds — where the key's own default
+// is the sentence saying the run's rigor mode decides it (#1483) — and the
+// 25-dollar default for agent.max_budget_usd.
 func TestSettingsProjectScopeReadsTheLayersDefaults(t *testing.T) {
 	settingsFixture(t, "")
 	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
@@ -959,7 +970,7 @@ func TestSettingsProjectScopeReadsTheLayersDefaults(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ key, value string }{
-		{"agent.review_rounds", "2"},
+		{"agent.review_rounds", "unset = the run's rigor mode decides (rigor.DefaultRounds)"},
 		{"agent.max_budget_usd", "25"},
 	} {
 		row := rowOf(t, doc, tc.key, "project")

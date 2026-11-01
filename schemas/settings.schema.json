@@ -227,8 +227,7 @@
           "default": "auto"
         },
         "agent.first_line_rounds": {
-          "$comment": "config.DefaultFirstLineRounds",
-          "default": "1"
+          "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
         "agent.instructions": {
           "default": "unset = none"
@@ -268,8 +267,7 @@
           "default": "unset = none"
         },
         "agent.review_rounds": {
-          "$comment": "config.DefaultReviewRounds",
-          "default": "2"
+          "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
         "backend": {
           "default": "unset = cloud-run"
@@ -541,7 +539,7 @@
           "default": "unset = auto"
         },
         "layer.defaults.agent.first_line_rounds": {
-          "default": "unset = 1"
+          "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
         "layer.defaults.agent.max_budget_usd": {
           "default": "unset = 25"
@@ -562,7 +560,7 @@
           "default": "unset = the built-in recipe"
         },
         "layer.defaults.agent.review_rounds": {
-          "default": "unset = 2"
+          "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
         "layer.defaults.git.pr.checkpoints": {
           "default": "unset = inherit"
@@ -776,6 +774,9 @@
         },
         "layer.version": {
           "default": "unset = the file is refused (version: is required)"
+        },
+        "layer_generation": {
+          "default": "unset = none: no generation is recorded; the next update adopts the published one"
         },
         "log_view": {
           "default": "unset = the project's default logs"
