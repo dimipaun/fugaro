@@ -2298,11 +2298,18 @@ export interface DrawnRunFrame {
   readonly header: ScreenElement
   readonly crumb: ScreenElement
   readonly main: ScreenElement
-  /** mainSlot holds the record read's busy mark. It is the first child of the
-   * main column rather than anything inside the diagnosis, because the mark is
-   * the *top* of the column: the diagnosis panel is below the timeline and a
-   * mark inside it would be a mark under the fold, which is the one place a
-   * section's busy state must not live. */
+  /** recordHost is the region the record's read owns and the one it wears its
+   * mark on: the record's own busy slot, the panels that read draws and the
+   * diagnosis. **It is the record's and not the column's.** The log window sits
+   * beside it in `main` and is a section of its own, so a mark on the column
+   * would dim and announce a section that has already answered while
+   * `run.diagnose` is still out. */
+  readonly recordHost: ScreenElement
+  /** mainSlot holds the record read's busy mark. It is the host's first child
+   * rather than anything inside the diagnosis, because the mark is the *top* of
+   * what that read draws: the diagnosis panel is below the timeline and a mark
+   * inside it would be a mark under the fold, which is the one place a section's
+   * busy state must not live. */
   readonly mainSlot: ScreenElement
   readonly aside: ScreenElement
   readonly diagnosis: ScreenElement
@@ -2317,13 +2324,14 @@ export interface DrawnRunFrame {
  * the click's own turn, and `renderRun` is this frame with both sections filled.
  *
  * **The main column is drawn empty, and both callers write it through
- * `runMainChildren`.** The column holds the busy slot, what the record draws, the
- * diagnosis, the log window and the arrivals -- two of which are the frame's and
- * three of which are a read's -- and the two reads answer in an order nobody
- * chooses, so there is no append order the frame could fix that would still hold
- * when the log window answered first. Drawing the column empty is what lets
- * `renderRun` append it in one pass and the entry *replace* it as each read
- * lands, with the same list describing both.
+ * `runMainChildren` and `runRecordChildren`.** The column holds the record's
+ * host, the log window and the arrivals, and the host in turn holds the record's
+ * busy slot, the panels the record draws and the diagnosis -- two of which are
+ * the frame's and three of which are a read's -- and the two reads answer in an
+ * order nobody chooses, so there is no append order the frame could fix that
+ * would still hold when the log window answered first. Drawing the column empty
+ * is what lets `renderRun` append it in one pass and the entry *replace* it as
+ * each read lands, with the same list describing both.
  */
 export function renderRunFrame(factory: RunFactory, theme: RunTheme, run: string): DrawnRunFrame {
   const root = make(factory, 'section', 'run')
@@ -2332,6 +2340,7 @@ export function renderRunFrame(factory: RunFactory, theme: RunTheme, run: string
   root.append(drawn.header)
   const layout = cell(root, factory, 'div', 'run-layout')
   const main = cell(layout, factory, 'div', 'run-main')
+  const recordHost = make(factory, 'div', 'run-record')
   const mainSlot = make(factory, 'div', BUSY_SLOT_CLASS)
   const diagnosis = make(factory, 'section', 'run-diagnosis')
   diagnosis.setAttribute('aria-label', DIAGNOSIS_PANEL_NAME)
@@ -2345,6 +2354,7 @@ export function renderRunFrame(factory: RunFactory, theme: RunTheme, run: string
     header: drawn.header,
     crumb: drawn.crumb,
     main,
+    recordHost,
     mainSlot,
     aside,
     diagnosis,
@@ -2419,9 +2429,23 @@ export interface RunMainParts {
 }
 
 /**
- * runMainChildren is the order of the run screen's main column: the column's own
- * busy slot, what the run's record draws, the diagnosis, the capped log window
- * and the arrivals.
+ * runRecordChildren is the order inside the record read's own host: its busy
+ * slot, the panels the record draws and the diagnosis.
+ *
+ * **The host is what the record's mark is on, and the mark is what makes the
+ * split worth having.** The host holds only what `run.diagnose` draws, so the
+ * busy state the entry puts on the host while that read is out dims and
+ * announces exactly the region that is still coming -- never the log window
+ * beside it, which may have landed first and would otherwise be dimmed and
+ * announced as busy by a read that is not its own.
+ */
+export function runRecordChildren(frame: DrawnRunFrame, parts: RunMainParts): readonly ScreenElement[] {
+  return [frame.mainSlot, ...parts.before, ...(parts.diagnosis ? [frame.diagnosis] : [])]
+}
+
+/**
+ * runMainChildren is the order of the run screen's main column: the record
+ * read's host, the capped log window and the arrivals.
  *
  * **The column is written as a whole list, and that is what the two independent
  * reads cost.** The log window's read can land before the record's, and a
@@ -2432,13 +2456,7 @@ export interface RunMainParts {
  * read to land has to sit under the first.
  */
 export function runMainChildren(frame: DrawnRunFrame, parts: RunMainParts): readonly ScreenElement[] {
-  return [
-    frame.mainSlot,
-    ...parts.before,
-    ...(parts.diagnosis ? [frame.diagnosis] : []),
-    frame.logs,
-    ...parts.arrivals,
-  ]
+  return [frame.recordHost, frame.logs, ...parts.arrivals]
 }
 
 /** renderRun walks the model through Task 2.0's writers, in one pass: the frame,
@@ -2449,8 +2467,8 @@ export function renderRun(factory: RunFactory, model: RunModel, theme: RunTheme)
   const frame = renderRunFrame(factory, theme, model.row.run)
   const record = fillRunRecord(factory, model, frame)
   const arrivals = fillRunLogs(factory, model, frame)
-  for (const child of runMainChildren(frame, { before: record.before, diagnosis: true, arrivals })) {
-    frame.main.append(child)
-  }
+  const parts: RunMainParts = { before: record.before, diagnosis: true, arrivals }
+  for (const child of runRecordChildren(frame, parts)) frame.recordHost.append(child)
+  for (const child of runMainChildren(frame, parts)) frame.main.append(child)
   return frame.root
 }

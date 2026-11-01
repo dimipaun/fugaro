@@ -37,6 +37,7 @@ import {
   renderRunFrame,
   runBusyLabel,
   runMainChildren,
+  runRecordChildren,
 } from '../../src/renderer/screens/run'
 import type {
   RunFactory,
@@ -750,19 +751,24 @@ describe('renderRun: the two columns', () => {
     expect(classesOf(layout)).toEqual(['run-main', 'run-aside'])
 
     const main = one(tree, 'run-main')
-    // The column's own busy slot is its first child. It is empty in a one-shot
+    // The record read's host is the column's first child, and the log window and
+    // its replay are the column's other two. **The host is the record's own and
+    // not the column**: the mark that read wears is over the panels it draws, and
+    // a mark over the whole column would dim and announce the log window with it
+    // -- a section that has answered and is not being read.
+    expect(classesOf(main)).toEqual(['run-record', 'run-logs', 'run-replay'])
+    // The host's own busy slot is its first child. It is empty in a one-shot
     // drawing -- `entry.ts`'s `showRun` draws the record read's mark into it
     // while that read is out -- and an empty slot is not laid out at all
     // (`flight-deck.css`). It is drawn for the reason the Spend sections' slots
     // are: the frame goes up before either read answers, so the mark has
     // somewhere to go.
-    expect(classesOf(main)).toEqual([
+    const host = one(tree, 'run-record')
+    expect(classesOf(host)).toEqual([
       'console-busy-slot',
       'run-stages',
       'run-tolerated-absent',
       'run-diagnosis',
-      'run-logs',
-      'run-replay',
     ])
 
     const aside = one(tree, 'run-aside')
@@ -819,38 +825,55 @@ describe('renderRunFrame: the frame a run is opened in', () => {
     expect(all(frame.root, 'run-log-line')).toEqual([])
     expect(all(frame.root, 'run-stages')).toEqual([])
 
-    // The frame leaves the main column empty and hands its two callers the one
-    // order: `renderRun` appends it to a fresh column, and the entry replaces
-    // the column's children with it on every fill. The column's own busy slot
-    // is where the record read's mark goes, and the log section's is where the
-    // log read's goes.
+    // The frame leaves the column **and the record's host inside it** empty, and
+    // hands its two callers the order: `renderRun` appends it to both, and the
+    // entry replaces their children with it on every fill. The host holds the
+    // record's own panels and the slot the record read's mark goes into, and the
+    // log window is the column's other child -- never inside the host, which is
+    // the region that mark dims and announces -- while the log section's own
+    // slot is where the log read's mark goes.
     expect(frame.main.childNodes()).toEqual([])
+    expect(frame.recordHost.childNodes()).toEqual([])
+    expect((frame.recordHost as FakeScreen).classes).toEqual(['run-record'])
     const logsSlot = frame.logs.childNodes()
     expect(logsSlot).toHaveLength(1)
     expect((logsSlot[0] as FakeScreen).classes).toEqual(['console-busy-slot'])
     expect((frame.mainSlot as FakeScreen).classes).toEqual(['console-busy-slot'])
+    expect(runRecordChildren(frame, { before: [], diagnosis: false, arrivals: [] })).toEqual([frame.mainSlot])
+    expect(runMainChildren(frame, { before: [], diagnosis: false, arrivals: [] })).toEqual([
+      frame.recordHost,
+      frame.logs,
+    ])
   })
 
-  it('writes the main column as one order, and leaves the diagnosis out until its read answers', () => {
+  it('writes the record’s host and the column as one order, and leaves the diagnosis out until its read answers', () => {
     const frame = renderRunFrame(factory, 'light', TRACKED)
     const record = factory.create('section')
     const arrival = factory.create('section')
 
-    // The two reads answer in an unknown order, and the column is one list
-    // rather than two halves: the record's panels, then the diagnosis, then the
-    // log window and what the log read brought with it.
-    expect(runMainChildren(frame, { before: [record], diagnosis: true, arrivals: [arrival] })).toEqual([
+    // The two reads answer in an unknown order, and the host is one list rather
+    // than two halves: its own busy slot, the record's panels and then the
+    // diagnosis -- the three things the record's read owns and the region its
+    // mark covers.
+    expect(runRecordChildren(frame, { before: [record], diagnosis: true, arrivals: [arrival] })).toEqual([
       frame.mainSlot,
       record,
       frame.diagnosis,
+    ])
+    // The column is the host, then the log window and what the log read brought
+    // with it: the log window is the frame's own and never the record's, which is
+    // why the record's mark cannot dim it.
+    expect(runMainChildren(frame, { before: [record], diagnosis: true, arrivals: [arrival] })).toEqual([
+      frame.recordHost,
       frame.logs,
       arrival,
     ])
     // A run whose diagnosis refused has no diagnosis section in the column at
     // all: the refusal is drawn in the slot instead, and an empty named region
     // beside it would be a panel that says the run reported nothing.
+    expect(runRecordChildren(frame, { before: [], diagnosis: false, arrivals: [] })).toEqual([frame.mainSlot])
     expect(runMainChildren(frame, { before: [], diagnosis: false, arrivals: [] })).toEqual([
-      frame.mainSlot,
+      frame.recordHost,
       frame.logs,
     ])
   })

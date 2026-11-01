@@ -108,11 +108,14 @@ import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
 import {
+  NO_CHECKOUT_AUTO_SENTENCE,
   NO_CHECKOUT_CHOICE_LABEL,
   NO_CHECKOUT_EMPTY_SENTENCE,
   NO_CHECKOUT_HEADLINE,
   NO_CHECKOUT_KIND,
+  NO_CHECKOUT_USE_LABEL,
 } from '../../src/renderer/screens/nocheckout'
+import { CHECKOUT_SELECT_CLASS } from '../../src/renderer/checkout'
 import {
   BUSY_ATTRIBUTE,
   BUSY_BUSY_ATTRIBUTE,
@@ -686,9 +689,9 @@ describe('the dashboard the entry mounts', () => {
       expect(classed(panel, 'run-id')[0]?.textContent).toBe('20261015-120000-aa01')
       expect(classed(panel, 'run-crumb-live')[0]?.tagName).toBe('BUTTON')
       // Both sections wear their own mark and say what they are reading.
-      const main = classed(panel, 'run-main')[0] as FakeNode
+      const main = classed(panel, 'run-record')[0] as FakeNode
       const logsSection = classed(panel, 'run-logs')[0] as FakeNode
-      expect(main?.attributes.get('data-busy'), 'the run column does not say it is reading').toBe('true')
+      expect(main?.attributes.get('data-busy'), 'the record’s host does not say it is reading').toBe('true')
       expect(main?.attributes.get('aria-busy')).toBe('true')
       expect(logsSection?.attributes.get('aria-busy')).toBe('true')
       const labels = classed(panel, 'console-busy-label').map((node) => node.textContent)
@@ -723,7 +726,7 @@ describe('the dashboard the entry mounts', () => {
       // replays: it is up as soon as that read lands, before the record's has.
       expect(classed(panel, 'run-replay')).toHaveLength(1)
       expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
-      expect(classed(panel, 'run-main')[0]?.attributes.get('data-busy')).toBe('true')
+      expect(classed(panel, 'run-record')[0]?.attributes.get('data-busy')).toBe('true')
       expect(classed(panel, 'console-busy-label').map((node) => node.textContent)).toEqual([
         'Reading the diagnosis of 20261015-120000-aa01',
       ])
@@ -2165,6 +2168,7 @@ function listRow(
     readonly command?: string
     readonly details?: readonly string[]
     readonly checkouts?: readonly string[]
+    readonly checkoutChoices?: readonly Record<string, unknown>[]
   } = {},
 ): Record<string, unknown> {
   return {
@@ -2173,6 +2177,7 @@ function listRow(
     active: options.open ?? false,
     saved: true,
     checkouts: options.checkouts ?? [],
+    checkoutChoices: options.checkoutChoices ?? [],
     state: {
       issue: options.issue ?? 'none',
       readable: options.readable ?? true,
@@ -2195,6 +2200,10 @@ function orbitRow(open = false): Record<string, unknown> {
     command: 'fugaro doctor --project orbit',
     details: [ORBIT_LINE],
     checkouts: ['/home/operator/src/orbit'],
+    // The menu is the main process's own list -- one entry per repository the
+    // CLI re-validated and enrolled -- and it is not the picker window's
+    // `checkouts`, which carries a path with no repository to label it by.
+    checkoutChoices: [{ repository: 'github/owner/orbit', path: '/home/operator/src/orbit', more: 0 }],
   })
 }
 
@@ -2287,9 +2296,18 @@ describe('the rail over the installation list', () => {
     expect(rowNamed(document, 'orbit').attributes.get('aria-selected')).toBe('true')
     expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('false')
 
-    buttonLabelled(view, `${ISSUE_CHECKOUT_LABEL}: /home/operator/src/orbit`).click()
+    // The chooser is a menu of the installation's own checkouts and one button
+    // beside it, and the directory it sends is the entry the menu carries: the
+    // control's value is what the main process matches against its own list.
+    const menu = classed(view, CHECKOUT_SELECT_CLASS)[0] as FakeNode
+    expect(menu.tagName).toBe('SELECT')
+    expect(menu.children.map((option) => option.attributes.get('value'))).toEqual(['/home/operator/src/orbit'])
+    // A real `select` reports its first option as its value before anyone
+    // touches it; the fake node derives nothing, so the case writes it.
+    ;(menu as unknown as { value: string }).value = '/home/operator/src/orbit'
+    buttonLabelled(view, ISSUE_CHECKOUT_LABEL).click()
     await flush()
-    expect(rail.at(-1)).toEqual({
+    expect(rail.at(-1), 'the menu sent a directory it was not offering').toEqual({
       name: 'setInstallationCheckout',
       args: { project: 'orbit', checkout: '/home/operator/src/orbit' },
     })
@@ -4923,15 +4941,28 @@ describe('the Graph’s no-checkout state', () => {
   })
 
   /** checkoutBridge is a console whose rail read answered with one row and
-   * whose plan read refused for want of a checkout: the two facts the card's
-   * action depends on. `checkouts` is what the CLI listed for that row, which is
-   * what the picker's own `Use <dir>` buttons are drawn from. */
-  function checkoutBridge(checkouts: readonly string[]): FakeBridge & {
+   * whose plan read refused for want of a checkout until a checkout is
+   * recorded: the two facts the card's action depends on. `choices` is the menu
+   * the main process built for that row, which is what the card's control is
+   * drawn from and what the write is matched against. */
+  function checkoutBridge(choices: readonly Record<string, unknown>[]): FakeBridge & {
     readonly rail: readonly { readonly name: string; readonly args: unknown }[]
+    readonly release: (value: unknown) => void
   } {
-    const base = railBridge([listRow('acme', { open: true, checkouts })])
-    base.bridge['planStatus'] = () => ({ ok: false, reason: NO_PLAN_CHECKOUT })
-    return base
+    vi.stubGlobal('Worker', FakeWorker)
+    const write = holding()
+    let recorded = false
+    const base = railBridge([listRow('acme', { open: true, checkoutChoices: choices })], {
+      setInstallationCheckout: () => {
+        recorded = true
+        return write.reply()
+      },
+    })
+    // The write is **held**, so a case can look at the card the console drew
+    // before the answer lands and at the plan read that follows it: the two are
+    // the whole of what this card does.
+    base.bridge['planStatus'] = () => (recorded ? planStatusReply() : { ok: false, reason: NO_PLAN_CHECKOUT })
+    return { ...base, release: (value) => write.release(value) }
   }
 
   it('says what to do instead of drawing an action for an installation that lists no checkout', async () => {
@@ -4939,29 +4970,76 @@ describe('the Graph’s no-checkout state', () => {
     const document = await openGraph(bridge)
     const card = panelOf(document).children[0] as FakeNode
     expect(card.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
-    // The picker's only word about a checkout is one `Use <dir>` per checkout
-    // the CLI listed, so for a row with none the card offers no action and says
-    // what records one instead.
+    // The action is a menu drawn from the CLI's own list, so for a row with
+    // nothing in that list the card offers no action and says what records one.
     expect(holdsText(card, NO_CHECKOUT_EMPTY_SENTENCE)).toBe(true)
     expect(
-      everyNode(card).some((node) => node.tagName === 'BUTTON' && node.textContent === NO_CHECKOUT_CHOICE_LABEL),
+      everyNode(card).some(
+        (node) =>
+          (node.tagName === 'BUTTON' && node.textContent === NO_CHECKOUT_USE_LABEL) ||
+          node.attributes.get('class') === CHECKOUT_SELECT_CLASS,
+      ),
       'the card drew an action that leads nowhere',
     ).toBe(false)
-    expect(rail.map((call) => call.name), 'the card opened the picker for a row it has no action for').toEqual([
+    expect(rail.map((call) => call.name), 'the card wrote a checkout for a row it has no action for').toEqual([
       'listInstallations',
     ])
   })
 
-  it('draws the action, and opens the picker, when the CLI listed a checkout', async () => {
-    const { bridge, rail } = checkoutBridge(['/home/operator/src/acme'])
+  it('sends the directory the menu has selected, and draws the plan it then reads', async () => {
+    const { bridge, rail, release } = checkoutBridge([
+      { repository: 'github/owner/acme', path: '/home/operator/src/acme', more: 0 },
+      { repository: 'github/owner/acme', path: '/home/operator/src/scratch', more: 0 },
+    ])
     const document = await openGraph(bridge)
     const card = panelOf(document).children[0] as FakeNode
     expect(holdsText(card, NO_CHECKOUT_EMPTY_SENTENCE)).toBe(false)
-    buttonLabelled(card, NO_CHECKOUT_CHOICE_LABEL).click()
-    expect(rail.at(-1), 'the card’s button does not open the picker').toEqual({
-      name: 'openInstallations',
-      args: {},
+    const menu = classed(card, CHECKOUT_SELECT_CLASS)[0] as FakeNode
+    expect(menu.children.map((option) => option.attributes.get('value'))).toEqual([
+      '/home/operator/src/acme',
+      '/home/operator/src/scratch',
+    ])
+    ;(menu as unknown as { value: string }).value = '/home/operator/src/scratch'
+    buttonLabelled(card, NO_CHECKOUT_USE_LABEL).click()
+    await flush()
+    expect(rail.at(-1), 'the menu sent a directory it was not offering').toEqual({
+      name: 'setInstallationCheckout',
+      args: { project: 'acme', checkout: '/home/operator/src/scratch' },
     })
+    // The write is not the answer: the plan read after it is, and it is what
+    // replaces the card with the picture -- in the frame the operator is in,
+    // never by walking off to the issue view the rail's own actions leave for.
+    expect(panelOf(document).children[0]?.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    release({ ok: true, data: null })
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length, 'the card did not give way to the plan').toBeGreaterThan(0)
+  })
+
+  it('chooses the installation’s one checkout by itself, says so once, and draws the plan', async () => {
+    const { bridge, rail, release } = checkoutBridge([
+      { repository: 'github/owner/acme', path: '/home/operator/src/acme', more: 0 },
+    ])
+    const document = await openGraph(bridge)
+    const card = panelOf(document).children[0] as FakeNode
+    // A menu of one entry is a control with nothing to choose, so the console
+    // presses it: the card says which directory the Graph is reading, in the
+    // entry's own words for it, and draws no control at all.
+    expect(holdsText(card, `${NO_CHECKOUT_AUTO_SENTENCE} github/owner/acme — …/src/acme`)).toBe(true)
+    expect(classed(card, CHECKOUT_SELECT_CLASS)).toEqual([])
+    expect(everyNode(card).some((node) => node.tagName === 'BUTTON' && node.textContent === NO_CHECKOUT_USE_LABEL)).toBe(
+      false,
+    )
+    expect(rail.at(-1), 'the card did not choose the one checkout it was offered').toEqual({
+      name: 'setInstallationCheckout',
+      args: { project: 'acme', checkout: '/home/operator/src/acme' },
+    })
+    release({ ok: true, data: null })
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    // Once: the same directory is never sent twice for one installation, so a
+    // card drawn again for it -- a cadence read, another visit -- offers the
+    // menu rather than claiming a read it is not making.
+    expect(rail.filter((call) => call.name === 'setInstallationCheckout')).toHaveLength(1)
   })
 
   it('draws the refusal screen for every other sentence the plan read refuses with', async () => {

@@ -250,6 +250,60 @@ describe('the installation list document', () => {
     expect(past.ok === false && past.reason).toContain('sandbox')
   })
 
+  it('offers a dropdown only the rows that are re-validated, enrolled and paired with a repository', () => {
+    // **This is the filter the whole dropdown rests on** (design §3.4 rule 7,
+    // §6.8): a path reaches the chooser only from a row carrying **both**
+    // `valid: true` and `enrolled: true` and naming the repository it belongs
+    // to. Everything else -- a row the CLI refused (`missing`, `other_project`,
+    // `not_representable`, whatever the reason), a row whose project does not
+    // enroll that repository, a row with no repository to label it by, a
+    // relative or control-bearing path -- is not offered, and the console then
+    // has nothing to send back.
+    //
+    // Mutation (run, restore): drop the `|| row['enrolled'] !== true` half of the
+    // condition in `checkoutsOf`, and the `not-enrolled` row below appears in
+    // `checkoutChoices`; drop the `valid` half and the `missing` row does.
+    const answer = parsed({
+      installations: [
+        {
+          name: 'sandbox',
+          gcp_project: 'p',
+          region: 'r',
+          checkouts: [
+            { repository: 'github/o/app', path: '/src/app', enrolled: true, valid: true },
+            { repository: 'github/o/app', path: '/src/app-two', enrolled: true, valid: true },
+            // The project's config does not enroll it: `valid` is already false,
+            // and the row says so twice over.
+            { repository: 'github/o/other', path: '/src/other', enrolled: false, valid: false, reason: 'not_enrolled' },
+            // A contradiction a CLI should never print, and the one case where
+            // the two fields disagree: without the `enrolled` half it would be
+            // offered.
+            { repository: 'github/o/other', path: '/src/other-two', enrolled: false, valid: true },
+            // Stale rows of every kind are never offered.
+            { repository: 'github/o/gone', path: '/src/gone', enrolled: true, valid: false, reason: 'missing' },
+            { repository: 'github/o/gone', path: '/src/gone-two', enrolled: true, valid: false, reason: 'not_representable' },
+            // Nothing to label a menu entry with.
+            { path: '/src/anonymous', enrolled: true, valid: true },
+            { repository: '', path: '/src/empty-repository', enrolled: true, valid: true },
+            // A path that is not a directory the console may hand over.
+            { repository: 'github/o/relative', path: 'src/relative', enrolled: true, valid: true },
+            { repository: 'github/o/control', path: '/src/with\u0000nul', enrolled: true, valid: true },
+          ],
+        },
+      ],
+      warnings: [],
+    })
+    expect(answer.ok).toBe(true)
+    if (!answer.ok) return
+    expect(answer.document.installations[0]?.checkoutChoices).toEqual([
+      { repository: 'github/o/app', path: '/src/app' },
+      { repository: 'github/o/app', path: '/src/app-two' },
+    ])
+    // The older `checkouts` list is untouched by it: the picker window's own
+    // buttons are drawn from that one, and this filter is the dropdown's.
+    expect([...(answer.document.installations[0]?.checkouts ?? [])]).toContain('/src/anonymous')
+  })
+
   it('refuses text that is not the document, rather than drawing part of it', () => {
     // Each of these is a mutation of the one above: a marshalled struct instead
     // of the named document, a document with no array, a row that is not an

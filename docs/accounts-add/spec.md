@@ -456,13 +456,18 @@ the repository", and the page's own §1 — and a launcher that may start a run 
 that run print the token (design D2). Widening `allow_data_to` therefore widens who may
 reach that token's account, and the confirmation's own text names it, with what it means (D868,
 answered: `--yes` covers everything, so the warning is carried by the sentence rather than by a typed
-gate; §2.6). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see #1472, F3).
+gate; §2.6). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see the cloud-senior-review
+design's **F3**, [docs/cloud-senior-review/](../cloud-senior-review/reconciliation.md)).
 
 ## 7. Owner-only boundaries
 
 - `claude_accounts`, `profiles` and `project_secrets` stay local-config-only: not `fugaro.yaml`, not
   the project layer, so neither a reviewed repository nor a published layer can add an account. This
   design changes none of that.
+- The three account-choice keys of §11.1 (`default_claude_account`, `stages.<stage>.claude_account`,
+  `claude_account_auto`) are local-config-only for the same reason, and `claude_account_auto` is a
+  sensitive direction: the choice of *which* admitted account a stage uses is the owner's, on the
+  owner's machine, and never a published or reviewed document's.
 - The command is a **local** act on the owner's machine. It writes the cloud only through the stages
   §2.5 names, which are the same stages `fugaro update` runs.
 - No new cloud call is introduced: Secret Manager (the store), the Realtime Database (the node and the
@@ -517,7 +522,167 @@ own account field (`fugaro watch --json`, `runstore.Record`), which this design 
 console's crash reporter is named in §6(d) as a leak path that is already closed, and nothing here
 reopens it.
 
-## 11. Release placement
+## 11. How a run chooses among several accounts (D873–D876, D876 open)
+
+An installation may define several accounts (`claude_accounts`) and a profile may list several of them
+(F1), and until now the choice was made once, for the whole run: the flag, else the committed
+`fugaro.yaml`'s `agent.oauth_token`, else the unsuffixed `default`. The owner's rulings of 2026-11-01 —
+**D873, D874, D875** — settle the rest: an explicit choice always wins, `auto` means ordered failover,
+and `auto` ships dormant. **No command is added.** The keys are registry keys written by
+`fugaro settings set` (§4.2 of [the settings spec](../settings-commands/spec.md)) through the one write
+helper that path and every dedicated family share (S5, E3), and the account a run used is read where it
+already is — with one limit the rulings exposed and did not settle, which is **D876** (§11.5).
+
+### 11.1 The keys (D873)
+
+| Key | Type | What it is |
+| --- | --- | --- |
+| `default_claude_account` | an account name | The project's default: the account every stage uses when nothing more specific does |
+| `stages.<stage>.claude_account` | an account name | The account one stage uses instead — `stages.review.claude_account` is "the reviewer uses account B" |
+| `claude_account_auto` | bool, default `false` | Whether `auto` (§11.3) may choose at all. Off, and dormant (§11.4) |
+
+All three are **local-config-only** (`--layer local`), on the boundary §7 already draws for
+`claude_accounts` and `profiles`: neither a reviewed repository nor a published layer may pick an
+account, and a key that could would be a way around `claude_accounts`'s own allow-list. Their registry
+rows name the generic path as their `Owner` (a scalar key is the generic path's, §4.4 of the settings
+spec), and `claude_account_auto` is marked a **sensitive direction**, so turning it on asks for the
+typed project name the way turning a `followup.*` key on does (D846): a write that spreads one project
+across several accounts is not one a script should be able to make.
+
+The names follow the registry's conventions. `default_claude_account` sits beside `default_profile`,
+the local config's other "which one by default" pointer, and `stages.<stage>.claude_account` has the
+shape of `repos.<r>.base_branch` — a wildcard segment and a leaf. `<stage>` is one of the **run's own
+stage names**, the ones `result.json` records (`implement`, `review_first`, `review`, `fix`, and the
+other stages a run spends a model call on), and a segment that is not a stage is refused rather than
+silently never applying. The alternative — one key per **role** (`coder`, `reviewer`,
+`config.StageRole`) — is a smaller surface over a closed set, and it is refused here for the reason
+D873 was asked at all: `StageRole` folds every stage but `review` into the coder role, so
+`review_first` could not use an account `implement` does not.
+
+### 11.2 What wins (D873)
+
+**Explicit choice always wins.** The chain `claudeAccountFor` (`internal/cli/run.go`) already walks
+gains two rungs under the flag and keeps every rung it has:
+
+| # | The source | Where it comes from |
+| --- | --- | --- |
+| 1 | `fugaro run --token NAME` | the flag: the run's own explicit act, and it beats everything below |
+| 2 | `stages.<stage>.claude_account` | the stage's own explicit choice (**new**) |
+| 3 | `agent.oauth_token` | the committed `fugaro.yaml` at the ref the run checks out (unchanged) |
+| 4 | `default_claude_account` | the project's default (**new**) |
+| 5 | the unsuffixed `default` | `config.DefaultClaudeAccount` — and with `auto` on, the walk of §11.3 in its place (unchanged when `auto` is off) |
+
+**This amends named-oauth-tokens T2.** That decision makes the committed `fugaro.yaml` the only place
+that may name an account ([named-oauth-tokens](../design/named-oauth-tokens.md) §3 T2, whose whole
+argument is that a name chosen in a bucket-writable layer is not the owner's own act): rung 2 puts a
+**local** per-stage key above the committed `agent.oauth_token`, and rung 4 puts a **local** project
+default below it, so a local key may now outrank the repository's own file while the project layer and
+a profile still may not name an account at all.
+
+Two properties do not move. **Every name is checked before any launch**, whatever rung it came from:
+`claudeAccountAllowed` still holds the winner to `claude_accounts`'s own allow-list for the repository,
+so a key can only ever name an account the owner has already admitted there. And **the run record's
+account is the field it already has** — `runstore.Record.OAuthAccount`, written by the runner as
+`result.json`'s `oauth_account` and already read back by `fugaro diagnose` as `row.oauth_account` — but
+that field is **one scalar for the whole run**: `recordCredential` (`internal/runner/runner.go:775`)
+assigns it, so the last write wins and the record names the account the run *last* used. With
+`stages.review.claude_account` set, or with an `auto` failover (§11.3), it therefore **cannot say which
+account served which stage**. Nothing here adds a field, and nothing here gives `oauth_account` a second
+meaning; the limit is **D876** (§11.5), and until the owner rules, the failover log line is the
+per-stage record.
+
+A follow-up (`--pr`) keeps its previous run's account unless `--token` is given, exactly as it does
+today: the keys decide a *first* run, and an explicit flag decides a follow-up.
+
+**The corner this section does not settle: which job a stage is served by.** A project job is deployed
+per `(profile, provider, account)` and mounts that one account's token (`config.ProjectJobAccounts`;
+LC4), so a stage runs *as* the account of the job it runs in, and the chain above decides which account
+a stage **asks for**. For the stages that share the run's own job, the answer is that job's account for
+the whole run; for a stage that runs in a job of its own — the cloud reviewer is one, in the
+cloud-senior-review design (**merged** as #1472, D880–D894,
+[docs/cloud-senior-review/](../cloud-senior-review/spec.md)) — the key is what picks that job. A stage that
+asks for an account its job does not hold is a **refusal**, not a silent fallback to the job's own
+account. That refusal, and the job each stage is served by, are A7's and the cloud-senior-review work's
+to settle; this design fixes the keys and the precedence, and nothing else.
+
+### 11.3 `auto` is ordered failover (D874)
+
+`claude_account_auto: true` is the only thing that lets Fugaro choose an account for the owner. It
+replaces rung 5 of §11.2 and walks the owner's accounts **in the order `fugaro accounts ls` prints
+them** — the first; on a rate limit or a rejection, the next; never mid-stage; always logged — and it
+walks only the accounts **allowed for the stage it is choosing for**, so the cloud reviewer only ever
+sees a review-scoped account. That second restriction is a **rule of its own** and not the repository's
+allow-list said twice — where it comes from is the next paragraph.
+
+**Where "allowed for the stage" comes from (D874).** The repository's own admission is one rule:
+`claudeAccountAllowed` / `config.AllowedClaudeAccounts` — the list `fugaro accounts ls` prints — and it
+is the floor every rung of §11.2 already stands on. **Stage scope is a narrower, second rule, and it
+comes from the stage's job.** A stage that shares the run's own job has no scope of its own, so its walk
+is the whole of that list: that includes the coding run's own in-job `review` stage, which runs on the coder's job credential. A stage that runs in a job of its own is bounded by the accounts that job
+exists for, and the one such stage this design names is the reviewer's: the cloud-senior-review design
+gives review **its own job variant, deployed per `(profile, account)` with its own service account**
+([cloud-senior-review](../cloud-senior-review/spec.md) §2), so the independent review job's stage may be served only by an
+account that variant is built for. Those are the **review-class** accounts — the class the
+credentials-service routing design (**#1514**, open; its **D1062**) defines, that design's **O1**
+consumes, and the credentials service admits a review caller under
+([cloud-senior-review](../cloud-senior-review/spec.md) §1–§2). So **the independent review job's stage walk is limited to
+review-class accounts**: an account admitted for the repository but not of that class is never chosen
+for the independent review job's stage, whatever the list says. A7 builds the walk, and its negative test is exactly this
+one — `TestAutoReviewStageWalksOnlyReviewClassAccounts`.
+
+- **Never mid-stage.** A stage's transcript, its cost and its verdict belong to one account, and a
+  switch inside a stage would leave a run whose own record cannot say which account produced which
+  half. A rate limit or a rejection that arrives mid-stage ends that attempt as it does today, and the
+  next attempt starts on the next account.
+- **Always logged.** A failover writes a line naming the **stage**, the account that refused and the one
+  that took over. That line is the per-stage record, and it is the only one: the run record's own
+  `oauth_account` is a single scalar for the whole run and cannot carry a stage's account (§11.2), so a
+  run that spread across accounts is readable afterwards from the log without asking the owner, and per
+  stage nowhere else until **D876** (§11.5) is answered.
+- **Not "most headroom".** Choosing the account with the most usage left would rest on a number Fugaro
+  cannot obtain — OAuth usage is not known to be readable — so the pick would be a guess nothing could
+  contradict, and a non-deterministic one, which a record can only report after the fact.
+
+The order is the read's own order and not a second list: `fugaro accounts ls` prints
+`config.AllowedClaudeAccounts`, which is the unsuffixed `default` first and the rest sorted. So `auto`
+walks exactly the list the owner already reads, no second order exists to keep in step with it, and the
+walk begins where the explicit chain's floor already was.
+
+### 11.4 `auto` ships dormant (D875)
+
+`claude_account_auto` is **off by default**, and off is **explicit-only**: the keys of §11.1 decide and
+nothing chooses for the owner. Turning it on is the owner's own act, and it is the act D875 waits for —
+**the owner himself** confirming that the subscription terms allow one project to spread across several
+accounts. That is why the switch is also a sensitive direction (§11.1): the confirmation is a typed
+project name, not a flag a script sets.
+
+The switch exists so that the answer, when it comes, is one setting rather than another design: `auto`
+is written down here, built by A7 behind the switch, and off.
+
+### 11.5 D876 (open): the record does not name a stage's account
+
+**This is the one thing the three rulings exposed and did not settle, and it is an open owner
+decision.** §11.2 gives a stage its own account and §11.3 lets `auto` move between accounts between
+stages, but the run record carries **one** account for the whole run: `runstore.Record.OAuthAccount` is a
+single string, assigned by `recordCredential` (`internal/runner/runner.go:775`), so a run that used
+`stages.review.claude_account`, or that failed over under `auto`, records only the account it used
+**last**. Nothing in this design can say which account served which stage from the record alone, and the
+failover log line of §11.3 is what stands in for it.
+
+**The recommendation, for the owner to rule on: a new additive per-stage field.** A `stage_accounts`
+map in the run record — the stage name to the account that served it, written where the stage's account
+is chosen — added by **A2** (which already asserts the record's account) or by **A7** (which is where a
+stage's account is chosen at all). Being additive it bumps no format version, and the console and the
+mobile app, which read the record, accept one more field; being a **new** field, it leaves
+`oauth_account` exactly the meaning it has today, so no reader draws a wrong figure. **The alternative —
+reusing `oauth_account` for a stage's account — is refused here, and would be refused by the
+repository's own rule**: a field a reader outside the binary consumes never changes meaning, and one
+record has several stages, so a reused name would need a second shape as well.
+
+Until the owner answers, the design states the limit rather than papering over it: the failover log line
+is the per-stage record, and `fugaro diagnose`'s `row.oauth_account` is the run's last account.
+
+## 12. Release placement
 
 **0.15.0.** The reasoning, and why 0.14.2 cannot carry it, is in
 [implementation-plan.md](implementation-plan.md) §Release.

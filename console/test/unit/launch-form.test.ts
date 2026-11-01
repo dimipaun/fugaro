@@ -49,6 +49,7 @@ import {
 import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { bootDashboard } from '../../src/renderer/entry'
 import { ISSUE_CHECKOUT_LABEL, RAIL_NAME_CLASS, RAIL_ROW_CLASS } from '../../src/renderer/entry'
+import { CHECKOUT_SELECT_CLASS } from '../../src/renderer/checkout'
 import {
   LAUNCH_ALREADY_WORD,
   LAUNCH_CLASS,
@@ -153,6 +154,7 @@ function openRow(
     active: true,
     saved: true,
     checkouts: [],
+    checkoutChoices: [],
     repositories,
     state: { issue: 'none', readable: true, sentence: '', command: '', details: [] },
     ...extra,
@@ -726,6 +728,7 @@ describe('the launch control', () => {
   it('offers what the installation records now after a rail answer, with the installation unchanged', async () => {
     const open = openRow(OPEN_REPOSITORIES, {
       checkouts: ['/home/operator/src/orbit'],
+      checkoutChoices: [{ repository: 'github/owner/orbit', path: '/home/operator/src/orbit', more: 0 }],
       state: {
         issue: 'config',
         readable: true,
@@ -736,6 +739,7 @@ describe('the launch control', () => {
     })
     const after = openRow([...OPEN_REPOSITORIES, 'github/owner/repo-c'], {
       checkouts: ['/home/operator/src/orbit'],
+      checkoutChoices: [{ repository: 'github/owner/orbit', path: '/home/operator/src/orbit', more: 0 }],
     })
     const { document, calls } = await boot({
       rows: [open],
@@ -748,7 +752,10 @@ describe('the launch control', () => {
     // CLI no longer records and refuse the repository the operator picked.
     rowNamed(document.body, 'orbit').click()
     await flush()
-    buttonLabelled(document.body, `${ISSUE_CHECKOUT_LABEL}: /home/operator/src/orbit`).click()
+    const menu = one(document.body, CHECKOUT_SELECT_CLASS)
+    expect(menu.children.map((option) => option.attributes.get('value'))).toEqual(['/home/operator/src/orbit'])
+    ;(menu as unknown as { value: string }).value = '/home/operator/src/orbit'
+    buttonLabelled(document.body, ISSUE_CHECKOUT_LABEL).click()
     await flush()
     expect(calls.filter((call) => call.name === 'setInstallationCheckout')).toHaveLength(1)
 
