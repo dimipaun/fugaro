@@ -40,3 +40,32 @@ func TestVerifiedNamesThePathAndNoBytes(t *testing.T) {
 		t.Fatalf("the refusal reads %q", got)
 	}
 }
+
+// TestVerifiedRefusesAResultWhoseFlowNeighbourChanged hands the guard the shape
+// the sibling check is there for: the value at the path is the one that was
+// asked for, and the member beside it is not what it was — `{0: , b: 1}` comes
+// back as `{0:, b: 2}`, where the comma against the colon turns the key `0`
+// into the key `0:`. The closure is the one SetScalar passes, and no operation
+// can be asked to reach it on purpose: the splices that produced such a result
+// are refused or written differently, which is what makes this check the last
+// thing between a splice that landed against its neighbour and a settings file
+// that reads back as settings nobody wrote. Bytes that carry the value and
+// leave the neighbour alone are not refused, so the check is not simply saying
+// no.
+func TestVerifiedRefusesAResultWhoseFlowNeighbourChanged(t *testing.T) {
+	path := []string{"b"}
+	d, err := open("SetScalar", []byte("{0: , b: 1}\n"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	carries := func(root *yaml.Node) bool {
+		return scalarIs(resolve(root, path), "2") && d.sameFlowSiblings(path, root)
+	}
+
+	if err := verified("SetScalar", path, []byte("{0:, b: 2}\n"), carries); ReasonOf(err) != ReasonVerification {
+		t.Fatalf("a member beside the path that reads differently: reason = %q, want %q (%v)", ReasonOf(err), ReasonVerification, err)
+	}
+	if err := verified("SetScalar", path, []byte("{0: , b: 2}\n"), carries); err != nil {
+		t.Fatalf("a result that carries the value and leaves the neighbour as it was: %v", err)
+	}
+}

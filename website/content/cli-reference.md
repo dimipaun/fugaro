@@ -1624,8 +1624,13 @@ name. With --check-github-app, in your own terminal, it also asks GitHub whether
 each GitHub App the config records is installed on its repository with the
 permissions Fugaro's runs ask for: that is the one thing that reads a secret's
 value (the App's private key, with your own credentials, held in memory only to
-sign, never printed), and it is refused in a coding agent's session. Otherwise
-it never prints a secret's value and never creates, enables or
+sign, never printed), and it is refused in a coding agent's session. With
+--check-bitbucket-token, in your own terminal, it also reads the credentials
+service's bundle to see that it holds a Bitbucket token and asks Bitbucket
+whether it still accepts it, one GET /repositories/<repo> per proxied
+repository: that too reads a secret's value (with your own credentials, in
+memory only, never printed) and is refused in a coding agent's session.
+Otherwise it never prints a secret's value and never creates, enables or
 changes anything.
 
 Inside a checkout whose project publishes a project layer (fugaro config
@@ -1662,6 +1667,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--all` | bool | `false` | no | print every check, the informational and audit lines included |
+| `--check-bitbucket-token` | bool | `false` | no | also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--check-github-app` | bool | `false` | no | also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |

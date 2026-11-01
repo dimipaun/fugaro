@@ -289,11 +289,11 @@ func firebaseProjectWordStart(r rune) bool {
 //
 // The empty config is the point rather than a convenience: it is the shape in
 // which a value read off the command line or the config is empty, and the
-// remedy is what the person sees. The two warnings in init_firebase.go are the
-// last of the round's fixes and are not in the table: they are printed only
-// inside the run that IS given --firebase-project, so the value they now read
-// (firebaseProjectIDWord of the installation's own GCP project) is the one the
-// case below covers, and the sentence around it cannot print another.
+// remedy is what the person sees. The two warnings in init_firebase.go read the
+// installation's own GCP project rather than anything off the command line, so
+// an empty config is not the shape that reaches them and they are not in the
+// table: TestTheUpdateWarningsCarryAProject below runs the update that prints
+// them and reads what they hand the person.
 func TestTheRemediesPrintedFromAnEmptyConfigCarryAProject(t *testing.T) {
 	ctx := context.Background()
 	fake := gcpfake.NewRTDB(t)
@@ -317,12 +317,17 @@ func TestTheRemediesPrintedFromAnEmptyConfigCarryAProject(t *testing.T) {
 	if unchecked == nil {
 		t.Fatal("a database with no /fugaro/project was accepted as the project's")
 	}
+	_, _, noBackend := budgetDBFor(ctx, empty)
+	if noBackend == nil {
+		t.Fatal("a config with no budget backend opened one")
+	}
 	cases := []struct{ name, text string }{
 		{"rulesNoBudget, no budget block", rulesNoBudget(empty)},
 		{"rulesNoBudget, a Firebase project and no URL", rulesNoBudget(noURL)},
 		{"rulesForeignDatabase", rulesForeignDatabase(mismatch)},
 		{"budgetDBUnadopted, a separate project and an empty database", budgetDBUnadopted(ctx, separate, infra.NewDB(client, "aurora", "", ""), "this stage neither marks nor writes there", "fugaro update")},
 		{"checkDBProject, a database with no /fugaro/project", unchecked.Error()},
+		{"budgetDBFor, no budget backend", noBackend.Error()},
 		{"accountsStates, no budget backend", note},
 		{"restoreConfig, a budget backend that did not come across", strings.Join(left, "\n")},
 		{"firebaseProjectIDWord with no project to read", "fugaro update --firebase-project " + firebaseProjectIDWord("")},
@@ -351,6 +356,55 @@ func TestTheRemediesPrintedFromAnEmptyConfigCarryAProject(t *testing.T) {
 	} {
 		if firebaseProjectRemedyStopsAtTheFlag(good) {
 			t.Errorf("the check rejects %q, whose printed command carries a project", good)
+		}
+	}
+}
+
+// TestTheUpdateWarningsCarryAProject is the other half of the runtime remedy
+// check, at the shape a person reaches with no flag at all: a plain
+// `fugaro update`. Both warnings init_firebase.go prints when it cannot deploy
+// a job are reachable there — infra.InstallationSpec builds History whenever
+// the installation has a budget backend (internal/infra/tfvars.go), and
+// Coordinator while the opt-in is recorded — so each is printed here from the
+// run that reaches it, and the remedy it hands the person has to carry the
+// project --firebase-project takes.
+func TestTheUpdateWarningsCarryAProject(t *testing.T) {
+	r, _ := updateBudgetRig(t)
+	// The recorded opt-in is what makes a plain update plan the coordinator at
+	// all (opts.Coordinator = o.coordinator || lc.Terraform.Coordinator), and
+	// no GitHub App ID is recorded: the state this warning is about.
+	r.appendConfig(t, "terraform: { coordinator: true }\n")
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	for _, c := range []struct{ name, warning, remedy string }{
+		{
+			"the history job",
+			"warning: the history job (the sweeper of crashed runs) is not deployed",
+			"then run fugaro update --firebase-project " + initProject + " again",
+		},
+		{
+			"the coordinator's aggregation job",
+			"warning: the coordinator's aggregation job is not deployed",
+			"the next fugaro update --firebase-project " + initProject + " deploys the job",
+		},
+	} {
+		at := strings.Index(out, c.warning)
+		if at < 0 {
+			t.Errorf("a plain update printed no warning about %s:\n%s", c.name, out)
+			continue
+		}
+		warn := out[at:]
+		if end := strings.Index(warn, "\nwarning: "); end > 0 {
+			warn = warn[:end]
+		}
+		if !strings.Contains(warn, c.remedy) {
+			t.Errorf("%s's remedy does not carry the project:\n%s", c.name, warn)
+		}
+		if firebaseProjectRemedyStopsAtTheFlag(warn) {
+			t.Errorf("%s's remedy prints a `%s` command with no project after it:\n%s", c.name, firebaseProjectFlag, warn)
 		}
 	}
 }

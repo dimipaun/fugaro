@@ -2054,3 +2054,110 @@ func TestRunsLsStateFilter(t *testing.T) {
 		t.Errorf("ls --state done: err = %v, want a refusal naming the states it takes", err)
 	}
 }
+
+// peakExecutionBackend is the compute backend a listing's follow width is
+// measured through: it counts the execution reads the pass has in flight at
+// once, and holds each one open until want of them are open at the same time —
+// one past the width under test — or hold passes, so a pass that widens past
+// its bound is measured widening and a pass at the bound is measured sitting at
+// it rather than at whatever the scheduler happened to overlap.
+type peakExecutionBackend struct {
+	backend.Backend
+	want int
+	hold time.Duration
+
+	mu      sync.Mutex
+	open    int
+	peak    int
+	calls   int
+	reached bool
+	gate    chan struct{}
+}
+
+// peakCalls is how many execution reads the pass made in all, and the most of
+// them that were ever in flight at once.
+func (b *peakExecutionBackend) peakCalls() (calls, peak int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls, b.peak
+}
+
+func (b *peakExecutionBackend) Execution(ctx context.Context, name string) (backend.Execution, error) {
+	b.mu.Lock()
+	b.open++
+	b.calls++
+	if b.open > b.peak {
+		b.peak = b.open
+	}
+	// One goroutine widened it, so one closes it: the flag is set inside the
+	// same critical section the reading of it is.
+	widened := b.open >= b.want && !b.reached
+	b.reached = b.reached || widened
+	waiting := !b.reached && b.hold > 0
+	b.mu.Unlock()
+	switch {
+	case widened:
+		close(b.gate)
+	case waiting:
+		select {
+		case <-b.gate:
+		case <-time.After(b.hold):
+		}
+	}
+	b.mu.Lock()
+	b.open--
+	b.mu.Unlock()
+	return b.Backend.Execution(ctx, name)
+}
+
+// TestRunsLsFollowsExecutionsWithinFollowWorkers: the follow pass reads back the
+// execution of every run the listing did not answer for, and it reads no more
+// than followWorkers of them at once. That read leaves the bucket for the
+// compute backend, which is why it has a width of its own rather than following
+// lsWorkers — and a width is the half a peak of one cannot show: a pass with no
+// bound reads every run's execution at once, and one with no fan-out is a queue
+// of round trips.
+// Mutations caught: following one run at a time (a peak of 1), and dropping the
+// bound (a peak that reaches followWorkers+1, which opens the gate and lets the
+// rest of the bucket through).
+func TestRunsLsFollowsExecutionsWithinFollowWorkers(t *testing.T) {
+	f := newCloudFixture(t)
+	const runs = followWorkers * 2
+	ctx := context.Background()
+	bucket, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bucket.Close()
+	at := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	for i := range runs {
+		id := at.Add(time.Duration(i)*time.Minute).Format("20060102-150405") + fmt.Sprintf("-%04x", i)
+		s := runstore.Open(bucket.Bucket, appSlug, id)
+		if err := s.CreateTask(ctx, &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		// A name of this backend's own shape that nothing ever started: the
+		// listing cannot answer for it (which is what makes the run reach the
+		// backend one by one), and the read that follows it is the one this
+		// pass's width is about.
+		exec := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: gcp.JobName(appSlug, "web"), Name: fmt.Sprintf("gone-%04x", i)}.String()
+		if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := envOn(t, f, bucket)
+	peek := &peakExecutionBackend{Backend: env.be, want: followWorkers + 1, hold: 200 * time.Millisecond, gate: make(chan struct{})}
+	env.be = peek
+
+	rows, err := loadRows(ctx, env, lsFilter{slugs: []string{appSlug}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, peak := peek.peakCalls()
+	if len(rows) != runs || calls != runs {
+		t.Fatalf("rows = %d and %d execution reads, want %d of each: the width test measured a pass that read something else", len(rows), calls, runs)
+	}
+	if peak != followWorkers {
+		t.Errorf("runs ls followed %d executions at once, want exactly followWorkers (%d): the pass fans out over the runs the listing could not answer for, within its bound", peak, followWorkers)
+	}
+}

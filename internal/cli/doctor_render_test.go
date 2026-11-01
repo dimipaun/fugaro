@@ -264,10 +264,14 @@ func TestDoctorDefaultIsOneScreen(t *testing.T) {
 		}
 	}
 	// And it says where they went, so nobody reads a short output as a clean one.
-	// Four findings: provider-zdr-unverified and the wiring's own notice in the
-	// audit half, and the sweep's two — access the caller cannot be placed for,
-	// and a read that failed. All four are counted, none is printed.
-	if !strings.Contains(got, "2 more findings: `fugaro doctor --all`") {
+	// Three findings: the wiring's own notice in the audit half, and the sweep's
+	// two — access the caller cannot be placed for, and a read that failed. All
+	// three are counted, none is printed. The standing provider-zdr-unverified
+	// note is not one of them: it is a measurement (what doctor cannot read there
+	// is the provider account's privacy setting, not this installation), so it
+	// earns no pointer — a pointer over a screen with nothing wrong in it is
+	// what a reader learns to skip.
+	if !strings.Contains(got, "1 more finding: `fugaro doctor --all`") {
 		t.Errorf("the default view hides its audit findings without saying so:\n%s", got)
 	}
 	if !strings.Contains(got, "2 security findings: `fugaro doctor --security`") {
@@ -328,11 +332,13 @@ func TestDoctorNoAuditFindingsNoPointer(t *testing.T) {
 // sweep's and the rest of the audit class — each naming the flag that prints
 // them, and each counted, not listed.
 //
-// The two counted here are findings, not measurements: provider-zdr-unverified
-// is a privacy setting doctor cannot read from here, and runs-bucket-iam-1 is
-// one instance's grant. The summaries those sweeps also emit are what doctor
-// measured and found nothing in — runs-bucket-iam's own OK summary, built by
-// the check — and the verdict says so by not counting them.
+// The two counted here are findings, not measurements: runs-bucket-iam-1 is one
+// instance's grant in the sweep, and plugin-settings-1 is the wiring's own
+// notice. The summaries those sweeps also emit are what doctor measured and
+// found nothing in — runs-bucket-iam's own OK summary, built by the check — and
+// the verdict says so by not counting them. The standing provider-zdr-unverified
+// note is in the fixture for the same reason: it is a measurement, so it is
+// counted nowhere, not even under --all's own pointer.
 func TestDoctorDefaultEndsWithAuditPointer(t *testing.T) {
 	measured := findingChecks(nil)[0]
 	if measured.ID != "runs-bucket-iam" || !measured.OK {
@@ -342,6 +348,7 @@ func TestDoctorDefaultEndsWithAuditPointer(t *testing.T) {
 		{ID: "installation", OK: true},
 		{ID: "provider-zdr-unverified", Severity: "info", Problem: "whether provider-a holds the traffic under zero data retention is unverified"},
 		{ID: "runs-bucket-iam-1", Severity: "info", Problem: "user:x@example.com can write anywhere in gs://fugaro-runs-proj-1234 (roles/storage.objectAdmin): expected only for an operator"},
+		{ID: "plugin-settings-1", Severity: "info", Problem: "the wiring in .claude/settings.json runs a command Fugaro does not bless"},
 		{ID: "routing-resolution", Severity: "info", Problem: "no repository this machine's config names resolves the switch"},
 		{ID: "token-signers", Severity: "info", Problem: "who can sign sign-in tokens for the budget database: 1 service account"},
 		measured,
@@ -712,14 +719,12 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		t.Errorf("--all does not carry the check's own text:\n%s", all)
 	}
 
-	// A check `fugaro update` does not put right is not an update item, and its
-	// line names the command that does the work: a line that sends the reader
-	// to a command which leaves the warning standing is worse than a longer one
-	// that works (the review's finding: what differs for plugin-install is the
-	// installed plugin, and the converge's plugin stage writes the pin rather
-	// than installing it).
+	// A check `fugaro update` does not put right on its own is not an update
+	// item: what differs for plugin-install is the installed plugin, so the
+	// line names the update that writes the pin and Claude Code's own install
+	// from it, rather than the update alone.
 	for id, want := range map[string]string{
-		"plugin-install": "`fugaro upgrade --local`",
+		"plugin-install": "`fugaro update`",
 	} {
 		c := doctorCheck{ID: id, Severity: "warning", Problem: "what is wrong here",
 			Fix: "a fix long enough that the default view prints the short form instead: " + strings.Repeat("and its own words ", 10)}
@@ -730,6 +735,22 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("%s's line does not name %s: %q", id, want, line)
 		}
+	}
+
+	// policy-newer-than-binary's line names two moves, because the state needs
+	// two: the release that understands the node is not installed yet, so the
+	// upgrade comes first, and `fugaro update` behind it is what brings the
+	// installation and the checkout to that release (CLAUDE.md's hard rule).
+	// The check's own text, which names the release the table knows, is what
+	// --all still prints.
+	newer := doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
+		Problem: "the project policy is version 2, and this Fugaro understands version 1",
+		Fix:     "upgrade Fugaro to 0.8.5, the release that introduced version 2, then run the update that follows it"}
+	if line := doctorItemLine(t, newer); !strings.Contains(line, "upgrade Fugaro (`brew upgrade fugaro`), then run `fugaro update`") {
+		t.Errorf("policy-newer-than-binary's line does not name the upgrade and the update behind it: %q", line)
+	}
+	if all := doctorAllOutput(t, []doctorCheck{newer}); !strings.Contains(all, "0.8.5") {
+		t.Errorf("--all does not carry the check's own text:\n%s", all)
 	}
 }
 
@@ -771,7 +792,7 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 	// not a measurement of this checkout's state. The fixed caveat line beside
 	// it (plugin-settings-caveat) is one, and stays one.
 	for _, id := range []string{
-		"provider-zdr-unverified", "runs-bucket-iam-1", "job-token-grant-2", "launcher-jobs-public",
+		"runs-bucket-iam-1", "job-token-grant-2", "launcher-jobs-public",
 		"project-account-stored", "a-check-added-later", "plugin-settings-1",
 	} {
 		info := doctorCheck{ID: id, Severity: "info", Problem: "what doctor measured"}
@@ -788,9 +809,15 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 	// is measured, counted by no view and printed by --all. Nothing on this list
 	// may be a check that fails doctor (the loop above holds that end: the same
 	// IDs at "" and at "warning" are items), and nothing whose info line is a
-	// read that failed belongs on it at all.
+	// read that failed belongs on it at all. provider-zdr-unverified is in both
+	// loops for that reason and not in spite of it: its warning is the state
+	// itself, and its info line is what doctor could not read about the
+	// *provider account* — a fact outside this installation, not a read of this
+	// installation that did not answer, which is a finding whatever it says
+	// (TestDoctorReadFailureIsCounted).
 	for _, id := range []string{
 		"cli-version", "plugin-install", "cosign", "provider-price-catalog",
+		"provider-zdr-unverified",
 		"routing-resolution", "routing-cache-markers", "project-layer", "project-layer-drift",
 		"shared-config", "shared-config-differs", "xdg-temp-dir", "policy-published",
 		"launcher-jobs", "token-signers", "token-signers-owners",
@@ -897,6 +924,61 @@ func TestDoctorReadFailureIsCounted(t *testing.T) {
 				t.Errorf("the pointer does not name the flag that prints %s:\n%s", tc.id, out)
 			}
 		})
+	}
+}
+
+// TestDoctorUnreadCheckThatSaysOKIsCounted is the guard beside the ruling of
+// 2026-10-31: the unread marker is what a check that could not read something
+// sets, and it is a finding whatever the check's own result field says. No
+// emitter writes this shape today (each unread check also carries a severity,
+// and its line says the read did not answer), which is why it is a guard: the
+// two fields are written by different branches, and a check that set both would
+// otherwise be doctor's own bookkeeping — an "ok" check with no severity is
+// skipped by every view, so an unknown would be dropped whole, counted by
+// nothing and printed nowhere. Both the class and the counting have to hold it.
+func TestDoctorUnreadCheckThatSaysOKIsCounted(t *testing.T) {
+	for _, tc := range []struct {
+		id, severity string
+	}{
+		// The two shapes an OK check can come in: with a severity (the
+		// measurement shape, which --all prints) and without one (doctor's
+		// bookkeeping, which nothing prints).
+		{"everything-else", ""},
+		{"everything-else", "info"},
+	} {
+		t.Run("severity "+tc.severity, func(t *testing.T) {
+			c := doctorCheck{ID: tc.id, OK: true, Severity: tc.severity, unread: true,
+				Problem: "whether the thing was read could not be checked, so it is unknown here"}
+			if got := doctorClassOf(c); got != doctorClassAudit {
+				t.Errorf("an unread check that says ok is %q, want %q", got, doctorClassAudit)
+			}
+			if !doctorIsFinding(c) {
+				t.Fatal("an unread check that says ok is not a finding")
+			}
+			out := doctorDefaultOutput(t, []doctorCheck{c})
+			if strings.Contains(out, "everything checked is ok") {
+				t.Errorf("the ok line stands above an unread check:\n%s", out)
+			}
+			if !strings.Contains(out, "1 more finding: `fugaro doctor --all`") {
+				t.Errorf("an unread check is dropped from the default view:\n%s", out)
+			}
+		})
+	}
+
+	// The verdict --security prints above the sweep is held by the same rule: a
+	// check the sweep holds is printed below it, so an ok one that carries the
+	// marker may not be answered with the ok line the reader would read first.
+	// The ID is one the sweep holds rather than prints: model-key-in-agent is
+	// the one sweep check the default view prints as an item as well
+	// (doctorClassSecurity), so its verdict is the item one, not this one.
+	sweep := doctorCheck{ID: "token-signers", OK: true, unread: true, Severity: "info",
+		Problem: "whether a member may sign a budget token could not be checked"}
+	shown := doctorSecurityOutput(t, []doctorCheck{sweep})
+	if strings.Contains(shown, "everything checked is ok") {
+		t.Errorf("--security says everything is ok above its own unread finding:\n%s", shown)
+	}
+	if !strings.Contains(shown, "fugaro doctor: nothing to do") {
+		t.Errorf("--security does not give the weaker verdict:\n%s", shown)
 	}
 }
 
