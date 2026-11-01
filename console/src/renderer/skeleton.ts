@@ -126,6 +126,29 @@ export const COORDINATOR_SHAPE: SkeletonShape = Object.freeze({
   blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row', 'row']),
 })
 
+/**
+ * COORDINATOR_QUEUE_SHAPE and COORDINATOR_TOTALS_SHAPE are the Coordinator
+ * screen's two sections above that body (console 0.118.0, K1): the action queue
+ * -- the line that counts what is waiting and a row per item -- and the fleet's
+ * totals strip. They are exported because the **entry** places them, like
+ * Spend's two: the queue is built from four reads (`coordinator.status`,
+ * `runs ls`, `plan status`, `budget show`) and the totals from three of them, and
+ * a section whose own read is still out wears the shape of what it will hold
+ * while the others are already filled.
+ *
+ * The section names are distinct from the body's, so "which section is still
+ * out" is answerable from a tree alone.
+ */
+export const COORDINATOR_QUEUE_SHAPE: SkeletonShape = Object.freeze({
+  section: 'queue',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row']),
+})
+
+export const COORDINATOR_TOTALS_SHAPE: SkeletonShape = Object.freeze({
+  section: 'fleet',
+  blocks: Object.freeze<SkeletonBlock[]>(['row']),
+})
+
 /** SkeletonTab is the five views of the navigation, which is the whole list of
  * tabs a skeleton can be drawn for -- the same five `reading.ts`'s
  * `READING_WORDS` names and `entry.ts`'s `VIEWS` offers. It is declared here and
@@ -153,11 +176,7 @@ export const SKELETON_SHAPES: Readonly<Record<SkeletonTab, readonly SkeletonShap
   ]),
   spend: Object.freeze([SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE]),
   projects: Object.freeze([PROJECTS_SHAPE]),
-  coordinator: Object.freeze([
-    Object.freeze({ section: 'head', blocks: Object.freeze<SkeletonBlock[]>(['line', 'chip']) }),
-    Object.freeze({ section: 'rows', blocks: Object.freeze<SkeletonBlock[]>(['row', 'row', 'row', 'row']) }),
-    Object.freeze({ section: 'totals', blocks: Object.freeze<SkeletonBlock[]>(['row']) }),
-  ]),
+  coordinator: Object.freeze([COORDINATOR_QUEUE_SHAPE, COORDINATOR_TOTALS_SHAPE, COORDINATOR_SHAPE]),
 })
 
 /** block draws one block of a kind: a `div` carrying the block class and the
