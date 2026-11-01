@@ -1281,8 +1281,9 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * not using -- and the value that *is* in force only comes back from
    * `setAuto`, which reads it from wherever the switch is kept and answers
    * rather than throwing (a throw here would be Electron's uncaught-error
-   * dialog over the running app). The menu is built again from that answer when
-   * the two disagree. */
+   * dialog over the running app). Every answer moves this local, agreeing or
+   * not, so the menu is built again from the value in force whenever the two
+   * disagree and every later rebuild draws that same value. */
   let drawnAuto = deps.updateMenu?.auto ?? false
 
   /** drawnSend is the same value for the crash reporter's checkbox, and the same
@@ -1304,10 +1305,13 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
                   auto: drawnAuto,
                   setAuto: (on) => {
                     const actual = updateMenu.setAuto(on)
-                    if (actual !== on) {
-                      drawnAuto = actual
-                      installMenu()
-                    }
+                    // The value in force is kept whether or not it disagreed
+                    // with the click: a write that landed leaves the two equal,
+                    // and any later rebuild -- the crash item's redraw, another
+                    // click's -- draws from this local rather than from the
+                    // click it was built beside.
+                    drawnAuto = actual
+                    if (actual !== on) installMenu()
                     return actual
                   },
                   checkNow: () => {
@@ -1322,10 +1326,8 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
                   send: drawnSend,
                   setSend: (on) => {
                     const actual = crashMenu.setSend(on)
-                    if (actual !== on) {
-                      drawnSend = actual
-                      installMenu()
-                    }
+                    drawnSend = actual
+                    if (actual !== on) installMenu()
                     return actual
                   },
                 },

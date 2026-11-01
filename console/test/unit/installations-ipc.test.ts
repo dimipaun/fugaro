@@ -1568,6 +1568,58 @@ describe('the picker’s window', () => {
     expect(readCrashSwitch(directory)).toBe(true)
   })
 
+  it('keeps the crash checkbox in step across a later rebuild (run 3)', () => {
+    // A rebuild redraws the whole menu, not only the item that asked for it. The
+    // crash item is drawn from `drawnSend`, so a write that landed has to move
+    // `drawnSend` even though it agreed with the click -- otherwise the next
+    // rebuild, whoever caused it, shows the operator a crash switch this console
+    // is not using.
+    const directory = freshDirectory()
+    const crash = createCrashSettings({ directory })
+    const controller: UpdateController = {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(),
+      checkNow: vi.fn(async () => undefined),
+      restartRequested: vi.fn(),
+      launchFlowIdle: vi.fn(),
+    }
+    // The update switch is the rebuild: its write fails, so its own checked and
+    // the value in force disagree and the menu is built again.
+    const updates = createUpdateSettings({
+      directory,
+      controller: () => controller,
+      fs: {
+        ...nodeUpdatesFs,
+        writeFile: () => {
+          throw new Error('ENOSPC: no space left on device')
+        },
+      },
+    })
+    const { picker, menu } = pickerOver({
+      updateMenu: { auto: updates.auto, setAuto: (on) => updates.setAuto(on), checkNow: () => undefined },
+      crashMenu: { send: crash.send, setSend: (on) => crash.setSend(on) },
+    })
+    picker.installMenu()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const crashItem = appMenuItems(menu()).find((entry) => entry.label === CRASH_SEND_ITEM_LABEL)
+      expect(crashItem?.checked).toBe(false)
+      crashItem?.click?.()
+      expect(readCrashSwitch(directory)).toBe(true)
+
+      const updateItem = appMenuItems(menu()).find((entry) => entry.label === UPDATE_AUTO_LABEL)
+      expect(updateItem?.checked).toBe(true)
+      updateItem?.click?.()
+    } finally {
+      logged.mockRestore()
+    }
+
+    // The rebuild the update item's failed write asked for draws the crash item
+    // from the file's value, which the click above put there.
+    expect(readCrashSwitch(directory)).toBe(true)
+    expect(appMenuItems(menu()).find((entry) => entry.label === CRASH_SEND_ITEM_LABEL)?.checked).toBe(true)
+  })
+
   it('has no crash item when the entry hands over none', () => {
     // What `src/main/index.ts` passes on Windows, where the owner's ruling of
     // 2026-10-30 does not put this item.
