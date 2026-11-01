@@ -23,6 +23,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -157,6 +158,34 @@ func checkDBProject(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) e
 		return userErr("the database at budget.rtdb_url has no /fugaro/project: it is not a Fugaro project's budget database; an operator runs fugaro update --firebase-project %s for project %s", firebaseProjectIDWord(lc.GCPProject), lc.Name)
 	case name != lc.Name:
 		return userErr("the database at budget.rtdb_url belongs to project %q, not %q; fix budget.rtdb_url in project %s's config", oneLine(name), lc.Name, lc.Name)
+	}
+	return nil
+}
+
+// requireOwnBudgetDB is the ONE ownership question every writer into the budget
+// database asks (budgetDBUnadopted — the owner's ruling of 2026-10-31), as a
+// command's refusal. It is a call and never a second check worded alike: the
+// `fugaro update` stages ask the same function, so a command and a stage cannot
+// answer "is this database ours" differently. declined is what the caller would
+// have written there and ends the refusal's sentence.
+//
+// checkDBProject beside it is not this check and stays: it reads the project's
+// name at /fugaro/project, a fact of the database's contents, while this asks
+// whether the database is one this installation may write at all.
+func requireOwnBudgetDB(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, declined string) error {
+	why, err := budgetDBUnadoptedErr(ctx, lc, infra.NewDB(db, lc.Name, lc.GCPProject, ""), declined, selfCommand()+" update")
+	switch {
+	case err != nil:
+		// Check's own error, classified the way it classified it: a refusal
+		// (another installation's mark, or data and no mark) is the user's
+		// (exit 1) and an outage is not (exit 2).
+		var ue *infra.UserError
+		if errors.As(err, &ue) {
+			return userErr("%s", why)
+		}
+		return remote(errors.New(why))
+	case why != "":
+		return userErr("%s", why)
 	}
 	return nil
 }
@@ -1252,6 +1281,9 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was set"); err != nil {
+		return err
+	}
 	slug := ""
 	if p.scope == "repo" {
 		if p.repo, err = namedRepo(ctx, p.repo); err != nil {
@@ -1380,6 +1412,13 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	}
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
+		return err
+	}
+	declined := "nothing was resumed"
+	if kill {
+		declined = "nothing was killed"
+	}
+	if err := requireOwnBudgetDB(ctx, lc, db, declined); err != nil {
 		return err
 	}
 	me, err := lc.Me(ctx)

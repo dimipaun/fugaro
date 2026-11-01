@@ -36,13 +36,15 @@ type seenFixture struct {
 
 func newSeenFixture(t *testing.T) *seenFixture {
 	t.Helper()
-	f := &seenFixture{projectFixture: newProjectFixture(t, ""), fs: gcpfake.NewFirestore(t),
+	p := newProjectFixture(t, "")
+	f := &seenFixture{projectFixture: p, fs: p.fs,
 		now: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)}
-	// The Firestore fake, and the repository the config names but nothing has
-	// ever run (the entry a listing must not turn into a "seen" one).
+	// A Firebase project of its own, other than the installation's GCP project
+	// — the shape the fixture's own block (the installation's own project) is
+	// not — and the repository the config names but nothing has ever run (the
+	// entry a listing must not turn into a "seen" one).
 	setConfig(t, f.projectFixture, func(s string) string {
-		s = strings.Replace(s, "endpoints: { no_auth: true }", "endpoints: { firestore: "+f.fs.URL+", no_auth: true }", 1)
-		s = strings.Replace(s, "rtdb_url: "+f.db.URL, "rtdb_url: "+f.db.URL+", firebase_project: fugaro-fp-1", 1)
+		s = strings.Replace(s, "firebase_project: proj-1234", "firebase_project: fugaro-fp-1", 1)
 		return s + "  acme/idle: { provider: github, workflows: [web] }\n"
 	})
 	f.fs.Set(budget.MetaCollection, budget.MarkDocument, map[string]any{"project": "aurora", "version": int64(1)})
@@ -555,6 +557,12 @@ func TestProjectReposRefusesAnotherProjectsSources(t *testing.T) {
 // empty seen list to read as "nothing has run here".
 func TestProjectReposListsWithoutASpendHistory(t *testing.T) {
 	f := newProjectFixture(t, "")
+	// A project with no budget backend is one whose config records neither
+	// half of the pair `fugaro update --firebase-project` writes, so the
+	// fixture's own Firebase project comes back out.
+	setConfig(t, f, func(s string) string {
+		return strings.Replace(s, "firebase_project: proj-1234, ", "", 1)
+	})
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version":     projectpolicy.Version,
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},

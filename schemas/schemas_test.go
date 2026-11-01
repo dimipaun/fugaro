@@ -2687,6 +2687,42 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaRefusesReservedAccountName: a task's oauth_token may not name
+// the account the credentials bundle reserves for the platform's own git
+// credential. The decoder is the authority (task.Spec.Validate, through
+// config.ReservedClaudeAccountName) and the schema is its published copy, so
+// both are held to the same fixture here: a name that is legal everywhere else
+// passes both, and the reserved name fails both. The field is optional and the
+// document is additionalProperties: false, so nothing else in either reader
+// says anything about this name.
+func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	docFor := func(name string) string {
+		s := task.Spec{Version: 1, RunID: "20261030-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", OAuthToken: name}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	for name, valid := range map[string]bool{
+		"acme-personal":        true,
+		config.BitbucketSecret: false,
+	} {
+		raw := docFor(name)
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if schemaOK := sch.Validate(inst) == nil; schemaOK != valid {
+			t.Errorf("oauth_token: %s: schema accepts = %v, want %v", name, schemaOK, valid)
+		}
+		if _, parseErr := task.Parse([]byte(raw)); (parseErr == nil) != valid {
+			t.Errorf("oauth_token: %s: task.Parse accepts = %v, want %v (%v)", name, parseErr == nil, valid, parseErr)
+		}
+	}
+}
+
 // TestTaskSchemaCompressionOffMatchesTheGoField ties task.schema.json's
 // `compression_off` property to the Go field it mirrors (task.Spec.
 // CompressionOff, fugaro run --no-compression). The schema is
@@ -2798,6 +2834,35 @@ func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
 	} {
 		if err := sch.Validate(yamlInstance(t, []byte(text))); (err == nil) != valid {
 			t.Errorf("%q: valid = %v, want %v (%v)", text, err == nil, valid, err)
+		}
+	}
+}
+
+// TestSchemaRefusesReservedOAuthTokenName: fugaro.yaml's agent.oauth_token
+// may not name the account the credentials bundle reserves for the platform's
+// own git credential. The decoder is the authority (config.Validate) and the
+// schema is its published copy, so both are held to the same fixture here: a
+// name that is legal everywhere else passes both, the reserved name fails
+// both, and the decoder refuses it at its own path — a schema that admitted
+// the name, or a decoder that accepted it, is the drift this catches.
+func TestSchemaRefusesReservedOAuthTokenName(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const head = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { oauth_token: "
+	const tail = " }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	for name, valid := range map[string]bool{
+		"acme-personal":        true,
+		config.BitbucketSecret: false,
+	} {
+		doc := []byte(head + name + tail)
+		if schemaOK := sch.Validate(yamlInstance(t, doc)) == nil; schemaOK != valid {
+			t.Errorf("agent.oauth_token: %s: schema accepts = %v, want %v", name, schemaOK, valid)
+		}
+		_, problems := config.Parse(doc)
+		if goOK := len(problems) == 0; goOK != valid {
+			t.Errorf("agent.oauth_token: %s: config.Parse accepts = %v, want %v (%v)", name, goOK, valid, problems)
+		}
+		if !valid && !slices.ContainsFunc(problems, func(p config.Problem) bool { return p.Path == "agent.oauth_token" }) {
+			t.Errorf("config.Parse did not refuse the reserved name at agent.oauth_token: %v", problems)
 		}
 	}
 }
