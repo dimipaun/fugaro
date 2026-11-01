@@ -2923,13 +2923,27 @@ describe('the placeholder a tab switch draws', () => {
   it('asks the operator to read the tab by the word the navigation gave it', () => {
     // The placeholder names the tab the operator just pressed, so the word is
     // the button's own and not a second name for the same view: "Reading Caps…"
-    // under a tab labelled Projects would be the console asking its reader to
+    // under a tab labelled Project would be the console asking its reader to
     // check a name it drew itself.
     const words: Readonly<Record<string, string>> = READING_WORDS
     expect(Object.keys(words)).toHaveLength(VIEWS.length)
     for (const entry of VIEWS) {
       expect(words[entry.id], `the ${entry.id} view has no placeholder word`).toBe(entry.label)
     }
+  })
+
+  it('names the projects tab Project, the settings of this one project', async () => {
+    // A Fugaro project is one installation -- many repositories and people, one
+    // GCP project, one Firebase -- and this screen is the settings of *this*
+    // one, so the tab and the word it reads by say Project (the owner's ruling
+    // of 2026-10-31). What is renamed is the visible word alone: the view's own
+    // id is `projects`, and so are the module, the classes and the `data-view`
+    // this test finds the button by.
+    const { bridge } = everyReadHeld()
+    const document = await boot(bridge, new FakeDocument())
+    expect(buttonFor(document, 'projects').textContent).toBe('Project')
+    expect(navButtons(document).map((button) => button.textContent)).not.toContain('Projects')
+    expect(READING_WORDS.projects).toBe('Project')
   })
 
   it('draws the placeholder for the Graph only when there is nothing to redraw', async () => {
