@@ -155,6 +155,11 @@ type Row struct {
 	// are rendered as they are. It is a DISPLAY-ONLY join hint (the plan's
 	// constraint C3): nothing decides anything by it, it is never joined
 	// into a path, and a run's claim about it changes no other node's state.
+	// Since console 0.118.0 it is also what the Coordinator queue prefills
+	// the launch confirmation's plan-task field with (Coordinator v2 K1):
+	// a second reader of the same text, not a second decision -- the
+	// operator edits it or not, and the window checks it the way the flag
+	// does before anything spawns.
 	PlanTask  string        `json:"plan_task,omitempty"`
 	PRURL     string        `json:"pr_url,omitempty"`
 	Execution string        `json:"execution,omitempty"`
