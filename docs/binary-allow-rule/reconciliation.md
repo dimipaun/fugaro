@@ -1,0 +1,272 @@
+# The binary allow rule and the no-verdict label: findings, decisions and open items
+
+**Status: the decisions D981–D996 are written with a recommendation and none is answered; the owner
+decides.** Where this file disagrees with [spec.md](spec.md), **this file wins**.
+
+## 0. What was read, and how the numbers were taken
+
+The findings below are against the code as it stands: `main` at `3d6ed04d` (2026-11-01) plus the
+open PR **#1476** ("runner: an unparseable review is tolerated, backlog filing cannot break verify,
+and no stray binary is committed"), which is where both deferrals come from and which is read here
+from its diff and not from a merged tree. Items that need #1476's code to exist are marked **(needs
+#1476)**; everything else is `main`.
+
+The decision block is the **next free block above every `D<number>` on `main` and in every open pull
+request**, read on 2026-11-01: `main` carries up to **D901**; the twenty-four open pull requests'
+highest is **D980** (PR #1490). This work therefore takes **D981–D1010**: **D981–D996 written here**,
+**D997–D1010 reserved and unused**. The block is thirty wide, as D520–D549 and D490–D519 are.
+
+## 1. Findings
+
+**F1 — the refuse-everything rule is real, and it is the rule this design must narrow, not the
+check that must go.** #1476's `internal/runner/stray.go` calls a path a stray when the first 8000
+bytes contain a NUL, and there is no input to that decision other than the bytes: the path, the
+mode, the extension and the project all go unread. Its own comment argues the content test is
+deliberate (a mode test refused a script a run had written and forgotten to commit), and that
+argument stands. What is missing is not a better test but a **name the project can vouch for**.
+
+**F2 — the population is large enough that this is not a corner.** This repository tracks **44**
+images and fonts: 32 `.png`, 7 `.woff2`, 4 `.webp`, 1 `.ico`, spread over `brand/`,
+`website/public/`, `website/public/images/`, `console/src/renderer/fonts/`, `console/build/`,
+`mobile/assets/` and the console's e2e screenshot snapshots. The largest is
+`brand/fugaro-logo.png` at 855 285 bytes. A run whose task is "update the site's hero image" is a
+run this repository asks for, and today it ends a failed draft.
+
+**F3 — the check reads one of the four ways a file reaches the branch.** #1476 guards finalize's
+leftover commit (`gitops.CommitAllExcept`) only. **(needs #1476)** The other three are the agent's
+own `git commit` in implement, `internal/runner/gate.go:357`'s `CommitAll` of a `commands.fix`
+working-tree change, and `internal/runner/digest.go:359`'s report step's commit; `shadow.go`'s arm
+commits the same way finalize does. A binary committed by any of the first three is on the branch
+and no check saw it.
+
+**F4 — `git add -N` defeats the check by construction.** `gitops.Untracked` is
+`git ls-files --others --exclude-standard`, which lists a path git would *add*. A path staged with
+intent-to-add is in the index, so it is no longer "other" — and the `git add -A` inside the leftover
+commit then stages its **bytes**. **(needs #1476)** The check is blind to it, and the payload is on
+the branch. This is the finding that makes the residual a hole rather than a tidiness gap.
+
+**F5 — finalize's status switch has one `default`, and everything lands in it.**
+`internal/runner/runner.go:3648–3654`: `ready` → succeeded, a halt → halted, a cancel → cancelled,
+**everything else → `failed`**. An unreviewed run, a run with failing tests and a run whose review
+left findings the mode blocks on are the same word on the wire.
+
+**F6 — issue 2 is at least two states, not one.** `Decide` refuses readiness with "no review
+verdict" in two places: `last == nil` (no round for it to read) and **(needs #1476)**
+`last.Verdict == "none"` (a round that answered nothing after its retry). The first case predates
+#1476 and is not a tolerance question — nothing was reviewed, so nothing can be tolerated; the
+second is #1476's new refusal, and its own comment is the ruling this design adopts (*"a run nobody
+read is not one this rule marks ready"*).
+
+**F7 — which round `Decide` reads is settled elsewhere, and this design depends on it.**
+`seniorReview` (`internal/runner/runner.go:2794`) skips a `runstore.TierFirst` round, so a run whose
+highest level is the first-line review has `last == nil` and is a draft today. **That is already a
+named defect with an answer**: [docs/review-levels-ab-jobmax](../review-levels-ab-jobmax/reconciliation.md)
+D723 (answered 2026-10-30) rules that *"the highest level that ran decides readiness"*, and its task
+**L4.2** is what makes `Decide` read that round. After L4.2, `last == nil` means what it says — no
+review round ran at all — and the no-verdict state is one refusal with two reasons rather than three
+with a level-resolution question hidden in the middle. This design's label is written for the state,
+not for the round.
+
+**F8 — the pattern language this rule needs already exists, twice, with one rule.** `rigor.Area.Match`
+and `internal/config`'s `rebuild.paths` both match with `github.com/bmatcuk/doublestar/v4` and both
+validate with the same four checks in the same order: not empty, not absolute, no `..` component,
+`doublestar.ValidatePattern` (`internal/rigor/area.go:63`, `internal/config/validate.go:383`). F9's
+rule in this tree — one matcher, one pattern rule — is what forbids a fifth spelling here.
+
+**F9 — the dependency is already direct.** `doublestar/v4` is in `go.mod` (`v4.10.2`) and imported
+by `internal/rigor`, `internal/config` and others. The allow rule adds no module.
+
+**F10 — `internal/policy.Merge` already knows the direction this key needs.**
+`internal/policy/merge.go:37–43`: *"A later layer may only tighten: the smaller positive cap, the
+stricter mode (enforce > observe > off), **the intersection of allow-lists**"*. `Layer.AllowedModels`
+is the list precedent and `TightenInt` the cap precedent, so a `Layer.BinariesAllow` +
+`Layer.BinariesMaxBytes` pair needs no new merge rule — and putting the key on the ceiling alone is
+what a `ReviewFloor`-shaped member does already.
+
+**F11 — the carrier for an owner-only key has a precedent, and it is `review_floor`.**
+`localcfg.Config.ReviewFloor` travels into the node and never into the shared config,
+`internal/cli/sharedcfg.go:198`'s `sharedForbidden` refuses the key at publish, and
+`internal/cli/project_cmd.go:670`'s `buildProjectPolicy` copies it in. `internal/cli/docs_project_centric_test.go:2326`
+already pins `project_cmd.go`'s `buildProjectPolicy` by name, so the "one build path" guard this
+design leans on is a test that exists.
+
+**F12 — the publish stage exists; the publish itself is another design's task.**
+`internal/cli/init_stages.go` registers `initflow.Policy` (`policyMigrateStage`,
+`internal/cli/init_policy_migrate.go:352`) today for the migration, and
+[docs/settings-commands](../settings-commands/implementation-plan.md) **S3** is what makes that
+stage publish the node from the local config with the ETag and generation guards. This design's
+publish half is a member of that node build, not a stage of its own.
+
+**F13 — the status vocabulary is one word in five places, and only four are this repository's.**
+`internal/runstore/runstore.go:28–40` (the constants), `schemas/result.schema.json:16` (the enum a
+strict reader validates), `internal/digest/digest.go:120` (`statuses`, the closed set a record's
+words are checked against — a value outside it renders `other`), `internal/watch/finished.go:44`
+(`isFailure`) and `internal/userstats/userstats.go:196` (the census switch's `default` → `Other`).
+`internal/runview/runview.go:394` passes a terminal record's status through unchanged, so nothing is
+derived wrongly there. The fifth reader is the console (`console/src/shared/schema.ts`,
+`console/src/source/redact.ts`), and it is another work stream's.
+
+**F14 — a run's diff does not currently say which paths were *added*.** `parseNumstat`
+(`internal/runner/diffbase.go:532`) reads added/deleted counts and a `binary` flag per path from
+`git diff --numstat -z --no-renames`, and it has no status field, so "an added binary" cannot be read
+out of it. The reading §4.2 needs is `--name-status` (an `A` row) cross-referenced with the numstat
+binary flag, or `--diff-filter=A` beside it; the design names the shape and the plan's task pins it.
+
+## 2. The decisions
+
+Each is written as a **recommendation** with the cost of the alternative, so that "as recommended"
+needs no rewrite.
+
+**D981 — the shape of the rule.** **Recommended:** two members on the policy node —
+`binaries.allow`, a list of repository-relative path globs, and `binaries.max_bytes`, one
+project-wide cap in bytes — with the block optional and absent meaning "no binary is admitted".
+*Cost of the alternative:* a **single list of `{path, max_bytes}` entries** buys a per-path cap
+nobody has asked for, at the price of a nested carrier, a nested validation, a registry row per
+field and a merge that has to pair two lists by index; a **directory-prefix-only language** (no
+globs) is simpler to explain but cannot say `brand/*.png`, so the owner of this repository would have
+to admit `brand/` wholesale, which is a wider grant than the one they want.
+
+**D982 — the pattern language is the tree's existing one.** **Recommended:** doublestar globs,
+validated at publish time by the same four checks `rigor.Area.Validate` and `internal/config`'s
+`rebuild.paths` apply, with no new matcher and no new module. *Cost of the alternative:* a bespoke
+"`**` means any depth, everything else is literal" language would be smaller to document and would
+be a **second** glob semantics in a tree that has gone out of its way to have one; and a
+loosely-validated pattern is the failure mode the emptiest-looking lock produces — a project that
+wrote `website/public/**.png`, believed the directory was admitted, and is refused the file it
+expected to pass.
+
+**D983 — the shipped cap.** **Recommended:** `max_bytes` defaults to **2 MiB (2 097 152 bytes)** when
+the block is present and the key is absent, and a project may only lower it. It is above the largest
+asset this repository tracks (855 285 bytes) with room for a retina replacement, and it is a bound,
+not a policy. *Cost of the alternative:* **no default** — requiring the key whenever `allow` is
+non-empty makes the block two required keys and gives every project that never thought about size a
+refusal to read before it can admit anything; a **much smaller default** (256 KiB) is a rule that
+silently refuses the very images a site needs.
+
+**D984 — extensions are not a key.** **Recommended:** an extension restriction is written inside a
+pattern (`brand/*.png`), and no `extensions` member exists. *Cost of the alternative:* an
+`extensions: ["png", "woff2"]` list is easier to write, and it admits those extensions at **every**
+path in the repository — including the fixture and testdata directories a reviewer's eye is not on,
+which is where a payload would go.
+
+**D985 — no content-type check.** **Recommended:** the "is this a binary" decision stays #1476's NUL
+test, and the rule's second input is the path and the size only. *Cost of the alternative:* a
+`net/http.DetectContentType` (or magic-number) allow list is stdlib and cheap, and it would admit
+**any** PNG at an admitted path — a finer-looking gate that is wider in practice, over the same
+bytes nobody can read, at the price of a second read of every added file and a second vocabulary
+(PNG/JPEG/WOFF2/…) to keep.
+
+**D986 — who may write it.** **Recommended:** the key is the **policy node's only**. `fugaro.yaml`
+has no `binaries` key and `internal/config` refuses one; `internal/cli/sharedcfg.go`'s
+`sharedForbidden` gains `binaries` so the shared config refuses it; no project-layer or profile key
+carries it in this release. *Cost of the alternative:* a **project-layer** list, merged by
+intersection, would let a project narrow the owner's list — a real capability, with no case today,
+and it costs a registry row, a `settings set` shape and one more document an operator must read
+before they can say why a file was admitted or was not. A **repository** key is not on the table at
+all: `fugaro.yaml` is in the checkout the run's own agent writes, so a key there is a self-grant
+(F1's whole point).
+
+**D987 — what silence means at publish.** **Recommended:** an absent `binaries` key in the local
+project config leaves the published node's block alone (it is not a request to remove it), and taking
+an admission away on purpose is a **written empty block** (`binaries: {allow: []}`), which is also
+the strictest answer. This is `review_floor`'s written-empty-object rule, and it is the direction
+that matters here: a publish that *widened* what a project commits because the operator's file
+happened to omit a block is the surprise this folder exists to remove. *Cost of the alternative:*
+"absent means remove" is one rule instead of two spellings to tell apart, and it silently widens the
+project's admissions on a machine whose local file was written before the key existed — the exact
+class of the HARD RULE in `CLAUDE.md` (a change `fugaro update` makes that nobody asked for).
+
+**D988 — where a refusal happens, and what it does.** **Recommended:** both checks run in **finalize,
+before the pull request is settled**: an untracked stray is held out of the leftover commit (as
+#1476 does) and a *committed* one is named and fails the run, with the commit left on the branch.
+The run ends `StatusFailed` / `OutcomeDraft`, exactly as #1476's refusal does today. *Cost of the
+alternative:* **a pre-flight check in the implement stage** would refuse earlier and cheaper, and it
+cannot be complete — `gate.go`'s autofix and `digest.go`'s step commit *after* implement, and the
+review and fix rounds run after it too; a check there would need a second one later anyway, which is
+two places for one rule.
+
+**D989 — close the residual, at one point.** **Recommended:** yes — finalize reads the run's own diff
+(`diffBase()...HEAD`) and refuses an **added** path that is binary and unadmitted, so the agent's own
+commit, `git add -N`, `gate.go`'s autofix commit and `digest.go`'s step all meet one check. Modified
+paths are not refused. No commit is rewritten. *Cost of the alternative:* **leaving it open** keeps
+the diff smaller and leaves F4 as a documented bypass — a run can put a payload on the branch with
+one `git add -N` and one commit, and "the reviewer will see it" is false for exactly the bytes the
+rule exists for. **Checking at each committer** instead is four copies of one rule, four reads of the
+checkout, and a fifth committer added later that nobody remembers to guard.
+
+**D990 — the policy version.** **Recommended:** **bump `projectpolicy.Version` 4 → 5**, add
+`VersionSince[5] = "0.15.0"`, and carry the convergence test the HARD RULE asks for. A version-4
+image tolerates a new *top-level* key (it lands in `UnknownKeys`), so tolerating would not be
+fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-4 image
+refuses the very file the list admits, and the run ends a draft with nothing saying why. That is the
+"published change that silently does nothing" class `CLAUDE.md`'s HARD RULE forbids, and `fugaro
+update` refreshes the image in the same command, so the lockstep costs the operator nothing.
+*Cost of the alternative:* tolerating means no republish step and no skew window — and it means a
+node whose member is half-enforced for as long as an image lags, which is the state this design
+exists to remove.
+
+**D991 — what an unadmitted binary does to the run's status.** **Recommended:** unchanged —
+`StatusFailed` / `OutcomeDraft`. It is a policy decision the runner made correctly, which is what
+`StatusFailed`'s own comment says it is for; the new status of §8 is for a run nothing failed in, and
+a refused binary is not that. *Cost of the alternative:* a second new status ("refused") would
+separate the two on a list, at the price of another value on a wire five clients read and of a word
+that says less than the reason already does.
+
+**D992 — what the agent is told.** **Recommended:** the implement prompt names the admitted paths and
+the cap, and the refusal sentence names the rule and says a repository cannot widen it. *Cost of the
+alternative:* saying nothing in the prompt keeps the prompt shorter and makes every run that needs to
+add an asset fail once before it finds out — a full retry round spent on a fact the run could have
+been given for one line.
+
+**D993 — what the pull request says.** **Recommended:** one bounded line in the status section
+(`binaries: 2 admitted (…, …)`) when a run committed a binary at an admitted path, and the refusal
+in the run's reason and the PR's own status line when it did not. *Cost of the alternative:* saying
+nothing keeps the body the same size and leaves a reader to discover the unreadable file by opening
+the diff; a per-file section would grow the body with what the diff already shows.
+
+**D994 — the label's name.** **Recommended:** **`unreviewed`**. It says the state a person acts on —
+this pull request has no review behind it — and it is the same word for the two states of F6.
+*Cost of the alternative:* **`no_verdict`** names the mechanism rather than the state, and reads
+oddly on a run whose first-line review did run and had nothing to say; a **reused** word
+(`succeeded`, or `failed` with a friendlier reason) is forbidden outright — a name never changes
+meaning, and `failed` still has to mean a policy decision for the runs that keep it.
+
+**D995 — how finalize learns which label to write.** **Recommended:** `Decide` returns a small typed
+value (readiness, reason, and the class `ready`/`blocked`/`unreviewed`) and finalize's `switch`
+gains a `case` on the class. *Cost of the alternative:* matching on the reason string is a two-line
+change and makes a **sentence** an enum: the next task to reword "no review verdict" moves a status
+by accident, and nothing fails.
+
+**D996 — the census.** **Recommended:** `internal/userstats` leaves the new value in its `default`
+bucket (`Other`), so this slice changes no aggregate shape. *Cost of the alternative:* a
+`Unreviewed` counter is more truthful on the spend screen, and it is a wire change in
+`internal/userstats`, the console and the phone for a figure the run records themselves already
+answer.
+
+## 3. Open items
+
+**O1 — does anything still reach `last == nil` once L4.2 lands?** F7's answer (D723, L4.2) removes
+the first-line-only case, so after it `last == nil` means a run with **no review round at all**.
+Whether such a run exists by configuration (a recipe that names no review stage) and whether it too
+should be `unreviewed` — or whether it is a refusal of a different kind — is a question for the
+levels work, not for this label; this design labels the state it is given and does not move the
+readiness rule. Recorded rather than settled.
+
+**O2 — what the console and the phone draw for `unreviewed`.** The chip's colour and word are those
+clients' (E2). Until they ship, the value reaches them as itself, because `status` is a contract key
+in `console/src/source/redact.ts` and the person pass never rewrites it.
+
+**O3 — whether the project layer should ever carry `binaries`.** D986 keeps the key on the ceiling
+only. If a project with many repositories later wants one list plus a narrower one per job profile,
+the merge direction is already settled (D986, F10) and the work is a registry row and a `settings`
+shape — not a new rule.
+
+## 4. What this design does not decide
+
+- **Readiness**, the **retry** `seniorLoop` gives a silent reviewer, and whether a silent senior
+  round should be retried more than once. §8 is about the label only.
+- **The console's and the phone's screens** (`console/**`, `mobile/**`): external (E2).
+- **Any repository-facing key** for the rule (D986), and any change to `fugaro.yaml`'s own schema
+  beyond "the key does not exist there".
+- **The other two deferrals of the 0.14.2 runner group** that are not these two: this folder answers
+  the binary refusal and the no-verdict label, and nothing else in #1476.
