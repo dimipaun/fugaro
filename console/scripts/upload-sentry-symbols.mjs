@@ -23,11 +23,31 @@
 //
 // **What it uploads, and from where.** The bundled app's native debug files
 // (`debug-files upload`, which walks the bundle for the Electron framework and
-// the app's native modules) and the built main process (`sourcemaps inject`
-// writes a debug id into each file and its map, `sourcemaps upload` sends them).
-// `console/dist/main` is what the packaged app runs, and the two halves are
-// separate commands for that reason: the ids have to be in the files the
-// archive carries, not only in the copy that was sent.
+// the app's native modules), and the built main process: `sourcemaps inject`
+// writes a debug id into each file of `console/dist/main` and into the map
+// beside it, and `sourcemaps upload` sends both. Those are two commands rather
+// than one because the id has to be in the file as well as in the map, which is
+// what `inject` is for.
+//
+// **Uploaded, and not yet effective.** The symbols are filed where the
+// reporter's project can find them, and no crash report this console sends is
+// resolved by them as it stands:
+//   - the JavaScript the app ships carries no debug id: this runs after
+//     `npm run package`, which is what packs the archive, so `inject` rewrites
+//     the `dist/main` the next build starts from rather than the copy inside the
+//     app;
+//   - the scrubber drops `debug_meta` along with every other key outside its
+//     allow-list (`console/src/main/crash.ts`), so nothing sends the ids a
+//     symbolicator looks up;
+//   - no event carries a release: nothing sets one, and the SDK's own
+//     `name@version` default is dropped by the scrubber's shape rule;
+//   - the native debug files would be read by a minidump's frames, and this
+//     console installs no minidump integration -- it sends stack frames, not
+//     process memory.
+// Making symbolication work (inject before the pack, keep `debug_meta`, give the
+// event a release) is a later task and is not attempted here: what this step
+// buys today is that the upload itself is built, tested and pointed at the right
+// project, so that task is one change rather than two.
 //
 // **The two halves are keyed differently.** The source maps go up under the
 // console's version -- that is what the two `sourcemaps` commands take the

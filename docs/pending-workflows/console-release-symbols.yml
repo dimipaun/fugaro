@@ -35,7 +35,11 @@
 # the step that verifies the shipped artifacts, it runs
 # `console/scripts/upload-sentry-symbols.mjs`, which pushes the packaged app's
 # native debug files and the main process's JavaScript and source maps to the
-# project the crash reporter reports to, tagged with the console's own version.
+# project the crash reporter reports to -- the maps tagged with the console's own
+# version, the debug files keyed by the debug id inside each one, which is why
+# `debug-files upload` takes no release. **The symbols are filed and no report is
+# read with them yet** (docs/pending-workflows/README.md says which four things
+# a later task has to add), so the step is groundwork rather than a fix.
 #
 # **It adds one repository secret, `SENTRY_AUTH_TOKEN`, to the `console-release`
 # environment, and it adds it to one step's `env:` only** -- no other step reads
