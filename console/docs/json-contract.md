@@ -1198,8 +1198,12 @@ ever becomes (or embeds) `localcfg.Config`.
 absent, null and a malformed entry are each an empty list rather than a refusal,
 because a console that refused a document over a field it only *offers* would stop
 listing installations on the day the field is added. Where it is present the
-console offers the `path` of each entry carrying `valid: true` (an absolute path;
-a `valid: false` entry is never offered, whatever its `reason`) and nothing else: a directory the document never
+console offers the `path` of each entry carrying `valid: true` **and**
+`enrolled: true` (an absolute path; a `valid: false` entry is never offered,
+whatever its `reason`, and neither is a row this installation's own config does
+not enroll) — **one entry per repository**, because a repository with several
+remembered directories would otherwise fill a menu and hide the others — and
+nothing else: a directory the document never
 named is refused by name, so the list is the CLI's own enumeration even at the
 point of use. An installation listed with no `checkouts` is drawn with no way to
 set one, which is the truthful state — the console does not invent a directory.
