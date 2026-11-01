@@ -150,16 +150,21 @@ p.live-review-capped {
  *
  * Section 6.1 rule 2: density as the default, tabular figures, right-aligned
  * numerics, and no whitespace padding between related figures. One rule carries
- * all of it, and it names **six** hooks because six screens draw a figure
- * through a `numberCell`: Live, Spend, Projects and Run each prepend their own,
- * the coordinator's is the span its `numberCell` writes the reading into beside
- * the console's own word for it (`coordinator-count-value`; `coordinator-count`
- * is the cell around the pair), and the degraded screen's `numberCell` prepends
- * none -- which is why Task 6.4 adds `degraded-num` to that one helper
+ * all of it, and it names **four** hooks. Live, Spend and Projects each draw a
+ * figure through a `numberCell` that prepends its own hook to the cell, and the
+ * degraded screen draws one through a `numberCell` that prepends none -- which
+ * is why Task 6.4 adds `degraded-num` to that one helper
  * (`src/renderer/screens/degraded.ts`), the only code change in the styling
  * work (design section 2.10). Without it the feed age, the counts and the money
  * of the degraded and unavailable screens would be the only figures in the
  * console with no alignment hook at all.
+ *
+ * **A screen the redesign has rebuilt aligns its own figure.** The Run screen's
+ * `run-number` and the Coordinator's `coordinator-count-value` (step 7) carry
+ * their own copy of these declarations in `flight-deck.css` and left this list
+ * with it, the way the degraded screen's hook arrived here: the rule keeps the
+ * screens whose figure has no rule of its own, and a step that writes one stops
+ * naming it here.
  *
  * `min-width` is in `ch` and stated here rather than as a token: like the rail's
  * two widths it is a fact about the drawing, and section 3.1's vocabulary is
@@ -170,7 +175,6 @@ p.live-review-capped {
 .live-num,
 .spend-num,
 .projects-number,
-.coordinator-count-value,
 .degraded-num {
   min-width: 6ch;
   font-family: var(--font-mono);
@@ -881,6 +885,22 @@ span.run-model-name {
   color: var(--text-muted);
 }
 
+/* A run's two columns while the reads that fill them are out. The frame is drawn
+ * in the click's own turn (`run.ts`'s `renderRunFrame`), and the aside holds
+ * nothing until the run's record lands: `flex: 1 1 340px` would keep a column of
+ * empty page beside the main column for as long as that read takes, which is the
+ * one thing the frame exists to avoid -- the operator would see the screen they
+ * asked for, laid out wrong, instead of a column holding the shape of what is
+ * coming. An aside with nothing in it is therefore not laid out at all, for the
+ * same reason `console-busy-slot:empty` is `display: none` (`flight-deck.css`).
+ *
+ * The rule names the aside by its class and its tag together, as the layout's
+ * own rules above do: `aside.run-aside` is one element of one screen, and a
+ * bare `:empty` selector would reach every empty element in the theme. */
+aside.run-aside:empty {
+  display: none;
+}
+
 /* ---- Degraded and unavailable --------------------------------------------
  *
  * The design's section 6.3 rule made visible: caps read `n/a`, the kill
@@ -1476,306 +1496,6 @@ li.graph-row[data-selected='true'] {
 
 p.graph-empty {
   color: var(--text-muted);
-}
-
-/* ---- Coordinator (design section 2.12) ------------------------------------
- *
- * The Coordinator draws the project view: one `section.coordinator-repo` per
- * repository the installation's config lists, each holding the sweep's marker,
- * the three counts beside the name, the records with the runs behind them, the
- * collisions and the pull requests whose host state no sweep could read. Every
- * string the document carried reaches the tree through `putText` and every
- * figure through `putReading`; what the rules below paint is spacing, weight and
- * tone.
- *
- * **The stored view is drawn as it is stored.** The screen cannot tell a
- * coordinator that is running from one switched off after its last sweep, so
- * nothing here claims an age: the marker is the document's own stamp, and the
- * sentence about the time the view does not carry (`coordinator-age`) is the
- * console's own prose, drawn as prose.
- *
- * **The tones are the state tokens' roles and not a second palette.** Three
- * readings on this screen ask for attention -- `--warn`, whose role cell is
- * "attention" (section 3.2): a pair of records in flight on the same files, a
- * pull request whose state a sweep could not read, and a set the document's own
- * bound left short. Each is a **word in the DOM** beside its tone, so the colour
- * is redundant by construction (section 3.5) and this screen adds no arm to the
- * forced-colors block below: no rule here depends on colour alone. `--ok` is
- * painted nowhere: section 3.2 licenses that token to two readings, and no
- * repository, record or run on this screen is either of them
- * (`theme-tokens.test.ts`'s `OK_SELECTORS`).
- *
- * **Nothing here animates and nothing here is a control.** The view is read-only
- * -- it draws no button, no field and no link -- so no rule needs a transition
- * beyond the focus ring the shared blocks already carry.
- */
-
-section.coordinator {
-  display: block;
-  color: var(--text);
-}
-
-/* The read's own command line, in the console's words: monospace and quiet,
- * because it says where the drawing came from and is not a reading. */
-p.coordinator-source {
-  margin: 0 0 var(--space-2xs);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-}
-
-/* The console's two sentences: the age the stored view does not carry, and an
- * installation that lists no repository. Both are the console speaking, so both
- * are muted prose and neither is a reading. */
-p.coordinator-age,
-p.coordinator-empty {
-  margin: 0 0 var(--space-sm);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-
-section.coordinator-repo {
-  margin-bottom: var(--space-lg);
-  padding-bottom: var(--space-sm);
-  border-bottom: var(--rule-width) solid var(--border);
-}
-
-h2.coordinator-repo-name {
-  margin: 0 0 var(--space-2xs);
-  color: var(--text);
-  font-size: var(--font-size-md);
-  font-weight: var(--weight-medium);
-}
-
-/* Which view the node is -- the stored word, or the runs-only fallback. It is a
- * sentence the CLI wrote about the document and not a state this console
- * measured, so it carries no tone. */
-p.coordinator-repo-state {
-  margin: 0 0 var(--space-2xs);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-
-/* The sweep's marker, exactly as stored: the introducing word, the stamp and
- * the reason the sweep wrote. The stamp is a document string, so it is monospace
- * beside the console's own word rather than reformatted into a date this console
- * would be claiming. */
-p.coordinator-repo-stale {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin: 0 0 var(--space-2xs);
-  font-size: var(--font-size-sm);
-}
-
-span.coordinator-stale-word {
-  color: var(--text-muted);
-}
-
-span.coordinator-stale-since {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-span.coordinator-stale-reason {
-  color: var(--text-muted);
-}
-
-p.coordinator-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  margin: 0 0 var(--space-2xs);
-}
-
-/* One count's cell: the console's own word for the count, and the reading
- * beside it. The reading is a span of its own -- the screen's number hook, the
- * class the shared alignment rule names -- so section 2.10's tabular figures and
- * `ch` minimum land on the figure and never on the word, and a count that grows
- * a digit keeps its width and its place in the row. */
-span.coordinator-count {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-2xs);
-}
-
-span.coordinator-count-word {
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-
-/* The bound that left records or collisions out: the console's own sentence with
- * the counts it kept, and the tone section 2.11's `graph-not-shown` draws for
- * the same reading -- a bound dropped something. */
-p.coordinator-omitted {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  margin: 0 0 var(--space-2xs);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-span.coordinator-omitted-word {
-  color: var(--warn);
-}
-
-ul.coordinator-records,
-ul.coordinator-collisions,
-ul.coordinator-unreads {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* One record: a pull request with the runs behind it, or the in-flight runs
- * alone. The runs hang off the row rather than beside it, so they take a line of
- * their own and the hairline a nested panel is separated with (section 3.8). */
-li.coordinator-record {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  min-height: var(--row-height);
-  padding: var(--space-2xs) 0;
-  border-bottom: var(--rule-width) solid var(--border);
-}
-
-span.coordinator-record-label {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-}
-
-span.coordinator-record-title {
-  color: var(--text);
-  font-size: var(--font-size-sm);
-}
-
-span.coordinator-record-branch {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-}
-
-span.coordinator-record-state,
-span.coordinator-record-release,
-span.coordinator-record-draft,
-span.coordinator-record-flight,
-span.coordinator-record-noruns {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-ul.coordinator-runs {
-  flex-basis: 100%;
-  margin: var(--space-2xs) 0 0;
-  padding-left: var(--space-sm);
-  list-style: none;
-  border-left: var(--rule-width) solid var(--border);
-}
-
-li.coordinator-run {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  font-size: var(--font-size-sm);
-}
-
-span.coordinator-run-id {
-  color: var(--text);
-  font-family: var(--font-mono);
-}
-
-/* The declaration and not an identity: the launch record wrote it about itself
- * and nothing verified it, so it is drawn as the person-shaped text it is. */
-span.coordinator-run-by {
-  color: var(--text-muted);
-}
-
-span.coordinator-run-status,
-span.coordinator-run-outcome,
-span.coordinator-run-declared-word,
-span.coordinator-run-open,
-span.coordinator-run-short {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-/* One collision: the two labels with the console's sentence between them, then
- * the paths and the services both records touch, each already cut to the
- * console's cap. */
-li.coordinator-collision {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  padding: var(--space-2xs) 0;
-  border-bottom: var(--rule-width) solid var(--border);
-}
-
-span.coordinator-collision-a,
-span.coordinator-collision-b {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-}
-
-span.coordinator-collision-word {
-  color: var(--warn);
-  font-size: var(--font-size-xs);
-}
-
-.coordinator-file {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-}
-
-.coordinator-service {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-/* How many of a cut list were not drawn: a count, so it is tabular and muted
- * beside the members that were. */
-.coordinator-more {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-/* One pull request a sweep could not read, with the console's own answer to
- * whether the state shown is the last one a sweep did read. */
-li.coordinator-unread {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-  padding: var(--space-2xs) 0;
-  border-bottom: var(--rule-width) solid var(--border);
-}
-
-span.coordinator-unread-word {
-  color: var(--warn);
-  font-size: var(--font-size-xs);
-}
-
-span.coordinator-unread-number {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-}
-
-span.coordinator-unread-reason,
-span.coordinator-unread-carried,
-span.coordinator-unread-retry {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
 }
 
 /* ---- Narrow windows (design section 4.2, the screens' share) -------------

@@ -1,6 +1,6 @@
 # Project-level named Claude OAuth tokens
 
-Status: **built, release 0.9.0 (released; the released CLI is 0.14.2)**, 2026-10-19. Was: design,
+Status: **built, release 0.9.0 (released; the released CLI is 0.15.0)**, 2026-10-19. Was: design,
 2026-10-18, **RULED** (release 0.9.0). The three implementation tasks are merged — the policy's
 `accounts` block and the profile field (policy version 3), the account jobs and their static mount,
 and the two gates with doctor and SECURITY.md — and the operator guide is

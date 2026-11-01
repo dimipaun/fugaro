@@ -154,12 +154,12 @@ type Spec struct {
 	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
 	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
 	// at most config.MaxClaudeAccountNameLen characters, never
-	// config.DefaultClaudeAccount itself — "" means that) this run's
-	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md).
-	// A runner before namedTokensSince refuses the field, since it is new
-	// and this package's decoder disallows unknown fields; the launching
-	// CLI checks the job's build record first, the same way it already
-	// does for ProjectLayer.
+	// config.DefaultClaudeAccount itself — "" means that — and never the name
+	// the bundle reserves, config.ReservedClaudeAccountName) this run's
+	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md). A
+	// runner before namedTokensSince refuses the field, since it is new and
+	// this package's decoder disallows unknown fields; the launching CLI
+	// checks the job's build record first, as it does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
 	// CompressionOff, when true, disables agent.compression for this run
 	// only, overriding fugaro.yaml (fugaro run --no-compression;
@@ -982,11 +982,17 @@ func (s *Spec) Validate() error {
 	// single source of truth for a named account's shape (internal/config/
 	// claude_accounts.go, Task 1): this package imports them rather than
 	// keeping its own copy, so the two can never silently drift apart the
-	// way an earlier version of this check did.
+	// way an earlier version of this check did. config's own reserved name
+	// comes with them, and its sentence with it: a launcher that accepts an
+	// account name the runner refuses writes a task the run then dies on
+	// after it was paid for, so the two refuse the same names in the same
+	// words (config.ReservedClaudeAccountName).
 	switch {
 	case s.OAuthToken == "":
 	case s.OAuthToken == config.DefaultClaudeAccount:
 		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
+	case config.ReservedClaudeAccountName(s.OAuthToken):
+		bad("task spec: oauth_token: %s", config.ReservedClaudeAccountNameMessage)
 	case len(s.OAuthToken) > config.MaxClaudeAccountNameLen:
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):

@@ -563,7 +563,7 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   },
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
-    theme: { within: 'renderRun', reason: 'a `RunTheme`, the closed theme tuple' },
+    theme: { within: 'renderRunFrame', reason: 'a `RunTheme`, the closed theme tuple' },
     '`the document carries no ${field}`':
       'the console\'s own sentence for a field the record left out of this run, interpolating the wire path the caller passes (`row.repo`, `row.oauth_account`, `row.branch`) and nothing the document chose -- the same sentence `putReading` writes into the `title` of a reading with no number, written here because a column of the header is text rather than a reading',
     'stageShare(value, longest)': {

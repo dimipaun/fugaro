@@ -502,10 +502,15 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	if err != nil {
 		return err
 	}
-	// This writes, so the database must be this project's own — the check
-	// `fugaro budget set` and `fugaro budget kill` make before they write: a
-	// budget.rtdb_url pointing at another project's database would otherwise
-	// have the operator clear a mark in an installation that is not theirs.
+	// This writes, so the database must be one this installation may write at
+	// all: the one ownership question every writer into it asks
+	// (requireOwnBudgetDB), and then the name check `fugaro budget set` and
+	// `fugaro budget kill` make — a budget.rtdb_url pointing at another
+	// project's database would otherwise have the operator clear a mark in an
+	// installation that is not theirs.
+	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was cleared"); err != nil {
+		return err
+	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
 		return err
 	}

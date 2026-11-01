@@ -40,9 +40,15 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	iam := gcpfake.NewIAMCredentials(t)
 	iam.AddSigner(testSigner)
 	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
-	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set("fugaro/project", "aurora")
+	// The database a real installation runs against carries Fugaro's own mark
+	// (init wrote it): a writer that asks the shared ownership check refuses a
+	// database it cannot tell is this installation's, and every fixture is the
+	// installation these commands are run for, not one somebody else's config
+	// points at.
+	f.db.Set(budget.PathMark, auroraMark())
 	f.db.Set("config/mode", "enforce")
 	f.db.Set("config/caps/global", map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
 	f.db.Set("config/caps/defaults", map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
