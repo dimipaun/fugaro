@@ -342,6 +342,50 @@ func TestUpdatePolicyStageRefusesWhenThePublishedGenerationIsNewer(t *testing.T)
 	}
 }
 
+// TestUpdatePolicyPublishRefusesANodeItDoesNotModel: P8 at the publish's own
+// write. A node at this version that carries a top-level key this Fugaro knows
+// nothing about is not one a publish may rewrite — the document it builds does
+// not carry that member, so the write would drop it, and a newer Fugaro's
+// policy is not this binary's to narrow. The refusal names the count of those
+// keys and never a value, and nothing is written.
+func TestUpdatePolicyPublishRefusesANodeItDoesNotModel(t *testing.T) {
+	f := newProjectFixture(t, "")
+	node := staleBudgetNode()
+	node["future_block"] = map[string]any{"a": 1}
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+	before, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("the publish rewrote a node it does not model:\n%s", out)
+	}
+	for _, want := range []string{"1 key(s) this Fugaro does not know", "fugaro upgrade", "update again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The keys are named — it is the values a refusal never carries, since a
+	// node may hold anything under them — so the operator knows which block is
+	// the newer Fugaro's.
+	if !strings.Contains(err.Error(), "future_block") {
+		t.Errorf("the refusal does not name the key: %v", err)
+	}
+	after, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("the node changed:\nbefore %s\nafter  %s", before, after)
+	}
+	if gen := recordedGeneration(t, f); gen != "" {
+		t.Errorf("a refused publish recorded policy_generation = %q", gen)
+	}
+}
+
 // TestUpdatePolicyReseedRefusesAMemberItCannotSplice: the re-seed writes the
 // published node's values with yamledit, one splice per member, and a member
 // inside a flow collection is one it refuses ("a flow collection the edit
