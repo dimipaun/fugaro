@@ -273,7 +273,7 @@ whatever the list says — the negative half, and the reason `claudeAccountAllow
 start and not only at launch), `TestAutoReviewStageWalksOnlyReviewClassAccounts` (spec §11.3's **stage
 scope**, the second rule: an account that is admitted for the repository but is **not of the review
 class** — no review job variant of the cloud-senior-review design is built for it — is never chosen for
-the `review` stage, whatever the list says; the sibling of the test above, and the one that keeps stage
+the independent review job's stage (not the coding run's in-job `review` stage, which shares the run's job and walks the whole list), whatever the list says; the sibling of the test above, and the one that keeps stage
 scope from collapsing back into the repository's allow-list),
 `TestAutoOffMeansExplicitOnly` (with the switch off the walk never runs,
 the account is the chain's own, and the record names one account), `TestAutoNeverSwitchesMidStage` (a

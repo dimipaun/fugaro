@@ -618,16 +618,16 @@ allow-list said twice — where it comes from is the next paragraph.
 `claudeAccountAllowed` / `config.AllowedClaudeAccounts` — the list `fugaro accounts ls` prints — and it
 is the floor every rung of §11.2 already stands on. **Stage scope is a narrower, second rule, and it
 comes from the stage's job.** A stage that shares the run's own job has no scope of its own, so its walk
-is the whole of that list. A stage that runs in a job of its own is bounded by the accounts that job
+is the whole of that list: that includes the coding run's own in-job `review` stage, which runs on the coder's job credential. A stage that runs in a job of its own is bounded by the accounts that job
 exists for, and the one such stage this design names is the reviewer's: the cloud-senior-review design
 gives review **its own job variant, deployed per `(profile, account)` with its own service account**
-([cloud-senior-review](../cloud-senior-review/spec.md) §2), so a review stage may be served only by an
+([cloud-senior-review](../cloud-senior-review/spec.md) §2), so the independent review job's stage may be served only by an
 account that variant is built for. Those are the **review-class** accounts — the class the
 credentials-service routing design (**#1514**, open; its **D1062**) defines, that design's **O1**
 consumes, and the credentials service admits a review caller under
-([cloud-senior-review](../cloud-senior-review/spec.md) §1–§2). So **a review stage's walk is limited to
+([cloud-senior-review](../cloud-senior-review/spec.md) §1–§2). So **the independent review job's stage walk is limited to
 review-class accounts**: an account admitted for the repository but not of that class is never chosen
-for a review stage, whatever the list says. A7 builds the walk, and its negative test is exactly this
+for the independent review job's stage, whatever the list says. A7 builds the walk, and its negative test is exactly this
 one — `TestAutoReviewStageWalksOnlyReviewClassAccounts`.
 
 - **Never mid-stage.** A stage's transcript, its cost and its verdict belong to one account, and a
