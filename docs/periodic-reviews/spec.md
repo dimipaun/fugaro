@@ -127,9 +127,9 @@ are missing for "every user" to mean anything:
   what is due. Its JSON is one versioned document, `{"version": 1, "dir": ..., "due": [{"dim",
   "key"}], "newest": {...} | null}`, with a JSON Schema in `schemas/` like the other wire formats.
 - **A line in `doctor` (D963).** The same reading, reported as one check in the checkout the user is
-  standing in: `reviews-due`, an info line when the newest report is a period old and a warning line
-  when a closed period has no report at all. Offline, like the rest of the checkout checks; never a
-  cloud read, so it runs in a coding agent's session.
+  standing in: `reviews-due`, an info line when the newest report is more than a period old and a
+  warning line when a closed period has no report. Offline, like the rest of the checkout checks;
+  never a cloud read, so it runs in a coding agent's session.
 
 The cadence itself stays the user's (D965). Fugaro schedules nothing for a repository it does not
 own: the **setup** skill prints the three ways — a cron job or CI workflow of the repository, an
