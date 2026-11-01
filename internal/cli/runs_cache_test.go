@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 )
 
 // ls reads every run's three objects on every call, and a listing covers the
@@ -374,6 +375,76 @@ func TestRunsLsCommandSecondCallReadsOnlyChangedGenerations(t *testing.T) {
 	}
 	if got := d.runReads(); len(got) == 0 {
 		t.Error("ls --no-cache read no run object: the flag has to read the bucket, cache or no cache")
+	}
+}
+
+// TestRunsLsOversizedObjectIsThisRunsRow: an object past its read cap is
+// ErrTooLarge, and a listing draws that as the run's own unreadable object
+// rather than as a failure of the listing (corruptObject). The cache must
+// not change which of the two it is: an object the bucket refused is never
+// cached, so the listing reads it again, and the row is the one a listing
+// without a cache draws -- the same rows, the same warnings, warm or cold,
+// cached or not.
+func TestRunsLsOversizedObjectIsThisRunsRow(t *testing.T) {
+	f := newCloudFixture(t)
+	d, ids := genFixture(t, f, 3)
+	d.set(resultKey(t, ids[0]), bytes.Repeat([]byte("x"), blobx.MaxReadBytes+1))
+
+	// row is what the listing says of the run whose result.json the bucket
+	// refused: the run is listed, with its own reason, and it is the run that
+	// failed rather than the listing.
+	row := func(t *testing.T, got lsOut) string {
+		t.Helper()
+		for _, r := range got.Runs {
+			if r.RunID != ids[0] {
+				continue
+			}
+			if r.Status != runview.StatusError || !strings.Contains(r.Reason, "result.json is unreadable") {
+				t.Fatalf("the run whose result.json the bucket refused reads %q / %q, want the run's own unreadable object", r.Status, r.Reason)
+			}
+			return r.Status + ": " + r.Reason
+		}
+		t.Fatalf("the listing left out run %s: the listing failed rather than the run", ids[0])
+		return ""
+	}
+	// warn is the one warning line the listing printed for that run: the
+	// corrupt object is the run's, and no other run's.
+	warn := func(t *testing.T, stderr string) string {
+		t.Helper()
+		var named []string
+		for _, line := range strings.Split(stderr, "\n") {
+			if strings.Contains(line, "result.json is unreadable") {
+				named = append(named, line)
+			}
+		}
+		if len(named) != 1 || !strings.Contains(named[0], ids[0]+":") {
+			t.Fatalf("stderr = %q, want one warning naming %s and no other run", stderr, ids[0])
+		}
+		return named[0]
+	}
+
+	first, firstErr := lsJSON(t, "--since", "0")
+	if len(first.Runs) != len(ids) {
+		t.Fatalf("ls listed %d of %d runs: an object the bucket refused is that run's row, not the listing's", len(first.Runs), len(ids))
+	}
+	wantRow, wantWarn := row(t, first), warn(t, firstErr)
+
+	// The warm cache answers the other runs, and the refused object is read
+	// again -- a read that failed cached nothing -- so neither the row nor
+	// the warning can change because a listing ran before it.
+	d.forget()
+	second, secondErr := lsJSON(t, "--since", "0")
+	if !slices.Equal(runIDs(second.Runs), runIDs(first.Runs)) || row(t, second) != wantRow || warn(t, secondErr) != wantWarn {
+		t.Errorf("the warm listing answered %v, want %v, with the same row and warning:\n%q\n%q", runIDs(second.Runs), runIDs(first.Runs), secondErr, firstErr)
+	}
+	if got := d.runReads(); !slices.Contains(got, resultKey(t, ids[0])) {
+		t.Errorf("the warm listing read %v, want the refused object read again", got)
+	}
+
+	d.forget()
+	third, thirdErr := lsJSON(t, "--since", "0", "--no-cache")
+	if !slices.Equal(runIDs(third.Runs), runIDs(first.Runs)) || row(t, third) != wantRow || warn(t, thirdErr) != wantWarn {
+		t.Errorf("ls --no-cache answered %v, want %v, with the same row and warning:\n%q\n%q", runIDs(third.Runs), runIDs(first.Runs), thirdErr, firstErr)
 	}
 }
 

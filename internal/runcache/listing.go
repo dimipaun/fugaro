@@ -126,6 +126,10 @@ type Reader struct {
 // the cache; any other generation -- a result.json the runner rewrote, a
 // task.json a second writer replaced -- is read again, and the read is what
 // the cache is brought to.
+//
+// What the cache answers with is bounded by the cap every read of the bucket
+// is bounded by (maxObject): a cached object is the bucket's bytes or it is
+// no object.
 func (r Reader) Read(ctx context.Context, s *runstore.Store, name string) ([]byte, error) {
 	if r.Index == nil {
 		return readBucket(ctx, s, name)

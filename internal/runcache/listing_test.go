@@ -3,7 +3,10 @@ package runcache
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -270,5 +273,66 @@ func TestReaderIsNeverTrustedForADecision(t *testing.T) {
 	// answer cheaply and the listing can.
 	if got, err := rd.Read(ctx, s, "launch.json"); err != nil || got != nil {
 		t.Errorf("a run that never launched read as %q, %v", got, err)
+	}
+}
+
+// TestAnEntryPastTheReadCapIsNotServed: what the bucket answers with is what
+// the reader answers with, and one of the bucket's answers is ErrTooLarge
+// rather than the bytes of an object past the read cap. No read of the
+// bucket can write an entry larger than that, so such an entry is a file of
+// another version of this cache, or one put there by hand, and it is a miss
+// like any other: the read that follows is the bucket's own answer, bounded
+// again, which is the answer the caller would have had without a cache --
+// the object when it fits there, ErrTooLarge when it does not.
+func TestAnEntryPastTheReadCapIsNotServed(t *testing.T) {
+	ctx := context.Background()
+	id := testRunIDs[0]
+	key := objectKey(id, "result.json")
+	g, bucket := testBucketWith(t, id)
+	c, _ := testCache(t, t.TempDir(), "aurora", testBucket)
+	s := runstore.Open(bucket.Bucket, testSlug, id)
+	want := []byte(`{"version":1,"run_id":"` + id + `"}`)
+
+	// The object itself fits: the oversized entry is dropped and the bucket's
+	// own bytes are what the caller gets.
+	index := List(ctx, bucket, testSlug, id)
+	blob, err := json.Marshal(entry{Bucket: testBucket, Name: key, Generation: index[key],
+		Data: bytes.Repeat([]byte("x"), maxObject+1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Put(key, index[key], want)
+	if err := os.WriteFile(c.path(key), blob, filePerm); err != nil {
+		t.Fatal(err)
+	}
+	var planted entry
+	if err := json.Unmarshal(blob, &planted); err != nil {
+		t.Fatal(err)
+	}
+	if planted.Generation != index[key] || len(planted.Data) <= maxObject {
+		t.Fatalf("the planted entry names generation %d and %d bytes: the test needs one past the cap at the generation the listing names",
+			planted.Generation, len(planted.Data))
+	}
+	if held, ok := c.Get(key, index[key]); ok {
+		t.Fatalf("the entry past the read cap answered %d bytes: nothing larger than the cap may be served", len(held))
+	}
+	got, err := (Reader{Cache: c, Index: index}).Read(ctx, s, "result.json")
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("the read with an oversized entry = %q, %v; want the bucket's own object", got, err)
+	}
+	if held, ok := c.Get(key, index[key]); !ok || !bytes.Equal(held, want) {
+		t.Errorf("the cache holds %d bytes, %v after the read: the entry the read rewrote has to be the object", len(held), ok)
+	}
+
+	// And an object that does not fit is ErrTooLarge either way: the read is
+	// the bucket's, so the caller classifies it as it classifies every other
+	// object the bucket refuses (internal/cli's corruptObject).
+	g.Put(testBucket, key, bytes.Repeat([]byte("y"), blobx.MaxReadBytes+1))
+	grew := List(ctx, bucket, testSlug, id)
+	if _, ok := c.Get(key, grew[key]); ok {
+		t.Fatal("the rewrite left a cached answer, so the test does not read the bucket")
+	}
+	if _, err := (Reader{Cache: c, Index: grew}).Read(ctx, s, "result.json"); !errors.Is(err, runstore.ErrTooLarge) {
+		t.Errorf("an object past the read cap = %v, want ErrTooLarge", err)
 	}
 }

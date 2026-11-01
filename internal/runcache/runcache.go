@@ -48,6 +48,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 const (
@@ -61,6 +62,14 @@ const (
 	// a few kilobytes, so this holds a large installation's window; past it the
 	// entries nobody has read for longest are dropped.
 	MaxBytes = 64 << 20
+
+	// maxObject caps one entry. Every object this cache holds is one a run
+	// listing reads under runstore's own record cap, so an entry larger than
+	// that is not one the bucket handed out -- a file of another version, or
+	// one put there by hand -- and serving it would have the CLI decode an
+	// object the bucket itself refuses (runstore.ErrTooLarge), past the bound
+	// that keeps a run's own object from exhausting the operator's memory.
+	maxObject = runstore.MaxRecordBytes
 )
 
 // Cache is one project's run-object cache: a directory of entries, each holding
@@ -116,9 +125,12 @@ func Open(getenv func(string) string, project, bucket string) (*Cache, error) {
 
 // Get answers the bytes of the object name at generation gen, when the cache
 // holds them. Every other answer is a miss with no error: another generation,
-// another object, another bucket, a file that is not an entry at all, and a
-// cache that could not be placed. A miss always means the caller reads the
-// bucket.
+// another object, another bucket, a file that is not an entry at all, an
+// entry past the read cap (maxObject), and a cache that could not be placed.
+// A miss always means the caller reads the bucket -- and the caller's own
+// read is what enforces the cap, so an entry larger than it is answered the
+// way the bucket answers the object: with a read of the bucket, never with
+// bytes no read of the bucket would have handed out.
 func (c *Cache) Get(name string, gen int64) ([]byte, bool) {
 	if c == nil {
 		return nil, false
@@ -132,7 +144,7 @@ func (c *Cache) Get(name string, gen int64) ([]byte, bool) {
 	if json.Unmarshal(data, &e) != nil {
 		return nil, false // a torn or corrupt entry is a miss, rewritten by the next read
 	}
-	if e.Bucket != c.bucket || e.Name != name || e.Generation != gen {
+	if e.Bucket != c.bucket || e.Name != name || e.Generation != gen || len(e.Data) > maxObject {
 		return nil, false
 	}
 	// A read is a use: what eviction drops first is what nothing has read for
