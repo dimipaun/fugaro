@@ -466,6 +466,7 @@ var localRows = []Row{
 	loc("registry", "none: the legacy shared registry", "setup", docSetup),
 	loc("registry_host", "none: no image has been pinned yet", "setup", docSetup),
 	loc("setup_pending", "none: setup ran to the end", "setup", docSetup),
+	loc("policy_generation", "none: no generation is recorded; the next update adopts the published one", "setup", docSetup),
 	loc("base_images", "the installation's own base image per kind", "setup", docSetup),
 	loc("image_source", "none: no base pin has been recorded", "setup", docSetup),
 	loc("backend", "cloud-run", "setup", "docs/backends.md"),
