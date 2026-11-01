@@ -587,20 +587,43 @@ func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 }
 
 // settingsLoosens reports whether newValue is looser than oldValue for a
-// ceiling key: a larger cap, a weaker mode, or a wider model list. A key no
-// layer sets has nothing to loosen, so a first write is never the typed form.
+// ceiling key: a larger cap, a cap removed, a weaker mode, or a wider model
+// list. A key no layer sets has nothing to loosen, so a first write of a cap
+// is never the typed form — a first write of 0 is, because 0 is not a cap.
 func settingsLoosens(key, oldValue, newValue string) bool {
-	if oldValue == "" {
-		return false
-	}
 	if key == "budget.mode" {
+		if oldValue == "" {
+			return false
+		}
 		return settingsModeRank(newValue) < settingsModeRank(oldValue)
 	}
 	if key == "budget.allowed_models" {
+		if oldValue == "" {
+			return false
+		}
 		return !settingsListSubset(newValue, oldValue)
 	}
 	oldN, oldErr := strconv.ParseFloat(oldValue, 64)
 	newN, newErr := strconv.ParseFloat(newValue, 64)
+	// 0 is the value that sets no cap at all (`config.Budget`: "0 sets none";
+	// the governance block's own rule is "0 and null mean unset"), so it is the
+	// loosest a ceiling can be written: it hands the cap back to whatever layer
+	// is above the file, which is exactly what `unset` does, and `unset` is
+	// typed. It is a loosening whatever it replaces, including a value the file
+	// does not hold: no cap is looser than any cap.
+	if newErr == nil && newN == 0 {
+		return true
+	}
+	// The mirror of that, and the reason this test is not simply "the number
+	// rose": over a 0, any cap is tighter, so raising 0 to 3 is not a
+	// loosening. Without this, a file already holding 0 would have every later
+	// write read as a loosening — including the ones that put a cap back.
+	if oldErr == nil && oldN == 0 {
+		return false
+	}
+	if oldValue == "" {
+		return false
+	}
 	if oldErr == nil && newErr == nil {
 		return newN > oldN
 	}

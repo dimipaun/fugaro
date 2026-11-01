@@ -1196,3 +1196,91 @@ func TestSettingsCeilingBaseIsNeverLooserThanTheFile(t *testing.T) {
 		t.Errorf("fugaro.yaml does not carry the tightened cap:\n%s", got)
 	}
 }
+
+// TestSettingsLoosensReadsZeroAsNoCap: 0 is not a small cap, it is no cap at
+// all (`config.Budget`: "0 sets none"; the governance block's own rule is "0
+// and null mean unset"), so writing it loosens whatever it replaces — and a
+// write over a 0 is a tightening however the number rises, because any cap is
+// tighter than none.
+func TestSettingsLoosensReadsZeroAsNoCap(t *testing.T) {
+	for _, c := range []struct {
+		old, new string
+		want     bool
+	}{
+		{"3", "0", true},
+		{"", "0", true},
+		{"0", "3", false},
+		{"3", "5", true},
+		{"5", "3", false},
+		{"", "5", false},
+	} {
+		if got := settingsLoosens("budget.per_run_usd", c.old, c.new); got != c.want {
+			t.Errorf("settingsLoosens(%q, %q) = %v, want %v", c.old, c.new, got, c.want)
+		}
+	}
+}
+
+// TestSettingsSetTypesAWriteThatRemovesACap: the command-line half of the same
+// rule, over every ceiling key at every layer it may be written at. Writing 0
+// has exactly the effect `unset` has, and `unset` is the typed form, so a
+// write of 0 is refused without the project's own name however it is spelled
+// and --yes does not stand in; the file is left as it was.
+func TestSettingsSetTypesAWriteThatRemovesACap(t *testing.T) {
+	cases := []struct {
+		key, layer, cap string
+	}{
+		// The repository's own block: what a repository's runs read.
+		{"budget.per_run_usd", "repo", "3"},
+		{"governance.review_ratio", "repo", "3"},
+		{"governance.review_floor_calls", "repo", "3"},
+		{"governance.max_subagents", "repo", "3"},
+		// The local file: the ceiling the deployed job carries.
+		{"budget.per_run_usd", "local", "3"},
+		{"budget.max_run_tokens", "local", "300000"},
+		// The project layer's own block (SD14), which is the same keys.
+		{"layer.governance.review_ratio", "project", "3"},
+		{"layer.governance.max_subagents", "project", "3"},
+	}
+	for _, c := range cases {
+		t.Run(c.key+"/"+c.layer, func(t *testing.T) {
+			_, localPath := settingsWriteHome(t)
+			layerPath := settingsWriteLayerFile(t, "")
+			repoPath := settingsWriteCheckout(t, settingsRepoYAML(""))
+			path := localPath
+			switch c.layer {
+			case "project":
+				path = layerPath
+			case "repo":
+				path = repoPath
+			}
+
+			// A cap where no layer held one is the ordinary write: it takes
+			// nothing away, so it is not the typed form.
+			if out, _, err := execute(t, "settings", "set", c.key, c.cap, "--layer", c.layer, "--yes"); err != nil {
+				t.Fatalf("the first write of a cap: %v\n%s", err, out)
+			}
+			before := readFileString(t, path)
+
+			_, _, err := execute(t, "settings", "set", c.key, "0", "--layer", c.layer, "--yes")
+			if err == nil {
+				t.Fatal("--yes removed a cap without the project's own name")
+			}
+			if !strings.Contains(err.Error(), "typed confirmation") {
+				t.Errorf("the refusal does not name the typed form: %v", err)
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused write changed the file:\n%s", got)
+			}
+
+			// And the typed name still does it: the refusal is a confirmation,
+			// not a wall.
+			fakeTerminal(t)
+			if out, _, err := executeStdin(t, "aurora\n", "settings", "set", c.key, "0", "--layer", c.layer); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if got := readFileString(t, path); !strings.Contains(got, "0") {
+				t.Errorf("the confirmed write did not land:\n%s", got)
+			}
+		})
+	}
+}
