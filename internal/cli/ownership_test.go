@@ -30,10 +30,10 @@ import (
 // is not this installation's is the operator's to fix and exits 1; a database
 // that cannot be read at all is an outage and exits 2, at the pairing door as
 // the "unreachable" code a console switches on. And the config's own half of
-// the question — a pair of config facts that do not name one database — is
-// asked first of all, without any database being contacted: it is the answer
-// `fugaro update`'s stages skip on, so it carries their sentence and not a
-// command's.
+// the question — no shared backend recorded, or two facts that do not name one
+// database — is asked first of all, without any database being contacted: it is
+// the answer `fugaro update`'s stages skip on, so it carries their sentence and
+// not a command's.
 
 // installMark is the mark `fugaro update --firebase-project` writes into the
 // installation's own database (infra.DB.Plan): the Fugaro project's name and the
@@ -183,8 +183,9 @@ func TestBudgetSetRefusesAnotherInstallationsDatabase(t *testing.T) {
 // half, and it is answered without the database being asked anything at all —
 // budget.rtdb_url with no budget.firebase_project is a config that records no
 // shared backend, and `budget set` refuses it as the config fact it is rather
-// than writing caps into a database the config never named. It is the why-only
-// answer: no database was contacted, and the answer is not an error.
+// than writing caps into a database whose ownership the config cannot show. It
+// is the why-only answer: no database is contacted at all, and what comes back
+// is a sentence and not the database's own error.
 func TestBudgetSetRefusesAConfigWithNoBudgetBackend(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedCaps(f, 100, 20)
