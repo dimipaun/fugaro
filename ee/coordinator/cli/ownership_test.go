@@ -50,6 +50,14 @@ func anotherMark() map[string]any {
 	return map[string]any{"managed_by": "fugaro", "version": 1, "project": "birch", "gcp_project": "proj-9999"}
 }
 
+// ownMark is the installation's own mark, the fields `fugaro update
+// --firebase-project` writes for the fixture's project. The tests that put a
+// foreign mark in place restore this one, so the case that follows reads the
+// config's half and not the mark's.
+func ownMark() map[string]any {
+	return map[string]any{"managed_by": "fugaro", "version": 1, "project": "aurora", "gcp_project": "proj-1234"}
+}
+
 // refusedByTheOwnershipCheck fails the test unless err is the shared refusal:
 // non-nil, a user error (exit 1, not an outage), and ending on what the writer
 // would have done. It is one helper so both writers are held to the one
@@ -142,8 +150,9 @@ func TestCoordinatorReportRefusesAnotherInstallationsDatabase(t *testing.T) {
 	// Firebase project records no shared budget backend at all, and the
 	// sentence it is refused with is the one `fugaro update` skips a stage
 	// with — its own remedy named, and no database contacted to reach it.
-	f.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": "aurora", "gcp_project": "proj-1234"})
+	f.db.Set(budget.PathMark, ownMark())
 	rewriteBudgetBlock(t, f, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+f.db.URL+" }\n")
+	asked := len(f.db.Requests())
 	_, _, err := execute(t, args...)
 	if err == nil {
 		t.Fatal("the report ran while its config recorded no Firebase budget backend")
@@ -154,6 +163,9 @@ func TestCoordinatorReportRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if !strings.Contains(err.Error(), "records no shared Firebase budget backend") ||
 		!strings.Contains(err.Error(), "fugaro update --firebase-project proj-1234") {
 		t.Errorf("the refusal is not the config half's own sentence and remedy: %v", err)
+	}
+	if n := len(f.db.Requests()); n != asked {
+		t.Errorf("the config half was answered by asking the database: %d requests, want %d", n, asked)
 	}
 	if !reflect.DeepEqual(f.db.Value(coordpath.PathRoot), own) {
 		t.Errorf("the refused report wrote under /%s: %v, want %v", coordpath.PathRoot, f.db.Value(coordpath.PathRoot), own)
@@ -189,6 +201,36 @@ func TestDeclareRefusesAnotherInstallationsDatabase(t *testing.T) {
 		if !reflect.DeepEqual(f.db.Value(coordpath.PathRoot), own) {
 			t.Fatalf("%s: the refused declaration wrote under /%s: %v, want %v", tc.what, coordpath.PathRoot, f.db.Value(coordpath.PathRoot), own)
 		}
+	}
+
+	// The config's own half, the same one the report is held to: a project that
+	// records the database and no Firebase project records no shared budget
+	// backend at all, and the declarer is refused by the config fact before the
+	// database is contacted. The declaration is the writer that reaches this
+	// half most easily — its switch is budget.rtdb_url and nothing else, so a
+	// config with the URL and no Firebase project is one a launch declares
+	// through — and the cloud is reopened because the config is read when it is
+	// opened.
+	f.db.Set(budget.PathMark, ownMark())
+	rewriteBudgetBlock(t, f, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+f.db.URL+" }\n")
+	unconfigured := openFromConfig(t, f.cloudFixture)
+	asked := len(f.db.Requests())
+	err := Declare(context.Background(), unconfigured, appSlug, spec)
+	if err == nil {
+		t.Fatal("the declaration ran while its config recorded no Firebase budget backend")
+	}
+	if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Fatalf("the launch declarer: exit %d, want 1 (a config fact the operator fixes): %v", fcli.ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "records no shared Firebase budget backend") ||
+		!strings.Contains(err.Error(), "fugaro update --firebase-project proj-1234") {
+		t.Errorf("the refusal is not the config half's own sentence and remedy: %v", err)
+	}
+	if n := len(f.db.Requests()); n != asked {
+		t.Errorf("the config half was answered by asking the database: %d requests, want %d", n, asked)
+	}
+	if !reflect.DeepEqual(f.db.Value(coordpath.PathRoot), own) {
+		t.Errorf("the refused declaration wrote under /%s: %v, want %v", coordpath.PathRoot, f.db.Value(coordpath.PathRoot), own)
 	}
 }
 
