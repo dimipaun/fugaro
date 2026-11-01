@@ -544,6 +544,16 @@ func settingsModeRank(mode string) int {
 // the effective caps the same way, for the same reason.
 func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) string {
 	effective := settingsEffectiveCeiling(ctx, row)
+	if effective == "" {
+		// No layer resolves a value, so what a run gets is the key's own
+		// default. For a cap that is no cap — a state, not a value to compare
+		// against — but `budget.mode`'s default is a decision: its registry row
+		// is unset("observe"), and the mode an unset key runs with is observe
+		// (config.BudgetObserve). A base of "" made a write of `off` read as a
+		// first write and skip the typed name although it takes the run from
+		// observe to off, which is the loosening D846 types (F2).
+		effective = settingsCeilingDefault(row)
+	}
 	switch {
 	case raw == "":
 		// The file holds no ceiling of its own: the layer below is the whole
@@ -582,6 +592,19 @@ func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 	}
 	if s := r.projectRow(row); s.Wins != settings.LayerDefault {
 		return s.Value
+	}
+	return ""
+}
+
+// settingsCeilingDefault is what a run gets for a ceiling key no layer sets,
+// for the one key whose default is a value rather than "no cap". `budget.mode`
+// is the exception: its registry row is unset("observe"), so a run with the key
+// set nowhere runs as observe (config.BudgetObserve, policy.ModeObserve), and a
+// write of `off` over it lowers the mode a run gets. Every other ceiling key's
+// unset means the cap is absent — a state, not a value — so the answer is "".
+func settingsCeilingDefault(row settings.Row) string {
+	if row.Key == "budget.mode" {
+		return config.BudgetObserve
 	}
 	return ""
 }

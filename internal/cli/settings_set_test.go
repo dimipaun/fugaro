@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -1194,6 +1196,31 @@ func TestSettingsCeilingBaseIsNeverLooserThanTheFile(t *testing.T) {
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 40") {
 		t.Errorf("fugaro.yaml does not carry the tightened cap:\n%s", got)
+	}
+}
+
+// TestSettingsCeilingBaseReadsAModeNoLayerSetsAsObserve: `budget.mode`'s
+// registry row is unset("observe"), so a run whose key no layer sets runs as
+// observe — and a write of `off` over it lowers what that run gets. A base of
+// "" read such a write as a first write and skipped the typed name, although
+// observe -> off is exactly the loosening D846 types (F2).
+func TestSettingsCeilingBaseReadsAModeNoLayerSetsAsObserve(t *testing.T) {
+	settingsWriteHome(t)
+	settingsWriteCheckout(t, settingsRepoYAML(""))
+	row, ok := settings.Lookup("budget.mode")
+	if !ok {
+		t.Fatal("the registry holds no budget.mode row")
+	}
+
+	base := settingsCeilingBase(context.Background(), row, "")
+	if base != config.BudgetObserve {
+		t.Fatalf("the base for a mode no layer sets is %q, want %q", base, config.BudgetObserve)
+	}
+	if !settingsLoosens(row.Key, base, "off") {
+		t.Error("off over a mode no layer sets is not read as a loosening")
+	}
+	if settingsLoosens(row.Key, base, "enforce") {
+		t.Error("enforce over a mode no layer sets is read as a loosening")
 	}
 }
 
