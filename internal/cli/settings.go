@@ -70,6 +70,7 @@ and rigor.areas are unions: a lower layer only adds.`,
 	f.BoolVar(&o.why, "why", false, "show the winning level for each key")
 	f.BoolVar(&o.offline, "offline", false, "read the offline layers only")
 	f.BoolVar(&o.jsonOut, "json", false, "print the versioned document")
+	cmd.AddCommand(newSettingsGetCmd(), newSettingsSetCmd(), newSettingsUnsetCmd())
 	return cmd
 }
 
