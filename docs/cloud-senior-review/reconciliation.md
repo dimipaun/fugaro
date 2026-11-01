@@ -104,8 +104,9 @@ records as open, D131/C3.9) — and `docs/accounts-add/` (PR #1470) deploys exac
 account (its `+ standard/github/team-a` spelling), as does `fugaro run --token team-a`.
 
 **Consequence:** the read-only scope of §2 needs a **job that does not exist yet** — a per-account
-review-only job variant and service account whose `secret_env` holds the account's OAuth token and no
-`github-app-key`, and whose account holds no accessor on that key. That is new infra, not a
+review-only job variant and service account whose `secret_env` names no `github-app-key` (and, under
+**O1**, holds **no secret at all** — no OAuth token either), and whose account holds no accessor on
+that key. That is new infra, not a
 permission string, and [implementation-plan.md](implementation-plan.md) carries it as **CSR7**.
 
 **F4. `Exists` — the account selection rule this design reuses.** `internal/cli/run.go`'s
