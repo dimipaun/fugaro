@@ -40,7 +40,7 @@ func dropInheritedGitConfig() {
 
 // isGitConfigEnv reports whether k is a name git reads configuration from the
 // environment under (git-config(1)): the count and its numbered pairs, and the
-// GIT_CONFIG_PARAMETERS an older git reads.
+// GIT_CONFIG_PARAMETERS git's own -c builds.
 func isGitConfigEnv(k string) bool {
 	return k == "GIT_CONFIG_COUNT" || k == "GIT_CONFIG_PARAMETERS" ||
 		strings.HasPrefix(k, "GIT_CONFIG_KEY_") || strings.HasPrefix(k, "GIT_CONFIG_VALUE_")
