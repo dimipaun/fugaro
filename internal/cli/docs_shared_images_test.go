@@ -55,8 +55,8 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		// §2.4's encoding rule, which review round 2 found missing: the three
 		// fields are each their own literal, the third always written, so two
 		// different triples can never be one fact — and the key's version moved
-		// with the change.
-		"key v2",
+		// with the change, as it did again for §2.3's Yarn patch rule.
+		"key v3",
 		"Each of the three is its own quoted literal, one space between",
 		"The three fields are encoded apart because a fact must be injective",
 		"which the spelling without per-field quoting could not say",

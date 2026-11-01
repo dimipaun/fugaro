@@ -246,7 +246,7 @@ table is reached.
 The canonical form is text, one line per fact, with a version line first:
 
 ```
-key v2
+key v3
 base:"<base_ref>@<base_digest>"
 pkg:"\"<name>\" \"<version>\" \"<integrity>\""
 tool:"<tool>@<version>"
@@ -289,7 +289,7 @@ tool:"<tool>@<version>"
   order of files, of entries in a file and of JSON or YAML keys cannot matter.
 - The bytes end with a single newline. The hash is the lower-case hex **SHA-256** of those bytes,
   computed over UTF-8 with no BOM.
-- `key v2` is the reduction's version: a change to §2.3's rules, or to this encoding, starts a new
+- `key v3` is the reduction's version: a change to §2.3's rules, or to this encoding, starts a new
   key universe instead of silently reusing images built under the old rules. The version is the
   canonical form's first line, so the two universes cannot collide.
 
