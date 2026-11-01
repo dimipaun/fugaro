@@ -3947,6 +3947,7 @@ func TestSettingsSchema(t *testing.T) {
 	}{
 		{"source", []string{"source", "properties", "layer", "enum"}},
 		{"row", []string{"row", "properties", "wins", "enum"}},
+		{"level", []string{"level", "properties", "layer", "enum"}},
 	} {
 		got := stringsOf(t, defs, tc.path...)
 		if !slices.Equal(got, wantLayers) {

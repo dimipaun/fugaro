@@ -277,14 +277,6 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 				}
 			}
 		}
-	case row.Key == "update_check":
-		s.Value, s.Wins = "true", settings.LayerEnv
-		if r.local != nil {
-			s.Value = fmt.Sprintf("%t", r.local.UpdateCheckEnabled())
-			if r.local.UpdateCheck != nil {
-				s.Wins = settings.LayerLocal
-			}
-		}
 	case slices.Contains(row.Layers, settings.LayerLocal) && r.local != nil:
 		if v, ok := valueAt(r.local, row.Key); ok {
 			s.Value, s.Wins = v, settings.LayerLocal
@@ -445,10 +437,17 @@ func stepInto(v reflect.Value, part string) reflect.Value {
 			})
 			return v.MapIndex(keys[0])
 		}
-		key := reflect.ValueOf(part)
-		if key.Type() != v.Type().Key() {
+		// A path element is text, so a map is addressable only by a string
+		// key: every map the config types carry is one — map[string]Workflow
+		// and map[rigor.Mode]float64 alike, and the second is a named string
+		// type a comparison of the two types would refuse. A map keyed by
+		// anything else is not addressable by a path, and says so by returning
+		// the invalid value rather than guessing at a rendering of its key.
+		kt := v.Type().Key()
+		if kt.Kind() != reflect.String {
 			return reflect.Value{}
 		}
+		key := reflect.ValueOf(part).Convert(kt)
 		return v.MapIndex(key)
 	case reflect.Slice, reflect.Array:
 		if v.Len() == 0 {

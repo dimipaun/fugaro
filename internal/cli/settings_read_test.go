@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/settings"
 )
 
 // settingsTestDoc and its members mirror the --json document without naming
@@ -246,6 +250,55 @@ func TestSettingsAllReposShowsUnknownWithoutACheckout(t *testing.T) {
 	}
 	if row.Value == nil || *row.Value != row.Default.Value {
 		t.Errorf("value = %q, default = %q: a repository that was not read is not guessed", deref(row.Value), row.Default.Value)
+	}
+}
+
+// TestSettingsWinsNamesALayerTheRowHas: WINS is either `default` or a layer the
+// key's own row says it may be set in, so the column can never name a store
+// that could not have decided the value. The read used to print WINS env for
+// update_check — a layer that row does not carry, and printed precisely when
+// the environment was not what decided the value.
+func TestSettingsWinsNamesALayerTheRowHas(t *testing.T) {
+	settingsFixture(t, "max_parallel: 3\n")
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
+		CheckedAt: time.Now(), YAML: testProjectLayer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	doc := readSettingsJSON(t)
+	won := 0
+	for _, r := range doc.Settings {
+		if r.Scope != "project" || r.Wins == "default" {
+			continue
+		}
+		won++
+		row, ok := settings.Lookup(r.Key)
+		if !ok {
+			t.Errorf("%s: the document carries a key the registry does not", r.Key)
+			continue
+		}
+		if !slices.Contains(row.Layers, r.Wins) {
+			t.Errorf("%s: wins = %q, and the row's layers are %v", r.Key, r.Wins, row.Layers)
+		}
+	}
+	if won == 0 {
+		t.Fatal("no row was decided by a layer, so this test checked nothing")
+	}
+}
+
+// TestSettingsValueAtReadsANamedStringKeyedMap: a path element is text, so a
+// map is addressable by a string key whatever the key type is *named* —
+// config.AB's exchange_rate is map[rigor.Mode]float64, and a comparison of the
+// two reflect.Types would refuse "poc" there and report the key absent, which
+// is a row printing its default while the layer sets it.
+func TestSettingsValueAtReadsANamedStringKeyedMap(t *testing.T) {
+	doc := config.AB{ExchangeRate: map[rigor.Mode]float64{rigor.POC: 0.25}}
+	if got, ok := valueAt(doc, "exchange_rate.poc"); !ok || got != "0.25" {
+		t.Errorf("exchange_rate.poc = %q, %v: want 0.25, true", got, ok)
+	}
+	if _, ok := valueAt(doc, "exchange_rate.pro"); ok {
+		t.Error("exchange_rate.pro: a mode the map does not carry reads as present")
 	}
 }
 
