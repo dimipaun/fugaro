@@ -473,7 +473,10 @@ type LongContext struct {
 // UpdateCheckEnabled reports whether the daily update check and its stderr
 // nag run for this config: true unless update_check: false.
 func (c *Config) UpdateCheckEnabled() bool {
-	return c.UpdateCheck == nil || *c.UpdateCheck
+	if c.UpdateCheck == nil {
+		return config.DefaultUpdateCheck
+	}
+	return *c.UpdateCheck
 }
 
 // BudgetMode is the budget's mode: "off" when there is no budget block or
