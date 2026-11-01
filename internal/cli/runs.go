@@ -47,9 +47,23 @@ const maxNameCellRunes = 64
 type lsOptions struct {
 	cloud                    cloudOptions
 	repo, since, batch       string
+	state                    string
 	all, mine, watch, asJSON bool
 	interval                 time.Duration
 	pr                       int // only the runs on this pull request, when set
+	limit                    int // only the newest N runs of the window, when > 0
+}
+
+// lsStates are the run states --state accepts, sorted: runstore's own states
+// and the ones runview derives for a run that has not recorded an outcome yet.
+// They are the vocabulary a row's `status` carries, never the decorated cell
+// statusCell prints -- `failed (preempted)` is --state failed, as a reader
+// switching on status has always seen it.
+var lsStates = []string{
+	string(runstore.StatusCancelled), runview.StatusError, string(runstore.StatusFailed),
+	string(runstore.StatusHalted), string(runstore.StatusInfraError), runview.StatusLaunching,
+	runview.StatusPending, string(runstore.StatusRunning), string(runstore.StatusSucceeded),
+	runview.StatusUnlaunched,
 }
 
 // prLookback is runs ls --pr's default --since: run --pr's window
@@ -81,8 +95,10 @@ var lsNow = time.Now
 type lsFilter struct {
 	slugs  []string
 	since  time.Time // zero means no bound
+	limit  int       // read the newest N runs only, when > 0
 	mine   string    // keep runs requested by this identity, when set
 	batch  string    // keep runs of this batch, when set
+	state  string    // keep runs in this state, when set
 	pr     int       // keep runs on this pull request (task or record), when set
 	runRef string    // "<slug>/<run-id>": only this run (diagnose)
 	warn   io.Writer // where non-fatal problems go; nil discards them
@@ -121,6 +137,14 @@ func newLsCmd() *cobra.Command {
 			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
 			"only when its result.json says so; an execution that ended without finalizing\n" +
 			"is an infra_error.\n\n" +
+			"--limit N reads the objects of the newest N runs alone, so a run left out\n" +
+			"costs nothing to leave out; the N are the newest of every repository\n" +
+			"listed, and --mine, --batch, --state and --pr then narrow fewer rows than\n" +
+			"that, never more. 0, the default, reads every run of the window.\n\n" +
+			"--state STATE lists only runs in that state, matched against the status --json\n" +
+			"carries: the `halted (run_cap)` cell is --state halted, and --help lists the\n" +
+			"states the flag takes. A run's state is in its result.json, so this filter\n" +
+			"reads every run it filters -- it narrows the listing, never the reads.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
 			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
 			"line is then the PR's total cost.",
@@ -133,6 +157,8 @@ func newLsCmd() *cobra.Command {
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
+	f.StringVar(&o.state, "state", "", "only runs in this state ("+strings.Join(lsStates, ", ")+")")
+	f.IntVar(&o.limit, "limit", 0, "read and list only the newest N runs (0, the default, is every run of the window)")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
 	f.DurationVar(&o.interval, "interval", 10*time.Second, "--watch's redraw interval")
@@ -164,13 +190,19 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if o.watch && o.interval <= 0 {
 		return userErr("--interval must be positive")
 	}
+	if o.limit < 0 {
+		return userErr("--limit %d: use a count, or 0 for every run of the window", o.limit)
+	}
+	if o.state != "" && !slices.Contains(lsStates, o.state) {
+		return userErr("--state %q: use one of %s", o.state, strings.Join(lsStates, ", "))
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
 	defer env.Close()
 
-	f := lsFilter{batch: o.batch, pr: o.pr, warn: cmd.ErrOrStderr()}
+	f := lsFilter{batch: o.batch, state: o.state, limit: o.limit, pr: o.pr, warn: cmd.ErrOrStderr()}
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
 		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}
@@ -252,10 +284,11 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 	return slugs, nil
 }
 
-// loadRows reads every run f selects, joins it with its execution, and
-// returns the rows newest first. A run whose launch.json or result.json is
-// corrupt, or names an execution that isn't the run's, is an error row
-// with a warning. Any other failed read but absence fails the whole
+// loadRows reads the runs f selects -- the newest f.limit of them when it is
+// set, which bounds the reads and not only the rows -- joins each with its
+// execution, and returns the rows newest first. A run whose launch.json or
+// result.json is corrupt, or names an execution that isn't the run's, is an
+// error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
 //
 // It reads every run's objects first, keeps the runs f.pr selects, and
@@ -283,6 +316,22 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 			for _, id := range ids {
 				refs = append(refs, ref{slug, id})
 			}
+		}
+		// A run ID starts with its mint time, so ordering the refs by ID puts
+		// the newest runs first before any object is read and --limit then
+		// reads the newest N runs' objects and nothing older. The order is
+		// across the repositories listed, not within each, because the N are
+		// the newest runs of the listing. Without a limit the refs keep the
+		// order they were gathered in, which is what the warnings a listing
+		// prints are read in.
+		if f.limit > 0 {
+			slices.SortStableFunc(refs, func(a, b ref) int {
+				if c := strings.Compare(b.id, a.id); c != 0 {
+					return c
+				}
+				return strings.Compare(a.slug, b.slug)
+			})
+			refs = refs[:min(len(refs), f.limit)]
 		}
 	}
 
@@ -352,7 +401,8 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	}
 
 	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
-		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch)
+		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch) ||
+			(f.state != "" && string(r.Status) != f.state)
 	})
 	slices.SortStableFunc(rows, func(a, b runview.Row) int {
 		if c := b.Created.Compare(a.Created); c != 0 {
