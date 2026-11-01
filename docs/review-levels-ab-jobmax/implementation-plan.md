@@ -218,6 +218,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Depends on:** L1.1 (`config.Efforts`, fixed by L0.1, so this task changes no schema).
 - **Red step:** an undefined function fails the test.
 - **Commit:** `agent: effort for a Claude stage, never a provider's`.
+- **Done (PR "agent: effort for a Claude stage, never a provider's (L4.3)")**: nothing is wired into a stage here, so until L4.2 lands `EffortVars` has no caller outside its tests. The wiring is L4.2's, not this task's.
 
 #### L4.2 The runner runs level 3, skips L2 after an L3 bounce, and decides by the highest level (D723, D727)
 
