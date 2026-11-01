@@ -260,9 +260,10 @@ const repo = site.facts.repository
           statistics, no identifier — with one exception it asks you about: <strong>Send Crash
           Reports</strong>, a switch in its own menu, off until you tick it. With it ticked, the
           next launch of the console sends a crash to Sentry, hosted in the European Union. A
-          report holds the exception's type and the code frames it was thrown from, as an
-          app-relative file with its line and column, and no message, no path, no user name, no
-          environment and no host name. Untick the switch and the next launch stops sending.
+          report holds the exception's type and the code frames it was thrown from, each an
+          app-relative file with its function name, its line and its column, and no message, no
+          path, no user name, no environment and no host name. Untick the switch and the next
+          launch stops sending.
         </p>
       </div>
 

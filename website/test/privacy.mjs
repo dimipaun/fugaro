@@ -699,6 +699,9 @@ export const CONSOLE_REPORTING = Object.freeze({
   both: Object.freeze([
     'Sentry, hosted in the European Union',
     'no message, no path, no user name, no environment and no host name',
+    // A frame is the file and the line, and both statements say so; what a reader would
+    // otherwise be left to guess is that the function the code was in travels too.
+    'its function name',
   ]),
   /** The design's own wording for the rule, in a list of its own because the page states the rule
    * and not this sentence: the page hands the reader the two facts that make reporting opt-in —

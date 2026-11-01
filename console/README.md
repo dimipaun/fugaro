@@ -241,7 +241,8 @@ the checkbox shows the value in force rather than the one the click asked for.
 **What is sent, and what is never sent.** The client is `@sentry/electron`
 `8.2.0` (`src/main/crash-electron.ts`, the only file that imports it; design
 §7.4). A report holds the **exception's type and the frames it was thrown
-from** — an app-relative file with its line, column and `in_app` flag — and
+from** — each an app-relative file with its function name, its line, its column
+and its `in_app` flag — and
 **no message, no path, no user name, no environment and no host name**. Nothing
 else is attached: no session, no breadcrumb, no minidump (`defaultIntegrations:
 false` installs none of the SDK's own, and two are named by hand below), no
