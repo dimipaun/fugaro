@@ -776,7 +776,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	//
 	// bitbucket_api_roots is the operator's own allow-list (D474) and the node
 	// is where the run reads it. It is copied rather than derived, and it is
-	// held to the node's rule (projectpolicy.validBitbucketAPIRoots, applied by
+	// held to the node's rule (projectpolicy.ValidBitbucketAPIRoots, applied by
 	// that same decode) rather than to a copy of it here: one rule, at the one
 	// point a root can be written.
 	token, err := projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)

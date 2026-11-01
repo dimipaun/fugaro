@@ -214,7 +214,7 @@ func validBitbucketTokenBlock(b *BitbucketToken) error {
 	return nil
 }
 
-// validBitbucketAPIRoots checks the node's owner-allow-listed Bitbucket API
+// ValidBitbucketAPIRoots checks the node's owner-allow-listed Bitbucket API
 // roots (D474, T2.8): each one an https URL that reaches one host, without a
 // query, a fragment or userinfo.
 //
@@ -224,7 +224,13 @@ func validBitbucketTokenBlock(b *BitbucketToken) error {
 // trailing "/" — so an entry carrying either would match nothing and would look
 // like an allow-list with no effect; and userinfo is a credential written into
 // the policy node, which every run token can read (§5(2)).
-func validBitbucketAPIRoots(roots []string) error {
+//
+// Exported for the one caller outside this package that has to apply it: doctor
+// holds the roots a local file lists to it before it sends the bundle's token
+// to one, because that file is not where a root is validated — the publish that
+// builds the node is — so an entry only it spells would otherwise take the
+// credential in clear.
+func ValidBitbucketAPIRoots(roots []string) error {
 	for i, root := range roots {
 		at := fmt.Sprintf("projectpolicy: bitbucket_api_roots[%d]", i)
 		u, err := url.Parse(root)

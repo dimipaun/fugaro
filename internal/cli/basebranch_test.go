@@ -237,9 +237,10 @@ func TestBaseBranchSkew(t *testing.T) {
 		if ref != "" {
 			lc.BaseImages[config.BaseKind] = ref
 		}
-		out := *e
-		out.lc = &lc
-		return &out
+		// The env is reused, not copied: it holds a mutex (policyReadOnce), and
+		// every case sets its own base images, so a case never sees the last one's.
+		e.lc = &lc
+		return e
 	}
 	for _, tc := range []struct {
 		name, baseImage, wantBase, wantWarn string

@@ -719,14 +719,12 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		t.Errorf("--all does not carry the check's own text:\n%s", all)
 	}
 
-	// A check `fugaro update` does not put right is not an update item, and its
-	// line names the command that does the work: a line that sends the reader
-	// to a command which leaves the warning standing is worse than a longer one
-	// that works (the review's finding: what differs for plugin-install is the
-	// installed plugin, and the converge's plugin stage writes the pin rather
-	// than installing it).
+	// A check `fugaro update` does not put right on its own is not an update
+	// item: what differs for plugin-install is the installed plugin, so the
+	// line names the update that writes the pin and Claude Code's own install
+	// from it, rather than the update alone.
 	for id, want := range map[string]string{
-		"plugin-install": "`fugaro upgrade --local`",
+		"plugin-install": "`fugaro update`",
 	} {
 		c := doctorCheck{ID: id, Severity: "warning", Problem: "what is wrong here",
 			Fix: "a fix long enough that the default view prints the short form instead: " + strings.Repeat("and its own words ", 10)}
@@ -737,6 +735,22 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("%s's line does not name %s: %q", id, want, line)
 		}
+	}
+
+	// policy-newer-than-binary's line names two moves, because the state needs
+	// two: the release that understands the node is not installed yet, so the
+	// upgrade comes first, and `fugaro update` behind it is what brings the
+	// installation and the checkout to that release (CLAUDE.md's hard rule).
+	// The check's own text, which names the release the table knows, is what
+	// --all still prints.
+	newer := doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
+		Problem: "the project policy is version 2, and this Fugaro understands version 1",
+		Fix:     "upgrade Fugaro to 0.8.5, the release that introduced version 2, then run the update that follows it"}
+	if line := doctorItemLine(t, newer); !strings.Contains(line, "upgrade Fugaro (`brew upgrade fugaro`), then run `fugaro update`") {
+		t.Errorf("policy-newer-than-binary's line does not name the upgrade and the update behind it: %q", line)
+	}
+	if all := doctorAllOutput(t, []doctorCheck{newer}); !strings.Contains(all, "0.8.5") {
+		t.Errorf("--all does not carry the check's own text:\n%s", all)
 	}
 }
 

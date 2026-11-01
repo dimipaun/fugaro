@@ -167,7 +167,7 @@ eight that are hooks here as well — `data-key` for the spend screen (§2.3, §
 `data-view` for the navigation and the people panel (§2.1, §2.5) — stay licensed, and §2.11
 says so.
 
-Three facts hold across every screen and are stated once:
+Four facts hold across every screen and are stated once:
 
 - **A number is never bare.** Every figure goes through `putReading` (`app.ts`), which
   calls `formatReading` (`console/src/shared/availability.ts`), so the marks are fixed console-wide:
@@ -181,6 +181,21 @@ Three facts hold across every screen and are stated once:
 - **The theme travels as an attribute.** Each screen's root is
   `<section class="<screen>" data-theme="light|dark">`; nothing else about the drawing
   depends on the theme today.
+- **A panel whose data has not arrived draws the shape of what is coming** (the owner,
+  2026-10-31: "when changing tabs in the Console we should show a skeleton while we load the
+  data, no?"). A tab switch draws one `div.console-skeleton` per section the tab is made of
+  — a `div.console-skeleton-block` per thing that is coming, each carrying `data-shape`
+  (`line`, `chip`, `row`, `card` or `band`) and the `data-section` its own wrapper names —
+  and a section whose own read is in flight draws one too, in place of the content it does
+  not have yet. The whole tree is `aria-hidden`, because a block is a shape and not a
+  reading, and what a reader who cannot see it is told is the panel's own sentence in
+  `span.console-reading-status` — visually hidden beside the blocks, with the fifteen-second
+  `p.console-busy-still` under them. The shapes are `console/src/renderer/skeleton.ts`'s
+  (`SKELETON_SHAPES`, one list per tab), the placeholder that draws them is
+  `screens/reading.ts`'s and the per-section one is `renderer/section.ts`'s, so the hooks
+  above are the console's rather than one screen's — and the heights the blocks hold are
+  `--skeleton-*` steps of `flight-deck.css`, so the section does not move when the read
+  lands.
 
 ### 2.1 The dashboard's chrome — `src/renderer/entry.ts`
 
@@ -1769,6 +1784,8 @@ animated would be a figure whose last frame is a lie about when the value was re
 - **Forced colours draw no animation at all** (§4.4): under `forced-colors: active` every state is its mark and its border, the same drawing the reduced-motion arm leaves behind.
 
 **Amendment, 2026-10-31: the busy mark's one turn, and nothing else moves.** The owner's rule of 2026-10-31 — "we need to render parts of screen as soon as we get that data, not wait for it all before we show anything" — needs the other half of the same complaint: a control change used to look like nothing had happened, and a section whose read has not answered has to say so **in the frame the click happened in**. A mark that says "reading" without moving is a mark a reader takes for a stopped console, so the busy mark (`console/src/renderer/section.ts`, drawn into a section's own slot) may draw **one** spinning element, `span.console-busy-spinner` in `flight-deck.css`, turned by **one** keyframe, `console-busy-turn`, whose only property is `transform`. The count above therefore becomes four. It is not a figure and not a state of a screen: it carries no number and no word about the data, it is drawn only while a read is in flight, and it is the only motion the console has outside the graph screen. Its two arms follow the rules above rather than restating them: under `prefers-reduced-motion: reduce` the element is **not drawn at all** (`display: none`, with the animation stopped on that same selector) and the static word `span.console-busy-still-mark` is shown in its place, because the global freeze would leave a ring wherever its last frame put it — a picture of half a circle rather than of reading; under `forced-colors: active` it declares no animation at all.
+
+**Amendment, 2026-11-01: the skeleton's one shimmer.** The owner, 2026-10-31: "when changing tabs in the Console we should show a skeleton while we load the data, no?" A skeleton of still blocks is a panel that may as well be a picture of a panel, so a block that is waiting on a read may carry **one** shimmer: `div.console-skeleton-block` in `flight-deck.css`, swept by **one** keyframe, `console-skeleton-shimmer`, whose only property is `background-position` over a gradient of two steps of the vocabulary. The count above therefore becomes five. It is bounded exactly as the turn before it is: one element and one keyframe; it carries no figure, no word and no state (the whole skeleton tree is `aria-hidden`, §2's fourth fact); it is drawn only while a read is in flight; and it is not a state of a screen. Its two arms are §3.9's rules rather than exceptions to them: under `prefers-reduced-motion: reduce` the blocks are **static** — the animation is stopped on the selector that started it and the sweep is taken off, because the global freeze would otherwise leave the gradient wherever the sweep stopped, which is a picture of a half-loaded block — and under `forced-colors: active` they declare **no animation at all** and are drawn as the system's own outline (§4.4).
 
 **What this amendment does not change.** The 120 ms `--duration-fast` hover and focus transitions are still the only motion on every other screen, the reduce rule is still written once in `base.css` and still applies to everything this screen does not restate, and the graph screen still takes its colours and its spacing from the shared token layer — which is why this is an amendment to the motion rule and to nothing else in this design.
 
