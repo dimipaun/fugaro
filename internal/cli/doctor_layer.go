@@ -128,12 +128,17 @@ type layerLocalState struct {
 // machine cannot name it) and compares it with pub, the published object as
 // this machine resolved it (nil: none applies). lc is the local project config
 // the record lives in.
-func localLayerState(getenv func(string) string, lc *localcfg.Config, project string, pub *config.ProjectLayer, gen int64) layerLocalState {
+//
+// It reads the environment through getenvOS, the same name localLayerFileCheck
+// and every findLayer call site use: the file's directory is the config home
+// the whole process is resolving against, and a second way of asking for it
+// would be a second answer.
+func localLayerState(lc *localcfg.Config, project string, pub *config.ProjectLayer, gen int64) layerLocalState {
 	var st layerLocalState
 	if project == "" {
 		return st
 	}
-	path, err := localcfg.LayerFile(getenv, project)
+	path, err := localcfg.LayerFile(getenvOS, project)
 	if err != nil {
 		return st
 	}
@@ -205,7 +210,7 @@ func localLayerFileCheck(lc *localcfg.Config, rf resolvedFile) []doctorCheck {
 	} else if lc != nil {
 		project = lc.Name
 	}
-	st := localLayerState(getenvOS, lc, project, pub, rf.Layer.Generation)
+	st := localLayerState(lc, project, pub, rf.Layer.Generation)
 	if st.Path == "" {
 		return nil
 	}

@@ -805,7 +805,7 @@ func TestConfigPublishRecordsTheGenerationItWroteAt(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Replace(testProjectLayer, "sh test.sh", "sh test-all.sh", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	st := localLayerState(os.Getenv, lc, "aurora", mustPublishedLayer(t, f), 0)
+	st := localLayerState(lc, "aurora", mustPublishedLayer(t, f), 0)
 	st.Generation, _ = strconv.ParseInt(lc.LayerGeneration, 10, 64)
 	if !st.Unpublished || st.Cause != layerLocalEdit {
 		t.Fatalf("after an edit the state is %+v, want a local edit", st)
@@ -852,5 +852,16 @@ func TestConfigLayerPrintsTheLocalPathAndItsUnpublishedState(t *testing.T) {
 	if err != nil || !strings.Contains(out, "unpublished") || !strings.Contains(out, layerLocalEdit) ||
 		!strings.Contains(out, "fugaro update") {
 		t.Fatalf("unpublished: %v\n%s", err, out)
+	}
+	// A published layer with no local file is a state with a remedy, and this
+	// door is where the owner reads it: the line names the command that seeds
+	// the file, not only the fact that it is missing.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "config", "layer")
+	if err != nil || !strings.Contains(out, "local layer file: "+path+" (does not exist") ||
+		!strings.Contains(out, selfCommand()+" update") {
+		t.Fatalf("missing local layer file: %v\n%s", err, out)
 	}
 }

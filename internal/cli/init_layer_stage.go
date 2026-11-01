@@ -411,9 +411,11 @@ func (s *layerStage) reseed(env initflow.Env, p *layerPlan) (initflow.Outcome, e
 	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("re-seeded %s from the published project layer (generation %d)", p.path, p.gen)}, nil
 }
 
-// Verify reads back what this run wrote: the object for a publish, and the file
-// for a seed or a re-seed. A write that claims bytes it did not land is a layer
-// this Fugaro would keep publishing on every run.
+// Verify reads back what this run wrote: the object for a publish, the file for
+// a seed or a re-seed, and the record for a run whose only write was the record.
+// A write that claims bytes it did not land is a layer this Fugaro would keep
+// publishing on every run, and a record that did not land is the same file
+// reported as a local edit on every door that reads it.
 func (s *layerStage) Verify(ctx context.Context) error {
 	p, err := s.plan(ctx)
 	if err != nil || p == nil {
@@ -421,6 +423,23 @@ func (s *layerStage) Verify(ctx context.Context) error {
 	}
 	switch {
 	case p.skip != "":
+		return nil
+	case p.recordGen:
+		// The plan's own recordGen is what Apply answered: the bytes already
+		// agree, so the only write this run claimed is the record, and reading
+		// the config back is the only way to see it landed (the layer file and
+		// the object would say the same thing either way).
+		data, err := os.ReadFile(p.configPath)
+		if err != nil {
+			return fmt.Errorf("the generation was recorded but %s cannot be read back: %w", p.configPath, err)
+		}
+		lc, err := localcfg.Parse(data)
+		if err != nil {
+			return fmt.Errorf("the generation was recorded but %s no longer parses: %w", p.configPath, err)
+		}
+		if want := strconv.FormatInt(p.gen, 10); lc.LayerGeneration != want {
+			return fmt.Errorf("%s records generation %s for its layer file, and this run recorded %s", p.configPath, generationText(lc.LayerGeneration), want)
+		}
 		return nil
 	case p.seed, p.stale != nil:
 		data, err := os.ReadFile(p.path)

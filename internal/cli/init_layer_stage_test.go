@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -429,5 +432,69 @@ func TestInstallationAtThePreviousVersionConverges(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(path); string(data) != testProjectLayer {
 		t.Errorf("the local layer file was not left as it is:\n%s", data)
+	}
+}
+
+// layerStageRig is the layer stage over a rig's own project config, driven a
+// call at a time (the policy tests' own pattern): Verify has to be exercised
+// after the state it watches has moved, which the door cannot be.
+type layerStageRig struct {
+	*initRig
+	s   *layerStage
+	out *syncBuf
+}
+
+// newLayerStageRig is that rig: published is the object in the runs bucket, and
+// local ("" for no file) is the owner's local layer file with generation
+// recorded beside it.
+func newLayerStageRig(t *testing.T, published, local, generation string) *layerStageRig {
+	t.Helper()
+	r := newLayerRig(t, published)
+	if local != "" {
+		recordLayer(t, local, generation)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(&syncBuf{})
+	cmd.SetIn(strings.NewReader(""))
+	run := &initRun{o: &initOptions{door: updateDoor.name}, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
+	run.setProject(lc)
+	return &layerStageRig{initRig: r.initRig, s: newLayerStage(&initEngine{r: run, lc: lc, path: r.cfg}), out: out}
+}
+
+// TestUpdateLayerStageVerifiesTheRecordItWrote: with the bytes already agreeing
+// the record is the only write the run claims, so reading it back is the only
+// way to see it landed — the layer file and the object say the same thing
+// whether it did or not.
+func TestUpdateLayerStageVerifiesTheRecordItWrote(t *testing.T) {
+	r := newLayerStageRig(t, testProjectLayer, testProjectLayer, "7")
+	ctx := context.Background()
+
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out.String())
+	}
+	if err := r.s.Verify(ctx); err != nil {
+		t.Fatalf("the generation this run recorded does not verify: %v", err)
+	}
+	// Another writer's record, or a write that never landed: the config says a
+	// generation this run did not write.
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, bytes.Replace(data, []byte(`layer_generation: "0"`), []byte(`layer_generation: "5"`), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = r.s.Verify(ctx)
+	if err == nil {
+		t.Fatal("a record this run did not write verified")
+	}
+	if !strings.Contains(err.Error(), "records generation 5") {
+		t.Errorf("the refusal is not the record one: %v", err)
 	}
 }
