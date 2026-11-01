@@ -190,6 +190,17 @@ func requireOwnBudgetDB(ctx context.Context, lc *localcfg.Config, db *rtdb.Clien
 	return nil
 }
 
+// RequireOwnBudgetDB is requireOwnBudgetDB for the writers the core does not
+// hold: the EE tree's coordinator writes into the same database the budget
+// commands open, and it asks the same question with the same wording and the
+// same exit codes (docs/design/upgrade.md, "Every writer into that database").
+// It is this call and not a second check worded alike — a second copy of the
+// question's two halves is how a command and a stage come to answer "is this
+// database ours" differently.
+func RequireOwnBudgetDB(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, declined string) error {
+	return requireOwnBudgetDB(ctx, lc, db, declined)
+}
+
 // openBudget opens the database and checks it is the project's.
 func openBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, error) {
 	lc, db, err := openBudgetDB(ctx, o)

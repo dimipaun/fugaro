@@ -50,6 +50,14 @@ func Declare(ctx context.Context, c *fcli.Cloud, slug string, spec *task.Spec) e
 	if err != nil {
 		return err
 	}
+	// The database is this installation's before the declaration lands in it:
+	// the record is read back by this project's coordinator and by nobody
+	// else, so a launch must not write one into a database another
+	// installation marked. The launch itself is untouched by the answer — the
+	// caller turns it into a warning line, as it does every failure here.
+	if err := ownCoordinatorDB(ctx, lc, "nothing was declared"); err != nil {
+		return err
+	}
 	branch := spec.Branch
 	if branch == "" {
 		// The launcher's own rule for the branch it reports and creates: the

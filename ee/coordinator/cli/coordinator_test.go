@@ -24,6 +24,7 @@ import (
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -1426,10 +1427,19 @@ type coordinatorReportFixture struct {
 	db *gcpfake.RTDB
 }
 
+// newCoordinatorReportFixture is the ordinary installation the report and the
+// declarer are driven against: budget.firebase_project recorded beside
+// budget.rtdb_url — the pair `fugaro update --firebase-project` writes — and the
+// database carrying the mark that same command writes. It is the shape the
+// ownership question every writer into that database asks is answered "yes"
+// by (budgetDBUnadopted, docs/design/upgrade.md), so a test that hands the
+// database another installation's mark, or empties the mark and leaves data, is
+// the refusal and not a fixture that never could have been written to.
 func newCoordinatorReportFixture(t *testing.T) *coordinatorReportFixture {
 	t.Helper()
 	f := &coordinatorReportFixture{cloudFixture: newCloudFixture(t), db: gcpfake.NewRTDB(t)}
-	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+f.db.URL+" }\n")
+	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+" }\n")
+	f.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": "aurora", "gcp_project": "proj-1234"})
 	return f
 }
 
