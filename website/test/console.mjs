@@ -849,6 +849,34 @@ test("the console's guarantees are stated as the document that decides them stat
       `the no-telemetry property does not name "${part}": the console's promise has four parts (telemetry, crash reporting, analytics and the update check's identifier) and a property that drops one promises more than the design does`,
     )
   }
+  // The one flow there is, and it is the person's to turn on. Both sentences have to say so:
+  // a property that repeats the promise and stops is a promise the design no longer makes,
+  // because the console reports crashes to Sentry once the switch is on (the owner's ruling
+  // of 2026-10-31, and the design's section 7.4). The switch and the host are the two facts a
+  // reader acts on, so the design and the property are held to both rather than to the four
+  // parts above alone.
+  assert.match(
+    promised[0],
+    /opt[- ]in/i,
+    `the design's section 7.4 promise does not say the crash reporting is an opt-in: ${JSON.stringify(promised[0])}`,
+  )
+  assert.match(
+    noTelemetry.text,
+    /opt[- ]in/i,
+    `the no-telemetry property ${JSON.stringify(noTelemetry.text)} does not say the crash reporting is the person's own opt-in, and the design's sentence does`,
+  )
+  for (const [what, text] of [
+    ["the design's section 7.4", design],
+    ['the no-telemetry property', noTelemetry.text],
+  ]) {
+    for (const part of ['Sentry', 'European Union']) {
+      assert.ok(
+        text.includes(part),
+        `${what} does not name ${part}: the crash reports go to Sentry, hosted in the EU, and a statement of the flow that withholds where it goes is not the design's sentence`,
+      )
+    }
+  }
+
   // And where the property enumerates what does leave the machine, the update check has to
   // be listed among those things — the precise shape of the defect above. "Names the update
   // check somewhere" is not the rule and does not catch it: the defective sentence did name

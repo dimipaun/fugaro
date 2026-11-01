@@ -62,6 +62,8 @@ import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
 import type { CrashReportingHandle } from './crash-electron'
+import { startCrashReportingSafely } from './crash'
+import { createCrashSettings, readCrashSwitch } from './crashstore'
 import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
@@ -69,7 +71,12 @@ import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
-import { reducedModeHandlers, registerConsoleHandlers, startupCompatibility } from './ipc'
+import {
+  openPullRequestHandler,
+  reducedModeHandlers,
+  registerConsoleHandlers,
+  startupCompatibility,
+} from './ipc'
 import type { ConsoleHandlers, ValidatedArguments } from './ipc'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
@@ -436,16 +443,28 @@ const resolvedBinaries = new Map<string, string>()
 const boundSource = createBoundSource({ installation: activeBinding, appEnv: process.env })
 
 /**
- * openExternalFromShell is the surface's one operation that is not a read of the
- * CLI: it hands the URL to `openExternalValidated`, which is the console's one
+ * openExternalFromShell is the surface's operation that hands over a URL it was
+ * given: it passes it to `openExternalValidated`, which is the console's one
  * call to `shell.openExternal` and its own allow-list (`src/main/window.ts`). The
  * argument is narrowed here and validated there; a value that is not a string
  * cannot be a URL this console opens, so it is refused by the same function
  * rather than by a second check written here.
+ *
+ * `openPullRequestFromShell` is the other half, and the reason the two are not
+ * one operation: that one is handed a URL, and this one is handed the three
+ * fields a URL is built from. It passes the shell in as the opener, so the
+ * build and the refusal are `openPullRequestHandler`'s (`src/main/ipc.ts`) --
+ * a rule that security-sensitive is written where a test can reach it rather
+ * than in this file, which loads Electron's runtime and so cannot be imported
+ * under a test at all.
  */
 async function openExternalFromShell(raw: unknown): Promise<void> {
   await openExternalValidated(shell, typeof raw === 'string' ? raw : '')
 }
+
+/** openPullRequestFromShell is `link.openPullRequest`'s wiring: the built URL,
+ * and nothing else, reaches `openExternalValidated`. */
+const openPullRequestFromShell = openPullRequestHandler((url) => openExternalValidated(shell, url))
 
 /**
  * launchRequest narrows the operation's five validated fields to the launcher's
@@ -731,9 +750,11 @@ let launchRunner = createLaunchRunner({
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
  * `FugaroSource` lists them) -- over
  * `boundSource`, so each of them reaches the active installation's own binary
- * and nothing else), and `startup.compatibility` is joined in here because it is
- * the one operation whose answer is the console's own state rather than a read
- * (`CliBackedHandlers` in `src/source/source.ts` says so from the other side).
+ * and nothing else), and the three operations that are not reads of the CLI are
+ * joined in here -- `startup.compatibility`, whose answer is the console's own
+ * state, and the launch and the pull request link, which are the console's one
+ * write and its one built link (`CliBackedHandlers` in `src/source/source.ts`
+ * says so from the other side).
  *
  * `reducedModeHandlers` wraps the result in `registerHandlers` below rather than
  * here, so that what this constant holds is the surface and what the wrapper
@@ -769,6 +790,13 @@ const gated: ConsoleHandlers = {
   // declining launcher above answers every launch with `DECLINED_UNBUILT`, and
   // this operation has no way to a child at all.
   'run.launch': (args) => launchRunner.launch(launchRequest(args)),
+  // **The pull request link, and the one URL this console builds** (K2a, D814
+  // and D815). Joined here for the same reason the two above are: it reads no
+  // CLI, so `handlersFor` leaves it out. What it is handed is three fields of a
+  // document and no URL at all, and what reaches `shell.openExternal` is the
+  // URL `pullRequestUrl` built from them -- the first gate is the build, and
+  // `openExternalValidated` inside the opener is the second.
+  'link.openPullRequest': openPullRequestFromShell,
 }
 
 /**
@@ -890,28 +918,34 @@ let crashReporting: CrashReportingHandle | null = null
  */
 async function main(): Promise<void> {
   // **The crash reporter comes up before anything it could report on, and the
-  // module that holds the SDK comes up with it and not before.** The gate is an
-  // allow test and not a list of the answers that shut it: `optedIn` is `null`
-  // -- nothing has read the switch yet, and reading it is the next slice's,
-  // which reads the per-user switch this console keeps for itself -- and only a
-  // `true` reaches the reporter, so the third state D734 makes off is off here
-  // because it is not a yes rather than because this file knows its name. What
-  // follows from it is the whole of this slice's cost: in a console whose switch
-  // is not a yes, `./crash-electron` and
-  // the fourteen packages `@sentry/electron/main` reaches are never loaded and no
-  // client exists to start -- so a start that reports nothing pays nothing for
-  // the wiring that would, and the DSN sitting one import away is never read.
+  // module that holds the SDK comes up with it and not before.** The switch is
+  // the console's own per-user file (`crash.json`), read here -- before this
+  // function's first `await`, so the answer is the file's at the moment the app
+  // is ready rather than one a later stage could have moved -- and it is handed
+  // to the gate as a **value**. The gate is an allow test rather than a list of
+  // the answers that shut it: only the file's own `true` reaches the reporter, so
+  // `"true"`, `1` and a file that cannot be read are off because they are not a
+  // yes rather than because this file knows their names (`./crashstore` refuses
+  // them once and `crashReportingDecision` refuses them again). What follows from
+  // it is the whole of this slice's cost: in a console whose switch is not a yes,
+  // `./crash-electron` and the fourteen packages `@sentry/electron/main` reaches
+  // are never loaded and no client exists to start -- so a start that reports
+  // nothing pays nothing for the wiring that would.
   //
-  // Everything after the yes is `startCrashReporting`'s: the DSN constant the
-  // build carries (`./crash-dsn`), and the one way a yes can still end without a
-  // client, which is a caller that passed a DSN of its own. That is why this
-  // file needs no opinion about either -- and why it imports nothing from
-  // `./crash` to ask a question `===` answers.
+  // **A start that fails after the yes is a console that still starts.** The load
+  // and the client are two things that can fail -- an import that rejects (a
+  // damaged archive, a file the build did not carry) and an `init` that throws --
+  // and neither may keep the window from opening. Both are caught by
+  // `startCrashReportingSafely`, which answers `null` and says one constant line:
+  // `crashReporting` stays null, the quit path below has nothing to close, and
+  // this function carries on to the rest of the startup. Everything after that is
+  // `startCrashReporting`'s own: the DSN constant of every build (`./crash-dsn`)
+  // and the app root the frames are cut at.
   //
   // The reporter is wired here rather than beside the window because a crash
   // before the window opens is the one an operator most wants back, and because
   // the handle has to be closed on the way out.
-  const optedIn: unknown = null
+  const optedIn: unknown = readCrashSwitch(app.getPath('userData'))
   if (optedIn === true) {
     // The `.js` is the CommonJS build's spelling rather than a file this source
     // tree has: `dist/main/index.js` carries this `import()` as `tsc` emitted it
@@ -920,8 +954,13 @@ async function main(): Promise<void> {
     // `test/e2e/crash-init.spec.ts` resolves the emitted specifier and loads it
     // for that reason. The type-checking config resolves either spelling, so it
     // is the build that decides.
-    const { startCrashReporting } = await import('./crash-electron.js')
-    crashReporting = startCrashReporting({ optedIn, appRoot: app.getAppPath() })
+    crashReporting = await startCrashReportingSafely({
+      load: () => import('./crash-electron.js'),
+      input: { optedIn, appRoot: app.getAppPath() },
+      log: (line) => {
+        console.error(line)
+      },
+    })
   }
   // The icon first, and before any window exists: an unpackaged console has no
   // bundle to carry `build/icon.png`, so until this runs the dock shows
@@ -984,6 +1023,12 @@ async function main(): Promise<void> {
     directory: app.getPath('userData'),
     controller: () => updates,
   })
+  // **The crash switch's one source is `crash.json`**, and it is the same file
+  // the startup above read: the menu item writes it and answers with what the
+  // file says afterwards, and the next launch's read is what the change applies
+  // to. Nothing is started or stopped here -- the reporter is created once, in
+  // `main`, and this is the setting that decides whether it is.
+  const crashSettings = createCrashSettings({ directory: app.getPath('userData') })
   updates = startUpdates({
     isLaunchFlowIdle: () => launchRunner.isIdle(),
     switchOn: () => updateSettings.auto,
@@ -1031,6 +1076,20 @@ async function main(): Promise<void> {
     onRecordRemoved: (project) => {
       launchRunner.cancelFor(project)
     },
+    // The crash reporter's checkbox, on the platforms the owner's ruling of
+    // 2026-10-30 gives it (`darwin` and `linux`) and not on Windows. It is the
+    // console's own setting rather than the updater's, so it is handed over
+    // whether or not a controller is running: the Linux build has no updater and
+    // still has this item, which is why it is not inside the `updates === null`
+    // test below.
+    ...(process.platform === 'darwin' || process.platform === 'linux'
+      ? {
+          crashMenu: {
+            send: crashSettings.send,
+            setSend: (on) => crashSettings.setSend(on),
+          },
+        }
+      : {}),
     // The two update items, handed over **only while a controller is running**:
     // `startUpdates` answered null on everything that is not a packaged macOS
     // app, so the menu carries neither item off a Mac and in development, and
