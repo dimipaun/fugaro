@@ -569,11 +569,12 @@ describe('the dashboard the entry mounts', () => {
     },
   )
 
-  it('draws the refusal, not an empty run, when a run’s own record refuses', async () => {
-    // `diagnose` and `logs` are the run's own record: a refused read of either
-    // is a run this console cannot draw, and handing the screen `null` would
-    // draw an empty log window and a ledger of `n/a` -- which reads as "this run
-    // logged nothing and spent nothing" when the console could not ask.
+  it('draws the refusal in the section that refused, not over the run’s own screen', async () => {
+    // `diagnose` and `logs` are two reads of a run's own record, and each has
+    // its own section: one refusing says nothing about the other. The log read
+    // refusing here must not take the diagnosis down with it -- and it must
+    // not be drawn as an empty window either, which would read as "this run
+    // logged nothing" when the console could not ask.
     const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
     const { bridge } = fakeBridge({
       replies: {
@@ -591,15 +592,219 @@ describe('the dashboard the entry mounts', () => {
     const row = classed(panel, 'live-run')[0] as FakeNode
     row.click()
     await flush()
-    const drawn = panel.children[0] as FakeNode
-    expect(drawn.attributes.get('class')).toBe('console-unavailable')
+    // The screen is still the run's: this is a section's refusal, not the
+    // screen's.
+    expect((panel.children[0] as FakeNode).attributes.get('class')).toBe('run')
+    // The diagnosis the other read answered is up, and the column is no longer
+    // reading.
+    expect(classed(panel, 'run-stages')).toHaveLength(1)
+    expect(classed(panel, 'run-main')[0]?.attributes.get('data-busy')).toBeUndefined()
+    // The refusal is the log section's own, naming the read it came from.
+    const logs = classed(panel, 'run-logs')[0] as FakeNode
+    const drawn = classed(logs, 'console-unavailable')[0] as FakeNode
+    expect(drawn, 'the refusal was not drawn in the log section').toBeDefined()
     expect(drawn.attributes.get('data-kind')).toBe('refused')
-    // The CLI's own sentence, and the operation it came from.
     expect(textOf(drawn)).toContain('no such run 20261015-120000-aa01')
-    expect(classed(panel, 'unavailable-operation')[0]?.textContent).toBe('run.logs')
-    // And nothing of the run was drawn: no log window that would read as an
-    // empty one.
+    expect(classed(logs, 'unavailable-operation')[0]?.textContent).toBe('run.logs')
+    // And nothing of the window was drawn: no log line that would read as an
+    // empty one, and no replay figures about a window nobody read.
     expect(classed(panel, 'run-log-line')).toEqual([])
+    expect(classed(panel, 'run-replay')).toEqual([])
+  })
+
+  it('draws a refused diagnosis over the log window the other read drew', async () => {
+    // The same rule the other way round: the record read is the one that
+    // refuses, and the log window that arrived before it stays on screen.
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        diagnoseRun: () => ({ ok: false, reason: 'no such run 20261015-120000-aa01' }),
+        readRunLogs: () => ({
+          ok: true,
+          data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+        }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    ;(classed(panel, 'live-run')[0] as FakeNode).click()
+    await flush()
+    expect((panel.children[0] as FakeNode).attributes.get('class')).toBe('run')
+    expect(classed(panel, 'run-stages'), 'the empty ledger was drawn under a refused diagnosis').toEqual([])
+    expect(classed(panel, 'unavailable-operation').map((node) => node.textContent)).toEqual(['run.diagnose'])
+    expect(classed(panel, 'run-log-line')).toHaveLength(1)
+    // The log read answered, so its replay panel is up -- the refused diagnosis
+    // is the record's and has no say over what the window's read drew.
+    expect(classed(panel, 'run-replay')).toHaveLength(1)
+    expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
+  })
+
+  describe('the frame a run is opened in', () => {
+    /** opened boots the committed frame and clicks its first run row. The two
+     * reads that draw a run answer what the case told them to, so a case can
+     * hold them, land them in either order, or refuse one. */
+    async function opened(replies: Readonly<Record<string, AReply>>): Promise<{
+      readonly document: FakeDocument
+      readonly panel: FakeNode
+      readonly calls: readonly { readonly name: string; readonly args: unknown }[]
+    }> {
+      const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+      const fake = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame), ...replies } })
+      const document = await boot(fake.bridge, new FakeDocument())
+      const panel = panelOf(document)
+      ;(classed(panel, 'live-run')[0] as FakeNode).click()
+      return { document, panel, calls: fake.calls }
+    }
+
+    it('draws the run’s frame in the click’s own turn, before either read answers', async () => {
+      // The owner's report of 2026-11-01: a click on a run id looked like it had
+      // not registered, because the screen waited for both reads before drawing
+      // anything. Neither read answers in this case at all -- and there is no
+      // `await` between the click above and the assertions below, so what they
+      // see is what the click itself drew.
+      const diagnosis = holding()
+      const logs = holding()
+      const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+      const fake = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          diagnoseRun: diagnosis.reply,
+          readRunLogs: logs.reply,
+          runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+        },
+      })
+      const document = await boot(fake.bridge, new FakeDocument())
+      const panel = panelOf(document)
+      ;(classed(panel, 'live-run')[0] as FakeNode).click()
+      // **Nothing is awaited between the click above and the assertions
+      // below.** A case that flushed first would pass against a screen that
+      // drew a turn later, and drawing a turn later is the whole of the
+      // owner's complaint.
+      expect(panel.children[0]?.attributes.get('class'), 'the click drew no run screen').toBe('run')
+      // The run the operator clicked, and the way back from it.
+      expect(classed(panel, 'run-id')[0]?.textContent).toBe('20261015-120000-aa01')
+      expect(classed(panel, 'run-crumb-live')[0]?.tagName).toBe('BUTTON')
+      // Both sections wear their own mark and say what they are reading.
+      const main = classed(panel, 'run-main')[0] as FakeNode
+      const logsSection = classed(panel, 'run-logs')[0] as FakeNode
+      expect(main?.attributes.get('data-busy'), 'the run column does not say it is reading').toBe('true')
+      expect(main?.attributes.get('aria-busy')).toBe('true')
+      expect(logsSection?.attributes.get('aria-busy')).toBe('true')
+      const labels = classed(panel, 'console-busy-label').map((node) => node.textContent)
+      expect(labels).toContain('Reading the diagnosis of 20261015-120000-aa01')
+      expect(labels).toContain('Reading the log window of 20261015-120000-aa01')
+      // A skeleton stands in each section, so the frame is a shape rather than
+      // blank space.
+      expect(classed(panel, 'console-skeleton')).toHaveLength(2)
+      // And no figure is drawn: nothing has arrived yet.
+      expect(classed(panel, 'run-stages')).toEqual([])
+      expect(classed(panel, 'run-log-line')).toEqual([])
+      expect(classed(panel, 'run-log-link-note')).toEqual([])
+    })
+
+    it('fills each section when its own read answers, whichever order they land in', async () => {
+      // The log window answers first: its section paints, and the diagnosis is
+      // still marked as reading -- the screen is never held until the last read.
+      const diagnosis = holding()
+      const logs = holding()
+      const { panel } = await opened({
+        diagnoseRun: diagnosis.reply,
+        readRunLogs: logs.reply,
+        runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+      })
+      logs.release({
+        ok: true,
+        data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+      })
+      await flush()
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      // The replay panel is the log read's own arrival, drawn with the window it
+      // replays: it is up as soon as that read lands, before the record's has.
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
+      expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
+      expect(classed(panel, 'run-main')[0]?.attributes.get('data-busy')).toBe('true')
+      expect(classed(panel, 'console-busy-label').map((node) => node.textContent)).toEqual([
+        'Reading the diagnosis of 20261015-120000-aa01',
+      ])
+
+      // Then the record lands, and the window is still there: the two fills are
+      // written into the same column without either taking the other's place.
+      diagnosis.release({ ok: true, data: { document: {} } })
+      await flush()
+      expect(classed(panel, 'run-stages')).toHaveLength(1)
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      expect(classed(panel, 'run-tolerated-absent')).toHaveLength(1)
+      // And the record's fill left the other read's replay panel exactly where
+      // the log read drew it: one panel, never two.
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
+      // Neither section is reading any more, and neither kept a placeholder.
+      expect(classed(panel, 'console-busy-label')).toEqual([])
+      expect(classed(panel, 'console-skeleton')).toEqual([])
+      expect(classed(panel, 'run-main')[0]?.attributes.get('data-busy')).toBeUndefined()
+      expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
+      // The way back is still bound after both fills.
+      const crumb = classed(panel, 'run-crumb-live')[0] as FakeNode
+      crumb.click()
+      await flush()
+      expect((panel.children[0] as FakeNode).attributes.get('class')).toBe('live')
+    })
+
+    it('keeps the log read’s replay panel when the diagnosis refuses after it', async () => {
+      // The replay panel is what the *log* read draws, and the diagnosis is the
+      // record read's: a record that refuses says nothing about the window that
+      // arrived before it, so the panel stays under it. The log read answers
+      // first here, so the refusal is landing on a column that already holds it.
+      const diagnosis = holding()
+      const { panel } = await opened({
+        diagnoseRun: diagnosis.reply,
+        readRunLogs: () => ({
+          ok: true,
+          data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+        }),
+        runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+      })
+      await flush()
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
+
+      diagnosis.release({ ok: false, reason: 'no such run 20261015-120000-aa01' })
+      await flush()
+      expect(classed(panel, 'unavailable-operation').map((node) => node.textContent)).toEqual(['run.diagnose'])
+      expect(classed(panel, 'run-stages'), 'the timeline was drawn under a refused diagnosis').toEqual([])
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      expect(
+        classed(panel, 'run-replay'),
+        'the refused diagnosis took the log read’s replay panel with it',
+      ).toHaveLength(1)
+    })
+
+    it('rewrites the window’s sentence when the transcript link lands after it', async () => {
+      // The window's own note -- "no `logs RUN --url` line arrived" -- is a
+      // sentence about a read that had not answered yet. A link that arrives
+      // after the window must replace it, or the log section would claim the
+      // CLI printed no link when the console had simply not been told.
+      const link = holding()
+      const { panel } = await opened({
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({
+          ok: true,
+          data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+        }),
+        runLogLink: link.reply,
+      })
+      await flush()
+      const note = classed(panel, 'run-log-link-note')[0] as FakeNode
+      expect(note?.textContent, 'the window never said its link was missing').toContain('logs RUN --url')
+      expect(classed(panel, 'run-log-link')).toEqual([])
+
+      link.release({ ok: true, data: 'https://console.cloud.google.com/logs/query' })
+      await flush()
+      expect(classed(panel, 'run-log-link-note'), 'the missing-link sentence outlived the link').toEqual([])
+      expect(classed(panel, 'run-log-link')).toHaveLength(1)
+      // And the window itself was redrawn, not lost with the sentence.
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+    })
   })
 
   describe('the Live poll', () => {
@@ -879,7 +1084,9 @@ describe('the dashboard the entry mounts', () => {
       // Neither is the range the read above answered: a range this session has
       // already read is drawn from the cache and starts no read at all, so a
       // case about two reads in flight has to pick two it has not read.
-      const first = windows[0]
+      // `windows[0]` is the range the opening read answered, which the cache
+      // would serve without a read.
+      const first = windows[1]
       const second = windows[2]
       expect(first?.textContent).not.toBe(second?.textContent)
       first?.click()
@@ -998,7 +1205,7 @@ describe('the by-person read the entry wires', () => {
   it('reads `statsRuns` with the picker’s window once the knob is on, and draws its document', async () => {
     const { panel, calls } = await spendWithPeople(() => ({ ok: true, data: { document: STATS } }))
     expect(calls.filter((call) => call.name === 'statsRuns').map((call) => call.args)).toEqual([
-      { since: '30d' },
+      { since: '7d' },
     ])
     const people = classed(panel, 'spend-people')
     expect(people).toHaveLength(1)
@@ -3464,23 +3671,53 @@ describe('the sections Spend fills as their own reads land', () => {
     vi.useRealTimers()
   })
 
+  it('opens on the recent week by day, and offers the wider windows beside it', async () => {
+    // The owner's choice for 0.118.0: Spend opens on 7d rather than on the
+    // month the CLI's own `--since` defaults to. The picker keeps every window
+    // it offered, so the wider ranges are one click away.
+    const windows = windowReads()
+    const { bridge, calls } = spendBridge({ runReport: windows.reply })
+    const document = await openSpend(bridge)
+    expect(
+      calls.filter((call) => call.name === 'runReport').map((call) => call.args),
+      'the screen did not open on the recent week by day',
+    ).toEqual([{ by: 'day', since: '7d' }])
+    windows.release('7d', reportDoc('2026-10-24'))
+    await flush()
+    expect(theSpendView(document)).toEqual(['2026-10-24'])
+    expect(classed(panelOf(document), 'spend-window').map((node) => node.textContent)).toEqual([
+      '7d',
+      '30d',
+      '90d',
+      '12w',
+    ])
+
+    // And 30d is still read as 30d: the default moved, the picker's windows did
+    // not.
+    windowButton(document, '30d').click()
+    await flush()
+    expect(
+      calls.filter((call) => call.name === 'runReport').map((call) => call.args),
+    ).toContainEqual({ by: 'day', since: '30d' })
+  })
+
   it('marks the report section in the click’s own frame, over the figures it already drew', async () => {
     const windows = windowReads()
     const { bridge } = spendBridge({ runReport: windows.reply })
     const document = await openSpend(bridge)
-    windows.release('30d', reportDoc('2026-10-01'))
+    windows.release('7d', reportDoc('2026-10-01'))
     await flush()
     expect(theSpendView(document)).toEqual(['2026-10-01'])
     expect(classed(panelOf(document), BUSY_CLASS)).toEqual([])
 
-    windowButton(document, '7d').click()
+    windowButton(document, '90d').click()
     // Nothing is awaited: this is the frame the click happened in, which is the
     // whole of the owner's complaint -- "it feels like nothing happens".
     const report = sectionOf(document, 'spend-report')
     expect(report.getAttribute(BUSY_ATTRIBUTE)).toBe('true')
     expect(report.getAttribute(BUSY_BUSY_ATTRIBUTE)).toBe('true')
     expect(classed(report, BUSY_SPINNER_CLASS)).toHaveLength(1)
-    expect(busyLabels(document)).toEqual(['Reading spend for 7d, by day…'])
+    expect(busyLabels(document)).toEqual(['Reading spend for 90d, by day…'])
     // The figures already drawn stay under the mark: a section that blanked
     // would lose its answer to say it is reading another.
     expect(theSpendView(document)).toEqual(['2026-10-01'])
@@ -3488,28 +3725,28 @@ describe('the sections Spend fills as their own reads land', () => {
     // section that has already answered look busy.
     expect(sectionOf(document, 'spend-caps').getAttribute(BUSY_ATTRIBUTE)).toBeNull()
 
-    windows.release('7d', reportDoc('2026-10-24'))
+    windows.release('90d', reportDoc('2026-08-02'))
     await flush()
     expect(report.getAttribute(BUSY_ATTRIBUTE)).toBeNull()
     expect(classed(panelOf(document), BUSY_CLASS)).toEqual([])
-    expect(theSpendView(document)).toEqual(['2026-10-24'])
+    expect(theSpendView(document)).toEqual(['2026-08-02'])
   })
 
   it('keeps the second view when the read asked for first answers last', async () => {
     const windows = windowReads()
     const { bridge } = spendBridge({ runReport: windows.reply })
     const document = await openSpend(bridge)
-    windows.release('30d', reportDoc('2026-10-01'))
+    windows.release('7d', reportDoc('2026-10-01'))
     await flush()
 
-    windowButton(document, '7d').click()
+    windowButton(document, '30d').click()
     windowButton(document, '90d').click()
     expect(busyLabels(document)).toEqual(['Reading spend for 90d, by day…'])
 
     // The earlier read answers last. It is not this section's any more, and
     // drawing it would put the window the operator has already replaced under a
     // picker that marks the later one.
-    windows.release('7d', reportDoc('2026-10-24'))
+    windows.release('30d', reportDoc('2026-10-01'))
     await flush()
     expect(busyLabels(document), 'the superseded read took the latest change’s mark down').toEqual([
       'Reading spend for 90d, by day…',
@@ -3527,7 +3764,7 @@ describe('the sections Spend fills as their own reads land', () => {
     const windows = windowReads()
     const { bridge } = spendBridge({ runReport: windows.reply })
     const document = await openSpend(bridge)
-    windows.release('30d', reportDoc('2026-10-01'))
+    windows.release('7d', reportDoc('2026-10-01'))
     await flush()
 
     windowButton(document, '90d').click()
@@ -3558,7 +3795,7 @@ describe('the sections Spend fills as their own reads land', () => {
     // The report's section is the one that is busy, and it names the read that
     // is running rather than only that one is.
     expect(sectionOf(document, 'spend-report').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
-    expect(busyLabels(document)).toEqual(['Reading spend for 30d, by day…'])
+    expect(busyLabels(document)).toEqual(['Reading spend for 7d, by day…'])
     expect(theSpendView(document)).toEqual([])
   })
 
@@ -3672,7 +3909,7 @@ describe('the sections Spend fills as their own reads land', () => {
     expect(report.getAttribute(BUSY_ATTRIBUTE), 'the second visit is not reading: the case proves nothing').toBe(
       'true',
     )
-    expect(busyLabels(document)).toEqual(['Reading spend for 30d, by day…'])
+    expect(busyLabels(document)).toEqual(['Reading spend for 7d, by day…'])
 
     reads.release(0, { ok: true, data: { document: reportDoc('2026-10-01') } })
     await flush()
@@ -3747,7 +3984,7 @@ describe('the sections Spend fills as their own reads land', () => {
     await flush()
     const stats = fake.calls.filter((call) => call.name === 'statsRuns')
     expect(stats).toHaveLength(1)
-    expect((stats[0]?.args as { readonly since?: unknown }).since).toBe('30d')
+    expect((stats[0]?.args as { readonly since?: unknown }).since).toBe('7d')
   })
 })
 
@@ -3765,7 +4002,7 @@ describe('the view a session already read', () => {
     const windows = windowReads()
     const fake = spendBridge({ runReport: windows.reply })
     const document = await openSpend(fake.bridge)
-    windows.release('30d', reportDoc('2026-10-01'))
+    windows.release('7d', reportDoc('2026-10-01'))
     await flush()
     expect(theSpendView(document)).toEqual(['2026-10-01'])
     return { fake, document, windows }
@@ -3803,7 +4040,7 @@ describe('the view a session already read', () => {
       fake.calls
         .filter((call) => call.name === 'runReport')
         .map((call) => (call.args as { readonly since?: unknown }).since),
-    ).toEqual(['30d', '30d'])
+    ).toEqual(['7d', '7d'])
     expect(stamped(document), 'the re-read view is still stamped as a cached one').toBeNull()
   })
 
@@ -3843,11 +4080,11 @@ describe('the view a session already read', () => {
     ).toHaveLength(offered)
 
     const before = fake.calls.filter((call) => call.name === 'runReport').length
-    windowButton(document, '7d').click()
+    windowButton(document, '90d').click()
     await flush()
     const reads = fake.calls.filter((call) => call.name === 'runReport')
     expect(reads.length - before, 'one click started more than one read').toBe(1)
-    expect((reads[reads.length - 1]?.args as { readonly since?: unknown }).since).toBe('7d')
+    expect((reads[reads.length - 1]?.args as { readonly since?: unknown }).since).toBe('90d')
   })
 
   it('draws a view older than five minutes and reads it again at once', async () => {
@@ -3871,17 +4108,17 @@ describe('the view a session already read', () => {
   })
 
   it('answers a control change from the cache, and reads again only what is older than five minutes', async () => {
-    // 30d → 7d → 30d is a round trip the three controls make easy and an
+    // 7d → 30d → 7d is a round trip the three controls make easy and an
     // operator makes without meaning to ask the CLI anything. The view is in
-    // this session's cache, so the second 30d is drawn stamped in the click's own
+    // this session's cache, so the second 7d is drawn stamped in the click's own
     // frame and no report is read for it.
     const { fake, document, windows } = await readSpendOnce()
     const reads = (): number => fake.calls.filter((call) => call.name === 'runReport').length
     const before = reads()
 
-    // 7d is asked for and does not answer, and the operator comes straight back.
-    windowButton(document, '7d').click()
+    // 30d is asked for and does not answer, and the operator comes straight back.
     windowButton(document, '30d').click()
+    windowButton(document, '7d').click()
     expect(theSpendView(document), 'the change was not answered from the cache').toEqual(['2026-10-01'])
     expect(stamped(document)).toMatch(/^as of \d\d:\d\d$/)
     expect(busyLabels(document), 'the cached view was left under the mark of the read it replaced').toEqual([])
@@ -3890,14 +4127,14 @@ describe('the view a session already read', () => {
 
     // The read the operator left behind is not drawn over the view they chose:
     // the cached view is the newest answer for the controls on screen.
-    windows.release('7d', reportDoc('2026-10-24'))
+    windows.release('30d', reportDoc('2026-09-01'))
     await flush()
     expect(theSpendView(document), 'a read for a range the operator left was drawn').toEqual(['2026-10-01'])
 
     // A cached view older than five minutes is drawn **and** read again, exactly
     // as it is on entering the tab: a change is not a door around that rule.
     vi.setSystemTime(Date.now() + CACHE_FRESH_MS)
-    windowButton(document, '30d').click()
+    windowButton(document, '7d').click()
     expect(stamped(document), 'the stale cached view was served without its stamp').not.toBeNull()
     await flush()
     expect(reads()).toBe(before + 2)
