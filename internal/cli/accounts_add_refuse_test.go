@@ -96,6 +96,60 @@ func TestAccountsAddSubsetRuleIsCheckedBeforeAnyWrite(t *testing.T) {
 	}
 }
 
+// accountsAddLocalStaleAccount is a profile that already lists an account
+// covering less than the profile admits: the subset rule's second reader, and
+// the one the command does not touch — the account that fails the rule is not
+// the account being added.
+const accountsAddLocalStaleAccount = `version: 1
+name: aurora
+gcp_project: aurora-gcp
+region: us-east5
+runs_bucket: fugaro-runs-aurora-gcp
+
+claude_accounts:
+  legacy:
+    allow_data_to:
+      - acme/app
+
+profiles:
+  standard:
+    provider: github
+    allow_repos:
+      - acme/app
+      - acme/lib
+    claude_accounts:
+      - legacy
+`
+
+// TestAccountsAddRefusesAPreExistingAccountMissingARepository: the rule reads
+// every account a profile lists, not only the one being added. When the account
+// that fails it is one this command does not touch, the refusal must say so —
+// --repos writes the allow_data_to of the account named on the command line, so
+// offering it here would send the person to widen the wrong account.
+func TestAccountsAddRefusesAPreExistingAccountMissingARepository(t *testing.T) {
+	path := accountsAddFixture(t, accountsAddLocalStaleAccount)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app,acme/lib", "--profile", "standard", "--yes")
+	if err == nil {
+		t.Fatal("an account that covered less than the profile admits was left in place")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	for _, want := range []string{"claude_accounts.legacy", "acme/lib", "not the account this command is adding", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--repos") {
+		t.Errorf("the refusal tells the person to pass --repos, which widens the account being added and not the one that failed: %v", err)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Errorf("a refused subset check wrote the file:\n%s", after)
+	}
+}
+
 // accountsAddLocalNoAllowRepos is the profile the subset rule cannot be asked
 // about: it would list an account and it writes no allow_repos of its own, so
 // the repositories it admits are the project's enrollment and no account is

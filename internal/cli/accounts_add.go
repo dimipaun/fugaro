@@ -241,20 +241,29 @@ func accountsAddSubsetRule(after *localcfg.Config, name, profile string) error {
 		}
 	}
 	for _, listed := range after.Profiles[profile].ClaudeAccounts {
+		covered := after.ClaudeAccounts[listed].AllowDataTo
 		missing := []string{}
 		for _, r := range allow {
-			if !slices.Contains(after.ClaudeAccounts[listed].AllowDataTo, r) {
+			if !slices.Contains(covered, r) {
 				missing = append(missing, r)
 			}
 		}
 		if len(missing) == 0 {
 			continue
 		}
-		covered := slices.Clone(after.ClaudeAccounts[listed].AllowDataTo)
-		return userErr("profiles.%s.allow_repos lists %s and claude_accounts.%s.allow_data_to does not cover %s: an account a profile lists covers every repository that profile admits, and the profile's repositories are the intersection of the two and never their union — pass --repos %s to include %s, or drop %s from the profile; nothing was written",
-			pluginwire.Printable(profile), strings.Join(missing, ", "), pluginwire.Printable(listed),
-			strings.Join(missing, ", "), strings.Join(append(covered, missing...), ","),
-			name, pluginwire.Printable(listed))
+		head := fmt.Sprintf("profiles.%s.allow_repos lists %s and claude_accounts.%s.allow_data_to does not cover %s: an account a profile lists covers every repository that profile admits, and the profile's repositories are the intersection of the two and never their union — ",
+			pluginwire.Printable(profile), strings.Join(missing, ", "), pluginwire.Printable(listed), strings.Join(missing, ", "))
+		// The remedy is the failing account's own: --repos writes the
+		// allow_data_to of the account named on the command line, so a
+		// profile's pre-existing account is not this command's to widen, and
+		// offering the flag for it would send the person to the wrong
+		// account's list — the one thing this rule exists to prevent.
+		if listed != name {
+			return userErr("%sclaude_accounts.%s is not the account this command is adding: widen claude_accounts.%s.allow_data_to with the repositories above, narrow profiles.%s.allow_repos, or drop %s from the profile; nothing was written",
+				head, pluginwire.Printable(listed), pluginwire.Printable(listed), pluginwire.Printable(profile), pluginwire.Printable(listed))
+		}
+		return userErr("%spass --repos %s to include %s, or drop %s from the profile; nothing was written",
+			head, strings.Join(append(slices.Clone(covered), missing...), ","), pluginwire.Printable(name), pluginwire.Printable(listed))
 	}
 	return nil
 }
