@@ -12,8 +12,10 @@ import (
 )
 
 // binaryScanBytes is how much of a file is read to decide whether it is text:
-// git's own test, a NUL byte in the first 8000 bytes, which is also how this
-// repository reads a diff (reviewinput.go).
+// git's own test, a NUL byte in the first 8000 bytes. The window is what makes
+// the test cheap — one read, never the whole file — and 8000 is where a
+// compiler's output declares itself: a binary format's magic or a header's
+// first padding puts a NUL well inside it.
 const binaryScanBytes = 8000
 
 // strayArtifact is a file finalize refuses to commit, with the signal that

@@ -3487,6 +3487,12 @@ func (r *run) finalize(ctx context.Context) error {
 	// A build's artifact the run left in the tree is never this commit's
 	// (stray.go): it is refused by name, and held out of the commit, so what
 	// the branch carries is the run's work and no compiled file beside it.
+	//
+	// The refusal is a failure and not a stop, like every other failure at this
+	// point of a run: finalize carries on, and what a refused run leaves is the
+	// same draft a failed run leaves — the work pushed, the pull request open,
+	// the reason naming the file. That is what makes it actionable; a run that
+	// returned here would put nothing on the branch and open nothing.
 	strays, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
