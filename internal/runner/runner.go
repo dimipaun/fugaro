@@ -2028,7 +2028,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 			planAgent.Models.Coder = r.championCoder
 		}
 		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor())
-		if err := checkPlan(rcp, plan); err != nil {
+		if err := checkPlan(plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
 		r.plan = plan
@@ -2647,10 +2647,18 @@ func (r *run) agentLoop(ctx context.Context) {
 				return
 			}
 		case recipe.StepReview:
-			// The last step: recipe.Parse allows only the adversarial step
-			// after review, planOf has no arm for it and checkPlan refuses a
-			// recipe carrying one, so the review is what the plan ends with.
+			// The senior review is the plan's last step unless the recipe
+			// carries the adversarial step after it (recipe.Parse allows no
+			// other order), so this is where the run ends when there is no
+			// level 3 to run.
 			r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID)
+			return
+		case recipe.StepAdversarial:
+			// Level 3 runs the same loop on the reviewer's model, after the
+			// senior review, and records its own tier: it is a review round
+			// like the senior one, and the one readiness reads when it ran
+			// (seniorReview takes the last round that is not a first line).
+			r.seniorLoop(ctx, st, runstore.TierAdversarial, reviewPrompt, sys, sessionID)
 			return
 		}
 	}
