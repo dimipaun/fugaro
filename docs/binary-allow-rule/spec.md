@@ -174,16 +174,26 @@ within the cap. Everything else is unchanged: the file is held out of the leftov
 `CommitAllExcept`, the reason names it, and the run fails. This is the check that covers the run
 that *adds an asset and does not commit it*, which is the ordinary case and the one item 1 is about.
 
-**4.2 The committed check (the residual, closed).** A binary the agent committed itself — or one
+**4.2 The committed check (the residual, closed — and this whole subsection is conditional on
+§D997's answer).** A binary the agent committed itself — or one
 `swept` into a commit by `gate.go`'s `CommitAll` for `commands.fix`
 (`internal/runner/gate.go:357`) or by `digest.go`'s report step (`internal/runner/digest.go:359`) —
 never passes through 4.1: `Untracked` lists only what git would *add*, and a committed path is not
 that. So finalize also reads **the run's own diff** (`diffBase()...HEAD`, the range the review stage
 is already handed) and refuses an **added** path that is binary and unadmitted:
 
-- the reading is `git diff --name-status -z --no-renames --end-of-options <base>...HEAD` — added
-  (`A`) paths only, with `--no-renames` so a move is an add and a delete rather than a status the
+- the reading is `git diff --raw -z --no-renames --end-of-options <base>...HEAD`: one row per path
+  with its status letter (`A`, `D`, `M`) and **both blob ids**, paired **by path, never by index**,
+  with `--numstat -z`'s binary flag (F14). `--raw` rather than `--name-status` because the move rule
+  below needs the ids, and `--no-renames` so a move is an add and a delete rather than a status the
   parser has to know;
+- **a move is not an addition.** `--no-renames` reports a rename as `D old` and `A new`, and the
+  branch's work is unchanged, so an `A` path whose new blob id equals a `D` path's old blob id in the
+  same diff is a **move of a tracked file** — which §2.1 already leaves alone. Both ids come from the
+  `--raw` row, so the rule costs no third read and no rename detection, and it is what keeps option A
+  of §D997 from refusing a run for tidying up its own assets. A move that *also* edits the bytes has
+  two different ids and is refused as an addition, which is the honest residual: those bytes are new
+  and unadmitted;
 - a path whose blob is binary is `git diff --numstat -z`'s `-`/`-` row, which
   `parseNumstat` already computes (`internal/runner/diffbase.go:532`, `reviewChange.binary`);
 - **modified** paths are not refused at all: `M` on a tracked binary is the repository's own file
@@ -279,7 +289,10 @@ tolerated. See §D990 for why, and for the cost of the alternative.
 
 ## 7. The residual: does the agent's own commit get checked?
 
-**Yes — §4.2 is that closure, and this section is why it is worth the work.** Before #1476 the
+**Yes — §4.2 is that closure, and this section is why it is worth the work. Whether to close it at
+all is the owner's open decision (§D997), the one thing in this design that changes a run's
+behaviour rather than its shape; everything below is the case for the recommended answer.** Before
+#1476 the
 question could not be asked, because exactly one thing committed: finalize. Today there are **five**
 places a file can reach a branch (`git grep 'CommitAll' internal/runner/*.go`, excluding tests),
 and #1476 guards only the first:
@@ -412,7 +425,9 @@ owner's own word, and a rule that its writer can widen is not a rule.
 admits `website/public/**` has said a binary may sit anywhere under it, and the reviewer's only
 signal is the marker line with its size. (2) A committed payload is refused *after* it is on the
 branch — §4.2 fails the run and does not rewrite history, so containment is "a draft nobody merged"
-rather than "the bytes never left the checkout". (3) The check reads the checkout's own git, which
+rather than "the bytes never left the checkout". **And only if D997 is answered A**: under B the
+refusal does not exist at all and the run can be `ready` with those bytes on the branch, which is
+that option's whole cost. (3) The check reads the checkout's own git, which
 the agent writes; `stray.go` already refuses an unreadable file rather than trusting it, and §4.2's
 reading goes through the same `sessionGit` seam the review range does, but a checkout whose `.git`
 the agent owns is a checkout with a smaller trusted core than the repository's own history would

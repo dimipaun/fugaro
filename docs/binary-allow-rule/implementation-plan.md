@@ -2,7 +2,8 @@
 
 **Status: plan only; nothing is implemented; no task approved; the owner decides.** Written to
 [spec.md](spec.md) and [reconciliation.md](reconciliation.md) **as recommended**, so an answer of
-"as recommended" on D981–D996 needs no rewrite here.
+"as recommended" on D981–D996 needs no rewrite here, and **AR4 is the one task D997 can delete**
+(see its heading).
 
 ## 1. Order, and what this plan does not own
 
@@ -187,7 +188,15 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   change from becoming a loosening), `TestAnAdmittedPathOutsideItsPatternIsRefused` (the glob is
   matched, not prefix-compared).
 
-### AR4. The residual: the run's own diff (D989, F3, F4, F14)
+### AR4. The residual: the run's own diff (D989, D997, F3, F4, F14)
+
+**This is the one task the owner can delete.** It implements option **A** of D997 — refuse a new
+binary anywhere in the run's own range, subject to the allow rule. If the owner answers **B**
+(finalize only, as #1476 ships), AR4 is not written, the residual stays documented in spec.md §7 and
+§9 instead of closed, and the plan loses its longest task without any other one changing. If the
+owner answers **C**, AR4's reading moves to the runner's commit call sites and its tests move with
+it — and the hole it was written to close (the coder's own commits, which are not a runner call
+site) stays open, which is the argument D997 makes against C.
 
 - **Files (5):** `internal/runner/stray.go` (the diff reader and the shared predicate),
   `internal/runner/diffbase.go` (`--name-status` beside the numstat read, so an **added** path is
@@ -201,7 +210,9 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   `TestTheAutofixCommitIsChecked` (`gate.go:357`'s path), `TestTheDigestStepCommitIsChecked`
   (`digest.go:359`'s path), `TestTheTwoReadingsPairByPath` (the pairing is by path, never by index —
   F14's addition; a range whose two git orderings differ, which is the case an index-based pairing
-  gets wrong silently), `TestAnAddedThenDeletedBinaryIsNotRefused` (the deliberate hole named in
+  gets wrong silently), `TestAMovedBinaryIsNotRefused` (a rename reads as `D` + `A`, and the blob
+  ids say it is a move of a tracked file — the false refusal D997's cost column names),
+  `TestAnAddedThenDeletedBinaryIsNotRefused` (the deliberate hole named in
   spec.md §4.2 and residual 4: the add is hidden by a later delete, and this test makes closing it
   a decision), and `TestTheRefusalNamesThePathAndTheSize`.
 - **`shadow.go`, named rather than assumed away.** The **fifth** committer is
@@ -270,7 +281,7 @@ publishes.
 | --- | --- | --- | --- |
 | 1 | **The status label, whole** | NV0–NV2 | it closes a falsehood, has no dependency at all, and does not touch a policy, a stage or the settings work. It can land in the same release as anything else, first, and it is the cheapest thing to review |
 | 2 | **The node member and the merge** | AR0, AR2 | no publish, no stage, no other design: the shape and the direction, tested against a policy built by hand. This is the slice that a reviewer of this design can judge on its own |
-| 3 | **The runner's two checks, the sentences and the end-to-end test, as one slot** | AR3, AR4, AR5, AR6 (with **E1**, #1476) | the enforcement lands once, in finalize, where the run's own commits and its stray files are both readable. **AR5 is in this row and not its own row** because §1.1 puts AR3–AR5 in one slot: all three write `stray.go` and `runner.go`, and the sentences must describe checks that exist. AR5 names no file AR3–AR4 do not already name except `prompts.go` and `prflow.go` |
+| 3 | **The runner's two checks, the sentences and the end-to-end test, as one slot** | AR3, AR4, AR5, AR6 (with **E1**, #1476; **AR4 only if D997 is answered A**) | the enforcement lands once, in finalize, where the run's own commits and its stray files are both readable. **AR5 is in this row and not its own row** because §1.1 puts AR3–AR5 in one slot: all three write `stray.go` and `runner.go`, and the sentences must describe checks that exist. AR5 names no file AR3–AR4 do not already name except `prompts.go` and `prflow.go` |
 | 4 | **The publish** | AR1 (with **E3**, settings S3) | last, because it rides a stage S3 builds. Before it lands the rule is enforceable but unpublished, which is exactly what step 2's hand-built fixture tests |
 | 5 | **The docs, the skill and the notes** | AR7 | with the release, not before it |
 

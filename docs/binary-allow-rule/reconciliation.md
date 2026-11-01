@@ -1,7 +1,10 @@
 # The binary allow rule and the no-verdict label: findings, decisions and open items
 
-**Status: the decisions D981–D996 are written with a recommendation and none is answered; the owner
-decides.** Where this file disagrees with [spec.md](spec.md), **this file wins**.
+**Status: the decisions D981–D997 are written with a recommendation and none is answered; the owner
+decides.** **D997 is left OPEN on purpose** and is the one decision here that changes a run's
+behaviour rather than its shape: whether a binary the coder commits itself is refused at all. The
+implementation plan is written to its recommended option, and its AR4 does not exist if the owner
+answers otherwise. Where this file disagrees with [spec.md](spec.md), **this file wins**.
 
 ## 0. What was read, and how the numbers were taken
 
@@ -13,8 +16,9 @@ from its diff and not from a merged tree. Items that need #1476's code to exist 
 
 The decision block is the **next free block above every `D<number>` on `main` and in every open pull
 request**, read on 2026-11-01: `main` carries up to **D901**; the twenty-four open pull requests'
-highest is **D980** (PR #1490). This work therefore takes **D981–D1010**: **D981–D996 written here**,
-**D997–D1010 reserved and unused**. The block is thirty wide, as D520–D549 and D490–D519 are.
+highest is **D980** (PR #1490). This work therefore takes **D981–D1010**: **D981–D997 written here**
+(the last of them, D997, added in this branch's review follow-up and deliberately left open),
+**D998–D1010 reserved and unused**. The block is thirty wide, as D520–D549 and D490–D519 are.
 
 ## 1. Findings
 
@@ -117,15 +121,19 @@ derived wrongly there. The fifth reader is the console (`console/src/shared/sche
 **F14 — a run's diff does not currently say which paths were *added*.** `parseNumstat`
 (`internal/runner/diffbase.go:532`) reads added/deleted counts and a `binary` flag per path from
 `git diff --numstat -z --no-renames`, and it has no status field, so "an added binary" cannot be read
-out of it. The reading §4.2 needs is `--name-status` (an `A` row) cross-referenced with the numstat
-binary flag, or `--diff-filter=A` beside it; the design names the shape and the plan's task pins it.
+out of it. The reading §4.2 needs is a status row (`A`/`D`/`M` per path) cross-referenced with the
+numstat binary flag, or `--diff-filter=A` beside it; the design names the shape and the plan's task
+pins it. **`--raw`, not `--name-status`**, because the move rule §4.2 adds (an `A` path whose new
+blob id is a `D` path's old blob id is a rename of a tracked file, not an addition) needs both blob
+ids, and `--raw -z` carries them beside the same status letter.
 
 **The cross-reference is by path, never by index, and that is a design requirement rather than an
 implementation detail.** Two separate `-z` invocations produce two NUL-delimited streams whose
 ordering is git's, not a promise: pairing row *i* of one with row *i* of the other would mispair
 silently the first time the two orderings differ (a rename, a submodule, a path git quotes
-differently). §4.2 therefore reads **one** stream for the status (`--name-status -z --no-renames`)
-and builds the binary set as a `map[string]bool` **keyed by the path** the numstat stream reports,
+differently). §4.2 therefore reads **one** stream for the status and the blob ids
+(`--raw -z --no-renames`) and builds the binary set as a `map[string]bool` **keyed by the path** the
+numstat stream reports,
 then looks each `A` path up in that map. `--no-renames` is what makes the path a single field on the
 numstat side too; a path absent from the map is *unreadable*, and the design refuses it rather than
 treating it as text (F1's rule: the check fails closed). AR4's `TestTheTwoReadingsPairByPath` pins
@@ -268,7 +276,65 @@ bucket (`Other`), so this slice changes no aggregate shape. *Cost of the alterna
 `internal/userstats`, the console and the phone for a figure the run records themselves already
 answer.
 
+**D997 — the binaries the coder commits itself: refuse them, or keep #1476's finalize-only check?
+(OPEN: the owner's ruling comes before AR4 is written.)** #1476's check reads the **working tree** at
+finalize — `git ls-files --others`, what `git add -A` would stage. A binary the coder put in a commit
+of its own is *not* in that set, so it is not refused, and neither `git commit -am work` nor
+`git add -N payload.bin` followed by any runner commit is seen by anything (F3, F4). **Closing it
+means refusing a *new* binary anywhere in the run's own range `diffBase()...HEAD`, subject to this
+design's allow rule** — a **behaviour change**, which is why it is the owner's to take and not a
+detail the design settles (D989 chose *how* a closure is written; this is *whether* to close at all).
+
+**Recommended: (A) refuse across the run's own range, subject to the allow rule.** finalize reads the
+diff it is already handed for the review and fails an added binary the node does not admit, whoever
+committed it — the coder, `gate.go`'s autofix, `digest.go`'s step, or the challenger arm's own
+commit. The run ends `StatusFailed` / `OutcomeDraft`, the commits stay on the branch, the reason
+names the paths; a person deletes the file. *Cost of A:*
+
+- **False refusals of legitimate assets**, which is the very failure this folder exists to remove,
+  and **one shape of them is new**: with `--no-renames` a *move* reads as a delete plus an add, so
+  renaming a tracked `brand/logo.png` to `brand/logo-v2.png` would be an *added binary* at a path
+  the project may not have admitted. **Spec §4.2 answers it in the reading itself** — an `A` path
+  whose new blob id is a `D` path's old blob id is a move of a tracked file, not an addition — so
+  the flag-free, cost-free mitigation is already in the design and the allow rule covers the rest by
+  naming the project's asset directories. The residual false refusal is a move that *also* edits the
+  bytes (two ids, so an addition by the rule): refused by name, with the rule in the reason, so the
+  answer is a publish and not a bug report.
+- **Run time**: one more `git diff` over a range the runner already walks for the review and the
+  review scope, in the same order as that read. Not a new class of cost, and AR4's task adds no
+  second pass over the checkout.
+- **A "fix" that rewrote the coder's commits is refused**, and it is the tempting repair: the
+  refusal is a verdict on the run. Rewriting would break the pull request's own record — the review
+  read those commits, the review scope and the patch object name them, the stamp hook signed them —
+  so the branch keeps them and a person deletes the file.
+
+**Alternative (B): check only at finalize, exactly as #1476 ships.** The smallest change: no new
+reading, no rename question, nothing added to `finalize`. *Cost of B:* **the bypass stands in
+precisely the case the rule is for.** One `git commit -am work`, or one `git add -N` and a later
+commit, puts a payload on the branch and **no check reads it**: the run is not failed, and because
+the rule is not about readiness the run can still end `succeeded` / `ready` — so nothing in the run
+tells a person to look. A person's only signal is the review input's marker line (`binary file %s
+changed, %d bytes`), which a review round can pass over; the rule then refuses the sloppy stray and
+admits the deliberate one, which is the wrong way round.
+
+**Alternative (C): check at every commit the runner makes.** *Cost of C:* it is a copy of one rule
+per call site with one read of the checkout each, and it **does not close the hole this decision is
+about** — the coder's own `git commit` is not a runner call site at all, so the very commits in
+question are still unread. The count is also the part that already went wrong: a first reading of F3
+found four committers and missed `shadowFinalize`, and a rule with five homes has five places for the
+next committer to be missed.
+
+**Refused: a refusal in the repository's own git (`pre-receive`, a stamp hook).** It runs where the
+bytes are, but it is a file in the checkout the coder writes and reads, and #1418's API-root refusal
+is this repository's own record of what trusting the checkout's git configuration costs.
+
 ## 3. Open items
+
+**The one decision left open on purpose is §2's D997** — whether a binary the coder commits itself
+is refused at all. It sits in §2 rather than here because it takes the same shape as the rest (a
+recommendation and the cost of each answer) and it has a recommendation; it is "open" in the sense
+that no answer to it may be assumed by an implementation. The three items below are the ones this
+design does not even propose an answer to.
 
 **O1 — does anything still reach `last == nil` once L4.2 lands?** F7's answer (D723, L4.2) removes
 the first-line-only case, so after it `last == nil` means a run with **no review round at all**.

@@ -29,6 +29,12 @@ label, not a re-aimed old one** (a name never changes meaning).
    a run nobody read is not ready — but the record's `status` then says `failed`, and a person
    reading `fugaro runs ls`, the console or the history is told a thing that is not true.
 
+**The one question this folder deliberately does not answer is D997**: a binary the coder puts in
+a commit of its own is not refused by #1476's check, which reads the working tree at finalize, and
+closing that gap is a behaviour change. The options, the recommendation and the cost of each are in
+[reconciliation.md](reconciliation.md) §2, and the implementation plan's AR4 exists only if the
+owner takes the recommended one.
+
 **The gateway enforces the cost cap** on the runs that build this design's tasks. Nothing else in
 this folder is about cost.
 
@@ -58,7 +64,7 @@ reads the two ends of the run's diff. Both are in spec.md §4.2 and §9's residu
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The rule's shape (paths, size, and the three things it deliberately is not), who may write it, where finalize checks it, what the agent is told, how `fugaro update` publishes it, the residual and what to do about it, the status label and its wire, and the threat model. The design in full; the tasks in [implementation-plan.md](implementation-plan.md) are written to it |
-| [reconciliation.md](reconciliation.md) | Findings F1–F14 against the code on `main` and on #1476, the owner decisions **D981–D996** (D997–D1010 reserved and unused), each with the recommendation and the cost of the alternative, the open items O1–O3, and what this design does not decide. **Where it disagrees with [spec.md](spec.md), it wins** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F14 against the code on `main` and on #1476, the owner decisions **D981–D997** (D998–D1010 reserved and unused), each with the recommendation and the cost of the alternative, the open items O1–O3, and what this design does not decide. **D997** is the one left open on purpose: whether a binary the coder commits itself is refused. **Where it disagrees with [spec.md](spec.md), it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks NV0–NV2 (the label) and AR0–AR7 (the rule), the external dependencies E1–E3, the files the sibling designs share, the order, and the recommended slot |
 | [README.md](README.md) | This file: what is being asked, what it adds, and where it sits in the release |
 
@@ -67,8 +73,8 @@ reads the two ends of the run's diff. Both are in spec.md §4.2 and §9's residu
 The decision block is taken **above every `D<number>` on `main` and in every open pull request**,
 read on 2026-11-01: `main` at `3d6ed04d` carries up to **D901**, and the highest of the twenty-four
 open pull requests is **D980** (PR #1490, the periodic-run-reviews design). The next free block is
-therefore **D981–D1010**, and this work takes it: **D981–D996 are written here and answered with a
-recommendation**, and **D997–D1010 are reserved and unused**. Blocks are thirty wide, the width
+therefore **D981–D1010**, and this work takes it: **D981–D997 are written here and answered with a
+recommendation**, and **D998–D1010 are reserved and unused**. Blocks are thirty wide, the width
 [docs/ee-reorg](../ee-reorg/README.md) took for D520–D549 and
 [docs/secrets-brokering](../secrets-brokering/implementation-plan.md) for D490–D519 before it.
 
