@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -296,6 +295,11 @@ func policyGenerationRecord(w io.Writer, path string, lc *localcfg.Config, gen s
 // look like this machine's own publish and would overwrite the newer node. So
 // nothing is recorded, and the refusal says what happened and where the node is
 // read.
+//
+// Every failure here happens AFTER the write landed, so every one of them says
+// so: the caller reports it as the run's outcome, and a sentence that read as a
+// publish that failed would hide the node this run moved — the operator would
+// look for a write that is already there.
 func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client, lc *localcfg.Config, path string, payload []byte) error {
 	if path == "" {
 		// A run that holds no local config file — the shared config has none, and
@@ -305,10 +309,12 @@ func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client
 	}
 	etag, found, raw, err := readPolicyNode(ctx, db, lc)
 	if err != nil {
-		return err
+		return fmt.Errorf("the policy node at %s was written, but the generation to record in %s could not be read back, so that config still names the generation from before this write — its next edit is refused as one made against a node that has moved, read what the node holds now with 'fugaro project policy show': %w",
+			projectpolicy.PathShared(), path, err)
 	}
 	if !found {
-		return errors.New("the published policy is gone")
+		return userErr("the policy node at %s was written by this run and is gone now, so no generation was recorded in %s: another writer deleted the node after this publish landed. Nothing has to be put back in step — a project with no published policy reads nothing — and the next publish of one ('fugaro project policy publish') records its own generation",
+			projectpolicy.PathShared(), path)
 	}
 	if !sameNode(raw, payload) {
 		return userErr("the policy node at %s was written and then changed again before the generation could be recorded in %s: another writer published in between, so nothing was recorded there and the config still records the generation from before this write. Read what the node holds now with 'fugaro project policy show': the next %s refuses to publish from a file the node has moved past, and offers to re-seed the file from the node instead",
@@ -376,11 +382,13 @@ func dropNullMembers(v any) any {
 // re-seed that recorded the generation while leaving a member behind would let
 // the next publish overwrite the newer node with the older file, which is the
 // whole of what D854 refuses.
-func reseedPolicyKeys(path string, lc *localcfg.Config, p *projectpolicy.Policy, members []string) (out []byte, written []string, hand []string, err error) {
-	out, err = os.ReadFile(path)
-	if err != nil {
-		return nil, nil, nil, userErr("re-seeding the local config from the published policy node: %v", err)
-	}
+//
+// It edits the bytes its caller read (old), rather than reading the file itself:
+// the write the caller ends with is guarded on exactly those bytes
+// (writeFileAtomicGuarded), and a second read of the same file would be a splice
+// made against contents the backup beside it does not hold.
+func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, members []string) (out []byte, written, hand []string) {
+	out = old
 	// apply is what the caller's own config learns from a splice that landed:
 	// the members this re-seed writes are the published node's now, and a config
 	// left stating the values the file no longer holds is one a stage re-planned
@@ -447,7 +455,7 @@ func reseedPolicyKeys(path string, lc *localcfg.Config, p *projectpolicy.Policy,
 			hand = append(hand, member)
 		}
 	}
-	return out, written, hand, nil
+	return out, written, hand
 }
 
 // applyPolicyReseed is the accepted offer: the file is backed up and written
@@ -468,10 +476,7 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 	if err != nil {
 		return nil, userErr("re-seeding %s from the published policy node: %v", path, err)
 	}
-	out, written, hand, err := reseedPolicyKeys(path, lc, p, members)
-	if err != nil {
-		return nil, err
-	}
+	out, written, hand := reseedPolicyKeys(old, lc, p, members)
 	if len(hand) > 0 {
 		return nil, userErr("the published policy node's %s cannot be re-seeded into %s by one edit, so the file was left as it is: put the published values there by hand, then run %s again",
 			strings.Join(hand, ", "), path, selfCommand()+" update")

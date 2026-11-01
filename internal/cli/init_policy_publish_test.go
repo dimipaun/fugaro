@@ -500,6 +500,54 @@ func TestProjectPolicyPublishRecordsTheGenerationOfItsOwnWrite(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishSaysTheWriteLandedWhenItCannotRecord: the record is
+// made after the write, so every way the record can fail is a way that leaves
+// the node moved. The door reports the failure — the operator has to put the two
+// back in step — and the failure has to carry that fact: a sentence that read as
+// a publish that failed would send them looking for a write that is already
+// there, and the file's own next edit is the one that pays for it. The read-back
+// is the read that fails here: it is denied while it is in flight, which is the
+// shape of a database that stops answering between the two requests.
+func TestProjectPolicyPublishSaysTheWriteLandedWhenItCannotRecord(t *testing.T) {
+	f := newProjectFixture(t, "")
+	// Three requests to the node, in order: the publish's own read, the write,
+	// and the read the generation is recorded from.
+	stampedRead, releaseRead := f.db.HoldNext(projectpolicy.PathShared())
+	stampedWrite, releaseWrite := f.db.HoldNext(projectpolicy.PathShared())
+	stampedRecord, releaseRecord := f.db.HoldNext(projectpolicy.PathShared())
+	done := make(chan struct{})
+	var out string
+	var err error
+	go func() {
+		defer close(done)
+		out, _, err = execute(t, "project", "policy", "publish")
+	}()
+	<-stampedRead
+	releaseRead()
+	<-stampedWrite
+	releaseWrite()
+	<-stampedRecord
+	f.db.DenyRead(projectpolicy.PathShared())
+	releaseRecord()
+	<-done
+
+	if err == nil {
+		t.Fatalf("the publish claimed a record it could not make:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "was written, but the generation to record") {
+		t.Errorf("the failure does not say the node was written: %v", err)
+	}
+	if !strings.Contains(out, "set "+projectpolicy.PathShared()) {
+		t.Errorf("the door does not show the write that landed:\n%s", out)
+	}
+	if got := nodeCeiling(t, f); got != 5 {
+		t.Errorf("the node's ceiling is %v, want the door's 5: the write this failure is about did not land", got)
+	}
+	if gen := recordedGeneration(t, f); gen != "" {
+		t.Errorf("policy_generation = %q: a generation was recorded for a read that failed", gen)
+	}
+}
+
 // TestUpdatePolicyStageRefreshesAStaleRecordWhenTheNodeMatches: the record
 // belongs to the agreement between the file and the node, not to this run's own
 // write. A file whose policy keys are exactly what the node carries, whose

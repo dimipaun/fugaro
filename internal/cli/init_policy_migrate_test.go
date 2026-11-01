@@ -518,6 +518,40 @@ func TestUpdatePolicyMigrationVerifyReadsTheNodeBack(t *testing.T) {
 	}
 }
 
+// TestUpdatePolicyReseedVerifyReadsTheNodeBack: the re-seed D854 offers writes
+// no node of its own, and Verify skipping that one is right. A re-seed that
+// carries a migration beside it does write the node, and that write is read
+// back like any other: the question is asked of the plan (writesNode), so a
+// migration that did not land is caught here rather than by the next run
+// rewriting it.
+func TestUpdatePolicyReseedVerifyReadsTheNodeBack(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	f.db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
+		"budget": map[string]any{"mode": "enforce", "per_run_usd": 9},
+	}))
+	h := newMigrationRig(t, f, &initOptions{})
+	blockBudgetConfig(t, f)
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the re-seed and the migration did not finish: %v\n%s", err, out)
+	}
+	if err := h.s.Verify(context.Background()); err != nil {
+		t.Fatalf("the node the re-seed's migration has just written does not verify: %v", err)
+	}
+	// The node put back where the run found it: a migration this run did not
+	// leave behind is one it would make again on every run.
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	err = h.s.Verify(context.Background())
+	if err == nil {
+		t.Fatal("a re-seed's migration that left the node at version 3 verified")
+	}
+	if !strings.Contains(err.Error(), "still version 3") {
+		t.Errorf("the refusal is not the version one: %v", err)
+	}
+}
+
 func TestUpdatePolicyMigrationRefusedInAgentSession(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))

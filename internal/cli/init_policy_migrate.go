@@ -85,10 +85,13 @@ type policyMigration struct {
 	// that write (recordGeneration) — and when the file is not this installation's
 	// to write (path empty) or already records the node's generation.
 	record string
-	// reseeded is set when the run answered the generation refusal by re-seeding
-	// this machine's file and wrote no node at all: Verify then has nothing of
-	// its own to read back.
-	reseeded bool
+	// recorded is what this machine's file recorded as the generation its policy
+	// keys were written from when this plan was read: the value `record` is
+	// compared against and the one the check line names. It is read here rather
+	// than off the config later, because the plan is one read of one state — a
+	// re-seed rewrites the file's policy keys under the same config struct, and
+	// a plan that read them again afterwards would be comparing two states.
+	recorded string
 }
 
 // policyNodeUnreachable is whether this project has no published policy node to
@@ -204,7 +207,8 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	}
 	_ = json.Unmarshal(raw, &head)
 	m = &policyMigration{lc: lc, db: db, etag: etag, moved: moved, changes: changes,
-		from: head.Version, path: configPath, derived: derivedMembers(base, raw)}
+		from: head.Version, path: configPath, recorded: lc.PolicyGeneration,
+		derived: derivedMembers(base, raw)}
 	// The publish half reads the same node, through the same ownership gate and
 	// the same ETag: the stage is one writer, and a publish that opened a second
 	// read path would be the second writer — with its own, weaker gate — that
@@ -244,7 +248,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	// hand-fixed re-seed refusal would refuse the operator's next legitimate edit
 	// and offer to re-seed the file over it, which is the overwrite D854 exists
 	// to prevent, one round later.
-	if !writes && m.generations == nil && m.path != "" && lc.PolicyGeneration != etag {
+	if !writes && m.generations == nil && m.path != "" && m.recorded != etag {
 		m.record = etag
 	}
 	if writes {
@@ -459,8 +463,10 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 	if !m.writesNode() {
 		// Nothing was written to the node, so the generation recorded is the one
 		// the file's policy keys now come from: the node as this run read it, and
-		// nothing of this run's own may move it.
-		m.reseeded = true
+		// nothing of this run's own may move it. There is no node write for
+		// Verify to read back either, which is the whole of what it asks
+		// (writesNode): a re-seed that carries a migration with it does write the
+		// node and is verified like any other write.
 		return policyGenerationRecord(w, m.path, m.lc, m.generations.published)
 	}
 	if err := m.write(ctx); err != nil {
@@ -726,7 +732,7 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy at %s has moved past the generation this machine's config was written from (%s)", projectpolicy.PathShared(), m.generations.text())}, nil
 	case m.record != "":
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy node carries what the local config states, and the config records %s as the generation its policy keys were written from: this run records %s in %s",
-			generationText(s.e.lc.PolicyGeneration), m.record, m.path)}, nil
+			generationText(m.recorded), m.record, m.path)}, nil
 	case m.moved == nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local config states what the published policy does not carry: %s", memberListText(m.drift))}, nil
 	}
@@ -827,10 +833,15 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 // reader refuses is a write that landed a policy no run of the project can
 // admit itself by.
 func (s *policyMigrateStage) Verify(ctx context.Context) error {
-	if s.m == nil || s.m.reseeded {
-		// D854's re-seed wrote this machine's file and left the node exactly as
-		// it was: there is nothing of this run's to read back, and the node it
-		// read is another machine's to change.
+	if s.m == nil || !s.m.writesNode() {
+		// The run wrote no node: D854's re-seed wrote this machine's file and left
+		// the node exactly as it was, and a record-only run wrote the file alone.
+		// There is nothing of this run's to read back, and the node a re-seed read
+		// is another machine's to change. The question is asked of the write the
+		// plan holds, never of a flag one branch of one confirmation sets: a
+		// re-seed that carries a migration with it (writesNode) is a node write
+		// like any other, and a Verify that skipped it would leave a migration that
+		// did not land to the next run — the loop that keeps rewriting.
 		return nil
 	}
 	_, found, raw, err := readPolicyNode(ctx, s.m.db, s.m.lc)
