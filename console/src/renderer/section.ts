@@ -26,6 +26,8 @@
 
 import type { SkewTheme } from '../shared/version'
 import { READING_STILL, READING_STILL_MS } from './screens/reading'
+import { renderSkeleton } from './skeleton'
+import type { SkeletonShape } from './skeleton'
 
 /** SectionElement is the whole of the DOM this file touches: a text slot, the
  * three attribute writers and `append`. It is `SkewElement`'s shape, declared
@@ -110,14 +112,28 @@ export interface DrawnBusy {
 
 /**
  * renderBusy draws the mark for one read: the spinning element, the static word
- * the reduced-motion arm shows instead of it, and the label naming what is being
- * read.
+ * the reduced-motion arm shows instead of it, the label naming what is being
+ * read and, for a section that has nothing drawn yet, the skeleton of the shape
+ * it will take.
  *
- * All three are drawn, always, and the stylesheet decides which of the first two
- * a reader sees: a renderer that chose would need the preference, and the
+ * All of them are drawn, always, and the stylesheet decides which of the first
+ * two a reader sees: a renderer that chose would need the preference, and the
  * console reads a preference in exactly one place (`base.css`).
+ *
+ * **The skeleton is drawn only where the caller says the section is empty**, and
+ * that is the whole of the rule the owner's complaint of 2026-10-31 has two
+ * halves of: a section being **re-read** keeps the figures it already has,
+ * dimmed under the mark (so the operator's own view answers the click), while a
+ * section that has never been filled holds the shape of what is coming. The two
+ * cases are told apart by the caller, which is the only place that knows whether
+ * a read has ever landed for that section.
  */
-export function renderBusy(factory: SectionFactory, label: string, theme: SkewTheme): DrawnBusy {
+export function renderBusy(
+  factory: SectionFactory,
+  label: string,
+  theme: SkewTheme,
+  skeleton?: SkeletonShape,
+): DrawnBusy {
   const root = factory.create('div')
   root.setAttribute('class', BUSY_CLASS)
   root.setAttribute('data-theme', theme)
@@ -136,6 +152,9 @@ export function renderBusy(factory: SectionFactory, label: string, theme: SkewTh
   word.setAttribute('class', BUSY_LABEL_CLASS)
   literal(word, label)
   root.append(word)
+  // Under the label and not beside it: the mark is a wrapping row, and the
+  // skeleton is the section's own height rather than one more word in the line.
+  if (skeleton !== undefined) root.append(renderSkeleton(factory, skeleton, theme))
   const still = factory.create('p')
   still.setAttribute('class', BUSY_STILL_CLASS)
   literal(still, READING_STILL)
@@ -166,8 +185,15 @@ export interface SectionRead {
    * `aria-busy` are what the stylesheet dims the rest of it by. A token that is
    * no longer the newest is not drawn -- the section belongs to the newest
    * change, and the older read is on its way out.
+   *
+   * `skeleton` is the shape of the section's content, and it is passed **only
+   * by a caller that knows the section has nothing drawn under the mark**: the
+   * mark of a section being re-read is drawn over the figures already there, and
+   * a skeleton over figures would be a second drawing of the same section. A
+   * mark that is already up keeps the skeleton it was drawn with -- the section
+   * it belongs to is the same section, and its read is still the same read.
    */
-  mark(token: number, host: SectionElement, slot: SectionElement, label: string): void
+  mark(token: number, host: SectionElement, slot: SectionElement, label: string, skeleton?: SkeletonShape): void
   /**
    * settle answers whether this token is the newest one asked for, and clears
    * the busy state when it is. A read that lands with an older token is dropped:
@@ -225,13 +251,19 @@ export function sectionRead(options: {
       token += 1
       return token
     },
-    mark(mine: number, host: SectionElement, slot: SectionElement, label: string): void {
+    mark(
+      mine: number,
+      host: SectionElement,
+      slot: SectionElement,
+      label: string,
+      skeleton?: SkeletonShape,
+    ): void {
       if (mine !== token) return
       const worn = held === host ? heldMark : null
       end()
       host.setAttribute(BUSY_ATTRIBUTE, 'true')
       host.setAttribute(BUSY_BUSY_ATTRIBUTE, 'true')
-      const drawn = worn ?? renderBusy(options.factory, label, options.theme)
+      const drawn = worn ?? renderBusy(options.factory, label, options.theme, skeleton)
       if (worn === null) slot.append(drawn.root)
       else literal(drawn.label, label)
       held = host
