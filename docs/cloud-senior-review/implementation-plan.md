@@ -165,7 +165,7 @@ otherwise reserved.
 
 ## 3. Tasks
 
-### CSR1. A fourth installation-token set: `ReviewTokenPermissions`
+### CSR1. A fifth installation-token set: `ReviewTokenPermissions`
 
 **Decision:** D883, **D893 (c)**. **Findings:** F2, F3, **F16**. **Verification:** `internal/gitprov`.
 
@@ -173,7 +173,7 @@ otherwise reserved.
   **2 files.**
 - **Interfaces:** produces `reviewTokenPermissions` = `{contents: read, pull_requests: read, metadata:
   read}` and its exported spelling beside `RunTokenPermissions` and `BuildTokenPermissions` — the
-  **fourth** set, as spec §2 and D883 say. **It builds no mint caller, and F16 is why:** every mint in
+  **fifth** set, as spec §2 and D883 say. **It builds no mint caller, and F16 is why:** every mint in
   this tree happens where the App key is mounted — `mintBuildToken` (`internal/cli/gitcred.go:92`)
   reads the key from its own environment inside the build that calls it, and `jobGitEnv`
   (`internal/cli/imagecheck.go:530`) does the same inside a check job — so **neither is a precedent
@@ -693,7 +693,7 @@ on `/v1/messages`.**
 
 **Recommended: 0.16.0 or later, gated on C3.9 — and that is O7's answer, which moves the slot this
 plan first named.** The first slice (E1 + CSR1 + CSR7 + CSR2) needs a new command, a new job shape, a
-**new job variant and service account per account**, a fourth permission set and at least one version
+**new job variant and service account per account**, a fifth permission set and at least one version
 gate; CSR3–CSR5 add a new wire format and a new prompt path. **E1 is `fugaro accounts add`'s own three
 tasks** — **A1** the local config edit, **A2** the converge half and **A3** `--claude` — and A2's
 shared write helper is the settings design's **S5** (`internal/cli/settings_write.go`). A 0.14.2 that

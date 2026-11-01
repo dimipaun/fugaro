@@ -153,7 +153,7 @@ in this tree: the image build's `{contents: read, metadata: read}`
 `apptoken.go:128`, exported as `CoordinatorTokenPermissions` at `:142`), and the challenger arm's
 `shadowTokenPermissions` (`{contents: read, metadata: read}`, `apptoken.go:111`).
 
-The review job's set is a fourth: **`{contents: read, pull_requests: read, metadata: read}`** — read
+The review job's set is a fifth: **`{contents: read, pull_requests: read, metadata: read}`** — read
 the head, read the pull request's metadata, write nothing. **A permission set is not a boundary by
 itself**: a GitHub App's private key can mint *any* subset the App holds, so a job that mounts the App
 key can mint a write token whatever the launcher asked for.

@@ -86,7 +86,7 @@ metadata: read}`, `apptoken.go:111`); and the coordinator's `coordinatorTokenPer
 `CoordinatorTokenPermissions` (`internal/gitprov/github/apptoken.go:128` is the map, `:142` the
 exported accessor that clones it — **in code, not in a design
 document**, which an earlier draft of this finding got wrong by citing
-`docs/coordinator/reconciliation.md`). §2's set is a fourth, and new work.
+`docs/coordinator/reconciliation.md`). §2's set is a fifth, and new work.
 
 **F3. `Rule` — a permission set is not a boundary, because the job holds the App key, and the job
 this design first proposed *is* that job.** `internal/runner/runner.go`'s `serviceTokens` mints
@@ -563,7 +563,7 @@ met** (§6's **E7** and D893's own entry below say exactly what is missing).
   on demand and refreshed by the same `Token(ctx, minValid)` contract the in-job source holds; it
   lives in the process's memory for the run's length, is never mounted and never written down.
   **What the service has to grow, and it is not built:** the mint hard-codes the run's own set
-  (`RunTokenPermissions`, `internal/credsvc/github.go:263`), so a review identity must be served **CSR1's fourth,
+  (`RunTokenPermissions`, `internal/credsvc/github.go:263`), so a review identity must be served **CSR1's fifth,
   read-only set**, and the choice must be made from the verified identity's own claims (no `fb` → a
   run that pushes nothing) rather than from any field a caller could send; the repository must come
   from the run identity's `fs` for a review caller (above); the **review class on `/v1/messages`**
@@ -708,7 +708,7 @@ met** (§6's **E7** and D893's own entry below say exactly what is missing).
   stickiness, lease) — a retry loop, a state protocol and a policy surface, i.e. the credentials
   service's job done in the CLI, and it would have to be built twice if the service lands.
 - **D883. The review job's forge credential is read-only, on a job that mounts no App key, and the
-  launcher posts nothing on its behalf.** *Recommended:* a **fourth permission set**
+  launcher posts nothing on its behalf.** *Recommended:* a **fifth permission set**
   `{contents: read, pull_requests: read, metadata: read}` on a job that is a **new per-account
   variant with no `github-app-key` in its `secret_env` and no accessor on that key** (**F2**, **F3**,
   **F16**, **CSR7**), the read-only token minted by the **credentials service** — never the launcher,
