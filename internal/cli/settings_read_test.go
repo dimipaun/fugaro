@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -299,6 +301,129 @@ func TestSettingsValueAtReadsANamedStringKeyedMap(t *testing.T) {
 	}
 	if _, ok := valueAt(doc, "exchange_rate.pro"); ok {
 		t.Error("exchange_rate.pro: a mode the map does not carry reads as present")
+	}
+}
+
+// TestSettingsOfflineReadsNoCloudLayer: --offline is the flag's promise — no
+// bucket, no database — and the read keeps it by not entering its cloud half
+// at all. The seam reports every call it gets and fails it, so a cloud layer
+// that starts reading before the gate is in place reds this test rather than
+// reaching a network. The second half proves the seam is on the read's path:
+// a flag that guarded nothing would leave a command that never reads the cloud
+// layers green too.
+func TestSettingsOfflineReadsNoCloudLayer(t *testing.T) {
+	settingsFixture(t, "")
+	real := settingsCloudLayers
+	t.Cleanup(func() { settingsCloudLayers = real })
+	calls := 0
+	settingsCloudLayers = func(context.Context, *settingsRead, settingsOptions) error {
+		calls++
+		return errors.New("the read left this machine")
+	}
+
+	if out, _, err := execute(t, "settings", "--offline", "--all-repos", "--json"); err != nil {
+		t.Fatalf("--offline read a cloud layer: %v\n%s", err, out)
+	}
+	if calls != 0 {
+		t.Errorf("--offline made %d cloud reads, want none", calls)
+	}
+	if _, _, err := execute(t, "settings"); err == nil {
+		t.Error("a read without --offline never entered the cloud layers, so --offline guards nothing")
+	} else if calls != 1 {
+		t.Errorf("the cloud layers were read %d times, want once", calls)
+	}
+}
+
+// TestSettingsGlobMatchesNestedKeys: in a glob * is one dotted segment and **
+// is any number of them, so a key of a varying segment is addressable and a
+// whole subtree is reachable in one argument. `workflows.*` — what a *
+// spanning dots would make of it — names a key directly under workflows, and
+// the registry has none, so it is refused rather than answered with the
+// subtree.
+func TestSettingsGlobMatchesNestedKeys(t *testing.T) {
+	settingsFixture(t, "")
+	one := readSettingsJSON(t, "budget.*_usd")
+	keys := map[string]bool{}
+	for _, r := range one.Settings {
+		keys[r.Key] = true
+	}
+	if !keys["budget.per_run_usd"] || !keys["budget.per_day_usd"] {
+		t.Errorf("budget.*_usd matched %v, want both budgets", keys)
+	}
+
+	deep := readSettingsJSON(t, "workflows.**")
+	if len(deep.Settings) < 2 {
+		t.Fatalf("workflows.** matched %d rows, want the whole subtree", len(deep.Settings))
+	}
+	for _, r := range deep.Settings {
+		if !strings.HasPrefix(r.Key, "workflows.") {
+			t.Errorf("workflows.** matched %s, which is not under workflows", r.Key)
+		}
+	}
+
+	exact := readSettingsJSON(t, "layer.profiles.*.commands.test")
+	if len(exact.Settings) != 1 || exact.Settings[0].Key != "layer.profiles.*.commands.test" {
+		t.Errorf("a key named with its own * segment matched %d rows", len(exact.Settings))
+	}
+
+	out, _, err := execute(t, "settings", "workflows.*")
+	if err == nil {
+		t.Errorf("workflows.* matched a key, and * is one segment:\n%s", out)
+	}
+}
+
+// TestSettingsRecordsEachLayersReadDuration: duration_ms is what reading that
+// layer cost, so 0 belongs to the one source that is not a read — the
+// registry's defaults, which are in memory — and every layer that was read
+// reports its own. The clock is a seam so the durations are exact: a field
+// nothing writes and a field written from the clock are the same `0` in a
+// document, and only this tells them apart.
+func TestSettingsRecordsEachLayersReadDuration(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML(""))
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
+		CheckedAt: time.Now(), YAML: testProjectLayer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ticks := 0
+	settingsNow = func() time.Time {
+		ticks++
+		return time.Unix(0, 0).Add(time.Duration(ticks) * 10 * time.Millisecond)
+	}
+	t.Cleanup(func() { settingsNow = time.Now })
+
+	got := map[string]int64{}
+	for _, s := range readSettingsJSON(t, "--all-repos").Sources {
+		got[s.Layer] = s.DurationMS
+	}
+	if got["default"] != 0 {
+		t.Errorf("default duration_ms = %d, want 0: the defaults are the registry in memory", got["default"])
+	}
+	for _, layer := range []string{"project", "local", "repo"} {
+		if got[layer] != 10 {
+			t.Errorf("%s duration_ms = %d, want the 10ms the clock advanced while it was read", layer, got[layer])
+		}
+	}
+}
+
+// TestSettingsValueAtRendersAMap: a key whose leaf is a map prints it rather
+// than a blank, in sorted order. The four registry keys that land on one —
+// layer.claude_models, base_images and review_floor with ab.exchange_rate —
+// hold lists and numbers, so a blank there would read as unset while the layer
+// sets the key.
+func TestSettingsValueAtRendersAMap(t *testing.T) {
+	doc := config.AB{ExchangeRate: map[rigor.Mode]float64{rigor.Pro: 1, rigor.POC: 0.25}}
+	if got, ok := valueAt(doc, "exchange_rate"); !ok || got != `{"poc":0.25,"pro":1}` {
+		t.Errorf("exchange_rate = %q, %v, want the map as its JSON in key order", got, ok)
+	}
+	type holder struct {
+		Models map[string][]string `yaml:"models"`
+	}
+	got, ok := valueAt(holder{Models: map[string][]string{"b": {"2"}, "a": {"1"}}}, "models")
+	if !ok || got != `{"a":["1"],"b":["2"]}` {
+		t.Errorf("models = %q, %v, want the lists inside a map rendered too", got, ok)
 	}
 }
 

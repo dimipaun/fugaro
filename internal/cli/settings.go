@@ -36,7 +36,9 @@ decided it, the built-in default, and the state of the read.
 
 A bare ` + "`fugaro settings`" + ` prints every key of the registry. Positional arguments
 are a key, a prefix or a glob; a name no key matches is refused with the nearest
-names.
+names. In a glob * is one dotted segment and ** is any number of them, so
+` + "`budget.*_usd`" + ` names a key inside budget and ` + "`workflows.**`" + ` is every
+workflow key.
 
 The layers are read in this order, loosest first:
 
@@ -132,12 +134,18 @@ func selectSettingsKeys(args []string) (map[string]bool, error) {
 }
 
 // settingsKeyMatches reports whether key answers to the argument: the key
-// itself, a prefix of it, or a glob where * matches any run of characters.
+// itself, a prefix of it, or a glob. In a glob * is one dotted segment and **
+// is any number of them, which is the spelling a key needs: the registry names
+// a varying segment with * itself (workflows.*.commands.test), so one * has to
+// address exactly that segment, and a * spanning dots would make one argument
+// answer for keys of different depths — `workflows.*` is a key directly under
+// workflows, of which there are none, and `workflows.**` is every workflow key.
 func settingsKeyMatches(key, arg string) bool {
 	if !strings.Contains(arg, "*") {
 		return key == arg || strings.HasPrefix(key, arg+".")
 	}
 	pattern := "^" + regexp.QuoteMeta(arg) + "$"
+	pattern = strings.ReplaceAll(pattern, `\*\*`, `.*`)
 	pattern = strings.ReplaceAll(pattern, `\*`, `[^.]*`)
 	re, err := regexp.Compile(pattern)
 	return err == nil && re.MatchString(key)

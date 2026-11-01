@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,17 +66,30 @@ func (s setting) matches(re *regexp.Regexp) bool {
 	return false
 }
 
-// settingsRead is one run of the read: the documents it read and the clock it
-// read them at. Everything in here is offline; the cloud layers are S2's.
+// settingsNow is the clock the read times its layers with. A seam, like
+// doctorNow and lsNow: a test pins a duration exactly rather than racing one.
+var settingsNow = time.Now
+
+// settingsCloudLayers is the read's cloud half: the shared config's refresh,
+// the published policy node and the Realtime Database caps (spec §2.7). It is
+// the one place a read leaves this machine, and it is empty until S2 fills it.
+// --offline is the gate in front of it, so the flag's promise — no bucket, no
+// database — is a property of the read and not of a comment.
+var settingsCloudLayers = func(_ context.Context, _ *settingsRead, _ settingsOptions) error { return nil }
+
+// settingsRead is one run of the read: the documents it read, the clock it
+// read them at, and what each of them cost.
 type settingsRead struct {
 	project string
 	now     time.Time
 
 	local     *localcfg.Config
 	localPath string
+	localMS   int64
 
 	layer    *config.ProjectLayer
 	layerAge time.Duration
+	layerMS  int64
 
 	repos []repoRead
 }
@@ -87,12 +101,27 @@ type repoRead struct {
 	config *config.Config
 	res    *config.Resolution
 	state  string
+	ms     int64
+}
+
+// readMS is what a layer's read cost, as the document's duration_ms. A layer
+// that was read reports at least 1ms: every read here is of a local file, which
+// finishes inside a millisecond, and truncating one to 0 would make "read, and
+// fast" indistinguishable from "never read", which is the one thing 0 is
+// reserved for.
+func readMS(d time.Duration) int64 {
+	if d < time.Millisecond {
+		return 1
+	}
+	return d.Milliseconds()
 }
 
 // readSettings reads the offline layers: the local config, the project layer's
 // cache, this machine's remembered checkouts and the environment. It reads no
-// bucket and no database, so it cannot be refused by one.
-func readSettings(_ context.Context, o settingsOptions, now time.Time) (*settingsRead, error) {
+// bucket and no database, so it cannot be refused by one; with --offline it
+// does not reach for one either, because the flag skips settingsCloudLayers,
+// the read's only cloud call.
+func readSettings(ctx context.Context, o settingsOptions, now time.Time) (*settingsRead, error) {
 	r := &settingsRead{now: now}
 	in := localcfg.SelectInput{
 		Project:    os.Getenv("FUGARO_PROJECT"),
@@ -100,7 +129,9 @@ func readSettings(_ context.Context, o settingsOptions, now time.Time) (*setting
 		EnvConfig:  os.Getenv("FUGARO_CONFIG"),
 		Getenv:     os.Getenv,
 	}
+	t := settingsNow()
 	sel, lc, err := localcfg.Select(in)
+	r.localMS = readMS(settingsNow().Sub(t))
 	if err != nil {
 		return nil, userErr("%w", err)
 	}
@@ -112,9 +143,16 @@ func readSettings(_ context.Context, o settingsOptions, now time.Time) (*setting
 	if r.project == "" {
 		return nil, userErr("no project is selected: set $FUGARO_PROJECT or $FUGARO_CONFIG, or run fugaro setup")
 	}
+	t = settingsNow()
 	r.readLayerCache()
+	r.layerMS = readMS(settingsNow().Sub(t))
 	if err := r.readRepos(o); err != nil {
 		return nil, err
+	}
+	if !o.offline {
+		if err := settingsCloudLayers(ctx, r, o); err != nil {
+			return nil, err
+		}
 	}
 	return r, nil
 }
@@ -169,7 +207,10 @@ func (r *settingsRead) readRepos(o settingsOptions) error {
 		slices.Sort(names)
 	}
 	for _, name := range names {
-		r.repos = append(r.repos, r.readRepo(name, remembered[checkoutKeyFor(name, remembered)]))
+		t := settingsNow()
+		rr := r.readRepo(name, remembered[checkoutKeyFor(name, remembered)])
+		rr.ms = readMS(settingsNow().Sub(t))
+		r.repos = append(r.repos, rr)
 	}
 	return nil
 }
@@ -459,7 +500,15 @@ func stepInto(v reflect.Value, part string) reflect.Value {
 }
 
 // renderValue is a leaf as the read prints it: a list joins with ", ", a bool
-// is true or false, and everything else is its own text.
+// is true or false, and everything else is its own text. A map or a struct has
+// no text of its own and renders as its JSON: refusing such a key instead is
+// not open to the read, because the registry requires a row for every field of
+// the config types (TestRegistryCoversEveryConfigField) and four of them are
+// maps — layer.claude_models, base_images, review_floor and
+// layer.ab.exchange_rate, whose values are lists and numbers. A k=v join of
+// those would be ambiguous
+// about where one value ends; JSON is not, and it sorts the keys, so two reads
+// of one document print the same text.
 func renderValue(v reflect.Value) string {
 	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
@@ -474,8 +523,12 @@ func renderValue(v reflect.Value) string {
 			parts = append(parts, renderValue(v.Index(i)))
 		}
 		return strings.Join(parts, ", ")
-	case reflect.Map:
-		return ""
+	case reflect.Map, reflect.Struct:
+		b, err := json.Marshal(v.Interface())
+		if err != nil {
+			return ""
+		}
+		return string(b)
 	}
 	if s, ok := v.Interface().(fmt.Stringer); ok {
 		return s.String()

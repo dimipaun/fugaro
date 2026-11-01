@@ -3446,7 +3446,9 @@ decided it, the built-in default, and the state of the read.
 
 A bare `fugaro settings` prints every key of the registry. Positional arguments
 are a key, a prefix or a glob; a name no key matches is refused with the nearest
-names.
+names. In a glob * is one dotted segment and ** is any number of them, so
+`budget.*_usd` names a key inside budget and `workflows.**` is every
+workflow key.
 
 The layers are read in this order, loosest first:
 

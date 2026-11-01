@@ -117,22 +117,26 @@ func writeSettingsJSON(w io.Writer, r *settingsRead, rows []setting, now time.Ti
 	return enc.Encode(doc)
 }
 
-// sources is the layers this read touched, in precedence order.
+// sources is the layers this read touched, in precedence order, each with what
+// reading it cost. The default layer is the registry in memory, so it is the
+// one entry that is not a read and the one that reports 0ms.
 func (r *settingsRead) sources(now time.Time) []settingsLayer {
 	at := now.UTC().Format(time.RFC3339)
 	out := []settingsLayer{{Layer: "default", ReadAt: at, Status: "ok"}}
 	if r.layer != nil {
 		out = append(out, settingsLayer{
-			Layer: "project", ReadAt: at, Status: "ok",
+			Layer: "project", ReadAt: at, DurationMS: r.layerMS, Status: "ok",
 			Note: "cached " + humanAge(r.layerAge) + " ago",
 		})
 	}
 	if r.local != nil {
-		out = append(out, settingsLayer{Layer: "local", ReadAt: at, Status: "ok", Note: r.localPath})
+		out = append(out, settingsLayer{
+			Layer: "local", ReadAt: at, DurationMS: r.localMS, Status: "ok", Note: r.localPath,
+		})
 	}
 	for _, repo := range r.repos {
 		out = append(out, settingsLayer{
-			Layer: "repo", ReadAt: at, Status: repo.state,
+			Layer: "repo", ReadAt: at, DurationMS: repo.ms, Status: repo.state,
 			Note: "repo:" + repo.name,
 		})
 	}

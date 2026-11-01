@@ -871,6 +871,12 @@
         "scheduler_region": {
           "default": "unset = the region the jobs run in"
         },
+        "secret_expires": {
+          "default": "unset = none: no expiry date is recorded"
+        },
+        "secret_rotation_days": {
+          "default": "unset = 0: no rotation period is recorded"
+        },
         "setup_pending": {
           "default": "unset = none: setup ran to the end"
         },

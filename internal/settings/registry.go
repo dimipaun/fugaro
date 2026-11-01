@@ -463,6 +463,8 @@ var localRows = []Row{
 	loc("max_parallel", "Fugaro's own cap", "config", docSetup),
 	loc("base_branch", "none: each repository's own branch", "config", docSetup),
 	loc("update_check", "", "setup", docSetup),
+	loc("secret_rotation_days", "0: no rotation period is recorded", "secrets", docSetup),
+	loc("secret_expires", "none: no expiry date is recorded", "secrets", docSetup),
 	loc("bitbucket_api_roots", "the provider's public API", "secrets", docSetup),
 
 	loc("batch.image", "Fugaro's own batch image", "setup", "docs/backends.md"),
