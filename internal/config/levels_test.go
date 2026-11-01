@@ -223,6 +223,30 @@ func TestResolveLevelsRefusesSameModel(t *testing.T) {
 	if got.L1.On {
 		t.Errorf("l1 = %+v; want it off: first_line_review is off", got.L1)
 	}
+
+	// An installation that names no model at all is the ordinary one, and
+	// standard's first_line step runs level 1 whatever first_line_review
+	// says: both levels then run the same model — Claude Code's own default —
+	// which is not an ID the resolver can compare, and refusing it would
+	// refuse every such installation a recipe with a first_line step. The
+	// owner ruled on 2026-11-01 that this warns instead, once, and the run
+	// goes on.
+	unset := LevelInputs{
+		Config: &Config{Agent: Agent{FirstLineReview: FirstLineOn}},
+		Mode:   rigor.Pro,
+		Recipe: levelRecipe(t, "standard"),
+	}
+	got, warns, err := ResolveLevels(unset)
+	if err != nil {
+		t.Fatalf("ResolveLevels with no model named anywhere: %v; want a warning and no refusal (owner's ruling, 2026-11-01)", err)
+	}
+	if !got.L1.On || !got.L2.On || got.L1.Model != "" || got.L2.Model != "" {
+		t.Errorf("l1 = %+v, l2 = %+v; want both on with no model of their own", got.L1, got.L2)
+	}
+	mustWarn(t, warns, policy.LevelL2, "not independent")
+	if len(warns) != 1 {
+		t.Errorf("warnings = %v; want exactly one: the pair is warned about once", warns)
+	}
 }
 
 // TestResolveLevelsInsertsMissingStep is O7 as ruled: the rigor mode wins, and

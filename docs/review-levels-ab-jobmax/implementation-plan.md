@@ -38,7 +38,7 @@ the plan:
 
 **Waiting on something external:**
 
-- O7, O9, O10 and O11 were ruled on 2026-10-30. O7: the missing step is inserted (L3.1). O9: the `settings` node (T1.1–T1.3, J1.3). O10: Hotfix takes Pro's levels (L2.2). O11: the refusal is accepted, and this repository's `fugaro.yaml` changes (L5.2).
+- O7, O9, O10 and O11 were ruled on 2026-10-30. O7: the missing step is inserted (L3.1). O9: the `settings` node (T1.1–T1.3, J1.3). O10: Hotfix takes Pro's levels (L2.2). O11: the refusal is accepted, and this repository's `fugaro.yaml` changes (L5.2). Ruled again on 2026-11-01, in the fix round on L3.1's PR: the refusal stays and is **by exact model ID**, and a run whose level 1 and level 2 are **both** left unset — no model named anywhere, `--recipe standard` — **warns** that the senior review is not independent of the coder rather than refusing, because two unset models are not an ID the resolver can compare and refusing them would refuse every installation that names no models at all.
 - O4, the processor's name, gates T2.1 and T2.2.
 - The A/B plan's A3.3 and A5.x gate B1.2 and B1.3.
 - The mobile app's sign-in to the installation's database (the mobile plan) gates T3.1.

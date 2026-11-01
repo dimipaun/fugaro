@@ -366,7 +366,10 @@ func (r *resolver) check(s levelSpec, lv ResolvedLevel) {
 //
 // The comparison is by exact ID and only for a level that is on: "" is the
 // agent's own default rather than an ID the resolver can compare, and a level
-// that does not run reviews nothing.
+// that does not run reviews nothing. Two levels both left unset are an
+// installation naming no models at all, which is an ordinary configuration
+// rather than a mistake to refuse — the owner ruled on 2026-11-01 that it
+// warns — but they are one model all the same, and it is the coder's.
 func (r *resolver) guard() {
 	l1, l2 := r.levels.L1, r.levels.L2
 	if !l2.On {
@@ -375,7 +378,14 @@ func (r *resolver) guard() {
 	if coder := r.agent.ModelFor(RoleCoder); l2.Model != "" && l2.Model == coder {
 		r.warnf(policy.LevelL2, "l2.model %s is the coder's own model: a review by the model that wrote the change is the first-line review's job, not the senior one", l2.Model)
 	}
-	if !l1.On || l1.Model == "" || l2.Model == "" {
+	if !l1.On {
+		return
+	}
+	if l1.Model == "" && l2.Model == "" {
+		r.warnf(policy.LevelL2, "l2.model and l1.model are both unset: both levels run the same model, Claude Code's own default, so the senior review is not independent of the first-line one — and neither is independent of the coder, unless agent.models names the coder another model; name l2 a model of its own to make it independent (D721)")
+		return
+	}
+	if l1.Model == "" || l2.Model == "" {
 		return
 	}
 	if l1.Model == l2.Model {
