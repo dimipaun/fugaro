@@ -192,6 +192,20 @@ export const REPORT_MAX_DAYS = 3660
 export const REPORT_MAX_WEEKS = 522
 
 /**
+ * RUNS_LIST_MAX_LIMIT bounds the page `runs ls --limit=<n>` may be asked for
+ * from here, and **it is the console's own bound rather than the CLI's**: the
+ * command takes any count `strconv.Atoi` reads up to int, and a page exists
+ * because reading and holding a whole window is what the job list was built to
+ * avoid (the console coordinator-v2 plan's D818, and the F5 finding behind it).
+ * A renderer that could ask for more than this could ask for the window by
+ * another name -- `runs ls --since 0` is one argv and no page at all -- so the
+ * ceiling is stated once, here, and both the schema and the argv builder read
+ * it: the second would otherwise let `1e21` through as the word `1e+21`, which
+ * cobra's `IntVar` refuses only after a child exists.
+ */
+export const RUNS_LIST_MAX_LIMIT = 200
+
+/**
  * ArgumentKind is the closed set of things an operation's argument may be. Every
  * kind is a value the CLI's own flags already accept *in that position*, and
  * none of them is a path, a command, a flag name or a free-form string: a
@@ -224,6 +238,18 @@ export const REPORT_MAX_WEEKS = 522
  *     child exists. The two commands disagree about `--since` and one kind
  *     cannot say both: `report` refuses `3h` and a bare `0` (its `reportRange`
  *     has no duration branch), and `runs ls` refuses `12w` and every date;
+ *   - `runLimit` -- `runs ls --limit`'s own page size: a positive integer, at
+ *     most `RUNS_LIST_MAX_LIMIT`. **`0` is not one of its values** even though
+ *     the CLI takes it (`--limit 0` is "every row of the window"), because that
+ *     is exactly what omitting the argument means here: a payload that asks for
+ *     it asks for nothing, and a value that is a string (`"50"`), fractional
+ *     (`1.5`) or past the cap is refused before a child exists rather than by a
+ *     spawned CLI's flag parser;
+ *   - `runAfter` -- `runs ls --after`'s cursor: a run id in `runId`'s own
+ *     grammar, and it is the id the same read printed (`runview.Row.run_id`).
+ *     It is a separate kind from `runId` for the reason the two `--since`s are
+ *     separate kinds: the *position* differs -- this one is emitted as the `=`
+ *     form `--after=<id>`, one word, so a value can never read as a flag;
  *   - `reportDimension` -- `report --by`'s closed set of eight words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
@@ -268,6 +294,8 @@ export type ArgumentKind =
   | 'day'
   | 'reportSince'
   | 'runSince'
+  | 'runLimit'
+  | 'runAfter'
   | 'reportDimension'
   | 'secretScope'
   | 'pullRequest'
@@ -553,6 +581,32 @@ export const CONSOLE_OPERATIONS = [
         kind: 'flag',
         required: false,
         why: 'the design allow-list admits `--all` on this command.',
+      },
+      // The page and its cursor (D818, the console coordinator-v2 plan's C2).
+      // They are the two arguments the job list was waiting for: the read is
+      // about 248 KB and six seconds for a day of runs, so the screen asks for
+      // a page and walks it with the cursor rather than holding a window it
+      // cannot draw. Both are emitted as one `=`-form word each (`spawn.ts`),
+      // which is what keeps a value from ever reading as a flag.
+      //
+      // **`--limit`'s ceiling is the console's** (`RUNS_LIST_MAX_LIMIT`) and
+      // not the CLI's: the command takes any count it can parse, and a
+      // renderer that could ask for more than the cap could ask for the window
+      // under another name. `--after` is the id the same read printed, held to
+      // the run id's own grammar; an id the window does not hold is the CLI's
+      // refusal and not this one's, because only the CLI can know what the
+      // window held.
+      {
+        key: 'limit',
+        kind: 'runLimit',
+        required: false,
+        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the window, at most RUNS_LIST_MAX_LIMIT.',
+      },
+      {
+        key: 'after',
+        kind: 'runAfter',
+        required: false,
+        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor the row’s own run_id pages on.',
       },
     ],
   },
@@ -1845,6 +1899,15 @@ function validateValue(
     }
     return { ok: true, value }
   }
+  if (spec.kind === 'runLimit') {
+    // The digits cobra's `IntVar` reads, and nothing else: `0` is the CLI's own
+    // "every row of the window", which is what omitting the argument already
+    // means here, and the cap is this surface's (`RUNS_LIST_MAX_LIMIT`).
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > RUNS_LIST_MAX_LIMIT) {
+      return refuse(`${spec.key} must be a page size between 1 and ${RUNS_LIST_MAX_LIMIT}`)
+    }
+    return { ok: true, value }
+  }
   if (typeof value !== 'string') return refuse(`${spec.key} must be a string`)
   const limit = kindLimit(spec.kind)
   if (value.length > limit) return refuse(`${spec.key} is longer than ${limit} characters`)
@@ -1875,6 +1938,14 @@ function validateValue(
       if (value.endsWith('.git')) return refuse(`${spec.key} must be the canonical repository, without .git`)
       return { ok: true, value }
     case 'runId':
+      if (!RUN_ID_RE.test(value)) return refuse(`${spec.key} must be a run id`)
+      return { ok: true, value }
+    case 'runAfter':
+      // The same grammar in a different position: the cursor is an id this same
+      // read printed, and a value that is not one (`--watch`, a path, a
+      // truncated id) is refused before a child exists. The `=` form the row
+      // emits is what makes a value's own leading dashes impossible to read as
+      // a flag, and this grammar is what makes them impossible to send.
       if (!RUN_ID_RE.test(value)) return refuse(`${spec.key} must be a run id`)
       return { ok: true, value }
     case 'day':
@@ -2019,6 +2090,7 @@ function kindLimit(kind: ArgumentKind): number {
     case 'repository':
       return MAX_REPOSITORY_LENGTH
     case 'runId':
+    case 'runAfter':
       return MAX_RUN_ID_LENGTH
     case 'day':
       return 10

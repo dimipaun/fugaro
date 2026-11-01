@@ -84,6 +84,7 @@ import {
   PRIVATE_DIR_LEAF,
   PRIVATE_DIR_NAME,
   privateWorkingDirectory,
+  RUNS_LIST_EQUALS_FLAGS,
   shellQuoteWord,
   probeVersion,
   resolveBinary,
@@ -120,7 +121,7 @@ import type {
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import type { SpawnLogWriter } from '../../src/main/spawnlog'
-import { validateArguments } from '../../src/main/ipc'
+import { RUNS_LIST_MAX_LIMIT, validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
 import type { InstallationCandidate } from '../../src/source/cli'
@@ -733,6 +734,100 @@ describe('the spawn table and the argv it builds', () => {
     expect(argv).toContain('--pr')
     expect(argv).toContain('412')
     expect(argv[argv.indexOf('--pr') + 1]).toBe('412')
+  })
+
+  it('pages the runs list with two `=`-form words, in the row’s own order', () => {
+    // The page and its cursor (D818, coordinator v2 C2). Both are **one word
+    // each** -- `--limit=<n>` and `--after=<run id>` -- and the form is the
+    // point: a value inside the flag's own word cannot be read as a flag, so
+    // neither argument can spell a word of the command line of its own. They
+    // come after the row's other arguments, which is where the table declares
+    // them, and before the installation's own `--project`.
+    const cursor = '20261030-184402-31de'
+    expect([...argvFor('runs.list', { since: '24h', limit: 50 }, safeContext({ project: 'chosen' }))]).toEqual([
+      'runs',
+      'ls',
+      '--json',
+      '--since',
+      '24h',
+      '--limit=50',
+      '--project',
+      'chosen',
+    ])
+    const argv = argvFor('runs.list', { since: '24h', limit: 50, after: cursor }, safeContext({ project: 'chosen' }))
+    expect([...argv]).toEqual([
+      'runs',
+      'ls',
+      '--json',
+      '--since',
+      '24h',
+      '--limit=50',
+      `--after=${cursor}`,
+      '--project',
+      'chosen',
+    ])
+    // The value lives inside the flag's word and nowhere else: neither flag is
+    // a word of its own, and neither value is either.
+    for (const word of ['--limit', '--after', '50', cursor]) {
+      expect(argv, word).not.toContain(word)
+    }
+  })
+
+  it('refuses a page size the CLI’s IntVar would not read', () => {
+    // The validator's cap is `ipc.ts`'s `RUNS_LIST_MAX_LIMIT`, and this is the
+    // second of the two checks: `String` would happily spell `1e+21` or
+    // `1.5`, which cobra's `IntVar` refuses a stage later -- after a child
+    // exists, which is the one outcome the schema and this guard both exist to
+    // prevent.
+    for (const limit of [0, -1, 1.5, RUNS_LIST_MAX_LIMIT + 1, 1e21, Number.NaN, Number.POSITIVE_INFINITY, '50']) {
+      expect(() => argvFor('runs.list', { limit }, safeContext()), String(limit)).toThrow(/page size/)
+    }
+    expect(() => argvFor('runs.list', { limit: RUNS_LIST_MAX_LIMIT }, safeContext())).not.toThrow()
+  })
+
+  it('refuses a cursor that is not a run id this console will pass', () => {
+    for (const after of ['--watch', '-x', '', 'a b', '$(id)', '20261030-184402-31de; rm -rf /', 'a\nb']) {
+      expect(() => argvFor('runs.list', { after }, safeContext()), JSON.stringify(after)).toThrow()
+    }
+  })
+
+  it('takes the `=` form on the runs list row, and never a bare or empty flag', () => {
+    const cursor = '20261030-184402-31de'
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--limit=25'])).not.toThrow()
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', `--after=${cursor}`])).not.toThrow()
+    // A bare word and an `=` with nothing after it are both refused: the
+    // exception is a *prefix with a value*, not a flag name.
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--limit'])).toThrow()
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--limit='])).toThrow()
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--after'])).toThrow()
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--after='])).toThrow()
+    // The two prefixes are this row's own: no other row may borrow them, and
+    // the launch's two are still the launch's alone.
+    for (const row of ['live.watch', 'run.diagnose', 'plan.status', 'spend.report']) {
+      expect(() => assertArgvFlags(row, [row, '--limit=25']), row).toThrow()
+      expect(() => assertArgvFlags(row, [row, `--after=${cursor}`]), row).toThrow()
+    }
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--title=x'])).toThrow()
+    expect(() => assertArgvFlags('run.launch', ['run', '--limit=25'])).toThrow()
+    // ...and the row declares exactly these two `=`-form flags, so the table
+    // and the argv check cannot drift apart.
+    expect(RUNS_LIST_EQUALS_FLAGS).toStrictEqual(['--limit=', '--after='])
+  })
+
+  it('keeps `--watch` and every other runs ls flag off the runs list row', () => {
+    // `--watch` is `watch` under another name and is on the never-reachable
+    // table as a *flag*, so it stays refused however a payload spells it. The
+    // page and the cursor are the only two words this task adds: every other
+    // `runs ls` flag (`--state`, `--batch`, `--interval`, `--watch`) is not a
+    // key of the operation's schema and has no row table entry either.
+    for (const value of ['--watch', '--interval=10s', '--state=failed']) {
+      expect(validateArguments('runs.list', { after: value }).ok, value).toBe(false)
+      expect(validateArguments('runs.list', { limit: value }).ok, value).toBe(false)
+    }
+    for (const key of ['watch', 'state', 'batch', 'interval']) {
+      expect(() => argvFor('runs.list', { [key]: true }, safeContext()), key).toThrow(/does not declare/)
+    }
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--watch'])).toThrow(/--watch/)
   })
 
   it('refuses a pull request that is not a number the validator would hand over', () => {

@@ -113,7 +113,7 @@ import { homedir, tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { dirname, isAbsolute, join } from 'node:path'
 
-import { CONSOLE_OPERATIONS, isNeverReachable } from './ipc'
+import { CONSOLE_OPERATIONS, RUNS_LIST_MAX_LIMIT, isNeverReachable } from './ipc'
 import type { ArgumentKind, OperationName, ValidatedArgument, ValidatedArguments } from './ipc'
 import type { SpawnLogWriter } from './spawnlog'
 // The WSL seam, and the one import that closes a cycle: `wsl.ts` imports this
@@ -522,8 +522,27 @@ export interface Backoff {
  * that alphabet for a title would widen it for `--repo` and every other value
  * too. `stdin` is an argument that reaches **no argv word at all**: the task
  * text goes to the child on its standard input (below).
+ *
+ * **`limit` and `after` are the runs list's two** (D818, the console
+ * coordinator-v2 plan's C2): `--limit=<n>` and `--after=<run id>`, one word
+ * each, the form `title` and `planTask` already use and for the same reason --
+ * a value inside the flag's own word cannot be read as a flag. They are kinds
+ * of their own rather than `value` because each spells a value the validator
+ * handed over in a way `value` cannot: `limit` is a *number* the digits have to
+ * come from, the way `pullRequest`'s is, and `after` is the `=` form. The
+ * prefix each one emits is the row's own declared flag, and `EQUALS_FORM_FLAGS`
+ * below is the one table that says which prefixes a row may emit.
  */
-export type SpawnArgumentKind = 'value' | 'boolean' | 'secretScope' | 'pullRequest' | 'title' | 'planTask' | 'stdin'
+export type SpawnArgumentKind =
+  | 'value'
+  | 'boolean'
+  | 'secretScope'
+  | 'pullRequest'
+  | 'title'
+  | 'planTask'
+  | 'limit'
+  | 'after'
+  | 'stdin'
 
 /**
  * SPAWN_KIND_FOR is the one place the two kind vocabularies are related: the
@@ -537,6 +556,10 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   day: 'value',
   reportSince: 'value',
   runSince: 'value',
+  // The runs list's page and its cursor: the two `=`-form kinds, and the only
+  // two on a row that is a read (`title`/`planTask` are the launch's).
+  runLimit: 'limit',
+  runAfter: 'after',
   reportDimension: 'value',
   secretScope: 'secretScope',
   pullRequest: 'pullRequest',
@@ -652,6 +675,13 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The run list, and the one read that pages: `--limit=N` and `--after=ID`
+    // are its last two declared arguments, both emitted as **one `=`-form word
+    // each** (D818, the console coordinator-v2 plan's C2). The form is the
+    // point -- a value inside the flag's own word cannot be read as a flag --
+    // and it is why this row is the second entry on `EQUALS_FORM_FLAGS`. What
+    // `--watch` would be is still not here: it is on `NEVER_REACHABLE` as a
+    // flag, refused for every row.
     operation: 'runs.list',
     words: ['runs', 'ls', '--json'],
     takesProject: true,
@@ -661,6 +691,8 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
       { key: 'mine', flag: '--mine', kind: 'boolean' },
       { key: 'pr', flag: '--pr', kind: 'pullRequest' },
       { key: 'all', flag: '--all', kind: 'boolean' },
+      { key: 'limit', flag: '--limit=', kind: 'limit' },
+      { key: 'after', flag: '--after=', kind: 'after' },
     ],
     dirFlag: false,
   },
@@ -1059,6 +1091,36 @@ export function argvFor(
         argv.push(value)
         break
       }
+      case 'limit': {
+        // One word, `--limit=<n>`, and the digits come from here. The bound is
+        // checked again rather than trusted: the schema is the renderer's gate
+        // (`ipc.ts`'s `runLimit`), and this is the spelling's -- `String` would
+        // happily render `1e+21` or `1.5`, which cobra's `IntVar` refuses only
+        // after a child exists, which is the one outcome both checks prevent.
+        if (
+          typeof value !== 'number' ||
+          !Number.isInteger(value) ||
+          value < 1 ||
+          value > RUNS_LIST_MAX_LIMIT
+        ) {
+          refused(`${operation}'s ${spec.key} is not a run page size`)
+        }
+        argv.push(`${spec.flag ?? ''}${String(value)}`)
+        break
+      }
+      case 'after': {
+        // One word, `--after=<run id>`: the id stays inside the flag's own
+        // word, so it can never be read as a flag -- the design's reason for
+        // the `=` form on this row (design §5.1 rule 6). The value is held to
+        // `isSafeArgumentValue` as well, which the validator's run-id grammar
+        // is narrower than; what this adds is the refusal of a word the argv
+        // could not carry at all.
+        if (typeof value !== 'string' || value === '' || value.includes('\u0000') || !isSafeArgumentValue(value)) {
+          refused(`${operation}'s ${spec.key} is not a run id this console will pass to the CLI`)
+        }
+        argv.push(`${spec.flag ?? ''}${value}`)
+        break
+      }
       case 'pullRequest': {
         // The validator hands this over as the *number* it checked (ipc.ts's
         // `pullRequest` kind returns it unchanged), and the CLI's `--pr` is an
@@ -1122,31 +1184,57 @@ const RUN_LAUNCH_OPERATION = 'run.launch'
  * `--plan-task=` prefixes, for the `run.launch` row alone". */
 export const RUN_LAUNCH_EQUALS_FLAGS: readonly string[] = Object.freeze(['--title=', '--plan-task='])
 
+/** RUNS_LIST_EQUALS_FLAGS are `runs.list`'s two `=`-form prefixes: the page and
+ * the cursor D818 adds (`--limit=<n>`, `--after=<run id>`). They are a list of
+ * their own rather than a widening of `RUN_LAUNCH_EQUALS_FLAGS`, because the
+ * two rows' words are two rows' words: this row is a read whose values are a
+ * number and a run id, and the launch's are the two strings rule 11 writes. */
+export const RUNS_LIST_EQUALS_FLAGS: readonly string[] = Object.freeze(['--limit=', '--after='])
+
+/**
+ * EQUALS_FORM_FLAGS is, **per operation**, the `=`-form flag prefixes that
+ * operation's argv may carry -- the one place `assertArgvFlags` reads its
+ * exception from. Every other `--`-word must be on `SPAWN_FLAGS` verbatim; a
+ * word here is one word of the form `--flag=value`, which no `SPAWN_FLAGS`
+ * entry can match because those are flag *names*, and the value after the `=`
+ * is therefore never read as a flag.
+ *
+ * **The table is bounded in three ways, and `assertSpawnSurface` asserts all
+ * three.** It is keyed by operation, so an operation absent from it can emit no
+ * `=`-form word at all -- a read cannot grow one by copying another row's. The
+ * entries are exactly the flags the row itself declares with a trailing `=`, so
+ * a prefix here and a row that emits it cannot land apart. And a bare flag or
+ * an `=` with nothing after it is not a match: `isEqualsFormWord` requires a
+ * value.
+ */
+export const EQUALS_FORM_FLAGS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  [RUN_LAUNCH_OPERATION]: RUN_LAUNCH_EQUALS_FLAGS,
+  'runs.list': RUNS_LIST_EQUALS_FLAGS,
+})
+
 /** assertArgvFlags refuses an argv carrying a flag outside `SPAWN_FLAGS`, and one
  * carrying a flag the design's never-table names. Both checks are here rather
  * than in the callers because this function is the only producer of an argv.
  *
- * **The launch's two `=`-form flags are the one exception, and it is spelled
- * out rather than implied.** `--title=<T>` and `--plan-task=<P>` are one word
- * each -- the design fixes that form because a value inside the flag's own word
- * cannot be read as a flag -- so they can never match a `SPAWN_FLAGS` entry
- * that is a flag *name*. Accepting them here is what makes that form
- * expressible at all, and the exception is bounded in three ways: it is the
- * `run.launch` row alone, it is those two prefixes alone, and the value after
- * the `=` has to be non-empty. A bare `--title` (no `=`) is not on this list,
- * and neither prefix is admitted for any other row -- so a read cannot grow an
- * `=`-form flag by copying it. The value's own rules (its cap, one line, no
- * control character, no format character) are the validator's: `ipc.ts` runs
- * `launchrules.ts`'s checker for the `title` and `planTask` kinds before any of
- * this is reached. */
+ * **The `=`-form flags are the one exception, and it is spelled out rather than
+ * implied.** `--title=<T>`, `--plan-task=<P>` (the launch's) and `--limit=<N>`,
+ * `--after=<RUN-ID>` (the runs list's) are one word each -- the design fixes
+ * that form because a value inside the flag's own word cannot be read as a flag
+ * -- so they can never match a `SPAWN_FLAGS` entry that is a flag *name*.
+ * Accepting them here is what makes that form expressible at all, and the
+ * exception is bounded: `EQUALS_FORM_FLAGS` names the prefixes each operation
+ * may emit and no others, `assertSpawnSurface` holds that table to the rows'
+ * own declared flags, and the value after the `=` has to be non-empty -- so a
+ * bare `--limit` (no `=`) is not on this list, and no operation admits a prefix
+ * it does not declare. Each value's own rules are the validator's: `ipc.ts`
+ * runs `launchrules.ts`'s checker for the `title` and `planTask` kinds, and the
+ * run page size and run-id grammars for the runs list's two, before any of this
+ * is reached. */
 export function assertArgvFlags(operation: string, argv: readonly string[]): void {
   const command = commandPathIn(argv)
   for (const element of argv) {
     if (!element.startsWith('--')) continue
-    if (operation === RUN_LAUNCH_OPERATION) {
-      const equals = RUN_LAUNCH_EQUALS_FLAGS.find((prefix) => element.startsWith(prefix))
-      if (equals !== undefined && element.length > equals.length) continue
-    }
+    if (isEqualsFormWord(operation, element)) continue
     if (!SPAWN_FLAGS.includes(element)) {
       refused(`${operation} would emit ${element}, which is not a flag this console may spawn`)
     }
@@ -1170,6 +1258,19 @@ function commandPathIn(argv: readonly string[]): string {
     words.push(word)
   }
   return words.join(' ')
+}
+
+/** isEqualsFormWord answers whether one argv element is a `--flag=value` word of
+ * the prefixes `EQUALS_FORM_FLAGS` names for this operation -- the whole of the
+ * exception `assertArgvFlags` makes. It is a lookup and not a shape test on
+ * purpose: `--anything=x` is not a word this console may emit, and an operation
+ * the table does not name may emit no `=`-form word at all. The `length` clause
+ * is what keeps the *flag alone* (`--limit`) and an empty value (`--limit=`)
+ * refused: the exception is a prefix **with a value after it**. */
+function isEqualsFormWord(operation: string, element: string): boolean {
+  const prefixes = EQUALS_FORM_FLAGS[operation]
+  if (prefixes === undefined) return false
+  return prefixes.some((prefix) => element.startsWith(prefix) && element.length > prefix.length)
 }
 
 /**
@@ -1387,6 +1488,24 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
           `${row.operation}'s ${spec.key} is declared ${String(expected)} in the spawn table, but the operation's schema says ${argument?.kind ?? 'nothing'}`,
         )
       }
+    }
+    // The `=`-form words, held two-sided the way the kinds above are: the row's
+    // arguments that emit one (`flag` carrying the trailing `=`) must be exactly
+    // the prefixes `EQUALS_FORM_FLAGS` names for this operation. A row that
+    // grew an `=`-form argument without an entry in that table would be refused
+    // by `assertArgvFlags` at spawn time rather than here -- a refusal a user
+    // sees instead of a build that fails -- and an entry for a prefix no row
+    // declares is a permission nothing uses, which is the shape a later row
+    // could quietly start using.
+    const declaredEquals = row.args
+      .map((spec) => spec.flag)
+      .filter((flag): flag is string => flag !== null && flag.endsWith('='))
+      .sort()
+    const tabledEquals = [...(EQUALS_FORM_FLAGS[row.operation] ?? [])].sort()
+    if (declaredEquals.join(' ') !== tabledEquals.join(' ')) {
+      refused(
+        `${row.operation}'s \`=\`-form arguments and EQUALS_FORM_FLAGS disagree: the row declares ${declaredEquals.join(', ') || 'none'} and the table names ${tabledEquals.join(', ') || 'none'}`,
+      )
     }
     assertArgvFlags(row.operation, row.words)
   }
