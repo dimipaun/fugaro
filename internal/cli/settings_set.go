@@ -55,14 +55,14 @@ var settingsFamilyCommands = map[string]string{
 // `layer.` prefix (SD14), so §4.4's `default_profile` is `layer.default_profile`
 // in the registry and its `defaults.git.*` is `layer.defaults.git.*`; the
 // registry's spelling is the one listed, because a name the registry does not
-// hold is refused before this list is reached. §4.4's list omits `budget.mode`
-// and `budget.per_day_usd`, which the registry holds as scalars of the same
-// block the audit (docs/settings-commands/audit.md:81) names as user settings
-// and which no family writes; they are here, and nothing else is.
+// hold is refused before this list is reached. §4.4's list is the whole of it,
+// and it names four budget keys: `budget.mode` and `budget.per_day_usd` are the
+// registry's too — the audit (docs/settings-commands/audit.md:81) lists them as
+// user settings, and `fugaro setup` and the local config write them — but the
+// spec does not hand them to the generic path, so they are refused here like
+// any other key outside the list rather than widened in by this list.
 var settingsGenericKeys = map[string]bool{
-	"budget.mode":              true,
 	"budget.per_run_usd":       true,
-	"budget.per_day_usd":       true,
 	"budget.max_run_tokens":    true,
 	"budget.allowed_models":    true,
 	"budget.unreachable_grace": true,

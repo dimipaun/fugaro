@@ -610,6 +610,9 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		"credentials_service.url", "budget.rtdb_url", "budget.firebase_api_key",
 		"name", "runs_bucket", "bucket_url", "repos.*.base_branch",
 		"providers.*.base_url", "bitbucket_api_roots", "model_prices", "routing.claude",
+		// Registry rows the spec's §4.4 list does not name, so the generic path
+		// refuses them however the audit or the local config classifies them.
+		"budget.mode", "budget.per_day_usd",
 	}
 	for _, key := range refused {
 		if settingsGenericKey(key) {
@@ -628,6 +631,10 @@ func TestSettingsSetRefusesEveryKeyOutsideSpec44(t *testing.T) {
 	for _, key := range []string{
 		"endpoints.compute", "terraform.state_bucket", "policy_generation", "layer_generation",
 		"credentials_service.url", "budget.rtdb_url", "name", "runs_bucket", "bucket_url",
+		// The two registry rows §4.4 leaves out: they are read by `settings`
+		// and written by `fugaro setup` and the local config, and the generic
+		// path does not write them.
+		"budget.mode", "budget.per_day_usd",
 	} {
 		t.Run(key, func(t *testing.T) {
 			out, _, err := execute(t, "settings", "set", key, "x", "--yes")
