@@ -99,6 +99,7 @@ import {
   isConsoleSenderUrl,
   isSenderOnDocument,
   isNeverReachable,
+  openPullRequestHandler,
   operationFor,
   readStoredCompatibility,
   reducedModeHandlers,
@@ -736,13 +737,13 @@ describe("the allow-list's read-only invariant", () => {
     expect(driven).toHaveLength(DESIGN_ARGV.length)
   })
 
-  it('has exactly eight operations spawn nothing at all, and names each of them', () => {
+  it('has exactly nine operations spawn nothing at all, and names each of them', () => {
     // Task 3.3 added the handshake's answer, Task 3.4b `installation.current`
-    // (plan step 6: "added to SHIPPED_SURFACE deliberately"), and the owner's
-    // design ruling of 2026-10-25 the rail's five store-and-window operations.
-    // The number is the claim: these rows are the console's own state, and a
-    // tenth operation with no command would be a surface that answers something
-    // no CLI read produced.
+    // (plan step 6: "added to SHIPPED_SURFACE deliberately"), the owner's
+    // design ruling of 2026-10-25 the rail's five store-and-window operations,
+    // and K2a `link.openPullRequest`. The number is the claim: these rows are
+    // the console's own state, and a tenth operation with no command would be a
+    // surface that answers something no CLI read produced.
     const withoutCommand = CONSOLE_OPERATIONS.filter((operation) => operation.command === null)
     expect(withoutCommand.map((operation) => operation.name)).toEqual([
       'startup.compatibility',
@@ -753,6 +754,7 @@ describe("the allow-list's read-only invariant", () => {
       'installation.reveal',
       'installation.open',
       'link.openExternal',
+      'link.openPullRequest',
     ])
     // Each of them, by name, so the test fails naming the row rather than on a
     // list that a reader has to diff.
@@ -765,6 +767,7 @@ describe("the allow-list's read-only invariant", () => {
       'revealInstallation',
       'openInstallations',
       'openExternal',
+      'openPullRequest',
     ])
   })
 
@@ -1112,6 +1115,10 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'installation.current': {},
   'environment.report': {},
   'link.openExternal': { url: 'https://github.com/acme/app/pull/1' },
+  // The three fields the main process builds a pull request link from, and
+  // **no URL**: a `url` key here would be a shape this operation does not have
+  // (K2a, D815).
+  'link.openPullRequest': { provider: 'github', repo: 'acme/app', number: 42 },
   // The installation rail (owner's design ruling of 2026-10-25). The project
   // names and the directory are invented, and the directory is absolute -- the
   // grammar decides the shape and nothing else, and whether the CLI ever listed
@@ -1949,7 +1956,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-four, and no others".
+ * channel. The claim is "these twenty-five, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -1976,9 +1983,13 @@ describe('the spend read’s arguments', () => {
  * twenty-two exactly where they were. **The console v2 plan's V2.5.1a added the
  * twenty-fourth** (`run.launch` / `launchRun`, the console's one write and the
  * only operation here that is not a read, rule 11) and left the other twenty-
- * three exactly where they were. V2.5.1a's part 2b-3b-1 then built the
- * confirmation window into the entry point, so that row's spawn happens on a yes
- * from the window's own top frame and on nothing else.
+ * three exactly where they were; its part 2b-3b-1 then built the confirmation
+ * window into the entry point, so that row's spawn happens on a yes from the
+ * window's own top frame and on nothing else. **The coordinator-v2 plan's K2a
+ * added the twenty-fifth** (`link.openPullRequest` / `openPullRequest`: the pull
+ * request link, built in the main process from three fields and never read out
+ * of a document's `url`, D814/D815) and left the other twenty-four exactly where
+ * they were.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -1997,6 +2008,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
+  ['link.openPullRequest', 'openPullRequest'],
   ['installation.list', 'listInstallations'],
   ['installation.choose', 'chooseInstallation'],
   ['installation.checkout', 'setInstallationCheckout'],
@@ -2035,7 +2047,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-four, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these twenty-five, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2052,11 +2064,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A twenty-fifth channel: what each task added must stay one row, and the
+    // A twenty-sixth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const twentyFifth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(twentyFifth).toContain('fleet.report: a channel this console does not ship')
-    expect(twentyFifth).toContain('25 rows, and this console ships 24')
+    const twentySixth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(twentySixth).toContain('fleet.report: a channel this console does not ship')
+    expect(twentySixth).toContain('26 rows, and this console ships 25')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2070,7 +2082,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('23 rows, and this console ships 24')
+    expect(withoutTheNewRow).toContain('24 rows, and this console ships 25')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2085,8 +2097,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-four methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-four methods and the names,
+  it('is frozen, and hands the window a bridge with the twenty-five methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-five methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -2153,6 +2165,138 @@ describe('the one URL-shaped argument', () => {
         if (spec.kind === 'link') expect(operation.name).toBe('link.openExternal')
       }
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The pull request link the main process builds (Coordinator v2 K2a, D814/D815)
+// ---------------------------------------------------------------------------
+//
+// `link.openPullRequest` is the second operation that reaches
+// `shell.openExternal`, and the difference between it and the first is the whole
+// of its safety: it is handed **three fields and no URL**, and the main process
+// spells the link from them. So there are two things to hold here -- that the
+// schema cannot be made to carry a URL (a `url` key, or a `repo` that is one),
+// and that a triple the builder refuses opens nothing at all.
+describe('the pull request link the main process builds (K2a, D814/D815)', () => {
+  it('takes exactly the three fields, and refuses a fourth key', () => {
+    const decision = validateArguments('link.openPullRequest', {
+      ...WELL_FORMED['link.openPullRequest'],
+      url: 'https://github.com/acme/app/pull/1',
+    })
+    expect(decision.ok).toBe(false)
+    expect(decision.ok === false && decision.reason).toContain('url')
+  })
+
+  it('refuses a payload that carries a URL under any of its own keys', () => {
+    // The three keys are the whole of what a renderer may say, and a URL-shaped
+    // value is refused wherever it is put: the provider is a closed set of two
+    // words, the repository is `owner/name`, and the number is a number. There
+    // is no key here a document's `url` could travel in (D815).
+    const url = 'https://github.com/acme/app/pull/1'
+    for (const key of ['provider', 'repo', 'number']) {
+      const decision = validateArguments('link.openPullRequest', {
+        ...WELL_FORMED['link.openPullRequest'],
+        [key]: url,
+      })
+      expect(decision.ok, `${key} accepted a URL`).toBe(false)
+    }
+  })
+
+  it('refuses a repository that walks out of its own path, a URL, and a bare word', () => {
+    // The shapes the `repository` kind refuses. `owner/repo-a/pull/1` is not one
+    // of them -- three segments is a repository as far as that grammar is
+    // concerned -- and it is the case the builder catches, one test below.
+    for (const repo of ['owner/../evil', 'https://github.com/acme/app', 'acme', '', 'owner/repo-a/']) {
+      const decision = validateArguments('link.openPullRequest', { provider: 'github', repo, number: 1 })
+      expect(decision.ok, `repo accepted ${repo}`).toBe(false)
+    }
+  })
+
+  it('refuses a provider outside the two, and a number that is not a pull request number', () => {
+    for (const provider of ['gitlab', 'GitHub', '', 'github.com', 'constructor', '__proto__']) {
+      expect(
+        validateArguments('link.openPullRequest', { provider, repo: 'acme/app', number: 1 }).ok,
+        `provider accepted ${provider}`,
+      ).toBe(false)
+    }
+    for (const number of [0, -1, 1.5, '1', true, null, 2 ** 53]) {
+      expect(
+        validateArguments('link.openPullRequest', { provider: 'github', repo: 'acme/app', number }).ok,
+        `number accepted ${String(number)}`,
+      ).toBe(false)
+    }
+    for (const provider of ['github', 'bitbucket']) {
+      expect(validateArguments('link.openPullRequest', { provider, repo: 'acme/app', number: 1 }).ok).toBe(true)
+    }
+  })
+
+  it('opens nothing at all for a triple the builder refuses, and the opener is never called', async () => {
+    // **The headline test of K2a.** The spy is the only way to the browser, and
+    // the hostile values below are sent through the real registrar, the real
+    // validator and the real bridge -- so what is asserted is the operation, not
+    // the handler in isolation. `owner/repo-a/pull/1` is the interesting one: it
+    // passes the schema and is refused by `pullRequestUrl`, which is the gate
+    // that exists precisely because a `repo` field could be one.
+    const opened: string[] = []
+    const { bridge } = wiredConsole({
+      'link.openPullRequest': openPullRequestHandler(async (url) => {
+        opened.push(url)
+      }),
+    })
+    // The first gate refuses these: they are not the three fields at all.
+    const refusedByTheSchema = [
+      { provider: 'gitlab', repo: 'owner/repo-a', number: 42 },
+      { provider: 'github', repo: 'owner/../evil', number: 42 },
+      { provider: 'github', repo: 'owner/repo-a', number: 0 },
+      { provider: 'github', repo: 'owner/repo-a', number: 1.5 },
+    ]
+    for (const args of refusedByTheSchema) {
+      const reply = await asCallable(bridge.openPullRequest)(args)
+      expect(reply.ok, JSON.stringify(args)).toBe(false)
+    }
+    // And these pass the schema and are refused by the builder -- the second
+    // gate, and the reason it exists: a `repo` field can be a path or a host.
+    const refusedByTheBuilder = [
+      { provider: 'github', repo: 'owner/repo-a/pull/1', number: 42 },
+      { provider: 'github', repo: 'github.com/owner/repo-a', number: 42 },
+    ]
+    for (const args of refusedByTheBuilder) {
+      const reply = await asCallable(bridge.openPullRequest)(args)
+      expect(reply, JSON.stringify(args)).toEqual({ ok: true, data: null })
+    }
+    // Neither gate opened anything.
+    expect(opened).toEqual([])
+  })
+
+  it('opens the built URL exactly once for a good triple, and never the document’s own url', async () => {
+    const opened: string[] = []
+    const { bridge } = wiredConsole({
+      'link.openPullRequest': openPullRequestHandler(async (url) => {
+        opened.push(url)
+      }),
+    })
+    // The payload a document's three fields would produce.
+    const reply = await asCallable(bridge.openPullRequest)({
+      provider: 'bitbucket',
+      repo: 'owner/repo-a',
+      number: 1458,
+    })
+    expect(reply).toEqual({ ok: true, data: null })
+    expect(opened).toEqual(['https://bitbucket.org/owner/repo-a/pull-requests/1458'])
+
+    // The same three fields with the `url` the same document carries beside
+    // them: it is not a key this schema has, so the whole payload is refused
+    // rather than a field being opened.
+    const withUrl = await asCallable(bridge.openPullRequest)({
+      provider: 'bitbucket',
+      repo: 'owner/repo-a',
+      number: 1458,
+      url: 'https://evil.test/owner/repo-a/pull-requests/1458',
+    })
+    expect(withUrl.ok).toBe(false)
+    // Still exactly the one URL, built here: the refused payload opened nothing.
+    expect(opened).toEqual(['https://bitbucket.org/owner/repo-a/pull-requests/1458'])
   })
 })
 
@@ -3108,7 +3252,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty of the surface's twenty-four operations,
+    // The non-vacuity half: twenty-one of the surface's twenty-five operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -3119,10 +3263,13 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // (T1.2) is another, and for the same reason: the project view is repository
     // state, not money, so the mode has nothing to withhold from it.
     // A wrapper that refused the whole surface would fail here. **The launch is
-    // among the twenty**: a reduced console withholds figures, and a launch is
-    // not a figure -- whether it may be offered at all is rule 11's own floor,
-    // which is a comparison against the handshake's version and not this list.
-    expect(THE_OPEN_OPERATIONS.length).toBe(20)
+    // among the twenty-one**: a reduced console withholds figures, and a launch
+    // is not a figure -- whether it may be offered at all is rule 11's own
+    // floor, which is a comparison against the handshake's version and not this
+    // list. **`link.openPullRequest` is too, and for the same reason**: a pull
+    // request number is repository state rather than money, so the mode has
+    // nothing to withhold from it.
+    expect(THE_OPEN_OPERATIONS.length).toBe(21)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
