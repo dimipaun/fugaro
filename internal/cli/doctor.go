@@ -233,14 +233,15 @@ var doctorLookPath = exec.LookPath
 
 func newDoctorCmd() *cobra.Command {
 	var (
-		cloud    cloudOptions
-		dir      string
-		plugin   bool
-		checkApp bool
-		strict   bool
-		asJSON   bool
-		showAll  bool
-		security bool
+		cloud               cloudOptions
+		dir                 string
+		plugin              bool
+		checkApp            bool
+		checkBitbucketToken bool
+		strict              bool
+		asJSON              bool
+		showAll             bool
+		security            bool
 	)
 	cmd := &cobra.Command{
 		Use:   "doctor [--json] [--all] [--security] [--plugin] [--strict]",
@@ -253,8 +254,13 @@ name. With --check-github-app, in your own terminal, it also asks GitHub whether
 each GitHub App the config records is installed on its repository with the
 permissions Fugaro's runs ask for: that is the one thing that reads a secret's
 value (the App's private key, with your own credentials, held in memory only to
-sign, never printed), and it is refused in a coding agent's session. Otherwise
-it never prints a secret's value and never creates, enables or
+sign, never printed), and it is refused in a coding agent's session. With
+--check-bitbucket-token, in your own terminal, it also reads the credentials
+service's bundle to see that it holds a Bitbucket token and asks Bitbucket
+whether it still accepts it, one GET /repositories/<repo> per proxied
+repository: that too reads a secret's value (with your own credentials, in
+memory only, never printed) and is refused in a coding agent's session.
+Otherwise it never prints a secret's value and never creates, enables or
 changes anything.
 
 Inside a checkout whose project publishes a project layer (fugaro config
@@ -285,13 +291,14 @@ the flags.
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp, doctorView{all: showAll, security: security})
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp, checkBitbucketToken, doctorView{all: showAll, security: security})
 		},
 	}
 	addCloudFlags(cmd, &cloud)
 	cmd.Flags().StringVar(&dir, "dir", ".", "a directory in the checkout, for the plugin wiring")
 	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
+	cmd.Flags().BoolVar(&checkBitbucketToken, "check-bitbucket-token", false, "also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	cmd.Flags().BoolVar(&showAll, "all", false, "print every check, the informational and audit lines included")
@@ -299,11 +306,17 @@ Exit 1 when a check fails, with the one-line fix to run.`,
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool, view doctorView) error {
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp, checkBitbucketToken bool, view doctorView) error {
 	ctx := cmd.Context()
-	// Before anything is read: the key is never read in a coding agent's session.
+	// Before anything is read: neither the App's key nor the bundle's Bitbucket
+	// token is read in a coding agent's session.
 	if checkApp {
 		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+			return err
+		}
+	}
+	if checkBitbucketToken {
+		if err := refuseBitbucketTokenReadInAgent(os.Getenv); err != nil {
 			return err
 		}
 	}
@@ -442,6 +455,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
+	// The secrets-brokering checks that read the installation rather than this
+	// checkout (plan B1.9): the credentials service and its callers' invoker
+	// grants, the age of the stored credentials, and — behind
+	// --check-bitbucket-token, already refused above — what the bundle holds.
+	o.Checks = append(o.Checks, doctorCredentialsServiceDeployed(ctx, lc)...)
 	// The Batch backend's live checks (plan 2026-10-19-compute-backend.md Task
 	// 8 step 5, design §4.4). They return nothing for an installation with no
 	// batch block: the backend's own name is refused by internal/localcfg until
@@ -470,6 +488,16 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	projSM, projSecrets, projOK := doctorProjectSecrets(ctx, lc)
 	o.Checks = append(o.Checks, doctorProjectSecretAccessorChecks(ctx, lc, projSM, projSecrets)...)
 	o.Checks = append(o.Checks, doctorSecretManagerChecks(ctx, lc, projSM, crmSvc)...)
+	// This checkout's own secret containers, listed here rather than in the
+	// checkout branch below because secret-rotation-age measures both scopes:
+	// the operator's secret_expires is keyed by a secret's logical name, and
+	// bitbucket-token is stored in the repository's own container by default.
+	// nil outside a checkout, which is what doctorSecrets answers for one.
+	repoSecrets := doctorSecrets(cmd, lc)
+	o.Checks = append(o.Checks, doctorSecretRotationAge(ctx, lc, projSecrets, projOK, repoSecrets, doctorManagedSecrets(ctx, lc))...)
+	if checkBitbucketToken {
+		o.Checks = append(o.Checks, doctorBundleChecks(ctx, lc)...)
+	}
 	if c := projectAccountStoredCheck(lc, projSecrets, projOK); c != nil {
 		// Outside the checkout branch on purpose: an account job is the
 		// project's, not this repository's (the profile and the jobs it is
@@ -488,7 +516,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 				o.Checks = append(o.Checks, doctorLayerChecks(ctx, lc, co.Root, *rf)...)
 			}
 		}
-		o.Secrets = doctorSecrets(cmd, lc)
+		o.Secrets = repoSecrets
 		token := oauthTokenOf(rf)
 		if repo, err := originRepo(ctx); err == nil {
 			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets, projSecrets, projOK); c != nil {
@@ -505,9 +533,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 						o.Checks = append(o.Checks, *c)
 					}
 					o.Checks = append(o.Checks, doctorSecretScopeChecks(facts, o.Secrets, projSecrets, projOK)...)
+					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, facts)...)
 				}
 			}
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
+				o.Checks = append(o.Checks, *c)
+			}
+			if c := doctorModelKeyInAgent(lc, rf); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 		} else {
@@ -612,7 +644,15 @@ func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 		return nil
 	}
 	slices.Sort(names)
-	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info", unread: true,
+	// No unread marker, and that is the point of the note: what doctor cannot
+	// read is the provider account's privacy setting, a fact outside this
+	// installation, not a read of the installation that did not answer. The
+	// marker is for the second kind, and with it this line is a counted finding
+	// on every installation whose routes the catalog prices — a pointer over a
+	// screen that has nothing wrong in it, which is what the owner's rule
+	// against a pointer on a clean run forbids. It is a measurement
+	// (doctorMeasureIDs): --all, --security and --json carry it.
+	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info",
 		Problem: "require_zdr is on for the provider route(s) " + strings.Join(names, ", ") + " (the default), so their models are priced at the ZDR-eligible endpoints: " +
 			"that is the conservative price, not enforcement. Whether calls are actually zero-data-retention is your OpenRouter account's privacy setting, and Fugaro cannot read it",
 		Fix: "confirm the account's data policy in the OpenRouter settings; require_zdr: false prices every endpoint the model is served by instead"}
@@ -831,6 +871,53 @@ func doctorProjectSecrets(ctx context.Context, lc *localcfg.Config) (sm *gcp.Sec
 	}
 	slices.SortFunc(list, func(a, b gcp.SecretInfo) int { return strings.Compare(a.ID, b.ID) })
 	return client, list, true
+}
+
+// doctorManagedSet is every container Fugaro manages in the project — the
+// project-wide ones and each repository's own, whoever onboarded it — by the
+// logical names they carry, and whether that listing answered.
+//
+// It answers the one question secret-rotation-age cannot answer from the two
+// scopes it measures: whether a name the operator recorded in secret_expires is
+// carried by a container of another repository's own (bitbucket-token is
+// per-repository by default, so the date may have been recorded from another
+// checkout). Read is false when the listing could not be made — and the check
+// reads it only for a name nothing in the two scopes carries, so a false Read is
+// always a failed read and never "there was nothing to look for".
+type doctorManagedSet struct {
+	Names map[string]bool
+	Read  bool
+}
+
+// doctorManagedSecrets reads doctorManagedSet, best-effort and never fatal:
+// nothing is listed at all unless the operator recorded an expiry date, since a
+// name is what the listing is for and doctor's other two listings already cover
+// the scopes the age check measures (which matters, since listing a container
+// costs a version listing as well).
+func doctorManagedSecrets(ctx context.Context, lc *localcfg.Config) doctorManagedSet {
+	if len(lc.SecretExpires) == 0 {
+		return doctorManagedSet{}
+	}
+	if lc.Endpoints.NoAuth && lc.Endpoints.SecretManager == "" {
+		// Fakes only, and no fake for Secret Manager: the same guard
+		// doctorProjectSecrets makes.
+		return doctorManagedSet{}
+	}
+	sm, err := gcp.NewSecrets(ctx, gcpOptions(lc))
+	if err != nil {
+		return doctorManagedSet{}
+	}
+	list, err := sm.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+	if err != nil {
+		return doctorManagedSet{}
+	}
+	set := doctorManagedSet{Names: make(map[string]bool, len(list)), Read: true}
+	for _, s := range list {
+		if name := s.Labels[gcp.LabelSecret]; name != "" {
+			set.Names[name] = true
+		}
+	}
+	return set
 }
 
 // projectSecretEnabled is the logical names holding an enabled version, from
@@ -2032,15 +2119,18 @@ const routingCacheMarkersUnmeasured = "a routed Claude senior's cost is unmeasur
 // what keeps the sentence above from reading as a warning about nothing.
 const routingCacheMarkersNothingRouted = "no Claude ID is routed through a provider by this policy, so no call is charged at a route's rate: when the switch routes one, whether that route reports cache_read/cache_write tokens at all is unmeasured until Check 50 runs"
 
-// routingCacheMarkersUnread is the same check when the policy node itself could
-// not be read: no Firebase backend, an unreachable budget database, a marker or
-// a version this binary cannot read, a failed read. Every one of those paths
-// reaches doctorRoutingChecks with no node, and "no Claude ID is routed through
-// a provider by this policy" is a reading of a node nobody read — doctor said
-// the resolution was unresolved on the line beside it and then reported a
-// reading of the same node. It says which state this is instead, as
-// routing-resolution does.
-const routingCacheMarkersUnread = "the policy node was not read (see routing-resolution), so whether a Claude ID is routed through a provider — and so whether any call is charged at a route's rate — is unknown here: when one is, whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN)"
+// routingCacheMarkersNoSwitch is the same check when no switch is in force: no
+// Firebase backend, an unreachable budget database, a marker, a node this binary
+// cannot read, a failed read, or a policy published that no run applies — the
+// version skew in either direction, which is a node doctor read and cannot use.
+// Every one of those paths reaches doctorRoutingChecks with no node, and "no
+// Claude ID is routed through a provider by this policy" is a reading of a node
+// nobody resolved — doctor said the resolution was unresolved on the line beside
+// it and then reported a reading of the same node. It says which state this is
+// instead, as routing-resolution does, and it says it of the switch rather than
+// of the read: a policy that is published at a version no run applies was read,
+// and "the policy node was not read" would be false about it.
+const routingCacheMarkersNoSwitch = "no routing switch is in force here (see routing-resolution), so whether a Claude ID is routed through a provider — and so whether any call is charged at a route's rate — is unknown from this run: when one is, whether the route reports cache_read/cache_write tokens at all is Check 50's question (docs/gcp-live-checklist.md, NOT RUN)"
 
 // routingCacheMarkersUndetermined is the same check when the resolution above
 // could not be read at all: doctor cannot say a routed Claude's cost is
@@ -2098,7 +2188,7 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 				Problem: "the routing resolution is unresolved: " + why,
 				Fix:     "fugaro project policy show prints the switch the published node holds, and `fugaro validate` prints this line from the operator's own config (offline)"},
 			{ID: "routing-cache-markers", Severity: "info",
-				Problem: routingCacheMarkersUnread,
+				Problem: routingCacheMarkersNoSwitch,
 				Fix:     "fugaro project policy publish writes the switch the owner's config holds; Check 50 measures what a routed Claude costs"},
 		}
 	}
