@@ -813,11 +813,13 @@ func pnpmKey(raw string) (name, version string, ok bool) {
 
 // yarnSpec is one yarn.lock entry while it is being read: the name its header
 // states, the version, the integrity the entry carries (Yarn 1's integrity
-// line, Berry's checksum), and what its resolved or resolution line names,
-// which is what says whether the entry came from a registry (D618).
+// line, Berry's checksum), the names of the built-in patches it resolved with,
+// and what its resolved or resolution line names, which is what says whether
+// the entry came from a registry (D618).
 type yarnSpec struct {
 	name, version string
 	integrity     string
+	patches       []string
 	// kind is what the resolved or resolution line named, and source is that
 	// value as the refusal names it: the two are what decides whether the entry
 	// may be keyed at all.
@@ -892,7 +894,7 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 			err = set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s@%s (no integrity, and resolved from %s)", cur.name, cur.version, cur.source))
 			return false
 		}
-		if err = set.add(cur.name, cur.version, cur.integrity); err != nil {
+		if err = set.add(cur.name, cur.version, yarnFactIntegrity(cur.integrity, cur.patches)); err != nil {
 			return false
 		}
 		return true
@@ -912,35 +914,24 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 			// entry whose second descriptor is a git or file specifier as the
 			// registry's, which it is not (D618).
 			descriptors := splitOutsideQuotes(key, ',')
-			name := yarnName(strings.Trim(strings.TrimSpace(descriptors[0]), `"'`))
-			if name != "__metadata" {
-				for _, d := range descriptors {
-					d = strings.Trim(strings.TrimSpace(d), `"'`)
-					// An alias's descriptor states the alias and the package it
-					// points at — `lodash@npm:evil-pkg@^1.0.0` in Berry, and the
-					// same in Yarn 1 — so the name this reads is not a package's,
-					// and the version and integrity beside it are the aliased
-					// package's. A name holding a scheme is that descriptor, and
-					// the entry is not the registry's (D618) — as it is not for a
-					// git descriptor's, whose name is not a package name either.
-					if strings.Contains(yarnName(d), ":") {
-						err = set.fail(UnkeyedNonRegistry, key)
-						return false
-					}
-					// The descriptor states the specifier the entry resolved as
-					// well as the name, and a git, file, link or URL specifier is
-					// a source no registry served, whatever the line beside it
-					// says (D618). Yarn 1 writes that specifier in the header for
-					// a git dependency while its resolved line is a plain
-					// codeload URL, which no reading of the URL alone can tell
-					// from another registry's tarball, and Berry writes it as the
-					// scheme of the range.
-					if i := strings.LastIndexByte(d, '@'); i > 0 && yarnNonRegistrySpecifier(d[i+1:]) {
-						err = set.fail(UnkeyedNonRegistry, key)
-						return false
-					}
+			name := ""
+			var patches []string
+			for i, d := range descriptors {
+				d = strings.Trim(strings.TrimSpace(d), `"'`)
+				dName, patch, ok := yarnHeaderDescriptor(d)
+				if !ok {
+					err = set.fail(UnkeyedNonRegistry, key)
+					return false
 				}
-				cur, inEntry = yarnSpec{name: name}, true
+				if i == 0 {
+					name = dName
+				}
+				if patch != "" {
+					patches = append(patches, patch)
+				}
+			}
+			if name != "__metadata" {
+				cur, inEntry = yarnSpec{name: name, patches: patches}, true
 			}
 			return true
 		}
@@ -955,7 +946,15 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 		case strings.HasPrefix(text, "checksum"):
 			cur.integrity = yarnValue(text, "checksum")
 		case strings.HasPrefix(text, "resolved"), strings.HasPrefix(text, "resolution"):
-			cur.kind, cur.source = classifyYarnSource(yarnValue(text, strings.Fields(text)[0]))
+			value := yarnValue(text, strings.Fields(text)[0])
+			cur.kind, cur.source = classifyYarnSource(value)
+			// The line states the patch descriptor the header does, and reading
+			// the name from it as well is what keeps a lock that writes the
+			// patch in one of the two places only from keying a patched set as
+			// the unpatched one: the name joins the same field either way.
+			if _, _, patch, ok := yarnPatchDescriptor(value); ok {
+				cur.patches = append(cur.patches, patch)
+			}
 		}
 		return true
 	})
@@ -1001,6 +1000,129 @@ func yarnComment(v string) string {
 	return v
 }
 
+// yarnFactIntegrity is the fact's third field: the integrity or checksum the
+// lock states for the version, and, for an entry that resolved from a built-in
+// patch, the patch's own name beside it. The patch is what the install applies
+// to that artifact, so two locks differing only in which one they applied are
+// two dependency sets, and the checksum beside them says nothing about it. The
+// two are joined the way go.sum's hashes are, sorted and deduplicated, so that
+// a lock stating the same patch in its header and in its resolution line is one
+// fact rather than two.
+func yarnFactIntegrity(integrity string, patches []string) string {
+	if len(patches) == 0 {
+		return integrity
+	}
+	if integrity == "" {
+		return joinedHashes(patches)
+	}
+	return joinedHashes(append([]string{integrity}, patches...))
+}
+
+// yarnHeaderDescriptor reads one descriptor of a yarn.lock entry's header: the
+// package it names and, for a descriptor that resolved from a patch, the name
+// of that patch. ok is false for a descriptor that is a source no registry
+// served, which leaves the entry unkeyed.
+func yarnHeaderDescriptor(d string) (name, patch string, ok bool) {
+	if strings.Contains(d, "@patch:") {
+		name, _, patch, ok := yarnPatchDescriptor(d)
+		if !ok {
+			return "", "", false
+		}
+		return name, patch, true
+	}
+	// An alias's descriptor states the alias and the package it points at —
+	// `lodash@npm:evil-pkg@^1.0.0` in Berry, and the same in Yarn 1 — so the
+	// name this reads is not a package's, and the version and integrity beside
+	// it are the aliased package's. A name holding a scheme is that descriptor,
+	// and the entry is not the registry's (D618) — as it is not for a git
+	// descriptor's, whose name is not a package name either.
+	if strings.Contains(yarnName(d), ":") {
+		return "", "", false
+	}
+	// The descriptor states the specifier the entry resolved as well as the
+	// name, and a git, file, link or URL specifier is a source no registry
+	// served, whatever the line beside it says (D618). Yarn 1 writes that
+	// specifier in the header for a git dependency while its resolved line is a
+	// plain codeload URL, which no reading of the URL alone can tell from
+	// another registry's tarball, and Berry writes it as the scheme of the
+	// range.
+	if i := strings.LastIndexByte(d, '@'); i > 0 && yarnNonRegistrySpecifier(d[i+1:]) {
+		return "", "", false
+	}
+	return yarnName(d), "", true
+}
+
+// yarnPatchDescriptor reads one of Berry's patch descriptors, which a lock
+// writes in an entry's header and in the resolution line beside it:
+// `name@patch:<inner>`, where the inner locator is the package's own and Berry
+// escapes the colon its protocol holds as `%3A`, and, after a `#`, the patch
+// the entry was resolved with. The inner range is what says the entry is the
+// registry's: the package's own locator is `name@npm:1.2.3`, and the two names
+// must be the same one, since a descriptor naming another package inside is an
+// alias's shape and not a patch of this package. ok is false for a descriptor
+// this reader must not key — one whose inner range is not that, or whose patch
+// is not a built-in one.
+func yarnPatchDescriptor(value string) (name, inner, patch string, ok bool) {
+	i := strings.Index(value, "@patch:")
+	if i <= 0 {
+		return "", "", "", false
+	}
+	name = value[:i]
+	inner, fragment, _ := strings.Cut(value[i+len("@patch:"):], "#")
+	inner = yarnPatchColon(inner)
+	innerName, _, locator := yarnRegistryVersion(inner)
+	if !locator || innerName != name {
+		return "", "", "", false
+	}
+	patch = yarnBuiltinPatch(fragment)
+	if patch == "" {
+		return "", "", "", false
+	}
+	return name, inner, patch, true
+}
+
+// yarnPatchColon restores the colon Berry escapes in a patch descriptor's inner
+// locator (`typescript@npm%3A5.4.5`): it is what makes the inner range read as
+// the package's own registry locator rather than as text no scheme names.
+func yarnPatchColon(inner string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(inner, "%3A", ":"), "%3a", ":")
+}
+
+// yarnRegistryVersion reads the package and the version a registry locator
+// names. Berry writes a package's own resolution as `name@npm:1.2.3`, and a
+// locator whose scheme is another one — `workspace:`, `virtual:` — names a
+// version this reader cannot take from it.
+func yarnRegistryVersion(locator string) (name, version string, ok bool) {
+	i := strings.LastIndexByte(locator, '@')
+	if i <= 0 {
+		return "", "", false
+	}
+	version, found := strings.CutPrefix(locator[i+1:], "npm:")
+	if !found || version == "" {
+		return "", "", false
+	}
+	return locator[:i], version, true
+}
+
+// yarnBuiltinPatch is the name of the built-in compatibility patch a patch
+// descriptor names, and empty for one naming a patch the repository holds the
+// bytes of. A built-in one is written `builtin<compat/typescript>` — Yarn may
+// write a marker before it, `optional!`, which says the patch is applied only
+// where it applies and is not part of the patch's name — while a patch of the
+// repository's is written as a path or as a hash, whose bytes are not in the
+// fact and so cannot key anything.
+func yarnBuiltinPatch(fragment string) string {
+	i := strings.Index(fragment, "builtin<")
+	if i < 0 {
+		return ""
+	}
+	name := fragment[i:]
+	if j := strings.IndexByte(name, '>'); j >= 0 {
+		return name[:j+1]
+	}
+	return ""
+}
+
 // classifyYarnSource reads a resolved or resolution line, and answers what it
 // named and how that is served. Berry writes the resolved package as
 // `name@npm:1.3.0`, `name@patch:…`, `name@virtual:…` or `name@workspace:…`,
@@ -1012,6 +1134,19 @@ func yarnComment(v string) string {
 func classifyYarnSource(value string) (yarnSourceKind, string) {
 	if value == "" {
 		return yarnSourceUnstated, ""
+	}
+	// A Berry patch descriptor names the package's own locator after `patch:`,
+	// so the entry is what that locator is: the default registry's when it is
+	// the package's registry version and the patch is a built-in one. A patch
+	// the repository holds the bytes of is a source the registry never served —
+	// the fact does not hold it — and an inner locator naming anything else is a
+	// shape this reader cannot say the artifact of.
+	if strings.Contains(value, "@patch:") {
+		_, inner, _, ok := yarnPatchDescriptor(value)
+		if !ok {
+			return yarnSourceOther, value
+		}
+		return classifyYarnSource(inner)
 	}
 	source := yarnSourceURL(value)
 	switch {

@@ -516,6 +516,50 @@ func TestReduceYarnLock(t *testing.T) {
 	}
 }
 
+// yarnBerryPatchLock is one Berry entry that resolved from a patch, with the
+// patch the lock writes after the descriptor's `#`. The header and the
+// resolution line state the same descriptor, as a lock writes them.
+func yarnBerryPatchLock(patch string) string {
+	descriptor := "typescript@patch:typescript@npm%3A5.4.5#" + patch
+	return "\"" + descriptor + "\":\n  version: 5.4.5\n  resolution: \"" + descriptor + "\"\n  checksum: 10c0/abcdef\n"
+}
+
+func TestReduceYarnBerryPatch(t *testing.T) {
+	// A package a repository patched with one of Yarn's own compatibility
+	// patches is a registry package: the descriptor resolved from the package's
+	// own registry version, which its inner `npm%3A` range names, so the entry
+	// keys like the unpatched one. The patch's own name is part of the fact
+	// beside the checksum, because the patch is what the install applies and
+	// nothing else in the fact says which one it was.
+	builtin := yarnBerryPatchLock("optional!builtin<compat/typescript>")
+	want := []string{factOf("typescript", "5.4.5", "10c0/abcdef,builtin<compat/typescript>")}
+	if got := reduced(t, "yarn.lock", builtin); !slices.Equal(got, want) {
+		t.Errorf("a Berry entry patched with a built-in patch = %v, want %v", got, want)
+	}
+	// Two locks that differ only in which built-in patch the entry resolved
+	// with are two dependency sets and two keys.
+	other := yarnBerryPatchLock("builtin<compat/other>")
+	if reducedKey(t, "yarn.lock", builtin) == reducedKey(t, "yarn.lock", other) {
+		t.Error("two locks differing only in the built-in patch's name took one key")
+	}
+	// A header states every range the entry resolved, and a patched package
+	// lists the patch descriptor beside the range the repository asked for: the
+	// two are one entry and one fact.
+	both := "\"typescript@patch:typescript@npm%3A5.4.5#optional!builtin<compat/typescript>, typescript@npm:^5.4.0\":\n" +
+		"  version: 5.4.5\n  resolution: \"typescript@patch:typescript@npm%3A5.4.5#optional!builtin<compat/typescript>\"\n" +
+		"  checksum: 10c0/abcdef\n"
+	if got := reduced(t, "yarn.lock", both); !slices.Equal(got, want) {
+		t.Errorf("a header naming a patch descriptor and a plain range = %v, want %v", got, want)
+	}
+	// A patch the repository holds the bytes of names a path where a built-in
+	// one names `builtin<...>`, and those bytes are not in the fact: the entry
+	// is refused rather than keyed as the package's own version, which would
+	// give a patched set the unpatched set's image.
+	refused(t, "yarn.lock", yarnBerryPatchLock("./patches/typescript.patch"), UnkeyedNonRegistry)
+	refused(t, "yarn.lock", yarnBerryPatchLock("~/.yarn/patches/typescript.patch"), UnkeyedNonRegistry)
+	refused(t, "yarn.lock", yarnBerryPatchLock("abc123"), UnkeyedNonRegistry)
+}
+
 func TestReduceGoSum(t *testing.T) {
 	// One module is one fact: the /go.mod line is the same module at the same
 	// version, and the integrity is the module's own hash — the zip's, from the
