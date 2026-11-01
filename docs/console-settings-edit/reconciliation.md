@@ -74,16 +74,19 @@ The marker list is `agentenv.Markers` (`internal/agentenv/agentenv.go:28`): `CLA
 `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT`, `AI_AGENT`.
 *Consequence, and it cuts both ways:* S5's agent-session refusal (`applySettingsEdit`, **S5 #1525**
 `internal/cli/settings_write.go:72`, reading `agentMarker`) can never fire for a console spawn —
-which is correct, because the console is not a coding agent's session — and **the console cannot use
-that refusal as the reason a row has no pencil**. The human confirmation is the window (F2), not the
-marker. **F9** and **D1111** are the other half of this.
+which is correct, because the console is not a coding agent's session, and it is what makes
+**D1107**'s ruling workable: the console's `settings set … --yes` is never the session the fence
+refuses — and **the console cannot use that refusal as the reason a row has no pencil**. The human
+confirmation is the window (F2), not the marker. **F9** and **D1111** are the other half of this.
 
 **F5: Exists. The write path is one function, and its sentences are the console's to show.**
 `applySettingsEdit` (**S5 #1525** `internal/cli/settings_write.go:72`) is the one write path: the
 line diff, the confirmation, the agent-session refusal, the compare-and-swap re-read
 (`readSettingsCurrent`, `:140`), the backup and the atomic write. Its ordinary confirmation is
 `confirmSettingsWrite` (`:151`) — `--yes` answers it — and its typed one is `confirmTypedStrict`
-(`internal/cli/budget.go:239`), which **no flag answers**. Every successful write ends with `next:
+(`internal/cli/budget.go:239`), which **no flag answers** as it stands: **D1107** is the owner's
+ruling that `--yes` answers that one too, outside an agent session, and the plan's **P4** is the
+task that makes it so. Every successful write ends with `next:
 fugaro update` (`runSettingsSet`, **S5 #1525** `internal/cli/settings_set.go:678`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
 re-implements the diff (**D1103**).
@@ -206,16 +209,16 @@ exception, is not printed. The exception is `sensitive` (F6), which is already i
 document. The console therefore cannot be given a pencil that is honest about itself without four
 CLI changes: it must be able to **name its installation** (F12/P1), it must be told **which rows are
 writable and by whom** (F10/P2), it must be told **whether an edit widens** and **which layer it
-writes** (F11/P3), and — if the owner takes **D1107**'s recommendation — it must have a way to
-confirm a widening at all, because the CLI's own widening confirmation needs a terminal the console
-does not have (F5/P4). None of the four is a console change, and three of them are small.
+writes** (F11/P3), and it must have a way to confirm a widening at all, because the CLI's own
+widening confirmation asks for a terminal the console has not got (F5/P4, answered by **D1107**:
+the CLI accepts `--yes` there instead). None of the four is a console change, and all four are small.
 
 ## 4. Owner decisions
 
 Recommendation first in each, with the reason and the cost of the alternative. **D1100–D1139 are
-this work's block. D1100–D1121 are ANSWERED by the owner on 2026-11-01: D1100 and D1101 in the ask
-itself, and D1102–D1120 and D1121 as recommended in his ruling on this design — the one exception is
-D1107, which stays `OPEN` with all three of its options. D1122–D1139 are reserved and unused.**
+this work's block. Every one of D1100–D1121 is ANSWERED by the owner on 2026-11-01: D1100 and D1101
+in the ask itself, D1102–D1106 and D1108–D1121 as recommended in his ruling on this design, and
+D1107 in his own words, against the design's recommendation. D1122–D1139 are reserved and unused.**
 
 An answer here is not an approval: the plan's tasks start only when the owner approves them.
 
@@ -285,8 +288,8 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   false`* — the property `argvFor` (`console/src/main/spawn.ts:980`) already guarantees and
   `console/test/unit/spawn.test.ts` already pins. *On the WSL route the wrapper's own
   `distroShellUnsafe` check refuses a word with shell metacharacters, so a value containing one is
-  refused there and the edit is offered as a command to copy instead (D1107's option **B**
-  behaviour, applied per word).* *Answered as recommended by the owner on 2026-11-01, in
+  refused there and the edit is offered as a command to copy instead — the copy-the-command shape,
+  applied per word.* *Answered as recommended by the owner on 2026-11-01, in
   [spec.md](spec.md).*
 
 - **D1105 (ANSWERED by the owner, 2026-11-01, as recommended: the console passes `--layer`
@@ -325,59 +328,45 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   schema entry that pins it; it is **P3**. *Answered as recommended by the owner on 2026-11-01, in
   [spec.md](spec.md).*
 
-- **D1107 (OPEN, recommended: option A, and it is a deliberate weakening of D846 on one path). S5's
-  widening path needs the project's name typed at a terminal, and the console has no terminal. What
-  happens to a widening?** *The problem, stated plainly:* `settingsTypedWrite` (**S5 #1525**
-  `internal/cli/settings_set.go:633`) marks a loosened ceiling, a removed ceiling and a `followup.*`
-  key turned on as the typed form; `applySettingsEdit` then calls `confirmTypedStrict`
-  (`internal/cli/budget.go:239`), which requires a terminal (`stdinIsTerminal`) and compares the
-  typed line against the project's name, and which **no flag answers** — `--yes` is not consulted on
-  that path at all. The console's child gets `stdio` with stdin `'ignore'` on every read and
-  `'pipe'` on exactly one row (`run.launch`, rule 11), and it has no terminal to offer. So **the
-  console cannot perform a widening through S5 as designed**, and the owner's D1100 answer says
-  widenings are in scope on day one.
-  - **Option A (recommended). A narrow CLI hook meaning "the operator confirmed this widening in the
-    console's own dialog".** Concretely: one new flag on `settings set|unset`,
-    `--console-confirmed`, which stands in for the typed name **only when the child's environment
-    carries the console's own marker variable**, and which is **refused whenever `agentenv.Marker`
-    reports a coding agent's session** — so an agent's shell cannot use it, exactly as it cannot use
-    `--layer repo` for a typed write today. Terminal use is unchanged: with no marker,
-    `--console-confirmed` is refused and the typed name is still what confirms. **How it is
-    authenticated, and what it is honestly worth.** It is bound to **one environment variable the
-    console writes into the child**, which means adding a key to `CHILD_ENV_KEYS`
-    (`console/src/main/spawn.ts:360`) — itself a change to §5.1 rule 8's "nothing added", so it is
-    SECURITY-SENSITIVE and it is **P4**. **It is not a security boundary, and this design says so
-    rather than implying otherwise:** a local user who can run `fugaro` directly can also set that
-    variable in their own shell, so the hook buys them nothing they could not have by running the
-    command with the variable set — and nothing at all, in fact, because such a user can already
-    edit the same files with an editor. What it is worth is what it was built for: **it keeps the
-    console's widening from being one stray click**, because the flag is only ever passed by the one
-    argv the console's allow-list builds, behind a window whose yes comes from its own top frame,
-    and it keeps the *agent-session* fence intact, which is the fence that matters — the threat D846
-    answers is a coding agent widening its own ceiling, not a person with a terminal. *What it does
-    not do:* it does not make the console's confirmation a security control; it makes it a **UX gate
-    over a deliberate, recorded weakening of D846 on one path**. *Cost of A:* D846 stops being true
-    of `settings set` on one path, and that sentence has to be written into
-    `docs/settings-commands/reconciliation.md`'s D846 entry and into `desktop-console.md`'s new rule
-    12 by the task that lands P4.
-  - **Option B. The console edits narrowings and non-widening rows only; a widening shows the exact
-    CLI command to copy into a terminal.** *Cost:* the owner's D1100 answer is "all edits, including
-    widenings, from day one", so B does not meet the ask; it is recorded because it is the only
-    option that needs **no** CLI change and no weakening, and because it is the right **fallback**
-    if P4 is refused. Under B the widening row still gets a pencil, and the window it opens says
-    what to run.
-  - **Option C. The console draws the typed project name itself and passes it to the CLI's
-    typed-confirmation input.** *Cost:* it is the design the owner already ruled out — D1101, "too
-    much" — and it is worse than A on its own terms, because it puts the project's name in an argv
-    word or on the child's stdin, which is a value the console would then have to protect, while A
-    puts one boolean-shaped word there.
-  - **Recommendation: A, with B as the recorded fallback if the owner refuses P4.** *Whichever he
-    chooses, the console's widening dialog is the same* (**D1109**): the extra tick is the console's
-    own, and it is not the typed name.
-  - **This is the one decision the owner's ruling of 2026-11-01 left `OPEN`** ([spec.md](spec.md)):
-    every other decision in this block was answered as recommended, and all three options above stay
-    live, so the choice between them is still his. The plan is written so that the choice changes one
-    task: option A is **P4**, and B removes it.
+- **D1107 (ANSWERED by the owner, 2026-11-01, and not as this design recommended: `--yes` is allowed
+  for a widening, and there is no console-only hook). S5's widening path needs the project's name
+  typed at a terminal, and the console has no terminal. What happens to a widening?** *The problem,
+  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:633`) marks a
+  loosened ceiling, a removed ceiling and a `followup.*` key turned on as the typed form;
+  `applySettingsEdit` then calls `confirmTypedStrict` (`internal/cli/budget.go:239`), which requires
+  a terminal (`stdinIsTerminal`) and compares the typed line against the project's name, and which
+  **no flag answers** — `--yes` is not consulted on that path at all. The console's child gets
+  `stdio` with stdin `'ignore'` on every read and `'pipe'` on exactly one row (`run.launch`, rule
+  11), and it has no terminal to offer. So **the console cannot perform a widening through S5 as it
+  stands**, and the owner's D1100 answer says widenings are in scope on day one.
+  - **The answer: `--yes` answers the widening prompt, and the agent-session refusal stays.** *In the
+    owner's words ([spec.md](spec.md)):* "I don't see why `--yes` doesn't work, we should allow it."
+    Concretely: `settings set|unset` consult `--yes` on the path that used to demand the typed name,
+    with **the agent-session refusal first** — `agentenv.Marker(os.Getenv)` reports a coding agent's
+    session and the command refuses whatever else is passed, so **`--yes` never lifts that fence** —
+    and the typed name still works wherever there is a terminal to type it at. The console therefore
+    runs `settings set KEY --layer <L> --yes -- <VALUE>`, after its own confirmation dialog, with
+    **no flag, marker variable or typed name of its own**. *Why this is narrower than it looks:*
+    D846 stops being the only confirmation for a widening, and it stays true of **`fugaro update`**,
+    which still asks for the typed project name and still refuses `--yes` alone where it would
+    publish a looser node; and the fence D846 was written for — a coding agent raising its own
+    ceiling — is the one thing `--yes` cannot touch.
+  - **Option A, this design's own recommendation, is withdrawn.** It was a `--console-confirmed`
+    flag bound to a marker key the console would write into the child's environment; it was a UX gate
+    and not a security boundary, and the owner's ruling makes the whole marker question **moot** —
+    with `--yes` allowed there is nothing for a console-only flag to add, and `CHILD_ENV_KEYS`
+    (`console/src/main/spawn.ts:360`) gains no key, so §5.1 rule 8's "nothing added" is unchanged.
+  - **Option B (recorded, not taken). The console edits narrowings and non-widening rows only; a
+    widening shows the exact CLI command to copy into a terminal.** It was the only option that
+    needed no CLI change, and it does not meet the D1100 answer that widenings are in scope on day
+    one.
+  - **Option C (recorded, not taken). The console draws the typed project name itself.** It is the
+    design the owner already ruled out — D1101, "too much" — and the ruling above puts the project's
+    name nowhere near the console's argv.
+  - **What the ruling changes in the plan is one task, not the dialog.** The console's widening
+    dialog is the one **D1109** designs — the extra tick is the console's own, and it is not the
+    typed name — and **P4** becomes "accept `--yes` on the typed path outside an agent session"
+    instead of "a console-only hook". *Answered by the owner on 2026-11-01, in [spec.md](spec.md).*
 
 - **D1108 (ANSWERED by the owner, 2026-11-01, as recommended: the six fields below, and nothing
   else). What does the confirmation window show?** *Recommendation:* **the key**; **the old value**
@@ -407,8 +396,9 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   tick is not a substitute for `CONFIRM_READY_DELAY_MS`:* both apply, the delay as it does for the
   launch window, and the tick resets whenever the window is re-shown or re-focused. *The console
   does not decide which shape a window takes:* it is the dry run's `widening` field (D1106), so a
-  rule change in S5 changes the dialog with no console edit. *Under D1107's option B,* a widening
-  window draws the command to copy and its Confirm button is **absent**, not disabled. *Answered as
+  rule change in S5 changes the dialog with no console edit. *When the CLI refuses the widening
+  itself — the WSL route's metacharacter check, for instance — the window draws the command to copy
+  and its Confirm button is **absent**, not disabled.* *Answered as
   recommended by the owner on 2026-11-01, in [spec.md](spec.md).*
 
 - **D1110 (ANSWERED by the owner, 2026-11-01, as recommended: no roles are invented; "administrator"
@@ -600,7 +590,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   person could edit with an editor, the CLI prerequisites add flags and fields rather than changing
   a meaning, and nothing here is a post-deploy step. The one thing the notes must say is in **Known
   limits**: launching is no longer the console's only write, and the widening dialog's tick is the
-  console's own confirmation of a deliberate weakening of the CLI's typed-name rule (D1107).
+  console's own confirmation of a widening the CLI now also accepts `--yes` for (D1107).
   *Answered as recommended by the owner on 2026-11-01, in [spec.md](spec.md).*
 
 - **D1121 (ANSWERED by the owner, 2026-11-01, as recommended: the four documents the implementing
@@ -608,12 +598,11 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   the documents that state it, in the same commit: **`docs/design/desktop-console.md` §5.1 rule 5**
   (the operation count, 24 → 26), **rule 6** (the two new allow-list rows, with the exact argvs),
   and a **new rule 12** for the second write — the settings confirmation window, its own-top-frame
-  gate, its cancel default, its widening tick, and the honest sentence that D1107's hook is a UX
-  gate and not a boundary; **`console/docs/json-contract.md` §6.15** (the settings document,
-  including the fields **D1102** adds — the section D848 reserved);
+  gate, its cancel default, and its widening tick; **`console/docs/json-contract.md` §6.15** (the
+  settings document, including the fields **D1102** adds — the section D848 reserved);
   **`docs/design/console-styling.md` §2.5** (the new panels, the pencil's hooks and the window's own
-  document); and **`docs/settings-commands/reconciliation.md`'s D846 entry** if P4 lands, because
-  D846 then has one path it is not true of. `docs/` tests pin several of these sentences, so each
+  document); and **`docs/settings-commands/reconciliation.md`'s D846 entry**, which P4 amends for
+  `settings set|unset` and leaves untouched for `fugaro update`. `docs/` tests pin several of these sentences, so each
   task runs `go test ./internal/cli -run Docs` and, for the console documents, the console's own doc
   tests. *None of them is edited by this design.* *Answered as recommended by the owner on
   2026-11-01, in [spec.md](spec.md).*

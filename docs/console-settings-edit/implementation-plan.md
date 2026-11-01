@@ -2,9 +2,11 @@
 
 **Nothing here is approved.** Every task below starts only when the owner approves it, and an answer
 to a decision in [reconciliation.md](reconciliation.md) is not an approval. The owner answered
-**D1102–D1121 as recommended on 2026-11-01** ([spec.md](spec.md)); **D1107 is the one left `OPEN`**,
-and this plan is written so that its option **A** is P4 and its option **B** is the fallback that
-removes P4. This document adds no
+**every one of D1100–D1121 on 2026-11-01** ([spec.md](spec.md)): D1102–D1106 and D1108–D1121 as
+recommended, and **D1107 in his own words — `fugaro settings set|unset` accepts `--yes` for a
+widening outside an agent session**, and the console gets no hook and no marker. Only the shape of
+**P4** changed: it is that CLI change, not the console-only flag the design had recommended. This
+document adds no
 code, no schema, no console source, no fixture and no workflow: it names the files the tasks will
 touch and edits none of them.
 
@@ -12,9 +14,9 @@ touch and edits none of them.
 settings set|unset`, which is pull request **#1525**, merged into `main` while this design was in
 review. Nothing in this plan could be built, tested or even written against a CLI that did not have
 it — which is why the four prerequisites below are changes **to that same command** and land on top
-of it rather than beside it. With S5 on `main`, all four can be built now. If the owner
-takes **D1107**'s fallback (**B**), the widening half of C3 and C4 and all of P4 fall away and the
-rest of the plan is unchanged.
+of it rather than beside it. With S5 on `main`, all four can be built now, and all four are small —
+**P4** included, since the owner's **D1107** ruling is a handful of lines in `settings_write.go`
+rather than the new flag and the new child-environment key the design had proposed.
 
 ## 1. The order, and what forces it
 
@@ -29,7 +31,7 @@ rest of the plan is unchanged.
         │                           │
         C2                          │           ← the pencil and the dialog's content
         │                           │
-        C3 ─────────────────────────┘           ← the write, the dry run, the widening hook
+        C3 ─────────────────────────┘           ← the write, the dry run, the widening `--yes`
         │
         C4                                       ← the hermetic e2e and the fixture
         │
@@ -51,10 +53,11 @@ its own (**D1102**), so there is no pencil to draw before the read carries `writ
 later is the fourth-copy defect the settings design's own F12 exists to prevent, and it would ship.
 
 **Why P3 and P4 are separable.** P3 gives the console a machine-readable widening classification
-(**D1106**), which is needed by **every** edit — it is what decides the dialog's shape. P4 gives it
-the ability to **perform** a widening (**D1107**). A console that can only narrow is a coherent,
-shippable state under D1107's option B, so P4 is a task whose absence degrades the feature rather
-than blocking it, and the plan says so rather than pretending the two are one task.
+(**D1106**), which is needed by **every** edit — it is what decides the dialog's shape. P4 is what
+lets the console **perform** a widening: the CLI consults `--yes` on the path that demanded the
+typed project name, **outside an agent session** (**D1107**). They are two different questions — how
+the console knows, and whether the CLI lets it — asked of two different refusals, and a reviewer who
+wants only the first can take P3 alone and leave every widening row showing a command to copy.
 
 **Why C5 is not first.** Three of the four documents C5 changes are the **fences themselves** —
 `docs/design/desktop-console.md` §5.1 rules 5 and 6 and the new rule 12. A fence document written
@@ -185,38 +188,33 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   offering a widening, and getting it wrong in the widening direction is a limit raised behind a
   one-click dialog.
 
-### P4. `--console-confirmed`: the widening hook, a deliberate weakening of D846 on one path (**D1107** A). **SEC** — **size M**
+### P4. `settings set|unset` accept `--yes` for a widening, outside an agent session (**D1107**). **SEC** — **size S**
 
-- **Files:** `internal/cli/settings_write.go` (`applySettingsEdit` accepts the flag in place of the
-  typed name **only** when the console's marker variable is present in its environment),
-  `internal/cli/settings_set.go` (the flag on `set` and `unset`), `console/src/main/spawn.ts`
-  (`CHILD_ENV_KEYS` gains the one marker key — **this is the change to §5.1 rule 8's "nothing
-  added"**, and it is why the task is SEC and why the console side of it is one line in C3),
-  `internal/cli/settings_console_confirm_test.go` (new), `console/test/unit/spawn.test.ts` (the key
-  list, whose count is pinned), `docs/settings-commands/reconciliation.md` (**the D846 entry gains
-  the sentence that one path is no longer covered by it**).
-- **The refusal set, which is what makes it narrow:** the flag is refused when the marker is absent;
-  refused when `agentenv.Marker(os.Getenv)` reports a coding agent's session — the fence D846 exists
-  for, unchanged; refused when the key is not one the typed path would have demanded it for (so the
-  flag cannot be used to skip an ordinary confirmation); and refused together with `--dry-run`.
-- **What it is honestly worth, written into the code's own comment and into rule 12:** it is **a UX
-  gate, not a security boundary**. A local user who can run `fugaro` can set the marker variable
-  themselves, and can edit the same file with an editor. What the hook preserves is the fence that
-  matters — an agent's session cannot raise its own ceiling — and what it buys is that a widening
-  from the console is one argv, built by the allow-list, behind a window whose yes comes from its
-  own top frame. **The task writes that sentence; it does not imply otherwise anywhere.**
-- **Tests:** `TestSettingsSetRefusesConsoleConfirmedWithoutTheMarker`,
-  `TestSettingsSetRefusesConsoleConfirmedInAnAgentSession` (each of `agentenv.Markers`, one case
-  each), `TestSettingsSetAcceptsConsoleConfirmedWithTheMarker`,
-  `TestSettingsSetRefusesConsoleConfirmedOnANonWideningEdit`,
-  `TestSettingsSetConsoleConfirmedStillWritesTheSameBytes` (the hook changes who confirms, never
-  what is written), `TestSettingsSetStillDemandsTheTypedNameAtATerminal` (no marker, no flag: S5's
-  behaviour is untouched), and — on the console side, in the same task —
-  `console/test/unit/spawn.test.ts`'s child-environment vector, which carries the one new key and no
-  other.
-- **Why SEC:** it is the one task in this plan that weakens a rule, and the review is the point.
-- **If the owner refuses it:** the task is not built, D1107's **B** applies, and C3's widening path
-  draws the command to copy instead of a Confirm button.
+- **Files:** `internal/cli/settings_write.go` (`applySettingsEdit`: the typed path consults `--yes`,
+  **after** the agent-session refusal), `internal/cli/settings_set.go` (`set` and `unset` — `--yes`
+  is already a flag of both, so this is the refusal's sentence and the help text, not a new word),
+  `internal/cli/settings_yes_widening_test.go` (new), and
+  `docs/settings-commands/reconciliation.md` (**the D846 entry gains the sentence that `settings
+  set|unset` no longer demand the typed name outside an agent session, and that `fugaro update`
+  still does**).
+- **The order of the two refusals is the whole of the change, and it is the security property:**
+  `agentenv.Marker(os.Getenv)` is consulted **first** and the command refuses a coding agent's
+  session whatever else is passed, so **`--yes` never lifts that fence**; only then does `--yes`
+  stand in for the typed name. With no terminal and no `--yes`, the behaviour is S5's today.
+- **What it does not touch, and the task says so where it writes:** `fugaro update`'s typed
+  confirmation, which is a different path and where D846 is unchanged; the ordinary confirmation
+  `--yes` already answered (**F5**); the agent-session refusal; the compare-and-swap; and what the
+  write puts on disk. The flag changes **who confirms**, never **what is written**.
+- **Tests:** `TestSettingsSetAcceptsYesForAWidening` and the `unset` form,
+  `TestSettingsSetRefusesAYesWideningInAnAgentSession` (each of `agentenv.Markers`, one case each),
+  `TestSettingsSetYesWideningStillWritesTheSameBytes` (the flag changes who confirms, never what is
+  written), `TestSettingsSetStillDemandsTheTypedNameWithoutYes` (no terminal, no flag: S5's
+  behaviour is untouched), and `TestSettingsUpdateStillDemandsTheTypedName` (D846 holds where the
+  ruling says it does).
+- **Why SEC:** it is the one task here that moves a confirmation rule, and independent review is the
+  point. What keeps it narrow is the refusal that stays in front of it.
+- **There is no console side to this task.** The console gets no flag, no marker and no typed name;
+  it spawns `settings set KEY --layer <L> --yes -- <VALUE>`, which C3 builds.
 
 ## 5. Console tasks
 
@@ -282,12 +280,13 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **SEC because** the dialog is the confirmation rule 11's pattern is copied for; the review is what
   decides whether the copy kept the gate.
 
-### C3. The write: `settings.edit`, the dry run, and the widening hook (D1103, D1104, D1105, D1112, D1114, D1115). **SEC** — **size L**
+### C3. The write: `settings.edit`, the dry run, and the widening `--yes` (D1103, D1104, D1105, D1112, D1114, D1115). **SEC** — **size L**
 
 - **Files:** `console/src/main/ipc.ts` (`settings.edit`, its exact-argv row, **rule 5's count 25 →
   26 in the same commit**, and the never table re-read rather than edited),
-  `console/src/main/spawn.ts` (the row; `CHILD_ENV_KEYS` gains P4's marker key **only if P4
-  landed**), `console/src/main/confirm.ts` (**generalized from one view to a union**, D1115, with
+  `console/src/main/spawn.ts` (the row — and **no** new key in `CHILD_ENV_KEYS`, since the ruling
+  means the console passes `--yes` rather than a flag of its own: §5.1 rule 8's "nothing added"
+  stands), `console/src/main/confirm.ts` (**generalized from one view to a union**, D1115, with
   `LaunchConfirmer`'s seam widened to take either view and its `close()` kept as the tab-leave and
   installation-change cancel), `console/src/main/launch.ts` (the launch's own view moves behind the
   union, unchanged in behaviour), `console/src/preload/index.ts` and
@@ -298,8 +297,10 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **The two spawns per confirmed edit, in this order:** first `settings set KEY --layer <L>
   --dry-run --json --project <name> [--config <path>]` (or the `unset` form) — nothing is written,
   and its document is what the window draws; then, on a yes from the window's own top frame,
-  `settings set KEY --layer <L> --yes [--console-confirmed] -- <VALUE> --project <name> [--config
-  <path>]`.
+  `settings set KEY --layer <L> --yes -- <VALUE> --project <name> [--config <path>]` — the same
+  argv for a widening and for a narrowing, because after **D1107** the CLI needs nothing more from
+  the console than `--yes`, and the console's own extra tick is the window's business and not an
+  argv word.
 - **Why `--` and why the layer is explicit (D1104, D1105):** the value is a **positional** argument,
   so the terminator is the only thing that keeps a value spelled `-draft` or `--layer` from being
   read as a flag; and the layer is passed because **what the window showed is what is spawned** —
@@ -318,8 +319,8 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   answered no, when it closed, or when the answer came from another frame — the property
   `confirm.test.ts` already pins for the launch, asserted for the second view);
   `TestSettingsEditDoesNotRetryOnARefusal`; `TestSettingsWindowClosesAsACancelOnTabLeave`; the count
-  and the never-entry tests; and, under P4,
-  `TestSettingsEditPassesConsoleConfirmedOnlyForAWidening`.
+  and the never-entry tests; and `TestSettingsEditPassesYesForAWidening`, which asserts the widening
+  vector and the narrowing vector are the same words and that neither carries a console-only flag.
 - **SEC because** it moves rule 5 and rule 6 and it is the second write the console makes; rule 12
   and the count move in the same commit.
 
@@ -349,11 +350,12 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **Files:** `docs/design/desktop-console.md` §5.1 (**rule 5's count and rule 6's two rows move in
   C1's and C3's commits, not here**; what is left for this task is the prose that is not a fence —
   §3.4's project-flag paragraph gaining `settings`, and rule 12's cross-reference into
-  `docs/settings-commands/` for the D846 weakening), `docs/design/console-styling.md` §2.5 (the new
+  `docs/settings-commands/` for the D846 amendment), `docs/design/console-styling.md` §2.5 (the new
   panels' class hooks and the pencil's states, which C2's CSS implements),
   `console/docs/json-contract.md` §6.15 (finished against the shipped screen, per D848's own rule
   that the console's work writes the console's document), and
-  `docs/settings-commands/reconciliation.md`'s D846 entry **only if P4 landed**.
+  `docs/settings-commands/reconciliation.md`'s D846 entry — **P4 writes the CLI half of that
+  sentence and this task the console's**, and the two are checked against each other here.
 - **Why it is a task of its own and still SEC:** three of these documents are pinned by docs tests
   (`go test ./internal/cli -run Docs` and the console's own document tests), so a wording change
   here turns a test red somewhere else, and the task is where that is noticed. It is not a fence
@@ -365,10 +367,10 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **Files:** `docs/releases/console/v0.119.0.md` (new) and `website/data/release-summaries.yaml`
   (one line, no backticks).
 - **What the notes say, and what they must not:** the feature in the owner's words; the widening
-  dialog's tick, described as **the console's own confirmation of a CLI weakening** rather than as a
-  security control; and, under **Known limits**, that launching is no longer the console's only
-  write, and that an edit does not change a run until `fugaro update` publishes it — the CLI's own
-  sentence, unchanged.
+  dialog's tick, described as **the console's own extra confirmation** rather than as a security
+  control; and, under **Known limits**, that launching is no longer the console's only write, and
+  that an edit does not change a run until `fugaro update` publishes it — the CLI's own sentence,
+  unchanged.
 - **`### For operators`: none, and this task says so in the notes' own body.** Nothing here is a
   post-deploy step: the console edits files a person could edit with an editor, the CLI
   prerequisites add flags and members rather than changing a meaning, and the policy node's shape is
@@ -380,19 +382,19 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 ## 6. The critical path, and what it costs
 
 **S5 (#1525) has merged → P1 → C1 → C2 → C3 → C4 → C5 → C6.** P2 runs beside P1 and is needed by C1; P3
-runs beside them and is needed by C3; **P4 runs beside them and is needed only by C3's widening
-path**, which is why its refusal degrades the feature rather than stopping the plan. The longest
-chain is five tasks and two of them are L.
+runs beside them and is needed by C3; **P4 runs beside them and is needed by C3's widening path** —
+without it the console can narrow and cannot widen, which the owner's D1100 answer puts in scope on
+day one, and it is small enough that this is an ordering fact rather than a risk. The longest chain
+is five tasks and two of them are L.
 
 **Two things a reader should weigh before approving this.** First, **the plan is larger than the ask
-looks**: eleven tasks, seven of them SEC, for a pencil — and the reason is that the console cannot
+looks**: ten tasks, seven of them SEC, for a pencil — and the reason is that the console cannot
 be told which rows are writable, whether an edit widens, or which installation it is looking at, and
-each of those is a CLI change rather than a console one. Second, **the cheapest version of this
-feature is not this one**: D1107's option **B** (narrowings only, widenings shown as a command to
-copy) drops P4 and the widening half of C3 and C4, and it is the version to approve if the owner
-would rather have the pencil in console 0.119.0 without a rule weakened for it. The owner's D1100
-answer says widenings are in scope on day one, so this plan is built for that; the fallback is
-written down because it is a real option and not a consolation.
+each of those is a CLI change rather than a console one. Second, **the CLI half is now the smaller
+half**: after the owner's **D1107** ruling, all four prerequisites are small (P4 is a few lines in
+`settings_write.go`), and what is left that is genuinely large is the console's own read, window and
+write. The version of this feature that needed a console-only flag, a marker key in the child's
+environment and an exception written into D846 is not the version being built.
 
 ## 7. What is deliberately not in this plan
 

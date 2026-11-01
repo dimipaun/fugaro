@@ -3,9 +3,11 @@
 **Status: plan only; nothing is implemented; no task approved.** This is a design-only folder: it adds
 no code, no schema, no console source, no test fixture and no workflow, and it edits no file outside
 `docs/` and the one Go test that pins this folder. Every command, flag, field and argv below is a
-proposal. The owner answered its decisions on 2026-11-01 ([spec.md](spec.md)): **D1100–D1121, each as
-recommended — except D1107, which stays `OPEN`**. An answer is not an approval: no task in
-[implementation-plan.md](implementation-plan.md) may start before the owner approves it.
+proposal. The owner answered **every one of its decisions** on 2026-11-01 ([spec.md](spec.md)):
+D1100–D1121 as recommended, except **D1107**, which he answered with **`--yes` is allowed for a
+widening** — so the console runs `settings set … --yes` and gets no hook of its own. An answer is not
+an approval: no task in [implementation-plan.md](implementation-plan.md) may start before the owner
+approves it.
 
 **Asked by:** the owner, 2026-11-01: "In the console, under the Project tab, for each of those values,
 a way for administrators to edit them from within the console: a little pencil icon to trigger an
@@ -51,19 +53,22 @@ Three things this design settles that the ask does not:
    from the rendered table` (**D1118**).
 2. **Widening versus narrowing is the CLI's classification too** — the console asks, it does not
    re-derive (**D1106**, prerequisite **P3**).
-3. **The widening path is a deliberate weakening of D846 on one path, and the design says so.** D846
-   reserves a widening for the project's name typed at a terminal, and `--yes` never stands in for it
-   (`confirmTypedStrict`, `internal/cli/budget.go:239`). The console has no terminal, so it cannot
-   perform a widening through S5 as it stands. **D1107** records the three ways out — a narrow CLI
-   hook (recommended), narrowings only, or the typed name drawn by the console (the form the owner
-   already called "too much") — and is `OPEN`. **It is the one decision the owner's ruling of
-   2026-11-01 left open**, and the prerequisite **P4** is what its option **A** costs.
+3. **A widening is confirmed by `--yes`, and the agent-session fence is untouched.** D846 reserves a
+   widening for the project's name typed at a terminal, and no flag answers it today
+   (`confirmTypedStrict`, `internal/cli/budget.go:239`) — which the console, with no terminal, cannot
+   do. **D1107** is the owner's answer of 2026-11-01: "I don't see why `--yes` doesn't work, we
+   should allow it." `settings set|unset` **consult `--yes`** on that path **outside an agent
+   session**, the agent-session refusal coming **first** so `--yes` never lifts it, and `fugaro
+   update` still asks for the typed name. The console therefore passes `--yes` after its own dialog,
+   with **no hook, no marker variable and no typed name**; the design's own recommendation — a
+   `--console-confirmed` flag bound to a child-environment marker — is withdrawn. The prerequisite
+   **P4** is that CLI change, and it is small.
 
 ## Numbers this work holds
 
 | Block | State |
 | --- | --- |
-| **D1100–D1139** | **this work's block.** **D1100–D1121 are written and ANSWERED** by the owner on 2026-11-01 ([spec.md](spec.md)): D1100 and D1101 in the ask itself, D1102–D1121 as recommended in his ruling on this design, **except D1107, which is written and `OPEN`**; **D1122–D1139 are reserved and unused**. Taken above every number on `main` and in the open design pull requests. On this branch the highest number **written as a decision** is **D894** (`docs/cloud-senior-review/reconciliation.md`, the tail of that work's D880–D894), and the highest number **cited at all** is **D1074**, which `docs/cloud-senior-review/implementation-plan.md` attributes to the credentials-service routing design **#1514** — an open pull request whose own folder is not on `main`; the numbers between D895 and D1075 are therefore held by open pull requests and by reservations this work does not read. **D1100** is clear of all of them, and the block is taken at the round number above that range rather than at D1076 so that two works cannot claim adjacent numbers and collide. **Verified free on 2026-11-01**: no `D11xx` appears anywhere in `docs/` on this branch |
+| **D1100–D1139** | **this work's block.** **D1100–D1121 are written and ANSWERED** by the owner on 2026-11-01 ([spec.md](spec.md)): D1100 and D1101 in the ask itself, D1102–D1106 and D1108–D1121 as recommended in his ruling on this design, and **D1107 in his own words — `--yes` is allowed, and the console gets no hook**; **D1122–D1139 are reserved and unused**. Taken above every number on `main` and in the open design pull requests. On this branch the highest number **written as a decision** is **D894** (`docs/cloud-senior-review/reconciliation.md`, the tail of that work's D880–D894), and the highest number **cited at all** is **D1074**, which `docs/cloud-senior-review/implementation-plan.md` attributes to the credentials-service routing design **#1514** — an open pull request whose own folder is not on `main`; the numbers between D895 and D1075 are therefore held by open pull requests and by reservations this work does not read. **D1100** is clear of all of them, and the block is taken at the round number above that range rather than at D1076 so that two works cannot claim adjacent numbers and collide. **Verified free on 2026-11-01**: no `D11xx` appears anywhere in `docs/` on this branch |
 
 ## What this design does not do
 
@@ -89,8 +94,9 @@ Three things this design settles that the ask does not:
 ## Related
 
 - [docs/settings-commands/](../settings-commands/README.md) — the design of `fugaro settings`, whose
-  **S5** is the command every edit here spawns, whose **D846** is the rule the widening path weakens,
-  and whose §4.4 is the allow-list of writable rows.
+  **S5** is the command every edit here spawns, whose **D846** is the rule this work's P4 amends for
+  that command and leaves standing for `fugaro update`, and whose §4.4 is the allow-list of writable
+  rows.
 - [docs/design/desktop-console.md](../design/desktop-console.md) §5.1 — rules 5, 6 and 11: the IPC
   allow-list, the exact-argv spawn allow-list with its never table, and the launch, which is the
   pattern this design's confirmation window copies.

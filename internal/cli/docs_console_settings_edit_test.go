@@ -21,9 +21,9 @@ package cli
 //    states the dependency that orders every task in it: the settings-write
 //    pull request, which has to be on `main` before any of them.
 //  * TestDocsConsoleSettingsEditDecisionsAreInRange -- D1100-D1121 are written,
-//    each exactly once and in order; every open one carries a recommendation and
-//    every answered one cites the ask it was answered in; and D1122-D1139, the
-//    reserved tail, is written as no decision at all.
+//    each exactly once and in order; every one is answered, and an answered one
+//    cites the ask it was answered in; and D1122-D1139, the reserved tail, is
+//    written as no decision at all.
 //  * TestDocsConsoleSettingsEditCitationsResolve -- every `path:line` citation
 //    resolves to a file of this tree and a line inside it, measured against an
 //    independent census so a regexp that stopped matching fails rather than
@@ -62,9 +62,9 @@ const (
 var cseDocs = []string{cseSpec, cseReconciled, csePlan}
 
 // The block this work holds, as the documents write it: D1100-D1121 written,
-// D1122-D1139 reserved and unused. The owner has answered all of D1100-D1121 --
-// D1100 and D1101 in the ask itself, the rest as recommended -- with D1107 the
-// single one left open.
+// D1122-D1139 reserved and unused. The owner has answered all of D1100-D1121:
+// D1100 and D1101 in the ask itself, D1102-D1106 and D1108-D1121 as the design
+// recommended, and D1107 in his own words, against the recommendation.
 const (
 	cseBlockFirst    = 1100
 	cseBlockLast     = 1121
@@ -90,13 +90,14 @@ func TestDocsConsoleSettingsEditIsWritten(t *testing.T) {
 		"a little pencil icon to trigger an edit",
 		"**all edits, including widenings, from day one**",
 		// The block, and the reservation above it that keeps two works from
-		// taking adjacent numbers. The answered/open split is pinned because it
+		// taking adjacent numbers. How D1107 was answered is pinned because it
 		// is the one thing a reader takes from the index without reading the
-		// decisions: D1107 is the single one the owner left open, and an index
-		// that lost that would read as if the widening path were settled.
+		// decisions: the widening path is settled by allowing `--yes` and by
+		// giving the console no hook of its own, and an index that lost that
+		// would read as if a console-only flag were still coming.
 		"**D1100–D1139**",
 		"**D1100–D1121 are written and ANSWERED** by the owner on 2026-11-01",
-		"**except D1107, which is written and `OPEN`**",
+		"**D1107 in his own words — `--yes` is allowed, and the console gets no hook**",
 		"**D1122–D1139 are reserved and unused**",
 	} {
 		if !strings.Contains(readme, want) {
@@ -112,12 +113,14 @@ func TestDocsConsoleSettingsEditIsWritten(t *testing.T) {
 		"**The dependency that orders everything: S5, which has merged.**",
 		"pull request **#1525**",
 		"**S5 (#1525) has merged → P1 → C1 → C2 → C3 → C4 → C5 → C6.**",
-		// The fallback, so a reader can see the cheaper shape rather than
-		// discovering it after approving the expensive one.
-		"D1107's option **B**",
+		// How the widening is confirmed, which is the whole of what the owner's
+		// D1107 ruling changed in this plan: the CLI accepts `--yes` for it and
+		// the console gets no flag of its own.
+		"`settings set|unset` accept `--yes` for a widening, outside an agent session (**D1107**)",
+		"**There is no console side to this task.**",
 	} {
 		if !strings.Contains(plan, want) {
-			t.Errorf("%s lacks %q: the plan is written against a command that is not on `main`, and that is the first thing a reader of it has to know", csePlan, want)
+			t.Errorf("%s lacks %q: the plan is written against a command that landed while the design was in review, and that is the first thing a reader of it has to know", csePlan, want)
 		}
 	}
 }
