@@ -11,9 +11,10 @@ project-scoped review identity**, a mint that serves the **read-only token set**
 those, decides them, and says in as many words what of the general C3.9 it does **not** do.
 
 **Asked by:** the owner, 2026-11-01. **Answered by:** the owner, 2026-11-01 — **every decision of
-D1062–D1074 is answered**: D1062–D1071 as recommended, **D1072 as 0.16.0**, **D1063 amended** by the owner's
-ruling **O1**, and **D1073** and **D1074** added in the same review of this folder. **D1075**, added in the
-round-3 review of this folder, is **recorded and not decided** ([reconciliation.md](reconciliation.md) §3).
+D1062–D1075 is answered**: D1062–D1071 as recommended, **D1072 as 0.16.0**, **D1063 amended** by the owner's
+ruling **O1**, **D1073** and **D1074** added in the same review of this folder, and **D1075**, added in its
+round-3 review, **answered in its round-5 one**: the verifier list is derived from the published project
+policy `fugaro update` already reads ([reconciliation.md](reconciliation.md) §3).
 Answering a decision is not approving a task: nothing here is approved to build.
 **Reconciled against** `origin/main` at `a38cfeec` and the open pull requests of 2026-11-01.
 
@@ -63,7 +64,7 @@ repository rather than about taste:
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The design: the account classes, the two identities and their pairing, the read-only mint, the sign and verify endpoints, the key and its rotation, the threat model, the owner-run live check, the `fugaro update` story, and what the slice does not do |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `origin/main` (**F1–F14**, each Exists, Missing or Conflicts) and the owner decisions **D1062–D1075**, each written to the recommended answer first and with the cost of its alternative: **D1062–D1074 answered** by the owner on 2026-11-01 (D1063 as amended by ruling O1) and **D1075 recorded, not decided**. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `origin/main` (**F1–F14**, each Exists, Missing or Conflicts) and the owner decisions **D1062–D1075**, each written to the recommended answer first and with the cost of its alternative, and **all answered** by the owner on 2026-11-01 (D1063 as amended by ruling O1; D1075 as the published policy's derivation). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks **C3.9a–C3.9g2** (at most 10 files each) with named tests, red steps, SEC flags and gates, the shared-files table, the named live check, and the release slot |
 | [live-check.md](live-check.md) | The live check's **register-shaped** entry — the shape read off Check 190, and §8's eleven steps one line each — so the task that takes the number derives neither. A stub: **NOT RUN**, and the number is the one free at C3.9g2's merge, not this folder's to take |
 
@@ -76,7 +77,7 @@ the fact in words.
 
 | Block | Use |
 | --- | --- |
-| **D1062–D1075** | this work's block: **14 decisions, 13 answered by the owner on 2026-11-01 and one open** — D1062–D1071 as recommended, **D1072** as 0.16.0, **D1063** as amended by the owner's ruling **O1**, **D1073**/**D1074** added in the same review of this folder, and **D1075** added in its round-3 review and **recorded, not decided**. The block was reserved as **D1062–D1075** so that a decision added in review did not collide with another work; **D1075 is the last number of it**. Taken above every number on `main` — whose highest written is **D1061** ([docs/run-limit-carry-over/reconciliation.md](../run-limit-carry-over/reconciliation.md) §3, merged) — and above every open pull request's: #1481 holds D901–D914, #1487 D920–D934, #1488 D940–D959, #1490 D960–D979, #1491/#1492 D980–D1010, #1496 D1011–D1040 and #1472 holds **D880–D899** with **D894 written and answered (a)** and **D895–D899 reserved and unused**. That is the launcher's **2026-11-01 reading**, taken by fetching every open pull request's head and grepping `docs/` for the numbers it writes — the inventory above is the result, and **a merger re-reads it** |
+| **D1062–D1075** | this work's block: **14 decisions, all answered by the owner on 2026-11-01** — D1062–D1071 as recommended, **D1072** as 0.16.0, **D1063** as amended by the owner's ruling **O1**, **D1073**/**D1074** added in the same review of this folder, and **D1075** added in its round-3 review and answered in its round-5 one as the published policy's derivation. The block was reserved as **D1062–D1075** so that a decision added in review did not collide with another work; **D1075 is the last number of it**. Taken above every number on `main` — whose highest written is **D1061** ([docs/run-limit-carry-over/reconciliation.md](../run-limit-carry-over/reconciliation.md) §3, merged) — and above every open pull request's: #1481 holds D901–D914, #1487 D920–D934, #1488 D940–D959, #1490 D960–D979, #1491/#1492 D980–D1010, #1496 D1011–D1040 and #1472 holds **D880–D899** with **D894 written and answered (a)** and **D895–D899 reserved and unused**. That is the launcher's **2026-11-01 reading**, taken by fetching every open pull request's head and grepping `docs/` for the numbers it writes — the inventory above is the result, and **a merger re-reads it** |
 | **Findings** | **F1–F14** are this folder's own and start at F1, the way [docs/cloud-senior-review/](../cloud-senior-review/)'s F1–F27 do; the credentials-service plan's F1–F37 and that folder's are different sets over different trees |
 | **Checks** | **none taken, and the check is named rather than numbered** — the shape [docs/run-limit-carry-over/README.md](../run-limit-carry-over/README.md) chose on 2026-11-01. The register's highest **written** section on `main` is **Check 190**, and open pull requests claim above it (PR #1420 holds **230–235**, 233 withdrawn); the register's own rule is that a claim above the highest written section is settled at its merge and that whichever of two open claims merges second renumbers itself (`docs/gcp-live-checklist.md`). So the task that writes the check takes the number free at **its** merge, and [spec.md](spec.md) §8 writes the steps under a name |
 
@@ -84,8 +85,7 @@ the fact in words.
 
 **At merge**, three things, and a merger who checks only the first has not finished:
 
-1. **Re-check the D-block.** The owner answered D1062–D1074 on 2026-11-01 and **D1075 is open**, so the
-   answers themselves stand;
+1. **Re-check the D-block.** The owner answered D1062–D1075 on 2026-11-01, so the answers themselves stand;
    what a merger re-reads is the **inventory they sit in** — the open pull requests and the merged tree —
    and renumbers to the first free block if it has moved, in every file here that names a number.
 2. **Take the live check's number** ([spec.md](spec.md) §8): the task that writes it takes the number free

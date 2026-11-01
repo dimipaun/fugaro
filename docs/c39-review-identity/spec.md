@@ -793,12 +793,15 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   outside that loop, where an absent or empty value is an **empty verifier list**. An installation that never
   sets the field therefore starts the same service it starts today, with a route that refuses every caller,
   rather than one that refuses to start; Check 96's "the seven names the config builder reads" stays true.
-  **Where that value comes from at `fugaro update` is D1075, recorded and not decided**
-  ([reconciliation.md](reconciliation.md) §3): the recommendation is the **configuration `fugaro update`
-  already holds and publishes as the policy** — the source `internal/infra/tfvars.go`'s `Credentials()`
-  (`:289`) and `CredentialsJobAccounts` (`:343`) already read — so naming verifiers is the publication the
-  owner already makes and not a new act, and the alternative readings — a second, unpublished local
-  configuration, or a value derived from the coordinator's deployment — are stated there with their costs.
+  **Where that value comes from is answered, and it costs the upgrade no operator step** (**D1075**,
+  answered by the owner on 2026-11-01; [reconciliation.md](reconciliation.md) §3): the verifier list is
+  **derived** from the published project policy `fugaro update` already reads — the source
+  `internal/infra/tfvars.go`'s `Credentials()` (`:289`) and `CredentialsJobAccounts` (`:343`) already read —
+  so naming verifiers is the publication the owner already makes and not a new act. Nothing is added to the
+  upgrade for it: no command, no flag and no second local configuration file, and an installation whose
+  published policy names no verifier keeps the variable null and the route unreachable while the service
+  starts as it does today. The two readings the answer rejects — a second, unpublished local configuration,
+  or a value derived from the coordinator's deployment — are stated there with their costs.
 - **An installation already opted in converges with an ordinary `fugaro update`** for everything this
   slice adds to *code*: the classes, the routes, the refusals, the audit purposes. The service's image is
   re-pinned by `fugaro update` already.

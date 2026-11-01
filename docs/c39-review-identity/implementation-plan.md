@@ -11,9 +11,8 @@ task touches at most 10 files, names its tests, starts with a red step, and ends
 
 ## Dependencies
 
-Six things this plan does **not** own. **CSR1, U7 and D1075 are the three that block a task** — CSR1 blocks
-C3.9b, U7 blocks C3.9e (D1074), and D1075 blocks C3.9g1 and C3.9g2 — and the other three are facts the tasks
-are written to, not gates in front of them. **The `CSR` ids are
+Five things this plan does **not** own. **CSR1 and U7 are the two that block a task** — CSR1 blocks C3.9b,
+U7 blocks C3.9e (D1074) — and the other three are facts the tasks are written to. **The `CSR` ids are
 `docs/cloud-senior-review/`'s own task ids**, spelled as that work stream spells them (CSR1–CSR7, with its
 former R4 split into **CSR4a**, the settings posture, and **CSR4b**, the mutation check); this folder cites
 them and renames none of them.
@@ -44,15 +43,6 @@ them and renames none of them.
 - **The coordinator** (`docs/coordinator/`): the verify route is built and its caller class configured
   empty. The component that calls it, and the merge path that acts on a verified verdict, is that work
   stream's, and no task below adds one (X1).
-- **D1075, what writes the verifier list's value** ([reconciliation.md](reconciliation.md) §3, **OPEN**):
-  C3.9g1's field on `CredentialsServiceSpec` (`internal/infra/tfvars.go:180`) and the `Credentials()`
-  writer that fills it (`:289`), and C3.9g2's optional read, cannot be finished without it — the field has
-  to be filled from *something*, and the source is what D1075 asks for. The recommendation is the
-  configuration `fugaro update` already holds and publishes as the project policy, which is why no task
-  here invents a second local format; the answer still belongs to the implementing pull request, because
-  the recommendation costs a **field on a published format** and the field's spelling is that pull
-  request's to settle. The two tasks land with their variable, their read **and** that answer, or they do
-  not land: a `CredentialsServiceSpec` field with no source is the shape this dependency exists to refuse.
 - **Naming a file that other work owns.** `internal/gitprov/github/apptoken.go` (CSR1),
   `internal/infra/projectjobs.go` and the module that deploys the variant (CSR7), and everything under
   `ee/`, `console/`, `mobile/`, `website/`, `plugin/` are **read, not changed** by this plan.
@@ -65,7 +55,7 @@ them and renames none of them.
 | 1 | C3.9b | C3.9a, and **CSR1 merged** (the set it serves) |
 | 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074) |
 | 3 | C3.9f | C3.9a, C3.9c, C3.9e (the frame the verify route recomputes) |
-| 4 | C3.9g1, C3.9g2 | C3.9e, C3.9f **and D1075 answered** (the verifier list's field has to be filled from a named source); the two are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
+| 4 | C3.9g1, C3.9g2 | C3.9e, C3.9f; the two are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
 
 ## Where each decision lands
 
@@ -77,7 +67,7 @@ them and renames none of them.
 | D1065 which token set | C3.9b | D1071 who generates the bytes | C3.9d |
 | D1066 the repository, and the table | C3.9a (the table), C3.9b (the mint's use) | D1072 the release slot | §"Release slot" |
 | D1067 what is signed | C3.9e | D1073 the framed message | C3.9e (built), C3.9f (recomputed) |
-| D1074 one signature per run, and U7 | C3.9e | D1075 the verifier list's value (**open**) | C3.9g1 (the field), C3.9g2 (the wiring) |
+| D1074 one signature per run, and U7 | C3.9e | D1075 the verifier list's value (**answered**: the published policy) | C3.9g1 (the field), C3.9g2 (the wiring) |
 
 ## Where each finding lands
 
@@ -490,7 +480,8 @@ for review size, not for sequencing.
   (`internal/infra/tfvars.go:180`) and `Credentials()` fills it (`:289`) from the configuration it already
   reads the service's other fields from — the source `fugaro update` holds and publishes as the policy, the
   same one `CredentialsJobAccounts` (`:343`) reads the job table from — so the value is not an operator's
-  new act. **D1075 is open** and records exactly this recommendation, with the alternatives' costs.
+  new act. **D1075 is answered** (2026-11-01) as exactly this derivation — the published policy, so **no
+  operator step** — and it records the two rejected readings with their costs.
 - **One allow-list grows by exactly one, and it refuses a name it does not know**:
   `internal/infra/tf/cover.go`'s `credentialsServiceEnv` (`:792`), which is what one `fugaro update`
   confirmation covers and which must name the entry the module can now render.
