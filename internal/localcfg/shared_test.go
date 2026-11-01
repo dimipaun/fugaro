@@ -97,6 +97,9 @@ batch:
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
 update_check: false
+secret_rotation_days: 90
+secret_expires:
+  bitbucket-token: "2027-01-15"
 base_branch: trunk
 repos:
   acme/web: { provider: github, base_branch: main, workflows: [web] }
@@ -121,7 +124,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// batch.service_account is published (it is an installation fact, not the
 	// deprecated build one), so the forbidden word would fail on the block
 	// this file now carries.
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "update_check", "commit_name", "commit_email", "Someone Else", "someone-else@users.noreply.github.com"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "update_check", "commit_name", "commit_email", "Someone Else", "someone-else@users.noreply.github.com", "secret_rotation_days", "secret_expires", "2027-01-15"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -156,6 +159,27 @@ func TestSharedBlanksCommitIdentity(t *testing.T) {
 	}
 	if lc.CommitName == "" || lc.CommitEmail == "" {
 		t.Error("Shared cleared the receiver's own commit identity")
+	}
+}
+
+// TestSharedConfigDropsRotationDays: the operator's own rotation record is
+// local-only, for update_check's reason one credential at a time (D503c).
+// secret_rotation_days is how often the person who holds the provider accounts
+// means to rotate them, and secret_expires is what their own page for a token
+// says: neither is a fact of the installation, and a launcher who could write
+// the shared file would be choosing when every other machine is told its
+// credentials are overdue.
+func TestSharedConfigDropsRotationDays(t *testing.T) {
+	lc := fullLocalConfig(t)
+	if lc.SecretRotationDays == 0 || len(lc.SecretExpires) == 0 {
+		t.Fatalf("the fixture records no rotation period or expiry to drop: %+v", lc)
+	}
+	s := lc.Shared()
+	if s.SecretRotationDays != 0 || s.SecretExpires != nil {
+		t.Errorf("Shared published secret_rotation_days %d and secret_expires %v, want both dropped", s.SecretRotationDays, s.SecretExpires)
+	}
+	if lc.SecretRotationDays == 0 || len(lc.SecretExpires) == 0 {
+		t.Error("Shared cleared the receiver's own rotation record")
 	}
 }
 
