@@ -393,8 +393,8 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 // release out of that reference — credentials.tf's credentials_image_release,
 // which names the Cloud Run container port h2c at and above the release that
 // serves HTTP/2 — stay where they were. The owner is then left with an
-// operator step (re-running `fugaro update --provision-credentials`, the only
-// other path that pins) that the upgrade is not allowed to leave them.
+// operator step (re-running `fugaro update --provision-credentials`, the other
+// path that pins) that the upgrade is not allowed to leave them.
 //
 // It pins through resolveCredentialsImage, the same step the credentials stage
 // pins through: the release's signed "-pinned" image, its signature verified
@@ -425,8 +425,11 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 		return nil
 	}
 	doc, image, err := e.recordedCredentialsImage()
-	if err != nil || doc == nil {
+	if err != nil {
 		return err
+	}
+	if doc == nil { // no credentials_service in the installation's tfvars: nothing opted in
+		return nil
 	}
 	if infra.CredentialsServiceImageRelease(image) == ver {
 		return nil
