@@ -328,6 +328,31 @@ func ProviderRouteVars() map[string]string {
 	}
 }
 
+// EffortVars are the variables that give a Claude stage its reasoning
+// effort: CLAUDE_CODE_EFFORT_LEVEL alone, which beats the --effort flag and
+// the effortLevel settings key and is in turn clamped by a maxEffortLevel in
+// any settings file (docs/multi-model.md, "How the pinned Claude Code takes
+// an effort setting").
+//
+// Nothing is set for a provider stage -- those run with thinking off, so an
+// effort there would look applied and be no-ops (G5, D725) -- and nothing
+// for an absent effort, which already means the model's own default.
+//
+// The value is validated before either of those is decided: it comes from
+// the launcher's task field, and Claude Code is no gate at all -- the flag
+// warns and sends the default, the variable and the settings key are dropped
+// in silence -- so Fugaro refusing a value outside the closed set is the
+// only refusal there is.
+func EffortVars(effort string, provider bool) (map[string]string, error) {
+	if effort != "" && !config.ValidEffort(effort) {
+		return nil, fmt.Errorf("effort %q must be one of %s", effort, strings.Join(config.Efforts, ", "))
+	}
+	if provider || effort == "" {
+		return map[string]string{}, nil
+	}
+	return map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": effort}, nil
+}
+
 // PinVars are a stage's pins (design §2.1): the model for Claude Code's
 // opus, sonnet and subagent roles (when set), the background model for its
 // haiku role (when set), and the output limit per call (when > 0). Each is
