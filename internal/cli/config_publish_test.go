@@ -731,3 +731,32 @@ func TestFanOutStopsWithoutClaimingARaceOnAReadError(t *testing.T) {
 		t.Fatalf("a copy was written despite the unconfirmed layer: %v", rerr)
 	}
 }
+
+// localLayerPath is the conventional local layer file of the fixture's
+// project: the project's own name under the config home's projects/
+// directory, beside its project config.
+func localLayerPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", "aurora-layer.yaml")
+}
+
+// TestConfigPublishWithNoFilePublishesTheLocalLayer: the FILE argument
+// defaults to the one conventional local layer file (D830), so the explicit
+// door and the update stage publish the same bytes from the same path.
+func TestConfigPublishWithNoFilePublishesTheLocalLayer(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, "")
+	noAgentSession(t)
+	path := localLayerPath(t)
+	if err := os.WriteFile(path, []byte(testProjectLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "config", "publish", "--executable-changes")
+	if err != nil || !strings.Contains(out, "published the project layer of aurora") {
+		t.Fatalf("publishing without FILE: %v\n%s", err, out)
+	}
+	if bucketText(t, f, config.LayerKey) != testProjectLayer {
+		t.Fatal("the local layer file was not what was published")
+	}
+}
