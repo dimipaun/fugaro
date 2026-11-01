@@ -52,7 +52,7 @@ steps:
 
 | Name | Behaviour | Use when |
 |---|---|---|
-| `default` | Today's loop. A first-line review only when `agent.first_line_review` turns it on (`auto`, the default for that key, turns it on when a provider serves the coder and none serves the reviewer), for `agent.first_line_rounds` rounds, then the senior review for `agent.review_rounds` rounds. | The implicit choice: an unconfigured repository keeps its behaviour. |
+| `default` | Today's loop. A first-line review only when `agent.first_line_review` turns it on (`auto`, the default for that key, turns it on when a provider serves the coder and none serves the reviewer), for `agent.first_line_rounds` rounds, then the senior review for `agent.review_rounds` rounds. | The implicit choice: what runs when nothing else names a recipe. Its rounds are not fixed: a repository that sets neither round knob runs the rigor mode's own row (section 4), so an unconfigured repository, which resolves `pro`, runs 3/3 where it used to run 1/2, and the same recipe takes more stages. |
 | `solo` | `roles: { reviewer: coder }`; `review: {}`. | Small, low-risk changes confined to one or two files, where a second model's review would cost more than it finds. |
 | `standard` | `first_line: {}`; `review: { bounce: first_line }`. | Typical feature or bug-fix work that needs a real review. Choose it when nothing more specific fits. |
 | `premium` | `roles: { coder: reviewer } `; `review: {}`. No cheap stage. | High-stakes or subtle work (concurrency, security, data migrations) where a cheap model's attempt is likely to waste the review. |
@@ -132,7 +132,7 @@ Launch it with `fugaro run --recipe sizzle --attach screenshot.png`, which uploa
 
 ## 4. Loop knobs stay outside the recipe
 
-`agent.first_line_rounds` (1 to 3, the cheap rounds) and `agent.review_rounds` (1 to 10, the senior rounds; with `bounce`, the number of bounce-backs is `review_rounds - 1`) are the knobs a recipe's own `max_rounds` overrides, never the other way around (section 1). The catalog recipes above set no `max_rounds` (`review-only` and `pick` excepted, which `mode: review` pins to 1, and `run-digest`, whose one review round is the report run's own shape rather than a knob), so tuning the loop in `fugaro.yaml` or the project layer keeps you on a built-in recipe. A custom recipe can still pin its own rounds.
+`agent.first_line_rounds` (1 to 3, the cheap rounds) and `agent.review_rounds` (1 to 10, the senior rounds; with `bounce`, the number of bounce-backs is `review_rounds - 1`) are the knobs a recipe's own `max_rounds` overrides, never the other way around (section 1). Leaving one out, or writing 0, runs the rigor mode's own row instead of a fixed pair (0.15.0): poc 1/1, startup 2/2, pro 3/3, critical 3/5, hotfix 1/1. A repository that sets neither knob and configures no mode therefore runs pro's 3/3, where it ran 1/2 before — set both keys, or a `defaults.rigor.default` in the project layer, to pin what a repository runs. The catalog recipes above set no `max_rounds` (`review-only` and `pick` excepted, which `mode: review` pins to 1, and `run-digest`, whose one review round is the report run's own shape rather than a knob), so tuning the loop in `fugaro.yaml` or the project layer keeps you on a built-in recipe. A custom recipe can still pin its own rounds.
 
 ## 5. Choosing a recipe
 
