@@ -130,3 +130,40 @@ func TestDefaultRecipeUnchangedForAClaudeOnlyRepository(t *testing.T) {
 		t.Fatalf("Critical plan = %+v, want %+v", got, want)
 	}
 }
+
+// TestTheOperatorsTwoRemediesGiveTheOldLoop: the two ways an operator keeps
+// the loop a repository ran before 0.15.0, pinned here because the release
+// note names them and a named remedy has to be the one that works. A
+// repository (or project) recipe named `default` is taken as written, so one
+// listing `first_line: {}` and `review: {}` is the old two-level loop at every
+// mode — and, since a written `first_line` always runs, the same file with
+// `review: {}` alone is the old loop for a repository whose coder is Claude's,
+// where the derived default's first line was off anyway. The round knobs are
+// the other half: they pin the pre-0.15.0 1/2 pair, which is all they ever
+// did — level 3's rounds are the mode's own row or the step's max_rounds, and
+// no knob reaches them (L1.3/L4.4 add one).
+func TestTheOperatorsTwoRemediesGiveTheOldLoop(t *testing.T) {
+	t.Run("a repository default with no adversarial step", func(t *testing.T) {
+		repoDefault := parseRecipe(t, "version: 1\nname: default\nsteps:\n  - first_line: {}\n  - review: {}\n")
+		a, providers := providerCoderAgent()
+		got := planOf(repoDefault, false, a, providers, nil, rigor.Critical)
+		want := []recipe.StepKind{recipe.StepFirstLine, recipe.StepReview}
+		if kinds := planKinds(got); !slices.Equal(kinds, want) {
+			t.Fatalf("plan = %v, want %v", kinds, want)
+		}
+	})
+
+	t.Run("the round knobs pin the old pair", func(t *testing.T) {
+		knobs := parseRecipe(t, "version: 1\nname: knobs\nsteps:\n  - first_line: {}\n  - review: {}\n")
+		a, providers := providerCoderAgent()
+		a.FirstLineRounds, a.ReviewRounds = 1, 2
+		got := planOf(knobs, false, a, providers, nil, rigor.Critical)
+		want := []planStep{
+			{Kind: recipe.StepFirstLine, Rounds: 1, Precedence: 1},
+			{Kind: recipe.StepReview, Rounds: 2, Precedence: 2, FirstRounds: 1},
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("plan = %+v, want %+v", got, want)
+		}
+	})
+}
