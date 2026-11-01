@@ -81,7 +81,14 @@ agent:
     background: claude-haiku-4-5      # optional: with a provider coder it defaults to the coder's model
   first_line_review: auto             # auto | on | off
   first_line_rounds: 1                # 1 to 3
+  levels:                             # each review level's own settings
+    l1: { model: claude-haiku-4-5 }   # the first line; without it, the coder's own model
+    l2: { effort: high }              # the senior round
+    l3: { model: claude-opus-5-5 }    # the adversarial round
+  adversarial_rounds: 3               # review level 3's rounds, 1 to 10
 ```
+
+`agent.levels` is the per-level block: `l1` is the first line of review, `l2` the senior round and `l3` the adversarial one, and each level takes the same four keys — `model`, `effort` (`low`, `medium`, `high`, `xhigh`, `max`), `focus` (what the reviewer is asked to look at, up to 500 bytes) and `none: true`, which turns the level off and is refused beside any other key, since a level that does not run has no settings. A level left out keeps what its layer already resolves — `l1` on the coder's model, `l2` and `l3` on `agent.models.reviewer` — and the project layer sets the same block under `defaults.agent.levels` for every repository of the project. The two layers merge **key by key**, not block by block: a repository that writes `l2: { model: ... }` keeps the project's `l1` and its `l3: { none: true }`. `none` is the one key that is not merged that way — a level that is off has no other keys — so `none: true` **replaces** the level the layer below set rather than merging into it, and a level that writes any other key turns the project's `none` back on: a repository can turn a project's level off, and one the project turned off back on. `agent.adversarial_rounds` is the one round knob of level 3 — 1 to 10, and unset means the resolved rigor mode's own senior row decides (poc and hotfix 1, startup 2, pro 3, critical 5), which is why no value is written into a config that does not name it. The block and the key both need Fugaro 0.16.0.
 
 The catalog recipes `standard` (a first-line loop by the coder's model, then one senior round) and `solo` (the coder's model also reviews) package the common shapes; see [recipes.md](recipes.md).
 
