@@ -2449,6 +2449,122 @@ func TestProjectLayerSchemaArtifactKeys(t *testing.T) {
 	}
 }
 
+// TestSchemasReviewLevelsMatchDecoder is the corpus for L1.3's per-level review
+// block and its round count, over both surfaces one file passes: the strict
+// decoder a run uses and the published schema an editor or a repository's CI
+// checks against. Every block below is written twice — under agent: in a
+// repository's file and under defaults.agent: in a project layer — and each
+// side must accept or refuse it exactly as the decoder does; a schema that has
+// lost the `levels` property (its agent object is closed) or a decoder that has
+// lost a rule is a file one surface takes and the other refuses, which is the
+// gap TestProjectLayerSchemaArtifactKeys exists for on the keys this release
+// adds. The whole-block sample is what catches `levels` deleted from
+// fugaro.schema.json: without the property the schema refuses a file that
+// carries the block, while the decoder takes it.
+func TestSchemasReviewLevelsMatchDecoder(t *testing.T) {
+	repoSchema := compile(t, "fugaro.schema.json")
+	layerSchema := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	const repoHead = head + "git: { provider: github }\nworkflows:\n  default:\n    commands: { build: make, test: make test }\n"
+	anchor := config.LayerAnchor{Project: "acme", GCPProject: "acme-fugaro"}
+	repoProblems := func(s string) []config.Problem { _, ps := config.Parse([]byte(s)); return ps }
+	layerProblems := func(s string) []config.Problem { _, ps := config.ParseProjectLayer([]byte(s), anchor); return ps }
+	check := func(t *testing.T, text string, ok bool, sch *jsonschema.Schema, decode func(string) []config.Problem) {
+		t.Helper()
+		ps := decode(text)
+		if got := len(ps) == 0; got != ok {
+			t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", got, ok, ps)
+		}
+		if got := sch.Validate(yamlInstance(t, []byte(text))) == nil; got != ok {
+			t.Errorf("the schema accepted = %v, want %v: the schema and the decoder disagree", got, ok)
+		}
+	}
+	// The block is written under defaults.agent: in a project layer, so the
+	// repository's own text is indented by the two spaces defaults: adds.
+	atLayer := func(block string) string {
+		var b strings.Builder
+		for _, line := range strings.Split(strings.TrimSuffix(block, "\n"), "\n") {
+			b.WriteString("  " + line + "\n")
+		}
+		return b.String()
+	}
+	for _, tc := range []struct {
+		name, block string
+		ok          bool
+	}{
+		{
+			"the whole block",
+			"agent:\n  levels:\n    l1: { model: claude-haiku-4-5 }\n    l2: { effort: high, focus: the public API and its callers }\n    l3: { model: claude-opus-5-5, effort: xhigh }\n  adversarial_rounds: 4\n",
+			true,
+		},
+		{"no block", "", true},
+		{"a level that is off", "agent:\n  levels:\n    l3: { none: true }\n", true},
+		{"a level that is off beside a round count", "agent:\n  levels:\n    l3: { none: true }\n  adversarial_rounds: 5\n", true},
+		{"a level that is not a mapping", "agent:\n  levels:\n    l1: claude-haiku-4-5\n", false},
+		{"a fourth level", "agent:\n  levels:\n    l4: { model: claude-opus-5-5 }\n", false},
+		{"an unknown key in a level", "agent:\n  levels:\n    l2: { rounds: 2 }\n", false},
+		{"an effort outside the five", "agent:\n  levels:\n    l3: { effort: auto }\n", false},
+		{"a focus over the bound", "agent:\n  levels:\n    l1: { focus: " + strings.Repeat("a", 501) + " }\n", false},
+		{"a round count over the bound", "agent: { adversarial_rounds: 11 }\n", false},
+		{"a negative round count", "agent: { adversarial_rounds: -1 }\n", false},
+		{"a round count that is not a number", "agent: { adversarial_rounds: two }\n", false},
+	} {
+		t.Run("repo/"+tc.name, func(t *testing.T) {
+			check(t, repoHead+tc.block, tc.ok, repoSchema, repoProblems)
+		})
+		t.Run("layer/"+tc.name, func(t *testing.T) {
+			text := head
+			if tc.block != "" {
+				text += "defaults:\n" + atLayer(tc.block)
+			}
+			check(t, text, tc.ok, layerSchema, layerProblems)
+		})
+	}
+
+	// Two asymmetries, pinned as the facts they are rather than left unsampled.
+	//
+	// The layer schema is the stricter side for a round count of 0, which the
+	// layer's own decoder reads as unset (validateLayer's != 0 rule, the rule
+	// defaults.agent.review_rounds has too): the schema's minimum of 1 mirrors
+	// review_rounds', and a project layer writing the key as 0 says nothing a
+	// project layer has to say.
+	// A repository's own file admits 0, as its decoder does: 0 is unset, and a
+	// written 0 is how a repository replaces a number the project layer set
+	// (a layer's scalars replace whole).
+	{
+		check(t, repoHead+"agent: { adversarial_rounds: 0 }\n", true, repoSchema, repoProblems)
+		text := head + "defaults:\n  agent: { adversarial_rounds: 0 }\n"
+		if ps := layerProblems(text); len(ps) != 0 {
+			t.Errorf("the decoder refused defaults.agent.adversarial_rounds: 0: %v", ps)
+		}
+		if err := layerSchema.Validate(yamlInstance(t, []byte(text))); err == nil {
+			t.Error("the layer schema accepted defaults.agent.adversarial_rounds: 0, and it is the stricter side here")
+		}
+	}
+	//
+	// The schema is the looser side for `none: true` beside another key, which
+	// config.ReviewLevels.Validate refuses at both paths — a level that is off
+	// has no settings — and which $defs.level says in its own description that
+	// it cannot express.
+	for _, tc := range []struct {
+		name, text string
+		sch        *jsonschema.Schema
+		decode     func(string) []config.Problem
+	}{
+		{"repo", repoHead + "agent:\n  levels:\n    l2: { none: true, model: claude-opus-5-5 }\n", repoSchema, repoProblems},
+		{"layer", head + "defaults:\n  agent:\n    levels:\n      l2: { none: true, model: claude-opus-5-5 }\n", layerSchema, layerProblems},
+	} {
+		t.Run("schema looser/"+tc.name, func(t *testing.T) {
+			if ps := tc.decode(tc.text); len(ps) == 0 {
+				t.Error("the decoder accepted none: true beside another key")
+			}
+			if err := tc.sch.Validate(yamlInstance(t, []byte(tc.text))); err != nil {
+				t.Errorf("the schema refused it, and it is the looser side here: %v", err)
+			}
+		})
+	}
+}
+
 // TestInputCapCeilingsAgreeWithGo ties both schemas' inputs bounds to the Go
 // ceilings they mirror (config.MaxInputFiles, MaxInputBytes and
 // MaxInputTotalBytes, applied by validateInputs): the numbers are separate
