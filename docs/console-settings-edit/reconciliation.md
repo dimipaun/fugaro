@@ -127,7 +127,7 @@ commit, not in a console task.
 **F10: Missing. Nothing in `settings --json` says which rows are writable, or by whom.** The
 registry's `Owner` and the allow-list of F7 are **CLI-side facts with no reader outside
 `internal/cli`**: `settingsJSON` (F8) has no `owner`, no `writable`, no `layers` and no
-`target_layer`. `settingsWriteRow` (**S5 #1525** `settings_set.go:239`) prints "X is written by
+`target_layer`. `settingsWriteRow` (**S5 #1525** `internal/cli/settings_set.go:239`) prints "X is written by
 `fugaro rigor set`, not by the generic path" — a sentence on a **refusal**, reachable only by asking
 the CLI to write something it will not write. *Consequence:* **the console cannot draw the pencil
 from the CLI's output as S5 stands.** Either it keeps a copy of `settingsGenericKeys` (which the
@@ -136,9 +136,10 @@ or the read grows the field. **D1102**, and prerequisite **P2**.
 
 **F11: Missing. `settings set|unset` has no machine-readable output, no dry run, and no
 classification.** The flags are `--layer`, `--repo`, `--yes`, `--add` and `--remove` and nothing else
-(`newSettingsSetCmd`, **S5 #1525** `settings_set.go:161`; `newSettingsUnsetCmd`, `:202`). Widening is
-decided inside `settingsTypedWrite` (**S5 #1525** `settings_set.go:633`) — via `settingsCeilingKey`
-(`:503`), `settingsLoosens` (`:592`) and `settingsListSubset` (`:615`) — and is **never printed as a
+(`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:161`; `newSettingsUnsetCmd`, `:202`). Widening is
+decided inside `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:633`) — via `settingsCeilingKey`
+(`internal/cli/settings_set.go:503`), `settingsLoosens` (`:592`) and `settingsListSubset` (`:615`)
+— and is **never printed as a
 field**; it becomes a prompt. The only outputs are prose on stdout and `userErr`'s exit code.
 *Consequence:* the console cannot ask "is this a widening?" and must not re-derive it — the
 classification rules are S5's, and a copy in TypeScript is a second answer that will drift the day
@@ -150,23 +151,23 @@ has are `--repo`, `--all-repos`, `--layer`, `--grep`, `--changed`, `--why`, `--o
 (`settingsOptions`, `:21`). Both the read and the write build a `localcfg.SelectInput` with
 **`Project`, `Config` and `Checkout` all empty** (`readSettings`, **S5 #1525**
 `internal/cli/settings_read.go:146`, whose `SelectInput` is at `:148`; `settingsSelection`,
-**S5 #1525** `settings_set.go:273`) — so `localcfg.Select`
+**S5 #1525** `internal/cli/settings_set.go:273`) — so `localcfg.Select`
 (`internal/localcfg/select.go:104`) reaches step 6, "exactly one project config", with steps 1–5 all
 unavailable. The console's child carries no `FUGARO_PROJECT` and no `FUGARO_CONFIG` (F4) and its
 working directory is the installation's checkout (`createBoundSource`, cited in `ipc.ts`'s
-`plan.status` comment at `:587`), which `Select` would consult at step 3 **only if `Checkout` were
+`plan.status` comment at `console/src/main/ipc.ts:587`), which `Select` would consult at step 3 **only if `Checkout` were
 filled — and it is not**. *Consequence, and it is the largest finding here:* on a machine with the
 owner's two installations, **every** `fugaro settings` argv the console could spawn is refused with
 "the projects are: …", and on a machine with one it silently reads whichever installation is the only
 one. **No console task in this plan can start before P1 lands.** The other allow-listed rows do not
-have this problem because `addCloudFlags` (`internal/cli/cloud.go:53`) gives them `--project` and
+have this problem because `addCloudFlags` (`internal/cli/cloud.go:51`) gives them `--project` and
 `--config` and §3.4 rule 3 makes the console pass both.
 
 **F13: Missing. `settings set` prints no document, so a write has no decoded result.** The read has
 `--json`; the write has prose and an exit code. *Consequence:* the console's result handling for an
 edit is "exit code plus the CLI's own sentence" unless **P3** gives the write a small result document.
 **D1106** recommends one, because a refusal the console must show verbatim is exactly the case
-`MAX_REPLY_REASON_LENGTH` (`ipc.ts:139`) already bounds.
+`MAX_REPLY_REASON_LENGTH` (`console/src/main/ipc.ts:150`) already bounds.
 
 **F14: Exists. The compare-and-swap refusal, and its sentence.** `applySettingsEdit` re-reads the file
 through `readSettingsCurrent` and refuses with "`%s` changed since it was read: nothing was written;
@@ -265,12 +266,12 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   on the child's stdin. *Recommendation:* **(a)**. The reason is the one rule 11 already gives for
   `--title=` and `--plan-task=`: **a value that follows `=` is part of the flag's own word, and
   nothing that follows can be read as a flag** — but `VALUE` is a **positional** argument here
-  (`Use: "set KEY VALUE"`, **S5 #1525** `settings_set.go:163`), so there is no `=` to hide behind and
+  (`Use: "set KEY VALUE"`, **S5 #1525** `internal/cli/settings_set.go:163`), so there is no `=` to hide behind and
   the terminator is the equivalent. `settings set commit_name --layer local --yes -- -draft` sets the
   name `-draft`; without the `--`, pflag reads `-draft` as an unknown shorthand and the edit fails —
   or worse, a value spelled `--layer` silently retargets the write. **(b)** is the form this row must
   never build. **(c)** is refused because S5 reads stdin for its confirmation, not for its value
-  (`confirmSettingsWrite`, **S5 #1525** `settings_write.go:151`), so a value on stdin would have to
+  (`confirmSettingsWrite`, **S5 #1525** `internal/cli/settings_write.go:151`), so a value on stdin would have to
   arrive before the confirmation that the console has not shown yet. *Every word is a fixed literal
   of the console's own, and the value is passed as an array element with `shell: false`* — the
   property `argvFor` (`console/src/main/spawn.ts:980`) already guarantees and
@@ -282,7 +283,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1105 (OPEN, recommended: the console passes `--layer` explicitly, and only after the CLI named
   it). Which layer does a pencil write, and who chooses?** *Options:* **(a)** the console passes no
   `--layer` and lets S5 pick the narrowest layer the key may be set in (`settingsDefaultLayer`,
-  **S5 #1525** `settings_set.go:263`); **(b)** the console passes `--layer` explicitly, from the
+  **S5 #1525** `internal/cli/settings_set.go:263`); **(b)** the console passes `--layer` explicitly, from the
   `target_layer` field **D1102(a)** adds, and shows it in the window; **(c)** the console offers the
   operator a layer chooser. *Recommendation:* **(b)**, because rule 11's whole property is that **what
   the window shows is what is spawned** — a window that says "written to the local config" while the
@@ -299,8 +300,8 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   widening from the registry's key list and the old/new values; **(c)** the console performs the write
   and reads the CLI's prompt behaviour from the exit code. *Recommendation:* **(a)**. **(b)** is the
   option the brief forbids and the one that is wrong on the merits: widening is
-  `settingsCeilingKey` (`:503`) **and** `settingsLoosens` (`:592`) **and** `settingsListSubset`
-  (`:615`) **and** `settingsTypedWrite` (`:633`), including the deliberate "a form this Fugaro does
+  `settingsCeilingKey` (`internal/cli/settings_set.go:503`) **and** `settingsLoosens` (`:592`) **and**
+  `settingsListSubset` (`:615`) **and** `settingsTypedWrite` (`:633`), including the deliberate "a form this Fugaro does
   not know how to compare is treated as a loosening" rule — a TypeScript re-implementation would
   answer *narrowing* where the CLI answers *widening*, which is the one direction that must never be
   got wrong. **(c)** is refused because a widening's failure mode is a refusal **after** the operator
@@ -315,7 +316,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1107 (OPEN, recommended: option A, and it is a deliberate weakening of D846 on one path). S5's
   widening path needs the project's name typed at a terminal, and the console has no terminal. What
   happens to a widening?** *The problem, stated plainly:* `settingsTypedWrite` (**S5 #1525**
-  `settings_set.go:633`) marks a loosened ceiling, a removed ceiling and a `followup.*` key turned on
+  `internal/cli/settings_set.go:633`) marks a loosened ceiling, a removed ceiling and a `followup.*` key turned on
   as the typed form; `applySettingsEdit` then calls `confirmTypedStrict`
   (`internal/cli/budget.go:239`), which requires a terminal (`stdinIsTerminal`) and compares the typed
   line against the project's name, and which **no flag answers** — `--yes` is not consulted on that
@@ -398,7 +399,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   *Recommendation:* **(a)**. It is the settings design's own SD18 answer ("anyone may edit their own
   file; the boundary stays IAM at publish") applied to a second surface, and it invents nothing: a
   permission refusal is the CLI's own sentence, shown verbatim and bounded
-  (`MAX_REPLY_REASON_LENGTH`, `ipc.ts:150`), with the section marked `unavailable` — never a
+  (`MAX_REPLY_REASON_LENGTH`, `console/src/main/ipc.ts:150`), with the section marked `unavailable` — never a
   console-authored "you are not an administrator", which would be a role claim the console cannot
   make. **(b)** is refused because a role the console invents is a role the CLI does not enforce, and
   **(c)** refuses the owner's ask. *Cost of (a):* the console's "administrator" is a word in the
@@ -409,7 +410,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   every one of them is read, never decided:
   1. **A row the generic path does not own** — `writable: false` in the read (D1102) — is drawn with
      **no pencil**, and the row says which command owns it, from `owner`: S5's own family names
-     (`settingsFamilyCommands`, **S5 #1525** `settings_set.go:39`, whose values are `fugaro models`,
+     (`settingsFamilyCommands`, **S5 #1525** `internal/cli/settings_set.go:39`, whose values are `fugaro models`,
      `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`).
      A row with `writable: false` and an empty `owner` says the generic path does not write it and
      names nothing, which is the honest answer for an installation-plumbing key.
@@ -460,7 +461,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   `budget.show` would spawn the wrong command. **(b)** is refused because the read is a section that
   runs on tab open and the write is a confirmed window — two different lifetimes, and an operation
   that both reads and writes cannot be reasoned about from its schema. *What moves, in one commit per
-  operation:* `CONSOLE_OPERATIONS` (`ipc.ts:417`) gains the entry; the rule 5 count goes **24 → 26**
+  operation:* `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:417`) gains the entry; the rule 5 count goes **24 → 26**
   (the design paragraph's own number, which the plan's C1 and C3 each move once); `NEVER_REACHABLE`
   (`:1051`) is unchanged for the read and **loses nothing** for the write — no row moves, because
   `settings` is not on the never table today and the two rows are new entries on rule 6's allow-list
@@ -468,7 +469,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   fixed words `--json`, `--yes`, `--dry-run` and `--layer` are the rows' own `words`, and `--layer`
   is the one to argue about below); the preload's written-out list gains the two methods
   (`console/src/preload/index.ts`, whose duplication is closed by
-  `console/test/unit/ipc.test.ts`); and `argvFor`'s table (`spawn.ts:980`) gains the two rows with
+  `console/test/unit/ipc.test.ts`); and `argvFor`'s table (`console/src/main/spawn.ts:980`) gains the two rows with
   `takesProject: true`. *The one flag that needs care:* **`--layer`.** It is a fixed word of the
   write's row only in the sense that its **value** varies with the row — so it is either (i) an
   argument of the operation whose value the main process computes from the row it already validated,
@@ -483,7 +484,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 
 - **D1115 (OPEN, recommended: one confirmer, two views — not a second window module). How is the
   confirmation window built?** *Options:* **(a)** generalize `confirm.ts` so that the window is one
-  implementation and the view is a union — `ConfirmView` (the launch, `launch.ts:291`) and a new
+  implementation and the view is a union — `ConfirmView` (the launch, `console/src/main/launch.ts:291`) and a new
   `SettingsConfirmView` — with `LaunchConfirmer`'s seam generalized to a confirmer that takes either
   view; **(b)** a second module `settingsconfirm.ts` copying `confirm.ts`; **(c)** reuse the launch
   window unchanged, passing a settings-shaped payload through `ConfirmView`. *Recommendation:* **(a)**.
@@ -515,7 +516,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   mid-write **never draws on the new tab**: the window is the main process's and is closed as a cancel
   when the tab is left or the installation changes, which is rule 11's own "an installation removed or
   re-chosen while the window is open closes the window as a cancel" applied to the second write —
-  `LaunchConfirmer.close(runId)` (`launch.ts:354`) is the seam, and the settings confirmer needs the
+  `LaunchConfirmer.close(runId)` (`console/src/main/launch.ts:354`) is the seam, and the settings confirmer needs the
   same one. The section's own cache is `section.ts`'s (`resultCache`), stamped `as of HH:MM`, and a
   view older than `CACHE_FRESH_MS` is drawn **and** re-read.
 
@@ -526,8 +527,10 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   window's content, built from a fixture dry-run document, asserting the six fields, the absence of a
   sensitive row, and the widening shape (Cancel default, Confirm disabled until the tick); **(c)** an
   e2e spec over the **existing** fake CLI (`console/test/fixtures/bin/fugaro`, F16), whose stub gains
-  a `settings --json --project P` arm and a `settings set|unset` arm that records its argv to a file
-  the spec reads — so the test proves the console spawned the vector it showed; **(d)** the two
+  a `settings --json --project P` arm and a `settings set|unset` arm that appends its argv to the
+  **same `reads.log`** the stub already writes beside itself (its own `log` helper, a `printf` per
+  answer) — so the spec waits on the file it already waits on, and the test proves the console
+  spawned the vector it showed; **(d)** the two
   allow-list tests (`console/test/unit/ipc.test.ts`, `spawn.test.ts`) move with the operations and the
   count. *The goldens:* `console/test/e2e/__screenshots__/projects/{light,dark}-<platform>.png`
   change, because the tab gains a section. **They are re-recorded by the coordinator on the owner's
@@ -569,7 +572,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 ## 5. UNVERIFIED
 
 - **U1. Whether `--` before the value works with S5's parser as written.** `settings set` is
-  `cobra.ArbitraryArgs` with `RunE` reading `args[0]`/`args[1]` (**S5 #1525** `settings_set.go:178`),
+  `cobra.ArbitraryArgs` with `RunE` reading `args[0]`/`args[1]` (**S5 #1525** `internal/cli/settings_set.go:178`),
   and pflag terminates flag parsing at `--`, so `set KEY --layer local --yes -- -draft` should give
   `args = [KEY, -draft]`. **Not measured here** — this design adds no test and runs no command — and
   **P3's task measures it and, if it does not hold, changes S5's parser to `Flags().SetInterspersed(false)`
@@ -577,7 +580,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   construction rather than by pflag's default.
 - **U2. Whether a second `BrowserWindow` for a settings confirmation can be opened while a launch
   confirmation is open.** Rule 11 rate-limits launch windows (`CONFIRM_RATE_WINDOW_MS`,
-  `CONFIRM_RATE_PER_INSTALLATION`, `CONFIRM_RATE_APP`, `launch.ts:60`). This design assumes the
+  `CONFIRM_RATE_PER_INSTALLATION`, `CONFIRM_RATE_APP`, `console/src/main/launch.ts:60`). This design assumes the
   settings window is a **separate confirmer with its own in-flight bound of one per installation** and
   that the two do not share a rate bucket; **no test here shows it**, and C3's task asserts the
   behaviour rather than assuming it.

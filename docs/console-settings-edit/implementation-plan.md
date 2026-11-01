@@ -316,8 +316,9 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 ### C4. The hermetic end to end, and the fixture (D1118). **size M**
 
 - **Files:** `console/test/fixtures/bin/fugaro` (two arms: `settings --json` answering a fixture
-  document, and `settings set|unset` **recording its argv to a file under the test's temp dir** and
-  answering P3's dry-run document for the first call and a success sentence for the second),
+  document, and `settings set|unset` answering P3's dry-run document for the first call and a success
+  sentence for the second, **appending its argv to the same `reads.log` the stub already writes**
+  through its own `log` helper),
   `console/test/e2e/projects.spec.ts` (the pencil, the dialog, the widening's tick, the refusal),
   `console/test/fixtures/settings.json` (new, with its `.license`), `console/test/unit/fixture.test.ts`
   and `console/test/unit/stub.test.ts` (the stub's own pins), `console/test/unit/goldens.test.ts`
