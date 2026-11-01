@@ -1174,14 +1174,16 @@ export function argvFor(
  * ever printed -- because this one is about the id the *console* makes. */
 const RUN_ID_ARGUMENT_RE = /^\d{8}-\d{6}-[0-9a-f]{4}$/
 
-/** RUN_LAUNCH_OPERATION is the one row whose argv may carry a word that is not
- * on `SPAWN_FLAGS` verbatim: the launch's two `=`-form flags (below). */
+/** RUN_LAUNCH_OPERATION is the launch, and the first of the two rows whose argv
+ * may carry a word that is not on `SPAWN_FLAGS` verbatim: its two `=`-form
+ * flags, which `EQUALS_FORM_FLAGS` (below) is the table of. */
 const RUN_LAUNCH_OPERATION = 'run.launch'
 
 /** RUN_LAUNCH_EQUALS_FLAGS are the two prefixes `assertArgvFlags` admits for
  * that row and no other. They are `spawn.ts`'s own spelling of the two words
- * rule 11 fixes, and the design names this exact list: "the `--title=` and
- * `--plan-task=` prefixes, for the `run.launch` row alone". */
+ * rule 11 fixes, and the design states the same bound in rule 11's words: each
+ * row gets exactly the `=`-form prefixes its own table declares, and no row
+ * gets another's. */
 export const RUN_LAUNCH_EQUALS_FLAGS: readonly string[] = Object.freeze(['--title=', '--plan-task='])
 
 /** RUNS_LIST_EQUALS_FLAGS are `runs.list`'s two `=`-form prefixes: the page and

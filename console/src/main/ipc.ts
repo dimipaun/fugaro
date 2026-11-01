@@ -196,7 +196,7 @@ export const REPORT_MAX_WEEKS = 522
  * from here, and **it is the console's own bound rather than the CLI's**: the
  * command takes any count `strconv.Atoi` reads up to int, and a page exists
  * because reading and holding a whole window is what the job list was built to
- * avoid (the console coordinator-v2 plan's D818, and the F5 finding behind it).
+ * avoid (the console coordinator-v2 reconciliation's D818 and its F5 behind it).
  * A renderer that could ask for more than this could ask for the window by
  * another name -- `runs ls --since 0` is one argv and no page at all -- so the
  * ceiling is stated once, here, and both the schema and the argv builder read
