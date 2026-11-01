@@ -104,6 +104,7 @@ import type {
   SpendReader,
 } from './screens/spend'
 import { CACHE_FRESH_MS, CACHE_LIMIT, cacheKey, renderStamp, resultCache, sectionRead } from './section'
+import { SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE } from './skeleton'
 import { buildCoordinatorModel, renderCoordinator } from './screens/coordinator'
 import { buildProjectsModel, renderProjects } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
@@ -3550,15 +3551,31 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * It puts the busy mark on every section whose read is still out, which is
      * the only moment those marks can be drawn: the panel held the tab's
      * placeholder until now, and the sections did not exist.
+     *
+     * **The mark of a pending section carries that section's skeleton**, and it
+     * is what keeps the placeholder's promise across the swap: the first read to
+     * land replaces the panel with this shell, and the section still out shows
+     * the shape it will take rather than a mark over nothing. That is also why
+     * the section that just landed gets no mark here -- its own fill replaces
+     * the slot's contents in this same turn, and it is `paintCaps` and
+     * `paintReport` that decide that, not this.
      */
     const mount = (): DrawnSpendFrame => {
       if (frame !== null) return frame
       const drawn = renderSpendFrame(factory, theme)
       frame = drawn
       replace(drawn.root)
-      if (capsPending) spendCapsRead.mark(capsToken, drawn.caps, drawn.capsSlot, SPEND_CAPS_BUSY)
+      if (capsPending) {
+        spendCapsRead.mark(capsToken, drawn.caps, drawn.capsSlot, SPEND_CAPS_BUSY, SPEND_CAPS_SHAPE)
+      }
       if (reportPending) {
-        spendReportRead.mark(reportToken, drawn.report, drawn.reportSlot, spendBusyLabel(controls))
+        spendReportRead.mark(
+          reportToken,
+          drawn.report,
+          drawn.reportSlot,
+          spendBusyLabel(controls),
+          SPEND_REPORT_SHAPE,
+        )
       }
       return drawn
     }
