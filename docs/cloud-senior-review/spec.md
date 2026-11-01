@@ -845,8 +845,9 @@ in that environment for the scrub to remove** — the environment route is close
 token at all, and the scrub is what remains for the fallback — so what D891(a) still has to close is
 `/proc` and the network. **How egress is denied for a subprocess inside a Cloud Run container is U7, and U7 is ANSWERED
 (2026-11-01): both fences exist and both hold.** The owner ran the standalone probe §8's step 6 writes
-— **sandbox probe run `20261101-210556-146e`** on the sandbox installation, **kernel 6.9.12, Cloud Run
-gen2, uid 1000, no capabilities, `NoNewPrivs` 1** — and of the three outcomes the first is what it
+— **sandbox probe run `20261101-210556-146e`** on the sandbox installation, **a real kernel (6.9.12,
+not gVisor)**, **Cloud Run gen2, uid 1000, no capabilities, `NoNewPrivs` 1** — and of the three
+outcomes the first is what it
 saw: a child fenced with `unshare -rn` or `unshare -rnpf --mount-proc` reaches no network, and one
 fenced with `unshare -rpf --mount-proc` or `unshare -rnpf --mount-proc` is given **a `/proc` of its
 own**; `unshare -n`, `setpriv` and `runuser` are refused in that environment. Unfenced, the same child
@@ -854,21 +855,27 @@ reached the internet **and both metadata addresses** and read the parent's envir
 `/proc/1/environ` — the exposure the fence is for. **So D891(a) stands as written, and the
 conditional tail is not taken:** the **(b)** and **(c)** fallbacks stay in §4 for the record, and
 neither is the design's answer, because the fence the answer assumed was measured and is there.
-**`/proc` was the same question asked in the same breath, and it is closed the same way:** the
-mutant's child is given **its own PID namespace with its own `/proc` mount**, so neither the parent's
-`/proc` nor the parent's environment is readable from the stage that runs the head's test. **U7's five
-caveats are recorded in [reconciliation.md](reconciliation.md) §6, and four of them shape this
-paragraph:** the mutant/test child **must** start with an explicit environment (`env -i` plus an
-allow-list), because a namespace stops it reading the parent's `/proc` and not the variables it was
-handed at start; **only the tool or test child can be fenced, never the agent**, because `unshare -rn`
-takes the loopback away and the agent's model calls go through the gateway on it; the claim that the
-parent's environ is denied inside the PID namespace is **partly an artifact** (`$PPID` reads 0 there),
-so the evidence is the drop in visible PIDs; and if **CSR7**'s review-only variant runs in a different
-execution environment, **§8's step 7 confirms again**. **What the fence leaves is what the agent's own
+**`/proc` was the same question asked in the same breath, and it is closed the same way — within what
+caveats 1 and 2 say it is worth:** the mutant's child is given **its own PID namespace with its own
+`/proc` mount**, so the parent's `/proc` is not readable from the stage that runs the head's test.
+**The parent's *environment* is the narrower claim, and the probe does not support it by itself:** a
+namespace stops the child reading the parent's `/proc` and **not the variables it was handed at
+start**, so the environ is closed only when the child starts from the explicit environment caveat 1
+requires — and the evidence for the environ is **the drop in visible PIDs, 11 to 4**, not a `$PPID`
+read (caveat 2): `$PPID` reads 0 inside the namespace and would have read as a denial either way.
+**U7's five
+caveats are recorded in [reconciliation.md](reconciliation.md) §6; caveats 1 and 2 are the paragraph
+above, and the rest shape this one:** **only the tool or test child can be fenced, never the agent**,
+because `unshare -rn` takes the loopback away and the agent's model calls go through the gateway on it
+(caveat 3); if **CSR7**'s review-only variant runs in a different
+execution environment, **§8's step 7 confirms again** (caveat 4); and caveat 5 is why all of this is a
+requirement rather than hardening — the unfenced baseline exposure is real. **What the fence leaves is what the agent's own
 stage is still handed, and O1 is what makes that small:** that stage cannot be fenced, so the best case
 for a process that reads `/proc` from it is the **one-hour, read-only installation token** the runner
 holds in its own memory, not the person's subscription token. That is a real reduction, and the
-`/proc` read from the mutant's fenced child is closed rather than merely reduced.
+`/proc` read from the mutant's fenced child is closed rather than merely reduced — **on caveat 1's
+terms, which is the whole of the claim: closed for a child that starts from the explicit environment,
+because the fence itself does not reach the variables a child is handed.**
 
 What the design still buys, and it is worth having: a container that **did not run the coder**, a
 read-only forge scope, no App key in that container, a run whose whole purpose is the review — and,
@@ -1064,8 +1071,9 @@ run by the owner in their own terminal.
    network namespace (`unshare -n` where the image has it, or the equivalent the platform allows),
    **and a PID namespace with its own `/proc` mount, or a different uid, whichever the platform
    allows** — and records what the child could do. **`20261101-210556-146e` is that run:** the
-   environment it recorded is kernel 6.9.12, Cloud Run gen2, uid 1000, no capabilities and
-   `NoNewPrivs` 1; the network fence holds under `unshare -rn` and `unshare -rnpf --mount-proc`, the
+   environment it recorded is a real kernel (6.9.12, not gVisor), Cloud Run gen2, uid 1000, no
+   capabilities and `NoNewPrivs` 1; the network fence holds under `unshare -rn` and
+   `unshare -rnpf --mount-proc`, the
    private `/proc` under `unshare -rpf --mount-proc` and `unshare -rnpf --mount-proc`, and
    `unshare -n`, `setpriv` and `runuser` are refused there. **Of the three things this step observes, the first
    is the recorded one:** the child cannot reach the network and cannot read the parent's `/proc` when

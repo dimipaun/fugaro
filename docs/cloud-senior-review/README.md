@@ -9,9 +9,11 @@ take no decision number: an answer picks an option rather than allocating one) �
 not an approval**: no task in [implementation-plan.md](implementation-plan.md) may start before the
 owner approves it, and one of them waits on a gate outside this design (**E7**, below). **U7**, the
 owner-run observation of the deployed fence, **is ANSWERED (2026-11-01)** — both fences hold — so it
-gates nothing: it was never CSR4b's gate alone, and the same answer is the observation the first
+gates nothing **for the environment it probed**, an ordinary coding job on Cloud Run gen2: it was
+never CSR4b's gate alone, and the same answer is the observation the first
 slice's signed `ship` path waited on, through the routing design **#1514**'s **D1074** (its
-**C3.9e**).
+**C3.9e**) — re-confirmed by Check 125's step 7 where **CSR7**'s review-only variant runs, if that is
+somewhere else.
 
 **Asked by:** the owner, 2026-10-31, as priority ONE right after the CLI 0.14.1 and console 0.116.1
 releases: the **independent review** run today on the owner's own machine — a local session with the

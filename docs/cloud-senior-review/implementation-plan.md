@@ -7,7 +7,9 @@ they touch. An answered decision is not an
 approval to start: **every task still carries its own gate**, and one of them is hard. **E7** (the
 credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's
 merge path. **U7** (the owner-run live observation of the deployed fence) **is ANSWERED
-(2026-11-01)** — both fences hold — so it gates nothing, and the same answer is the observation the
+(2026-11-01)** — both fences hold — so it gates nothing **for the environment it probed**, an ordinary
+coding job on Cloud Run gen2 (if CSR7's review-only variant runs somewhere else, Check 125's step 7
+confirms again there), and the same answer is the observation the
 routing design **#1514**'s **D1074** (its **C3.9e**) made a precondition of the first slice's signed
 `ship` path. A task starts
 only when the decisions and the gates it names are satisfied. **CSR4a carries D894(a)'s configuration
@@ -110,7 +112,10 @@ E7 is met. **And the `ship` path carried the same observation, not CSR4b alone �
 cleared:** the routing design **#1514**'s
 **D1074** (its **C3.9e**) makes an owner-run probe of the sandbox environment a precondition of the
 first slice's signed `ship` path, and **U7's probe is that observation** — taken on the sandbox
-installation on 2026-11-01, finding both fences present and holding — so that precondition is met.
+installation on 2026-11-01, finding both fences present and holding — so **that precondition is met
+for the environment the probe ran in and not as a claim about every environment**: it was an ordinary
+coding job on Cloud Run gen2, and if **CSR7**'s review-only variant runs anywhere else, **Check 125's
+step 7 re-confirms it there** (U7's caveat 4).
 **CSR1, CSR3, CSR4a and CSR4b are
 unaffected** — none of them launches or authenticates a job, and CSR3 in
 particular is **runner-side and needs no command** (it says so in its own block, and it does not
@@ -443,7 +448,8 @@ for**. **Findings:** F13, **F24**. **Depends on:** CSR3. **Unblocked:** the answ
   it) **and a PID namespace with its own `/proc` mount, or a different uid, whichever the platform
   allows** — recording which of the three outcomes it saw, exactly as [spec.md](spec.md) §8's step 6
   describes it. **What it saw is the first outcome:** on the sandbox installation — run
-  **`20261101-210556-146e`**, kernel 6.9.12, Cloud Run gen2, uid 1000, no capabilities, `NoNewPrivs`
+  **`20261101-210556-146e`**, on a real kernel (6.9.12, not gVisor), Cloud Run gen2, uid 1000,
+  no capabilities, `NoNewPrivs`
   1 — `unshare -rn` and `unshare -rnpf --mount-proc` leave the child with no network, and
   `unshare -rpf --mount-proc` and `unshare -rnpf --mount-proc` give it a `/proc` of its own, while
   `unshare -n`, `setpriv` and `runuser` are refused; unfenced, the child reached the internet and both
