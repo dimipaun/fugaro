@@ -65,6 +65,59 @@ func plainForm(value string) (string, bool) {
 	return c.Tag, true
 }
 
+// renderFlowValue writes a value for a place inside a flow collection, keeping
+// the quoting style already there and quoting a value whose plain form would
+// not read back as itself between braces.
+func renderFlowValue(value string, style yaml.Style) string {
+	if style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0 {
+		return renderValue(value, style)
+	}
+	if _, ok := flowPlainForm(value); ok {
+		return value
+	}
+	return doubleQuote(value)
+}
+
+// renderFlowKey writes a mapping key for a place inside a flow collection.
+func renderFlowKey(key string) string {
+	if tag, ok := flowPlainForm(key); ok && tag == "!!str" {
+		return key
+	}
+	return doubleQuote(key)
+}
+
+// flowPlainForm reports whether a value written without quotes inside a flow
+// collection reads back as exactly this text, and returns the tag YAML gives
+// it. plainForm's answer is about block style, where `x, y` is one scalar and
+// `}` is a character like any other; between braces the same bytes are two
+// members and the end of the mapping, so the value is read back where it is
+// going to be written rather than trusted to the other answer. A quote is
+// refused whatever YAML reads it as, because this package's own scan of the line
+// takes it for the start of a quoted scalar and would never find the end of the
+// member again.
+func flowPlainForm(value string) (string, bool) {
+	if value == "" || strings.ContainsAny(value, "\n\r\t\"'") {
+		return "", false
+	}
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte("k: {v: "+value+"}"), &n); err != nil {
+		return "", false
+	}
+	if n.Kind != yaml.DocumentNode || len(n.Content) != 1 {
+		return "", false
+	}
+	m := mapValue(n.Content[0], "k")
+	if m == nil || m.Kind != yaml.MappingNode || len(m.Content) != 2 {
+		return "", false
+	}
+	c := m.Content[1]
+	if c.Kind != yaml.ScalarNode || c.Style != 0 || c.Tag == "!!merge" ||
+		c.Anchor != "" || c.Value != value {
+		return "", false
+	}
+	return c.Tag, true
+}
+
 func doubleQuote(value string) string {
 	var b strings.Builder
 	b.WriteByte('"')
