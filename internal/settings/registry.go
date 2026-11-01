@@ -262,6 +262,11 @@ func buildRows() []Row {
 			out[i].Default = v
 		}
 	}
+	// Each document's rows are written in its own order, so the three groups
+	// are sorted here rather than in a reader: the table, `--changed` and the
+	// schema's key list are one stable order, and a row added to any group
+	// lands where a reader looking for it by name expects it.
+	slices.SortFunc(out, func(a, b Row) int { return strings.Compare(a.Key, b.Key) })
 	return out
 }
 
@@ -403,7 +408,13 @@ var layerRows = []Row{
 	layerRow("profiles.*.cache.*.paths", "none", "settings set", docLayer),
 	layerRow("profiles.*.resources.cpu", "4", "settings set", docLayer),
 	layerRow("profiles.*.resources.memory", "8Gi", "settings set", docLayer),
+	layerRow("profiles.*.timeouts.total", "the workflow's own", "settings set", docLayer),
+	layerRow("profiles.*.timeouts.stage", "the workflow's own", "settings set", docLayer),
+	layerRow("profiles.*.timeouts.verify", "the workflow's own", "settings set", docLayer),
+	layerRow("profiles.*.timeouts.render", "the workflow's own", "settings set", docLayer),
+	layerRow("profiles.*.timeouts.finalize_reserve", "the workflow's own", "settings set", docLayer),
 	layerRow("profiles.*.rebuild.check", "the rebuild rule's own default", "settings set", docLayer),
+	layerRow("profiles.*.rebuild.max_age", "the rebuild rule's own default", "settings set", docLayer),
 	layerRow("profiles.*.rebuild.lockfiles", "the rebuild rule's own default", "settings set", docLayer),
 	layerRow("profiles.*.rebuild.base", "the rebuild rule's own default", "settings set", docLayer),
 	layerRow("profiles.*.rebuild.paths", "the rebuild rule's own default", "settings set", docLayer),
@@ -415,6 +426,9 @@ var layerRows = []Row{
 	layerRow("governance.review_ratio", "every review", "settings set", docLayer),
 	layerRow("governance.review_floor_calls", "none", "settings set", docLayer),
 	layerRow("governance.max_subagents", "Fugaro's own cap", "settings set", docLayer),
+	layerRow("governance.stage_timeout.implement", "Fugaro's own stage timeouts", "settings set", docLayer),
+	layerRow("governance.stage_timeout.review", "Fugaro's own stage timeouts", "settings set", docLayer),
+	layerRow("governance.stage_timeout.fix", "Fugaro's own stage timeouts", "settings set", docLayer),
 	layerRow("governance.stage_budget.implement", "Fugaro's own stage budgets", "settings set", docLayer),
 	layerRow("governance.stage_budget.review", "Fugaro's own stage budgets", "settings set", docLayer),
 	layerRow("governance.stage_budget.fix", "Fugaro's own stage budgets", "settings set", docLayer),

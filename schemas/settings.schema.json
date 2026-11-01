@@ -607,6 +607,15 @@
         "layer.governance.stage_budget.review": {
           "default": "unset = Fugaro's own stage budgets"
         },
+        "layer.governance.stage_timeout.fix": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "layer.governance.stage_timeout.implement": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "layer.governance.stage_timeout.review": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
         "layer.governance.stage_tokens.fix": {
           "default": "unset = Fugaro's own stage token caps"
         },
@@ -733,6 +742,9 @@
         "layer.profiles.*.rebuild.lockfiles": {
           "default": "unset = the rebuild rule's own default"
         },
+        "layer.profiles.*.rebuild.max_age": {
+          "default": "unset = the rebuild rule's own default"
+        },
         "layer.profiles.*.rebuild.paths": {
           "default": "unset = the rebuild rule's own default"
         },
@@ -741,6 +753,21 @@
         },
         "layer.profiles.*.resources.memory": {
           "default": "unset = 8Gi"
+        },
+        "layer.profiles.*.timeouts.finalize_reserve": {
+          "default": "unset = the workflow's own"
+        },
+        "layer.profiles.*.timeouts.render": {
+          "default": "unset = the workflow's own"
+        },
+        "layer.profiles.*.timeouts.stage": {
+          "default": "unset = the workflow's own"
+        },
+        "layer.profiles.*.timeouts.total": {
+          "default": "unset = the workflow's own"
+        },
+        "layer.profiles.*.timeouts.verify": {
+          "default": "unset = the workflow's own"
         },
         "layer.project": {
           "default": "unset = the file is refused (project: is required)"

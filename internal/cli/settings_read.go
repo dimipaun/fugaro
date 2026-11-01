@@ -23,10 +23,17 @@ import (
 // same thing about the same state.
 const (
 	stateOK      = "ok"
-	stateStale   = "stale "
-	stateUnread  = "unread: "
 	stateUnknown = "unknown (no checkout on this machine)"
 )
+
+// staleState is the cached copy's state, with its age, and unreadState is the
+// state of a layer that was not read, with the reason. The two that carry text
+// are built here rather than concatenated at each use: a constant holding a
+// trailing space would need a second value beside it for every reader that
+// wants the word alone, and one `+` with an empty reason would put the space in
+// the document.
+func staleState(d time.Duration) string { return "stale " + humanAge(d) }
+func unreadState(reason string) string  { return "unread: " + reason }
 
 // setting is one row of the read: a key in one scope, the value a run gets,
 // the layer that decided it, the built-in default and the state of the read.
@@ -204,7 +211,11 @@ func (r *settingsRead) readRepos(o settingsOptions) error {
 				}
 			}
 		}
+		// One name, one row: two providers remembering one owner/name would
+		// otherwise list the repository twice, and both rows would read the
+		// same checkout.
 		slices.Sort(names)
+		names = slices.Compact(names)
 	}
 	for _, name := range names {
 		t := settingsNow()
@@ -228,12 +239,12 @@ func (r *settingsRead) readRepo(name, dir string) repoRead {
 	}
 	data, err := readFugaroYAML(filepath.Join(dir, "fugaro.yaml"))
 	if err != nil {
-		rr.state = stateUnread + err.Error()
+		rr.state = unreadState(err.Error())
 		return rr
 	}
 	cfg, res, ps := config.Resolve(data, r.layer)
 	if len(ps) > 0 {
-		rr.state = stateUnread + ps[0].Message
+		rr.state = unreadState(ps[0].Message)
 		return rr
 	}
 	rr.config, rr.res, rr.state = cfg, res, stateOK
@@ -243,14 +254,23 @@ func (r *settingsRead) readRepo(name, dir string) repoRead {
 // checkoutKeyFor is the remembered entry's key for a repository named by its
 // owner/name: the document is keyed "<provider>/<owner>/<name>", and the
 // provider is the one the entry itself carries, so a lookup tries the key of
-// every entry whose owner/name is the one asked for.
+// every entry whose owner/name is the one asked for. Two providers can remember
+// one owner/name — the same repository cloned from GitHub and from Bitbucket —
+// so the keys are sorted and the first is the answer: reading them out of the
+// map would give one read a different checkout than the next, and the row would
+// print the state of a directory the read did not choose.
 func checkoutKeyFor(name string, remembered map[string]string) string {
+	keys := make([]string, 0, 1)
 	for key := range remembered {
 		if strings.HasSuffix(key, "/"+name) {
-			return key
+			keys = append(keys, key)
 		}
 	}
-	return ""
+	if len(keys) == 0 {
+		return ""
+	}
+	slices.Sort(keys)
+	return keys[0]
 }
 
 // checkoutPath is the path a remembered repository was last seen in.
@@ -314,7 +334,7 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 			if v, ok := valueAt(r.layer, strings.TrimPrefix(row.Key, "layer.")); ok {
 				s.Value, s.Wins = v, settings.LayerProject
 				if r.layerAge > 0 {
-					s.State = stateStale + humanAge(r.layerAge)
+					s.State = staleState(r.layerAge)
 				}
 			}
 		}

@@ -123,7 +123,7 @@ fourth hand-kept copy (F12).
   `internal/cli/root.go` (registration; owned elsewhere, see "Order"), `internal/settings/registry.go`
   (only if a row the read prints is missing).
 - **Interface:** `fugaro settings [KEY|GLOB ...] [--repo R | --all-repos] [--layer ...] [--grep RE]
-  [--changed] [--why] [--offline] [--json]`, columns `KEY VALUE WINS DEFAULT STATE` (spec §2).
+  [--changed] [--why] [--offline] [--json]`, columns `KEY SCOPE VALUE WINS DEFAULT STATE` (spec §2).
 - **Red step:** `TestSettingsPrintsKeyValueWinsDefaultState` fails while the command does not exist.
 - **Tests:** `TestSettingsPrintsKeyValueWinsDefaultState`,
   `TestSettingsShowsTheDefaultWhenNoLayerSetsIt`, `TestSettingsChangedShowsOnlyNonDefaults`,

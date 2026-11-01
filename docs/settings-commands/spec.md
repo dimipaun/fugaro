@@ -34,7 +34,7 @@ fugaro settings [KEY|GLOB ...] [--repo owner/name | --all-repos]
 One row per (key, scope), where a scope is `project` or `repo:<canonical>`. The text columns are:
 
 ```
-KEY  VALUE  WINS  DEFAULT  STATE
+KEY  SCOPE  VALUE  WINS  DEFAULT  STATE
 ```
 
 ### 2.1 KEY

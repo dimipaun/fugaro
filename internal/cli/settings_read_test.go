@@ -138,7 +138,9 @@ func rowOf(t *testing.T, doc settingsTestDoc, key, scope string) settingsTestRow
 }
 
 // TestSettingsPrintsKeyValueWinsDefaultState: the table is the whole contract,
-// so its five columns are named and in order, and every row fills them.
+// so its six columns are named and in order, and every row fills them. SCOPE is
+// one of them because the same key is a row per scope under --repo and
+// --all-repos.
 func TestSettingsPrintsKeyValueWinsDefaultState(t *testing.T) {
 	settingsFixture(t, "")
 	out, _, err := execute(t, "settings", "budget.per_run_usd")
@@ -149,14 +151,49 @@ func TestSettingsPrintsKeyValueWinsDefaultState(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("one key prints its header and its row, got:\n%s", out)
 	}
-	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "KEY VALUE WINS DEFAULT STATE" {
-		t.Errorf("header = %q, want the five columns", lines[0])
+	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "KEY SCOPE VALUE WINS DEFAULT STATE" {
+		t.Errorf("header = %q, want the six columns", lines[0])
 	}
-	if !strings.HasPrefix(lines[1], "budget.per_run_usd") {
-		t.Errorf("row = %q, want the key first", lines[1])
+	if fields := strings.Fields(lines[1]); len(fields) < 2 || fields[0] != "budget.per_run_usd" || fields[1] != "project" {
+		t.Errorf("row = %q, want the key and then its scope", lines[1])
 	}
 	if !strings.Contains(lines[1], "default") {
 		t.Errorf("row = %q, want the layer that decided it", lines[1])
+	}
+}
+
+// TestSettingsTableSeparatesTheScopes: the same key is one row per scope, and
+// the text table names the scope of each, so two repositories' values are not
+// two identical-looking rows.
+func TestSettingsTableSeparatesTheScopes(t *testing.T) {
+	home := settingsFixture(t, "repos:\n  owner/repo-b: {}\n")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML("agent:\n  review_rounds: 3\n"))
+	out, _, err := execute(t, "settings", "agent.review_rounds", "--all-repos")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	seen := map[string]string{}
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n")[1:] {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "agent.review_rounds" {
+			t.Fatalf("row = %q, want the key first", line)
+		}
+		if _, dup := seen[fields[1]]; dup {
+			t.Errorf("scope %q is printed twice", fields[1])
+		}
+		seen[fields[1]] = fields[2]
+	}
+	if len(seen) != 3 {
+		t.Fatalf("scopes = %v, want the project and its two repositories", seen)
+	}
+	if seen["project"] != "2" {
+		t.Errorf("the project scope's value = %q, want the default 2", seen["project"])
+	}
+	if seen["repo:owner/repo-a"] != "3" {
+		t.Errorf("the repository scope's value = %q, want the checkout's 3", seen["repo:owner/repo-a"])
+	}
+	if seen["repo:owner/repo-b"] != "2" {
+		t.Errorf("the unchecked-out repository's value = %q, want its default 2", seen["repo:owner/repo-b"])
 	}
 }
 
@@ -370,6 +407,21 @@ func TestSettingsGlobMatchesNestedKeys(t *testing.T) {
 	if err == nil {
 		t.Errorf("workflows.* matched a key, and * is one segment:\n%s", out)
 	}
+
+	// A * never crosses a dot, and a ** in the middle is the same any-depth
+	// rule as at the end.
+	if out, _, err := execute(t, "settings", "budget*usd"); err == nil {
+		t.Errorf("budget*usd matched a key, so * crossed a dot:\n%s", out)
+	}
+	mid := readSettingsJSON(t, "layer.profiles.**.commands.test")
+	if len(mid.Settings) != 1 || mid.Settings[0].Key != "layer.profiles.*.commands.test" {
+		t.Errorf("layer.profiles.**.commands.test matched %d rows, want the one key", len(mid.Settings))
+	}
+	all := readSettingsJSON(t)
+	everything := readSettingsJSON(t, "**")
+	if len(everything.Settings) != len(all.Settings) {
+		t.Errorf("** matched %d of %d rows: it is every key", len(everything.Settings), len(all.Settings))
+	}
 }
 
 // TestSettingsRecordsEachLayersReadDuration: duration_ms is what reading that
@@ -447,6 +499,163 @@ func TestSettingsGrepFiltersRows(t *testing.T) {
 	none := readSettingsJSON(t, "--grep", "nothing-matches-this")
 	if len(none.Settings) != 0 {
 		t.Errorf("--grep with no match printed %d rows", len(none.Settings))
+	}
+}
+
+// TestSettingsTwoProvidersOfOneRepositoryReadOneCheckout: this machine can
+// remember one owner/name under two providers — a repository cloned from both
+// GitHub and Bitbucket — and the remembered document is keyed by provider, so
+// the choice between them has to be made rather than fallen into. It is the
+// key in sorted order, and the repository is read once: two rows for one scope
+// with one of two checkouts' values would be a row that means nothing.
+func TestSettingsTwoProvidersOfOneRepositoryReadOneCheckout(t *testing.T) {
+	home := settingsFixture(t, "")
+	write := func(dir, yaml string) string {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	bitbucket := write(filepath.Join(home, "bitbucket"), settingsRepoYAML("agent:\n  review_rounds: 3\n"))
+	github := write(filepath.Join(home, "github"), settingsRepoYAML("agent:\n  review_rounds: 7\n"))
+	for _, c := range []struct{ provider, dir string }{{"bitbucket", bitbucket}, {"github", github}} {
+		if err := localcfg.RecordCheckout(os.Getenv, "aurora",
+			localcfg.CheckoutIdentity{Provider: c.provider, Repo: "owner/repo-a"}, c.dir, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	doc := readSettingsJSON(t, "agent.review_rounds", "--all-repos")
+	rows := []settingsTestRow{}
+	for _, r := range doc.Settings {
+		if r.Scope == "repo:owner/repo-a" {
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) != 1 {
+		t.Fatalf("%d rows for one repository, want one", len(rows))
+	}
+	if rows[0].Value == nil || *rows[0].Value != "3" {
+		t.Errorf("value = %s, want the bitbucket checkout's 3: the provider keys are read in sorted order", deref(rows[0].Value))
+	}
+}
+
+// TestSettingsGrepNeverSeesASensitiveValue: --grep is unanchored over the key
+// and every rendered column, and a sensitive row's rendered value is the
+// set/unset fact — so the credential string matches nothing, while the key
+// itself still does. A pattern that answered with the row would mean the value
+// reached a column.
+func TestSettingsGrepNeverSeesASensitiveValue(t *testing.T) {
+	settingsFixture(t, "budget:\n  firebase_api_key: "+settingsFakeAPIKey+"\n")
+	if doc := readSettingsJSON(t, "--grep", "AIzaSy"); len(doc.Settings) != 0 {
+		t.Errorf("--grep for the credential matched %d rows", len(doc.Settings))
+	}
+	if doc := readSettingsJSON(t, "--grep", "--why", "--grep", "firebase_api_key"); len(doc.Settings) == 0 {
+		t.Error("--grep for the key matched nothing")
+	}
+}
+
+// TestSettingsLayerRestrictsTheRows: --layer says which stores to read, so a
+// row none of whose layers is named is left out, and a name the registry does
+// not know is refused. `flag` is a level a run's own command line holds and
+// `settings` takes no such override, so it reads an empty layer rather than
+// disappearing from the vocabulary.
+func TestSettingsLayerRestrictsTheRows(t *testing.T) {
+	settingsFixture(t, "max_parallel: 3\n")
+	local := readSettingsJSON(t, "--layer", "local")
+	keys := map[string]bool{}
+	for _, r := range local.Settings {
+		keys[r.Key] = true
+	}
+	if !keys["max_parallel"] {
+		t.Errorf("--layer local left out a key the local config sets: %v", keys)
+	}
+	if keys["agent.review_rounds"] || keys["layer.default_profile"] {
+		t.Errorf("--layer local kept a key whose layers are not local (review_rounds %v, layer.default_profile %v)",
+			keys["agent.review_rounds"], keys["layer.default_profile"])
+	}
+	if row := rowOf(t, local, "max_parallel", "project"); row.Wins != "local" {
+		t.Errorf("max_parallel wins = %q, want local", row.Wins)
+	}
+
+	flag := readSettingsJSON(t, "--layer", "flag")
+	hasFlag := false
+	for _, r := range flag.Settings {
+		row, ok := settings.Lookup(r.Key)
+		hasFlag = hasFlag || (ok && slices.Contains(row.Layers, "flag"))
+	}
+	if !hasFlag {
+		t.Error("--layer flag read no row with a flag level, so the name is not in the vocabulary")
+	}
+
+	if out, _, err := execute(t, "settings", "--layer", "bogus"); err == nil {
+		t.Errorf("--layer bogus was accepted:\n%s", out)
+	} else if ExitCode(err) != ExitUserError {
+		t.Errorf("--layer bogus exits %d, want %d", ExitCode(err), ExitUserError)
+	}
+}
+
+// TestEditDistanceCountsEdits: the name a typo is answered with is the nearest
+// registry key by this distance, so it is tested on its own rather than only
+// through a message.
+func TestEditDistanceCountsEdits(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"budget", "budget", 0},
+		{"budget.per_run_usd", "budget.per_run_uds", 2},
+		{"", "abc", 3},
+		{"abc", "", 3},
+		{"kitten", "sitting", 3},
+	} {
+		if got := editDistance(tc.a, tc.b); got != tc.want {
+			t.Errorf("editDistance(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+		if got, rev := editDistance(tc.b, tc.a), tc.want; got != rev {
+			t.Errorf("editDistance(%q, %q) = %d, want %d: the distance is symmetric", tc.b, tc.a, got, rev)
+		}
+	}
+}
+
+// TestSettingsStatesCarryNoTrailingSpace: a state that carries a reason is a
+// word and its text, and the two are only ever joined in one place. A constant
+// holding the trailing space would put it in the document the moment a reason
+// was empty — and the document is what a consumer branches on.
+func TestSettingsStatesCarryNoTrailingSpace(t *testing.T) {
+	home := settingsFixture(t, "")
+	// A checkout the machine remembers but whose file is refused reads
+	// `unread: <reason>`; the layer cache is old enough to read `stale <age>`.
+	settingsCheckout(t, home, "owner/repo-b", "project: aurora\n")
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
+		CheckedAt: time.Now().Add(-3 * time.Minute), YAML: testProjectLayer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "settings", "--json", "--all-repos")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	states := doc2states(t, out)
+	if len(states) == 0 {
+		t.Fatal("the document carries no state")
+	}
+	unread, stale := false, false
+	for _, s := range states {
+		if strings.TrimRight(s, " ") != s || s == "" {
+			t.Errorf("state %q carries a trailing space or is empty", s)
+		}
+		unread = unread || strings.HasPrefix(s, "unread: ")
+		stale = stale || strings.HasPrefix(s, "stale ")
+	}
+	if !unread || !stale {
+		t.Errorf("the fixture produced no unread and no stale state (%v), so this test checked one of them at most", states)
 	}
 }
 

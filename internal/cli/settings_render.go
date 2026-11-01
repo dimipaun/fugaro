@@ -61,17 +61,20 @@ type settingsLevelJS struct {
 	Outcome string `json:"outcome"`
 }
 
-// writeSettingsTable prints the text table: KEY VALUE WINS DEFAULT STATE, one
-// row per key and scope, and with --why one indented line per layer that sets
-// the key.
+// writeSettingsTable prints the text table: KEY SCOPE VALUE WINS DEFAULT STATE,
+// one row per key and scope, and with --why one indented line per layer that
+// sets the key. SCOPE is a column of its own because the same key is a row per
+// scope under --repo and --all-repos: without it a reader of two repositories'
+// agent.review_rounds sees one key twice with different values and nothing
+// saying which is which.
 func writeSettingsTable(w io.Writer, rows []setting, why bool) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "KEY\tVALUE\tWINS\tDEFAULT\tSTATE")
+	fmt.Fprintln(tw, "KEY\tSCOPE\tVALUE\tWINS\tDEFAULT\tSTATE")
 	for _, s := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Key, s.Value, s.Wins, s.Default, s.State)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.Key, s.Scope, s.Value, s.Wins, s.Default, s.State)
 		if why {
 			for _, l := range s.Levels {
-				fmt.Fprintf(tw, "  %s\t%s\t%s\t\t\n", l.Layer, l.Value, l.Outcome)
+				fmt.Fprintf(tw, "  %s\t\t%s\t%s\t\t\n", l.Layer, l.Value, l.Outcome)
 			}
 		}
 	}

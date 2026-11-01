@@ -21,6 +21,14 @@ func yamlPaths(t reflect.Type, prefix string) []string {
 	if t.Kind() != reflect.Struct {
 		return []string{prefix}
 	}
+	if prefix != "" && !yamlFields(t) {
+		// A struct with no yaml-tagged field of its own is one value, not a
+		// subtree: config.Duration writes "90m" and carries its two fields for
+		// the parser, so max_age is a leaf the registry needs a row for. Walking
+		// into it instead found no tagged field and returned nothing at all,
+		// which is how layer.profiles.*.rebuild.max_age stayed out of the table.
+		return []string{prefix}
+	}
 	var out []string
 	for i := range t.NumField() {
 		f := t.Field(i)
@@ -60,6 +68,26 @@ func yamlPaths(t reflect.Type, prefix string) []string {
 		}
 	}
 	return out
+}
+
+// yamlFields reports whether a struct writes any yaml-tagged field of its own.
+func yamlFields(t reflect.Type) bool {
+	for i := range t.NumField() {
+		tag := strings.Split(t.Field(i).Tag.Get("yaml"), ",")[0]
+		if tag != "" && tag != "-" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRegistryIsInKeyOrder: the table is sorted, so a reader scanning for a
+// key finds it where its name says and two reads of one registry print the same
+// order. Sorted() is the invariant; this is what holds buildRows to it.
+func TestRegistryIsInKeyOrder(t *testing.T) {
+	if !Sorted() {
+		t.Error("Rows() is not in key order")
+	}
 }
 
 func TestRegistryCoversEveryConfigField(t *testing.T) {

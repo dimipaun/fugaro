@@ -270,7 +270,7 @@ fugaro settings [KEY|GLOB ...] [--repo owner/name | --all-repos] [--layer defaul
 
 One row per (key, scope), where scope is `project` or `repo:<canonical>`. The text columns are:
 
-`KEY  VALUE  WINS  DEFAULT  STATE`
+`KEY  SCOPE  VALUE  WINS  DEFAULT  STATE`
 
 - **KEY** is a stable dotted name from a key registry (§4C).
   - The names are unique across stores, so a field never changes meaning. For example, `budget.mode` is the policy ceiling mode (local config, node, `fugaro.yaml`), while `caps.mode` is the Realtime Database `config/mode`.
