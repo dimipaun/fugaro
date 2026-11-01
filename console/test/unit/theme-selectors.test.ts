@@ -103,7 +103,7 @@ const RAIL_HOOKS: readonly string[] = Object.freeze([
  * (`div.console-rail-head`, `header.degraded-header`). Stripping one is what
  * turns a token into the class a rule would select; a token with any other
  * prefix is not a hook. */
-const ELEMENT_PREFIX = /^(?:a|aside|button|code|dd|details|div|dl|figure|form|g|h1|h2|h3|header|input|label|li|main|nav|ol|p|path|pre|rect|section|span|summary|svg|table|tbody|td|text|th|tr|tspan|ul)\./
+const ELEMENT_PREFIX = /^(?:a|aside|button|code|dd|details|div|dl|figure|form|g|h1|h2|h3|header|input|label|li|main|nav|ol|p|path|pre|rect|section|select|span|summary|svg|table|tbody|td|text|th|tr|tspan|ul)\./
 
 /** HOOK is what a token has to look like to be a hook rather than a word of
  * prose. A class hook carries one of the prefixes §2's tables and prose are

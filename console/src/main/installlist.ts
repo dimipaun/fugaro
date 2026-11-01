@@ -104,6 +104,36 @@ export interface DiscoveredInstallation {
   /** every checkout row's repository and its recorded base branch */
   readonly repositories: readonly DiscoveredRepository[]
   readonly checkouts: readonly string[]
+  /**
+   * `checkoutChoices` is the same rows as `checkouts`, **paired with the
+   * repository each path was recorded under** and held to both of the CLI's
+   * verdicts (`valid` *and* `enrolled`): it is what the dashboard's and the
+   * Graph's checkout chooser draws its menu from.
+   *
+   * It is not `checkouts`, and the two differences are the point. `checkouts` is
+   * the older list the picker window draws one `Use <dir>` button per entry from,
+   * and it is kept exactly as it was. This one exists because a menu entry has to
+   * say **which repository** a directory is a checkout of (owner's ask: "an
+   * installation can have multiple repos, I should be able to pick one with a
+   * dropdown"), and a row the CLI did not re-validate is not a directory the
+   * console may offer at all (design §3.4 rule 7).
+   */
+  readonly checkoutChoices: readonly DiscoveredCheckout[]
+}
+
+/**
+ * DiscoveredCheckout is one menu entry the choosers offer: the repository the CLI
+ * recorded the path under, and the path itself.
+ *
+ * Both are the CLI's own strings and neither is resolved, joined or looked up
+ * here (§6.8). The repository is what the entry is **labelled** with and the path
+ * is what is **sent back** -- `installation.checkout` takes a directory the main
+ * process then holds to this installation's own list, so the console never
+ * invents one.
+ */
+export interface DiscoveredCheckout {
+  readonly repository: string
+  readonly path: string
 }
 
 /**
@@ -228,6 +258,7 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
         baseBranch: baseBranch.kind === 'absent' ? null : baseBranch.value,
         repositories: rows.repositories,
         checkouts: rows.paths,
+        checkoutChoices: rows.choices,
       }),
     )
   }
@@ -317,6 +348,7 @@ type CheckoutRows =
       readonly kind: 'rows'
       readonly paths: readonly string[]
       readonly repositories: readonly DiscoveredRepository[]
+      readonly choices: readonly DiscoveredCheckout[]
     }
   /** more rows than the console will hold from one document */
   | { readonly kind: 'too-many' }
@@ -336,7 +368,11 @@ type CheckoutRows =
  * `valid: false` row (any `reason`, including `not_representable`) is never used
  * for anything. A **repository record** is kept from every entry that names one,
  * whatever its `valid` is, because the base branch is a fact of the project
- * config and not of the directory the path named. Entries of any other shape are
+ * config and not of the directory the path named. A **menu entry**
+ * (`checkoutChoices`) is kept only from a row carrying `valid: true` *and*
+ * `enrolled: true` and naming a repository: it is what the choosers draw, and
+ * an entry that cannot say which repository a directory is a checkout of is not
+ * one an operator can pick between. Entries of any other shape are
  * dropped, an absent key is an empty list (an older CLI), and the *count* is
  * bounded by `MAX_DISCOVERED_INSTALLATIONS`. What this refuses to do is guess: a
  * kept path is verbatim, and neither list is ever resolved, joined or looked at.
@@ -359,10 +395,13 @@ type CheckoutRows =
  */
 function checkoutsOf(entry: Record<string, unknown>): CheckoutRows {
   const value = entry['checkouts']
-  if (!Array.isArray(value)) return { kind: 'rows', paths: Object.freeze([]), repositories: Object.freeze([]) }
+  if (!Array.isArray(value)) {
+    return { kind: 'rows', paths: Object.freeze([]), repositories: Object.freeze([]), choices: Object.freeze([]) }
+  }
   if (value.length > MAX_DISCOVERED_INSTALLATIONS) return { kind: 'too-many' }
   const paths: string[] = []
   const repositories: DiscoveredRepository[] = []
+  const choices: DiscoveredCheckout[] = []
   for (const row of value) {
     if (!isRecord(row)) continue
     const branch = branchField(row, 'base_branch')
@@ -378,8 +417,22 @@ function checkoutsOf(entry: Record<string, unknown>): CheckoutRows {
     // eslint-disable-next-line no-control-regex
     if (/[\u0000-\u001f\u007f]/.test(candidate)) continue
     paths.push(candidate)
+    // The choosers' entry is the stricter one, and both halves of the CLI's
+    // verdict are required: `valid` is the path's own and `enrolled` is the
+    // project's, so a row that fails either is not a directory this console may
+    // offer (design §3.4 rule 7, §6.8). `enrolled` is read here and not in
+    // `paths`, which the picker window's own buttons are drawn from and which
+    // this change leaves exactly as it was.
+    if (row['enrolled'] !== true) continue
+    if (typeof repository !== 'string' || repository === '' || repository.length > MAX_DOCUMENT_STRING) continue
+    choices.push(Object.freeze({ repository, path: candidate }))
   }
-  return { kind: 'rows', paths: Object.freeze(paths), repositories: Object.freeze(repositories) }
+  return {
+    kind: 'rows',
+    paths: Object.freeze(paths),
+    repositories: Object.freeze(repositories),
+    choices: Object.freeze(choices),
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
