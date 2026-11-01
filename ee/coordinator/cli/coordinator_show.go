@@ -107,9 +107,11 @@ func runCoordinatorShow(cmd *cobra.Command, o *coordinatorShowOptions) error {
 	}
 	defer env.Close()
 
-	// RepoSlug is the resolution that refuses a repository whose provider
-	// cannot be told, and asking it first is what keeps RepoProvider off a nil
-	// checkout's config.
+	co := fcli.CheckoutOf(ctx, o.repo)()
+	// RepoSlug is the read that refuses a repository whose provider cannot be
+	// told at all, and it comes before anything is opened: a repository the
+	// caller's own configuration cannot place is the caller's to fix and not a
+	// failure of the host (coordinatorViewOf's own order).
 	if _, err := env.RepoSlug(ctx, o.repo); err != nil {
 		return err
 	}
@@ -122,13 +124,15 @@ func runCoordinatorShow(cmd *cobra.Command, o *coordinatorShowOptions) error {
 	// it lives for the read and no longer (coordinatorTokens.revoke).
 	defer tokens.revoke(ctx)
 
-	doc, err := reader.PullRequest(ctx, env.RepoProvider(o.repo, fcli.CheckoutOf(ctx, o.repo)()), o.repo, o.pr)
+	doc, err := reader.PullRequest(ctx, env.RepoProvider(o.repo, co), o.repo, o.pr)
 	if err != nil {
 		// The refusal of a project this read does not serve is the
-		// configuration's (reconciliation Q12 (A), finding #30); everything
-		// else is the host's, a user error the reader rewrote the text of
-		// included, exactly as the view classifies the same failure
-		// (coordinatorViewOf).
+		// configuration's (reconciliation Q12 (A), finding #30). Everything else
+		// is the host's — unless the reader kept the class of what failed, which
+		// it does for the mint's own refusal of a missing App credential
+		// (coordinator's redactedError): fcli.RemoteErr() marks a failure exit 2
+		// only when it does not already carry a code, so a user error the reader
+		// rewrote the text of is still a user error here.
 		if errors.Is(err, coordinator.ErrBitbucket) {
 			return fcli.UserErr("%v", err)
 		}
