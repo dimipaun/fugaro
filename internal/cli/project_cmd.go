@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -175,6 +177,16 @@ func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *
 
 func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
+	// SD8: this command writes the node every run of the project is admitted by
+	// — and, beside it, the per-repository admissions — so it is a person's write
+	// and not a coding agent's, the same refusal `fugaro config publish`,
+	// `fugaro recipes publish` and the credential commands carry. It holds for
+	// --delete too: taking the policy away changes what every run is admitted by
+	// exactly as much as publishing one does, and it is not an agent's to do on
+	// its own.
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("nothing was written: fugaro project policy publish writes the policy every run of the project is admitted by: %s", initflow.AgentRefusal(m))
+	}
 	lc, db, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -208,19 +220,13 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
-		allow, sources, err := publishAllowRepos(ctx, lc, old, o.seedRepos)
+		// The one build both doors take (policyNodeForPublish): `fugaro update`'s
+		// policy stage writes the node the local config states from the same
+		// flags, and two builds of one node from one config is a node that
+		// depends on which door the operator came through
+		// (TestUpdateStageAndTheExplicitDoorBuildTheSameNode).
+		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting)
 		if err != nil {
-			return publishFailure(err, narrowedSoFar)
-		}
-		pol, keepRouting, err := buildProjectPolicy(lc, allow, old, o.removeRouting)
-		if err != nil {
-			return publishFailure(err, narrowedSoFar)
-		}
-		body, err := policyNodeBytes(pol, raw, exists, keepRouting)
-		if err != nil {
-			return publishFailure(err, narrowedSoFar)
-		}
-		if err := checkPolicyBytes(body); err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
 		// The per-repository admissions (O4) and the shared node are two writes,

@@ -40,6 +40,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -429,6 +430,16 @@ func seenNote(r seenRepo, admitted bool) string {
 // would refuse to touch.
 func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string, remove bool) error {
 	ctx := cmd.Context()
+	// SD8: this command writes the published node's allow_repos, which is what
+	// admits a repository to the project at all, so it is a person's write and
+	// not a coding agent's — an agent that enrolled a repository would have
+	// widened what every run of the project is admitted by on its own. It is
+	// the same refusal `policy publish` carries, and it comes before the read
+	// and before the ETag, so nothing is written and no cloud write is even
+	// reached.
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("nothing was written: fugaro project repos add and repos rm edit the published allow-list, which is what admits a repository to the project: %s", initflow.AgentRefusal(m))
+	}
 	// openProjectBudget, not openBudget: this writes the published policy node,
 	// so it is a writer like `policy publish` and takes the same two refusals —
 	// the shared config is not an operator's own installation (and its repos:
@@ -791,6 +802,16 @@ func newProjectSyncCmd() *cobra.Command {
 // what it was told to add.
 func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	ctx := cmd.Context()
+	// SD8: sync writes the same allow_repos `repos add` writes, so it carries
+	// the same refusal and it carries it first — before the App key's own
+	// refusal (refuseKeyReadInAgent, which guards the secret read and not the
+	// write) and before the flag's own complaint, so an agent session is told
+	// the one thing that is true of every way of running this command: the
+	// write is not its to make. And it comes before the GitHub call, so nothing
+	// of the project leaves the machine either.
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("nothing was written: fugaro project sync adds to the published allow-list, which is what admits a repository to the project, and --github-app-key reads the App's private key with your own credentials to ask GitHub which repositories the App is installed on: %s", initflow.AgentRefusal(m))
+	}
 	lc, db, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
