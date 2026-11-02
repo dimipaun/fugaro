@@ -56,6 +56,29 @@ profiles:
       - acme/lib
 `
 
+// accountsAddLocalExistingAccount already declares the account the command is
+// asked for, so re-declaring it is a rotation (spec §2.2 step 1) and its
+// allow_data_to grows instead of being written from --repos alone.
+const accountsAddLocalExistingAccount = `version: 1
+name: aurora
+gcp_project: aurora-gcp
+region: us-east5
+runs_bucket: fugaro-runs-aurora-gcp
+
+claude_accounts:
+  legacy:
+    allow_data_to:
+      - acme/app
+
+profiles:
+  standard:
+    provider: github
+    allow_repos:
+      - acme/app
+    claude_accounts:
+      - legacy
+`
+
 // accountsAddFixture writes this machine's project config with local and
 // selects it, returning the file's path.
 func accountsAddFixture(t *testing.T, local string) string {
@@ -215,6 +238,30 @@ func TestAccountsAddConfirmsTheWideningItMakes(t *testing.T) {
 			t.Errorf("the confirmation claims a widening for the checkout's own repository:\n%s", out)
 		}
 	})
+}
+
+// TestAccountsAddConfirmsTheRotationItMakes: re-declaring an account the file
+// already has is a rotation (spec §2.2 step 1), so the confirmation says so,
+// and it names the list the account ends up with — the one it already has plus
+// --repos, which is what the write leaves — rather than the flag alone
+// (spec §2.6).
+func TestAccountsAddConfirmsTheRotationItMakes(t *testing.T) {
+	accountsAddCheckout(t, "acme/app")
+	path := accountsAddFixture(t, accountsAddLocalExistingAccount)
+
+	out, _, err := execute(t, "accounts", "add", "legacy", "--repos", "acme/other", "--yes")
+	if err != nil {
+		t.Fatalf("accounts add: %v", err)
+	}
+	if !strings.Contains(out, "claude_accounts.legacy.allow_data_to = [acme/app, acme/other]") {
+		t.Errorf("the confirmation does not name the list the account ends up with:\n%s", out)
+	}
+	if !strings.Contains(out, "rotation") {
+		t.Errorf("the confirmation does not say the account already exists:\n%s", out)
+	}
+	if after := readFileString(t, path); !strings.Contains(after, "- acme/other") {
+		t.Errorf("the account's allow_data_to did not grow, so the confirmation and the write disagree:\n%s", after)
+	}
 }
 
 // TestSettingsWritesTheAccountChoiceKeys is D873's three keys on the generic

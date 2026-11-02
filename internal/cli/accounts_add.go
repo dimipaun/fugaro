@@ -123,11 +123,16 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 		return err
 	}
 
+	// A name this file already defines is a rotation (spec §2.2 step 1): the
+	// token written for it replaces the one in use, and the confirmation says
+	// so. It is read from the config as it was, before the edit above.
+	_, rotation := lc.ClaudeAccounts[name]
+
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
 		Old:     old,
 		New:     next,
-		What:    accountsAddWhat(name, repos, profile, accountsAddBeyond(cmd.Context(), repos)),
+		What:    accountsAddWhat(name, after.ClaudeAccounts[name].AllowDataTo, profile, accountsAddBeyond(cmd.Context(), repos), rotation),
 		Kind:    settingsDocLocal,
 		Command: accountsAddCommand(name, repos, profile),
 		Yes:     o.yes,
@@ -291,8 +296,16 @@ func accountsAddBeyond(ctx context.Context, repos []string) []string {
 // beyond this checkout — the sentence saying what that widening means. The
 // rest of the block is printed either way, so the confirmation a person reads
 // is never a bare y.
-func accountsAddWhat(name string, repos []string, profile string, beyond []string) string {
-	what := fmt.Sprintf("declare claude_accounts.%s.allow_data_to = [%s]", pluginwire.Printable(name), strings.Join(repos, ", "))
+//
+// The list is the one the account ends up with, read back from the config this
+// would write, and not the --repos it was given: re-declaring an account adds
+// to the list it already has, and a confirmation that named the flag would
+// print a shorter list than the file it asks to write.
+func accountsAddWhat(name string, allow []string, profile string, beyond []string, rotation bool) string {
+	what := fmt.Sprintf("declare claude_accounts.%s.allow_data_to = [%s]", pluginwire.Printable(name), strings.Join(allow, ", "))
+	if rotation {
+		what += " (a rotation: the account already exists, and the token written for it replaces the one in use)"
+	}
 	if profile != "" {
 		what += fmt.Sprintf("; profile profiles.%s.claude_accounts += %s", pluginwire.Printable(profile), pluginwire.Printable(name))
 	}
