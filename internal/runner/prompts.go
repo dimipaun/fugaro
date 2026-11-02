@@ -279,7 +279,7 @@ const inRunVerdictAsk = "When you are done, give your verdict: \"ship\" if nothi
 //
 // The last two sentences are D891(a)'s posture as the reviewer reads it. The
 // stage's managed settings deny Bash, Edit, Write, NotebookEdit and
-// Read(/proc/**) for the whole of it (agent.DenyRules), so a reviewer that
+// Read(/proc/**) for the whole of it (agent.ReviewJobDenyRules), so a reviewer that
 // tried to run the tests itself would spend its turns on refusals; and a
 // mutation check is the runner's own (the runner applies the mutant, runs the
 // test and reverts, internal/runner's mutation.go), so the reviewer is told

@@ -27,9 +27,9 @@ import (
 //
 // The mutant is applied, run and reverted here and never by the agent's own
 // tools: Bash, Edit, Write, NotebookEdit and Read(/proc/**) are denied in the
-// review stage's managed settings for the rest of the stage (agent.DenyRules,
-// D891(a)), which is what leaves a reviewer reading a hostile pull request
-// with no shell of its own to run anything in.
+// review job's managed settings for the rest of the stage
+// (agent.ReviewJobDenyRules, D891(a)), which is what leaves a reviewer reading
+// a hostile pull request with no shell of its own to run anything in.
 //
 // This path reaches no push: nothing here calls git at all. The mutated file
 // is read and rewritten through an os.Root on the worktree, so a path that
