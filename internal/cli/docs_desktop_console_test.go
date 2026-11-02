@@ -7796,14 +7796,17 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 }
 
 // consoleReleaseSymbolsStep is the upload step the symbols supersession adds to
-// the macOS `release` job, by name; consoleReleaseSymbolsStampStep is the step
-// it adds *before the signing step*, which builds the app and stamps the built
-// main process with its debug id; and consoleReleaseSymbolsScript is what both
-// of them run -- the script whose own unit test pins the `sentry-cli` commands
-// each run makes, their arguments, and that the token never reaches an argv.
+// the macOS `release` job, by name; consoleReleaseSymbolsBuildStep and
+// consoleReleaseSymbolsStampStep are the two it adds *before the signing step*,
+// which build the app with no secret in the step's environment and then stamp
+// the built main process with its debug id; and consoleReleaseSymbolsScript is
+// what every one of them runs -- the script whose own unit test pins the
+// `sentry-cli` commands each run makes, their arguments, and that the token never
+// reaches an argv.
 const (
 	consoleReleaseSymbolsStep      = "Upload the crash reporter's symbols, when a token is configured"
-	consoleReleaseSymbolsStampStep = "Build the app, and stamp the built main process with its debug id"
+	consoleReleaseSymbolsBuildStep = "Build the app the stamp and the pack both read"
+	consoleReleaseSymbolsStampStep = "Stamp the built main process with its debug id"
 	consoleReleaseSymbolsScript    = "node scripts/upload-sentry-symbols.mjs"
 )
 
@@ -7903,30 +7906,56 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 		t.Errorf("%s names %d secrets, want %d: the console-release environment's six, this change's one reached in two steps, and the header's own rule about them written with one -- a secret this file does not need is a secret the release job can read for no reason", path, got, consoleReleaseSymbolsRefCount)
 	}
 
-	// **The stamp, and the order it makes.** The second step the change adds is
-	// the one that runs before the signing step and writes the debug id into the
-	// files the packer copies into the archive. It is a step of its own, before
-	// the step that holds the signing material, for the reason the secret needs:
-	// the token must not sit beside an Apple secret, and a build inside the
-	// signing step would be a build inside the step that holds the keychain.
+	// **The build and the stamp, and the order they make.** The two steps the
+	// change adds before the signing step write the debug id into the files the
+	// packer copies into the archive, and they sit before the step that holds the
+	// signing material for the secret's reason: the token must not sit beside an
+	// Apple secret, and a build inside the signing step would be a build inside
+	// the step that holds the keychain.
+	//
+	// **They are two steps and not one, and the split is the token's.** `npm run
+	// build` runs the repository's toolchain and its dependencies' install scripts,
+	// and a step's `env:` is inherited by every process the step starts -- so the
+	// build's step carries no `env:` at all and the token is in the inject's step
+	// alone. A one-step file would put the token in the environment of a build,
+	// which is the shape this pair exists to refuse; the clause below holds the
+	// build's `env:` to nothing, and the file-wide env clause above holds every
+	// *other* step of the job to reading no secret.
+	buildIndex, build := consoleStepNamed(t, release, "release", consoleReleaseSymbolsBuildStep)
 	stampIndex, stamp := consoleStepNamed(t, release, "release", consoleReleaseSymbolsStampStep)
 	if stampIndex >= index {
 		t.Errorf("%s runs %q at step %d and the symbol upload at step %d: the stamp comes before the pack and the upload after it, and a file that put the stamp last would stamp a tree nobody packs", path, consoleReleaseSymbolsStampStep, stampIndex, index)
+	}
+	if buildIndex >= stampIndex {
+		t.Errorf("%s runs %q at step %d and %q at step %d: the inject rewrites the files `npm run build` has just written, so a stamp before the build is a build that throws the ids away", path, consoleReleaseSymbolsBuildStep, buildIndex, consoleReleaseSymbolsStampStep, stampIndex)
 	}
 	signIndex, _ := consoleStepNamed(t, release, "release", consoleReleaseSigningStep)
 	if stampIndex >= signIndex {
 		t.Errorf("%s runs %q at step %d, at or after the signing step %d: the pack is the signing step's, so the stamp has to be written before it -- and the stamping step is the one place the token can be reached without an Apple secret beside it", path, consoleReleaseSymbolsStampStep, stampIndex, signIndex)
 	}
-	if stamp.WorkingDirectory != "console" {
-		t.Errorf("%s's %q step runs in %q, not `console`: the script and `dist/main` are both resolved from there", path, consoleReleaseSymbolsStampStep, stamp.WorkingDirectory)
-	}
-	for _, want := range []string{"npm run build", consoleReleaseSymbolsInject} {
-		if !slices.Contains(consoleRunLines(stamp.Run), want) {
-			t.Errorf("%s's %q step does not run %q: the build writes `dist/main` and the inject run stamps it, in that order, and a step that did neither would leave the app without the ids", path, consoleReleaseSymbolsStampStep, want)
+	for _, one := range []struct {
+		name string
+		step consoleReleaseStep
+		run  string
+	}{
+		{consoleReleaseSymbolsBuildStep, build, "npm run build"},
+		{consoleReleaseSymbolsStampStep, stamp, consoleReleaseSymbolsInject},
+	} {
+		if one.step.WorkingDirectory != "console" {
+			t.Errorf("%s's %q step runs in %q, not `console`: the script and `dist/main` are both resolved from there", path, one.name, one.step.WorkingDirectory)
 		}
+		if !slices.Contains(consoleRunLines(one.step.Run), one.run) {
+			t.Errorf("%s's %q step does not run %q: the build writes `dist/main` and the inject run stamps it, in that order, and a step that runs neither would leave the app without the ids", path, one.name, one.run)
+		}
+	}
+	if got := len(build.Env); got != 0 {
+		t.Errorf("%s's %q step names %d environment variables (%v), want none: it runs the repository's build tooling and its dependencies' install scripts, which a step's environment is inherited by -- the token belongs to the step that runs the inject, and to no other step of this job", path, consoleReleaseSymbolsBuildStep, got, build.Env)
 	}
 	if got := len(stamp.Env); got != 1 || stamp.Env[consoleReleaseSymbolsSecret] != "${{ secrets."+consoleReleaseSymbolsSecret+" }}" {
 		t.Errorf("%s's %q step's env is %v, want the token alone: it is the step before the key material exists, and no Apple secret may sit beside it", path, consoleReleaseSymbolsStampStep, stamp.Env)
+	}
+	if got := len(consoleRunLines(stamp.Run)); got != 2 {
+		t.Errorf("%s's %q step runs %d lines, want the fail-closed shell and the inject alone: the build is the step before it, which is what keeps the token out of a build's environment", path, consoleReleaseSymbolsStampStep, got)
 	}
 
 	// Where the step is: the app's debug files and its source maps have to
