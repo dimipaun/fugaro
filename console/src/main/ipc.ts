@@ -1024,10 +1024,9 @@ export const CONSOLE_OPERATIONS = [
   // per record would ride in the document every reader of the view fetches).
   //
   // **It is the second operation here whose child mints a credential of the
-  // host's**, and the first whose child may not write anything at all: the read
-  // goes through the coordinator's own GitHub App installation token, minted
-  // with the named read-only permission set (metadata read and pull requests
-  // read, no `write` of any kind, `github.CoordinatorTokenPermissions`) and
+  // host's**, and the set that credential carries is the read-only one: pull
+  // requests read and metadata read, no `write` of any kind
+  // (`github.CoordinatorTokenPermissions`), minted for the one repository and
   // revoked when the command is done. That is why the two arguments below are
   // the whole of what a renderer can influence about this argv: there is no key
   // for a token, a host, a path, an endpoint or a flag, and the row in
