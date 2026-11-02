@@ -5181,7 +5181,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       paintJobs()
     }
 
-
     /** paintTotals fills the fleet's strip: the figures off the stored view and
      * the plan read, and the money off `budget show`. The slot stays, because it
      * is where the section's own mark goes. */

@@ -332,10 +332,6 @@ export const COORDINATOR_BLIND_HOST_CLASS = 'coordinator-blind-host'
  * the part it fills, the way the launch control's own button does for its form. */
 export const COORDINATOR_QUEUE_JOBS_CLASS = 'coordinator-queue-jobs'
 
-// ---------------------------------------------------------------------------
-// The job list (console coordinator v2, K4).
-// ---------------------------------------------------------------------------
-
 /**
  * COORDINATOR_JOBS_CLASS is the job list's own section, a sibling of the queue
  * and the fleet strip: the section the operator asks for, and the one section of
@@ -1756,10 +1752,6 @@ export function fillCoordinatorTotals(
     numberCell(host, factory, COORDINATOR_TOTAL_CAP_WORD, totals.cap, 'usd', 'coordinator-total-cap')
   }
 }
-
-// ---------------------------------------------------------------------------
-// The job list (K4).
-// ---------------------------------------------------------------------------
 
 /**
  * coordinatorJobsControl is the section's own control, in one of its two words:
