@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,6 +194,17 @@ func (f *summaryFixture) spent(t *testing.T, date, slug, repo string, spent budg
 	f.fs.Set(budget.SpendCollection, r.DocID(), r.ToFields())
 }
 
+// spentPriced writes one spendDaily document for a day whose compute was
+// priced, which is the only way a figure reaches the document's compute
+// column: the live half opens no runs bucket, so it never estimates one.
+func (f *summaryFixture) spentPriced(t *testing.T, date, slug, repo string, spent, compute budget.Micros) {
+	t.Helper()
+	r := budget.DayRecord{Repo: repo, Slug: slug, Date: date, Version: budget.DayRecordVersion, Final: true,
+		SpentMicros: spent, ComputeMicros: compute, ComputeEstimatedRuns: 1, Runs: 1,
+		Outcomes: map[string]int64{"succeeded": 1}}
+	f.fs.Set(budget.SpendCollection, r.DocID(), r.ToFields())
+}
+
 // summaryJSON runs the command and decodes its document.
 func summaryJSON(t *testing.T, args ...string) (summaryOut, string) {
 	t.Helper()
@@ -359,6 +371,148 @@ func TestSummaryNamesTheDaysNothingAnswered(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(got.Notes, "\n"), "history") {
 		t.Errorf("notes = %v, want the line saying the history answered nothing", got.Notes)
+	}
+}
+
+// TestSummaryPrintsTheTable pins the half of the output the document tests
+// never look at: the human table. The header's columns and their order, one row
+// per repository, the TOTAL row that adds them up, a compute cell that is n/a
+// where nothing priced the run and a figure where the history did, and the
+// notes printed above it all.
+func TestSummaryPrintsTheTable(t *testing.T) {
+	f := newSummaryFixture(t)
+	other := mustSlug("bitbucket", "acme/other")
+	f.addRepo(t, "  acme/other: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	today := f.day(0)
+	f.seed(t, summaryRun{day: today, slug: appSlug, repo: "acme/app", status: "succeeded", spent: 1_500_000, seq: 1})
+	f.seed(t, summaryRun{day: today, slug: appSlug, repo: "acme/app", status: "failed", spent: 500_000, seq: 2})
+	// An archived day whose compute the rollover priced: the row's COMPUTE is a
+	// figure, while the live repository's is n/a.
+	f.spentPriced(t, budget.DayDate(f.day(1)), other, "acme/other", 1_000_000, 500_000)
+
+	out, errOut, err := execute(t, "runs", "summary")
+	if err != nil {
+		t.Fatalf("runs summary: %v (%s)", err, errOut)
+	}
+	// The rows by their first cell, so the tabwriter's own padding is not what
+	// is pinned here.
+	rows := map[string][]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if fs := strings.Fields(line); len(fs) > 0 {
+			if _, ok := rows[fs[0]]; !ok {
+				rows[fs[0]] = fs
+			}
+		}
+	}
+	wantHeader := "REPOSITORY RUNS SUCCEEDED FAILED HALTED CANCELLED INFRA ERROR OTHER SPENT NOTIONAL COMPUTE"
+	if got := strings.Join(rows["REPOSITORY"], " "); got != wantHeader {
+		t.Errorf("header = %q, want %q\n%s", got, wantHeader, out)
+	}
+	for _, tc := range []struct {
+		first string
+		want  string
+	}{
+		// The repository the database answered for: two runs, no compute
+		// estimate, so n/a rather than a zero that would read as free.
+		{"acme/app", "acme/app 2 1 1 0 0 0 0 $2 $0 n/a"},
+		// The repository the history answered for, one run and its compute.
+		{"acme/other", "acme/other 1 1 0 0 0 0 0 $1 $0 $0.50"},
+		// The TOTAL row: the rows above added up, compute included.
+		{"TOTAL", "TOTAL 3 2 1 0 0 0 0 $3 $0 $0.50"},
+	} {
+		got := strings.Join(rows[tc.first], " ")
+		if got != tc.want {
+			t.Errorf("the %s row = %q, want %q\n%s", tc.first, got, tc.want, out)
+		}
+	}
+	// The window and the notes come before the table, one line each: a person
+	// reading it reads what it counts and what it could not cover first.
+	if !strings.HasPrefix(out, "project: ") || !strings.HasPrefix(strings.SplitN(out, "\n", 3)[1], "window:") {
+		t.Errorf("the table does not open with the project and the window:\n%s", out)
+	}
+	if i, j := strings.Index(out, "no run object was read"), strings.Index(out, "REPOSITORY"); i < 0 || j < 0 || i > j {
+		t.Errorf("the notes are not printed above the table:\n%s", out)
+	}
+}
+
+// TestSummaryPrintsAnEmptyWindow: a window nothing ran in is said in words, not
+// drawn as a table of zeros a reader could take for a failure.
+func TestSummaryPrintsAnEmptyWindow(t *testing.T) {
+	newSummaryFixture(t)
+	out, errOut, err := execute(t, "runs", "summary")
+	if err != nil {
+		t.Fatalf("runs summary: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "no run and no spend in this window") {
+		t.Errorf("the empty window is not said plainly:\n%s", out)
+	}
+	if strings.Contains(out, "REPOSITORY") {
+		t.Errorf("the empty window is drawn as a table:\n%s", out)
+	}
+}
+
+// TestSummaryFiltersToTheNamedRepository: --repo narrows the read to one
+// repository, and the totals follow the rows rather than the window. The filter
+// is the storage slug the sources file a repository under, so the name the
+// caller spells is resolved to it first, and a name nothing resolves is refused
+// rather than answered as an empty window.
+func TestSummaryFiltersToTheNamedRepository(t *testing.T) {
+	f := newSummaryFixture(t)
+	other := mustSlug("bitbucket", "acme/other")
+	f.addRepo(t, "  acme/other: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	today := f.day(0)
+	f.seed(t, summaryRun{day: today, slug: appSlug, repo: "acme/app", status: "succeeded", spent: 1_000_000, seq: 1})
+	f.seed(t, summaryRun{day: today, slug: other, repo: "acme/other", status: "failed", spent: 2_000_000, seq: 2})
+
+	all, _ := summaryJSON(t)
+	if len(all.Repositories) != 2 || all.Totals.Runs != 2 {
+		t.Fatalf("the unfiltered window holds %+v, so this test would prove nothing", all)
+	}
+
+	got, out := summaryJSON(t, "--repo", "acme/other")
+	if len(got.Repositories) != 1 {
+		t.Fatalf("repositories = %+v, want acme/other alone", got.Repositories)
+	}
+	r := got.Repositories[0]
+	if r.Slug != other || r.Repo != "acme/other" || r.Runs != 1 || r.States["failed"] != 1 || r.SpentMicros != 2_000_000 {
+		t.Errorf("repositories[0] = %+v", r)
+	}
+	if got.Totals.Runs != 1 || got.Totals.SpentMicros != 2_000_000 || got.Totals.States["succeeded"] != 0 {
+		t.Errorf("totals = %+v, want the filtered repository's figures alone", got.Totals)
+	}
+	if strings.Contains(out, appSlug) || strings.Contains(out, "acme/app") {
+		t.Errorf("the document still carries the repository --repo left out:\n%s", out)
+	}
+
+	if _, errOut, err := execute(t, "runs", "summary", "--repo", "acme/nosuch", "--json"); err == nil {
+		t.Errorf("--repo acme/nosuch was answered rather than refused: %s", errOut)
+	}
+}
+
+// TestSummarySaturatesASumThatWouldWrap: the money is added as micro-dollar
+// integers, and a long window over many repositories must not wrap into a
+// negative figure a reader would take for a real one. The budget database's own
+// rollup sums its counters the same way (budget's satAdd), so the summary
+// saturates at the largest figure the integer holds.
+func TestSummarySaturatesASumThatWouldWrap(t *testing.T) {
+	f := newSummaryFixture(t)
+	other := mustSlug("bitbucket", "acme/other")
+	f.addRepo(t, "  acme/other: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	today := f.day(0)
+	f.seed(t, summaryRun{day: today, slug: appSlug, repo: "acme/app", status: "succeeded", spent: math.MaxInt64, seq: 1})
+	f.seed(t, summaryRun{day: today, slug: other, repo: "acme/other", status: "succeeded", spent: math.MaxInt64, seq: 2})
+
+	got, out := summaryJSON(t)
+	if got.Totals.SpentMicros != math.MaxInt64 {
+		t.Errorf("totals.spent_micros = %d, want the sum saturated at %d:\n%s", got.Totals.SpentMicros, int64(math.MaxInt64), out)
+	}
+	if len(got.Repositories) != 2 {
+		t.Fatalf("repositories = %+v", got.Repositories)
+	}
+	for _, r := range got.Repositories {
+		if r.SpentMicros != math.MaxInt64 {
+			t.Errorf("%s: spent_micros = %d, want %d", r.Slug, r.SpentMicros, int64(math.MaxInt64))
+		}
 	}
 }
 
