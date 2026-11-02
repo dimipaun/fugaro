@@ -52,7 +52,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		// caller admitted as a review one whose email this table does not carry
 		// is a deployment disagreeing with itself — and a service that panicked
 		// on a state it cannot name would be the worse answer to it.
-		ra, ok := s.review[id.JobAccount]
+		ra, ok := s.reviewAccount(id.JobAccount)
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
 		}

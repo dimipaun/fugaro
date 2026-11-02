@@ -231,20 +231,35 @@ func TestReviewCallerOnAnUnpublishedRepositoryIsRefused(t *testing.T) {
 // spelling the VERIFIER'S list carries — so a deployment whose two lists spell
 // the same address in different cases would have a caller the verifier admits
 // and the pairing cannot look up, which is a refusal no operator could read.
-// The table is keyed by the folded email for that reason, and this is the call
-// that is refused if it ever stops being.
+//
+// Both directions are covered, because the two sides are looked up in opposite
+// ones: the table is keyed by the folded email (NewServer), and the account the
+// pairing looks up is the verifier's own spelling, so it is folded on the way
+// in (Server.reviewAccount). Either fold alone leaves the other direction
+// missing — the first subtest passes with only the key folded, the second only
+// with the lookup folded.
 func TestReviewTableIsKeyedTheWayTheVerifierKeysItsOwn(t *testing.T) {
 	loud := strings.ToUpper(testReviewSA)
 	if loud == testReviewSA {
 		t.Fatal("the fixture's own service account is already upper case, so this test would cover nothing")
 	}
-	s := newReviewSvcSpelled(t, testReviewSA, loud)
-	resp, body := s.callTokens(t, callBody("review-case-folded"), s.reviewRunToken(), s.reviewJobToken(), s.job)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("the review caller was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
-	}
-	if got := resp.Header.Get(HeaderCredential); got != testReviewAccount {
-		t.Errorf("%s = %q, want the review job's own account %q", HeaderCredential, got, testReviewAccount)
+	for _, tc := range []struct {
+		name                      string
+		verifierEmail, tableEmail string
+	}{
+		{"the table's list is the loud one", testReviewSA, loud},
+		{"the verifier's list is the loud one", loud, testReviewSA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newReviewSvcSpelled(t, tc.verifierEmail, tc.tableEmail)
+			resp, body := s.callTokens(t, callBody("review-case-folded"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the review caller was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
+			}
+			if got := resp.Header.Get(HeaderCredential); got != testReviewAccount {
+				t.Errorf("%s = %q, want the review job's own account %q", HeaderCredential, got, testReviewAccount)
+			}
+		})
 	}
 }
 

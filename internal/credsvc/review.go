@@ -236,6 +236,28 @@ func ReviewOf(id Identity) error {
 // An absent child is an empty admission and never an error (a repository
 // admitted to nothing is admitted to nothing); an unreadable child or node is
 // a refusal, because fail closed is a refusal and not a silent nothing.
+// reviewAccount is the review row of the calling account: the table NewServer
+// built, looked up by the FOLDED account.
+//
+// The two sides are spelled by two lists. The table is keyed by the folded
+// email (NewServer), and the account Verify answers with is the VERIFIER's own
+// spelling — so the lookup folds on the way in, exactly as the verifier folds a
+// presented claim, and a deployment that spelled the two lists in different
+// cases pairs its caller rather than refusing it for a reason no operator could
+// read. Folding either side alone leaves the other direction missing.
+//
+// An email that cannot be folded is a miss and not an error: verifyJob could
+// not have answered a class for one (it folds the claim the same way), so the
+// refusal it produces is fail-closed and unreachable through ServeHTTP.
+func (s *Server) reviewAccount(email string) (ReviewJobAccount, bool) {
+	folded, ok := foldEmail(email)
+	if !ok {
+		return ReviewJobAccount{}, false
+	}
+	ra, ok := s.review[folded]
+	return ra, ok
+}
+
 func (s *Server) pairReview(ctx context.Context, id Identity) (string, error) {
 	// Step 4 comes first: the claim rule is a fact about the run identity
 	// alone, so it is asked before anything is read — before the table, before
@@ -247,7 +269,7 @@ func (s *Server) pairReview(ctx context.Context, id Identity) (string, error) {
 	if err := ReviewOf(id); err != nil {
 		return "", err
 	}
-	ra, ok := s.review[id.JobAccount]
+	ra, ok := s.reviewAccount(id.JobAccount)
 	if !ok {
 		// The verifier answered a class this service's own table does not
 		// hold: the two lists are configured together, so this is a
