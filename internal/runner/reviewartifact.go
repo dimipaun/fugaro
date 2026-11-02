@@ -540,6 +540,15 @@ func VerifyReviewArtifact(ctx context.Context, data []byte, signature string, wa
 	return art, nil
 }
 
+// reviewRunPattern is the shape of the id the launcher mints for a review run,
+// spelled in the reader as well as in the published schema: it is the nonce the
+// coordinator checks (spec §6), so a reader that took any string would let an
+// artifact name a run that cannot exist. It is not a style rule -- the value
+// reaches an object path, a log line and the framed message a signature covers,
+// and a separator or a control character in it is a value something downstream
+// would act on.
+var reviewRunPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
+
 // DecodeReviewArtifact reads one artifact. It is strict and it closes every
 // vocabulary the shape has: an unknown field, a version this reader does not
 // read, a missing required field, a verdict that is not one of the three, or a
@@ -575,6 +584,9 @@ func DecodeReviewArtifact(data []byte) (ReviewArtifact, error) {
 		if strings.TrimSpace(f.value) == "" {
 			return art, fmt.Errorf("%w: the artifact carries no %s", ErrReviewArtifact, f.name)
 		}
+	}
+	if !reviewRunPattern.MatchString(art.ReviewRun) {
+		return art, fmt.Errorf("%w: review_run is %q, and the launcher mints %s", ErrReviewArtifact, art.ReviewRun, reviewRunPattern)
 	}
 	// The effort is the one provenance field a run may honestly have nothing
 	// to say about (the level named none), so its absence is not a refusal --

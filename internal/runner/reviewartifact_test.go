@@ -1052,3 +1052,54 @@ func TestReviewArtifactRedactsItsMutationChecks(t *testing.T) {
 		t.Errorf("the redaction changed the check's own statements: %+v", m)
 	}
 }
+
+// TestReviewArtifactRefusesAHostileRunID: review_run is the launcher's id, and
+// it travels on -- into an object path, a log line and the frame the signature
+// covers -- so the reader holds it to the shape its own schema states rather
+// than trusting a string that arrived in a document. A value carrying a
+// separator, a control character, an upper-case hex letter or the wrong length
+// is not an id any launcher minted, and something downstream would act on it as
+// if it were.
+func TestReviewArtifactRefusesAHostileRunID(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{"a path traversal", "../../etc/passwd"},
+		{"a slash in the hex group", "20261102-093000-ab/cd"},
+		{"a newline", "20261102-093000-ab\ncd"},
+		{"a NUL", "20261102-093000-ab\x00d"},
+		{"upper-case hex", "20261102-093000-ABCD"},
+		{"one upper-case hex letter", "20261102-093000-abCd"},
+		{"a short hex group", "20261102-093000-abc"},
+		{"a long hex group", "20261102-093000-abcd0"},
+		{"a short date group", "2026102-093000-abcd"},
+		{"no separators", "20261102093000abcd"},
+		{"a non-hex letter", "20261102-093000-zzzz"},
+		{"a trailing space", "20261102-093000-abcd "},
+		{"empty", ""},
+	} {
+		art := reviewArtifactFixture(t)
+		art.ReviewRun = tc.id
+		data, err := json.Marshal(art)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeReviewArtifact(data); err == nil {
+			t.Errorf("the reader accepted %s as a review_run: %q", tc.name, tc.id)
+		}
+	}
+	// The shape the launcher mints is read, so the check refuses other strings
+	// rather than the field itself.
+	art := reviewArtifactFixture(t)
+	for _, id := range []string{"20261102-093000-abcd", "20261031-210911-718a", "00000000-000000-0000"} {
+		art.ReviewRun = id
+		data, err := json.Marshal(art)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeReviewArtifact(data); err != nil {
+			t.Errorf("the reader refused the launcher's own shape %q: %v", id, err)
+		}
+	}
+}
