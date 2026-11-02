@@ -36,6 +36,14 @@ import (
 //   - Nothing else can fail the launch: the core's caller turns a failure into
 //     a warning, because the coordinator is advisory and a run must not wait on
 //     it, and drops a refusal of the write (rtdb.ErrPermission) without one.
+//     The ownership question above reads the database before that write, so a
+//     launcher the database refuses to READ gets the warning anyway: that
+//     refusal is a plain one from the core, carrying no rtdb.ErrPermission for
+//     the caller to drop. Every person of the installation holds
+//     roles/firebasedatabase.viewer (deploy/terraform, modules/firebase), so
+//     only a role somebody edited by hand reaches that line — and a warning
+//     about a role is what an operator can act on, where the write the rules
+//     refuse is not.
 func Declare(ctx context.Context, c *fcli.Cloud, slug string, spec *task.Spec) error {
 	lc := c.Config()
 	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" ||
@@ -48,6 +56,14 @@ func Declare(ctx context.Context, c *fcli.Cloud, slug string, spec *task.Spec) e
 	defer cancel()
 	store, err := openCoordinatorStore(ctx, lc)
 	if err != nil {
+		return err
+	}
+	// The database is this installation's before the declaration lands in it:
+	// the record is read back by this project's coordinator and by nobody
+	// else, so a launch must not write one into a database another
+	// installation marked. The launch itself is untouched by the answer — the
+	// caller turns it into a warning line, as it does every failure here.
+	if err := ownCoordinatorDB(ctx, lc, "nothing was declared"); err != nil {
 		return err
 	}
 	branch := spec.Branch

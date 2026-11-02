@@ -68,6 +68,52 @@ type PullRequest struct {
 	State string `json:"state,omitempty"`
 }
 
+// PRDocument is one pull request as the host has it, whole: the shape
+// `fugaro coordinator show` prints (coordinator v2 C3, D816), and the read
+// behind the console's inline description.
+//
+// It is separate from PullRequest, which is the view's own reduced record of
+// the same thing, because the two answer different questions and the
+// difference is the body. The view drops it by design — a body is unbounded
+// text written by whoever opened the pull request, and one per record would
+// ride in the document every reader of the view fetches (reconciliation F3,
+// D816's (a)) — so the shape that carries it is a read of its own, and a
+// second transport for it would be a second shape.
+//
+// Every field is the host's own answer and nothing is derived from it: the
+// document says what the host said, and a field the host did not answer is
+// absent rather than guessed. `body` is untrusted text like the view's Title:
+// a renderer sanitises it before it reaches a line or a cell (safetext), and
+// nothing in it is ever a link, a path or a decision.
+type PRDocument struct {
+	Number int `json:"number"`
+	// URL is the host's own address for the pull request. It is carried as
+	// data and is never drawn as a link by the surfaces that print this
+	// document, for the reason PullRequest.URL's own comment gives.
+	URL   string `json:"url,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Body is the description the host holds, as the host holds it. Untrusted
+	// text: it is whatever whoever opened the pull request wrote, and the only
+	// thing this read does with it is carry it.
+	Body string `json:"body,omitempty"`
+	// State is the host's own word ("open", "merged", "closed"), never a
+	// derivation of the runs behind the pull request.
+	State string `json:"state,omitempty"`
+	// Draft is whether the host says the pull request is a draft, which is the
+	// adapter's answer too (a title carrying DraftPrefix where the host has no
+	// real drafts).
+	Draft bool `json:"draft,omitempty"`
+	// Branch is the source branch the host reports and Base the branch it
+	// targets now, which a retargeted pull request makes different from the
+	// one it was opened against.
+	Branch string `json:"branch,omitempty"`
+	Base   string `json:"base,omitempty"`
+	// Author is the host's own identity for whoever opened it: GitHub's
+	// numeric user id, Bitbucket's account_id. It is an account id and never a
+	// display name, and nothing is authorised by it.
+	Author string `json:"author,omitempty"`
+}
+
 // Run is one run behind a pull request, as the run store records it.
 type Run struct {
 	ID string `json:"id"`
