@@ -286,9 +286,15 @@ var consoleReadPaths = map[string]bool{
 	"fugaro logs":         true,
 	"fugaro secrets ls":   true,
 	"fugaro accounts ls":  true,
-	"fugaro version":      true,
-	"fugaro doctor":       true,
-	"fugaro config list":  true,
+	// The read-only models panel (console 0.119.0, the owner's ruling of
+	// 2026-11-02): it resolves the selected project config the way every cloud
+	// read here does and opens no bucket, no database and no host -- the CLI's
+	// own comment says so -- so a console that asks it must remember no
+	// checkout either.
+	"fugaro models ls":   true,
+	"fugaro version":     true,
+	"fugaro doctor":      true,
+	"fugaro config list": true,
 	// plan status resolves the checkout (it is a cloud read of the checkout's
 	// own repository's runs) and writes nothing, the remembered checkouts
 	// included.

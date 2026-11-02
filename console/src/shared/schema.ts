@@ -291,6 +291,59 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // The other strings of that document are classified already (`project`,
   // `slug`, `repo`) or are days, which are `NON_TEXT_STRING_KEYS`' below.
   notes: 'sentence',
+  // The models read (contract §6.18). Every one of these is the **owner's own
+  // configuration or a catalog's own text**, never a value this console
+  // composed, so each is drawn through the sanitizer like any other string a
+  // document carries.
+  //
+  // `base_url` is a URL and takes the url class -- `pr_url`'s and `log_url`'s,
+  // which is the class that keeps a `javascript:` one from becoming an
+  // attribute, and which is drawn as **text**: no screen builds a link out of
+  // this document (design §4.3 gap 7). The class is https-only, so a provider
+  // whose base_url is plain http draws the class's own refusal rather than a
+  // URL -- the safe direction, and the read is offline either way.
+  base_url: 'url',
+  // `host` is the host of `base_url`: a machine name, so it takes the host
+  // class, which draws `HOST_PLACEHOLDER` for every value. That is the
+  // console's rule for a machine and not a decision this document gets to
+  // change -- the panel cannot show which host a route points at, and
+  // `docs/design/desktop-console.md` §5.1's row is where that is stated.
+  host: 'host',
+  // A route's or a model's `note`, a row's `refused` (why it has no price) and
+  // a repository's `problems[]` (the refusals a launch would give for its pins)
+  // are prose the CLI wrote about the configuration: sentences, drawn through
+  // the sanitizer's one-line and clipping rules like every other reason string.
+  note: 'sentence',
+  refused: 'sentence',
+  problems: 'sentence',
+  // `route` is the name of the route a model would go down, `kind` the
+  // provider entry's own kind, and `coder`, `reviewer`, `background` and
+  // `background_effective` are the model ids a repository pins: identifiers a
+  // policy or a file wrote, drawn as labels -- the class `job`, `profile` and
+  // `models` above carry.
+  route: 'label',
+  kind: 'label',
+  coder: 'label',
+  reviewer: 'label',
+  background: 'label',
+  background_effective: 'label',
+  // The two allow-lists (`allow_data_to`, `allowed_to`) are repository names,
+  // and they are **labels** rather than the `repository` class `repo` carries:
+  // the direct route's is `["*"]`, the marker that says "every repository", and
+  // a validating class would refuse it. A label draws the marker and a name
+  // alike, as text, which is what a route's allow-list is.
+  allow_data_to: 'label',
+  allowed_to: 'label',
+  // `source` is the one key of this document with **two readings**, and the
+  // map cannot have two entries for one key: on a model row it is one of the
+  // CLI's four price-source words (`embedded`, `catalog`, `local`, `none`),
+  // and on the catalog block it is the price catalog's own source URL. It takes
+  // the **drawn** reading, `label`, which is what the four enum words need --
+  // a URL under a label is drawn as the free-text rules' marker rather than as
+  // a link, so the collision fails in the safe direction. (`state`, which has
+  // the same shape of collision between the CLI's own word and a host's, took
+  // the same reading in coordinator v2 C3.)
+  source: 'label',
 })
 
 /**
@@ -366,6 +419,16 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'since',
   'until',
   'days_unknown',
+  // The models read (contract §6.18): `checked_at` is the UTC day the price
+  // catalog was generated -- the same kind of value as `day` beside it, which
+  // `age_days` is the whole-day distance from -- and `tier` (`zdr` | `all`) and
+  // `bound` (`min` | `max`) are two enums the CLI writes from its own tables,
+  // the kind of value `mode`, `health` and `derived` are. A screen that draws
+  // `tier` or `bound` spells a class for it at the call site, as the Live
+  // screen does for a connection's own state word.
+  'checked_at',
+  'tier',
+  'bound',
 ])
 
 /**
@@ -2111,9 +2174,11 @@ function coordinatorOptionalStampAt(raw: Record<string, unknown>, key: string, f
 }
 
 /** coordinatorStringsAt is a string array that must be there: a record's and a
- * run's `files`, a collision's `files` and `services`. An empty list is the
- * answer "no path" and not a missing answer, so the key is required and each
- * member is a string. */
+ * run's `files`, a collision's `files` and `services`, and -- since console
+ * 0.119.0, which is why the name is the coordinator's and the reader is not --
+ * the models read's `models`, `allow_data_to` and `allowed_to`. An empty list
+ * is the answer "no path" and not a missing answer, so the key is required and
+ * each member is a string. */
 function coordinatorStringsAt(raw: unknown, field: string, where: string): readonly string[] {
   return arrayAt(raw, field, where).map((item, index) =>
     stringAt(item, `${field}[${String(index)}]`, where),
@@ -2587,4 +2652,311 @@ function runsSummaryAt(raw: Record<string, unknown>, where: string): RunsSummary
  */
 export function decodeRunsSummary(raw: unknown, where = 'the runs summary document'): Decoded<RunsSummaryView> {
   return at(where, () => runsSummaryAt(objectAt(raw, 'the document', where), where))
+}
+
+// ---------------------------------------------------------------------------
+// The models read (console 0.119.0 "Pomelo"; contract §6.18).
+// ---------------------------------------------------------------------------
+
+/** MODELS_LIST_VERSION is the only `version` this build reads (the CLI's
+ * `modelsLsDocVersion`, pinned by `schemas/models-ls.schema.json`). The contract
+ * promises a member is only ever *added* within a version (D784), so a version
+ * this build does not know is a document whose members may have been re-meant
+ * rather than grown -- which is what a reader must refuse instead of draw. */
+export const MODELS_LIST_VERSION = 1
+
+/** ModelsListCatalog is the built-in provider price catalog's own provenance,
+ * carried once for the document: the day it was generated and whether it is
+ * past its staleness rule (design D10, which is why every model it prices is
+ * charged the dearest end of its tier's range when `stale` is true). */
+export interface ModelsListCatalog {
+  readonly source: string
+  readonly checkedAt: string
+  readonly ageDays: number
+  readonly stale: boolean
+}
+
+/** ModelsListPriceCatalog is one catalog-priced model row's own provenance: the
+ * tier the price is over, which end of its range was charged, and how many
+ * endpoints are behind it. `tierInputMaxPerM` and `tierOutputMaxPerM` are the
+ * dearest prices that tier holds -- the spread the row is charged over, against
+ * the price the row itself carries (design D6, P11). */
+export interface ModelsListPriceCatalog {
+  readonly tier: string
+  readonly bound: string
+  readonly endpoints: number
+  readonly zdrEndpoints: number
+  readonly source: string
+  readonly checkedAt: string
+  readonly stale: boolean
+  readonly tierInputMaxPerM: number
+  readonly tierOutputMaxPerM: number
+}
+
+/** ModelsListRoute is one route a model may go down: a provider entry of the
+ * project config, or the direct Anthropic route. `models` is what the route
+ * claims, as written -- exact ids or a prefix ending in `*` -- and
+ * `allowDataTo` the repositories whose code may be sent to it, `['*']` when it
+ * is open to every one of them. `feePct` is `route_fee_pct`: what is added to
+ * every charge on the route, and `0` when the entry adds nothing at all. */
+export interface ModelsListRoute {
+  readonly name: string
+  readonly kind: string
+  readonly baseUrl: string
+  readonly host: string
+  readonly models: readonly string[]
+  readonly feePct: number
+  readonly allowDataTo: readonly string[]
+  readonly openToEveryRepo: boolean
+  readonly note: string
+}
+
+/** ModelsListModel is one model a run can name, with the route that serves it
+ * and where its price comes from. `inputPerM` and `outputPerM` are US dollars
+ * per million tokens and are **`null` when the document carries none**: the
+ * contract leaves them out on a row whose price is zero *or unknown* -- "a
+ * consumer reads `source` before it reads a price" -- so an absent price is an
+ * absent price and never `0`, which would draw an unknown model as a free one.
+ * `route` is `''` for a model no route of this project serves (a launch refuses
+ * one), `refused` says why a row has no price at all, and `note` is the spread
+ * the row is charged over. */
+export interface ModelsListModel {
+  readonly id: string
+  readonly route: string
+  readonly source: string
+  readonly inputPerM: number | null
+  readonly outputPerM: number | null
+  readonly catalog: ModelsListPriceCatalog | null
+  readonly allowedTo: readonly string[]
+  readonly refused: string
+  readonly note: string
+}
+
+/** ModelsListRepo is one recorded repository's pins, read out of the
+ * `fugaro.yaml` at the base branch it runs against. `state` is the CLI's own
+ * word for what it could read (`ok`, `unknown (no checkout on this machine)`,
+ * `unread: <reason>`), the four model keys are absent unless it read the file,
+ * and `problems` is the refusals a launch would give for these pins. */
+export interface ModelsListRepo {
+  readonly name: string
+  readonly state: string
+  readonly coder: string
+  readonly reviewer: string
+  readonly background: string
+  readonly backgroundEffective: string
+  readonly problems: readonly string[]
+}
+
+/** ModelsListView is the whole document. `project` is `''` when no project
+ * config was selected, which is a state the CLI prints by leaving the key out,
+ * and `catalog` is `null` when no model in the document is priced from it.
+ * `routes` and `models` are what the project can run, `repositories` what it
+ * records -- and a repository this machine has no checkout for is a row whose
+ * `state` says so rather than a row that is missing. */
+export interface ModelsListView {
+  readonly version: number
+  readonly project: string
+  readonly catalog: ModelsListCatalog | null
+  readonly routes: readonly ModelsListRoute[]
+  readonly models: readonly ModelsListModel[]
+  readonly repositories: readonly ModelsListRepo[]
+}
+
+/** modelsCountAt is one of the document's counts: a whole number, and never
+ * below `minimum`. It is `intAt` with the schema's own `minimum`, because a
+ * count outside its range is a document this console does not know rather than
+ * a figure it withholds. */
+function modelsCountAt(raw: unknown, field: string, where: string, minimum = 0): number {
+  const count = intAt(raw, field, where)
+  if (count < minimum) return refuse('not-a-number', field, where)
+  return count
+}
+
+/** modelsPriceAt is one price the document may leave out: a finite,
+ * non-negative number, or **`null` when the key is absent** -- "an absent price
+ * is absent, never `0`". A value that is there and is not such a number is
+ * refused by name, because a price this console cannot read is not the same
+ * fact as a price the CLI did not write. */
+function modelsPriceAt(raw: Record<string, unknown>, key: string, field: string, where: string): number | null {
+  const at = field === '' ? key : `${field}.${key}`
+  const value = raw[key]
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return refuse('not-a-number', at, where)
+  return value
+}
+
+/** modelsMoneyAt is one price the document **always** writes, for a key whose
+ * absence would be a row this console cannot draw: a finite, non-negative
+ * US-dollar figure per million tokens. It refuses a value of any other shape by
+ * name, because a tier's dearest price is a figure a screen compares a row's
+ * own price against, and reading an absent one as `0` would say the tier holds
+ * nothing dearer than free. */
+function modelsMoneyAt(raw: unknown, field: string, where: string): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return refuse('not-a-number', field, where)
+  return raw
+}
+
+/** modelsFeeAt is `route_fee_pct`, the one number of the document that is
+ * **`0` when it is absent**: the contract leaves the key out "when the route
+ * charges none", and a route that adds nothing to a charge is a route whose fee
+ * is zero -- unlike a price, where absent means the figure is unknown. */
+function modelsFeeAt(raw: Record<string, unknown>, key: string, field: string, where: string): number {
+  const value = modelsPriceAt(raw, key, field, where)
+  return value === null ? 0 : value
+}
+
+/** modelsCatalogAt decodes the document's catalog provenance block. Its
+ * `checked_at` is a UTC day rather than a timestamp: the catalog is generated
+ * per day and `age_days` is the whole days between then and the read. */
+function modelsCatalogAt(raw: unknown, field: string, where: string): ModelsListCatalog {
+  const catalog = objectAt(raw, field, where)
+  return {
+    source: stringAt(required(catalog, 'source', field, where), `${field}.source`, where),
+    checkedAt: stringAt(required(catalog, 'checked_at', field, where), `${field}.checked_at`, where),
+    ageDays: modelsCountAt(required(catalog, 'age_days', field, where), `${field}.age_days`, where),
+    stale: boolAt(required(catalog, 'stale', field, where), `${field}.stale`, where),
+  }
+}
+
+/** modelsPriceCatalogAt decodes a catalog-priced model row's own provenance.
+ * Every member is one the CLI always writes for such a row, so each is
+ * required: a row that claims the catalog priced it and does not say over what
+ * is a row this console cannot draw a spread for. */
+function modelsPriceCatalogAt(raw: unknown, field: string, where: string): ModelsListPriceCatalog {
+  const catalog = objectAt(raw, field, where)
+  return {
+    tier: stringAt(required(catalog, 'tier', field, where), `${field}.tier`, where),
+    bound: stringAt(required(catalog, 'bound', field, where), `${field}.bound`, where),
+    endpoints: modelsCountAt(required(catalog, 'endpoints', field, where), `${field}.endpoints`, where, 1),
+    zdrEndpoints: modelsCountAt(
+      required(catalog, 'zdr_endpoints', field, where),
+      `${field}.zdr_endpoints`,
+      where,
+    ),
+    source: stringAt(required(catalog, 'source', field, where), `${field}.source`, where),
+    checkedAt: stringAt(required(catalog, 'checked_at', field, where), `${field}.checked_at`, where),
+    stale: boolAt(required(catalog, 'stale', field, where), `${field}.stale`, where),
+    tierInputMaxPerM: modelsMoneyAt(
+      required(catalog, 'tier_input_max_per_m', field, where),
+      `${field}.tier_input_max_per_m`,
+      where,
+    ),
+    tierOutputMaxPerM: modelsMoneyAt(
+      required(catalog, 'tier_output_max_per_m', field, where),
+      `${field}.tier_output_max_per_m`,
+      where,
+    ),
+  }
+}
+
+function modelsRouteAt(raw: unknown, index: number, where: string): ModelsListRoute {
+  const field = `routes[${String(index)}]`
+  const route = objectAt(raw, field, where)
+  return {
+    name: stringAt(required(route, 'name', field, where), `${field}.name`, where),
+    kind: optionalText(route, 'kind', field, where),
+    baseUrl: optionalText(route, 'base_url', field, where),
+    host: optionalText(route, 'host', field, where),
+    models: coordinatorStringsAt(required(route, 'models', field, where), `${field}.models`, where),
+    feePct: modelsFeeAt(route, 'route_fee_pct', field, where),
+    allowDataTo: coordinatorStringsAt(
+      required(route, 'allow_data_to', field, where),
+      `${field}.allow_data_to`,
+      where,
+    ),
+    openToEveryRepo: boolAt(
+      required(route, 'open_to_every_repo', field, where),
+      `${field}.open_to_every_repo`,
+      where,
+    ),
+    note: optionalText(route, 'note', field, where),
+  }
+}
+
+function modelsModelAt(raw: unknown, index: number, where: string): ModelsListModel {
+  const field = `models[${String(index)}]`
+  const model = objectAt(raw, field, where)
+  const catalog = model['catalog']
+  return {
+    id: stringAt(required(model, 'id', field, where), `${field}.id`, where),
+    route: stringAt(required(model, 'route', field, where), `${field}.route`, where),
+    source: stringAt(required(model, 'source', field, where), `${field}.source`, where),
+    inputPerM: modelsPriceAt(model, 'input_per_m', field, where),
+    outputPerM: modelsPriceAt(model, 'output_per_m', field, where),
+    catalog:
+      catalog === undefined || catalog === null
+        ? null
+        : modelsPriceCatalogAt(catalog, `${field}.catalog`, where),
+    allowedTo: coordinatorStringsAt(
+      required(model, 'allowed_to', field, where),
+      `${field}.allowed_to`,
+      where,
+    ),
+    refused: optionalText(model, 'refused', field, where),
+    note: optionalText(model, 'note', field, where),
+  }
+}
+
+function modelsRepoAt(raw: unknown, index: number, where: string): ModelsListRepo {
+  const field = `repositories[${String(index)}]`
+  const repo = objectAt(raw, field, where)
+  const problems = repo['problems']
+  return {
+    name: stringAt(required(repo, 'name', field, where), `${field}.name`, where),
+    state: stringAt(required(repo, 'state', field, where), `${field}.state`, where),
+    coder: optionalText(repo, 'coder', field, where),
+    reviewer: optionalText(repo, 'reviewer', field, where),
+    background: optionalText(repo, 'background', field, where),
+    backgroundEffective: optionalText(repo, 'background_effective', field, where),
+    problems:
+      problems === undefined || problems === null
+        ? []
+        : coordinatorStringsAt(problems, `${field}.problems`, where),
+  }
+}
+
+/** modelsListAt decodes §6.18's `version: 1` document field by field. Unknown
+ * keys are ignored, per this module's header rule (the owner's ruling of
+ * 2026-10-30): a key outside the shape is a field a newer CLI added, and it
+ * reaches no screen, no sanitizer and no sum. */
+function modelsListAt(raw: Record<string, unknown>, where: string): ModelsListView {
+  const version = intAt(required(raw, 'version', '', where), 'version', where)
+  if (version !== MODELS_LIST_VERSION) return refuse('unknown-value', 'version', where)
+  const catalog = raw['catalog']
+  return {
+    version,
+    project: optionalText(raw, 'project', '', where),
+    catalog:
+      catalog === undefined || catalog === null
+        ? null
+        : modelsCatalogAt(catalog, 'catalog', where),
+    routes: arrayAt(required(raw, 'routes', '', where), 'routes', where).map((item, index) =>
+      modelsRouteAt(item, index, where),
+    ),
+    models: arrayAt(required(raw, 'models', '', where), 'models', where).map((item, index) =>
+      modelsModelAt(item, index, where),
+    ),
+    repositories: arrayAt(required(raw, 'repositories', '', where), 'repositories', where).map(
+      (item, index) => modelsRepoAt(item, index, where),
+    ),
+  }
+}
+
+/**
+ * decodeModelsList admits `models ls --json` and nothing else (contract §6.18).
+ * It is a door of its own for `decodePlanStatus`'s reason: the document carries
+ * no marker a feed document has, so a feed handed here is refused for the keys
+ * it is missing and this document handed to the feed's door is refused as an
+ * unknown shape. Neither is read as the other.
+ *
+ * **The document is what the local files say.** The read is offline -- no
+ * bucket, no database, no host -- so what it holds is the project's own
+ * configuration, this binary's price table and the price catalog: the routes,
+ * the models a launch may name, and each recorded repository's pins. Every
+ * name, fee note and path-shaped value in it is somebody else's text, carried
+ * as data and classified in `WIRE_TEXT_CLASSES`; an instruction found in one is
+ * never acted on (design §5.1 rule 2).
+ */
+export function decodeModelsList(raw: unknown, where = 'the models list document'): Decoded<ModelsListView> {
+  return at(where, () => modelsListAt(objectAt(raw, 'the document', where), where))
 }
