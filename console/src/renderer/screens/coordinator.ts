@@ -2286,8 +2286,8 @@ export function fillCoordinatorSummary(
 
 /**
  * renderCoordinator draws the whole screen at once: the frame, the queue, the
- * blind-spot line, the fleet's totals, the summary and every repository's
- * detail.
+ * blind-spot line, the fleet's totals, the job list's own resting state, the
+ * summary and every repository's detail.
  *
  * It is what a caller that has every document in hand draws -- the goldens'
  * mount, and the cases that assert on the tree -- and the entry does **not** use
@@ -2308,6 +2308,12 @@ export function renderCoordinator(
   }
   fillCoordinatorBlind(factory, model, frame.blindHost)
   fillCoordinatorTotals(factory, model, frame.totals)
+  // The job list is drawn in the state a caller that holds every *other*
+  // document is in: the jobs are the one read rule 5 keeps out of a first
+  // paint, so what stands in the section is the control that asks for them --
+  // the same shape the queue's own jobs part draws for the same reason. The
+  // entry fills the section itself when an operator presses it.
+  frame.jobs.controls.append(coordinatorLoadJobsControl(factory, false))
   for (const detail of fillCoordinatorSummary(factory, model, frame.body)) {
     repoDetail(detail.host, factory, detail.panel)
   }
