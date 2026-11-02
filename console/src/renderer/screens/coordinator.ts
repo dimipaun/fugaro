@@ -1764,38 +1764,30 @@ export function fillCoordinatorTotals(
 /**
  * coordinatorJobsControl is the section's own control, in one of its two words:
  * the button that asks for the list at all, and the button that asks for the page
- * after it. Both carry `aria-expanded` for what the press fills, the way the
- * queue's jobs control and the launch control do -- the two states are "the list
- * is on screen" and "the page after the one on screen has been asked for", and
- * `expanded` is whichever the caller means.
+ * after it. Both carry `aria-expanded="false"`, the way the queue's jobs control
+ * and the launch control do, and it is the same state for both: the thing the
+ * press asks for is **not on screen when the control is** -- `Load jobs` is gone
+ * the moment the first page lands, and `Older 50` is the press for a page that has
+ * not been asked for yet.
  *
  * They are buttons and never anchors, and neither carries a value from a
  * document: the cursor the Older control pages with is held by the entry as the
  * last row it drew, so nothing a document wrote reaches an attribute.
  */
-export function coordinatorLoadJobsControl(factory: ScreenFactory, expanded: boolean): ScreenElement {
-  return jobsControl(factory, COORDINATOR_JOBS_LOAD_CLASS, COORDINATOR_JOBS_LOAD_WORD, expanded)
+export function coordinatorLoadJobsControl(factory: ScreenFactory): ScreenElement {
+  return jobsControl(factory, COORDINATOR_JOBS_LOAD_CLASS, COORDINATOR_JOBS_LOAD_WORD)
 }
 
-/**
- * coordinatorOlderJobsControl is the other one: the press that asks for the page
- * after the one on screen, with `--after` the last row the console drew. Its
- * `expanded` is true once that page has landed, so a press that is still out says
- * so and a control that has been answered says so too.
- */
-export function coordinatorOlderJobsControl(factory: ScreenFactory, expanded: boolean): ScreenElement {
-  return jobsControl(factory, COORDINATOR_JOBS_OLDER_CLASS, COORDINATOR_JOBS_OLDER_WORD, expanded)
+/** coordinatorOlderJobsControl is the other one: the press that asks for the page
+ * after the one on screen, with `--after` the last row the console drew. */
+export function coordinatorOlderJobsControl(factory: ScreenFactory): ScreenElement {
+  return jobsControl(factory, COORDINATOR_JOBS_OLDER_CLASS, COORDINATOR_JOBS_OLDER_WORD)
 }
 
-function jobsControl(
-  factory: ScreenFactory,
-  className: string,
-  label: string,
-  expanded: boolean,
-): ScreenElement {
+function jobsControl(factory: ScreenFactory, className: string, label: string): ScreenElement {
   const button = make(factory, 'button', className)
   button.setAttribute('type', 'button')
-  button.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+  button.setAttribute('aria-expanded', 'false')
   literal(button, label)
   return button
 }
@@ -2317,7 +2309,7 @@ export function renderCoordinator(
   // paint, so what stands in the section is the control that asks for them --
   // the same shape the queue's own jobs part draws for the same reason. The
   // entry fills the section itself when an operator presses it.
-  frame.jobs.controls.append(coordinatorLoadJobsControl(factory, false))
+  frame.jobs.controls.append(coordinatorLoadJobsControl(factory))
   for (const detail of fillCoordinatorSummary(factory, model, frame.body)) {
     repoDetail(detail.host, factory, detail.panel)
   }

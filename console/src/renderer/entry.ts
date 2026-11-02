@@ -5066,7 +5066,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         fillCoordinatorJobsEmpty(factory, section.list)
       }
       if (!jobsListedAsked) {
-        const control = coordinatorLoadJobsControl(factory, false)
+        const control = coordinatorLoadJobsControl(factory)
         appendTo(section.controls, control)
         surface.nodeOf(control).addEventListener('click', () => {
           askForJobPage(null)
@@ -5075,7 +5075,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       }
       if (jobsOut) return
       if (lastFullPage) {
-        const older = coordinatorOlderJobsControl(factory, false)
+        const older = coordinatorOlderJobsControl(factory)
         appendTo(section.controls, older)
         surface.nodeOf(older).addEventListener('click', () => {
           askForJobPage(jobsListed.cursor)

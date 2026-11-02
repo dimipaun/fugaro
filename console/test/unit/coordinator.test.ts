@@ -1657,14 +1657,16 @@ describe('the job list (K4)', () => {
   })
 
   it('draws the section’s two controls in the console’s own words, and the floor sentence with the version', () => {
-    const load = coordinatorLoadJobsControl(factory, false)
+    const load = coordinatorLoadJobsControl(factory)
     expect(load.getAttribute('class')).toBe(COORDINATOR_JOBS_LOAD_CLASS)
     expect(load.getAttribute('type')).toBe('button')
+    // Both carry the same state: what the press asks for is not on screen while
+    // the control is, which is what the attribute says.
     expect(load.getAttribute('aria-expanded')).toBe('false')
     expect(load.textContent).toBe(COORDINATOR_JOBS_LOAD_WORD)
-    const older = coordinatorOlderJobsControl(factory, true)
+    const older = coordinatorOlderJobsControl(factory)
     expect(older.getAttribute('class')).toBe(COORDINATOR_JOBS_OLDER_CLASS)
-    expect(older.getAttribute('aria-expanded')).toBe('true')
+    expect(older.getAttribute('aria-expanded')).toBe('false')
     expect(older.textContent).toBe(COORDINATOR_JOBS_OLDER_WORD)
 
     // The floor: the sentence names the release the paged read needs and the
