@@ -775,7 +775,8 @@ func credsDisabledRefusal(id, did string) error {
 func credsNameRefusal() error {
 	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), or the review-signing names %s and %s<account>%s, which --generate writes. Nothing was read and nothing was written",
 		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret,
-		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix)}
+		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix)
+}
 
 // credsGenerateNameRefusal refuses --generate for a NAME that is not an
 // account's review-signing key. The mode is refused rather than widened,
