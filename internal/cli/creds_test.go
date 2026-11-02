@@ -1517,8 +1517,19 @@ func TestCredsSetGenerateWritesTheDefaultAccountsKey(t *testing.T) {
 	replaced := reviewSigningKeyValue(t, "replaced")
 	f.seed(t, []byte(name+": "+replaced+"\n"))
 
-	if _, errOut, err := executeStdin(t, "", "creds", "set", "--generate", name); err != nil {
+	out, errOut, err := executeStdin(t, "", "creds", "set", "--generate", name, "--json")
+	if err != nil {
 		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	// The JSON shape names the window the way the human line does: a scripted
+	// rotation has no other way to learn which entry holds the value this run
+	// replaced, since the name is the whole of what it acts on.
+	var wrote credsSetResult
+	if err := json.Unmarshal([]byte(out), &wrote); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	if wrote.Window != window {
+		t.Errorf("--json window = %q, want %q", wrote.Window, window)
 	}
 	b := fixtureBundle(t, f)
 	gotName, key, err := b.ReviewSigningKey(config.DefaultClaudeAccount, false)
@@ -1697,6 +1708,37 @@ func TestCredsSetGenerateIsRefusedInACodingAgentsSession(t *testing.T) {
 	}
 	if n := f.writes(); n != 0 {
 		t.Fatalf("%d version(s) were written from an agent's session", n)
+	}
+}
+
+// TestCredsSetGenerateIsRefusedInARunsProcess is the other half of the pair
+// above, and it is the marker set a run actually carries: `FUGARO_RUN` on a
+// local launch, the Cloud Run and Batch markers in the cloud. The refusal is
+// credsOwnerOnly's, which runs before this command reads anything or opens the
+// cloud, and the whole point of holding both halves is that the mode stays
+// refused if a later edit ever moves a generate-dependent branch ahead of it —
+// a test that only covers the agent's session would not notice.
+func TestCredsSetGenerateIsRefusedInARunsProcess(t *testing.T) {
+	for _, marker := range []string{"FUGARO_RUN", "CLOUD_RUN_JOB"} {
+		t.Run(marker, func(t *testing.T) {
+			f := credsFixtureFor(t)
+			f.seed(t, []byte(config.ReviewSigningKeySecret("alice")+": "+reviewSigningKeyValue(t, "first")+"\n"))
+			t.Setenv(marker, "aurora/run-1")
+
+			_, _, err := executeStdin(t, "", "creds", "set", "--generate", config.ReviewSigningKeySecret("alice"))
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("creds set --generate with %s set = %v, want a refusal", marker, err)
+			}
+			if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), marker) {
+				t.Errorf("the refusal does not name the marker %s: %v", marker, err)
+			}
+			if n := len(f.Requests()); n != 0 {
+				t.Fatalf("%d request(s) were made from a run's process", n)
+			}
+			if n := f.writes(); n != 0 {
+				t.Fatalf("%d version(s) were written from a run's process", n)
+			}
+		})
 	}
 }
 

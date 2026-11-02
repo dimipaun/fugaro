@@ -680,7 +680,7 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if o.asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(credsSetResult{Project: lc.Name, Secret: store.id, Version: version, Replaced: replaced, Disabled: retired})
+		return enc.Encode(credsSetResult{Project: lc.Name, Secret: store.id, Version: version, Replaced: replaced, Disabled: retired, Window: window})
 	}
 	switch {
 	case replaced == "":
@@ -702,12 +702,19 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 // credsSetResult is `creds set --json`'s shape. It names the container, the
 // version written, the version replaced and whether that one was disabled, and
 // it holds no value and nothing derived from one.
+//
+// Window is the rotation window's entry — the name that now holds the value
+// this run replaced — and it is absent from a write that carried nothing over
+// (a first `--generate` for an account, and every write of a typed value). A
+// scripted rotation has no other way to learn it: what it prints is a NAME, and
+// the name is the whole of what an operator acts on (spec §6.3).
 type credsSetResult struct {
 	Project  string `json:"project"`
 	Secret   string `json:"secret"`
 	Version  string `json:"version"`
 	Replaced string `json:"replaced,omitempty"`
 	Disabled bool   `json:"disabled"`
+	Window   string `json:"window,omitempty"`
 }
 
 // credsWriteBack is the read a write is verified with. It is a variable so a
