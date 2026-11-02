@@ -2055,8 +2055,11 @@ database **refused** is a refusal with **no document at all** and exit **1**,
 naming the role that admits one — a console that read the refusal as an empty
 list would draw a quiet project where the truth is that nobody could look. A
 stored record this build cannot decode — an unknown field, or a document that is
-not a record — is refused the same way rather than shown with a field dropped,
-which is the strict decoding §6.13's stored view keeps.
+not a record — is refused rather than shown with a field dropped, which is the
+strict decoding §6.13's stored view keeps. **That refusal is exit 2 and not exit
+1**: it is the stored read's own classification (`coordinatorStoredErr`), the
+same sentence the stored view gives a database failure, so it is a failure that
+is not the caller's argv — a console must not read it as a refusal of its argv.
 
 **`--since` bounds the declarations by the record's own `at`**, and its default
 is `0`: every declaration the store holds. The node is already bounded — the

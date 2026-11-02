@@ -260,6 +260,12 @@ func TestCoordinatorIntentsRefusesARecordItCannotRead(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown field") {
 		t.Errorf("an undecodable record = %v, want the decoder's own refusal", err)
 	}
+	// The refusal is the stored status's own, so it carries that command's exit
+	// code: a record this build cannot decode is a failure that is not the
+	// caller's argv, and §6.16 is the sentence a console reads it from.
+	if code := fcli.ExitCode(err); code != fcli.ExitRemoteError {
+		t.Errorf("an undecodable record = exit %d, %v; want exit %d", code, err, fcli.ExitRemoteError)
+	}
 	if out != "" {
 		t.Errorf("an undecodable record printed a document:\n%s", out)
 	}
