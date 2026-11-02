@@ -184,9 +184,9 @@ emptied by --remove is refused: an absent key and an empty list mean different
 things to the loader, so use unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*) or turning a followup.* key
-on asks for the project's name rather than y/N, and --yes never answers that
-form. Writing outside a repository is refused in a coding agent's session,
---yes included; a ceiling loosened at --layer repo is refused there too.
+on is confirmed by the project's name typed at a terminal, or by --yes. Writing
+outside a repository is refused in a coding agent's session, --yes included,
+and so is the typed form at any layer: --yes never lifts that fence.
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -218,8 +218,8 @@ indistinguishable from a deliberate pin and silently wrong the day the built-in
 changes. Nothing to remove is a no-op with a sentence and exit 0, so an
 idempotent script does not fail.
 
-Removing a ceiling key asks for the project's name rather than y/N, and --yes
-never answers that form.
+Removing a ceiling key is confirmed by the project's name typed at a terminal,
+or by --yes outside a coding agent's session.
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -740,12 +740,12 @@ func settingsListSubset(a, b string) bool {
 // always is, for a ceiling, because it hands the decision to a looser layer.
 func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool, string) {
 	key := row.Key
-	ceilingWhy := "this loosens a ceiling: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, and --yes does not stand in"
-	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, and --yes does not stand in"
+	ceilingWhy := "this raises a limit: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
 	if settingsCeilingKey(key) {
 		switch mode {
 		case "unset":
-			return true, "removing a ceiling hands the decision back to a looser layer, so the project's own name is what confirms it, and --yes does not stand in"
+			return true, "removing a ceiling hands the decision back to a looser layer, so the project's own name is what confirms it, or --yes outside a coding agent's session"
 		case "add":
 			return true, ceilingWhy
 		case "set":

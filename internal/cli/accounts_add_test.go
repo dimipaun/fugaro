@@ -346,11 +346,12 @@ func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 	}
 
 	// Off is the default and the ordinary write; on is the sensitive
-	// direction, and a session with no terminal writes nothing rather than
-	// taking --yes for the owner's own hand.
-	_, _, err = execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local", "--yes")
+	// direction, so with no terminal and no --yes nothing is written. --yes is
+	// the other answer to that form outside a coding agent's session (D1107).
+	noTerminal(t)
+	_, _, err = execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local")
 	if err == nil {
-		t.Fatal("turning claude_account_auto on was answered by --yes")
+		t.Fatal("turning claude_account_auto on was written with no terminal and no --yes")
 	}
 	if !strings.Contains(err.Error(), "needs a real terminal") {
 		t.Errorf("the refusal does not say what it needs: %v", err)

@@ -97,8 +97,8 @@ three READMEs share.
 - **One sentence for the repository with no checkout**: `unknown (no checkout on this machine)`
   (the `rigor` design's D839), everywhere it is printed.
 - **One write path.** The diff, the confirmation, the backup and the atomic write are the same five
-  helpers everywhere; the sensitive directions ask for the typed project name, `--yes` never covers
-  it, and in a coding agent's session a write outside a repository prints the command and writes
+  helpers everywhere; the sensitive directions ask for the typed project name, `set` and `unset` take `--yes` for it
+  outside a coding agent's session (D1107), and in a coding agent's session a write outside a repository prints the command and writes
   nothing (SD9, D846).
 
 ## How this was reconciled
