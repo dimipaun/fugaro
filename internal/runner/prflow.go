@@ -578,7 +578,7 @@ func reviewFactsPart(last runstore.ReviewSummary) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return " (" + strings.Join(parts, ", ") + ")"
+	return " (recorded: " + strings.Join(parts, ", ") + ")"
 }
 
 // levelNames are the levels as the section's own line names them, in the order

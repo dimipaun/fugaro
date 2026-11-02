@@ -78,17 +78,17 @@ func TestReviewsPartNamesTheReviewer(t *testing.T) {
 		{
 			"a shipping round names all three",
 			[]runstore.ReviewSummary{round("ship", 0, "claude-opus-5-5", "high")}, FindingsPolicy{},
-			"senior review: ship in round 2 (model claude-opus-5-5, effort high, at " + short + ")",
+			"senior review: ship in round 2 (recorded: model claude-opus-5-5, effort high, at " + short + ")",
 		},
 		{
 			"a level with no effort of its own leaves it out",
 			[]runstore.ReviewSummary{round("ship", 0, "claude-sonnet-5", "")}, FindingsPolicy{},
-			"senior review: ship in round 2 (model claude-sonnet-5, at " + short + ")",
+			"senior review: ship in round 2 (recorded: model claude-sonnet-5, at " + short + ")",
 		},
 		{
 			"a round that recorded no head leaves the commit out",
 			[]runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Model: "claude-opus-5-5", Effort: "max"}}, FindingsPolicy{},
-			"senior review: ship in round 2 (model claude-opus-5-5, effort max)",
+			"senior review: ship in round 2 (recorded: model claude-opus-5-5, effort max)",
 		},
 		{
 			"a round that recorded none of them prints the line it always did",
@@ -98,31 +98,31 @@ func TestReviewsPartNamesTheReviewer(t *testing.T) {
 		{
 			"the facts come after the tolerated part, so the verdict and the policy stay one clause",
 			[]runstore.ReviewSummary{round("changes", 3, "claude-opus-5-5", "high")}, tolerated,
-			"senior review round 2: 3 findings, tolerated at startup (low, nit, nit) (model claude-opus-5-5, effort high, at " + short + ")",
+			"senior review round 2: 3 findings, tolerated at startup (low, nit, nit) (recorded: model claude-opus-5-5, effort high, at " + short + ")",
 		},
 		{
 			"a first-line round that answered nothing still names what ran",
 			[]runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: "deepseek/deepseek-v4-flash"}},
 			FindingsPolicy{},
-			"first-line review round 1: skipped, no verdict (model deepseek/deepseek-v4-flash, at " + short + ")",
+			"first-line review round 1: skipped, no verdict (recorded: model deepseek/deepseek-v4-flash, at " + short + ")",
 		},
 		{
 			"an unparseable outer round names what ran too",
 			[]runstore.ReviewSummary{{Round: 1, Tier: runstore.TierAdversarial, Verdict: "none", Head: head, Effort: "xhigh"}},
 			FindingsPolicy{},
-			"adversarial review round 1 returned no parseable verdict after a retry (effort xhigh, at " + short + ")",
+			"adversarial review round 1 returned no parseable verdict after a retry (recorded: effort xhigh, at " + short + ")",
 		},
 		{
 			"a model a hand edited into the record cannot forge section markup",
 			[]runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Model: "claude\n## shipped by *someone*"}},
 			FindingsPolicy{},
-			"senior review: ship in round 2 (model claude shipped by \\*someone\\*)",
+			"senior review: ship in round 2 (recorded: model claude shipped by \\*someone\\*)",
 		},
 		{
 			"a head a hand edited into the record is not printed as one",
 			[]runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Head: "abc\n## shipped by *someone*"}},
 			FindingsPolicy{},
-			"senior review: ship in round 2 (at (invalid))",
+			"senior review: ship in round 2 (recorded: at (invalid))",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

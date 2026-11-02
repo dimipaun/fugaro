@@ -392,7 +392,7 @@ func reviewLine(r runstore.ReviewSummary) string {
 		parts = append(parts, "at "+shortGitHead(r.Head))
 	}
 	if len(parts) > 0 {
-		line += " (" + strings.Join(parts, ", ") + ")"
+		line += " (recorded: " + strings.Join(parts, ", ") + ")"
 	}
 	return line
 }

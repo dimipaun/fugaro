@@ -649,12 +649,15 @@ all, and a verdict that does not verify is never a `ship`.
 
 **A review at the final head by a model on the approved list may stand in for an independent
 review.** The rule turns on a pair rather than on a name: **what** reviewed the round and **which
-head** it read. CLI 0.16.0 makes both facts things the run's own record states — every review round
-writes the model it ran on, the reasoning effort it ran at and the commit it read
-(`runstore.ReviewSummary.Model`, `.Effort` and `.Head`, beside the round, the tier and the verdict),
-and the run's pull request status line and `fugaro diagnose` print them — so the coordinator compares
-a review's head with the pull request's final head, and its model with the list, rather than
-inferring either from who launched the job. The final-head half is the rule this section already
+head** it read, and **both are read from the signed review artifact** (CSR3, #1598) after its
+signature verifies: its `head_sha` and its `reviewer.model` (the reviewer block carries the model and
+the effort). The run's own record also states them — every review round writes the model it ran on,
+the reasoning effort it ran at and the commit it read (`runstore.ReviewSummary.Model`, `.Effort` and
+`.Head`), and the run's pull request status line and `fugaro diagnose` print them as **recorded** —
+but those are the unsigned bytes of `result.json`, a hint for a human reader, and **never an input to
+ship, merge, a status verdict or the coordinator** (owner ruling, 2026-11-02). The coordinator
+compares the artifact's head with the pull request's final head, and the artifact's model with the
+list, rather than inferring either from who launched the job. The final-head half is the rule this section already
 takes: a head that has moved since gets no merge on that verdict. **What the approved list is —
 which models are strong enough to stand in, and where the list is set — is a project or policy
 decision this design does not make**: the shape and the default are still open, and until the

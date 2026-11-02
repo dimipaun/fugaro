@@ -1585,8 +1585,8 @@ func TestDiagnosePrintsTheReviewersModelEffortAndHead(t *testing.T) {
 	}
 	for _, want := range []string{
 		"\nReviews\n",
-		"  round 1 first: ship, 0 findings (model deepseek/deepseek-v4-flash, at " + head[:7] + ")\n",
-		"  round 2 senior: changes, 2 findings (model claude-opus-5-5, effort high, at " + head[:7] + ")\n",
+		"  round 1 first: ship, 0 findings (recorded: model deepseek/deepseek-v4-flash, at " + head[:7] + ")\n",
+		"  round 2 senior: changes, 2 findings (recorded: model claude-opus-5-5, effort high, at " + head[:7] + ")\n",
 		"  round 3 adversarial: no verdict, 0 findings\n",
 	} {
 		if !strings.Contains(human, want) {
@@ -1719,7 +1719,7 @@ func TestDiagnoseRedactsEveryStringOfAReviewRound(t *testing.T) {
 		t.Fatalf("the Reviews block prints the secret:\n%s", human)
 	}
 	for _, want := range []string{
-		"  round 1 adversarial: ship [REDACTED], 1 finding (model model [REDACTED], effort effort [REDACTED], at " + head[:7] + ")\n",
+		"  round 1 adversarial: ship [REDACTED], 1 finding (recorded: model model [REDACTED], effort effort [REDACTED], at " + head[:7] + ")\n",
 		"  round 2 senior: changes [REDACTED], 2 findings\n",
 	} {
 		if !strings.Contains(human, want) {

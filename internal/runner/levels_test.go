@@ -598,7 +598,7 @@ func TestLevelsRecordNoEffortWhenTheStageIsOnAProviderRoute(t *testing.T) {
 	// The line the pull request carries says the same: the model, no effort at
 	// all, and the head the round read.
 	body := onlyPR(t, g.provider).Body
-	want := "adversarial review: ship in round " + strconv.Itoa(adv.Round) + " (model " + sonnet + ", at " + adv.Head[:7] + ")"
+	want := "adversarial review: ship in round " + strconv.Itoa(adv.Round) + " (recorded: model " + sonnet + ", at " + adv.Head[:7] + ")"
 	if !strings.Contains(body, want) {
 		t.Errorf("the pull request does not say %q:\n%s", want, body)
 	}
@@ -649,7 +649,7 @@ func TestLevelsRecordTheReviewersModelAndEffort(t *testing.T) {
 	// The plan's last round is level 3's, so its facts are the ones the pull
 	// request's review line carries.
 	body := onlyPR(t, g.provider).Body
-	want := "adversarial review: ship in round " + strconv.Itoa(adv.Round) + " (model " + sonnet + ", effort " + effort + ", at " + adv.Head[:7] + ")"
+	want := "adversarial review: ship in round " + strconv.Itoa(adv.Round) + " (recorded: model " + sonnet + ", effort " + effort + ", at " + adv.Head[:7] + ")"
 	if !strings.Contains(body, want) {
 		t.Errorf("the pull request does not say %q:\n%s", want, body)
 	}
