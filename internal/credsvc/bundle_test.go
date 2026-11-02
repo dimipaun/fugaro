@@ -736,6 +736,15 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a review-signing name at the length bound", config.ReviewSigningKeyPreviousSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen)) + ": " + fakeCred(t, "x") + "\n"},
 		{"a review-signing name one byte over the length bound", config.ReviewSigningKeyPreviousSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen+1)) + ": " + fakeCred(t, "x") + "\n"},
 		{"a dash-heavy review-signing account over the account length bound", config.ReviewSigningKeySecret("a"+strings.Repeat("-a", 30)) + ": " + fakeCred(t, "x") + "\n"},
+		// The account family's own bound, read as a whole-name length: 41
+		// characters of dash-heavy account are a 60-byte key that the account
+		// regex admits and MaxClaudeAccountNameLen refuses, so a schema whose
+		// single bound covered the review-signing family too would accept it.
+		{"a dash-heavy account name the regex admits and the account length rule refuses", "claude-oauth-token-a" + strings.Repeat("-a", 20) + ": " + fakeCred(t, "x") + "\n"},
+		// The same, inside the family that made the bound a single number: a
+		// 33-character account is a 68-byte review-signing key, which the
+		// account length rule refuses and no bound of 75 can.
+		{"a review-signing name whose account is over the account length bound", config.ReviewSigningKeySecret("a"+strings.Repeat("-a", 16)) + ": " + fakeCred(t, "x") + "\n"},
 		// The one reserved ACCOUNT name is legal as a review-signing entry's
 		// account part, and both sides read it that way: the reservation exists
 		// because that account's derived SECRET would be the git entry's own
