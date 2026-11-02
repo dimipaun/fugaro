@@ -553,6 +553,9 @@ func TestSummaryCountsAreNeverNegative(t *testing.T) {
 	if got.Totals.States["succeeded"] != 3 || got.Totals.States["failed"] != 0 || got.Totals.Runs != 3 {
 		t.Errorf("totals = %+v", got.Totals)
 	}
+	// The clamped figure is the document's figure, so it is the one the
+	// contract's own minimum of 0 allows.
+	summarySchemaValid(t, out)
 
 	// The table is drawn from the same figures, so it carries no count below
 	// zero either: a "-3" a person reads is the defect this clamps.
@@ -617,13 +620,12 @@ func TestSummaryRefusesAForeignBudgetDatabase(t *testing.T) {
 	}
 }
 
-// TestSummaryDocMatchesSchema validates the document the command writes against
-// schemas/summary.schema.json, the contract a consumer reads it by (D784).
-func TestSummaryDocMatchesSchema(t *testing.T) {
-	f := newSummaryFixture(t)
-	f.seed(t, summaryRun{day: f.day(0), slug: appSlug, repo: "acme/app", status: "succeeded", spent: 1_000_000, seq: 1})
-	_, out := summaryJSON(t)
-
+// summarySchemaValid fails the test when out is not a document
+// schemas/summary.schema.json allows: the contract a consumer reads the
+// document by (D784), so a figure or a shape outside it is one no consumer can
+// read. The counts' own minimum is 0, which is the property the clamp keeps.
+func summarySchemaValid(t *testing.T, out string) {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "summary.schema.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -651,6 +653,16 @@ func TestSummaryDocMatchesSchema(t *testing.T) {
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("the document does not match schemas/summary.schema.json: %v\n%s", err, out)
 	}
+}
+
+// TestSummaryDocMatchesSchema validates the document the command writes against
+// schemas/summary.schema.json, the contract a consumer reads it by (D784).
+func TestSummaryDocMatchesSchema(t *testing.T) {
+	f := newSummaryFixture(t)
+	f.seed(t, summaryRun{day: f.day(0), slug: appSlug, repo: "acme/app", status: "succeeded", spent: 1_000_000, seq: 1})
+	_, out := summaryJSON(t)
+
+	summarySchemaValid(t, out)
 	// The members a consumer reads without a nil check are written on every
 	// run, empty included: a null array would be a shape the schema's own
 	// type does not allow and a consumer's loop would crash on.
