@@ -312,6 +312,8 @@ var bitbucketWillCreate = map[string]string{
 	// service's read consumer.
 	"internal/gitprov/bitbucket/oauth.go":              "BB1",
 	"internal/gitprov/bitbucket/oauth_test.go":         "BB1",
+	"scripts/live-checks/check145.sh":                  "BB3",
+	"scripts/live-checks/check145_test.sh":             "BB3",
 	"internal/credsvc/bitbucket.go":                    "BB4",
 	"internal/credsvc/bitbucket_test.go":               "BB4",
 	"internal/gitprov/bitbucket/service.go":            "BB4",
@@ -320,8 +322,6 @@ var bitbucketWillCreate = map[string]string{
 	"scripts/live-checks/check146.sh":                  "BB5",
 	"scripts/live-checks/check146_test.sh":             "BB5",
 	"internal/cli/docs_bitbucket_runbook_test.go":      "T2.6",
-	"scripts/live-checks/check145.sh":                  "BB3",
-	"scripts/live-checks/check145_test.sh":             "BB3",
 	"internal/cli/docs_bitbucket_security_test.go":     "T2.11",
 	// Parked with S3, and still absent for as long as S3 is.
 	"internal/gitprov/bitbucket/comments_test.go": "T3.3 (parked)",
