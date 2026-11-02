@@ -1,8 +1,9 @@
 # Pending workflow changes
 
 **Two files are pending: `console-release-symbols.yml`** (the console's release
-pipeline with the crash reporter's symbol upload added after the build,
-2026-11-01 — a release-time job, not a pull-request check; see
+pipeline with the crash reporter's symbols stamped into the build before the
+pack and uploaded after it, staged 2026-11-01 and re-cut 2026-11-02 — a
+release-time job, not a pull-request check; see
 `## console-release-symbols.yml` below) and **`console-windows.yml`** (the
 console's Windows
 installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
@@ -14,7 +15,7 @@ installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
 - **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
 - **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It runs on the release tag and **never on a pull request**, so it is the first of the three files here that are not pull-request checks. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
 - **`console-release-feed.yml`** — the console's signing, notarisation and publishing pipeline **with the console's update feed added**: the macOS `release` job writes electron-updater's `latest-mac.yml` beside the `.zip` it has just verified, sums it into the job's `console-sha256sums.txt` and uploads it with the other assets, and `publish` requires it, checks it against the sums and attaches it — so the release carries the feed under the one keyless cosign signature over the merged sums file. It runs on the release tag and **never on a pull request**. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-feed.yml` below.
-- **`console-release-symbols.yml`** — the console's signing, notarisation and publishing pipeline **with the crash reporter's symbol upload added after the build**: one step, run after the artifacts have been verified and before they are uploaded, that pushes the packaged app's native debug files and the main process's JavaScript and source maps to Sentry (org `fugaro`, project `fugaro-console`, the EU region) — the maps under the console's own version, the native debug files keyed by the debug id inside each one, so `debug-files upload` takes no release at all. It files the symbols and **no crash report is read with them yet**: nothing the console sends carries the ids or the release a symbolicator looks up, and the four reasons are in `## console-release-symbols.yml` below. It carries the running file's text plus that one step and nothing else, and **it is the file that adds `SENTRY_AUTH_TOKEN` to the `console-release` environment**; the step prints one line and exits 0 while that secret does not exist, so the copy-in is inert until the owner adds it. It runs on the release tag and **never on a pull request**. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-symbols.yml` below.
+- **`console-release-symbols.yml`** — the console's signing, notarisation and publishing pipeline **with the crash reporter's symbols stamped into the build and then uploaded**: a step that builds the app and stamps `dist/main` with its debug id **before** the signing step packs it — which is why the signing step's first pack changes from `npm run package` to the same packer without its build, `npm run package:targets -- --dir` — and, after the artifacts have been verified and before they are uploaded, a step that pushes the packaged app's native debug files and the main process's JavaScript and source maps to Sentry (org `fugaro`, project `fugaro-console`, the EU region) — the maps under the console's own version, which every event now names as its release, and the native debug files keyed by the debug id inside each one, so `debug-files upload` takes no release at all. **One piece is still missing**: the pinned SDK fills an event's debug images from `globalThis._sentryDebugIds`, which the bundler shims write into a *bundle*, and the console's main process is unbundled `tsc` output — so an event carries the release and no image yet, and the four things now true (and the one that is not) are in `## console-release-symbols.yml` below. It carries the running file's text plus those two steps and the one changed pack line, and **it is the file that adds `SENTRY_AUTH_TOKEN` to the `console-release` environment**; each step prints one line and exits 0 while that secret does not exist, so the copy-in is inert until the owner adds it. It runs on the release tag and **never on a pull request**. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-symbols.yml` below.
 - **`console-windows.yml`** — the console's **Windows pack**, and the second of the three files here that are **not** a pull-request check (`console-release-linux.yml` above is the first and `mobile-release.yml` below is the third): one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
 - **`mobile-release.yml`** — **applied on 2026-10-23, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 and reworked on 2026-10-21 after the security review of #777 (the build runs from GitHub Actions on each release tag, and by hand). On every `mobile-v[0-9]+.[0-9]+.[0-9]+` tag (the app's own stream since the owner's ruling of 2026-10-22) and on a manual dispatch, **one job per platform** builds on EAS and submits the finished build to TestFlight's internal testers and to Play's internal-testing track, behind the `mobile-release` GitHub environment and its only required reviewer (the owner) — the same click that gates `console-release` and `website-live`. The two jobs are independent, **both are enabled**, and one repository variable (`MOBILE_RELEASE_DISABLED_PLATFORMS`) can turn either off; see `## mobile-release.yml` below, which carries the Android first-release checklist.
 - **`console-release-tag.yml`** — the console's **own release stream**: the staged `console-release.yml` with its trigger moved from the CLI's `vX.Y.Z` tag to the console's own `console-vX.Y.Z` tag, a step that refuses a tag whose X.Y.Z is not `console/package.json`'s own `version`, a step that refuses a version whose notes file `docs/releases/console/vX.Y.Z.md` is missing, and a `publish` whose release body is that notes file rather than the string it used to inline. The three release streams are independent (owner addendum 2026-10-22: CLI = animals, Console = fruits, Mobile = birds); nothing else in the file moved, and `scripts/release.sh` and `scripts/release-gate.sh` stay CLI-only. **Applied on 2026-10-23**: it was copied over the staged `console-release.yml` and into `.github/workflows/console-release.yml`, and its own staged copy is gone, so the byte-identity clause in `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` holds on the new text; see `## console-release-tag.yml` below, which is now the record.
@@ -1100,54 +1101,75 @@ which compares it with the directory in both directions.
 ## `console-release-symbols.yml`
 
 **This file supersedes `## console-release.yml` above.** It is that file as it
-runs today with **one step added** and nothing else, so it is copied over the
-staged `console-release.yml` **and** into
+runs today with **two steps added and one pack line changed**, so it is copied
+over the staged `console-release.yml` **and** into
 `.github/workflows/console-release.yml`, which is why its copy-in has one more
-command than usual. Staged on **2026-11-01** on the owner's ruling of that date:
-the console's crash reports (0.118.0, the per-user opt-in switch of Task 2.2) are
-scrubbed to the exception type and the app's own frames, and **the symbols are
-what make those frames readable** — the design behind it is **section 7.4** of
-`docs/design/desktop-console.md`, and the script the step runs is
+command than usual. Staged on **2026-11-01** on the owner's ruling of that date
+— the console's crash reports (0.118.0, the per-user opt-in switch of Task 2.2)
+are scrubbed to the exception type and the app's own frames, and **the symbols
+are what make those frames readable** — and **re-cut on 2026-11-02** on the
+ruling of that date, which is the one that makes symbolication effective: the
+first staging uploaded the symbols and left nothing sending the ids they are
+keyed by, and the second stamps the build before the pack and gives every event
+the release the maps are filed under. The design behind it is **section 7.4** of
+`docs/design/desktop-console.md`, and the script both steps run is
 `console/scripts/upload-sentry-symbols.mjs`, whose own header carries the
 arguments. It runs on the release tag and **never on a pull request**, like the
 file it supersedes.
 
-What it adds, and nothing else in the file moved:
+What it changes, and nothing else in the file moved:
 
-1. **The step**, in the macOS `release` job, after **Verify the shipped
+1. **The stamp, in a step of its own before the signing step** — *Build the app,
+   and stamp the built main process with its debug id* runs `npm run build` and
+   then `node scripts/upload-sentry-symbols.mjs inject`, which rewrites every
+   file of `console/dist/main` and the map beside it with a **debug id**. It has
+   to sit exactly there: the id has to be inside the files the packer copies
+   into the archive, so a build after the stamp throws it away and a stamp after
+   the pack is not in the app at all. That is also why the signing step's **first
+   pack changes from `npm run package` to `npm run package:targets -- --dir
+   -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`** — the same
+   packer without its own `npm run build`, which would rebuild over the stamp.
+   The second pack (the .dmg and the .zip, from the stapled bundle) already read
+   that way and does not change.
+2. **The upload step**, in the macOS `release` job, after **Verify the shipped
    artifacts, and record it** — the app's debug files are uploaded from the
    bundle that has just been verified, so what is uploaded describes the bytes
-   that ship — and before the verified assets are uploaded as an artifact.
-   `console/scripts/upload-sentry-symbols.mjs` runs three `sentry-cli` commands
+   that ship — and before the verified assets are uploaded as an artifact. The
+   same script runs with no argument and makes two further `sentry-cli` calls
    against that bundle and the built main process: `debug-files upload` for the
-   native debug files (the Electron framework and the app's native modules) and
-   `sourcemaps inject` followed by `sourcemaps upload` for the main process's
-   JavaScript and its maps — the two commands that put a debug id into each file
-   and into the map beside it. The org, the project
-   (`fugaro-console`) and the EU region (`https://de.sentry.io/`) are constants
-   in the script; the release is the console's own version, read from
-   `console/package.json`, which the tag step above has already held to the tag,
-   and it names the two `sourcemaps` commands and not the `debug-files` one —
-   `debug-files upload` matches a file by the debug id inside it, so a release
-   names nothing there and the CLI refuses the argument outright.
-   **The bare version and not `@sentry/electron`'s `name@version` default**: the
-   reporter's scrubber drops a release that is not its own shape, and an `@` is
-   not in it.
-2. **One repository secret, `SENTRY_AUTH_TOKEN`**, added to the
-   `console-release` environment and named in this step's `env:` and nowhere
-   else — the file's second secret, beside the six the signing step reads. **It
-   is never on an argv**: `sentry-cli` takes it from the environment it inherits,
-   and the script only ever asks whether the variable is empty. A token in an
-   argv is a token in the process table, readable by every process of the same
-   user on the runner.
+   native debug files (the Electron framework and the app's native modules),
+   then `sourcemaps upload` for the main process's JavaScript and its maps. The
+   org, the project (`fugaro-console`) and the EU region
+   (`https://de.sentry.io/`) are constants in the script; the release is the
+   console's own version, read from `console/package.json`, which the tag step
+   above has already held to the tag, and it names the two `sourcemaps` commands
+   and not the `debug-files` one — `debug-files upload` matches a file by the
+   debug id inside it, so a release names nothing there and the CLI refuses the
+   argument outright. **The bare version and not `@sentry/electron`'s
+   `name@version` default**: the reporter's scrubber drops a release that is not
+   its own shape, an `@` is not in it, and the wiring stamps every event with the
+   app's own version — the same string. The maps are read out of
+   `console/dist/main`, where the stamp left them: **source maps are deliberately
+   not inside the app** (`build.files` carries `dist/main/**/*.js` and no
+   `.map`, which `console/test/unit/build-files.test.ts` pins).
+3. **One repository secret, `SENTRY_AUTH_TOKEN`**, added to the
+   `console-release` environment and named in **the two steps'** `env:` and
+   nowhere else — the file's second secret, beside the six the signing step
+   reads, and **neither step holds it beside an Apple secret**: the stamping step
+   runs before the key material exists and the upload step after the signing step
+   has removed it. **It is never on an argv**: `sentry-cli` takes it from the
+   environment it inherits, and the script only ever asks whether the variable is
+   empty. A token in an argv is a token in the process table, readable by every
+   process of the same user on the runner.
 
-**The step is a no-op until the secret exists**, and that is deliberate rather
+**Each step is a no-op until the secret exists**, and that is deliberate rather
 than an oversight: with `SENTRY_AUTH_TOKEN` unset or empty the script prints one
 line — `Sentry symbol upload skipped: no auth token configured` — and exits
-**0** without invoking the CLI at all. So the copy-in is safe to make today, in
-advance of the secret, and the day the owner adds the token to the environment
-the same step starts uploading. A fork, a checkout and the console's own
-pull-request job never have a token and never upload anything. **The one thing
+**0** without invoking the CLI at all, in the stamping run and in the upload run
+alike. So the copy-in is safe to make today, in advance of the secret, and the
+day the owner adds the token to the environment both steps start working. A
+fork, a checkout and the console's own pull-request job never have a token,
+never stamp anything and never upload anything. **The one thing
 to add on the owner's side** is the repository secret `SENTRY_AUTH_TOKEN` in the
 `console-release` environment's secrets (a Sentry auth token with `project:releases`
 and `org:read` scope at most), beside the six the signing step already uses; the
@@ -1163,25 +1185,38 @@ download for the platforms that package no binary — is not what makes
 `sentry-cli` runnable there. An earlier draft of this section said the install
 had to be changed to run scripts; it does not.
 
-**The symbols are uploaded, and no crash report is read with them yet.** The
-step files both halves where the project can find them, and a report this
-console sends is resolved by neither as staged:
+**Three of the four things a symbolicated frame needs now hold, and the fourth
+is the console's rather than this file's.** A JavaScript frame is readable when
+the app's files carry the debug id the uploaded map carries, the map is filed
+under the release the event names, the event says which image it was thrown
+from, and the project can resolve that image:
 
-- the JavaScript the app ships carries no debug id. The step runs after `npm run
-  package`, which is what packs the archive, so `sourcemaps inject` rewrites the
-  `dist/main` the next build starts from rather than the copy inside the app;
-- the scrubber drops `debug_meta` along with every other key outside its
-  allow-list (`console/src/main/crash.ts`), so nothing sends the ids a
-  symbolicator looks up;
-- no event carries a release: nothing sets one, and the SDK's own `name@version`
-  default is dropped by the scrubber's shape rule;
-- the native debug files would be read by a minidump's frames, and this console
-  installs no minidump integration — it sends stack frames, not process memory.
+- **the id is in the app as it ships**: the stamp runs before the pack, and the
+  packer in the signing step no longer rebuilds — so the debug id written into
+  `dist/main` is inside the archive;
+- **every event names the release**: `console/src/main/crash-electron.ts` stamps
+  it with the app's own version (`app.getVersion()`, which electron-builder takes
+  from the same tag), which is the string the maps are uploaded under — the SDK's
+  own `name@version` default carries an `@`, and the scrubber drops a release
+  that is not its own shape, so an event would otherwise carry none at all;
+- **the scrubber keeps the debug image**: `console/src/main/crash.ts` reduces
+  `debug_meta.images` to an image type, a debug id and an app-relative
+  `code_file` (cut at the app root exactly as a frame's file is), drops every
+  other field an image arrived with, and **refuses** an image whose id or path
+  fails its shape rather than sending it;
+- **and the one that does not**: nothing populates
+  `globalThis._sentryDebugIds`, which is where the pinned SDK reads an event's
+  images from, and the console's main process is unbundled `tsc` output — the
+  shims that write that global are bundler plugins. So an event arrives with its
+  release and **no image**, and what closes the last step is a later task that
+  gives the main process a debug-id runtime. The native debug files are not that
+  step: they would be read by a minidump's frames, and this console installs no
+  minidump integration — it sends stack frames, not process memory.
 
 So the copy-in buys the upload itself — built, tested and pointed at the right
-project — and **not a readable stack trace**. Making symbolication work (inject
-before the pack, keep `debug_meta`, give the event a release) is a later task
-and is deliberately not attempted here.
+project — and the three pieces of the lookup that were missing on 2026-11-01.
+The fourth is a change to the console, not to this file, and it is the one thing
+between this staging and a stack trace a maintainer can open.
 
 **Why the upload lives in the release job at all**, rather than in a step of its
 own workflow: it needs the signed, stapled bundle that has just been verified,
@@ -1191,11 +1226,13 @@ chance to upload symbols for bytes that are not the ones that ship.
 
 **What it does not change**, which is the whole of the review: no new action
 (every `uses:` line and its SHA pin is unchanged), no `env:` that names a secret
-beyond this step's, and nothing in `on:`, `permissions:`, `environment:`, the
+beyond the two steps', and nothing in `on:`, `permissions:`, `environment:`, the
 runners, the Linux leg, `--latest=false`, the publish order or who may approve.
 A test compares the two files' action pins, trigger, permissions, job
 environments and `secrets.` references for exactly that, and refuses a file that
-drops a line of the pipeline it inherited.
+drops a line of the pipeline it inherited — the changed pack line is the one
+non-comment line of the file it supersedes that this change takes away, and the
+test names it as the exception.
 
 **To copy it in**, from the repository root — the first command is the one that
 keeps `console-release.yml` and its staged copy byte-identical, which is what

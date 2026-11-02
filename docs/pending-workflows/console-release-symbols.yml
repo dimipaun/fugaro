@@ -29,27 +29,52 @@
 # secret to them.
 #
 # **THIS FILE SUPERSEDES docs/pending-workflows/console-release.yml**, and the
-# running pipeline plus one step is the whole of it. It is staged by the run
-# that gives the console's crash reports the symbols they are read with (the
-# owner's ruling of 2026-11-01; design section 7.4): after the build, and after
-# the step that verifies the shipped artifacts, it runs
-# `console/scripts/upload-sentry-symbols.mjs`, which pushes the packaged app's
-# native debug files and the main process's JavaScript and source maps to the
-# project the crash reporter reports to -- the maps tagged with the console's own
-# version, the debug files keyed by the debug id inside each one, which is why
-# `debug-files upload` takes no release. **The symbols are filed and no report is
-# read with them yet** (docs/pending-workflows/README.md says which four things
-# a later task has to add), so the step is groundwork rather than a fix.
+# running pipeline plus **one step and one changed pack line** is the whole of
+# it. It is staged by the run that makes the console's crash reports readable
+# (the owner's ruling of 2026-11-02: crash symbolication has to work; design
+# section 7.4, and the earlier step it grew out of was staged on 2026-11-01):
+# a stack a maintainer can open needs three things, and this file is two of them
+# plus the order they need.
+#
+#   - **The stamp, before the pack.** A new step -- *Build the app, and stamp the
+#     built main process with its debug id* -- runs `npm run build` and then
+#     `node scripts/upload-sentry-symbols.mjs inject`, which rewrites each file
+#     of `console/dist/main` and the map beside it with a debug id. It sits after
+#     the warm-up step and **before the signing step, which is what packs the
+#     app**: the id has to be inside the files the packer copies into the
+#     archive, so a build after the stamp throws it away and a stamp after the
+#     pack is not in the app at all. That is why the signing step's first pack
+#     changes from `npm run package` to `npm run package:targets -- --dir` -- the
+#     same packer, without its `npm run build` -- and the second pack (the .dmg
+#     and the .zip, from the stapled bundle) does not change at all.
+#   - **The upload, after the pack.** The step staged on 2026-11-01 is unchanged
+#     and stays where it was: after *Verify the shipped artifacts, and record it*
+#     and before the verified assets leave the job, it runs
+#     `console/scripts/upload-sentry-symbols.mjs` (no argument), which pushes the
+#     packaged app's native debug files and the main process's JavaScript and
+#     source maps to the project the crash reporter reports to -- the maps tagged
+#     with the console's own version, the debug files keyed by the debug id
+#     inside each one, which is why `debug-files upload` takes no release. The
+#     maps are read out of `console/dist/main`, which is where the stamp left
+#     them: **source maps are deliberately not inside the app** (Task 4.1's
+#     `build.files` carries `dist/main/**/*.js` and no `.map`), which
+#     `console/test/unit/build-files.test.ts` pins.
 #
 # **It adds one repository secret, `SENTRY_AUTH_TOKEN`, to the `console-release`
-# environment, and it adds it to one step's `env:` only** -- no other step reads
-# it, and it is never on an argv: `sentry-cli` takes it from the environment
-# (`console/scripts/upload-sentry-symbols.mjs` says why). **The step is a no-op
-# that exits 0 while that secret does not exist**, printing one line, so copying
-# this file in is safe today and becomes an upload the day the owner adds the
-# secret to the environment. Nothing else in the file moves: the action pins,
-# the trigger, the permissions, the protected environment, the runners, the
-# Linux leg and the publish order are the file you already have.
+# environment, and it adds it to two steps' `env:` and nowhere else** -- no other
+# step reads it, and it is never on an argv: `sentry-cli` takes it from the
+# environment (`console/scripts/upload-sentry-symbols.mjs` says why). The two
+# steps hold one credential each and never meet: the stamping step holds the
+# Sentry token in the part of the job that runs before the key material exists,
+# and the signing step holds the six Apple secrets and the version and *not* the
+# token -- which is also why the stamp cannot move into it. **Each of the two is
+# a no-op that exits 0 while that secret does not exist**, printing one line, so
+# copying this file in is safe today and becomes a stamped, uploaded build the
+# day the owner adds the secret to the environment; until then the app ships
+# without debug ids, and a release whose stack traces are not symbolicated is
+# what that means. Nothing else in the file moves: the action pins, the trigger,
+# the permissions, the protected environment, the runners, the Linux leg and the
+# publish order are the file you already have.
 #
 # To apply it, from the repository root -- the first command is the one that
 # keeps `console-release.yml` and its staged copy byte-identical, which is what
@@ -242,10 +267,12 @@
 #     material**, and they are reached only as `${{ secrets.NAME }}` in the
 #     `env:` of **exactly one step**, the one that signs, notarises and staples;
 #     **the seventh is the symbol upload's `SENTRY_AUTH_TOKEN`**, and it is
-#     reached the same way in the one step that uploads the crash reporter's
-#     symbols, after the signing step has removed its key material. Never in a
-#     workflow- or job-level `env:`, never inlined into a command line, never
-#     handed to an action's `with:`.
+#     reached the same way in the two steps that stamp the built main process with
+#     its debug id and then upload the crash reporter's symbols -- one before the
+#     key material exists, one after the signing step has removed it, so no
+#     single step's environment holds the Sentry token and an Apple secret
+#     together. Never in a workflow- or job-level `env:`, never inlined into a
+#     command line, never handed to an action's `with:`.
 #   - **No secret is placed in any step's environment or on disk while
 #     third-party code installs.** (The runner process itself receives the
 #     environment's secrets when the job starts; what this file controls is
@@ -270,9 +297,11 @@
 #     pack the .dmg and the .zip -- and what is verified is the bundle inside
 #     the shipped artifacts. The packer notarises nothing here.** The packer
 #     (the pinned local electron-builder, `--mac --universal --publish never`)
-#     is run twice -- and only the first of the two rebuilds. First `npm run
-#     package -- --dir -c.mac.notarize=false`, which runs `npm run build` and
-#     then builds and signs the universal `.app` and nothing else:
+#     is run twice -- and neither of the two rebuilds any more: the build happens
+#     once, in the stamping step above, so that the debug ids it writes are in the
+#     files both packs copy. First `npm run package:targets -- --dir
+#     -c.mac.notarize=false`, the packer alone, which builds and signs the
+#     universal `.app` and nothing else:
 #     electron-builder's own notarise-and-staple is *inside* that command
 #     (`@electron/notarize` submits the bundle and staples the ticket while
 #     packing), so a lost connection to Apple there fails the pack with no way
@@ -283,12 +312,15 @@
 #     and only then runs `npm run package:targets -- --prepackaged "$APP"
 #     -c.mac.notarize=false` to build the `.dmg` and the `.zip` *from the
 #     stapled bundle*, so both artifacts carry a bundle that already holds its
-#     ticket. That second invocation is the variant Task 4.1's `package` script
-#     has no reason to be: `package:targets` is `electron-builder` alone, with
-#     no `npm run build`, because `--prepackaged` packs the bundle that is
-#     already built -- and re-running the build there would spend the compile
-#     again while this step holds the unlocked keychain and the `.p8` path in
-#     its environment. What the first pack builds is unchanged. The `.dmg` is
+#     ticket. That invocation is the variant Task 4.1's `package` script has no
+#     reason to be: `package:targets` is `electron-builder` alone, with no `npm
+#     run build`, because `--prepackaged` packs the bundle that is already built
+#     -- and re-running the build there would spend the compile again while this
+#     step holds the unlocked keychain and the `.p8` path in its environment.
+#     **The first pack is now the same variant for a second reason**, and a
+#     harder one: a rebuild there would also wipe the debug ids the stamping step
+#     wrote, because `npm run package` builds before it packs and the app would
+#     ship from files that no longer carry an id. The `.dmg` is
 #     then signed (electron-builder leaves `dmg.sign` false), submitted,
 #     stapled and validated the same way, because the disk image is its own
 #     artifact and Gatekeeper assesses it on open. The owner's own `npm run
@@ -524,19 +556,57 @@ jobs:
           # pack below -- the packer's own staple is inside `npm run package`
           # and is not this file's to retry -- even though no credential is in
           # this step's environment for it to activate from.
+          # `npm run package` is `npm run build && npm run symbols:inject &&
+          # electron-builder`, and with no token in this step's environment the
+          # inject prints its one-line skip and the pack goes on: nothing here is
+          # stamped, and the release that follows re-runs the build with a token,
+          # in the step below.
           npm run package -- -c.mac.identity=null -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
           rm -rf release
 
-      # **The only step that holds a secret**, and everything that needs one
-      # happens inside it: the fail-closed check, the temporary keychain, the
-      # App Store Connect key file, two `npm run package` calls with the
-      # packer's notarisation off (they sign with the hardened runtime and
-      # entitlements.mac.plist and flip the fuses; the first builds the .app,
-      # the second the .dmg and the .zip from it), the team checks, and the
-      # notarisation, staple and validation of the .app and of the disk image
-      # through console/scripts/notarize-and-staple.sh. The key material is
-      # removed when the step exits, pass or fail, so no later step runs with
-      # it on disk.
+      # **The build, and the stamp that makes a stack trace readable.** `npm run
+      # build` writes `console/dist/main`; the script's `inject` run then rewrites
+      # every file of it and the map beside it with a debug id, and the packer in
+      # the step below copies those files into the app -- which is the only order
+      # that works, because a build after the stamp throws the ids away and a
+      # stamp after the pack is not in the app at all. The second run of the same
+      # script, the upload that files the maps under the release the events name,
+      # comes after the pack (the symbol step below).
+      #
+      # **This is one of the two steps that hold the Sentry token**, and neither
+      # holds it beside an Apple secret: the token is here, where no key material
+      # exists yet, and the six Apple secrets are in the step below, whose
+      # environment deliberately does not carry the token. The build has to happen
+      # here rather than in the signing step for the same two reasons: the stamp
+      # must come between the build and the pack, and the token must not be in the
+      # step that holds the keychain.
+      #
+      # While `SENTRY_AUTH_TOKEN` does not exist this step builds and prints the
+      # script's one-line skip, exit 0: the pack below then ships an app whose
+      # files carry no debug id, which is a release nobody can symbolicate rather
+      # than a failed release. That is what makes the copy-in safe before the
+      # secret is added.
+      - name: Build the app, and stamp the built main process with its debug id
+        working-directory: console
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm run build
+          node scripts/upload-sentry-symbols.mjs inject
+
+      # **The step that holds the signing material**, and everything that needs
+      # it happens inside it: the fail-closed check, the temporary keychain, the
+      # App Store Connect key file, two packs with the packer's notarisation off
+      # (they sign with the hardened runtime and entitlements.mac.plist and flip
+      # the fuses; the first builds the .app, the second the .dmg and the .zip
+      # from it), the team checks, and the notarisation, staple and validation of
+      # the .app and of the disk image through
+      # console/scripts/notarize-and-staple.sh. The key material is removed when
+      # the step exits, pass or fail, so no later step runs with it on disk. Why
+      # it makes no secret beyond the six: **the Sentry token is not here**, so a
+      # step that rebuilt (which would throw the stamped ids away) is not available
+      # to it either.
       #
       # - The .p12 and the .p8 are created under `umask 077` (a subshell, so the
       #   packed bundle's own file modes are not affected) -- never created
@@ -645,7 +715,12 @@ jobs:
           # fourth attempt of the October 2026 release run, error 68). The
           # submission, staple and validation are this file's, in the script
           # below.
-          npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
+          #
+          # `package:targets` and not `package`: the build and the debug-id stamp
+          # both happened in the step above, and this step's environment holds no
+          # Sentry token, so `npm run package` here would rebuild `dist/main`
+          # without the ids and pack an app nobody can symbolicate.
+          npm run package:targets -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
 
           APP="release/mac-universal/Fugaro Console.app"
           if [ ! -d "$APP" ]; then
@@ -840,8 +915,15 @@ jobs:
       # what turn those three into a stack trace a maintainer can open, so they
       # are uploaded per release and tagged with the console's own version.
       #
+      # This is the *upload* run of the script the stamping step ran with a mode
+      # argument: the ids are already in the app as it was packed, and this run
+      # files the main process's maps under the release (read out of
+      # `console/dist/main`, where the stamp left them -- they are deliberately
+      # not inside the app) and the packaged app's native debug files beside
+      # them.
+      #
       # **This is the file's second secret**, `SENTRY_AUTH_TOKEN`, and it is in
-      # this step's `env:` and nowhere else.
+      # this step's `env:` and in the stamping step's, nowhere else.
       # `console/scripts/upload-sentry-symbols.mjs` reads nothing from it but
       # whether it is empty -- the token reaches `sentry-cli` through the
       # environment it inherits, never on an argv, where any process of the same
