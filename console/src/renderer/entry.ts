@@ -5007,8 +5007,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * in which the console knows the window ends where the drawing does. A refused
      * read draws the CLI's own sentence under the rows already read and no control
      * at all, because a button that asks again for a read just refused offers the
-     * same failure; an installation whose CLI is older than the paged read draws the
-     * console's own sentence naming the version it needs, and spawns nothing.
+     * same failure; an installation whose CLI is older than the paged read draws
+     * the console's own sentence naming the version it needs, and spawns nothing.
      */
     const paintJobs = (): void => {
       const section = mount(false).jobs
