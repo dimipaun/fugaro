@@ -30,7 +30,7 @@ and a model a repository pins.
 Both reads are offline: they touch no bucket, no database and no host. What
 they print about the cloud is what the local files already say.`,
 	}
-	cmd.AddCommand(newModelsLsCmd(), newModelsSearchCmd())
+	cmd.AddCommand(newModelsLsCmd(), newModelsSearchCmd(), newModelsAddCmd())
 	return cmd
 }
 
