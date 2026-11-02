@@ -765,10 +765,10 @@ test.describe('the Coordinator view in the dashboard', () => {
     // K5, in the state this window's stub puts the pane in: the pane's own read
     // (`coordinator intents --all --json`) is a real spawn the CLI refuses
     // (exit 2, like every command this stub does not answer), so what the pane
-    // holds is the console's refusal naming its own command -- and, beside it,
-    // the three things it can draw without the store: its heading, the three
-    // questions the console composes itself, and the sentence about the front
-    // door that is not built (D820).
+    // holds is the console's refusal naming its own command, the one press that
+    // asks that read again -- and, beside it, the three things it can draw
+    // without the store: its heading, the three questions the console composes
+    // itself, and the sentence about the front door that is not built (D820).
     //
     // **The absence is the claim** (D827): the pane is a drawing and not a door,
     // and a real browser is what makes that checkable -- a field a person could
@@ -790,10 +790,13 @@ test.describe('the Coordinator view in the dashboard', () => {
 
     await expect(pane.locator('input, textarea, select')).toHaveCount(0)
     await expect(pane.locator('[contenteditable]')).toHaveCount(0)
-    // The pane draws no control at all in this state: the one it can draw is the
-    // stamp's own Refresh, and a stamp stands for declarations this window never
-    // read. A button that sent text would be a second one, whatever it read.
-    await expect(pane.locator('button')).toHaveCount(0)
+    // The pane's **one** control is the stamp's own Refresh, and the refusal is
+    // the state it is drawn without a time in (K5's follow-up): the read refused,
+    // so there are no declarations to date, and the clock in hand is a previous
+    // read's. A button that sent text would be a second one, whatever it read.
+    await expect(pane.locator('p.console-stamp button.console-stamp-refresh')).toHaveCount(1)
+    await expect(pane.locator('p.console-stamp span.console-stamp-at')).toHaveCount(0)
+    await expect(pane.locator('button')).toHaveCount(1)
     await expect(page.locator(`${THE_VIEW} a`)).toHaveCount(0)
   })
 
