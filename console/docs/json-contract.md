@@ -2126,10 +2126,13 @@ resolved, the way §6.13's selection refuses it.
 **Document:** `summaryDoc`, with its `summaryRepo` rows and its `summaryTotals`,
 indented (`writeSummary`), all in `internal/cli/runs_summary.go` — cited by
 symbol, not by line, for §6.11's reason. This is the fourth command in this
-document the console **does not spawn yet**: it is the read the Project,
-Coordinator and Spend screens' totals are built on, and the section is here so
-the screens that follow read a shape off the code rather than assuming one from
-a design.
+document the console did not spawn when the section was written, and **the
+console spawns it now**: console 0.119.0 put it on the surface (`runs.summary`
+in `console/src/main/ipc.ts`), the console's half of B4, as the read the
+Project, Coordinator and Spend screens' totals are built on. Its argv is design
+§5.1 rule 6's `runs summary --json` row: at most one `--since=<window>` word,
+from the console's own closed set. The section stays here for §6.11's reason —
+the screens read a shape off the code rather than assuming one from a design.
 
 **Why it exists: a totals read that opens no run.** `runs ls` (§5) answers by
 reading the runs bucket — one run object per row, its task and its result — and
@@ -2223,11 +2226,13 @@ unavailable (the availability rule, §1) rather than an error loop. A field
 added later is a field an older console does not draw; a console that requires
 one must refuse the document rather than fill it in.
 
-**The console's row is a later task.** This section is the CLI's half of the
-read: the spawn row, the operation and the decoder are **not** in this
-document's scope, so nothing here authorises a spawn — §5.1's table and the
-allow-lists are where a row is admitted, and no row, operation or decoder is
-added by this section.
+**The console's row has landed.** This section is the CLI's half of the read,
+and the console's half is in the allow-lists' code rather than here: the spawn
+row (design §5.1 rule 6's), the operation (`runs.summary`) and the decoder
+(`decodeRunsSummary`, `console/src/shared/schema.ts`) were added by console
+0.119.0. Nothing here authorises a spawn on its own — §5.1's table and the
+allow-lists are where a row is admitted — and this document still describes the
+CLI's side of the contract.
 
 **Flags** (`newRunsSummaryCmd`): `--repo` (one repository, `owner/name`),
 `--since` (the window, default `7d`), `--json`, and the cloud flags
