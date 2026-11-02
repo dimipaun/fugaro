@@ -244,7 +244,10 @@ export interface FugaroSource {
    * stored view beside it, the read is the caller's own database node -- no App
    * key, no installation token, no provider and no host -- so it has no
    * precondition of its own and succeeds under `FUGARO_CREDENTIALS_SERVICE_URL`
-   * where `coordinatorStatus`'s host read would refuse. */
+   * where `coordinatorShow`'s host read refuses: the reads that ask the host
+   * are the ones the service URL turns away, and this one is not among them --
+   * neither is `coordinatorStatus`, which is the stored view and needs no host
+   * credential either. */
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
