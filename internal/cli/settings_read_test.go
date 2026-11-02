@@ -290,8 +290,10 @@ func TestSettingsLocalConfigDecidesOnlyTheKeysItWrites(t *testing.T) {
 		}
 	}
 	// The five keys settingsFixture's own file writes, which is every key of
-	// the fixture: the read has nothing else to list.
-	want := []string{"gcp_project", "name", "region", "runs_bucket", "version"}
+	// the fixture: the read has nothing else to list. The two that share a name
+	// with a fugaro.yaml key are the local rows of those two (SD6), so the
+	// file's version: and gcp_project: are listed under their own names.
+	want := []string{"local.gcp_project", "local.version", "name", "region", "runs_bucket"}
 	if !slices.Equal(got, want) {
 		t.Errorf("--changed lists %v, and the file writes %v", got, want)
 	}
@@ -851,6 +853,46 @@ func TestSettingsRepoScopeReportsTheKeyTheRepositorySets(t *testing.T) {
 	}
 }
 
+// TestSettingsRepoRowShowsTheValueARunGets: the repository scope answers a key
+// no layer sets with the value a run gets, which is the repository's resolved
+// config — config.Resolve has already applied the defaults — and not the
+// registry's own text. The two agree today (TestRegistryDefaultsMatchApplyDefaults
+// in internal/settings reddens the day they part company), so the row's default
+// is made a lie here on purpose: it is the only way to see which of the two the
+// read answered with. A row whose default is a decision rather than a value
+// keeps the sentence saying so, because the resolution left the sentinel that
+// sentence is about — agent.review_rounds resolves to 0, and no run reads that
+// as zero rounds.
+func TestSettingsRepoRowShowsTheValueARunGets(t *testing.T) {
+	cfg, res, ps := config.Resolve([]byte(settingsRepoYAML("")), nil)
+	if len(ps) > 0 {
+		t.Fatalf("the fixture's repository is refused: %v", ps)
+	}
+	for _, tc := range []struct {
+		key   string
+		lie   bool
+		value string
+	}{
+		{"workflows.*.resources.cpu", true, "4"},
+		{"agent.review_rounds", false, "unset = the run's rigor mode decides (rigor.DefaultRounds)"},
+	} {
+		row, ok := settings.Lookup(tc.key)
+		if !ok {
+			t.Fatalf("%s: not a registry key", tc.key)
+		}
+		if tc.lie {
+			row.Default = settings.Default{Value: "999", Const: "not.the.constant"}
+		}
+		got := (&settingsRead{}).repoRow(row, repoRead{name: "owner/repo-a", config: cfg, res: res, state: stateOK})
+		if got.Wins != settings.LayerDefault {
+			t.Fatalf("%s: wins = %q, want default: the checkout writes no such key", tc.key, got.Wins)
+		}
+		if got.Value != tc.value {
+			t.Errorf("%s: value = %q, want %q", tc.key, got.Value, tc.value)
+		}
+	}
+}
+
 // TestSettingsRepoFlagNeedsOwnerAndName: --repo names a repository the way a
 // scope is spelled — `repo:owner/name`, the pattern
 // schemas/settings.schema.json holds $defs.row.scope to — so a name without an
@@ -1012,12 +1054,13 @@ func TestSettingsScopesAgreeOnADefaultedValue(t *testing.T) {
 	}
 }
 
-// TestSettingsRepoScopeBeatsTheProjectScopesLocalValue: the two scopes answer
-// one key from different documents, and the repository's own file is the
-// stricter of the two (spec §2.2: local < repo). A repository scope that let
-// the local config decide would print the installation's GCP project for a
-// checkout that pins its own.
-func TestSettingsRepoScopeBeatsTheProjectScopesLocalValue(t *testing.T) {
+// TestSettingsGcpProjectRowsAreTwoKeys: `gcp_project` names two things — the
+// project a repository's fugaro.yaml is anchored to and the project the
+// installation lives in — so each has its own row (SD6), the local config's
+// under `local.gcp_project`. One row for both reported a repository whose
+// fugaro.yaml sets gcp_project as a key the local layer also sets, and answered
+// a repository's own project from this machine's local file.
+func TestSettingsGcpProjectRowsAreTwoKeys(t *testing.T) {
 	home := settingsFixture(t, "")
 	settingsCheckout(t, home, "owner/repo-a", settingsRepoFromProfile)
 	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
@@ -1026,17 +1069,62 @@ func TestSettingsRepoScopeBeatsTheProjectScopesLocalValue(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	doc := readSettingsJSON(t, "gcp_project", "--all-repos")
+	doc := readSettingsJSON(t, "gcp_project", "local.gcp_project", "--all-repos")
 	proj := rowOf(t, doc, "gcp_project", "project")
-	if proj.Value == nil || *proj.Value != "aurora-gcp" || proj.Wins != "local" {
-		t.Errorf("the project scope = %q/%q, want the local config's aurora-gcp and local", deref(proj.Value), proj.Wins)
+	if proj.Wins != "default" {
+		t.Errorf("gcp_project in the project scope wins = %q, want default: the local file's project is not this key's answer", proj.Wins)
 	}
 	repo := rowOf(t, doc, "gcp_project", "repo:owner/repo-a")
 	if repo.Value == nil || *repo.Value != "proj-1234" {
 		t.Fatalf("the repository scope = %q, wins = %q, want the checkout's proj-1234", deref(repo.Value), repo.Wins)
 	}
 	if repo.Wins != "repo" {
-		t.Errorf("wins = %q, want repo: the checkout sets the key, and the project scope's local value is not this row's answer", repo.Wins)
+		t.Errorf("wins = %q, want repo: the checkout pins its own project", repo.Wins)
+	}
+	local := rowOf(t, doc, "local.gcp_project", "project")
+	if local.Value == nil || *local.Value != "aurora-gcp" || local.Wins != "local" {
+		t.Errorf("local.gcp_project in the project scope = %q/%q, want the local config's aurora-gcp and local", deref(local.Value), local.Wins)
+	}
+}
+
+// TestSettingsRepoVersionIsNotTheLocalConfigs: `version` names two things as
+// well — the fugaro.yaml schema version and the local config file's own format
+// version — so the repository's key claims no local layer and the local file's
+// version is a key of its own. One row for both reported a repository whose
+// fugaro.yaml sets version as one the local layer sets too, and printed this
+// machine's local file version as the answer for a fugaro.yaml key.
+func TestSettingsRepoVersionIsNotTheLocalConfigs(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML(""))
+	local := readSettingsJSON(t, "version", "--layer", "local")
+	if len(local.Settings) != 0 {
+		t.Errorf("--layer local printed %d rows for the repository's version, want none: the local file's version is local.version", len(local.Settings))
+	}
+	doc := readSettingsJSON(t, "version", "--all-repos")
+	proj := rowOf(t, doc, "version", "project")
+	if proj.Wins != "default" {
+		t.Errorf("the project scope wins = %q, want default: the local file's version is not this key's answer", proj.Wins)
+	}
+	repo := rowOf(t, doc, "version", "repo:owner/repo-a")
+	if repo.Value == nil || *repo.Value != "1" || repo.Wins != "repo" {
+		t.Errorf("the repository scope = %q/%q, want the checkout's 1 decided by repo", deref(repo.Value), repo.Wins)
+	}
+}
+
+// TestSettingsLocalVersionIsNotTheRepoScopes: the other half of that split —
+// the local config's format version is decided by the local layer in both
+// scopes, because no repository file carries it.
+func TestSettingsLocalVersionIsNotTheRepoScopes(t *testing.T) {
+	home := settingsFixture(t, "")
+	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML(""))
+	doc := readSettingsJSON(t, "local.version", "--all-repos")
+	proj := rowOf(t, doc, "local.version", "project")
+	if proj.Value == nil || *proj.Value != "1" || proj.Wins != "local" {
+		t.Errorf("the project scope = %q/%q, want the local file's 1 and local", deref(proj.Value), proj.Wins)
+	}
+	repo := rowOf(t, doc, "local.version", "repo:owner/repo-a")
+	if repo.Wins != "local" {
+		t.Errorf("the repository scope wins = %q, want local: no repository file carries the local config's version", repo.Wins)
 	}
 }
 

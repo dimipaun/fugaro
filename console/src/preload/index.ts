@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-four names
+ * is not a name and a method is still a compile error, and the twenty-five names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -157,6 +157,10 @@ export const BRIDGE_VERSION = 1
  * **V2.5.1a added the twenty-fourth** (`run.launch` / `launchRun`, the console's
  * one write, design section 5.1 rule 11) and left the other twenty-three exactly
  * where they were. The twenty-third is above it in this list.
+ *
+ * **Coordinator v2 K2a added the twenty-fifth** (`link.openPullRequest` /
+ * `openPullRequest`, D814 and D815) and left the other twenty-four exactly where
+ * they were. The twenty-fourth is above it in this list.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -175,6 +179,12 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
+  // The clickable pull request number (Coordinator v2 K2a, D814/D815). One row,
+  // and the method takes the operation's own three fields: the provider, the
+  // repository and the number. It carries **no URL**, because the main process
+  // builds the link from those three fields -- a `url` a job wrote is drawn as
+  // text and never reaches the browser (rule 2, F2).
+  ['link.openPullRequest', 'openPullRequest'],
   // The installation rail (owner's design ruling of 2026-10-25). The console
   // never shows a picker screen: the rail lists every installation, a click
   // switches the console to one, and a row that cannot be read opens its issue
@@ -210,7 +220,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-four string literals, not `string`. It is the type of the `operations` list
+ * twenty-five string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -330,9 +340,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-four *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-five *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-four properties as properties rather than as an index
+ * object literal those twenty-five properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -361,7 +371,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-four methods.
+ * twenty-five methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

@@ -18,7 +18,9 @@
 //     person and the session: `preloadInjectionIntegration` (the preload that
 //     would carry a renderer's events to main), `mainProcessSessionIntegration`
 //     (the session file under `userData`), and the minidump integrations (native
-//     crash dumps, which are process memory rather than stack frames);
+//     crash dumps, which are process memory rather than stack frames). The
+//     captures this file installs by hand are the two in `integrations` below --
+//     an uncaught exception and an unhandled rejection -- and there is no third;
 //   - `ipcMode` is neither `Classic` nor `Protocol`, so `init` registers no
 //     `ipcMain` handler and no `sentry-ipc://` route, and `configureClassic` /
 //     `configureProtocol` are both skipped;
@@ -72,6 +74,8 @@ import {
   close as closeClient,
   init as initClient,
   makeElectronTransport,
+  onUncaughtExceptionIntegration,
+  onUnhandledRejectionIntegration,
   type ElectronMainOptions,
   type ErrorEvent,
   type IPCMode,
@@ -160,7 +164,9 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * doing. `beforeSend` above is the third and the one that matters most.
  *
  * **What actually keeps transactions out today, and why it is not that line.**
- * The pinned 11.7.0 ignores `beforeSendTransaction` unless `traceLifecycle` is
+ * The pinned `@sentry/core` 11.7.0 -- the version `@sentry/electron` 8.2.0
+ * depends on, and the one that implements this callback -- ignores
+ * `beforeSendTransaction` unless `traceLifecycle` is
  * `'static'`; it streams spans by default and says so out loud -- setting the
  * option makes the client log "`beforeSendTransaction` ... ignored with
  * `traceLifecycle: 'stream'`". The callback stays because it is the option a
@@ -200,6 +206,32 @@ export function startCrashReporting(input: CrashReportingInput): CrashReportingH
     beforeSend: (event) => toSdkEvent(event, input.appRoot),
     beforeSendTransaction: () => null,
     beforeSendLog: () => null,
+    // **The two ways a crash becomes a report, and the only two.** With
+    // `defaultIntegrations: false` a client that is handed no list captures
+    // nothing at all -- `captureException` still works, but nothing calls it --
+    // so the console names the two it wants by hand, and nothing else is added
+    // beside them: no minidump (process memory, not stack frames), no session, no
+    // preload and no breadcrumb integration, which is the same list the header
+    // gives. Both are the SDK's own, unmodified, and neither takes an option that
+    // would let it collect anything more.
+    //
+    // **Neither of them decides this process's exit.** The Electron SDK's
+    // `onUncaughtExceptionIntegration` takes no options at all -- it is not
+    // `@sentry/node`'s, whose `exitEvenIfOtherHandlersAreRegistered` and
+    // `onFatalError` are what let a reporter call `process.exit` -- so what
+    // happens to the process after an uncaught error is exactly what happened
+    // before this file existed: Electron's own handler, and the console's
+    // `reportAndQuit` for the paths it owns. The unit test pins that neither of
+    // those two options is set anywhere in these options, and that the installed
+    // integration registers a listener and nothing else.
+    //
+    // `mode: 'none'` is the same decision for a rejected promise: the integration
+    // exists to *capture* it, and the two modes that would do more (`'warn'`
+    // writes Node's warning to the console, `'strict'` calls
+    // `logAndExitProcess`) are exactly the process-wide behaviour this console
+    // leaves alone. Its default is `'warn'`, so this is a choice and not a
+    // silence.
+    integrations: [onUncaughtExceptionIntegration(), onUnhandledRejectionIntegration({ mode: 'none' })],
   }
   // `configureUtilityProcessIPC`, which the pinned `init` calls on every start
   // whatever the IPC mode, replaces `electron.utilityProcess.fork` with a Proxy

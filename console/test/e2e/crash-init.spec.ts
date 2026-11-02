@@ -69,12 +69,26 @@
 //     against a copy of `dist/main/` inside a directory named `app.asar` and
 //     loaded, so a specifier that names nothing, a dropped extension, or a path
 //     the packer's layout breaks all fail here rather than in an installed app.
-//   - **nothing captures an uncaught exception yet.** With
-//     `defaultIntegrations: false` no `onuncaughtexception` integration is
-//     installed, so this fixture captures the error *through the SDK's API*
-//     rather than by throwing it at the process: a report from a process that
-//     simply died is the switch slice's decision, and this round adds no
-//     integration.
+//   - **a crash is captured, and the process's exit is not the reporter's.**
+//     With `defaultIntegrations: false` a client handed no list captures
+//     nothing: `captureException` still works, but nothing calls it. So the
+//     wiring names the SDK's two integrations by hand -- uncaught exceptions and
+//     unhandled rejections -- and neither of them takes an option that would
+//     decide what the process does next (`@sentry/core`'s
+//     `onUncaughtExceptionIntegration` has no `exitEvenIfOtherHandlersAreRegistered`
+//     and no `onFatalError`; `onUnhandledRejectionIntegration` is given
+//     `mode: 'none'`, whose alternatives are the process-wide behaviours this
+//     console leaves alone). What that leaves behind is Electron's own uncaught
+//     handler and the console's `reportAndQuit`, exactly as before this wiring
+//     existed; the unit test pins the options and the listener, and this fixture
+//     captures through the SDK's API rather than by throwing at the process,
+//     because a report from a process that simply died is not a payload this
+//     spec could read back from its sink.
+//   - **nothing at all is installed when the switch is off.** The same fixture,
+//     launched with `FUGARO_CRASH_FIXTURE_OPTED_IN=0`, hands the wiring `false`:
+//     no client is constructed, so the fork patch, the loader hook, the four IPC
+//     registries and the profile are all untouched and the sink stays empty --
+//     which is the assertion that the switch is a gate rather than a filter.
 //
 // Nothing here reaches the network: the sink is an `http` server on 127.0.0.1
 // with a port the kernel picks, its DSN is assembled at run time from that port,
@@ -99,10 +113,12 @@ const consoleDir = join(__dirname, '..', '..')
 /** FIXTURE_DIR is the Electron app this spec launches: the real wiring in a real
  * main process (`test/fixtures/crash-init/main.cjs`). It is an app directory
  * rather than the console itself because the console starts its reporter only
- * when the gate opens, and the gate is shut in every build today (`optedIn:
- * null`, and the DSN artifact is the build owner's) -- so the console would send
- * nothing, and a test of what the SDK does with a *running* client has to start
- * one. */
+ * when the per-user switch says so, and that switch is off in every build until
+ * a person ticks it (`crash.json` absent, which reads as off, and the DSN is one
+ * public constant the app carries rather than a build input) -- so the console
+ * would send nothing, and a test of what the SDK does with a *running* client
+ * has to start one. The fixture asks both questions: it is launched with the
+ * switch on, and again with it off. */
 const FIXTURE_DIR = join(consoleDir, 'test', 'fixtures', 'crash-init')
 
 /** NO_DISPLAY is what the fixture's Electron needs to start where nothing has a
@@ -228,8 +244,10 @@ function appAsarLayout(): { readonly resolved: string; readonly specifier: strin
 
 /** envFor is the child's whole environment: this process's, so Electron finds
  * its display and its libraries the way CI gives them to it, plus the fixture's
- * inputs. */
-function envFor(sink: Sink, reportPath: string, importPath: string): Record<string, string> {
+ * inputs. `optedIn` is the switch's answer, and it defaults to the yes the first
+ * test needs: the fixture reads it as a string, so `'0'` is the no and anything
+ * else -- including this default -- is the yes. */
+function envFor(sink: Sink, reportPath: string, importPath: string, optedIn = true): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === 'string') env[key] = value
@@ -237,6 +255,7 @@ function envFor(sink: Sink, reportPath: string, importPath: string): Record<stri
   env['FUGARO_CRASH_FIXTURE_DSN'] = sink.dsn
   env['FUGARO_CRASH_FIXTURE_REPORT'] = reportPath
   env['FUGARO_CRASH_FIXTURE_IMPORT'] = importPath
+  env['FUGARO_CRASH_FIXTURE_OPTED_IN'] = optedIn ? '1' : '0'
   return env
 }
 
@@ -343,4 +362,51 @@ test('the real client sends the scrubbed event, and nothing else', async () => {
   // above is the built file's rather than the source's, and the fixture imported
   // what it resolved to in the runtime the app runs on.
   expect(report.entryImport?.loaded, 'loading the emitted specifier yields the wiring the app starts').toBe(true)
+})
+
+test('the switch off installs nothing, and sends nothing', async () => {
+  const sink = await startSink()
+  const profile = mkdtempSync(join(tmpdir(), 'fugaro-crash-profile-'))
+  const reportPath = join(mkdtempSync(join(tmpdir(), 'fugaro-crash-report-')), 'report.json')
+  const layout = appAsarLayout()
+
+  const app = await launchConsole({
+    args: [FIXTURE_DIR, `--user-data-dir=${profile}`, ...NO_DISPLAY],
+    env: envFor(sink, reportPath, layout.resolved, false),
+  })
+
+  let report: Report
+  try {
+    report = await waitForReport(reportPath, 60_000)
+  } finally {
+    await app.close().catch(() => undefined)
+    await closeSink(sink)
+  }
+  expect(report.fatal, 'the fixture started, reported and quit').toBeUndefined()
+
+  // **The switch is a gate rather than a filter.** The fixture captured an error
+  // and an event through the SDK's API exactly as the first test's fixture does,
+  // and the sink is where a client that existed would have put them. Nothing
+  // arrived, because no client was constructed at all: the wiring's first act is
+  // the decision, and a no returns the handle that closes nothing.
+  expect(sink.envelopes, 'a switch that is off sends nothing, whatever it is handed').toEqual([])
+
+  // **And nothing was installed on the way to that answer.** Each of these is
+  // the SDK's doing that the wiring cannot see after the fact -- the fork patch,
+  // the process-wide loader hook, the bookkeeping global, the four registries --
+  // or a file the profile would carry, and each is untouched here for the same
+  // reason the first test has to assert them: the *absence* is the claim.
+  expect(report.forkWrapped, 'no utility-process patch was installed').toBe(false)
+  expect(report.loaderHooks ?? [], 'no module-loader hook was installed').toEqual([])
+  expect(report.orchestrion ?? null, 'no orchestrion bookkeeping is left on the global').toBeNull()
+  expect(report.recorded?.ipcs ?? []).toEqual([])
+  expect(report.recorded?.protocols ?? []).toEqual([])
+  expect(report.recorded?.preloads ?? []).toEqual([])
+  const written = report.after ?? []
+  expect(written.filter((path) => /sentry/i.test(path))).toEqual([])
+
+  // The module the entry imports is still the file a yes would load, so the
+  // claim above is about what the wiring does with the answer rather than about
+  // a build that dropped it.
+  expect(report.entryImport?.loaded).toBe(true)
 })

@@ -542,6 +542,10 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   pullRequest: 'pullRequest',
   flag: 'boolean',
   link: 'value',
+  // `gitProvider` is the one kind whose operation spawns nothing
+  // (`link.openPullRequest`, K2a): the mapping is total over Task 1.2's kinds,
+  // and `value` is what a bare word would reach an argv as if one ever did.
+  gitProvider: 'value',
   installationName: 'value',
   installationCheckout: 'value',
   launchTask: 'stdin',

@@ -391,8 +391,8 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 		// the loader, so it holds a value for keys the file never wrote
 		// (localWritten). A key the file leaves out is the default's, not
 		// local's, and `--changed` then lists only the keys a layer decided.
-		if _, ok := valueAt(r.localTree, row.Key); ok {
-			if v, ok := valueAt(r.local, row.Key); ok {
+		if _, ok := valueAt(r.localTree, localPath(row.Key)); ok {
+			if v, ok := valueAt(r.local, localPath(row.Key)); ok {
 				s.Value, s.Wins = v, settings.LayerLocal
 			}
 		}
@@ -456,13 +456,18 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 	// layer's profiles supplied the value, the spelling config.SourceProfile
 	// holds and WINS prints (spec §2.2).
 	s.Wins = repo.res.SourceOf(path)
-	if s.Wins == settings.LayerDefault {
-		// The resolved value is dropped for the registry's own text on
-		// purpose: a key no layer sets prints the default, never a blank
-		// (spec §2.3, VALUE equal to DEFAULT), and the project scope answers
-		// the same key the same way. The two can only differ if the registry
-		// and applyDefaults part company, which
-		// TestRegistryDefaultsMatchApplyDefaults reddens.
+	if s.Wins == settings.LayerDefault && (v == "" || s.DefaultValue == "") {
+		// A key no layer sets prints what a run gets for it, which is the
+		// resolved value: config.Resolve has already applied the defaults, so
+		// the registry's own text is only what that value is supposed to be,
+		// and the two can only differ if the registry and applyDefaults part
+		// company, which TestRegistryDefaultsMatchApplyDefaults reddens. What
+		// is left to the registry is a row whose default is a decision rather
+		// than a value — the resolution left the sentinel its sentence is
+		// about, and printing that sentinel would read as a value a layer
+		// wrote — and a value that renders empty, which prints the default
+		// rather than a blank (spec §2.3). The project scope answers the same
+		// key the same way.
 		s.Value = valueOrDefault(s)
 	}
 	if row.Sensitive {
@@ -472,6 +477,15 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 		s.Levels = append(s.Levels, level{Layer: s.Wins, Value: s.Value, Outcome: "wins"})
 	}
 	return s
+}
+
+// localPath is the path a local row's key takes into the local config file:
+// the key itself, or the key without the local. prefix the two keys whose bare
+// name a fugaro.yaml key already uses carry (SD6: the local file's version is
+// its own format's, the fugaro.yaml version is the repository's schema's). The
+// `layer.` rows take the same strip for the same reason.
+func localPath(key string) string {
+	return strings.TrimPrefix(key, settings.LocalPrefix)
 }
 
 // isYAMLKey reports whether a row is a fugaro.yaml key: only config.Scopes'

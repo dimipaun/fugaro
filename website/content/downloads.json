@@ -25,7 +25,7 @@
     {
       "id": "no-telemetry",
       "title": "No telemetry",
-      "text": "No telemetry, no crash reporting, no analytics, and an update check that carries no identifier.",
+      "text": "No telemetry, no analytics, no crash reporting unless you opt in, and an update check that carries no identifier. Crash reports go to Sentry, hosted in the European Union, and hold only the exception type and the app's own code frames.",
       "source": "docs/design/desktop-console.md D5"
     },
     {

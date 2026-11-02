@@ -24,7 +24,7 @@ By default it lists the last 7 days of the configuration's repositories. Narrow 
 - `--mine` for runs the user requested
 - `--since <duration>` (`36h`, `7d`, `0` for no bound)
 - `--batch <name>` for one batch
-- `--limit N` for the newest N runs only: theirs are the objects the listing reads, so a run outside the N costs nothing
+- `--limit N` for the newest N rows only: the whole window is still read, and `totals` still covers all of it
 - `--state <state>` for one state (`unlaunched`, `launching`, `pending`, `running`, `succeeded`, `failed`, `halted`, `cancelled`, `infra_error`, `error`); it reads every run in the window first, because only a finished run's own record says what its state is
 - `--pr N` for the runs on one pull request (needs one repository; the window is 90 days)
 

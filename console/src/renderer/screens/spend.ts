@@ -2913,8 +2913,14 @@ function capsBarUnits(share: number): string {
  * the word is never beside numbers that contradict it -- the first needs no cap
  * of the repository's own and therefore no bar. An unavailable headroom is not a
  * zero: a row the document reports no headroom for, under a cap its counted
- * dollars have not reached, draws neither the word nor the tone. */
-function capsAtCap(row: SpendCapRow): boolean {
+ * dollars have not reached, draws neither the word nor the tone.
+ *
+ * It is exported because the Coordinator's action queue draws the same fact as
+ * an alert on its own row (console 0.118.0, K1; D812): a repository at its cap
+ * is the second of the two grounds a budget alert states, and two screens
+ * computing "at cap" out of the same row would be two screens that can
+ * disagree about the same figure. */
+export function capsAtCap(row: SpendCapRow): boolean {
   if (row.headroom.value !== null && row.headroom.value <= 0) return true
   const cap = row.dailyCap.value
   const counted = row.counted.value

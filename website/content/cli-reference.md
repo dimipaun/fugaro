@@ -1304,6 +1304,7 @@ Flags:
 Subcommands:
 
 - `fugaro coordinator report` -- Declare the work you are about to start
+- `fugaro coordinator show` -- Show one pull request as the host has it
 - `fugaro coordinator status` -- Show the work in flight, and where it collides
 
 ## `fugaro coordinator report`
@@ -1353,6 +1354,64 @@ Flags:
 | `--release` | string | "" | no | the target release (default: the one the branch names, e.g. release/v0.11.0) |
 | `--repo` | string | "" | no | the repository this report is about (owner/name; default: the local config's, when it lists one) |
 | `--service` | stringArray | `[]` | no | a service you are about to touch (repeatable) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator show`
+
+Show one pull request as the host has it
+
+One pull request as the host has it, whole: the number, the address, the
+title, the description, the state, the draft flag, the source branch and the
+branch it targets, and the author's account id, each exactly as the host
+answered it.
+
+The description is why this read exists: the stored view carries no body — a
+body is unbounded text written by whoever opened the pull request, and one
+per record would ride in the document every reader of the view fetches — so
+a console that draws one reads it here. It is untrusted text, and a renderer
+sanitises it before it reaches a line or a cell.
+
+The read is the coordinator's own: one installation token for the
+repository, minted from the GitHub App the environment holds and carrying
+the named read-only permission set — pull requests and metadata (Q3 answered
+(A)) — and revoked when the command is done, so the credential lives for the
+read and no longer. No credential of the host's reaches the output.
+With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials
+service holds the App's key and this command holds none, so it refuses
+(exit 1) before it reads the App's ID or key: the service mints a run's
+token, and this read is not a run.
+A repository on a host this read does not serve is refused the way the
+project-wide view refuses it (reconciliation Q12 (A), finding #30): the
+coordinator reads github only, because its bitbucket credential is one
+repository's access token and cannot be widened to a project.
+
+A pull request the host does not have is the host's own failure (exit 2),
+carrying the host's status, and never an empty document: an empty one would
+draw a pull request with no description, which is a different fact.
+Exit codes: 1 for a missing or malformed App credential (or the refusals
+above), 2 for a failure of the host.
+
+With --json the document is printed as it is: number, url, title, body,
+state, draft, branch, base and author, every field the host's own answer and
+absent when it gave none.
+
+Usage: `fugaro coordinator show`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--pr` | int | `0` | no | the pull request number |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository the pull request is in (owner/name) |
 
 Subcommands:
 
@@ -3135,17 +3194,24 @@ This command has no subcommands.
 
 List runs with their status, stage, cost and PR
 
-List runs, newest first, joining the runs bucket with what the backend knows.
+List runs, newest first -- created descending, then run descending --
+joining the runs bucket with what the backend knows.
 
 By default ls shows the last 7 days of the local config's repositories (every
 repository in the bucket when the config lists none). A run shows as succeeded
 only when its result.json says so; an execution that ended without finalizing
 is an infra_error.
 
---limit N reads the objects of the newest N runs alone, so a run left out
-costs nothing to leave out; the N are the newest of every repository
-listed, and --mine, --batch, --state and --pr then narrow fewer rows than
-that, never more. 0, the default, reads every run of the window.
+--limit N prints the newest N rows of the listing and shortens nothing else:
+the window is still read, and the totals line, in the text listing and in
+--json's totals, is the whole window's, because a page is not a total. 0,
+the default, prints every row of the window.
+
+--after RUN-ID starts the listing after that run: the rows strictly after it
+in the listing's order, so the same argv with the last id of a page is the
+next page. The id is the run_id --json carries; one the listing does not
+hold is refused rather than answered with an empty page, which reads as no
+more runs. Neither flag goes with --watch, which redraws the whole listing.
 
 --state STATE lists only runs in that state, matched against the status --json
 carries: the `halted (run_cap)` cell is --state halted, and --help lists the
@@ -3162,13 +3228,14 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--after` | string | "" | no | print only the rows after this run id in the listing |
 | `--all` | bool | `false` | no | every repository in the runs bucket |
 | `--batch` | string | "" | no | only runs of this batch |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--limit` | int | `0` | no | read and list only the newest N runs (0, the default, is every run of the window) |
+| `--limit` | int | `0` | no | print only the newest N rows (0, the default, is every row of the window; the totals stay the window's) |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |

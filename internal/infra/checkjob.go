@@ -431,7 +431,7 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 		return nil, shape("is not a checkout: clone or shared job: its container has no %s=%s or %s, so moving its image would leave a job expecting a baked checkout", CheckoutEnv, config.CheckoutClone, config.CheckoutShared)
 	}
 	if checkout == config.CheckoutShared && !config.SharedCheckoutShipped() {
-		return nil, shape("carries %s=%s, which no fugaro update before %s writes: no release builds or refreshes a shared dependency-layer image yet, so this job is not one this fugaro made", CheckoutEnv, config.CheckoutShared, config.SharedCheckoutSince)
+		return nil, shape("carries %s=%s, which no fugaro update writes: no released fugaro builds or refreshes a shared dependency-layer image yet, so this job is not one this fugaro made", CheckoutEnv, config.CheckoutShared)
 	}
 	u := &WorkflowJobUpdate{job: full, oldImage: image, newImage: newImage}
 	if !u.Changes() {

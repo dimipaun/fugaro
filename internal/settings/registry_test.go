@@ -42,9 +42,14 @@ func yamlPaths(t reflect.Type, prefix string) []string {
 		}
 		// The local config's profiles: block holds job profiles, and the
 		// project layer's holds workflow profiles (SD14): one key may not
-		// mean two things.
-		if path == "profiles" {
+		// mean two things. Its version: and gcp_project: are the same case —
+		// a fugaro.yaml key already has each name — and carry the prefix the
+		// registry's local rows of those two use.
+		switch path {
+		case "profiles":
 			path = "job_profiles"
+		case "version", "gcp_project":
+			path = "local." + path
 		}
 		ft := f.Type
 		for ft.Kind() == reflect.Pointer {

@@ -303,6 +303,31 @@ describe('the packaged console carries what it loads', () => {
     )
   })
 
+  it('keeps the symbol uploader out of the package (the owner’s ruling of 2026-11-01)', () => {
+    // `@sentry/cli` is the uploader `scripts/upload-sentry-symbols.mjs` runs
+    // after a build. It is a build tool and not a runtime: the app never runs it,
+    // the release job does, and everything in `dependencies` is packed into the
+    // shipped archive -- so its home is `devDependencies`, which is what the
+    // script's own binary path and the pinned-toolchain rule both assume. Two of
+    // the three assertions below are the load-bearing ones: electron-builder
+    // packs `dependencies` and not `devDependencies`, so a section that named it
+    // would ship it, and a `files` pattern that named it would put the CLI, and
+    // the per-platform binaries its postinstall downloads, inside the operator's
+    // download. The third is the non-vacuity: a package that is in neither
+    // section is one the script could not run.
+    const sections = JSON.parse(readFileSync(join(consoleDir, 'package.json'), 'utf8')) as {
+      readonly dependencies?: Record<string, string>
+      readonly devDependencies?: Record<string, string>
+    }
+    expect(Object.keys(sections.dependencies ?? {})).not.toContain('@sentry/cli')
+    expect(Object.keys(sections.devDependencies ?? {})).toContain('@sentry/cli')
+    for (const pattern of buildFiles() ?? []) {
+      expect(pattern, `${pattern} names the symbol uploader, which is a build tool and not part of the app`).not.toContain(
+        '@sentry/cli',
+      )
+    }
+  })
+
   it('the matcher itself: a directory, a glob and a negation', () => {
     // The checker is tested against the shapes it must accept and the one it
     // must refuse, so a `covers` that answered `true` to everything could not

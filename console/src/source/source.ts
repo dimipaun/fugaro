@@ -437,16 +437,20 @@ export function handlersFor(
 }
 
 /**
- * CliBackedHandlers is the whole surface **minus the two operations that are not
- * reads of the CLI**: `startup.compatibility` (desktop-console plan Task 3.3),
- * whose answer is the handshake `src/main/index.ts` ran before it built any
- * window, and `run.launch` (V2.5.1a, design section 5.1 rule 11), which is the
+ * CliBackedHandlers is the whole surface **minus the three operations that are
+ * not reads of the CLI**: `startup.compatibility` (desktop-console plan Task
+ * 3.3), whose answer is the handshake `src/main/index.ts` ran before it built
+ * any window, `run.launch` (V2.5.1a, design section 5.1 rule 11), which is the
  * console's **one write**: it is not a read of the active installation's source
  * at all -- it takes the installation's name as an argument, resolves its own
  * records, and goes through the confirmation seam (`src/main/launch.ts`) rather
- * than a `CliSource`. Both are joined in at the entry point, as
- * `{ ...handlersFor(source, deps), 'startup.compatibility': … , 'run.launch': … }`
- * with `startupCompatibility` from `src/main/ipc.ts` and the launcher from
+ * than a `CliSource` -- and `link.openPullRequest` (K2a, D815), which reads no
+ * CLI either: it builds a URL from three of its own arguments and hands it to
+ * the console's one call to `shell.openExternal`. All three are joined in at the
+ * entry point, as
+ * `{ ...handlersFor(source, deps), 'startup.compatibility': … , 'run.launch': … ,
+ * 'link.openPullRequest': … }` with `startupCompatibility` and
+ * `openPullRequestHandler` from `src/main/ipc.ts` and the launcher from
  * `src/main/launch.ts`. **Nothing registers the handlers until that task lands**:
  * today `main()` serves the bundle and starts the lifecycle, and no window has a
  * preload to reach a channel with.
@@ -458,4 +462,7 @@ export function handlersFor(
  * whole surface, so a console that forgets the join fails to register rather
  * than answering one operation with nothing.
  */
-export type CliBackedHandlers = Omit<ConsoleHandlers, 'startup.compatibility' | 'run.launch'>
+export type CliBackedHandlers = Omit<
+  ConsoleHandlers,
+  'startup.compatibility' | 'run.launch' | 'link.openPullRequest'
+>

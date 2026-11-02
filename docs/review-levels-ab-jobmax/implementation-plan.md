@@ -38,7 +38,7 @@ the plan:
 
 **Waiting on something external:**
 
-- O7, O9, O10 and O11 were ruled on 2026-10-30. O7: the missing step is inserted (L3.1). O9: the `settings` node (T1.1–T1.3, J1.3). O10: Hotfix takes Pro's levels (L2.2). O11: the refusal is accepted, and this repository's `fugaro.yaml` changes (L5.2).
+- O7, O9, O10 and O11 were ruled on 2026-10-30. O7: the missing step is inserted (L3.1). O9: the `settings` node (T1.1–T1.3, J1.3). O10: Hotfix takes Pro's levels (L2.2). O11: the refusal is accepted, and this repository's `fugaro.yaml` changes (L5.2). Ruled again on 2026-11-01, in the fix round on L3.1's PR: the refusal stays and is **by exact model ID**, and a run whose level 1 and level 2 are **both** left unset — no model named anywhere, `--recipe standard` — **warns** that the senior review is not independent of the coder rather than refusing, because two unset models are not an ID the resolver can compare and refusing them would refuse every installation that names no models at all.
 - O4, the processor's name, gates T2.1 and T2.2.
 - The A/B plan's A3.3 and A5.x gate B1.2 and B1.3.
 - The mobile app's sign-in to the installation's database (the mobile plan) gates T3.1.
@@ -188,6 +188,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Red step:** `TestResolveLevelsRefusesSameModel` fails before the refusal exists.
 - **Reviewer:** opus + mandatory independent review (the floor and the guardrail are policy).
 - **Commit:** `config: resolve review levels, the owner floor and the same-model refusal`.
+- **Done (PR "config: resolve review levels, the owner floor and the same-model refusal").** Red first: `TestResolveLevelsRefusesSameModel` failed with "a run with l1 and l2 both on deepseek/deepseek-v4-flash launched; want D721's refusal", and `TestResolveLevelsWarnsCoderAndFamily` and `TestResolveLevelsRefusesFirstLineRecipeWithCoderEqualsReviewer` with it, before the guard existed. `LevelInputs` takes the floor as `[]policy.Level` (internal/policy does not import internal/config, so the two do not cycle) and carries `CatalogDefault`, because the catalog's own `default` is the one recipe whose `first_line` step follows `agent.first_line_review` (docs/recipes.md §2, `runner.planOf`'s `derived`). Level 1's fallback is `Agent.FirstLineOn` except where the mode's own row turns it on (POC), and a recipe with a `first_line` step that is not the catalog default always runs it (O11). The resolver inserts nothing itself: `ResolvedLevel.Inserted` says which step the runner adds (L4.2).
 
 #### L3.2 `fugaro validate` and launch apply the resolver
 
@@ -420,7 +421,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
   - `beforeSend` keeps the exception type and frames (function, app-relative file, line). It drops the message, breadcrumbs, contexts, user, request, `server_name`, tags, extra and local variables.
   - Off: native crash minidumps (process memory), session and release-health envelopes, and client reports. Only error events are sent.
   - Main process only (`@sentry/electron/main`), with no renderer preload or IPC injected, so the IPC allow-list and the CSP are unchanged. Renderer errors are not reported in v1.
-  - The DSN comes from a build-time environment variable. A build without it sends nothing.
+  - The DSN comes from a build-time environment variable. A build without it sends nothing. **SUPERSEDED (owner's ruling, 2026-10-31):** a build-time DSN was cancelled, so this bullet and the two `after deploy` lines that lean on it (the build secret and the release note that names it) no longer describe what is built — the DSN is one embedded public constant in `console/src/main/crash-dsn.ts`, it is the same in every build, and the per-user switch is the gate that decides whether anything is sent.
 - **Tests:** `crash: nothing before the switch is read`, `crash: nothing with the switch off or null`, `crash: the scrubber drops message, home path, hostname and token-shaped placeholder`, `crash: no minidump, no session, no client report`, `crash: no preload is registered`, `pinning: @sentry/electron is exact and the only runtime dependency`, and the website's privacy test as amended.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 crash pinning`, then `cd website && npm run check`, then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Depends on:** T1.3, T0.1 (the same `desktop-console.md`), T3.1 (the same privacy page and test), the processor named (O4).

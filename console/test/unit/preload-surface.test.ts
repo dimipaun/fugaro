@@ -382,8 +382,8 @@ describe('the confirmation window’s built preload', () => {
   it('is a third surface: the dashboard’s names no confirm channel anywhere', () => {
     // The mutation this catches: a `confirm:` row added to the dashboard's
     // operation table, or a dashboard method that reaches this window's
-    // channels. The dashboard's surface is unchanged at twenty-four rows.
-    expect(EXPOSED_OPERATIONS).toHaveLength(24)
+    // channels. The dashboard's surface is unchanged at twenty-five rows.
+    expect(EXPOSED_OPERATIONS).toHaveLength(25)
     for (const [name, method] of [...EXPOSED_OPERATIONS, ...CONSOLE_OPERATIONS.map((row) => [row.name, row.method] as const)]) {
       expect(name, `${method} is on the confirm prefix`).not.toContain('confirm:')
       expect(method).not.toBe('fields')

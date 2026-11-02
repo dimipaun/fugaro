@@ -220,10 +220,10 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 // were to arrive in, and it is stale: 0.15.0 shipped without them, so no
 // release builds or refreshes one and nothing gates on this number. The
 // gate is sharedCheckoutShipped below, a flag the release that actually
-// builds these images flips. The value stays at 0.15.0 because two readers
-// still name it — internal/infra's job-shape refusal and docs/release.md's
-// bullet for internal/cli's sharedSince, which TestSharedSinceHasAReleaseBullet
-// holds to it — so the release that ships them moves this to its own tag.
+// builds these images flips. The value stays at 0.15.0 because one reader
+// still names it — docs/release.md's bullet for internal/cli's sharedSince,
+// which TestSharedSinceHasAReleaseBullet holds to it — so the release that
+// ships them moves this to its own tag.
 // SharedCheckoutRefusal names no release at all, so a stale number here
 // cannot reach a repository.
 //

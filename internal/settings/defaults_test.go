@@ -31,9 +31,10 @@ workflows:
 )
 
 // minimalLocal is the smallest local config localcfg.Parse accepts, which is
-// what the local loader's own defaults are read back out of.
-const minimalLocal = `version: 1
-name: workspace-a
+// what the local loader's own defaults are read back out of. It writes no
+// version: so the loader's own fill for that key is what the reader below
+// reads back.
+const minimalLocal = `name: workspace-a
 gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
@@ -79,6 +80,7 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		},
 		"max_parallel":       func() string { return strconv.Itoa(local.MaxParallel) },
 		"build.machine_type": func() string { return local.Build.MachineType },
+		"local.version":      func() string { return strconv.Itoa(local.Version) },
 	}
 	for _, r := range Rows() {
 		if r.Default.Value == "" {

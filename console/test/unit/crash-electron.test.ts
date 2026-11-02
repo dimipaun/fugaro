@@ -36,7 +36,7 @@
 //      only assert what the fake had been told to do, and into a real Electron
 //      main process running the pinned SDK.
 
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { inert } from '../support/fakeSecrets'
-import { scrubCrashEvent, type CrashEvent } from '../../src/main/crash'
+import { CRASH_START_FAILED, scrubCrashEvent, startCrashReportingSafely, type CrashEvent } from '../../src/main/crash'
 import { CONSOLE_CRASH_DSN } from '../../src/main/crash-dsn'
 import { CLOSE_TIMEOUT_MS, startCrashReporting } from '../../src/main/crash-electron'
 
@@ -54,6 +54,10 @@ import { CLOSE_TIMEOUT_MS, startCrashReporting } from '../../src/main/crash-elec
 const harness = vi.hoisted(() => ({
   /** Every options object `init` was handed, in order. */
   initOptions: [] as Record<string, unknown>[],
+  /** Every capture-integration call the wiring made, in order, with the options
+   * it was handed: the two integrations are the only things that turn an error
+   * into a report, so what they are asked for is part of the payload rule. */
+  integrations: [] as Record<string, unknown>[],
   /** What the client's transport received, in order. */
   sent: [] as unknown[],
   /** The transport the client built, as `init` left it. */
@@ -126,6 +130,20 @@ vi.mock('@sentry/electron/main', () => ({
     flush: async () => true,
     options,
   }),
+  // The two capture integrations the wiring names by hand. They are stubs for
+  // the reason the rest of this mock is -- the real ones register process
+  // listeners and reach Electron -- so the names and the options here are the
+  // wiring's, and `the capture integrations are the pinned SDK's own` below reads
+  // the installed package to hold both, and the behaviour they stand for, to the
+  // pinned version.
+  onUncaughtExceptionIntegration: () => {
+    harness.integrations.push({ name: 'OnUncaughtException' })
+    return { name: 'OnUncaughtException' }
+  },
+  onUnhandledRejectionIntegration: (options: Record<string, unknown> = {}) => {
+    harness.integrations.push({ name: 'OnUnhandledRejection', ...options })
+    return { name: 'OnUnhandledRejection' }
+  },
 }))
 
 /** dsnPlaceholder is a DSN's shape -- scheme, public key, host, project id --
@@ -146,8 +164,15 @@ function tokenPlaceholder(): string {
 /** tempAppRoot is a fresh temp directory per test: what `app.getAppPath()`
  * answers with, and the prefix a kept frame's path is cut at. */
 function tempAppRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'fugaro-crash-app-'))
+  const directory = mkdtempSync(join(tmpdir(), 'fugaro-crash-app-'))
+  made.push(directory)
+  return directory
 }
+
+/** made is every app root this file has handed out: they are directories in the
+ * machine's temp directory, one per test, and the rule below takes each of them
+ * away rather than leaving the run's leavings behind. */
+const made: string[] = []
 
 /** consoleFrame is a frame path that is genuinely inside this app, so the
  * scrubber has something to place; `hostileEvent` takes the prefix because the
@@ -196,6 +221,7 @@ function hostileEvent(appRoot: string): CrashEvent & Record<string, unknown> {
 
 beforeEach(() => {
   harness.initOptions = []
+  harness.integrations = []
   harness.sent = []
   harness.closes = 0
   harness.closeTimeouts = []
@@ -206,6 +232,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  for (const directory of made.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
 describe('the crash reporter starts only when the gate opens', () => {
@@ -288,22 +315,25 @@ describe('the crash reporter starts only when the gate opens', () => {
     // decision in prose that names both modules and a scan that read the prose
     // would be answered by the explanation rather than by the call.
     //
-    // Four shapes, because each one fails differently: a second call would start
-    // a second client (two transports, two event ids); a call with anything but
-    // `null` would be a slice deciding the switch before the switch exists; a
+    // Five shapes, because each one fails differently: a second start would be a
+    // second client (two transports, two event ids); a start with anything but
+    // the store's value would be a slice deciding the switch itself; a
     // **static** import of the module would load `@sentry/electron/main` and the
-    // fourteen packages it reaches at every start, whatever the gate answers;
-    // and no call on the quit path is a report cut off mid-send.
+    // fourteen packages it reaches at every start, whatever the gate answers; a
+    // start that is not wrapped would let a throw out of the SDK cost the app its
+    // startup; and no call on the quit path is a report cut off mid-send.
     const entry = withoutComments(
       readFileSync(fileURLToPath(new URL('../../src/main/index.ts', import.meta.url)), 'utf8'),
     )
-    const starts = [...entry.matchAll(/startCrashReporting\(\{([^}]*)\}\)/g)].map((match) => match[1]?.trim())
-    expect(starts).toEqual(['optedIn, appRoot: app.getAppPath()'])
+    expect(entry).not.toContain('startCrashReporting({')
+    expect([...entry.matchAll(/crashReporting = await startCrashReportingSafely\(\{/g)]).toHaveLength(1)
+    expect([...entry.matchAll(/input: \{ optedIn, appRoot: app\.getAppPath\(\) \}/g)]).toHaveLength(1)
     expect([...entry.matchAll(/crashReporting\?\.close\(\)/g)]).toHaveLength(1)
 
     // The module is reached dynamically, once, and only from behind the gate: a
     // static reach would load it before the decision exists to make, so the only
-    // line allowed to carry `from './crash-electron'` is the erased type import.
+    // line allowed to carry `from './crash-electron'` is the erased type import,
+    // and the loader handed to the guard is the one dynamic import in the file.
     const staticLoads = entry
       .split('\n')
       .filter((line) => line.includes("from './crash-electron'") && !line.trimStart().startsWith('import type'))
@@ -311,31 +341,35 @@ describe('the crash reporter starts only when the gate opens', () => {
     expect([...entry.matchAll(/import\('\.\/crash-electron\.js'\)/g)]).toHaveLength(1)
 
     // ...and the gate is an **allow test**: `optedIn === true`, and nothing else
-    // -- no `./crash`, no reason, no list of the answers that shut it. A state
-    // nobody has defined yet is off because it is not a yes, so the switch slice
-    // can add to what a yes is without this file learning a name.
+    // -- not `crashReportingDecision`, not a reason, not a list of the answers
+    // that shut it. `./crash` is where the *guard* comes from, and it is the
+    // only thing this file takes from it: the module it takes it from is
+    // importless, so naming it here loads no SDK, and the two names the gate
+    // itself uses stay out of this file.
     expect(entry).not.toContain('crashReportingDecision')
-    expect(entry).not.toContain("from './crash'")
+    expect(entry.split('\n').filter((line) => line.includes("from './crash'"))).toEqual([
+      "import { startCrashReportingSafely } from './crash'",
+    ])
     const allow = entry.indexOf('if (optedIn === true)')
     const load = entry.indexOf("import('./crash-electron.js')")
     expect(allow, 'the entry asks the gate with an allow test').toBeGreaterThan(-1)
     expect(load).toBeGreaterThan(allow)
     const branch = entry.slice(allow, load)
     expect(branch, 'no line closes the block before the load, so the load is inside it').not.toMatch(/^\s*\}/m)
-    expect(entry.slice(allow, entry.indexOf('}', load))).toContain('startCrashReporting(')
+    expect(entry.slice(allow, entry.indexOf('}', load))).toContain('startCrashReportingSafely(')
   })
 
-  it('declares the switch unread, so a build that flipped it fails here', () => {
+  it('reads the per-user switch itself, before the gate, and starts nothing on a value it computed', () => {
     // The gate above is only as good as the value it is handed, and the value is
     // the one thing a scan of the gate cannot see: with `optedIn` declared `true`
-    // every check in this file still passes -- the allow test is still an allow
-    // test, the import is still lazy, the close is still on the quit path -- and
-    // the console reports on every start of every build. So the declaration
-    // itself is pinned, and it is pinned as the *whole* line: the slice that
-    // reads the per-user switch changes this declaration and this pin together,
-    // which is the point -- a slice that flipped the constant without wiring the
-    // switch would be sending reports nobody asked for, and one that wired the
-    // switch has to say so here.
+    // every check in this test file still passes -- the allow test is still an
+    // allow test, the import is still lazy, the close is still on the quit path
+    // -- and the console reports on every start of every build. So the
+    // declaration is pinned as the *whole* line, and it is pinned as a **read of
+    // the store**: the switch is the console's own per-user file (`crash.json`,
+    // `./crashstore`), not a constant of the build and not a field of anything
+    // else, and the read is the one thing that stands between a `true` in that
+    // file and a client.
     const entry = withoutComments(
       readFileSync(fileURLToPath(new URL('../../src/main/index.ts', import.meta.url)), 'utf8'),
     )
@@ -345,8 +379,75 @@ describe('the crash reporter starts only when the gate opens', () => {
       .filter((line) => line.startsWith('const optedIn'))
     expect(
       declarations,
-      'index.ts must declare the switch unread: `= true` here starts the reporter in every build, and nothing else in this file would notice',
-    ).toEqual(['const optedIn: unknown = null'])
+      'index.ts must read the switch from the store: `= true` here starts the reporter in every build, and nothing else in this file would notice',
+    ).toEqual(["const optedIn: unknown = readCrashSwitch(app.getPath('userData'))"])
+
+    // The read comes before the gate and before the load, and it is the only
+    // thing between them: a switch read after the client started would decide
+    // nothing, and one read after an `await` would be a value from a later tick
+    // than the startup it is meant to describe.
+    const read = entry.indexOf('readCrashSwitch(')
+    const start = entry.indexOf('async function main(')
+    expect(read).toBeGreaterThan(start)
+    expect(entry.indexOf('if (optedIn === true)')).toBeGreaterThan(read)
+    expect(entry.indexOf("import('./crash-electron.js')")).toBeGreaterThan(read)
+    const beforeTheGate = entry.slice(start, entry.indexOf('if (optedIn === true)'))
+    expect(beforeTheGate, 'nothing is awaited before the switch is read').not.toContain('await ')
+  })
+
+  it('guards the load and the init, so a start that fails after the yes still reaches the window', async () => {
+    // `./crash`'s guard is where this is testable: `src/main/index.ts` cannot be
+    // imported under `vitest`, so the shapes that have to survive are handed to
+    // the guard itself -- an import that rejects (a damaged archive, a build that
+    // did not carry the file) and an `init` that throws after the module loaded.
+    // Both answer `null`, say one constant line, and resolve: what they must never
+    // do is reject, because the entry point awaits this inside `main`, whose
+    // rejection ends at `reportAndQuit` -- a console that quits instead of opening
+    // its window because the crash reporter could not start.
+    const logs: string[] = []
+    const load = (): Promise<never> => Promise.reject(new Error('Cannot find module ./crash-electron.js'))
+    const rejected = await startCrashReportingSafely({
+      load,
+      input: { optedIn: true, appRoot: '/app' },
+      log: (line) => logs.push(line),
+    })
+    expect(rejected).toBeNull()
+
+    const started = await startCrashReportingSafely<{ readonly close: () => Promise<void> }>({
+      load: () => Promise.resolve({ startCrashReporting: () => {
+        throw new Error('the client could not be initialised')
+      } }),
+      input: { optedIn: true, appRoot: '/app' },
+      log: (line) => logs.push(line),
+    })
+    expect(started).toBeNull()
+
+    // One line each, and the line is the constant: it repeats no error text and
+    // names no path, both of which arrive from a library.
+    expect(logs).toEqual([CRASH_START_FAILED, CRASH_START_FAILED])
+
+    // ...and the path that works is handed the input unchanged, so the guard is
+    // not a place the switch or the app root can be rewritten.
+    const handles: unknown[] = []
+    const ok = await startCrashReportingSafely({
+      load: () => Promise.resolve({ startCrashReporting: (input: { readonly optedIn: unknown; readonly appRoot: string }) => {
+        handles.push(input)
+        return { close: () => Promise.resolve() }
+      } }),
+      input: { optedIn: true, appRoot: '/app' },
+      log: (line) => logs.push(line),
+    })
+    expect(handles).toEqual([{ optedIn: true, appRoot: '/app' }])
+    expect(ok).not.toBeNull()
+    expect(logs).toEqual([CRASH_START_FAILED, CRASH_START_FAILED])
+
+    // One assignment in the entry point, and it is the guard's answer -- so
+    // nothing else in the file can put a client in the handle the guard did not
+    // make.
+    const entry = withoutComments(
+      readFileSync(fileURLToPath(new URL('../../src/main/index.ts', import.meta.url)), 'utf8'),
+    )
+    expect([...entry.matchAll(/crashReporting = (?!await startCrashReportingSafely\(\{)/g)]).toEqual([])
   })
 
   it('the wiring asks the gate with the switch alone, and the constant is the fallback', () => {
@@ -404,10 +505,77 @@ describe('what the client is told', () => {
     // loads, with no unregister in Node to take it back off. The option is read
     // as `!== false`, so `true` or a missing key installs it.
     expect(options.enableRuntimeChannelInjection).toBe(false)
-    // Nothing else is added: an integrations list here would be a way to turn
-    // one of those back on without touching CRASH_CLIENT_OPTIONS.
-    expect(options.integrations).toBeUndefined()
+    // **The captures are named, and they are exactly two.** With
+    // `defaultIntegrations: false` a client handed no list captures nothing on
+    // its own, so the console names the two that turn a crash into a report and
+    // adds no third: no minidump, no session, no preload and no breadcrumb
+    // integration, which is the list above restated as the list this option
+    // could put back.
+    const integrations = options.integrations as readonly { readonly name?: unknown }[]
+    expect(integrations.map((integration) => integration.name)).toEqual([
+      'OnUncaughtException',
+      'OnUnhandledRejection',
+    ])
+    // ...and what they were asked for: the uncaught-exception integration takes
+    // no options at all, and the rejection one is told `'none'`, so it captures
+    // and does nothing else -- not `'warn'` (Node's warning written to the
+    // console) and not `'strict'` (which calls `logAndExitProcess`). The
+    // default is `'warn'`, so this is a decision rather than a silence.
+    expect(harness.integrations).toEqual([
+      { name: 'OnUncaughtException' },
+      { name: 'OnUnhandledRejection', mode: 'none' },
+    ])
+    // **Neither of them decides this process's exit**, and these two are the
+    // options that would: `onFatalError` is what the Electron SDK calls after a
+    // fatal flush, and `exitEvenIfOtherHandlersAreRegistered` is `@sentry/node`'s
+    // -- an option the integration this wiring imports does not even accept. The
+    // console's own paths decide what happens to the process, which is what
+    // `reportAndQuit` and the quit handler are for.
+    expect(options.onFatalError).toBeUndefined()
+    expect(options.exitEvenIfOtherHandlersAreRegistered).toBeUndefined()
     void handle.close()
+  })
+
+  it('the capture integrations are the pinned SDK’s own, and neither ends the process', () => {
+    // The two names above are stubs' names until this test reads them out of the
+    // installed package, which is the same thing the option-name pin below does
+    // for the options object: the wiring may name an integration only if the
+    // pinned version exports it, and only if what it does is what this file says
+    // it does. Three readings, each of which fails on a version that moved:
+    //
+    //   - `@sentry/electron/main` exports both factories, and
+    //     `onUncaughtExceptionIntegration` is the Electron SDK's own -- it is
+    //     assigned from its own module *after* the `@sentry/node` re-exports, so
+    //     the import in the wiring resolves to the Electron one and not to the
+    //     Node one whose options include `exitEvenIfOtherHandlersAreRegistered`;
+    //   - the Electron one's handler registers a `global.process.on(
+    //     'uncaughtException')` listener, calls `captureException`, and reaches
+    //     for `options.onFatalError` **only when it is set** -- there is no
+    //     `process.exit` in it at all, which is why an uncaught error leaves the
+    //     process where Electron's own handler left it;
+    //   - the rejection one decides what to do after capturing from `mode`
+    //     alone: `'warn'` writes the warning, `'strict'` calls
+    //     `logAndExitProcess`, and anything else -- `'none'`, which is what this
+    //     wiring passes -- does nothing.
+    const consoleDir = fileURLToPath(new URL('../..', import.meta.url))
+    const installed = (relative: string): string => readFileSync(join(consoleDir, relative), 'utf8')
+    const exports = installed('node_modules/@sentry/electron/main/index.js')
+    expect(exports).toContain('exports.onUncaughtExceptionIntegration = onuncaughtexception.onUncaughtExceptionIntegration;')
+    expect(exports).toContain('exports.onUnhandledRejectionIntegration = node.onUnhandledRejectionIntegration;')
+
+    const uncaught = installed('node_modules/@sentry/electron/main/integrations/onuncaughtexception.js')
+    expect(uncaught).toContain("global.process.on('uncaughtException'")
+    expect(uncaught).toContain('options.onFatalError')
+    expect(uncaught).not.toContain('process.exit')
+    expect(uncaught).not.toContain('exitEvenIfOtherHandlersAreRegistered')
+
+    const rejection = installed('node_modules/@sentry/node/build/cjs/integrations/onunhandledrejection.js')
+    expect(rejection).toContain('mode === "warn"')
+    expect(rejection).toContain('mode === "strict"')
+    expect(rejection).toContain('errorhandling.logAndExitProcess(reason)')
+    // The `'none'` the wiring passes is the mode `handleRejection` answers with
+    // nothing at all: the function is the two branches above and no third.
+    expect(rejection.slice(rejection.indexOf('function handleRejection'))).not.toMatch(/mode === "none"/)
   })
 
   it('sends errors only: no transaction and no log leaves, whatever the client is handed', () => {
