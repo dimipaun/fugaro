@@ -90,7 +90,8 @@ func MintAccessToken(ctx context.Context, c Consumer, oauthRoot string, hc *http
 }
 
 // oauthErrorCode is the whole shape of an error code Bitbucket documents for
-// a refused grant; anything else is not a code, and is not relayed.
+// a refused grant. An answer's error field that is anything else is text this
+// exchange did not write, so it is dropped with the rest of the body.
 var oauthErrorCode = regexp.MustCompile(`^[a-z_]{1,40}$`)
 
 // refusal is the error of an exchange the endpoint refused. It carries the
