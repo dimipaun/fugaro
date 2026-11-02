@@ -38,6 +38,11 @@ func pins(a Agent) []pin {
 // it and the cap counts it — so PinWarnings warns about it as a pin, under
 // exactly the path the run's own model checks rename a problem about a level
 // to (internal/runner/gateway.go's levelModelPath).
+//
+// A level whose own model is also a role pin keeps its pin here rather than
+// being folded into it: a warning is about a key an owner writes, and a level
+// key is one — the same reason a coder and a background of one model are two
+// pins and get two warnings.
 func levelPins(a Agent) []pin {
 	var out []pin
 	for _, l := range []struct {

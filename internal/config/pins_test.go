@@ -381,6 +381,13 @@ func TestPinWarningsCoverALevelModel(t *testing.T) {
 	if ws[0].Code != CodeCatalogPrice || !strings.Contains(ws[0].Message, "stale") || !strings.Contains(ws[0].Message, "level l2") {
 		t.Errorf("the stale level model's warning: %+v", ws[0])
 	}
+	// A level model that is also one of the run's pins keeps its own warning:
+	// a warning is about a key the owner writes, and a level key is one.
+	c := providerAgent("deepseek/deepseek-v4-flash")
+	c.Levels = ReviewLevels{L3: &LevelSetting{Model: "deepseek/deepseek-v4-flash"}}
+	if got := paths(PinWarnings(c, placeholderPrices())); got != "agent.models.coder,agent.models.background,agent.levels.l3.model" {
+		t.Errorf("a level model that is a pin warned under %q", got)
+	}
 }
 
 func TestUnverifiedPriceWarns(t *testing.T) {
