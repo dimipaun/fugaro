@@ -402,6 +402,49 @@ func TestScrubRemovesTheReadConsumerKeyAndSecret(t *testing.T) {
 	}
 }
 
+// TestBundleSecretsCoverBothHalvesOfTheConsumer: Bundle.Secrets is the one list
+// of strings the redaction paths walk, and these are the three properties worth
+// having it for. Both halves of the read consumer's material are in it — its
+// secret through its entry's value, its key through the field beside it — the
+// workspace is not (it is a name, and a scrub that redacted it would be
+// redacting the words of prose), and no element is empty.
+//
+// The last one is not tidiness: a scrub given an empty form replaces BETWEEN
+// EVERY RUNE of the line it was handed. Two refusals at parse time already make
+// it unreachable — the value branch refuses an empty entry, readConsumerValue
+// refuses an entry whose key or secret is empty — and this pins it so that a
+// later widening of either is a red test and not a redaction that eats a line.
+func TestBundleSecretsCoverBothHalvesOfTheConsumer(t *testing.T) {
+	b, err := ParseBundle(append(bundleDoc(t), readConsumerDoc(t)...))
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	secrets := b.Secrets()
+	// One per credential, plus the consumer's key, which is no entry's value.
+	if len(secrets) != b.Len()+1 {
+		t.Errorf("Secrets answered %d strings for %d credentials, want one each and the consumer's key too", len(secrets), b.Len())
+	}
+	for i, v := range secrets {
+		if v == "" {
+			t.Errorf("Secrets' element %d is empty: a scrub given one would redact between every rune of the line", i)
+		}
+	}
+	found := make(map[string]bool, len(secrets))
+	for _, v := range secrets {
+		found[v] = true
+	}
+	key, secret, workspace, ok := b.BitbucketReadConsumer()
+	if !ok {
+		t.Fatal("the document holds no read consumer")
+	}
+	if !found[key] || !found[secret] {
+		t.Errorf("both halves of the consumer's material are in Secrets, and the key is %v in it and the secret %v", found[key], found[secret])
+	}
+	if found[workspace] {
+		t.Error("the workspace is in Secrets: it is a name, so a scrub that covered it would be redacting prose")
+	}
+}
+
 // TestBundleRefusesRunConsumerUntilS3: the second consumer (F21) is PARKED
 // with S3, and the parked kind is not a credential of the bundle: the loader
 // refuses a document that holds it, whole, as a key it does not know. It is

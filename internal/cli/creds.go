@@ -637,8 +637,10 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 		doc, window, err = setReviewSigningRotation(doc, name, config.ReviewSigningKeyPreviousSecret(account), string(value))
 	case kind == credsvc.KindBitbucketReadConsumer:
 		// The one entry whose value is not a string: the operator's value is
-		// the entry's whole mapping, and it is put in as it was read (the node
-		// readConsumerNode answered), not as text.
+		// the entry's whole mapping, and it is put in as it was read, not as
+		// text. This is the one place the bytes are parsed for it:
+		// validateBundleValue leaves the shape to this call, so the node that is
+		// validated here is the node the document gets.
 		var valueNode *yaml.Node
 		if valueNode, err = readConsumerNode(value); err == nil {
 			doc, err = setBundleEntryValue(doc, name, valueNode)
@@ -797,9 +799,9 @@ func credsDisabledRefusal(id, did string) error {
 // pasted value can land in (the rule `fugaro secrets set`'s own name check
 // follows), and nothing this command prints may carry a value.
 func credsNameRefusal() error {
-	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), %s (the Bitbucket read consumer, whose value is %s), or the review-signing names %s and %s<account>%s, which --generate writes. Nothing was read and nothing was written",
-		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret, credsvc.BitbucketReadConsumerSecret, readConsumerShape,
-		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix)
+	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), %s (the Bitbucket read consumer), or the review-signing names %s and %s<account>%s, which --generate writes. The read consumer's value is %s. Nothing was read and nothing was written",
+		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret, credsvc.BitbucketReadConsumerSecret,
+		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape)
 }
 
 // credsGenerateNameRefusal refuses --generate for a NAME that is not an
@@ -913,8 +915,8 @@ func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name s
 // KIND's: a model credential and the upstream Bitbucket token are one line
 // with no whitespace at either end (`fugaro secrets set`'s rule), the App key
 // is one PEM block that the service's own mint can parse, and the Bitbucket
-// read consumer is a mapping of key, secret and workspace. Errors never quote
-// the value.
+// read consumer's shape is readConsumerNode's — run once, at the write, so the
+// node it answers is the node the document gets. Errors never quote the value.
 func validateBundleValue(raw []byte, kind credsvc.Kind) error {
 	switch {
 	case len(raw) == 0:
@@ -930,13 +932,18 @@ func validateBundleValue(raw []byte, kind credsvc.Kind) error {
 	case credsvc.KindGitHubApp:
 		return validateAppKeyPEM(raw)
 	case credsvc.KindBitbucketReadConsumer:
-		// The one value that is not a line of text, so the one-line rule below
-		// is not it: readConsumerNode is what says the shape is right, and the
-		// bound above still holds — the whole mapping is read and stored under
-		// the per-credential limit, which is far more than a consumer key, a
-		// secret and a workspace need.
-		_, err := readConsumerNode(raw)
-		return err
+		// The one value that is not a line of text, so the one-line rules below
+		// are not it. Its SHAPE is not checked here either: readConsumerNode is
+		// what says the shape is right, and it runs once, in credsSet, where the
+		// node it answers is the node the write stores. Checking it here as well
+		// would be a second parse of the same bytes for one write — this one's
+		// tree, every field's tag and style rewritten in it, thrown away and the
+		// bytes parsed again for the tree that is stored.
+		//
+		// The bound above is this command's own, and the whole mapping is read
+		// and stored under it: one limit for every value, rather than three
+		// times the per-field bound the loader applies to a mapping.
+		return nil
 	}
 	switch {
 	case bytes.ContainsAny(raw, "\r\n"):
@@ -1004,9 +1011,18 @@ const readConsumerShape = "a YAML mapping of exactly key, secret and workspace, 
 //
 // No refusal repeats a byte of a field's value: the fields are named (three
 // words this command's own message supplies) and nothing the operator pasted
-// is. The whole mapping is read and stored under the loader's per-credential
-// bound, which is far more than a consumer key, a secret and a workspace need,
-// and the loader reads the document again before the write.
+// is. The node it answers is the node the document gets, so these bytes are
+// parsed once per write (credsSet) and not once to be checked and once to be
+// stored.
+//
+// The whole mapping is stored under this command's per-credential bound, not
+// under the loader's per-FIELD one: the loader holds each field to
+// MaxBundleValueBytes and the document to MaxBundleBytes, so a mapping of three
+// maximal fields is a document it would accept, while readBundleValue reads at
+// most MaxBundleValueBytes from stdin and validateBundleValue refuses one over
+// it. One limit for every value is what the help text says and what an operator
+// can hold in mind; a consumer's key, a secret and a workspace are a few hundred
+// bytes, so nothing an operator has is near it.
 func readConsumerNode(raw []byte) (*yaml.Node, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil {

@@ -463,6 +463,15 @@ func (b *Bundle) Credentials() []creds.Credential {
 // The workspace is deliberately absent. It is a name and not a credential —
 // the read mint refuses a repository of another workspace BY NAME (G11) — and
 // redacting a name would redact the words of ordinary prose.
+//
+// Every element is non-empty, and that is a rule rather than a tidy-up: an
+// empty form would make a scrub redact BETWEEN EVERY RUNE of the line it was
+// given (strings.ReplaceAll with an empty old). The two ways a credential of
+// this bundle can be empty are both refusals at parse time — the value branch
+// refuses an empty entry, and readConsumerValue refuses an entry whose key or
+// secret is empty, so a parsed Bundle cannot hold one — and this filter is kept
+// as well because the cost of being wrong is the whole line, not a missed
+// redaction. TestBundleSecretsCoverBothHalvesOfTheConsumer holds it.
 func (b *Bundle) Secrets() []string {
 	if b == nil {
 		return nil

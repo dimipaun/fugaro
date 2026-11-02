@@ -1301,7 +1301,12 @@ func TestCredsSetBitbucketConsumerFromStdin(t *testing.T) {
 		if got := b.Credentials(); len(got) != 1 || got[0].Name != config.DefaultClaudeAccount {
 			t.Errorf("Credentials() = %v, want the model credential alone", got)
 		}
-		assertNoValue(t, out+errOut, key, secret, workspace, existing)
+		// The two secrets and nothing else: the workspace is a NAME and not a
+		// credential (the loader's own words for it), so a confirmation that
+		// named it would be readable text and not a leak. The refusal rows
+		// below assert it too, and there the rule is a different one: a refusal
+		// repeats nothing the operator pasted, name or not.
+		assertNoValue(t, out+errOut, key, secret, existing)
 	})
 
 	t.Run("a value that is not the shape", func(t *testing.T) {
@@ -1336,6 +1341,10 @@ func TestCredsSetBitbucketConsumerFromStdin(t *testing.T) {
 				if got := f.value(t); got != config.ClaudeOAuthToken+": "+existing+"\n" {
 					t.Errorf("the document changed: %q", got)
 				}
+				// The workspace is asserted here as well as the two secrets,
+				// and it is not a credential: a refusal repeats nothing the
+				// operator pasted, and a field's value is the operator's text
+				// whether or not it is a name.
 				assertNoValue(t, out+errOut+err.Error(), key, secret, workspace, existing)
 			})
 		}
