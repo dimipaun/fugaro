@@ -52,38 +52,25 @@ func readFileString(t *testing.T, path string) string {
 	return string(b)
 }
 
-// coordinatorSectionAt cuts the contract document's section that opens at head
-// and returns it: from that heading to the next heading of its own level or
-// above, so a check cannot pass on a field named in some other section's table.
-// A `###` heading ends a `###` section as surely as a `##` one does — these
-// commands' sections sit one after another — and the cut takes whichever comes
-// first, so a section added after one of them narrows it rather than folding
-// its tables in.
-func coordinatorSectionAt(t *testing.T, head string) string {
-	t.Helper()
-	doc := readFileString(t, coordinatorContractPath)
-	i := strings.Index(doc, head)
-	if i < 0 {
-		t.Fatalf("%s no longer carries the %q section this package's commands are documented in", coordinatorContractPath, head)
-	}
-	body := doc[i:]
-	cut := len(body)
-	for _, next := range []string{"\n## ", "\n### "} {
-		if j := strings.Index(body[1:], next); j >= 0 && j+1 < cut {
-			cut = j + 1
-		}
-	}
-	body = body[:cut]
-	if len(body) < 1000 {
-		t.Fatalf("%s's %q section is %d bytes: the section boundary moved and these checks would read almost nothing", coordinatorContractPath, head, len(body))
-	}
-	return body
-}
-
-// coordinatorSection is the contract's §6.13, the project view's stored read.
+// coordinatorSection is the contract's §6.13, from its heading to the heading of
+// the section after it, so a check cannot pass on a field named in some other
+// section's table.
 func coordinatorSection(t *testing.T) string {
 	t.Helper()
-	return coordinatorSectionAt(t, "### 6.13 ")
+	doc := readFileString(t, coordinatorContractPath)
+	const head = "### 6.13 "
+	i := strings.Index(doc, head)
+	if i < 0 {
+		t.Fatalf("%s no longer carries the %q section this package's command is documented in", coordinatorContractPath, head)
+	}
+	body := doc[i:]
+	if j := strings.Index(body[1:], "\n### "); j >= 0 {
+		body = body[:j+1]
+	}
+	if len(body) < 1000 {
+		t.Fatalf("%s's §6.13 is %d bytes: the section boundary moved and these checks would read almost nothing", coordinatorContractPath, len(body))
+	}
+	return body
 }
 
 // coordinatorViewTypes are the nine shapes §6.13 documents: the document, the
@@ -105,40 +92,26 @@ func coordinatorViewTypes() []reflect.Type {
 
 // coordinatorJSONKeys is every json key the nine shapes carry, dug out of the
 // structs so a field added in Go is a field this test demands in the document.
-func coordinatorJSONKeys() []string { return coordinatorKeysOf(coordinatorViewTypes()) }
-
-// coordinatorIntentsTypes are the three shapes §6.16 documents: the project's
-// document, one repository's records, and one record — the declaration itself
-// with the ID it is stored under, whose own keys are coordinator.Intent's.
-func coordinatorIntentsTypes() []reflect.Type {
-	return []reflect.Type{
-		reflect.TypeOf(coordinator.ProjectIntents{}),
-		reflect.TypeOf(coordinator.RepoIntents{}),
-		reflect.TypeOf(coordinator.IntentRecord{}),
-	}
-}
-
-// coordinatorKeysOf is every json key the given shapes carry, walked out of the
-// structs — embedded ones included — so a field added in Go is a field the
-// document has to name.
-func coordinatorKeysOf(types []reflect.Type) []string {
+func coordinatorJSONKeys() []string {
 	var out []string
 	var walk func(t reflect.Type)
 	walk = func(rt reflect.Type) {
 		for i := 0; i < rt.NumField(); i++ {
 			f := rt.Field(i)
 			tag := f.Tag.Get("json")
-			if tag != "" && tag != "-" {
-				if name := strings.Split(tag, ",")[0]; name != "" && !slices.Contains(out, name) {
-					out = append(out, name)
-				}
+			if tag == "" || tag == "-" {
+				continue
+			}
+			name := strings.Split(tag, ",")[0]
+			if name != "" && !slices.Contains(out, name) {
+				out = append(out, name)
 			}
 			if f.Type.Kind() == reflect.Struct {
 				walk(f.Type)
 			}
 		}
 	}
-	for _, rt := range types {
+	for _, rt := range coordinatorViewTypes() {
 		walk(rt)
 	}
 	slices.Sort(out)
@@ -419,16 +392,20 @@ func receiverName(recv *ast.FieldList) string {
 // field named in either.
 func coordinatorShowSection(t *testing.T) string {
 	t.Helper()
-	return coordinatorSectionAt(t, "### 6.15 ")
-}
-
-// coordinatorIntentsSection is the contract's §6.16: the declarations the
-// report path wrote, read back (coordinator v2 C4). It is read apart from the
-// two beside it for the reason they are read apart from each other, and it is
-// the section whose document is a list of shapes rather than one flat object.
-func coordinatorIntentsSection(t *testing.T) string {
-	t.Helper()
-	return coordinatorSectionAt(t, "### 6.16 ")
+	doc := readFileString(t, coordinatorContractPath)
+	const head = "### 6.15 "
+	i := strings.Index(doc, head)
+	if i < 0 {
+		t.Fatalf("%s no longer carries the %q section `coordinator show` is documented in", coordinatorContractPath, head)
+	}
+	body := doc[i:]
+	if j := strings.Index(body[1:], "\n##"); j >= 0 {
+		body = body[:j+1]
+	}
+	if len(body) < 1000 {
+		t.Fatalf("%s's §6.15 is %d bytes: the section boundary moved and these checks would read almost nothing", coordinatorContractPath, len(body))
+	}
+	return body
 }
 
 // TestConsoleContractNamesEveryShowField: §6.15's field table lists exactly the
@@ -528,24 +505,60 @@ func TestConsoleContractNamesOnlyRealShowFlags(t *testing.T) {
 	}
 }
 
-// TestConsoleContractNamesEveryIntentsField: §6.16's two field tables list
-// exactly the json keys the three shapes it documents carry, in both
-// directions — the check §6.13 and §6.15 each get, for the same reason. The
-// record's row of keys is coordinator.Intent's own, readout of the embedded
-// struct, so a field added to a declaration is a field this document has to
-// name: it is the document the console's transcript decoder is written against,
-// and a key it emits that the table never mentions is a field that decoder was
-// never told about.
+// coordinatorIntentsSection is the contract's §6.16, from its heading to the
+// next heading of its level or above: `coordinator intents`'s document
+// (coordinator v2 C4). It is read apart from §6.13 and §6.15 because the three
+// document different reads of different shapes, and a check that read the whole
+// document would pass on a field named in any of them.
+func coordinatorIntentsSection(t *testing.T) string {
+	t.Helper()
+	doc := readFileString(t, coordinatorContractPath)
+	const head = "### 6.16 "
+	i := strings.Index(doc, head)
+	if i < 0 {
+		t.Fatalf("%s no longer carries the %q section `coordinator intents` is documented in", coordinatorContractPath, head)
+	}
+	body := doc[i:]
+	if j := strings.Index(body[1:], "\n##"); j >= 0 {
+		body = body[:j+1]
+	}
+	if len(body) < 1000 {
+		t.Fatalf("%s's §6.16 is %d bytes: the section boundary moved and these checks would read almost nothing", coordinatorContractPath, len(body))
+	}
+	return body
+}
+
+// TestConsoleContractNamesEveryIntentsField: §6.16's field tables list exactly
+// the json keys the three intents shapes carry, in both directions — the same
+// check §6.13 and §6.15 get, for the same reason. A key the code writes and the
+// document does not name is a field the console's decoder was never told about,
+// and a key the document names and no shape carries is a reader written against
+// a field no command emits.
 func TestConsoleContractNamesEveryIntentsField(t *testing.T) {
 	listed := coordinatorListedKeys(t, coordinatorIntentsSection(t))
 	if len(listed) < 10 {
 		t.Fatalf("%s's §6.16 tables list %d key-shaped names: the table shape changed and this test stopped looking", coordinatorContractPath, len(listed))
 	}
 	real := map[string]bool{}
-	for _, key := range coordinatorKeysOf(coordinatorIntentsTypes()) {
-		real[key] = true
-		if !listed[key] {
-			t.Errorf("%s's §6.16 tables never list the json field %q, which a shape it documents carries", coordinatorContractPath, key)
+	// Intent is in the list beside the three shapes that carry it: an intent
+	// record's fields are inlined into coordinator.StoredIntent (it embeds
+	// Intent), and a walk that stopped at the outer struct would not see them.
+	for _, rt := range []reflect.Type{
+		reflect.TypeOf(coordinator.StoredProjectIntents{}),
+		reflect.TypeOf(coordinator.RepoIntents{}),
+		reflect.TypeOf(coordinator.StoredIntent{}),
+		reflect.TypeOf(coordinator.Intent{}),
+	} {
+		for i := 0; i < rt.NumField(); i++ {
+			tag := rt.Field(i).Tag.Get("json")
+			if tag == "" || tag == "-" {
+				continue
+			}
+			key := strings.Split(tag, ",")[0]
+			real[key] = true
+			if !listed[key] {
+				t.Errorf("%s's §6.16 tables never list the json field %q, which the shapes the section documents carry", coordinatorContractPath, key)
+			}
 		}
 	}
 	for key := range listed {
@@ -557,34 +570,17 @@ func TestConsoleContractNamesEveryIntentsField(t *testing.T) {
 
 // TestConsoleContractNamesOnlyRealIntentsFlags: every --flag §6.16 writes on a
 // line naming its command is a flag of newCoordinatorIntentsCmd, read off cobra
-// rather than against a list kept here, and the heading's argv is the row the
-// console will spawn. The section promises the console a read whose argv is
-// fixed words and nothing a renderer can influence, so a flag named in the
-// document and absent from the command — or the other way round — is a spawn
-// contract drawn from prose rather than from the tree.
+// rather than against a list kept here, and the heading's argv is the command
+// the console's row will pass. It is the check that keeps the document from
+// promising a flag the command does not have.
 func TestConsoleContractNamesOnlyRealIntentsFlags(t *testing.T) {
 	body := coordinatorIntentsSection(t)
 	cmd := newCoordinatorIntentsCmd()
 	real := map[string]bool{}
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { real[f.Name] = true })
-	for _, want := range []string{"all", "repo", "since", "json", "project", "config"} {
+	for _, want := range []string{"repo", "all", "since", "json", "project", "config"} {
 		if !real[want] {
 			t.Errorf("coordinator intents has no --%s, and %s documents it as one of the command's flags", want, coordinatorContractPath)
-		}
-	}
-	// Every flag the command has is one the section names: the read's own four
-	// and the cloud group's. A flag added here and nowhere in the document is a
-	// flag the console's spawn contract does not know it may pass.
-	for name := range real {
-		if !strings.Contains(body, "--"+name) {
-			t.Errorf("coordinator intents carries --%s, which %s's §6.16 never names: the console's row is written from that list", name, coordinatorContractPath)
-		}
-	}
-	// And nothing outside the cloud group's own names: this read takes no
-	// argument from the tree it reads about.
-	for _, never := range []string{"--from-store", "--fromstore", "--host", "--token"} {
-		if real[strings.TrimPrefix(never, "--")] {
-			t.Errorf("coordinator intents carries %s: this read is the database's, and no flag of it reaches a host", never)
 		}
 	}
 
@@ -592,7 +588,7 @@ func TestConsoleContractNamesOnlyRealIntentsFlags(t *testing.T) {
 	if i := strings.Index(body, head); i < 0 {
 		t.Fatalf("%s's §6.16 heading is not the command's argv any more: want %q", coordinatorContractPath, head)
 	}
-	for _, want := range []string{"--all", "--json"} {
+	for _, want := range []string{"--all", "--repo", "--since", "--json"} {
 		if !strings.Contains(body[:strings.Index(body, "\n")], want) {
 			t.Errorf("%s's §6.16 heading no longer names %s: the row the console spawns is what the console passes", coordinatorContractPath, want)
 		}

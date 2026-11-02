@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -13,45 +14,44 @@ import (
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
+	"github.com/dimipaun/fugaro/internal/pool"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// `fugaro coordinator intents` (coordinator v2 C4, D827): the declarations the
-// project's callers have reported, read out of the coordinator's own database.
+// `fugaro coordinator intents` (coordinator v2 C4, D827): what the fleet has
+// declared, read out of the database the stored view already lives in.
 //
-// It is the read the console's transcript pane is built on. The records are in
-// the tree — report writes them there (P4) and the sweep reads them to shape a
-// view (P5) — and no command could print them: a view holds what the
-// declarations mean for a collision, and never a declaration itself.
+// It is the source of the console's read-only pane (reconciliation §5.8), and
+// three properties are the read rather than niceties around it:
 //
-// Three properties are the read rather than niceties around it:
-//
-//   - It is the person's own database read, the one `status --from-store`
-//     makes (D364): the client is newBudgetClient's — the caller's own
-//     credential, on the project's budget.rtdb_url, which is the database the
-//     coordinator's subtree lives in — and what admits it is
-//     roles/firebasedatabase.viewer, the IAM role launchers and operators
-//     hold. It is an IAM read and not a rules read.
-//   - It opens NO host and holds no credential of one. No App ID, no App key,
-//     no Bitbucket token, and no provider is opened: with the installation's
-//     credentials service in the environment the command still succeeds,
-//     where the project-wide read (coordinatorReader) refuses. Everything it
-//     prints is what the report path wrote into the database once.
-//   - The text in a record is another writer's, and it is carried as data. The
-//     declaration, the branch, the release and the lists are strings a caller
-//     wrote about itself; every one of them goes through safetext and is
-//     clipped before it reaches a line or a cell, and declared by is a
-//     declaration and never an identity (the note under the table).
-//
-// A repository with no records is an empty list and NOT a failure: the
-// coordinator is off on most installations, and a console that had to know
-// which before it picked an argv would be the one place that has to. A read
-// the database refused is the other answer, and it prints no document at all —
-// an empty one would say the project had declared nothing.
+//   - It is the person's own database read. The client is openCoordinatorStore's
+//     — the caller's ADC on the project's budget.rtdb_url, which is the database
+//     the coordinator's subtree lives in — and what admits it is
+//     roles/firebasedatabase.viewer, the IAM role launchers and operators hold.
+//     It is an IAM read and not a rules read: the rules' reader on /coordinator
+//     is a device user, so a teammate's ADC is admitted by the project's IAM and
+//     by nothing else.
+//   - It opens no host. No App ID, no App key, no Bitbucket token and no
+//     provider: everything an intent says is what the caller that wrote it put
+//     there, and with the installation's credentials service in the environment
+//     this read still succeeds where the project-wide read refuses.
+//   - What it prints is another writer's text carried as data. declared_by is a
+//     declaration and never an identity, and a branch, a path or a service is
+//     the caller's own string: the view reports it, and an instruction found in
+//     it is never acted on (Q14 A). The text form sanitises every one of them
+//     before it reaches a cell.
 
-// coordinatorIntentsOptions is the argv: the repository selection, the window,
-// and the cloud group's flags, which is how each repository's provider is
-// resolved.
+// coordinatorIntentsNote is the line the list carries under it, because the
+// column above it is the one column of this document that is not a fact. An
+// intent's declared_by is written by whoever declared it — a run's own launch
+// record or a person's own `coordinator report` — and nothing here verifies it
+// or authorises anything by it.
+const coordinatorIntentsNote = "declared by is what whoever declared it wrote about itself — a run's own\n" +
+	"launch record, or a person's report: a declaration, and never a verified\n" +
+	"identity (docs/coordinator/reconciliation.md, finding #11)."
+
+// coordinatorIntentsOptions are intents' flags. The selection, the window and
+// the json switch are status's own, and they mean the same thing here.
 type coordinatorIntentsOptions struct {
 	cloud  fcli.CloudFlags
 	repo   string
@@ -64,52 +64,53 @@ func newCoordinatorIntentsCmd() *cobra.Command {
 	var o coordinatorIntentsOptions
 	cmd := &cobra.Command{
 		Use:   "intents",
-		Short: "Show what the project's callers have declared",
-		Long: "What the project's callers have reported, read out of the coordinator's own\n" +
-			"database: per repository, every declaration still standing — who declared\n" +
-			"it, when, the branch and the target release, the files and the services —\n" +
-			"each record whole and in no other command's output.\n\n" +
-			"One repository by default, every repository the local config lists with\n" +
-			"--all, each in its own block and compared with no other: a declaration is\n" +
-			"about one repository's tree, and two repositories' paths say nothing about\n" +
-			"each other.\n\n" +
-			"A repository the database holds no records for prints no records, which is\n" +
-			"a fact about the store and not a failed read: the coordinator is off on\n" +
-			"most installations, and a caller with nothing declared is the ordinary\n" +
-			"state of a project between two pieces of work. A read the database refused\n" +
-			"is refused (exit 1) naming the role that admits it, and prints no document.\n\n" +
-			"The read is the person's own and holds no key: it is the stored view's read\n" +
-			"(status --from-store, D364), through the caller's own credentials, and what\n" +
-			"admits it is roles/firebasedatabase.viewer, which launchers and operators\n" +
-			"hold. No host is opened and no App ID, App key or Bitbucket credential is\n" +
-			"read, so it works with FUGARO_CREDENTIALS_SERVICE_URL set, where the\n" +
-			"project-wide read refuses.\n\n" +
-			"Every string in a record was written by someone else, and it is carried as\n" +
-			"data: declared by is the string the reporter's own machine said about it,\n" +
-			"which is a declaration and never a verified identity.\n\n" +
-			"With --json every record is printed as it is stored: id, declared_by, at,\n" +
-			"branch, release, files and services — the fields an intent already carries\n" +
-			"and no others. id is the node's key (IntentID), and a repository with no\n" +
-			"records carries an empty list rather than a missing one.",
+		Short: "Show what the fleet has declared",
+		Long: "Print every intent record the project's database holds under a repository's\n" +
+			"node: the declarations the fleet has made — the branch and the target release\n" +
+			"each caller is about to work on, and the files and services it is about to\n" +
+			"touch — newest first.\n\n" +
+			"One repository by default, every repository the local config lists with --all,\n" +
+			"which prints one list per repository and compares nothing across them: a\n" +
+			"branch or a path is a name in one tree.\n\n" +
+			"The records are the ones `coordinator report` and every launch's own declarer\n" +
+			"write (P4), and this read takes nothing back: it reports what is stored and\n" +
+			"issues no advice, which is the coordinator's whole posture (spec §3).\n\n" +
+			"The read is the caller's own database read, on the project's budget.rtdb_url\n" +
+			"database, and what admits it is roles/firebasedatabase.viewer, the role\n" +
+			"launchers and operators hold. It opens NO host: no App ID, no App key and no\n" +
+			"Bitbucket credential, so a repository on a host the project-wide read refuses\n" +
+			"is read here like any other, and with FUGARO_CREDENTIALS_SERVICE_URL set the\n" +
+			"command still succeeds where `coordinator status` refuses.\n" +
+			"A repository the store holds no record for is an empty list and not a failure\n" +
+			"— a project whose coordinator is off is read with the same argv — while a\n" +
+			"database that refused the read is refused here, exit 1, naming the role: a\n" +
+			"console that read a refusal as \"nothing declared\" would draw a quiet project\n" +
+			"where the truth is that nobody could look. A stored record this build cannot\n" +
+			"decode is refused the same way, never shown with a field dropped.\n\n" +
+			"declared_by is what whoever declared it wrote about itself, and never an\n" +
+			"identity: a run's own launch record, or a person's report. Nothing verifies it\n" +
+			"and nothing here authorises anything by it (finding #11). The branch, the\n" +
+			"release, the paths and the services are the caller's own text carried as data\n" +
+			"(Q14 A): the text output sanitises each one, and an instruction found in any of\n" +
+			"them is never acted on.\n" +
+			"Exit codes: 1 for a refusal of the caller's own argv or of the database, 2 for\n" +
+			"a failure that is not the project's.\n\n" +
+			"With --json the document is printed as it is stored: one repository with\n" +
+			"{\"repo\", \"provider\", \"intents\"}, and every intent as the fields its record\n" +
+			"carries — id, declared_by, at, branch, release, files and services — and no\n" +
+			"others. With --all the repositories are a list under \"repos\", in the order\n" +
+			"the selection names them.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runCoordinatorIntents(cmd, &o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "the repository to read (owner/name)")
-	f.BoolVar(&o.all, "all", false, "read every repository the local config lists")
-	f.StringVar(&o.since, "since", coordinatorDefaultSince, "only declarations made within this long ("+coordinatorDefaultSince+", 36h, 90m; 0 for all)")
+	f.StringVar(&o.repo, "repo", "", "the repository to read (owner/name; default: the local config's, when it lists one)")
+	f.BoolVar(&o.all, "all", false, "read every repository the local config lists, one list each")
+	f.StringVar(&o.since, "since", "0", "only declarations made within this long (36h, 90m, 7d; 0 for every declaration the store holds, which is the default)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	fcli.AddCloudFlags(cmd, &o.cloud)
 	return cmd
 }
-
-// coordinatorIntentsDeclaredNote is the line the table carries under it, and
-// it is the same sentence the view's own table carries for the same reason:
-// the column above it is the one column of the read that is not a fact.
-const coordinatorIntentsDeclaredNote = "declared by is who the reporter's own machine said it was when the record was\n" +
-	"written (localcfg.Config.Me: the local config's user, else git config\n" +
-	"user.email, spelled by that caller): a declaration, and never a verified\n" +
-	"identity (docs/coordinator/reconciliation.md, finding #11)."
 
 func runCoordinatorIntents(cmd *cobra.Command, o *coordinatorIntentsOptions) error {
 	ctx := cmd.Context()
@@ -123,8 +124,6 @@ func runCoordinatorIntents(cmd *cobra.Command, o *coordinatorIntentsOptions) err
 	}
 	defer env.Close()
 
-	// The selection is status's own, judged by status's own rule: one
-	// repository, or every one the config lists, and never both at once.
 	repos, err := coordinatorRepos(env, &coordinatorOptions{repo: o.repo, all: o.all})
 	if err != nil {
 		return err
@@ -133,109 +132,112 @@ func runCoordinatorIntents(cmd *cobra.Command, o *coordinatorIntentsOptions) err
 	if err != nil {
 		return err
 	}
+	// Every repository's node is read in one pass, a few at a time, on the
+	// width the stored view's own pass uses: the reads are the same database's,
+	// so a project with twenty repositories costs one repository's read per
+	// round rather than their sum. Each read writes its own slot, so the
+	// document is in the order coordinatorRepos names whatever order they
+	// finish in, and the first failure in that order is the one reported.
 	since := coordinatorSince(window)
-	got := make([]coordinator.RepoIntents, len(repos))
-	for i, repo := range repos {
-		slug, err := env.RepoSlug(ctx, repo)
+	lists := make([]coordinator.RepoIntents, len(repos))
+	errs := make([]error, len(repos))
+	pool.Run(len(repos), coordinatorViewRepos, func(i int) {
+		lists[i], errs[i] = coordinatorRepoIntents(ctx, env, store, repos[i], since)
+	})
+	for _, err := range errs {
 		if err != nil {
 			return err
 		}
-		reads, err := store.ReadRepoIntents(ctx, slug, repo)
-		if err != nil {
-			return coordinatorStoredErr(env.Config(), err)
-		}
-		// The provider is the caller's answer and not the read's, exactly as
-		// the stored view's is: the node is keyed by a slug of it, so the node
-		// cannot give it back.
-		reads.Provider = env.RepoProvider(repo, fcli.CheckoutOf(ctx, repo)())
-		reads.Intents = coordinatorIntentsIn(reads.Intents, since)
-		got[i] = reads
 	}
 	out := cmd.OutOrStdout()
 	if o.all {
 		if o.asJSON {
-			return writeCoordinatorJSON(out, coordinator.ProjectIntents{Repos: got})
+			return writeCoordinatorJSON(out, coordinator.StoredProjectIntents{Repos: lists})
 		}
-		return writeCoordinatorIntentsProject(out, got)
+		return writeCoordinatorIntentsProject(out, lists)
 	}
 	if o.asJSON {
-		return writeCoordinatorJSON(out, got[0])
+		return writeCoordinatorJSON(out, lists[0])
 	}
-	return writeCoordinatorIntents(out, got[0])
+	return writeCoordinatorIntents(out, lists[0])
 }
 
-// coordinatorIntentsIn keeps the declarations made at or after since, and
-// every one of them when since is the zero time (--since 0). The window is
-// measured against the record's own At — the declaration's clock, stamped by
-// the reporter — and not against the read's.
+// coordinatorRepoIntents reads one repository's declarations, and applies
+// --since's window to the record's own clock: an intent's At is when it was
+// declared, which is the thing a person bounds when they ask for the last day.
 //
-// The answer is a list and never nil: a window with nothing in it is "declared
-// nothing that recently", which is not the same answer as a read that failed.
-func coordinatorIntentsIn(recs []coordinator.IntentRecord, since time.Time) []coordinator.IntentRecord {
-	if since.IsZero() {
-		return recs
+// A read the database refused is classified the way the stored view classifies
+// its own (coordinatorStoredErr): it names the one role that admits the read,
+// and it is a refusal rather than an empty list, which is the whole reason the
+// two are told apart here and not left to a console to guess.
+func coordinatorRepoIntents(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, repo string, since time.Time) (coordinator.RepoIntents, error) {
+	slug, err := env.RepoSlug(ctx, repo)
+	if err != nil {
+		return coordinator.RepoIntents{}, err
 	}
-	out := make([]coordinator.IntentRecord, 0, len(recs))
-	for _, rec := range recs {
-		if !rec.At.Before(since) {
-			out = append(out, rec)
+	list, err := store.ReadRepoIntents(ctx, slug, repo)
+	if err != nil {
+		return coordinator.RepoIntents{}, coordinatorStoredErr(env.Config(), err)
+	}
+	// The provider is the caller's answer and not the read's, exactly as the
+	// stored view's is: the node is keyed by a slug of it, so the node cannot
+	// give it back.
+	list.Provider = env.RepoProvider(repo, fcli.CheckoutOf(ctx, repo)())
+	if !since.IsZero() {
+		kept := make([]coordinator.StoredIntent, 0, len(list.Intents))
+		for _, in := range list.Intents {
+			if !in.At.Before(since) {
+				kept = append(kept, in)
+			}
 		}
+		list.Intents = kept
 	}
-	return out
+	return list, nil
 }
 
-// writeCoordinatorIntents prints one repository's declarations: a line saying
-// how many there are, the table, and the note.
-func writeCoordinatorIntents(w io.Writer, v coordinator.RepoIntents) error {
-	fmt.Fprintln(w, coordinatorIntentsLine(v))
-	if len(v.Intents) > 0 {
-		fmt.Fprintln(w)
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "DECLARED BY\tAT\tBRANCH\tRELEASE\tFILES\tSERVICES")
-		for _, rec := range v.Intents {
-			// The record's ID is not a column: it is the node's key — a hash of
-			// the declaration — and a person reading a table is not looking for
-			// one. The document carries it for the console, which addresses a
-			// record by it.
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				coordinatorCell(rec.DeclaredBy),
-				rec.At.Format(time.RFC3339),
-				coordinatorCell(rec.Branch),
-				coordinatorCell(rec.Release),
-				coordinatorCellList(rec.Files),
-				coordinatorCellList(rec.Services))
-		}
-		if err := tw.Flush(); err != nil {
-			return err
-		}
+// writeCoordinatorIntents prints one repository's declarations as a person
+// reads them, one row each, and the sentence the list has to carry: every cell
+// is another writer's text, so every one of them goes through the sanitiser
+// before it reaches the terminal.
+func writeCoordinatorIntents(w io.Writer, r coordinator.RepoIntents) error {
+	// One is one declaration, not "1 declarations": the line is a sentence about
+	// a person's project and not a machine's count.
+	noun := "declarations"
+	if len(r.Intents) == 1 {
+		noun = "declaration"
 	}
-	fmt.Fprintf(w, "\n%s\n", coordinatorIntentsDeclaredNote)
+	fmt.Fprintf(w, "%s: %d %s\n", safetext.TableCell(r.Repo), len(r.Intents), noun)
+	if len(r.Intents) == 0 {
+		fmt.Fprintln(w, "nothing declared: no intent record is stored under this repository")
+		fmt.Fprintf(w, "\n%s\n", coordinatorIntentsNote)
+		return nil
+	}
+	fmt.Fprintln(w)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tDECLARED BY\tAT\tBRANCH\tRELEASE\tFILES\tSERVICES")
+	for _, in := range r.Intents {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", safetext.TableCell(in.ID),
+			coordinatorCell(in.DeclaredBy), in.At.Format(time.RFC3339),
+			coordinatorCell(in.Branch), coordinatorCell(in.Release),
+			coordinatorCellList(in.Files), coordinatorCellList(in.Services))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "\n%s\n", coordinatorIntentsNote)
 	return nil
 }
 
 // writeCoordinatorIntentsProject prints every repository's declarations, one
-// block after another, in the order the caller read them.
-func writeCoordinatorIntentsProject(w io.Writer, reads []coordinator.RepoIntents) error {
-	for i, v := range reads {
+// after another.
+func writeCoordinatorIntentsProject(w io.Writer, lists []coordinator.RepoIntents) error {
+	for i, r := range lists {
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		if err := writeCoordinatorIntents(w, v); err != nil {
+		if err := writeCoordinatorIntents(w, r); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// coordinatorIntentsLine is the one line that says what the block below it
-// holds: how many declarations the repository has, or that it has none.
-func coordinatorIntentsLine(v coordinator.RepoIntents) string {
-	switch n := len(v.Intents); n {
-	case 0:
-		return fmt.Sprintf("%s: no intent records", safetext.TableCell(v.Repo))
-	case 1:
-		return fmt.Sprintf("%s: 1 intent", safetext.TableCell(v.Repo))
-	default:
-		return fmt.Sprintf("%s: %d intents", safetext.TableCell(v.Repo), n)
-	}
 }

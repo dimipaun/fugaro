@@ -1342,9 +1342,75 @@ Flags:
 
 Subcommands:
 
+- `fugaro coordinator intents` -- Show what the fleet has declared
 - `fugaro coordinator report` -- Declare the work you are about to start
 - `fugaro coordinator show` -- Show one pull request as the host has it
 - `fugaro coordinator status` -- Show the work in flight, and where it collides
+
+## `fugaro coordinator intents`
+
+Show what the fleet has declared
+
+Print every intent record the project's database holds under a repository's
+node: the declarations the fleet has made — the branch and the target release
+each caller is about to work on, and the files and services it is about to
+touch — newest first.
+
+One repository by default, every repository the local config lists with --all,
+which prints one list per repository and compares nothing across them: a
+branch or a path is a name in one tree.
+
+The records are the ones `coordinator report` and every launch's own declarer
+write (P4), and this read takes nothing back: it reports what is stored and
+issues no advice, which is the coordinator's whole posture (spec §3).
+
+The read is the caller's own database read, on the project's budget.rtdb_url
+database, and what admits it is roles/firebasedatabase.viewer, the role
+launchers and operators hold. It opens NO host: no App ID, no App key and no
+Bitbucket credential, so a repository on a host the project-wide read refuses
+is read here like any other, and with FUGARO_CREDENTIALS_SERVICE_URL set the
+command still succeeds where `coordinator status` refuses.
+A repository the store holds no record for is an empty list and not a failure
+— a project whose coordinator is off is read with the same argv — while a
+database that refused the read is refused here, exit 1, naming the role: a
+console that read a refusal as "nothing declared" would draw a quiet project
+where the truth is that nobody could look. A stored record this build cannot
+decode is refused the same way, never shown with a field dropped.
+
+declared_by is what whoever declared it wrote about itself, and never an
+identity: a run's own launch record, or a person's report. Nothing verifies it
+and nothing here authorises anything by it (finding #11). The branch, the
+release, the paths and the services are the caller's own text carried as data
+(Q14 A): the text output sanitises each one, and an instruction found in any of
+them is never acted on.
+Exit codes: 1 for a refusal of the caller's own argv or of the database, 2 for
+a failure that is not the project's.
+
+With --json the document is printed as it is stored: one repository with
+{"repo", "provider", "intents"}, and every intent as the fields its record
+carries — id, declared_by, at, branch, release, files and services — and no
+others. With --all the repositories are a list under "repos", in the order
+the selection names them.
+
+Usage: `fugaro coordinator intents`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | read every repository the local config lists, one list each |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for intents |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository to read (owner/name; default: the local config's, when it lists one) |
+| `--since` | string | `0` | no | only declarations made within this long (36h, 90m, 7d; 0 for every declaration the store holds, which is the default) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro coordinator report`
 
