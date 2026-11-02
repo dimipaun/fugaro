@@ -56,6 +56,7 @@ func TestParseInvalid(t *testing.T) {
 		{"two first lines", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - first_line: {}\n  - review: {}\n", "steps[1]", "at most once"},
 		{"first rounds 4", "version: 1\nname: a\nsteps:\n  - first_line: { max_rounds: 4 }\n  - review: {}\n", "steps[0].first_line.max_rounds", "between 1 and 3"},
 		{"review rounds 11", "version: 1\nname: a\nsteps:\n  - review: { max_rounds: 11 }\n", "steps[0].review.max_rounds", "between 1 and 10"},
+		{"adversarial rounds 11", "version: 1\nname: a\nsteps:\n  - review: {}\n  - adversarial: { max_rounds: 11 }\n", "steps[1].adversarial.max_rounds", "between 1 and 10"},
 		{"explicit zero", "version: 1\nname: a\nsteps:\n  - review: { max_rounds: 0 }\n", "steps[0].review.max_rounds", "between 1 and 10"},
 		{"rounds string", "version: 1\nname: a\nsteps:\n  - review: { max_rounds: two }\n", "steps[0].review.max_rounds", "whole number"},
 		{"unknown step", "version: 1\nname: a\nsteps:\n  - lint: {}\n  - review: {}\n", "steps[0].lint", "is not a step type"},
