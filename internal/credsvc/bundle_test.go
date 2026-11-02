@@ -295,6 +295,188 @@ func TestBundleBitbucketTokenStrict(t *testing.T) {
 	}
 }
 
+// readConsumerEntry is the read consumer's document key, spelled as the
+// operator types it (`fugaro creds set bitbucket-read-consumer`) and as the
+// release notes speak it. It is a literal on purpose: the tests below hold the
+// constant to it, so a rename of either cannot quietly move the credential's
+// home in the bundle.
+const readConsumerEntry = "bitbucket-read-consumer"
+
+// readConsumerDoc is a document holding the read consumer: the OAuth consumer
+// the credentials service exchanges for a read-scoped token (F21, D361). Its
+// three fields are fixture values, built at run time (Convention 2).
+func readConsumerDoc(t *testing.T) []byte {
+	t.Helper()
+	return []byte(readConsumerEntry + ":\n" +
+		"  key: " + fakeCred(t, "consumer-key") + "\n" +
+		"  secret: " + fakeCred(t, "consumer-secret") + "\n" +
+		"  workspace: " + fakeCred(t, "workspace") + "\n")
+}
+
+// TestBundleBitbucketReadConsumer: the read consumer is a credential of the
+// bundle, holding the consumer's key, its secret and the workspace the service
+// mints for (F21, BB2). It is the first entry whose value is not one string —
+// it is a mapping of three fields — so the loader reads it as one, and the
+// accessor is the only thing that hands its fields out.
+//
+// It is also where the entry's two exclusions are pinned: it is in NEITHER
+// Credentials (what the cascade is offered) nor Lookup (which answers model
+// credentials), so the consumer can never become a candidate of a model call.
+func TestBundleBitbucketReadConsumer(t *testing.T) {
+	if BitbucketReadConsumerSecret != readConsumerEntry {
+		t.Fatalf("BitbucketReadConsumerSecret = %q, want %q", BitbucketReadConsumerSecret, readConsumerEntry)
+	}
+	doc := readConsumerDoc(t)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle(%q) = %v; the read consumer is a credential the service holds", doc, err)
+	}
+	key, secret, workspace, ok := b.BitbucketReadConsumer()
+	if !ok {
+		t.Fatal("BitbucketReadConsumer found nothing, and the document holds one")
+	}
+	if want := fakeCred(t, "consumer-key"); key != want {
+		t.Errorf("the consumer's key = %q, want the field the document holds", key)
+	}
+	if want := fakeCred(t, "consumer-secret"); secret != want {
+		t.Errorf("the consumer's secret = %q, want the field the document holds", secret)
+	}
+	if want := fakeCred(t, "workspace"); workspace != want {
+		t.Errorf("the consumer's workspace = %q, want the field the document holds", workspace)
+	}
+	if b.Len() != 1 {
+		t.Errorf("the document holds %d entries, want 1", b.Len())
+	}
+	e, ok := b.Lookup(readConsumerEntry)
+	if ok {
+		t.Errorf("Lookup answered the read consumer as a model credential: %+v", e)
+	}
+	if got := b.Credentials(); len(got) != 0 {
+		t.Errorf("Credentials() = %v, want nothing: the read consumer is no model credential", got)
+	}
+	// Beside a model credential, the entry changes nothing the cascade is
+	// offered: the model credential alone is a candidate.
+	both := append(readConsumerDoc(t), []byte(config.ClaudeOAuthToken+": "+fakeCred(t, "default")+"\n")...)
+	bb, err := ParseBundle(both)
+	if err != nil {
+		t.Fatalf("ParseBundle with the consumer beside an account = %v", err)
+	}
+	if got := bb.Credentials(); len(got) != 1 || got[0] != (creds.Credential{Name: config.DefaultClaudeAccount, Tier: creds.TierA}) {
+		t.Errorf("Credentials() = %v, want the model credential alone", got)
+	}
+	if _, _, _, ok := bb.BitbucketReadConsumer(); !ok {
+		t.Error("the read consumer is not reachable beside a model credential")
+	}
+}
+
+// TestBundleRefusesRunConsumerUntilS3: the second consumer (F21) is PARKED
+// with S3, and the parked kind is not a credential of the bundle: the loader
+// refuses a document that holds it, whole, as a key it does not know. It is
+// the property the release notes lean on — a `bitbucket-run-consumer` entry
+// written by hand halts every model call and every GitHub mint, which is why
+// nobody may write one — and it is pinned rather than left to the day the run
+// kind lands.
+func TestBundleRefusesRunConsumerUntilS3(t *testing.T) {
+	doc := []byte("bitbucket-run-consumer:\n" +
+		"  key: " + fakeCred(t, "run-key") + "\n" +
+		"  secret: " + fakeCred(t, "run-secret") + "\n" +
+		"  workspace: " + fakeCred(t, "run-workspace") + "\n" +
+		"  repositories: [" + fakeCred(t, "repo") + "]\n")
+	if b, err := ParseBundle(doc); !errors.Is(err, ErrBundleUnknownKey) {
+		t.Fatalf("ParseBundle of the parked run consumer = %v, %v; want ErrBundleUnknownKey", b, err)
+	}
+	// The control: the read kind beside it is a credential, so the refusal is
+	// about the run kind and not about the shape.
+	if _, err := ParseBundle(readConsumerDoc(t)); err != nil {
+		t.Fatalf("the read consumer is refused: %v", err)
+	}
+}
+
+// TestBundleRefusesConsumerWithoutWorkspace: the read consumer's value is
+// closed. Each of its three fields is required, only those three may appear,
+// and each has to be a non-empty string: the workspace is what the read mint
+// refuses a repository of another workspace against (G11), so an entry that
+// holds none is a credential the service cannot use and must not load as one.
+//
+// The first row is the red step: before the kind existed the document was
+// refused whole (ErrBundleUnknownKey, "a key that is not a credential name"),
+// which is a refusal of the wrong thing — the KEY is a credential of the
+// bundle and the FIELD is what is wrong with it.
+func TestBundleRefusesConsumerWithoutWorkspace(t *testing.T) {
+	key, secret, workspace := fakeCred(t, "key"), fakeCred(t, "secret"), fakeCred(t, "workspace")
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want error
+	}{
+		{
+			name: "no workspace",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "no secret",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  workspace: " + workspace + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "an empty field",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: \"\"\n  workspace: " + workspace + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "a field that is not a string",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: 1234\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "a field over the per-credential bound",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: " + strings.Repeat("x", MaxBundleValueBytes+1) + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "a value that is not a mapping",
+			doc:  readConsumerEntry + ": " + secret + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "an empty mapping",
+			doc:  readConsumerEntry + ": {}\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "a field the entry does not define",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: " + workspace + "\n  repositories: [" + workspace + "]\n",
+			want: ErrBundleUnknownField,
+		},
+		{
+			name: "a misspelt field",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspaces: " + workspace + "\n",
+			want: ErrBundleUnknownField,
+		},
+		{
+			name: "the entry twice",
+			doc:  string(readConsumerDoc(t)) + readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: " + workspace + "\n",
+			want: ErrBundleUnknownKey,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseBundle([]byte(tc.doc))
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("ParseBundle(%q) = %v, %v; want %v", tc.doc, got, err, tc.want)
+			}
+			// A refusal names the ENTRY and never a field's content: the field
+			// a person misspells is a name, and the one they paste a secret
+			// into is not.
+			for _, v := range []string{key, secret, workspace} {
+				if strings.Contains(err.Error(), v) {
+					t.Errorf("the refusal carries a value: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // TestBundleGitKindNeverACascadeCandidate: the Bitbucket credential is in the
 // document and is NEVER a credential the cascade may select — the same
 // posture the GitHub App's key has, and for the same reason: a candidate the
@@ -700,6 +882,19 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a key that is nearly the app key", "github-app-keys: " + fakeCred(t, "x") + "\n"},
 		{"the upstream git credential", config.BitbucketSecret + ": " + fakeCred(t, "x") + "\n"},
 		{"a key that is nearly the git credential", "bitbucket-tokens: " + fakeCred(t, "x") + "\n"},
+		// The read consumer (F21) is the one credential of the document whose
+		// value is not a string, so it is the one key the schema names under
+		// `properties` — which is what exempts it from `additionalProperties`
+		// while every other key stays a string. The rows below are the shape
+		// both sides have to agree on, and the parked run consumer's is the
+		// pair of refusals S3 will have to unpark together.
+		{"the read consumer", string(readConsumerDoc(t))},
+		{"the parked run consumer", "bitbucket-run-consumer:\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: " + fakeCred(t, "z") + "\n"},
+		{"a read consumer whose value is a string", readConsumerEntry + ": " + fakeCred(t, "x") + "\n"},
+		{"a read consumer missing its workspace", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n"},
+		{"a read consumer with a field it does not define", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: " + fakeCred(t, "z") + "\n  repositories: [r]\n"},
+		{"a read consumer with an empty field", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: \"\"\n  workspace: " + fakeCred(t, "z") + "\n"},
+		{"a read consumer with a field that is not a string", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: 1234\n"},
 		// The account family's one reserved spelling: it resolves to the git
 		// credential's own key, so the loader refuses it, and the schema has
 		// to refuse it too even though the pattern alone admits it.
