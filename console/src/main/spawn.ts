@@ -532,6 +532,12 @@ export interface Backoff {
  * come from, the way `pullRequest`'s is, and `after` is the `=` form. The
  * prefix each one emits is the row's own declared flag, and `EQUALS_FORM_FLAGS`
  * below is the one table that says which prefixes a row may emit.
+ *
+ * **`summarySince` is the runs summary's one** (console 0.119.0's jobs-free
+ * totals read): `--since=<window>`, one word, the same `=` form and for the
+ * same reason. It is a kind of its own rather than `value` for that reason
+ * alone -- the window itself is `ipc.ts`'s closed set, which is narrower than
+ * any grammar here could be, so what is left for this module is the spelling.
  */
 export type SpawnArgumentKind =
   | 'value'
@@ -542,6 +548,7 @@ export type SpawnArgumentKind =
   | 'planTask'
   | 'limit'
   | 'after'
+  | 'summarySince'
   | 'stdin'
 
 /**
@@ -556,10 +563,14 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   day: 'value',
   reportSince: 'value',
   runSince: 'value',
-  // The runs list's page and its cursor: the two `=`-form kinds, and the only
-  // two on a row that is a read (`title`/`planTask` are the launch's).
+  // The runs list's page and its cursor: two of the three `=`-form kinds, and
+  // two of the three on a row that is a read (`title`/`planTask` are the
+  // launch's, and the summary's window is the third).
   runLimit: 'limit',
   runAfter: 'after',
+  // The runs summary's window: the third `=`-form kind, and the second on a
+  // row that is a read.
+  summarySince: 'summarySince',
   reportDimension: 'value',
   secretScope: 'secretScope',
   pullRequest: 'pullRequest',
@@ -707,6 +718,28 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     words: ['runs', 'stats', '--json'],
     takesProject: true,
     args: [{ key: 'since', flag: '--since', kind: 'value' }],
+    dirFlag: false,
+  },
+  {
+    // The Project, Coordinator and Spend tabs' totals read (console 0.119.0,
+    // B4's console half), and the row that reads **neither a run object nor a
+    // listing**: the command answers from the budget database's day counters and
+    // the spend history's daily documents, so its child opens no runs bucket and
+    // no compute backend.
+    //
+    // One declared argument, `--since`, emitted as the `=` form
+    // `--since=<window>`: a window inside the flag's own word cannot be read as
+    // a flag, which is this row's half of what `runs summary --since` accepts
+    // (design §5.1 rule 6). The window is `ipc.ts`'s closed set
+    // (`SUMMARY_SINCE_WINDOWS`) and not `parseSince`'s grammar, so a caller
+    // cannot ask this row for the whole history under another spelling -- and
+    // the argument is optional, because omitting it is the command's own
+    // default (`summaryDefaultSince`, `7d`), which is the window the set leads
+    // with.
+    operation: 'runs.summary',
+    words: ['runs', 'summary', '--json'],
+    takesProject: true,
+    args: [{ key: 'since', flag: '--since=', kind: 'summarySince' }],
     dirFlag: false,
   },
   {
@@ -1171,6 +1204,18 @@ export function argvFor(
         argv.push(`${spec.flag ?? ''}${value}`)
         break
       }
+      case 'summarySince': {
+        // One word, `--since=<window>`: the window stays inside the flag's own
+        // word, so it can never be read as a flag -- the design's reason for the
+        // `=` form on this row (design §5.1 rule 6). The set itself is the
+        // validator's (`ipc.ts`'s `summarySince`), so what is left here is the
+        // one word an argv could not carry at all.
+        if (typeof value !== 'string' || value === '' || !isSafeArgumentValue(value)) {
+          refused(`${operation}'s ${spec.key} is not a window this console will pass to the CLI`)
+        }
+        argv.push(`${spec.flag ?? ''}${value}`)
+        break
+      }
       case 'pullRequest': {
         // The validator hands this over as the *number* it checked (ipc.ts's
         // `pullRequest` kind returns it unchanged), and the CLI's `--pr` is an
@@ -1243,6 +1288,12 @@ export const RUN_LAUNCH_EQUALS_FLAGS: readonly string[] = Object.freeze(['--titl
  * number and a run id, and the launch's are the two strings rule 11 writes. */
 export const RUNS_LIST_EQUALS_FLAGS: readonly string[] = Object.freeze(['--limit=', '--after='])
 
+/** RUNS_SUMMARY_EQUALS_FLAGS is `runs.summary`'s one `=`-form prefix: the
+ * window. It is the console's own spelling of the word §5.1 rule 6's row
+ * permits, and it is a list of one so that the row and this table stay
+ * two-sided the way the runs list's are. */
+export const RUNS_SUMMARY_EQUALS_FLAGS: readonly string[] = Object.freeze(['--since='])
+
 /**
  * EQUALS_FORM_FLAGS is, **per operation**, the `=`-form flag prefixes that
  * operation's argv may carry -- the one place `assertArgvFlags` reads its
@@ -1262,6 +1313,7 @@ export const RUNS_LIST_EQUALS_FLAGS: readonly string[] = Object.freeze(['--limit
 export const EQUALS_FORM_FLAGS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   [RUN_LAUNCH_OPERATION]: RUN_LAUNCH_EQUALS_FLAGS,
   'runs.list': RUNS_LIST_EQUALS_FLAGS,
+  'runs.summary': RUNS_SUMMARY_EQUALS_FLAGS,
 })
 
 /** assertArgvFlags refuses an argv carrying a flag outside `SPAWN_FLAGS`, and one
@@ -1269,8 +1321,9 @@ export const EQUALS_FORM_FLAGS: Readonly<Record<string, readonly string[]>> = Ob
  * than in the callers because this function is the only producer of an argv.
  *
  * **The `=`-form flags are the one exception, and it is spelled out rather than
- * implied.** `--title=<T>`, `--plan-task=<P>` (the launch's) and `--limit=<N>`,
- * `--after=<RUN-ID>` (the runs list's) are one word each -- the design fixes
+ * implied.** `--title=<T>`, `--plan-task=<P>` (the launch's), `--limit=<N>`,
+ * `--after=<RUN-ID>` (the runs list's) and `--since=<WINDOW>` (the runs
+ * summary's) are one word each -- the design fixes
  * that form because a value inside the flag's own word cannot be read as a flag
  * -- so they can never match a `SPAWN_FLAGS` entry that is a flag *name*.
  * Accepting them here is what makes that form expressible at all, and the

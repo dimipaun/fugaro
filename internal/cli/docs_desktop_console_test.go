@@ -398,7 +398,7 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}),
 		reflect.TypeOf(planStatusTotals{}),
-		// §6.17, the jobs-free totals read (CLI 0.15.0).
+		// §6.17, the jobs-free totals read (CLI 0.16.0).
 		reflect.TypeOf(summaryDoc{}),
 		reflect.TypeOf(summaryRepo{}),
 		reflect.TypeOf(summaryTotals{}),
@@ -621,7 +621,7 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
 		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
-		// §6.17, the same three shapes as the test above (CLI 0.15.0).
+		// §6.17, the same three shapes as the test above (CLI 0.16.0).
 		reflect.TypeOf(summaryDoc{}), reflect.TypeOf(summaryRepo{}),
 		reflect.TypeOf(summaryTotals{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
@@ -930,11 +930,10 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// ones, which this command carries and `plan graph` does not — are checked
 	// against this constructor like any other command's.
 	"plan status": newPlanStatusCmd,
-	// §6.17 documents the jobs-free totals read (CLI 0.15.0). Like §6.11, the
-	// console does not spawn it yet -- the Project, Coordinator and Spend
-	// screens are the task that follows -- but the document describes its
-	// flags, so they are checked against this constructor like any other
-	// command's.
+	// §6.17 documents the jobs-free totals read (CLI 0.16.0), and the console
+	// spawns it since 0.119.0, as §5.1 rule 6's `runs summary --json` row. The
+	// document describes its flags, so they are checked against this
+	// constructor like any other command's.
 	"runs summary": newRunsSummaryCmd,
 }
 
@@ -1209,7 +1208,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the sixteen argvs and nothing else -- the console's one spawn table
+// the seventeen argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1228,6 +1227,12 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// rows the CLI scopes to the caller, and the one argv here the console
 		// may not widen with --all-users.
 		"runs stats --json",
+		// The jobs-free totals read (console 0.119.0, the `runs.summary`
+		// operation, B4/#1580): the window's runs counted by repository and by
+		// state. Its one argument is a window from the console's own closed set
+		// (`SUMMARY_SINCE_WINDOWS`), so the argv the console emits is
+		// `runs summary --json` with `--since=<window>` on it and nothing else.
+		"runs summary --json",
 		"diagnose RUN --json",
 		"logs RUN --json",
 		"logs RUN --url",
@@ -1399,16 +1404,17 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Seventeen commands: the twelve dashboard reads (logs has two argvs), the
+	// Eighteen commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
 	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
 	// --pr <n>` (coordinator v2 C3), the declarations read
-	// `coordinator intents --all --json` (coordinator v2 C4c) and the launch
-	// `fugaro run` (V2.5.1a).
-	if len(allowed) != 17 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 17 (logs has two argvs)", path, argvs, len(allowed))
+	// `coordinator intents --all --json` (coordinator v2 C4c), the jobs-free
+	// totals read `runs summary --json` (console 0.119.0, B4/#1580) and the
+	// launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 18 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 18 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -9311,8 +9317,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is twenty-six operations**") {
-		t.Errorf("%s no longer says the surface is twenty-six operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is twenty-eight operations**") {
+		t.Errorf("%s no longer says the surface is twenty-eight operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven and console 0.119.0's totals read to twenty-eight), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string

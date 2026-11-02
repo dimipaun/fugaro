@@ -476,6 +476,16 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('runs.stats', args)
   }
 
+  /** summaryRuns reads `runs summary --json`: the one read whose child touches
+   * neither a run object nor the runs bucket, since the command counts the
+   * budget database's day nodes and the spend history's daily documents. Its
+   * window is the console's own closed set, so the only argv this method can
+   * build is `runs summary --json` with at most one `--since=<window>` word
+   * (`src/main/spawn.ts`). */
+  summaryRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('runs.summary', args)
+  }
+
   /** planStatus reads `plan status --json`, which is the one read whose answer
    * depends on **where** the child runs: the CLI walks `docs/` from its working
    * directory (`internal/cli/plan_status.go`), and that directory is this
@@ -993,6 +1003,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
     listRuns: (args) => read('runs.list', (source) => source.listRuns(args)),
     statsRuns: (args) => read('runs.stats', (source) => source.statsRuns(args)),
+    summaryRuns: (args) => read('runs.summary', (source) => source.summaryRuns(args)),
     /**
      * planStatus is the surface's one read with a precondition and a cadence.
      *

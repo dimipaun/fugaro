@@ -2120,7 +2120,7 @@ measured against `at`), `--json`, and the cloud flags `--project`, `--config`,
 `--gcp-project` and `--region`. `--all` with `--repo` is refused rather than
 resolved, the way §6.13's selection refuses it.
 
-### 6.17 `fugaro runs summary --json` (**CLI 0.15.0**)
+### 6.17 `fugaro runs summary --json` (**CLI 0.16.0**)
 
 **Command:** `internal/cli/runs_summary.go` `newRunsSummaryCmd` / `runRunsSummary`.
 **Document:** `summaryDoc`, with its `summaryRepo` rows and its `summaryTotals`,

@@ -588,6 +588,14 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'report', kind: 'allowed', where: 'ee/report/cli/report.go:70' },
   { command: 'runs ls', kind: 'allowed', where: 'internal/cli/runs.go:87' },
   { command: 'runs stats', kind: 'allowed', where: 'internal/cli/runs_stats.go:110' },
+  // Console 0.119.0's jobs-free totals read (B4's console half): the window's
+  // runs counted by repository and by state, and what they spent, from the
+  // budget database and the spend history alone. `allowed` because the surface
+  // drives it, in one argv -- `runs summary --json`, with at most one
+  // `--since=<window>` word -- and it is the one command here whose child reads
+  // neither a run object nor a listing, which is why it is on this list at all
+  // rather than being a `runs ls` the console re-counts.
+  { command: 'runs summary', kind: 'allowed', where: 'internal/cli/runs_summary.go:137' },
   // Plan GV2.1: the graph screen's read, and the one command of this list whose
   // subject is the *checkout* rather than the project -- it walks the graph
   // artifacts under the checkout's own `docs/`, so its cwd is part of the
@@ -694,7 +702,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is sixteen argvs, and this surface is the same sixteen.** The thirteenth is
+ * **It is nineteen argvs, and this surface is the same nineteen.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
@@ -706,7 +714,11 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * launch -- rule 11's exact argv with the words an argument fills
  * (`--run-id <run id>`, `--repo <owner/name>`, `--title=<T>`,
  * `--plan-task=<P>`) and the console's own state (`--project`, `--config`)
- * taken out, which is this file's convention for every row here.
+ * taken out, which is this file's convention for every row here. The three
+ * rows after it are C3's pull request read (`coordinator show --json`, D816),
+ * C4c's declarations read (`coordinator intents --all --json`, D827) and
+ * console 0.119.0's totals read (`runs summary --json`, B4's console half) --
+ * the seventeenth, eighteenth and nineteenth.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -739,6 +751,12 @@ const DESIGN_ARGV: readonly string[] = [
   // Rule 11's argv, `--task-file -` and all: the literal `-` is the word that
   // sends the task down the child's stdin rather than onto a command line.
   'run --task-file - --json',
+  // The jobs-free totals read (console 0.119.0, B4's console half). This row's
+  // one argument is the window, and this file's convention takes what an
+  // argument fills out -- `--since=<window>` is the word the schema's `since`
+  // key becomes (`src/main/spawn.ts`'s `summarySince` kind) -- so the row is
+  // the command and its one fixed flag, exactly as `runs stats` above is.
+  'runs summary --json',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -1125,6 +1143,11 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // No `--all-users`: the operation has no such key, because the command
   // resolves the view itself (see `CONSOLE_OPERATIONS`' own comment).
   'runs.stats': { since: '7d' },
+  // The console's own closed set and not the command's grammar: `7d` is the
+  // window the command itself defaults to, and `1d` the one a screen that
+  // opens on today asks for. A window outside the set has no key here and is
+  // refused by the validator (see the refusal table below).
+  'runs.summary': { since: '7d' },
   // No `path`, no `checkout`, no `dir`: the read's directory is the
   // installation's own, and this payload is the whole of what a renderer may
   // say to it (plan GV2.1, constraint C1).
@@ -1859,6 +1882,60 @@ describe('the day and window arguments', () => {
     expect(kindsOf('spend.report')).toEqual(['reportSince'])
     expect(kindsOf('runs.list')).toEqual(['runSince'])
   })
+
+  // `runs summary --since` is **the console's own closed set**
+  // (`SUMMARY_SINCE_WINDOWS`), and not the command's grammar: the CLI reads
+  // `parseSince` here exactly as `runs stats` does, so every form in
+  // `runWindows` above is a form the command takes and this surface still
+  // refuses. That is the point of the set rather than a gap in it -- the read
+  // exists to make a whole-history scan unnecessary, and a window is the one
+  // thing about it a renderer chooses -- so the table is two accepted windows
+  // and the forms around them, each refused for the reason it is not one of the
+  // two.
+  const summaryWindows: readonly (readonly [string, boolean, string])[] = [
+    ['7d', true, 'the command’s own default, and the window its live counters cover'],
+    ['1d', true, 'today, for a screen that opens on the day'],
+    ['0', false, 'parseSince’s “no bound” is the whole history by another name'],
+    ['30d', false, 'a window the screens do not ask for'],
+    ['2d', false, 'nor this one: the set is closed, not a bound'],
+    ['36h', false, 'a Go duration is a form of the command and not of this set'],
+    ['2026-10-16', false, 'and a UTC day is neither'],
+    ['12w', false, 'nor weeks'],
+    ['7D', false, 'the set is exact: the spelling is part of the word'],
+    [' 7d', false, 'a leading space'],
+    ['7d ', false, 'a trailing one'],
+    ['', false, 'empty'],
+    ['all', false, 'a word'],
+    ['--json', false, 'and a flag is not a window'],
+  ]
+
+  for (const [value, accepted, why] of summaryWindows) {
+    it(`${accepted ? 'accepts' : 'refuses'} the summary window ${JSON.stringify(value)} (${why})`, () => {
+      expect(validateArguments('runs.summary', { since: value }).ok).toBe(accepted)
+    })
+  }
+
+  it('refuses a summary window the command itself takes, which is the set’s whole point', () => {
+    // The pair that makes the claim above a fact rather than a coincidence:
+    // `36h` is `parseSince`'s, so `runs stats` and `runs ls` both take it, and
+    // this operation refuses it before a child exists.
+    expect(validateArguments('runs.stats', { since: '36h' }).ok).toBe(true)
+    expect(validateArguments('runs.summary', { since: '36h' }).ok).toBe(false)
+    expect(validateArguments('runs.summary', { since: '7d' }).ok).toBe(true)
+  })
+
+  it('accepts a summary payload with no window at all, because the command has a default', () => {
+    // The argument is optional (`required: false`): a caller that sends none
+    // gets the command's own `7d`, which is the first window in the set.
+    expect(validateArguments('runs.summary', {}).ok).toBe(true)
+    expect(validateArguments('runs.summary', { since: '7d' }).ok).toBe(true)
+  })
+
+  it('gives the summary its own window kind, so the three `--since`s cannot drift', () => {
+    const kinds = CONSOLE_OPERATIONS.filter((operation) => operation.name === 'runs.summary')
+      .flatMap((operation) => operation.args.map((spec) => spec.kind))
+    expect(kinds).toEqual(['summarySince'])
+  })
 })
 
 describe('the closed sets', () => {
@@ -2104,7 +2181,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-seven, and no others".
+ * channel. The claim is "these twenty-eight, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2151,7 +2228,14 @@ describe('the spend read’s arguments', () => {
  * operation here with no argument at all -- its argv is the row's own words,
  * `--all --json`, and nothing a caller fills -- and it mints nothing of the
  * host's: the read is the caller's own database node. It sits next to `coordinator.status`,
- * which is the same store asked a different question.
+ * which is the same store asked a different question. **Console 0.119.0 added
+ * the twenty-eighth** (`runs.summary` / `summaryRuns`, the jobs-free totals
+ * read -- the window's runs counted by repository and by state and what they
+ * spent, from the budget database and the spend history alone, B4's console
+ * half) and left the other twenty-seven exactly where they were. It is next to
+ * `runs.stats` because the two are the runs family's reads of what the budget
+ * recorded, and it is the second operation here whose whole argv is the row's
+ * own words plus one optional window.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2159,6 +2243,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['spend.report', 'runReport'],
   ['runs.list', 'listRuns'],
   ['runs.stats', 'statsRuns'],
+  ['runs.summary', 'summaryRuns'],
   ['plan.status', 'planStatus'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
@@ -2211,7 +2296,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-seven, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these twenty-eight, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2228,11 +2313,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A twenty-eighth channel: what each task added must stay one row, and the
+    // A twenty-ninth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const twentyEighth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(twentyEighth).toContain('fleet.report: a channel this console does not ship')
-    expect(twentyEighth).toContain('28 rows, and this console ships 27')
+    const twentyNinth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(twentyNinth).toContain('fleet.report: a channel this console does not ship')
+    expect(twentyNinth).toContain('29 rows, and this console ships 28')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2246,7 +2331,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('26 rows, and this console ships 27')
+    expect(withoutTheNewRow).toContain('27 rows, and this console ships 28')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2261,8 +2346,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-seven methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-seven methods and the names,
+  it('is frozen, and hands the window a bridge with the twenty-eight methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-eight methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3297,11 +3382,18 @@ describe('the source of the allow-list and the preload', () => {
  * *answer* to "which channels does step 3 close": `spend.report` and
  * `runs.stats` are the Spend screen's two reads (the report, and the by-person
  * panel's per-person dollars, console L5b -- the same spend figures a reduced
- * console cannot vouch for, D7), `budget.show` is the Caps screen's, and the
- * kill switch has no operation of its own (design C10 -- its fields travel
+ * console cannot vouch for, D7), `runs.summary` is the totals read that carries
+ * those same two figures again over the window and over each repository
+ * (console 0.119.0, B4's console half), `budget.show` is the Caps screen's, and
+ * the kill switch has no operation of its own (design C10 -- its fields travel
  * inside `live.watch`, which a reduced console still draws).
  */
-const THE_WITHHELD_OPERATIONS: readonly OperationName[] = ['budget.show', 'runs.stats', 'spend.report']
+const THE_WITHHELD_OPERATIONS: readonly OperationName[] = [
+  'budget.show',
+  'runs.stats',
+  'runs.summary',
+  'spend.report',
+]
 
 /** theRest is every operation that is *not* withheld: the non-vacuity guard for
  * the tests below, which otherwise would pass on a wrapper that refused the
@@ -3416,7 +3508,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-three of the surface's twenty-seven operations,
+    // The non-vacuity half: twenty-three of the surface's twenty-eight operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
