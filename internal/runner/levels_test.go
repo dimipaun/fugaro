@@ -372,6 +372,31 @@ func TestLevelsFocusIsQuotedAndRecorded(t *testing.T) {
 	}
 }
 
+// TestLevelsFocusShownForLevel3Only: a focus is level 3's alone — only its
+// reviewer is given one (AdversarialPrompt, levelFocus) — so the pull request's
+// levels line shows the focus beside the level whose reviewer received it and
+// no other. A focus a layer wrote for level 1 or level 2 reaches no model, and
+// the line must not claim the round was asked for it.
+func TestLevelsFocusShownForLevel3Only(t *testing.T) {
+	h := newHarnessFiles(t, levelsCfg(t, "  levels:\n    l1: {focus: \"the cheap path\"}\n    l2: {focus: \"the contract\"}\n"), nil, levelsFiles)
+	rec, err := h.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := onlyPR(t, h.provider).Body
+	if strings.Contains(body, "(focus:") {
+		t.Errorf("the levels line shows a focus no reviewer was given:\n%s", body)
+	}
+	for _, want := range []string{"level 1: ship in round 1", "level 2: ship in round 1", "level 3: ship in round 1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the levels line does not name %q:\n%s", want, body)
+		}
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "adversarial") {
+		t.Fatalf("stages = %v", got)
+	}
+}
+
 // TestLevelsFocusPromptSanitises: FocusPrompt is where a level's focus becomes
 // text a model reads, and it does two things to it — it runs it through
 // safetext, so an escape sequence, a bidi control or a zero-width character

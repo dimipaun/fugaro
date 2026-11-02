@@ -516,6 +516,11 @@ var levelNames = map[policy.Level]string{policy.LevelL1: "level 1", policy.Level
 // earlier head than the one it ships. A reader of the pull request has to be
 // able to see that.
 //
+// The focus is level 3's alone: it is the only level whose reviewer is given
+// one (AdversarialPrompt, levelFocus), so a focus a layer wrote for level 1 or
+// level 2 reaches no model and the line does not claim the round was asked for
+// it.
+//
 // The focus is the same sanitiser's business as the verdict beside it, and the
 // two agree on every value that can reach here: the resolver refuses a focus
 // carrying a control, a bidi or a zero-width character at every layer that may
@@ -542,8 +547,10 @@ func (r *run) levelsPart() string {
 		if rs.Head != "" {
 			line += fmt.Sprintf(" on `%s`", shortSHA(rs.Head))
 		}
-		if f := inlineText(r.levelFocus(l)); f != "" {
-			line += fmt.Sprintf(" (focus: %s)", f)
+		if l == policy.LevelL3 {
+			if f := inlineText(r.levelFocus(l)); f != "" {
+				line += fmt.Sprintf(" (focus: %s)", f)
+			}
 		}
 		lines = append(lines, line)
 	}
