@@ -78,8 +78,46 @@ Flags:
 
 Subcommands:
 
+- `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+
+## `fugaro accounts add`
+
+Declare a named Claude account and the repositories its token may be used by
+
+Declare a named Claude OAuth account in this project's local config.
+
+It writes claude_accounts.<name>.allow_data_to — the repositories the account's
+token may be used by, and the field every other rule is built on — and adds the
+name to one profile's claude_accounts, so the profile's jobs may serve it.
+
+--repos defaults to this checkout's origin repository. A profile that lists
+accounts must write its own allow_repos, and every account it lists must cover
+every repository on it: an account that covers less is refused before the file
+is touched, naming the repositories it is missing, because widening the account
+silently is what that rule exists to prevent.
+
+The token itself is a second command's: this one declares the account, and the
+converge that stores the secret and deploys the jobs is not built yet.
+
+Run it at your own terminal: this file decides where a credential may be sent,
+so a coding agent's session is refused, --yes included.
+
+Usage: `fugaro accounts add NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
+| `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro accounts clear`
 
