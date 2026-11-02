@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -1362,5 +1363,101 @@ func TestUpgradePublishLooserNodeRefusesYesAlone(t *testing.T) {
 	}
 	if got := ceilingOn(t, db); got != 5 {
 		t.Errorf("the node's ceiling is %v, want the published 5: the upgrade step wrote the loosening", got)
+	}
+}
+
+// TestPolicyConfigDriftSeesTheDerivedAccounts: the accounts block and each
+// profile's list of the accounts it serves are members the publish derives from
+// the local config (D3), and a config edit that only declares an account is a
+// config the node has to learn. Comparing the members the file states and
+// leaving the derived ones out is what made `fugaro accounts add` write the
+// secret, clear the mark and report "nothing else to run" while the node the
+// run is admitted by named no account at all (A2's red step).
+//
+// The comparison is the derivation and never the profiles block: a profile's
+// other members are the node's own (`fugaro project repos add` writes its
+// allow_repos), so a node whose profile differs only there is not a reason to
+// rewrite what every run of the project is admitted by.
+func TestPolicyConfigDriftSeesTheDerivedAccounts(t *testing.T) {
+	lc := func() *localcfg.Config {
+		return &localcfg.Config{
+			Budget:         &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
+			ClaudeAccounts: map[string]config.ClaudeAccount{"team-a": {AllowDataTo: []string{"owner/repo-a"}}},
+			Profiles: map[string]config.JobProfile{"standard": {
+				Provider: "github", ClaudeAccounts: []string{"team-a"},
+			}},
+		}
+	}
+	profile := func(mut func(*projectpolicy.Profile)) map[string]projectpolicy.Profile {
+		pr := projectpolicy.Profile{JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{"team-a"}}}
+		if mut != nil {
+			mut(&pr)
+		}
+		return map[string]projectpolicy.Profile{"standard": pr}
+	}
+	node := func(accounts map[string]projectpolicy.Account, profiles map[string]projectpolicy.Profile) *projectpolicy.Policy {
+		return &projectpolicy.Policy{
+			Version:  projectpolicy.Version,
+			Budget:   projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
+			Accounts: accounts,
+			Profiles: profiles,
+		}
+	}
+	cases := []struct {
+		name string
+		node *projectpolicy.Policy
+		want []string
+	}{
+		{
+			name: "the node names no account the config declares",
+			node: node(nil, profile(nil)),
+			want: []string{"accounts"},
+		},
+		{
+			name: "the node's account list is what the config derives",
+			node: node(map[string]projectpolicy.Account{"team-a": {AllowRepos: []string{"github/owner/repo-a"}}}, profile(nil)),
+			want: nil,
+		},
+		{
+			name: "the profile does not say it serves the account",
+			node: node(map[string]projectpolicy.Account{"team-a": {AllowRepos: []string{"github/owner/repo-a"}}}, profile(func(pr *projectpolicy.Profile) { pr.ClaudeAccounts = nil })),
+			want: []string{"profiles.standard.claude_accounts"},
+		},
+		{
+			name: "the profile's own allow_repos is the node's, not the config's",
+			node: node(map[string]projectpolicy.Account{"team-a": {AllowRepos: []string{"github/owner/repo-a"}}}, profile(func(pr *projectpolicy.Profile) { pr.AllowRepos = []string{"github/owner/other"} })),
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, d := range policyConfigDrift(lc(), tc.node) {
+				got = append(got, d.Member)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("policyConfigDrift = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPolicyConfigDriftRefusesToCompareAnUnpublishableAccount: a config that
+// names an account no field defines, or one whose allow_data_to is empty, has
+// no pair of documents to compare — the derivation refuses the config itself.
+// The entry stands for the member then, so the run goes to the publisher, whose
+// refusal names the file and the entry to fix, rather than the stage deciding
+// there is nothing to do about a config it cannot read.
+func TestPolicyConfigDriftRefusesToCompareAnUnpublishableAccount(t *testing.T) {
+	lc := &localcfg.Config{
+		Budget:   &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
+		Profiles: map[string]config.JobProfile{"standard": {Provider: "github", ClaudeAccounts: []string{"team-a"}}},
+	}
+	var got []string
+	for _, d := range policyConfigDrift(lc, &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}) {
+		got = append(got, d.Member)
+	}
+	if want := []string{"accounts"}; !slices.Equal(got, want) {
+		t.Errorf("policyConfigDrift = %v, want %v: an account the config cannot publish is a member to publish", got, want)
 	}
 }

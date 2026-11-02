@@ -616,12 +616,28 @@ type Record struct {
 	// docs/design/named-oauth-tokens.md); informational only, never read by
 	// anything that makes a security decision. Absent in records from
 	// before this field existed.
-	OAuthAccount string  `json:"oauth_account,omitempty"`
-	Execution    string  `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
-	Status       Status  `json:"status"`
-	Stage        string  `json:"stage"`
-	Outcome      Outcome `json:"outcome"`
-	Reason       string  `json:"reason,omitempty"`
+	OAuthAccount string `json:"oauth_account,omitempty"`
+	// StageAccounts is the account that served each stage of this run, keyed
+	// by the stage name the record's own stage list and result.json's stage
+	// enum use: the per-stage answer OAuthAccount cannot give, because that
+	// field is one scalar the run writes last (D876, spec §11.5 of
+	// docs/accounts-add). The property arrives ahead of the writer that fills
+	// it — the runner's stage-start resolution: the account a
+	// stages.<stage>.claude_account override or default_claude_account names,
+	// and the one a failover took over with — so that writer needs no version
+	// move of its own. Nothing writes the field and nothing reads it: a map of
+	// account names is a new shape, and putting it on a screen goes through
+	// the console's redactor, which is a task of its own. Additive:
+	// OAuthAccount keeps the meaning it has (the account the run used last), a
+	// record written before this field decodes unchanged, and the format's
+	// version does not move (schemas/result.schema.json declares the
+	// property).
+	StageAccounts map[string]string `json:"stage_accounts,omitempty"`
+	Execution     string            `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
+	Status        Status            `json:"status"`
+	Stage         string            `json:"stage"`
+	Outcome       Outcome           `json:"outcome"`
+	Reason        string            `json:"reason,omitempty"`
 	// Gate is "clean" or "fixed" when the recipe's check step decided the
 	// run (gate.go); "" when the recipe has no check step, or it found a
 	// failure and the run went on to implement as usual.
