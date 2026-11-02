@@ -4942,7 +4942,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * else. The list is a list: no row opens a run, and no value the console read
      * reaches an attribute -- the press flips the `hidden` of the detail drawn
      * under the row and the `aria-expanded` of the head that flipped it, which is
-     * the same pair the launch control's reveal is.
+     * the same pair the launch control's reveal is. The head is a real button, so
+     * the press is one event and the keyboard reaches it the way it reaches every
+     * other control here: no `role`, no `tabindex` and no key handler of its own.
      *
      * The detail is drawn with the row and hidden here rather than built on the
      * press, so the press is a toggle and never a rendering: every string in the
@@ -4955,8 +4957,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         const head = classed(item, 'coordinator-job-head')[0]
         if (detail === undefined || head === undefined) continue
         const node = surface.nodeOf(head)
-        node.setAttribute('role', 'button')
-        node.setAttribute('tabindex', '0')
         node.setAttribute('aria-expanded', 'false')
         node.addEventListener('click', () => {
           const open = node.getAttribute('aria-expanded') === 'true'

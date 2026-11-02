@@ -1786,13 +1786,13 @@ export function coordinatorOlderJobsControl(factory: ScreenFactory, expanded: bo
 function jobsControl(
   factory: ScreenFactory,
   className: string,
-  word: string,
+  label: string,
   expanded: boolean,
 ): ScreenElement {
   const button = make(factory, 'button', className)
   button.setAttribute('type', 'button')
   button.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-  literal(button, word)
+  literal(button, label)
   return button
 }
 
@@ -1830,10 +1830,18 @@ export function fillCoordinatorJobsHead(
  * The row draws **no button that opens anything**: the job list is a list, and
  * the console's one write is the launch confirmation (rule 11). A run's id is
  * text here, exactly as it is in the queue.
+ *
+ * The head itself is a **real `button`**, and not a `div` carrying `role`: it
+ * is the disclosure the row's press opens, and a `div` would need a `tabindex`
+ * and a key handler of its own before Enter and Space did what a click does --
+ * a control that looks pressable to a mouse and is not to a keyboard. The
+ * reset in `base.css` is what makes a button with a line of spans in it read
+ * as the line does.
  */
 function jobCell(parent: ScreenElement, factory: ScreenFactory, row: CoordinatorJobRow): ScreenElement {
   const item = cell(parent, factory, 'li', 'coordinator-job')
-  const head = cell(item, factory, 'div', 'coordinator-job-head')
+  const head = cell(item, factory, 'button', 'coordinator-job-head')
+  head.setAttribute('type', 'button')
   textCell(head, factory, 'span', row.run, 'runId', 'runs[].run_id', 'coordinator-job-id')
   if (row.repo !== '') {
     textCell(head, factory, 'span', row.repo, 'repository', 'runs[].repo', 'coordinator-job-repo')
