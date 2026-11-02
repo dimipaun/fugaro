@@ -306,6 +306,21 @@ type AuthConfig struct {
 	// JobAccounts is refused rather than admitted, because the two classes do
 	// not have the same routes.
 	ReviewJobAccounts []ReviewJobAccount
+	// VerifierAccounts are the identities that may ask the verify route
+	// whether a verdict's signature is this service's (C3.9f, D1068): the
+	// coordinator's own account, and the owner's for a manual check. A verifier
+	// is NOT a job of this installation and holds no run identity, so it is a
+	// class of its own: an entry is a bare `email` claim and never an IAM
+	// member spelling, and it is matched against the caller's Google ID token
+	// by the same fold every other account is matched by.
+	//
+	// It is empty by default, and an empty list is a statement rather than a
+	// missing gate: an installation with no coordinator has no verifier, and
+	// the route answers every call with the class's own refusal. That is why
+	// the deployment reads it as an OPTIONAL value — a service that refused to
+	// start without it would be one an installation that never set it could not
+	// run at all (D1068).
+	VerifierAccounts []string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }

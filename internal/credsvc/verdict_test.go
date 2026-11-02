@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -979,4 +980,185 @@ func childReport(t *testing.T, out string) map[string]any {
 	}
 	t.Fatalf("the child printed no report: %s", out)
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// The verify route (C3.9f)
+// ---------------------------------------------------------------------------
+
+// testVerifierSA is the address the fixture's verifier list holds. It is a bare
+// address and not an IAM member spelling, because that is what the list is
+// matched against: the `email` claim of the caller's Google ID token. It is a
+// name and not a credential.
+var testVerifierSA = "coordinator@aurora-dev.iam.gserviceaccount.com"
+
+// verifySvc is the fixture behind a verifier: an installation whose verifier
+// list holds the addresses the test gives, a bundle holding the account's
+// review-signing key, and the review class configured exactly as the sign
+// route's fixture configures it — so the only thing a verify call is missing is
+// the run identity no verifier has.
+func verifySvc(t *testing.T, verifiers []string, extra ...func(*svc, *Config)) *svc {
+	t.Helper()
+	return newSvcWith(t, func(s *svc, cfg *Config) {
+		auth, err := NewAuthenticator(AuthConfig{
+			Project:           testProject,
+			FirebaseProject:   testFirebase,
+			Audience:          testAudience,
+			JobAccounts:       []string{testJobSA},
+			Keys:              s.keys,
+			JobKeys:           s.jobKeys,
+			Outcomes:          RTDBOutcomes{DB: s.db},
+			SharedJobAccounts: []string{testSharedSA},
+			ReviewJobAccounts: []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}},
+			VerifierAccounts:  verifiers,
+			Now:               func() time.Time { return s.now },
+		})
+		if err != nil {
+			t.Fatalf("the fixture's own verifier configuration is not one NewAuthenticator accepts: %v", err)
+		}
+		cfg.Auth, s.auth = auth, auth
+		cfg.ReviewAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}}
+		cfg.Repos = map[string]string{s.slug: testRepo}
+		s.src.docs = [][]byte{reviewSigningDoc(t)}
+		cfg.Signs = s.probes
+		for _, m := range extra {
+			m(s, cfg)
+		}
+	})
+}
+
+// verifierToken is the caller's Google ID token as the verifier's own address.
+func verifierToken(t *testing.T, s *svc, email string, mutate ...func(map[string]any)) string {
+	t.Helper()
+	return s.jobToken(append([]func(map[string]any){
+		func(c map[string]any) { c["email"] = email },
+	}, mutate...)...)
+}
+
+// verifyBody is a verify call's body: the frame's three fields and the
+// signature the service is asked about.
+func verifyBody(account, run, repository, digest, signature string) string {
+	return `{"account":"` + account + `","digest":"` + digest + `","signature":"` + signature +
+		`","run":"` + run + `","repository":"` + repository + `"}`
+}
+
+// verifyCall sends one verify call as the fixture's verifier and reads the
+// answer.
+func (s *svc) verifyCall(t *testing.T, body string, mutate ...func(*http.Request)) (*http.Response, []byte) {
+	t.Helper()
+	return s.verifyTokens(t, body, verifierToken(t, s, testVerifierSA), mutate...)
+}
+
+// verifyTokens is verifyCall with the caller's own token given rather than
+// minted, for the calls that must present one the service refuses.
+func (s *svc) verifyTokens(t *testing.T, body, jobTok string, mutate ...func(*http.Request)) (*http.Response, []byte) {
+	t.Helper()
+	resp := s.postVerify(t, body, jobTok, mutate...)
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the answer: %v", err)
+	}
+	return resp, b
+}
+
+// postVerify sends one verify call: the verifier's Google ID token in
+// Authorization and NOTHING else — no run identity, because a verifier holds
+// none, and no reported job name, because a verifier is not a job of this
+// installation. That is the whole shape of the call the class is designed for,
+// and a route left behind the shared parse refuses it before the class is ever
+// consulted.
+func (s *svc) postVerify(t *testing.T, body, jobTok string, mutate ...func(*http.Request)) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, s.http.URL+VerifyPath, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("building the call: %v", err)
+	}
+	if jobTok != "" {
+		req.Header.Set("Authorization", "Bearer "+jobTok)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for _, m := range mutate {
+		m(req)
+	}
+	resp, err := s.http.Client().Do(req)
+	if err != nil {
+		t.Fatalf("the call failed: %v", err)
+	}
+	return resp
+}
+
+// verifyAnswer decodes a verify answer strictly and holds it to its one field:
+// the answer is the one refusal bit and nothing else — no reason, no key id and
+// no echo of the account (spec §5.3).
+func verifyAnswer(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var ans map[string]any
+	if err := decodeStrict(body, &ans); err != nil {
+		t.Fatalf("the verify answer is not one this contract can read: %v (%s)", err, body)
+	}
+	if len(ans) != 1 {
+		t.Fatalf("the verify answer carries %d fields, want the one bit: %s", len(ans), body)
+	}
+	valid, ok := ans["valid"].(bool)
+	if !ok {
+		t.Fatalf("the verify answer's one field is not the bit: %s", body)
+	}
+	return map[string]any{"valid": valid}
+}
+
+// verifyValid reads the one bit out of an answer, failing when it is not the
+// one the test asked for.
+func verifyValid(t *testing.T, resp *http.Response, body []byte, want bool) {
+	t.Helper()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+	}
+	if got := verifyAnswer(t, body)["valid"]; got != want {
+		t.Errorf("valid = %v, want %v: %s", got, want, body)
+	}
+}
+
+// TestVerifyRouteAnswersValidForTheRealPairAndFalseForTheTamperedOne is C3.9f's
+// red step: the route recomputes the HMAC over the FRAME the caller names —
+// C3.9e's builder, so the verify route reads the bytes the sign route wrote —
+// and answers the one bit. Before this task the path is not in ServeHTTP's set
+// at all, so this call is the service's 404.
+//
+// The two answers come from the same call shape, which is the point: `true` is
+// "the service recomputed the HMAC and it is this account's", `false` is "it
+// recomputed and it is not", and neither is a refusal.
+func TestVerifyRouteAnswersValidForTheRealPairAndFalseForTheTamperedOne(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA})
+	digest := testDigest(t, "verify")
+	mac := hmac.New(sha256.New, signKey(t))
+	mac.Write([]byte(frameVersion + "\n" + s.slug + "\n" + s.run + "\n" + digest))
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, signature))
+	verifyValid(t, resp, body, true)
+
+	tampered := verifyBody(testReviewAccount, s.run, s.slug, digest, strings.Repeat("0", 64))
+	resp, body = s.verifyCall(t, tampered)
+	verifyValid(t, resp, body, false)
+}
+
+// TestVerifyRouteRefusesAnEmptyVerifierList: the list is configuration and it
+// is empty by default, so an installation with no coordinator has no reachable
+// route — and the refusal is the CALLER CLASS's own typed one rather than the
+// 404 a path outside ServeHTTP's set gets, because a caller must be able to
+// tell "you may not ask" from "there is nothing here".
+func TestVerifyRouteRefusesAnEmptyVerifierList(t *testing.T) {
+	s := verifySvc(t, nil)
+	digest := testDigest(t, "empty-list")
+	resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, strings.Repeat("0", 64)))
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedJobIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedJobIdentity)
+	}
+	if s.audit.Len() != 0 {
+		t.Errorf("a caller no verifier list admits wrote an audit line: %q", s.audit.String())
+	}
 }

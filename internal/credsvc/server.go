@@ -39,6 +39,12 @@ const (
 	// (C3.9e). It is not an Anthropic path: the request and the answer are
 	// this service's own contract.
 	SignPath = "/v1/review/sign"
+	// VerifyPath is the path a coordinator asks whether a verdict's signature
+	// is one this service made (C3.9f). It is the sign route's counterpart and
+	// is served to a caller class of its own: a verifier holds no run identity,
+	// so this path is answered ahead of the shared request parse that every
+	// other route is read by (ServeHTTP).
+	VerifyPath = "/v1/review/verify"
 )
 
 // routeAct is the ONE rule for the two facts an audit line carries about the
