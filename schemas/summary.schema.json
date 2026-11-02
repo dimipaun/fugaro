@@ -109,6 +109,7 @@
     },
     "states": {
       "type": "object",
+      "description": "One count per state, each derived by adding the window's day records together. A source figure below zero is not a count -- a window's nodes can disagree, and a history document can hold one an older release miscounted -- so it is added as nothing and every count here stays at or above the 0 its own minimum states. The document carries the clamped figure, which is the figure the human table prints beside it.",
       "required": [
         "succeeded",
         "failed",

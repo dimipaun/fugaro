@@ -264,6 +264,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Red step:** a run with a Claude level-2 model and every pin on a provider asks for no key.
 - **Reviewer:** opus (the rule decides a mount, not a refusal).
 - **Commit:** `config: the Anthropic key rule reads a level's own model`.
+- **Done (PR "config: the Anthropic key rule reads a level's own model").** Red first: `TestNeedsAnthropicKeyReadsALevelModel` failed with `NeedsAnthropicKey = false, want true` for a Claude model at each of l1, l2 and l3 under provider pins, and `TestNeedsAnthropicKeyLevelModelServedByAProvider` with the unclaimed `openai/gpt-9` level model reported as no call to Anthropic. `NeedsAnthropicKey` now reads each level's own model off `Agent.Levels` beside the coder, the reviewer and the background, and judges it by the one rule it already applied — `ProviderFor` plus `AllowsData`, so a level model an allowed route claims still needs no key. No signature changed, so no caller did, and the answer feeds the two places that already follow the rule (`AnthropicKeyNeeded`'s prompt and the mount); a level that is off needs no guard, because `LevelSetting.validate` refuses `none: true` beside a model.
 
 #### L4.4 `budget preview` counts level 3
 

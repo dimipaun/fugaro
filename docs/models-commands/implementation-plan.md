@@ -97,6 +97,10 @@ D783 was answered against the recommendation: `rm` warns and removes, it never r
 
 - **Files (3):** `internal/cli/models_rm.go` (new), `internal/cli/models_rm_test.go` (new),
   `internal/cli/models.go`.
+- **Not in a release without E1 and E2.** Until E2 lands, a route's claim still needs `fugaro update
+  --repo .` in a repository's checkout (a job routes by the copy of the providers block it holds:
+  `jobConfigCopyPolicyNote`), and M3's hand-off says so; the release that carries M3 or M4 carries E2 as
+  well as E1, and with it the single `next: fugaro update` line comes back.
 - **Red step:** `TestModelsRmWarnsNamingEachPinningRepository` fails while the subcommand does not exist.
 - **Tests:** `TestModelsRmWarnsNamingEachPinningRepository` (the warning names repository, role and the no-provider failure; the write still happens), `TestModelsRmWarnsForRepositoriesWithoutACheckout`,
   `TestModelsRmLeavesAClaimingPatternAndSaysSo`, `TestModelsRmRefusesEmptyingTheAllowList`,
