@@ -303,16 +303,16 @@ func mintAnswer(t *testing.T, body []byte) MintResponse {
 // The caller names no repository — the body has one field, the App ID — so the
 // repository is decided by the binding the service already made: the job
 // account the caller's Google ID token verified as, whose slug must be the
-// slug of the run identity's repository (review finding N1). The three halves
-// below are that claim:
+// slug of the run identity's repository (review finding N1). The two halves
+// below are that claim, and the repository the token names is the binding
+// table's and not the caller's (TestRepositoryMintKeepsNamingTheAccountsRepository,
+// which is the same claim read the other way round: the account's own
+// repository, which the caller did not name and could not):
 //
 //   - a run of the repository its job account is bound to mints for it, and
 //     GitHub is asked for exactly that repository;
 //   - a run identity of ANOTHER repository, presented with a job token the
-//     service admits, is refused before GitHub is reached at all;
-//   - the same job account, bound by this deployment to the other repository,
-//     mints for THAT one, which is the control: the repository comes from the
-//     binding table and from nothing the caller sent.
+//     service admits, is refused before GitHub is reached at all.
 func TestMintForOwnRepositoryOnly(t *testing.T) {
 	t.Run("the run's own repository", func(t *testing.T) {
 		s, gh := mintSvc(t, nil)
@@ -448,36 +448,132 @@ func TestMintForOwnRepositoryOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("the repository is the binding's, not the caller's", func(t *testing.T) {
-		// The same admitted job account, bound by this deployment to the other
-		// repository, and a run identity of that repository. The token comes
-		// back scoped to it — which is the control for the two halves above:
-		// the repository is read from the binding table the service was
-		// configured with (JobAccount.Repo) and from nothing the caller sent.
-		otherSlug := testSlug(t, testOtherRepoPath)
-		s, gh := mintSvc(t, func(_ *svc, cfg *Config) {
-			cfg.JobAccounts = []JobAccount{{Email: testJobSA, Slug: otherSlug, Repo: testOtherRepo}}
-		})
-		other := s.runToken(func(c map[string]any) {
-			c["fs"] = otherSlug
-			c["sub"] = "r~" + otherSlug + "~" + s.run
-			c["user_id"] = c["sub"]
-		})
-		resp, body := s.mintTokens(t, mintBody(testAppID), other, s.jobToken(), s.job)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
-		}
-		if ans := mintAnswer(t, body); ans.Repository != testOtherRepo {
-			t.Errorf("the answer's repository is %q, want the calling job's own %q", ans.Repository, testOtherRepo)
-		}
-		lookup, mint := gh.both(t)
-		if want := "/repos/" + testOtherRepoPath + "/installation"; lookup.path != want {
-			t.Errorf("the installation lookup was %s, want the calling job's own repository", lookup.path)
-		}
-		if !strings.Contains(mint.body, `"repositories":["borealis"]`) {
-			t.Errorf("the mint asked GitHub for %s, want the calling job's own repository", mint.body)
-		}
+}
+
+// TestRepositoryMintKeepsNamingTheAccountsRepository is F3's control, and it is
+// the half of the claim that the two tests above cannot make on their own: the
+// admitted job account is bound by THIS deployment to the other repository, and
+// a run identity of that repository mints for it. Nothing the caller sent names
+// a repository — the body has one field and a body that tries is refused — so
+// what the token is scoped to, and what the answer tells the run it is for, is
+// read from the binding table the service was configured with (JobAccount.Repo)
+// and from nothing else.
+//
+// C3.9b changes which SET such a call is served and not which repository, and
+// this is the test that holds the second half still: the review class resolves
+// its repository through the table the pairing reads (D1066), which is this
+// same table, and a repository class's answer that moved with it would be a
+// mint scoped to a name the caller never named.
+func TestRepositoryMintKeepsNamingTheAccountsRepository(t *testing.T) {
+	otherSlug := testSlug(t, testOtherRepoPath)
+	s, gh := mintSvc(t, func(_ *svc, cfg *Config) {
+		cfg.JobAccounts = []JobAccount{{Email: testJobSA, Slug: otherSlug, Repo: testOtherRepo}}
 	})
+	other := s.runToken(func(c map[string]any) {
+		c["fs"] = otherSlug
+		c["sub"] = "r~" + otherSlug + "~" + s.run
+		c["user_id"] = c["sub"]
+	})
+	resp, body := s.mintTokens(t, mintBody(testAppID), other, s.jobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+	}
+	if ans := mintAnswer(t, body); ans.Repository != testOtherRepo {
+		t.Errorf("the answer's repository is %q, want the calling job's own %q", ans.Repository, testOtherRepo)
+	}
+	lookup, mint := gh.both(t)
+	if want := "/repos/" + testOtherRepoPath + "/installation"; lookup.path != want {
+		t.Errorf("the installation lookup was %s, want the calling job's own repository", lookup.path)
+	}
+	if !strings.Contains(mint.body, `"repositories":["borealis"]`) {
+		t.Errorf("the mint asked GitHub for %s, want the calling job's own repository", mint.body)
+	}
+	// The line names the run's own slug, as every mint line does (C1.13), and
+	// the canonical repository is the answer's field: the two spellings are
+	// different strings and the line does not carry the canonical one.
+	if lines := mintAuditLines(t, s); len(lines) != 1 || lines[0]["repository"] != otherSlug {
+		t.Errorf("the mint's audit line = %v, want exactly one naming the run's own slug %q", lines, otherSlug)
+	}
+}
+
+// TestRepositoryMintKeepsTheRunSet is F5 read for the class C3.9b must leave
+// alone: a repository caller is still issued the run's own set, and CSR1's
+// read-only set is the review class's alone. It is the counterpart of the
+// review class's own test (TestReviewMintServesTheReadOnlySetForTheRunsRepository)
+// — the two sets can only be told apart by asking both classes — and it asserts
+// the two apart as well, because a comparison of the run's set with itself
+// would pass on the day the two spellings became one.
+//
+// The set is chosen from the verified email and the class it lands in, so this
+// is what fails if the chooser ever defaults to the narrow set: the read-only
+// set would take the push and the pull request away from every run of the
+// installation.
+func TestRepositoryMintKeepsTheRunSet(t *testing.T) {
+	run := github.RunTokenPermissions()
+	if review := github.ReviewTokenPermissions(); maps.Equal(run, review) {
+		t.Fatalf("the run's set and the review class's read-only set are the same map (%v): the two classes' sets are what this test and the review class's hold apart", run)
+	}
+	s, gh := mintSvc(t, nil)
+	resp, body := s.mintCall(t, mintBody(testAppID))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+	}
+	_, mint := gh.both(t)
+	var sent struct {
+		Permissions map[string]string `json:"permissions"`
+	}
+	if err := json.Unmarshal([]byte(mint.body), &sent); err != nil {
+		t.Fatalf("the mint's body is not the JSON this test reads: %v (%s)", err, mint.body)
+	}
+	if !maps.Equal(sent.Permissions, run) {
+		t.Errorf("the repository's mint asked GitHub for %v, want the run's own set %v", sent.Permissions, run)
+	}
+	if maps.Equal(sent.Permissions, github.ReviewTokenPermissions()) {
+		t.Errorf("the repository's mint asked GitHub for the review class's read-only set %v: no run of the installation could push or open its pull request", sent.Permissions)
+	}
+}
+
+// TestRepositoryMintKeepsTheRunSetForAReviewShapedIdentity: the class is the
+// verified email's and never the run identity's shape (spec §2.1). This caller
+// is a per-repository job's account — its run is bound to its own repository by
+// the same comparison as any other — and its identity is shaped like a
+// review's: it pushes nothing and names a pull request. It is served the run's
+// set, because the claim rule is the review class's rule and a repository
+// caller is admitted with or without the two claims
+// (TestReviewIdentityRequiresNoBranchAndAtLeastOnePR).
+//
+// The half that matters is what does NOT happen: the narrow set is not an
+// identity's to earn by presenting a shape, which is what "chosen from the
+// class" means where a caller can write the claims.
+func TestRepositoryMintKeepsTheRunSetForAReviewShapedIdentity(t *testing.T) {
+	s, gh := mintSvc(t, nil)
+	run := s.runToken(func(c map[string]any) { c["fpr"] = []any{7} })
+	resp, body := s.mintTokens(t, mintBody(testAppID), run, s.jobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want 200: a repository caller's claims are not the review class's rule: %s", resp.StatusCode, body)
+	}
+	if ans := mintAnswer(t, body); ans.Repository != testRepo {
+		t.Errorf("the answer's repository is %q, want the calling job's own %q", ans.Repository, testRepo)
+	}
+	_, mint := gh.both(t)
+	var sent struct {
+		Permissions map[string]string `json:"permissions"`
+	}
+	if err := json.Unmarshal([]byte(mint.body), &sent); err != nil {
+		t.Fatalf("the mint's body is not the JSON this test reads: %v (%s)", err, mint.body)
+	}
+	if !maps.Equal(sent.Permissions, github.RunTokenPermissions()) {
+		t.Errorf("the mint asked GitHub for %v, want the run's own set: this identity is not the review class, whatever shape it reports", sent.Permissions)
+	}
+	// The audit line is the class's own who: the repository job's account, and
+	// the review class's row is not what served this call.
+	lines := mintAuditLines(t, s)
+	if len(lines) != 1 {
+		t.Fatalf("the mint wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+	}
+	if got := lines[0]["caller"]; got != testJobSA {
+		t.Errorf("the mint's line records caller %v, want the repository job's own account %q", got, testJobSA)
+	}
 }
 
 // TestMintPermissionsAreTokenPermissions: the token the service mints is a
@@ -1226,7 +1322,7 @@ func TestTheAppKeyIsNeverACascadeCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the test's own bundle document is not one the loader accepts: %v", err)
 	}
-	cands, _, err := s.server.candidates(context.Background(), s.slug, testRepo, b)
+	cands, _, err := s.server.candidates(context.Background(), Identity{Slug: s.slug, JobClass: ClassRepository}, testRepo, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)
 	}
