@@ -151,3 +151,44 @@ func TestLevelModelIsTheModelTheStageAsksFor(t *testing.T) {
 		t.Errorf("Anthropic saw %d calls, want the two stages'", n)
 	}
 }
+
+// TestProviderLevelModelIsRoutedToItsProvider: a review level's own model that
+// a provider serves is a call to that provider, and the gateway routes a call
+// by the routes the run registered. The routes are built from the models the
+// run names, and a level's own model is one of the models the run runs: left
+// out of that list, the run registers no route for the level's provider at
+// all. The call is still admitted — the gateway admits the model its stage's
+// own spec names, and that spec is the level's model (L4.5) — and still
+// charged, and it goes direct to Anthropic: the repository's code leaves for
+// the vendor the owner routed it away from, on the key the owner gave for
+// another vendor's calls.
+//
+// The run's pins are Claude's own and only the level's model is a provider's,
+// so each fake's call count says which model went where.
+func TestProviderLevelModelIsRoutedToItsProvider(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	cfg := gwConfig(t, "  first_line_review: off\n  levels: { l2: { model: "+deepseek+" } }\n")
+	g := newGW(t, cfg, "enforce", "50", anthropicfake.MessageOK(sonnet, use))
+	wireProviders(t, g, []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+
+	var coderStatus, reviewStatus int
+	var reviewBody string
+	rec, err := g.run(t,
+		levelCall(new(string), &coderStatus, new(string), implement("feature")),
+		levelCall(new(string), &reviewStatus, &reviewBody, review("ship", 0)))
+	if n := g.compat.Count(); n != 1 {
+		t.Errorf("the provider saw %d calls, want the review stage's alone: a level model a provider serves is that provider's call", n)
+	}
+	if n := g.fake.Count(); n != 1 {
+		t.Errorf("Anthropic saw %d calls, want the coder's alone: the level's model is a provider's and must not go direct", n)
+	}
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v\nreviewer: %s", rec, err, reviewBody)
+	}
+	if coderStatus != 200 || reviewStatus != 200 {
+		t.Fatalf("statuses = %d, %d: a stage's own call was not served", coderStatus, reviewStatus)
+	}
+	if body := string(g.compat.Body(0)); !strings.Contains(body, `"model":"`+deepseek+`"`) {
+		t.Errorf("the provider's call is not on the level's model: %s", body)
+	}
+}
