@@ -614,10 +614,10 @@ func reviewLevelProblems(root string, cfg *config.Config, lc *localcfg.Config, l
 		Providers:      claimed,
 	})
 	for _, w := range warns {
-		warnings = append(warnings, config.Problem{Path: "agent.levels", Message: w.String()})
+		warnings = append(warnings, config.Problem{Path: "agent.levels", Message: oneLine(w.String())})
 	}
 	for _, e := range splitRefusals(err) {
-		problems = append(problems, config.Problem{Path: "agent.levels", Message: e.Error()})
+		problems = append(problems, config.Problem{Path: "agent.levels", Message: oneLine(e.Error())})
 	}
 	return problems, warnings
 }

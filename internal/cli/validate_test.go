@@ -2970,6 +2970,26 @@ func TestValidateLevelsSameModel(t *testing.T) {
 	}
 }
 
+// TestValidateLevelsRefusalIsSanitised: the resolver's refusal names the model
+// the file wrote, and no other validate check echoes that value, so this path
+// is the one that would carry a terminal escape from a hand-written model id
+// to the operator's screen. The launch path cleans it (ErrorText); validate
+// prints the problem itself, so the problem's text is cleaned where it is built.
+//
+// Mutation (drop oneLine from the two messages in reviewLevelProblems): this
+// test fails, finding the escape byte in validate's output.
+func TestValidateLevelsRefusalIsSanitised(t *testing.T) {
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+		"agent: { auth: api-key, first_line_review: on, models: { coder: \"a\\u001b[31mb\", reviewer: \"a\\u001b[31mb\" } }\nworkflows:", 1))
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "l2.model and l1.model are both") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("validate printed an escape byte: %q", out)
+	}
+}
+
 // TestReviewFloorUnpublishableWarns: the owner's review-level floor lives in
 // the owner-only policy node, and `fugaro project policy publish` is the only
 // thing that puts it there — a publish that needs a budget.mode for the node's
