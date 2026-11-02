@@ -45,7 +45,17 @@ var testReviewSA = serviceAccountEmail(ReviewServiceAccountID(testReviewProfile,
 // identity's slug.
 func newReviewSvc(t *testing.T) *svc {
 	t.Helper()
-	row := ReviewJobAccount{Email: testReviewSA, Account: testReviewAccount}
+	return newReviewSvcSpelled(t, testReviewSA, testReviewSA)
+}
+
+// newReviewSvcSpelled is newReviewSvc with the two lists' own spellings of the
+// one service account: the verifier's (AuthConfig.ReviewJobAccounts, which is
+// what a presented claim is matched against and what the identity then carries)
+// and the pairing's table (Config.ReviewAccounts). A deployment configures them
+// together, and the one test that spells them differently is what holds the
+// table to the fold the verifier matches by.
+func newReviewSvcSpelled(t *testing.T, verifierEmail, tableEmail string) *svc {
+	t.Helper()
 	return newSvcWith(t, func(s *svc, cfg *Config) {
 		auth, err := NewAuthenticator(AuthConfig{
 			Project:           testProject,
@@ -56,7 +66,7 @@ func newReviewSvc(t *testing.T) *svc {
 			JobKeys:           s.jobKeys,
 			Outcomes:          RTDBOutcomes{DB: s.db},
 			SharedJobAccounts: []string{testSharedSA},
-			ReviewJobAccounts: []ReviewJobAccount{row},
+			ReviewJobAccounts: []ReviewJobAccount{{Email: verifierEmail, Account: testReviewAccount}},
 			Now:               func() time.Time { return s.now },
 		})
 		if err != nil {
@@ -65,7 +75,7 @@ func newReviewSvc(t *testing.T) *svc {
 		// The fixture's verifier and the server's are the same object, so a
 		// test can call either and be asking the same configuration.
 		cfg.Auth, s.auth = auth, auth
-		cfg.ReviewAccounts = []ReviewJobAccount{row}
+		cfg.ReviewAccounts = []ReviewJobAccount{{Email: tableEmail, Account: testReviewAccount}}
 		cfg.Repos = map[string]string{s.slug: testRepo}
 	})
 }
@@ -195,6 +205,28 @@ func TestReviewCallerOnAnUnpublishedRepositoryIsRefused(t *testing.T) {
 			t.Errorf("the upstream saw %d requests, want none", n)
 		}
 	})
+}
+
+// TestReviewTableIsKeyedTheWayTheVerifierKeysItsOwn: the verifier's list and
+// the pairing's table are two lists, and the account Verify answers with is the
+// spelling the VERIFIER'S list carries — so a deployment whose two lists spell
+// the same address in different cases would have a caller the verifier admits
+// and the pairing cannot look up, which is a refusal no operator could read.
+// The table is keyed by the folded email for that reason, and this is the call
+// that is refused if it ever stops being.
+func TestReviewTableIsKeyedTheWayTheVerifierKeysItsOwn(t *testing.T) {
+	loud := strings.ToUpper(testReviewSA)
+	if loud == testReviewSA {
+		t.Fatal("the fixture's own service account is already upper case, so this test would cover nothing")
+	}
+	s := newReviewSvcSpelled(t, testReviewSA, loud)
+	resp, body := s.callTokens(t, callBody("review-case-folded"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the review caller was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testReviewAccount {
+		t.Errorf("%s = %q, want the review job's own account %q", HeaderCredential, got, testReviewAccount)
+	}
 }
 
 // TestRepositoryTableResolvesASlugToItsCanonicalName: the table the pairing

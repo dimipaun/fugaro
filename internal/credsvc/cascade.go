@@ -11,6 +11,7 @@ package credsvc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -45,7 +46,17 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	// its credential, so the filter is the accessor's rather than this loop's.
 	all := b.Credentials()
 	if id.JobClass == ClassReview {
-		out, skipped := reviewCandidates(all, s.review[id.JobAccount].Account)
+		// The lookup is guarded although the pairing has already refused an
+		// account this table does not hold (pairReview): the class is the
+		// verifier's answer and the two lists are configured separately, so a
+		// caller admitted as a review one whose email this table does not carry
+		// is a deployment disagreeing with itself — and a service that panicked
+		// on a state it cannot name would be the worse answer to it.
+		ra, ok := s.review[id.JobAccount]
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
+		}
+		out, skipped := reviewCandidates(all, ra.Account)
 		return out, skipped, nil
 	}
 	hasA := false

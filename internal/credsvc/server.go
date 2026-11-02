@@ -333,9 +333,10 @@ type Server struct {
 	log  *slog.Logger
 	now  func() time.Time
 	jobs map[string]JobAccount
-	// review is Config.ReviewAccounts by email: the same lookup the verifier
-	// makes, held here because the pairing and the cascade's offering rule
-	// both need the account name rather than the class.
+	// review is Config.ReviewAccounts by folded email: the same lookup the
+	// verifier makes (NewAuthenticator folds the same way), held here because
+	// the pairing and the cascade's offering rule both need the account name
+	// rather than the class.
 	review map[string]ReviewJobAccount
 	audit  *Auditor
 }
@@ -421,10 +422,23 @@ func NewServer(cfg Config) (*Server, error) {
 		if ra.Email == "" || ra.Account == "" {
 			return nil, errors.New("credsvc: a review job account with no email or no Claude account binds nothing")
 		}
-		if _, dup := s.review[ra.Email]; dup {
-			return nil, errors.New("credsvc: the same review job account is bound to two Claude accounts")
+		// Keyed by the folded email, exactly as the verifier keys its own
+		// review table: the account Verify answers with is the CONFIGURED
+		// spelling of the email it matched, so a deployment whose two lists
+		// spell the same address in different cases would have the verifier
+		// admit a caller this table could not look up — a miss on case alone,
+		// and a pairing refused for a reason no operator could see.
+		folded, ok := foldEmail(ra.Email)
+		if !ok {
+			return nil, errors.New("credsvc: a review job service account is not a printable ASCII email address")
 		}
-		s.review[ra.Email] = ra
+		if prev, dup := s.review[folded]; dup {
+			if prev.Account != ra.Account {
+				return nil, errors.New("credsvc: the same review job account is bound to two Claude accounts")
+			}
+			continue
+		}
+		s.review[folded] = ra
 	}
 	return s, nil
 }
