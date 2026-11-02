@@ -413,6 +413,135 @@ func TestStoreRefusesAnIntentIDThatIsNotANodeKey(t *testing.T) {
 	}
 }
 
+// testStoreAndFake is a store over the fake database, and the fake itself, for
+// the tests that seed a node by hand. A record written through the report path
+// has already been normalised by the writer — sorted, deduplicated and free of
+// empty entries — so a node seeded through Reporter.Report can never show what
+// the read does with a document it did not write.
+func testStoreAndFake(t *testing.T) (*Store, *gcpfake.RTDB) {
+	t.Helper()
+	f := gcpfake.NewRTDB(t)
+	return NewStore(testClient(t, f)), f
+}
+
+// TestReadRepoIntentsCleansTheListsItReads: the read's half of the record's own
+// promise about a list. Intent promises that an empty list is the answer
+// "declares none" and never a null a reader has to interpret, and Normalise
+// keeps that promise for every record the report path writes — which is why
+// TestReadRepoIntents (state_test.go) cannot see this: every document it reads
+// was normalised by the writer before it was stored.
+//
+// A node is not only what this build's writer puts in it. A hand, an older
+// build and another transport all write under the same key, so the read is the
+// place the promise has to hold: what comes back is sorted, deduplicated, free
+// of the empty entry, and an empty list rather than a nil for a document that
+// omits the key altogether.
+//
+// Hand mutation this fails on: deleting the cleanList pair in ReadRepoIntents
+// (the unsorted, duplicated and empty entries come back exactly as the node
+// holds them, and the record with no lists comes back nil).
+func TestReadRepoIntentsCleansTheListsItReads(t *testing.T) {
+	s, f := testStoreAndFake(t)
+	ctx := testCtx(t)
+	const slug = "github-acme-webapp"
+	f.Set(PathIntent(slug, "seeded-record"), map[string]any{
+		"declared_by": "person-1@example.com",
+		"at":          "2026-11-01T09:00:00Z",
+		"branch":      "topic/seeded",
+		"files":       []string{"internal/coordinator/state.go", "", "internal/cli", "internal/cli"},
+		"services":    []string{"", "zz", "aa", "zz"},
+	})
+	f.Set(PathIntent(slug, "seeded-without-lists"), map[string]any{
+		"declared_by": "person-2@example.com",
+		"at":          "2026-11-01T08:00:00Z",
+	})
+
+	got, err := s.ReadRepoIntents(ctx, slug, "acme/webapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Intents) != 2 {
+		t.Fatalf("the node read as %d records, want the two seeded: %+v", len(got.Intents), got.Intents)
+	}
+	byDeclarer := map[string]StoredIntent{}
+	for _, rec := range got.Intents {
+		byDeclarer[rec.DeclaredBy] = rec
+	}
+	for _, c := range []struct {
+		declaredBy   string
+		wantFiles    []string
+		wantServices []string
+	}{
+		{"person-1@example.com", []string{"internal/cli", "internal/coordinator/state.go"}, []string{"aa", "zz"}},
+		{"person-2@example.com", []string{}, []string{}},
+	} {
+		rec, ok := byDeclarer[c.declaredBy]
+		if !ok {
+			t.Errorf("the record declared by %s was not read back", c.declaredBy)
+			continue
+		}
+		if rec.Files == nil || rec.Services == nil {
+			t.Errorf("the record declared by %s read back a nil list where the node means \"declares none\": %+v", c.declaredBy, rec)
+		}
+		if !slices.Equal(rec.Files, c.wantFiles) {
+			t.Errorf("the record declared by %s read back files %q, want %q", c.declaredBy, rec.Files, c.wantFiles)
+		}
+		if !slices.Equal(rec.Services, c.wantServices) {
+			t.Errorf("the record declared by %s read back services %q, want %q", c.declaredBy, rec.Services, c.wantServices)
+		}
+	}
+}
+
+// TestReadRepoIntentsReadsTheStoredKeyAsTheID: the ID a caller is handed is the
+// node's own KEY, read back and not derived. Two records with the same
+// declaration under two keys are two records, and each carries its own key: the
+// ID names the document, which is what lets a console name one row, and a
+// reader that recomputed IntentID would answer an ID under which the tree holds
+// nothing — and would answer the same ID for both of these.
+//
+// TestReadRepoIntents (state_test.go) asserts the ID of every record it reads
+// equals IntentID(record), but it reports each record through the report path,
+// which stores it under exactly that ID: the two answers cannot differ there.
+//
+// Hand mutation this fails on: StoredIntent{ID: IntentID(in)} (both records
+// come back with the same derived ID, which is neither key).
+func TestReadRepoIntentsReadsTheStoredKeyAsTheID(t *testing.T) {
+	s, f := testStoreAndFake(t)
+	ctx := testCtx(t)
+	const slug = "github-acme-webapp"
+	// Two keys, one declaration: only a hand-written node can hold this, and it
+	// is what tells a read of the key from a derivation of the record.
+	keys := []string{"stored-key-one", "stored-key-two"}
+	for _, key := range keys {
+		f.Set(PathIntent(slug, key), map[string]any{
+			"declared_by": "person-1@example.com",
+			"at":          "2026-11-01T09:00:00Z",
+			"branch":      "topic/seeded",
+			"files":       []string{"internal/cli"},
+			"services":    []string{},
+		})
+	}
+
+	got, err := s.ReadRepoIntents(ctx, slug, "acme/webapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Intents) != 2 {
+		t.Fatalf("the node read as %d records, want the two keys: %+v", len(got.Intents), got.Intents)
+	}
+	ids := []string{got.Intents[0].ID, got.Intents[1].ID}
+	slices.Sort(ids)
+	if !slices.Equal(ids, keys) {
+		t.Errorf("the records carry the IDs %q, want the keys they are stored under, %q", ids, keys)
+	}
+	// An ID derived from the record is the same for both of these and is
+	// neither key: what the read must not answer.
+	derived := IntentID(got.Intents[0].Intent)
+	if derived == got.Intents[0].ID || derived == got.Intents[1].ID {
+		t.Errorf("the ID read back is IntentID(record) = %q, not the node's key", derived)
+	}
+}
+
 // children is the keys of a node of the fake database, sorted; nil when the
 // node is not there.
 func children(f *gcpfake.RTDB, path string) []string {
