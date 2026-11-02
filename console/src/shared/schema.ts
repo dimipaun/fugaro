@@ -2438,9 +2438,11 @@ type RecordMemberKind = 'text' | 'count' | 'flag' | 'stamp' | 'block'
  *
  * An absent member, and a `null` at one, both read as the CLI having nothing to
  * say -- this module's house reading of a `null` (`optionalText`), and what the
- * struct's three pointer members write. The four keys a row must carry are read
- * through `required` instead and are refused when they are not there, so a
- * `null` at one of those is a type error rather than an absence.
+ * struct's pointer members write. It is the reading of every member here and not
+ * only of those: `recordMemberAt` returns on a `null` whatever the key's kind is.
+ * The four keys a row must carry are not read there but through `required`,
+ * whose `null` reaches the reader of the key's own type and is refused by it
+ * (`not-a-string`, `not-a-boolean`) rather than read as an absence.
  */
 const RECORD_MEMBERS: Readonly<Record<string, RecordMemberKind>> = Object.freeze({
   run: 'text',
@@ -2554,9 +2556,10 @@ function runsRowAt(raw: unknown, index: number, where: string): RunsListRow {
 }
 
 /** recordMemberAt holds one member of a row to the kind the struct declares it
- * with. A member that is absent, or one of the struct's own pointer members
- * written as `null`, is the CLI saying it has nothing -- a `null` at any other
- * key is a value the struct cannot write and is refused like a wrong type. */
+ * with. A member that is absent, and a `null` at one, are both the CLI saying it
+ * has nothing, whatever the key's kind is -- `RECORD_MEMBERS` reads the count
+ * above the same way, and the four keys a row must carry are read through
+ * `required` and refused by their own reader rather than here. */
 function recordMemberAt(
   record: Record<string, unknown>,
   key: string,

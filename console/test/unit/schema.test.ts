@@ -62,6 +62,7 @@ import {
   RECORD_KEYS,
   REPO_KEYS,
   RUN_KEYS,
+  RUNS_LIST_KEYS,
   TOTAL_KEYS,
   LIVE_MARKERS,
   NON_TEXT_STRING_KEYS,
@@ -125,6 +126,15 @@ const PLAN_STATUS: JSONDoc = JSON.parse(
  */
 const RUNVIEW_SOURCE = readFileSync(
   fileURLToPath(new URL('../../../internal/runview/runview.go', import.meta.url)),
+  'utf8',
+)
+
+/** CLI_RUNS_SOURCE is `internal/cli/runs.go`, read the same way as the two
+ * above: `lsDoc` is the document `runs ls --json` prints, and the action queue's
+ * door reads that document **closed** (`RUNS_LIST_KEYS`), so its root key list
+ * is pinned against the struct rather than hand-written. */
+const CLI_RUNS_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/cli/runs.go', import.meta.url)),
   'utf8',
 )
 
@@ -2244,5 +2254,25 @@ describe('the declared intents document (coordinator v2 C4)', () => {
     // they lack: the three shapes share no top-level key but `repos`, and the
     // stored view's `repos` members carry `stored`/`view` rather than `intents`.
     expect(decodeCoordinatorIntents({ repo: 'owner/repo-a', stored: true }).ok).toBe(false)
+  })
+})
+
+describe('the runs list the action queue decides by (K4 follow-up)', () => {
+  it('lists every key of `lsDoc`, the one document this console reads closed', () => {
+    // The door refuses a root key `lsDoc` does not have, so this list is its
+    // whole tolerance at the root: a key added to the struct and not to the
+    // list would refuse every document the CLI prints, and the console would
+    // draw `runs.list` refused for a read that succeeded -- the one failure a
+    // decoder over a page the operator asked for must not have. Read off the
+    // struct, as `RECORD_KEYS` and `REPO_KEYS` above are, because a hand-written
+    // copy agrees with a hand-written list.
+    const fromTheStruct = structTags(CLI_RUNS_SOURCE, 'lsDoc', 'internal/cli/runs.go').map(
+      (tag) => tag.key,
+    )
+    expect([...RUNS_LIST_KEYS].sort()).toEqual([...fromTheStruct].sort())
+    expect(RUNS_LIST_KEYS.length).toBe(fromTheStruct.length)
+    // `runs` is the key the door reads, and the comparison above cannot catch a
+    // struct and a list that lost it together.
+    expect(fromTheStruct, 'runs is the key the queue cannot do without').toContain('runs')
   })
 })
