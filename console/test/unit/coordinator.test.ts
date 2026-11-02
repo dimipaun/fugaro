@@ -2108,6 +2108,101 @@ describe('the read-only transcript pane (K5)', () => {
     expect(one(node, 'coordinator-transcript-declaration').getAttribute('href')).toBeNull()
   })
 
+  it('draws a store’s hostile declarations as inert text, with no key material in them', () => {
+    // The pane draws what the fleet's writers wrote, so it is the screen where a
+    // control character, a bidi override or a hyperlink escape would reach the
+    // drawing as itself if a document's string were written with `textContent`
+    // (`literal`) or parsed (`innerHTML`) instead of classified. Every field goes
+    // through `putText`'s own class, and this is the assertion that tells the two
+    // drawings apart: `holdsToPutText` compares each cell with what the class
+    // itself draws, which a cell drawn through `literal` cannot pass.
+    //
+    // The key block is **built here** rather than written out: the file holds no
+    // key-shaped literal, and the material is fresh on every run. It is one line,
+    // which is the shape a label can hold -- a block wrapped over its newlines
+    // is a block no rule sees whole, and that case is the description block's
+    // (`maskCredentialBlocks`), not this pane's: every cell here is one field of
+    // one record, and the class reads the whole value.
+    const begin = ['-----BEGIN', 'PRIVATE KEY-----'].join(' ')
+    const end = ['-----END', 'PRIVATE KEY-----'].join(' ')
+    const material = randomBytes(57).toString('base64')
+    const block = [begin, material.slice(0, 64), material.slice(64), end].join(' ')
+    const bidi = 'a‮b‬​c'
+    const csi = '\u001b[31mred\u001b[0m'
+    const hyperlink = '\u001b]8;;https://evil.test\u0007link\u001b]8;;\u0007'
+    const view = intentsOf(
+      anIntentsDocument([
+        {
+          repo: 'owner/repo-a',
+          intents: [
+            anIntent({
+              declaredBy: `${bidi} ${csi} ${hyperlink}`,
+              branch: `feat/${bidi}`,
+              release: `${csi}${block}`,
+              files: [`${bidi}/home/operator/notes.md`],
+              // A line break is the one thing a label may not carry: the class
+              // refuses rather than flattening it, because two rows wearing one
+              // cell is a field the CLI's own renderer does not write, and this
+              // cell is where that rule is read off the drawing.
+              services: [`${hyperlink}\n${bidi}`],
+            }),
+          ],
+        },
+      ]),
+    )
+    const record = view.repos[0]?.intents[0]
+    if (record === undefined) throw new Error('the fixture decoded to no declaration')
+    const node = drawsPane({ intents: view })
+    const pane = one(node, 'coordinator-transcript')
+    const line = one(pane, 'coordinator-transcript-intent')
+
+    // Every cell, drawn the way its class draws it -- the assertion a `literal`
+    // drawing fails, because `literal` writes the string the store holds.
+    holdsToPutText(one(pane, 'coordinator-transcript-repo'), 'owner/repo-a', 'repository', 'repos[].repo')
+    holdsToPutText(one(line, 'coordinator-transcript-declaration'), record.declaredBy, 'label', 'intents[].declared_by')
+    holdsToPutText(one(line, 'coordinator-transcript-at'), record.at, 'sentence', 'intents[].at')
+    holdsToPutText(one(line, 'coordinator-transcript-branch'), record.branch, 'branch', 'intents[].branch')
+    holdsToPutText(one(line, 'coordinator-transcript-release'), record.release, 'label', 'intents[].release')
+    holdsToPutText(one(line, 'coordinator-transcript-file'), record.files[0] ?? '', 'path', 'intents[].files')
+    holdsToPutText(one(line, 'coordinator-transcript-service'), record.services[0] ?? '', 'label', 'intents[].services')
+
+    // What is on screen is inert: no escape sequence, no bidi control, no
+    // zero-width character and no line break survived the classes, and neither
+    // the hyperlink's own address nor the block's own markers came through as
+    // text. The key material is gone whole, in every window of eight characters
+    // of it, in a text node and in an attribute alike.
+    // The cells are joined with a **space**: the scan below says the drawing
+    // holds no control character, a line break included, and a reader that put
+    // one between two cells would be finding its own.
+    const drawnText = walk(pane)
+      .map((each) => each.textContent ?? '')
+      .join(' ')
+    const drawnAttributes = walk(pane)
+      .flatMap((each) => [...each.attributes.values()])
+      .join(' ')
+    const CONTROLS = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/
+    expect(CONTROLS.test(drawnText), 'a control character reached the drawing').toBe(false)
+    expect(drawnText).not.toContain('evil.test')
+    expect(drawnText).not.toContain('PRIVATE KEY')
+    expect(drawnText).toContain(TOKEN_PLACEHOLDER)
+    for (let from = 0; from + 8 <= material.length; from += 1) {
+      const window = material.slice(from, from + 8)
+      expect(drawnText.includes(window), 'the pane drew eight characters of the key material').toBe(false)
+      expect(
+        drawnAttributes.includes(window),
+        'an attribute the pane set carries eight characters of the key material',
+      ).toBe(false)
+    }
+
+    // And no element was built out of any of it: the pane's own tags are the
+    // screen's, and nothing carries a destination.
+    for (const element of walk(pane)) {
+      const tag = element.tag.toLowerCase()
+      expect(['a', 'script', 'img', 'iframe', 'style', 'link', 'object', 'embed'], `${tag} came from the store`).not.toContain(tag)
+      expect(element.getAttribute('href'), `${tag} carries a destination`).toBeNull()
+    }
+  })
+
   it('builds no link and no destination out of anything the store wrote', () => {
     const node = drawsPane({ intents: intentsOf(DECLARED) })
     const pane = one(node, 'coordinator-transcript')
