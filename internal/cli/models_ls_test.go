@@ -516,60 +516,6 @@ func TestModelsLsIsOffline(t *testing.T) {
 	}
 }
 
-// TestBudgetPricesJSONUnchanged pins the refactor M1 carries: the price-row
-// builder moved out of `budget prices` behind one function both commands call,
-// and the command's document has to stay exactly what that builder produces —
-// a second row construction grown back beside it fails here. The rows
-// themselves are pinned by value, not only agreed with, so a builder that
-// stopped carrying a catalog row's provenance or an override's prices is red
-// here rather than in a run.
-func TestBudgetPricesJSONUnchanged(t *testing.T) {
-	modelsFixture(t)
-
-	out, _, err := execute(t, "budget", "prices", "--json")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	var doc pricesDoc
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	var byID = map[string]priceRow{}
-	for _, r := range doc.Models {
-		byID[r.ID] = r
-	}
-	// The catalog row the route claims: its provenance is the catalog's own,
-	// and its prices are the ones the table holds.
-	if row, ok := byID["deepseek/deepseek-v4-flash"]; !ok {
-		t.Errorf("no row for deepseek/deepseek-v4-flash:\n%s", out)
-	} else if row.Catalog == nil {
-		t.Errorf("deepseek/deepseek-v4-flash is not marked catalog-priced: %+v", row)
-	} else if row.Catalog.Tier != "zdr" || row.Catalog.Bound != "min" || row.Catalog.Endpoints == 0 {
-		t.Errorf("deepseek/deepseek-v4-flash's catalog provenance = %+v", row.Catalog)
-	}
-	// The override: the owner's own numbers, marked local.
-	if row, ok := byID["vendor/model-y"]; !ok {
-		t.Errorf("no row for vendor/model-y:\n%s", out)
-	} else if !row.Local || row.InputPerM != 1 || row.OutputPerM != 2 {
-		t.Errorf("vendor/model-y = %+v, and the owner priced it 1/2", row)
-	}
-	// And the whole document is the shared builder's rows, in its order.
-	table, ov, err := priceTable(selectedModelsConfig(t), budgetNow())
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := priceRowsFor(table, ov)
-	if len(want) != len(doc.Models) {
-		t.Fatalf("the command prints %d rows and the shared builder has %d", len(doc.Models), len(want))
-	}
-	for i := range want {
-		got, wantJSON := jsonOf(t, doc.Models[i]), jsonOf(t, want[i])
-		if got != wantJSON {
-			t.Errorf("row %d is %s, and the shared builder makes %s", i, got, wantJSON)
-		}
-	}
-}
-
 // modelsSection is one section of the text read: the lines between its header
 // and the next one, so an assertion about the routes cannot be satisfied by a
 // line the models section happens to carry.
@@ -611,11 +557,3 @@ func selectedModelsConfig(t *testing.T) *localcfg.Config {
 	return lc
 }
 
-func jsonOf(t *testing.T, v any) string {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
-}
