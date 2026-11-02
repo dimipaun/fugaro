@@ -5595,8 +5595,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const loadIntents = async (attempt: number): Promise<void> => {
       const answer = documentOf(await bridge.coordinatorIntents({}))
       if (intentsAttempt !== attempt) return
-      intentsOut = false
       if (stale(mine)) return
+      // The flag says this visit has a read out, and it is cleared only where the
+      // answer belongs to a visit that still owns the screen: a visit the
+      // operator has left is never repainted, so its closure is not told that the
+      // pane's read ended.
+      intentsOut = false
       intents = null
       if (!answer.ok) {
         intentsSentence = answer.sentence
