@@ -796,6 +796,36 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	if err := sch.Validate(bad); err == nil {
 		t.Fatal(`schema accepts "status": "done"`)
 	}
+	// stage_accounts is closed in both of the directions its own key and its
+	// own value have (D876): the key is the stage vocabulary the record's
+	// stage list uses, so a stage no reader can place is refused, and the value
+	// is bounded like the account name beside it, so a name the record never
+	// holds is refused too.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a key outside the stage vocabulary", `"implement":"team-b"`, `"deploy":"team-b"`},
+		{"a value longer than the bound", `"review":"team-a"`, `"review":"` + strings.Repeat("a", 65) + `"`},
+		{"a value that is not text", `"implement":"team-b"`, `"implement":5`},
+	} {
+		if !bytes.Contains(data, []byte(tc.old)) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(tc.old), []byte(tc.new), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.new)
+		}
+	}
+	// The bound's other side, so the refusal above is the bound and not a rule
+	// that refuses any long name: 64 runes are what the field holds.
+	atBound, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"review":"team-a"`), []byte(`"review":"`+strings.Repeat("a", 64)+`"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(atBound); err != nil {
+		t.Errorf("schema rejects a stage account name of 64 runes: %v", err)
+	}
 	// The cost object is closed, so a compute_source that is not a string
 	// (what a hand-edited result.json could carry) is rejected rather than
 	// stored.

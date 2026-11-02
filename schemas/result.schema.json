@@ -14,7 +14,7 @@
     "oauth_account": { "type": "string", "maxLength": 64, "description": "The named Claude OAuth account this run's agent.auth: oauth workflow used last (docs/accounts-add spec §11.2): one scalar for the whole run." },
     "stage_accounts": {
       "type": "object",
-      "description": "The Claude OAuth account that served each stage, keyed by stage name (docs/accounts-add spec §11.5, D876). Written by fugaro accounts add's explicit chain and by the cascade's failover; read by nothing yet, so it is additive and oauth_account keeps its meaning.",
+      "description": "The Claude OAuth account that served each stage, keyed by stage name (docs/accounts-add spec §11.5, D876). Declared ahead of the runner's stage-start resolution, which is the writer that fills it, so it is written and read by nothing yet: additive, and oauth_account keeps its meaning.",
       "propertyNames": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"] },
       "additionalProperties": { "type": "string", "maxLength": 64 }
     },
