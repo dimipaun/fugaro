@@ -601,6 +601,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// bundle itself, because the App key is in it, and it reads no policy
 		// and consults no cascade: an installation token is not a model
 		// credential and no tier or admission has anything to say about it.
+		//
+		// The review class is the exception, and it is refused here rather than
+		// deeper in: a mint carries github.RunTokenPermissions over the run
+		// identity's repository — the WRITE set of the very repository the
+		// review is about — while a review job mounts no repository and holds
+		// no installation token of its own (O1), so this endpoint is where that
+		// would be undone. The guard only narrows what is admitted: C3.9b
+		// replaces it with CSR1's read-only set, and C3.9b must land before
+		// anything fills the review set.
+		if id.JobClass == ClassReview {
+			s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
+				"a review job's account may not mint an installation token")
+			return
+		}
 		s.mint(ctx, w, r, id, ja)
 		return
 	}

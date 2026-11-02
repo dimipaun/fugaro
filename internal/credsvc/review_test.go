@@ -19,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 const (
@@ -54,7 +56,7 @@ func newReviewSvc(t *testing.T) *svc {
 // and the pairing's table (Config.ReviewAccounts). A deployment configures them
 // together, and the one test that spells them differently is what holds the
 // table to the fold the verifier matches by.
-func newReviewSvcSpelled(t *testing.T, verifierEmail, tableEmail string) *svc {
+func newReviewSvcSpelled(t *testing.T, verifierEmail, tableEmail string, extra ...func(*svc, *Config)) *svc {
 	t.Helper()
 	return newSvcWith(t, func(s *svc, cfg *Config) {
 		auth, err := NewAuthenticator(AuthConfig{
@@ -77,7 +79,24 @@ func newReviewSvcSpelled(t *testing.T, verifierEmail, tableEmail string) *svc {
 		cfg.Auth, s.auth = auth, auth
 		cfg.ReviewAccounts = []ReviewJobAccount{{Email: tableEmail, Account: testReviewAccount}}
 		cfg.Repos = map[string]string{s.slug: testRepo}
+		for _, m := range extra {
+			m(s, cfg)
+		}
 	})
+}
+
+// reviewMintSvc is the review fixture behind the mint's fake GitHub, with the
+// bundle a mint needs: a caller the pairing admits, on the one route of this
+// service the class is not admitted to, where the refusal cannot be about the
+// identity, the pairing or the bundle.
+func reviewMintSvc(t *testing.T) (*svc, *ghFake) {
+	t.Helper()
+	gh := newGHFake(t)
+	s := newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, cfg *Config) {
+		cfg.Client = &http.Client{Transport: ghTransport{srv: gh.srv}}
+		s.src.docs = [][]byte{mintBundleDoc(t)}
+	})
+	return s, gh
 }
 
 // reviewRunToken is the run identity of a review run: it pushes nothing (no
@@ -380,6 +399,51 @@ func TestReviewIdentityWithAnEmptyPRListIsRefused(t *testing.T) {
 	}
 	if lines := auditLines(t, s.audit); len(lines) != 1 {
 		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+	}
+}
+
+// TestReviewCallerIsRefusedTheMint: the mint is the one route of this service
+// the review class is not admitted to, and this is the guard that says so
+// (C3.9b replaces it with CSR1's read-only permission set, and C3.9b must land
+// before anything fills the review set).
+//
+// The caller here is otherwise perfectly good: its two identities are whole,
+// the pairing admits it, and the bundle holds the App key a mint would be
+// issued from — so the only thing that can refuse it is the class. Left
+// unguarded it would be handed a token carrying github.RunTokenPermissions
+// over the run identity's repository, which is the WRITE set of the very
+// repository the review is about: the review job mounts no repository and
+// holds no installation token of its own (O1), and this endpoint is where that
+// would be undone.
+func TestReviewCallerIsRefusedTheMint(t *testing.T) {
+	s, gh := reviewMintSvc(t)
+	resp, body := s.mintTokens(t, mintBody(testAppID), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+	}
+	var ans MintResponse
+	if err := decodeStrict(body, &ans); err == nil {
+		t.Errorf("the refusal carries a mint's answer: %+v", ans)
+	}
+	if n := gh.count(); n != 0 {
+		t.Errorf("GitHub saw %d requests, want none: no installation token was asked for", n)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: the class is refused before it", n)
+	}
+	lines := mintAuditLines(t, s)
+	if len(lines) != 1 {
+		t.Fatalf("the refused mint wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+	}
+	if got := lines[0]["purpose"]; got != PurposeMint {
+		t.Errorf("the refusal's line records purpose %v, want %q: the act the run asked for", got, PurposeMint)
+	}
+	if got := lines[0]["credential"]; got != config.GitHubAppKeySecret {
+		t.Errorf("the refusal's line names credential %v, want the App key's name %q", got, config.GitHubAppKeySecret)
 	}
 }
 
