@@ -299,6 +299,11 @@ var consoleReadPaths = map[string]bool{
 	// the repository's provider -- and writes nothing, the remembered checkouts
 	// included.
 	"fugaro coordinator show": true,
+	// The declarations read (coordinator v2 C4, D827): it resolves the checkout
+	// the way the stored view does -- to tell each repository's provider -- and
+	// writes nothing, the remembered checkouts included. It asks nothing else
+	// of the machine: the read is the caller's own database node.
+	"fugaro coordinator intents": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,
