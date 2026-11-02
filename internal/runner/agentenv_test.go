@@ -184,8 +184,11 @@ func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 func TestManagedSettingsDenyBinaryReadsInReviewStages(t *testing.T) {
 	// first_line_rounds comes with first_line_review: this case scripts one
 	// cheap round, and an unset knob takes the resolved mode's row instead
-	// (internal/rigor's DefaultRounds).
-	g := newGW(t, gwConfig(t, "  first_line_review: on\n  first_line_rounds: 1\n"), "observe", "")
+	// (internal/rigor's DefaultRounds). Level 1 on is what the cheap round
+	// needs, and the fixture's coder and reviewer are one model, which D721
+	// refuses once both levels run: the senior level takes a model of its
+	// own, which is what a repository with a first-line review does.
+	g := newGW(t, gwConfig(t, "  first_line_review: on\n  first_line_rounds: 1\n  levels: { l2: { model: "+opus+" } }\n"), "observe", "")
 	h := g.harness
 	var denies [][]string
 	read := func(inner step) step {

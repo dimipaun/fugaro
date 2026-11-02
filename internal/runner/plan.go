@@ -41,8 +41,9 @@ type planStep struct {
 // resolveLevels decides the run's three review levels (config.ResolveLevels,
 // L3.1) and writes every level that runs into the run's own configuration, so
 // the model a level names is the model its stage pins. It runs inside
-// resolvePolicy, before applyRouting, because the switch rewrites the pins a
-// level writes exactly as it rewrites the role slots.
+// resolvePolicy, after applyRouting: the switch rewrites the pins a level is
+// read off exactly as it rewrites the role slots, and level 1's answer is the
+// coder's model, so the resolution has to see the IDs the switch left.
 //
 // The launcher resolves the same levels before it writes a task (L3.2), and
 // this is the run's own half of it: a task written straight to the runs

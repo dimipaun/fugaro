@@ -653,16 +653,18 @@ func TestReviewRoundsAnUnconfiguredRepositoryTakesPros(t *testing.T) {
 // TestReviewRoundsTheModesRowDoesNotLowerASetNumber: the mode supplies the
 // number where nothing else did, and lowers nothing where a layer set one
 // (the owner's ruling of 2026-10-31, which answers O3). The repository opted in
-// and runs at POC, whose row is one round, and asks for three: the run spends
-// the three it asked for — the ceiling that used to cut them to two is gone,
-// and the recipe's own bound (1-10) is what holds the number.
+// and runs at Startup, whose row is two rounds, and asks for three: the run
+// spends the three it asked for — the ceiling that used to cut them to two is
+// gone, and the recipe's own bound (1-10) is what holds the number. It is
+// Startup and not POC because POC's row turns level 2 off (rigor.DefaultLevels),
+// so a POC run has no senior loop for this case to spend rounds in.
 func TestReviewRoundsTheModesRowDoesNotLowerASetNumber(t *testing.T) {
 	base := testutil.FixtureFiles(t)["fugaro.yaml"]
 	cfg := strings.Replace(base, "review_rounds: 2", "review_rounds: 3", 1)
 	if cfg == base {
 		t.Fatal("the fixture has no review_rounds: 2 to raise, so the case would not ask for three rounds")
 	}
-	withRigor := strings.Replace(cfg, "agent:\n", "rigor:\n  default: poc\nagent:\n", 1)
+	withRigor := strings.Replace(cfg, "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
 	if withRigor == cfg {
 		t.Fatal("the fixture has no agent: block to put rigor: before, so the repository would not opt in")
 	}
@@ -677,7 +679,7 @@ func TestReviewRoundsTheModesRowDoesNotLowerASetNumber(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := seniorRounds(rec); got != 3 {
-		t.Fatalf("the run spent %d senior rounds; want the three the repository asked for — POC's row is a default, not a ceiling", got)
+		t.Fatalf("the run spent %d senior rounds; want the three the repository asked for — Startup's row is a default, not a ceiling", got)
 	}
 	if rec.Outcome != runstore.OutcomeDraft {
 		t.Fatalf("outcome = %q; want a draft: the run stopped on its own round with a finding open", rec.Outcome)
