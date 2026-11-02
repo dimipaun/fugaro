@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // levelPinned is gwConfig with one review level's own model set and the
@@ -190,5 +192,62 @@ func TestProviderLevelModelIsRoutedToItsProvider(t *testing.T) {
 	}
 	if body := string(g.compat.Body(0)); !strings.Contains(body, `"model":"`+deepseek+`"`) {
 		t.Errorf("the provider's call is not on the level's model: %s", body)
+	}
+}
+
+// reviewCommitting is review with the stage committing once and verifying it
+// before it reports: a commit's Fugaro-Model trailer is written from the
+// environment the stage's agent runs in, so a commit the review stage makes is
+// where that stage's trailer can be read. The verify is the run's own rule
+// that the branch tip has a test run behind it (writeback refuses a commit
+// nothing verified), not anything this test is about.
+func reviewCommitting(verdict string) step {
+	inner := review(verdict, 0)
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "git commit --allow-empty -qm 'review note'")
+		verifyTest(t, ctx, req)
+		return inner(t, ctx, req)
+	}
+}
+
+// TestLevelModelInTimingAndTrailer: the model a run records for a stage and
+// the model it stamps on the stage's commits are the model the stage ran. A
+// stage whose level a layer gave a model runs that one (L4.5), so both name
+// the level's model and neither the role slot's: a record and a log that name
+// the reviewer's model while the stage's calls went to the level's describe a
+// run that did not happen, and the log is the only place a reader can check
+// what a run used.
+//
+// The level's model here is Claude's own opus and every pin is sonnet or
+// haiku, so the two names cannot be confused.
+func TestLevelModelInTimingAndTrailer(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	cfg := gwConfig(t, "  first_line_review: off\n  levels: { l2: { model: "+opus+" } }\n")
+	g := newGW(t, cfg, "enforce", "50",
+		anthropicfake.MessageOK(sonnet, use), anthropicfake.MessageOK(opus, use))
+
+	rec, err := g.run(t,
+		levelCall(new(string), new(int), new(string), implement("feature")),
+		levelCall(new(string), new(int), new(string), reviewCommitting("ship")))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	var review *runstore.StageTiming
+	for i := range rec.Stages {
+		if rec.Stages[i].Name == "review" {
+			review = &rec.Stages[i]
+		}
+	}
+	if review == nil {
+		t.Fatalf("the record has no review stage: %+v", rec.Stages)
+	}
+	if review.Model != opus {
+		t.Errorf("the review stage's timing names %q, want the level's own model %q", review.Model, opus)
+	}
+	// The commit the review stage made, read back off the branch: its trailer
+	// is the stage's own, written when the commit was made.
+	msg := testutil.Git(t, g.remote, "log", "-1", "--format=%B", "--grep=review note", "fugaro/"+runID)
+	if got := trailersOf(msg)["fugaro-model"]; !slices.Equal(got, []string{opus}) {
+		t.Errorf("the review stage's commit carries fugaro-model %v, want %v", got, []string{opus})
 	}
 }

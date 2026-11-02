@@ -1262,7 +1262,7 @@ func (r *run) stageEnv(stage string, pins map[string]string) []string {
 		return env
 	}
 	stamp := gitops.Stamp{Author: r.stampAuthor,
-		Trailers: r.stampTrailers(r.cfg.Agent.ModelFor(config.StageRole(stage)))}
+		Trailers: r.stampTrailers(r.stageModel(stage))}
 	return gitops.StampEnv(stamp, r.stampHooks, env)
 }
 
