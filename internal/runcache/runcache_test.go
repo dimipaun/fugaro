@@ -336,14 +336,12 @@ func TestAnEntryNothingHasReadForAWeekIsGone(t *testing.T) {
 	}
 }
 
-// TestOpenDropsWhatNobodyHasReadForAWeek: the age is a bound on the machine
-// and not only on what a listing answers, so it is Open that keeps it. An
-// entry past MaxAge goes even when nothing asks for it again -- the run a
-// person stopped listing -- because the walk Open makes of the directory is
-// the one the first write would otherwise have made. Neither the missing
-// directory nor the command that never ran is a failure: the cache is speed,
-// and a sweep of a directory that is not there is nothing to sweep.
-func TestOpenDropsWhatNobodyHasReadForAWeek(t *testing.T) {
+// TestAWriteDropsWhatNobodyHasReadForAWeek: the age is a bound on the machine
+// and not only on what a listing answers. An entry past MaxAge goes even when
+// nothing asks for it again -- the run a person stopped listing -- because the
+// write that seeds the size the cap counts against walks the directory first,
+// and the walk is what finds it.
+func TestAWriteDropsWhatNobodyHasReadForAWeek(t *testing.T) {
 	home := t.TempDir()
 	c := testOpen(t, home, "aurora", "fugaro-runs")
 	old, young := "runs/app/20261018-090000-0000/task.json", "runs/app/20261018-090100-0001/task.json"
@@ -351,17 +349,64 @@ func TestOpenDropsWhatNobodyHasReadForAWeek(t *testing.T) {
 	c.Put(young, 4, []byte(`{"prompt":"the new task"}`))
 	backdate(t, c.path(old), MaxAge+time.Hour)
 
-	// The next command opens the cache and never reads either entry.
+	// The next command reads an object the cache does not hold: the write it
+	// makes sweeps the entries nobody has read for a week.
 	again := testOpen(t, home, "aurora", "fugaro-runs")
+	if got, ok := again.Get(young, 4); !ok || string(got) != `{"prompt":"the new task"}` {
+		t.Fatalf("the entry inside the age answered %q, %v", got, ok)
+	}
+	again.Put("runs/app/20261018-090200-0002/task.json", 5, []byte(`{"prompt":"the newest task"}`))
 	if _, err := os.Stat(again.path(old)); !os.IsNotExist(err) {
-		t.Errorf("the entry past %s is still at %s (%v): opening the cache is what drops what nothing reads", MaxAge, again.path(old), err)
+		t.Errorf("the entry past %s is still at %s (%v): the write that walks the directory drops what nothing reads", MaxAge, again.path(old), err)
 	}
 	if got, ok := again.Get(young, 4); !ok || string(got) != `{"prompt":"the new task"}` {
 		t.Errorf("the entry inside the age answered %q, %v after the sweep", got, ok)
 	}
+	// A cache that is only read from walks nothing: the entry nothing asks
+	// for is left where it is, and the listing pays for no walk it did not
+	// need (the whole reason the sweep is on this path and not on Open).
+	third := testOpen(t, home, "aurora", "fugaro-runs")
+	fresh := "runs/app/20261018-090300-0003/task.json"
+	third.Put(fresh, 6, []byte(`{"prompt":"a task"}`))
+	backdate(t, third.path(fresh), MaxAge+time.Hour)
+	fourth := testOpen(t, home, "aurora", "fugaro-runs")
+	if _, ok := fourth.Get(young, 4); !ok {
+		t.Fatal("the entry the read is for was not answered")
+	}
+	if _, err := os.Stat(fourth.path(fresh)); err != nil {
+		t.Errorf("opening a cache and reading one entry dropped another (%v): the age is enforced on the entry a read asks for, and by the walk a write makes", err)
+	}
 	// And a first open of a cache that was never written is not a failure.
-	if fresh := testOpen(t, t.TempDir(), "borealis", "fugaro-runs"); fresh == nil {
+	if other := testOpen(t, t.TempDir(), "borealis", "fugaro-runs"); other == nil {
 		t.Fatal("a project with no cache directory opened as no cache")
+	}
+}
+
+// TestARewriteIsNotExpiredByAStaleRead: Get decides an entry is expired from
+// the time the filesystem reports, and a write may replace the file between
+// that stat and the removal the miss makes (write renames over it). Removing
+// what the write stored would lose a live entry, so the age is measured again
+// under the lock -- the one place a write cannot be in flight -- and the file
+// that is removed is the file that was measured.
+func TestARewriteIsNotExpiredByAStaleRead(t *testing.T) {
+	c, _ := testCache(t, t.TempDir(), "aurora", "fugaro-runs")
+	key := "runs/app/20261018-090000-0000/task.json"
+	c.Put(key, 1, []byte(`{"prompt":"the task as it was"}`))
+	backdate(t, c.path(key), MaxAge+time.Hour)
+	// The read's stat saw the entry above; this write replaced it before the
+	// miss it decided on was carried out.
+	c.Put(key, 2, []byte(`{"prompt":"the task as it is"}`))
+
+	c.expire(c.path(key))
+	if got, ok := c.Get(key, 2); !ok || string(got) != `{"prompt":"the task as it is"}` {
+		t.Errorf("the entry written over the expired one answered %q, %v: an expiry of the file a read saw must not remove the file a write stored", got, ok)
+	}
+
+	// And the removal the miss makes still happens when nothing replaced it.
+	backdate(t, c.path(key), MaxAge+time.Hour)
+	c.expire(c.path(key))
+	if _, err := os.Stat(c.path(key)); !os.IsNotExist(err) {
+		t.Errorf("the expired entry is still at %s (%v)", c.path(key), err)
 	}
 }
 
