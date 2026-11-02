@@ -130,7 +130,7 @@ func modelsAddRefuseID(id string) error {
 	case isClaudeModel(id):
 		return userErr("%s is a Claude model: Claude models go direct to Anthropic, or down the route the owner's routing.claude switch names, and a provider route never claims one (D785). To send it through a provider, set routing.claude.via and routing.claude.models in the project config", config.CodeSpan(id))
 	case strings.Contains(id, ":"):
-		return userErr("%s is a variant (a \":\" suffix is another price and routing): name the plain vendor/model ID, as fugaro validate requires of a pin", config.CodeSpan(id))
+		return modelsRefuseVariant(id)
 	case pricing.IsAlias(id):
 		return userErr("%s is not an explicit model ID: name the vendor/model ID the route serves, as a pin must", config.CodeSpan(id))
 	}

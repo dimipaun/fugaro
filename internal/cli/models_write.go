@@ -90,6 +90,13 @@ func modelsSpliceRefusal(path string, err error) (error, bool) {
 	return userErr("%s cannot be changed by one edit (%s), and this command keeps every comment and key order it does not touch, so it wrote nothing: write the entry in by hand, or put that block in block style — one item per line — and repeat the command", path, reason), true
 }
 
+// modelsRefuseVariant is the refusal a ":" variant gets from every models
+// write, in one sentence: the suffix is another price and another routing, and
+// no file these commands carry holds one.
+func modelsRefuseVariant(id string) error {
+	return userErr("%s is a variant (a \":\" suffix is another price and routing): name the plain vendor/model ID, which is what a config carries", config.CodeSpan(id))
+}
+
 // modelsRoleBackground is the third key agent.models has. It is a literal and
 // not a config.Role: background has no launch role of its own (ModelFor folds
 // it into the coder's, and EffectiveBackground is what a background request

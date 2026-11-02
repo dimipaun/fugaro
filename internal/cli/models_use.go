@@ -115,7 +115,7 @@ func runModelsUse(cmd *cobra.Command, repo, role, id string, o *modelsUseOptions
 // one would refuse every launch of that repository.
 func modelsUseRefuseID(id string) error {
 	if strings.Contains(id, ":") {
-		return userErr("%s is a variant (a \":\" suffix is another price and routing): name the plain vendor/model ID, as a pin must", config.CodeSpan(id))
+		return modelsRefuseVariant(id)
 	}
 	if why := config.CheckModelID(id); why != "" {
 		return userErr("%s: name a model ID a run may pin", why)

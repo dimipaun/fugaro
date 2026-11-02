@@ -95,7 +95,7 @@ func modelsRmRefuseID(id string) error {
 	case isClaudeModel(id):
 		return userErr("%s is a Claude model: Claude models go direct to Anthropic, or down the route the owner's routing.claude switch names, and no provider route claims one, so there is nothing here to remove. Change routing.claude in the project config instead", config.CodeSpan(id))
 	case strings.Contains(id, ":"):
-		return userErr("%s is a variant (a \":\" suffix is another price and routing), and a config never carries one: name the plain vendor/model ID", config.CodeSpan(id))
+		return modelsRefuseVariant(id)
 	}
 	return nil
 }
