@@ -76,6 +76,9 @@ import {
   COORDINATOR_TOTAL_COLLISIONS_WORD,
   COORDINATOR_TOTAL_IN_FLIGHT_WORD,
   COORDINATOR_TOTAL_REPOS_WORD,
+  COORDINATOR_TRANSCRIPT_MISSING_WORD,
+  COORDINATOR_TRANSCRIPT_QUESTIONS,
+  COORDINATOR_TRANSCRIPT_WORD,
 } from '../../src/renderer/screens/coordinator'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
@@ -223,7 +226,7 @@ var coordinator = load('/renderer/screens/coordinator.js');
 var decoded = schema.decodeCoordinatorStatus(${JSON.stringify(document)}, 'the committed coordinator document');
 if (!decoded.ok) return { error: 'the decoder refused the fixture: ' + decoded.skew.because };
 var factory = domFactory();
-var model = coordinator.buildCoordinatorModel({ view: decoded.value, runs: null, plans: null, caps: null, checkout: true, capsHidden: false });
+var model = coordinator.buildCoordinatorModel({ view: decoded.value, runs: null, plans: null, caps: null, intents: null, checkout: true, capsHidden: false });
 var tree = coordinator.renderCoordinator(factory, model, ${JSON.stringify(theme)});
 var previous = document.getElementById('coordinator-mount');
 if (previous) previous.remove();
@@ -756,6 +759,42 @@ test.describe('the Coordinator view in the dashboard', () => {
     await expect(block).toBeVisible()
     await expect(block.locator('span.unavailable-operation')).toHaveCount(1)
     await expect(block.locator('span.unavailable-operation')).toHaveText('coordinator.show')
+  })
+
+  test('draws the read-only pane, and holds no field a person could type in', async () => {
+    // K5, in the state this window's stub puts the pane in: the pane's own read
+    // (`coordinator intents --all --json`) is a real spawn the CLI refuses
+    // (exit 2, like every command this stub does not answer), so what the pane
+    // holds is the console's refusal naming its own command -- and, beside it,
+    // the three things it can draw without the store: its heading, the three
+    // questions the console composes itself, and the sentence about the front
+    // door that is not built (D820).
+    //
+    // **The absence is the claim** (D827): the pane is a drawing and not a door,
+    // and a real browser is what makes that checkable -- a field a person could
+    // type a command line into is the browser's own element, and a
+    // `contenteditable` is an attribute a fake tree would only record.
+    const pane = page.locator(`${THE_VIEW} section.coordinator-transcript`)
+    await expect(pane).toHaveCount(1)
+    await expect(pane.locator('p.coordinator-transcript-word')).toHaveText(COORDINATOR_TRANSCRIPT_WORD)
+    await expect(pane.locator('p.coordinator-transcript-missing')).toHaveText(
+      COORDINATOR_TRANSCRIPT_MISSING_WORD,
+    )
+    await expect(pane.locator('span.unavailable-operation')).toHaveText('coordinator.intents')
+    await expect(pane.locator('p.coordinator-transcript-question-word')).toHaveText(
+      COORDINATOR_TRANSCRIPT_QUESTIONS.map((question) => question.word),
+    )
+    // No declaration is drawn: the read that would carry one refused, and an
+    // empty pane is not a fleet that has declared nothing.
+    await expect(pane.locator('p.coordinator-transcript-intent')).toHaveCount(0)
+
+    await expect(pane.locator('input, textarea, select')).toHaveCount(0)
+    await expect(pane.locator('[contenteditable]')).toHaveCount(0)
+    // The pane draws no control at all in this state: the one it can draw is the
+    // stamp's own Refresh, and a stamp stands for declarations this window never
+    // read. A button that sent text would be a second one, whatever it read.
+    await expect(pane.locator('button')).toHaveCount(0)
+    await expect(page.locator(`${THE_VIEW} a`)).toHaveCount(0)
   })
 
   test('draws the committed fixture’s numbers as text, and puts no destination on any of them', async () => {
