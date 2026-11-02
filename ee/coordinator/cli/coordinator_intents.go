@@ -44,11 +44,11 @@ import (
 // coordinatorIntentsNote is the line the list carries under it, because the
 // column above it is the one column of this document that is not a fact. An
 // intent's declared_by is written by whoever declared it — a run's own launch
-// record (launch.json's launched_by) or a person's own `coordinator report` —
-// and nothing here verifies it or authorises anything by it.
+// record or a person's own `coordinator report` — and nothing here verifies it
+// or authorises anything by it.
 const coordinatorIntentsNote = "declared by is what whoever declared it wrote about itself — a run's own\n" +
-	"launch record (launch.json's launched_by) or a person's report: a declaration,\n" +
-	"and never a verified identity (docs/coordinator/reconciliation.md, finding #11)."
+	"launch record, or a person's report: a declaration, and never a verified\n" +
+	"identity (docs/coordinator/reconciliation.md, finding #11)."
 
 // coordinatorIntentsOptions are intents' flags. The selection, the window and
 // the json switch are status's own, and they mean the same thing here.
