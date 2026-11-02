@@ -80,3 +80,70 @@ func HarnessOAuthSecret(name string) bool {
 // environment may carry. The container itself is derived by
 // gcp.CredsBundleSecretID, which is ProjectSecretID of this name.
 const CredentialsBundleSecret = "creds-bundle"
+
+// ReviewSigningKeySuffix is appended to an account's own secret name
+// (ClaudeAccountSecret) to build the name of its review-signing key's bundle
+// entry: the HMAC key the credentials service signs a review run's verdict
+// with, and verifies it against (docs/c39-review-identity/spec.md §6.1, D1069).
+//
+// The doubled dash is the separator on purpose, and it is what keeps the
+// family out of the account namespace: ClaudeAccountNameRE refuses a doubled
+// dash in a name, so no account can ever be named such that its own
+// ClaudeAccountSecret collides with a review-signing name — one name, two
+// credentials, which is the collision claude-oauth-token-bitbucket-token needs
+// a reservation for (CredentialKey, reservedClaudeAccountName). The family
+// therefore reserves no account name and the two cannot drift apart.
+const ReviewSigningKeySuffix = "--review-signing"
+
+// ReviewSigningKeyPreviousSuffix is the rotation window's second entry: the
+// value the rotation replaced, carried beside the new one so there is no
+// instant in which the service holds neither, and accepted by the verify route
+// and by nothing older (spec.md §6.3, D1069).
+const ReviewSigningKeyPreviousSuffix = "-previous"
+
+// ReviewSigningKeySecret is the bundle entry name holding account's
+// review-signing key, and ReviewSigningKeyPreviousSecret the name the rotation
+// carries the replaced key under. Like ClaudeAccountSecret they are pure
+// functions of the account name — the default (or empty) account is the
+// unsuffixed claude-oauth-token — and one entry per account is the property
+// D892 asks for: the bundle is where it lives, because Q6 pins the service's
+// Secret Manager reach to one container and one accessor grant.
+func ReviewSigningKeySecret(account string) string {
+	return ClaudeAccountSecret(account) + ReviewSigningKeySuffix
+}
+
+// ReviewSigningKeyPreviousSecret is ReviewSigningKeySecret of the rotation
+// window's previous entry, read beside the current one and never alone.
+func ReviewSigningKeyPreviousSecret(account string) string {
+	return ReviewSigningKeySecret(account) + ReviewSigningKeyPreviousSuffix
+}
+
+// ReviewSigningKeyAccount is the two functions above read backwards: it
+// reports whether name is a review-signing entry's name, which account it
+// belongs to (DefaultClaudeAccount for the unsuffixed default) and whether it
+// is the rotation's previous entry.
+//
+// A name whose account part is not one an account may be named — empty, over
+// MaxClaudeAccountNameLen, or outside ClaudeAccountNameRE — is not a
+// review-signing name: the same rule CredentialKey applies to the account
+// family, so a key the config path can never produce is a credential that
+// cannot be written either, rather than one that loads and is unreachable.
+func ReviewSigningKeyAccount(name string) (account string, previous, ok bool) {
+	rest, found := strings.CutSuffix(name, ReviewSigningKeyPreviousSuffix)
+	if !found {
+		rest = name
+	}
+	previous = found
+	own, found := strings.CutSuffix(rest, ReviewSigningKeySuffix)
+	if !found {
+		return "", false, false
+	}
+	if own == ClaudeOAuthToken {
+		return DefaultClaudeAccount, previous, true
+	}
+	account, found = strings.CutPrefix(own, ClaudeOAuthTokenPrefix)
+	if !found || len(account) > MaxClaudeAccountNameLen || !ClaudeAccountNameRE.MatchString(account) {
+		return "", false, false
+	}
+	return account, previous, true
+}

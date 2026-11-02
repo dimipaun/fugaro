@@ -3,6 +3,7 @@ package credsvc
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,8 +42,9 @@ import (
 //   - The shape is closed. The keys are exactly the credentials the platform
 //     defines — the model credentials (config.AnthropicSecret and the
 //     claude-oauth-token family), the GitHub App's private key
-//     (config.GitHubAppKeySecret, C2.1) and the upstream Bitbucket credential
-//     (config.BitbucketSecret, D506) — and a key outside that set is
+//     (config.GitHubAppKeySecret, C2.1), the upstream Bitbucket credential
+//     (config.BitbucketSecret, D506) and the review-signing family
+//     (config.ReviewSigningKeySecret, D1069) — and a key outside that set is
 //     refused rather than ignored: a typo'd key that parsed would be a
 //     credential nobody meant to store, read as nothing and never noticed.
 //     The published shape is schemas/creds-bundle.schema.json, and
@@ -76,11 +78,13 @@ import (
 // (config.ClaudeAccountSecret), which is what a workflow's `secrets:` would
 // have named and what `fugaro creds set` writes.
 //
-// Two entries are not model credentials and no cascade ever sees either
-// (C2.1, D145, D506): the App key, which the mint signs a JWT with, and the
-// upstream Bitbucket credential, which the git proxy forwards with. Neither
-// has a tier or an account, and Credentials — the whole of what the cascade
-// is offered — answers the model credentials alone.
+// Three kinds of entry are not model credentials and no cascade ever sees any
+// of them (C2.1, D145, D506, D1069): the App key, which the mint signs a JWT
+// with; the upstream Bitbucket credential, which the git proxy forwards with;
+// and the per-account review-signing keys, which the sign route computes a MAC
+// with and the verify route recomputes it with. None has a tier, and
+// Credentials — the whole of what the cascade is offered — answers the model
+// credentials alone.
 
 const (
 	// MaxBundleBytes bounds the bundle document before it is parsed. 64 KiB
@@ -103,6 +107,14 @@ const (
 	// 2 KiB; 8 KiB leaves room for a PEM with a wide key and refuses a
 	// document that pasted something else in.
 	MaxBundleValueBytes = 8 << 10
+
+	// ReviewSigningKeyBytes is the length of a review-signing key: the 32
+	// bytes D1071 has the CLI generate at the owner's terminal, written into
+	// the bundle as lower-case hex. The bound is checked where the key is read
+	// (ReviewSigningKey), so a document holding a shorter or a longer value is
+	// a service that refuses to sign rather than one that signs under what it
+	// found.
+	ReviewSigningKeyBytes = 32
 
 	// BundleCacheTTL is how long a parsed document is served before the
 	// container is read again. It is short and bounded on purpose: C1.25's
@@ -132,6 +144,17 @@ var (
 	// ErrBundleUnparseable is a body that is not a YAML map of names to
 	// string values.
 	ErrBundleUnparseable = errors.New("credsvc: the credentials bundle is not a YAML map of credential names to values")
+	// ErrReviewSigningKeyAbsent is a document that holds no review-signing key
+	// for the account asked for — the current entry or, for a rotation that has
+	// not run yet, the previous one. The read that answers it fails closed: a
+	// missing key is a refusal, never a signature under anything else (D143,
+	// docs/c39-review-identity/spec.md §6.4).
+	ErrReviewSigningKeyAbsent = errors.New("credsvc: the credentials bundle holds no review-signing key for that account")
+	// ErrReviewSigningKeyUnusable is a review-signing entry whose value is not
+	// the key it claims to be: not hex, or not ReviewSigningKeyBytes long. It
+	// is its own refusal rather than a signature computed from whatever the
+	// document held, for the absent entry's reason.
+	ErrReviewSigningKeyUnusable = errors.New("credsvc: the credentials bundle holds a review-signing key that is not a usable key")
 	// ErrBundleUnknownKey is a key that is not a credential name.
 	ErrBundleUnknownKey = errors.New("credsvc: the credentials bundle holds a key that is not a credential name")
 	// ErrBundleBadValue is a value that is not a usable credential.
@@ -159,9 +182,12 @@ func (e *BundleError) Unwrap() error { return e.Kind }
 
 func bundleErr(kind error, key string) error { return &BundleError{Kind: kind, Key: key} }
 
-// bundleRefusals are the loader's own refusals, the ones BundleRefusal maps a
-// failure to. Every one of them is written by this file.
+// bundleRefusals are this file's own refusals, the ones BundleRefusal maps a
+// failure to: the loader's and, for the review-signing key, ReviewSigningKey's.
+// Every one of them is written by this file.
 var bundleRefusals = []error{
+	ErrReviewSigningKeyAbsent,
+	ErrReviewSigningKeyUnusable,
 	ErrBundleAbsent,
 	ErrBundleUnreadable,
 	ErrBundleTooLarge,
@@ -197,11 +223,12 @@ func BundleRefusal(err error) string {
 	return ErrBundleUnreadable.Error()
 }
 
-// Kind is what a bundle entry is for. The bundle holds three kinds of thing:
+// Kind is what a bundle entry is for. The bundle holds four kinds of thing:
 // the model credentials the cascade selects, each with a tier, the GitHub
-// App's private key, which the mint signs with, and the upstream Bitbucket
-// credential the git proxy forwards with (D506) — the last two are candidates
-// for nothing (C2.1, B1.2).
+// App's private key, which the mint signs with, the upstream Bitbucket
+// credential the git proxy forwards with (D506) and the per-account
+// review-signing keys the verdict routes compute a MAC with (D1069) — the
+// last three are candidates for nothing (C2.1, B1.2).
 type Kind string
 
 const (
@@ -221,13 +248,25 @@ const (
 	// and it must never reach the cascade, for the App key's reason: the
 	// cascade would offer the caller's own git token to a model call.
 	KindGit Kind = "git"
+	// KindReviewSigning is an account's review-signing key: the document key
+	// config.ReviewSigningKeySecret(account), and the rotation window's
+	// config.ReviewSigningKeyPreviousSecret(account) beside it (D1069). The
+	// service signs a review run's verdict with it and verifies against those
+	// two entries and nothing older (docs/c39-review-identity/spec.md §6). It
+	// has no tier and it must never reach the cascade, for the App key's
+	// reason: a candidate the cascade could select would be a signing key
+	// attached to a model call as the caller's credential. ReviewSigningKey is
+	// the only reader, and it is not a value this kind hands out: it answers
+	// the key's bytes or a refusal.
+	KindReviewSigning Kind = "review-signing"
 )
 
 // Entry is one credential the bundle holds, as the cascade names it.
 type Entry struct {
 	// Kind is what the entry is for: KindModel for a credential the cascade
 	// may select, KindGitHubApp for the App key, KindGit for the upstream
-	// git credential. Credentials answers the model ones alone.
+	// git credential, KindReviewSigning for an account's review-signing key.
+	// Credentials answers the model ones alone.
 	Kind Kind
 	// Name is the credential's name: the Claude account's for tier A
 	// (config.DefaultClaudeAccount for the bare token), and
@@ -236,12 +275,16 @@ type Entry struct {
 	// name is config.GitHubAppKeySecret, which is what the audit line and the
 	// mint's own refusal name it by; the upstream Bitbucket token's is
 	// config.BitbucketSecret, which is the name the proxy's audit line speaks
-	// (R2: names only) and never its value.
+	// (R2: names only) and never its value; a review-signing entry's is its
+	// own document key (config.ReviewSigningKeySecret, or the rotation's
+	// config.ReviewSigningKeyPreviousSecret), which is the name the sign and
+	// verify lines speak — an account is one half of it rather than the whole,
+	// because one account has two entries.
 	Name string
 	// Tier is the cost class (creds.TierA, creds.TierB). It is empty for an
-	// entry that is not a model credential: the App key and the upstream
-	// Bitbucket credential are spent nowhere, so neither has a tier to settle
-	// a call against.
+	// entry that is not a model credential: the App key, the upstream
+	// Bitbucket credential and a review-signing key are spent nowhere, so
+	// none of them has a tier to settle a call against.
 	Tier creds.Tier
 	// Key is the document's own key for this credential
 	// (config.ClaudeAccountSecret for a named account). It is not a value.
@@ -316,6 +359,12 @@ type Bundle struct {
 	// -1 when the document holds none, under the same rule as appKey: one
 	// document key, one entry, a duplicate refused.
 	gitToken int
+	// reviewSigning indexes the review-signing entries by their DOCUMENT KEY
+	// (config.ReviewSigningKeySecret / ReviewSigningKeyPreviousSecret), which
+	// is the name the sign and verify lines speak. A key, not a name: the two
+	// entries of one account differ only by the rotation suffix, and a map
+	// keyed by the account could hold one of them.
+	reviewSigning map[string]int
 }
 
 // Len is how many credentials the document holds.
@@ -407,6 +456,55 @@ func (b *Bundle) BitbucketToken() (Entry, bool) {
 	return b.entries[b.gitToken], true
 }
 
+// ReviewSigningKey answers account's review-signing key: the bundle entry name
+// that holds it — the name the sign and verify lines carry as their credential
+// — and the key's bytes, which is what the route computes its MAC with
+// (D1069). previous asks for the rotation window's second entry
+// (config.ReviewSigningKeyPreviousSecret), which the verify route accepts
+// beside the current one and the sign route never signs with.
+//
+// It answers the name and the bytes rather than the Entry, and that is the
+// point of the accessor: an Entry carries the document's raw value, and a
+// caller that reached for it would be computing a MAC over whatever text the
+// document held, which is exactly the value this read exists to refuse. So the
+// two ways a read can fail are typed refusals and never a zero key:
+// ErrReviewSigningKeyAbsent for an entry the document does not hold (the
+// operator has not run the service's documented `creds set` step yet, or the
+// rotation that would carry the previous entry has not happened), and
+// ErrReviewSigningKeyUnusable for an entry whose value is not a 32-byte key in
+// hex. Both fail closed, as §6.4 of the review design requires: a service that
+// cannot read its key refuses to sign rather than signing under something
+// else.
+func (b *Bundle) ReviewSigningKey(account string, previous bool) (name string, key []byte, err error) {
+	name = config.ReviewSigningKeySecret(account)
+	if previous {
+		name = config.ReviewSigningKeyPreviousSecret(account)
+	}
+	if b == nil {
+		return "", nil, ErrReviewSigningKeyAbsent
+	}
+	i, ok := b.reviewSigning[name]
+	if !ok {
+		return "", nil, ErrReviewSigningKeyAbsent
+	}
+	key, err = reviewSigningKeyBytes(b.entries[i].value.value)
+	if err != nil {
+		return "", nil, ErrReviewSigningKeyUnusable
+	}
+	return name, key, nil
+}
+
+// reviewSigningKeyBytes decodes a review-signing entry's value. The value
+// never leaves this function and no error names it: a value that is not a key
+// is refused as a class, the way every other refusal in this file is.
+func reviewSigningKeyBytes(value string) ([]byte, error) {
+	raw, err := hex.DecodeString(value)
+	if err != nil || len(raw) != ReviewSigningKeyBytes {
+		return nil, ErrReviewSigningKeyUnusable
+	}
+	return raw, nil
+}
+
 // String renders the bundle as its names and tiers. It is what makes
 // `log.Printf("%v", bundle)` safe.
 func (b *Bundle) String() string {
@@ -433,11 +531,13 @@ func (b *Bundle) LogValue() slog.Value { return slog.StringValue(b.String()) }
 // Anthropic API key (config.AnthropicSecret, tier B), the Claude OAuth tokens
 // (config.ClaudeOAuthToken for the default account and the
 // claude-oauth-token-<name> namespace, tier A), the GitHub App's private key
-// (config.GitHubAppKeySecret, C2.1) and the upstream Bitbucket credential
-// (config.BitbucketSecret, D506) — the last two are the keys that are not
-// model credentials: their kinds are KindGitHubApp and KindGit and they have
-// no tier, because the mint signs a JWT with one and the proxy forwards the
-// other rather than either being spent on a call.
+// (config.GitHubAppKeySecret, C2.1), the upstream Bitbucket credential
+// (config.BitbucketSecret, D506) and the per-account review-signing keys
+// (config.ReviewSigningKeySecret's family, D1069) — the last three are the keys
+// that are not model credentials: their kinds are KindGitHubApp, KindGit and
+// KindReviewSigning and they have no tier, because the mint signs a JWT with
+// one, the proxy forwards another and the sign route computes a MAC with the
+// third, rather than any of them being spent on a call.
 func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool) {
 	switch {
 	case key == config.GitHubAppKeySecret:
@@ -449,6 +549,16 @@ func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool
 	case key == config.ClaudeOAuthToken:
 		return config.DefaultClaudeAccount, KindModel, creds.TierA, true
 	case strings.HasPrefix(key, config.ClaudeOAuthTokenPrefix):
+		// The review-signing family is read first, and it is why its separator
+		// is a doubled dash: ClaudeAccountNameRE refuses a doubled dash, so no
+		// account's own key (ClaudeAccountSecret) can spell one — the two
+		// families cannot collide, and no account name has to be reserved for
+		// this one the way config.BitbucketSecret's has to be. Its name is the
+		// DOCUMENT KEY, which is what the sign and verify lines speak (the App
+		// key's and the git token's name is their own document key too).
+		if _, _, ok := config.ReviewSigningKeyAccount(key); ok {
+			return key, KindReviewSigning, "", true
+		}
 		account := strings.TrimPrefix(key, config.ClaudeOAuthTokenPrefix)
 		// The one name the account family may not take, because it is the
 		// name of another credential of this same document: an account
@@ -549,7 +659,7 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 	if n := len(root.Content) / 2; n > MaxBundleCredentials {
 		return nil, bundleErr(ErrBundleTooMany, "")
 	}
-	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1}
+	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1, reviewSigning: make(map[string]int, 1)}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], root.Content[i+1]
 		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" {
@@ -589,6 +699,10 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 			if b.gitToken >= 0 {
 				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 			}
+		} else if kind == KindReviewSigning {
+			if _, dup := b.reviewSigning[k.Value]; dup {
+				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
+			}
 		} else if _, dup := b.byName[name]; dup {
 			return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 		}
@@ -606,6 +720,8 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 			b.appKey = len(b.entries)
 		case KindGit:
 			b.gitToken = len(b.entries)
+		case KindReviewSigning:
+			b.reviewSigning[k.Value] = len(b.entries)
 		default:
 			b.byName[name] = len(b.entries)
 		}
