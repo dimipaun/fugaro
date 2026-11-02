@@ -243,3 +243,61 @@ func TestRunReviewLevelsFlagWritesTaskField(t *testing.T) {
 		t.Fatalf("the refused launch started %d executions, want the %d it ran before", n, before)
 	}
 }
+
+// TestRunReviewLevelsFlagRefusesHostileDocuments: the document is the
+// launcher's to read strictly and refuse, before any cloud call, because the
+// runner's bootstrap is where a near miss would otherwise be found after the
+// launch was paid for (config.ParseReviewLevelsYAML). An unknown key, `none:
+// true` beside another key, a document with nothing in it, a file that is not
+// there, and - beside --task-file - (one stdin, two readers) are each refused
+// with a message naming what is wrong, and each leaves the runs bucket empty
+// and starts no execution.
+func TestRunReviewLevelsFlagRefusesHostileDocuments(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0160)
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := []struct {
+		name, id, stdin, want string
+		args                  []string
+	}{
+		{"an unknown key", "20261007-100000-abcd", "", "l4",
+			[]string{"--review-levels", write("unknown.yaml", "l4:\n  model: deepseek/deepseek-v4-pro\n")}},
+		{"none beside another key", "20261007-100000-abce", "", "none: true beside another key",
+			[]string{"--review-levels", write("none.yaml", "l2:\n  none: true\n  model: deepseek/deepseek-v4-pro\n")}},
+		{"a document with nothing in it", "20261007-100000-abcf", "", "the document is empty",
+			[]string{"--review-levels", write("empty.yaml", "")}},
+		{"an empty flag value", "20261007-100000-ac00", "", "pass a file, or - for stdin",
+			[]string{"--review-levels", ""}},
+		{"a file that is not there", "20261007-100000-ac01", "", "reading the review levels",
+			[]string{"--review-levels", filepath.Join(dir, "missing.yaml")}},
+		// The task comes from stdin too here, so this one carries text that way
+		// — with no text at all the empty task is refused first, and the
+		// both-read-stdin refusal is never reached.
+		{"- beside --task-file -", "20261007-100000-ac02", "do the thing", "both read stdin",
+			[]string{"--review-levels", "-", "--task-file", "-"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			before := len(f.run.Executions())
+			args := append([]string{"run", "--repo", "acme/app", "--run-id", c.id}, c.args...)
+			if c.stdin == "" {
+				args = append(args, "do the thing")
+			}
+			_, _, err := executeStdin(t, c.stdin, args...)
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want exit 1 naming %q", err, c.want)
+			}
+			if n := len(f.run.Executions()); n != before {
+				t.Fatalf("the refused launch started %d executions, want the %d it ran before", n, before)
+			}
+		})
+	}
+}

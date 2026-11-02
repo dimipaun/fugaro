@@ -3,11 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -570,6 +574,109 @@ func TestRecipesSkewJudgesARecipeItCannotRead(t *testing.T) {
 	}
 	if ask := reviewLevelsAsk(levels, nil, cfg, nil, false); ask != "" {
 		t.Errorf("a recipe that was read asked %q, want nothing", ask)
+	}
+}
+
+// TestRecipesSkewRefusesReviewLevelsOnACloneWorkflow: a checkout: clone
+// workflow's job runs the installation's base image directly and has no build
+// record of its own, so the gate's second call site — the clone branch of
+// finishLaunch — judges base_images.base instead (checkCloneReviewLevelsImage,
+// the clone half of checkImageSince). A launch that asks for levels is refused
+// there too, naming the base image's release.
+//
+// Mutation (pass "" as the ask on the clone branch's call,
+// `checkCloneReviewLevelsImage(env.lc, spec, "", warn)`): the 0.15.0 launch
+// below succeeds, and the run drops the level it asked for.
+func TestRecipesSkewRefusesReviewLevelsOnACloneWorkflow(t *testing.T) {
+	launch := func(t *testing.T, base string) error {
+		t.Helper()
+		f := newCloudFixture(t)
+		f.appendConfig(t, "base_images: {base: "+base+"}\n")
+		checkoutWorkflows(t, "", "  web: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+		levels := filepath.Join(t.TempDir(), "levels.yaml")
+		if err := os.WriteFile(levels, []byte("l3:\n  none: true\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--review-levels", levels, "Fix it.")
+		return err
+	}
+	err := launch(t, "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	if err == nil || !strings.Contains(err.Error(), "the task's review_levels (l3.none)") ||
+		!strings.Contains(err.Error(), "release 0.15.0") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want the clone refusal naming the base image's release", err)
+	}
+	if err := launch(t, "ghcr.io/dimipaun/fugaro-base:0.16.0"); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+}
+
+// TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord: the gate's judge is
+// the build record, which is what says which binary the image runs: a launch
+// that asks for levels and has no record to read is refused rather than waved
+// through — a record that is missing, unreadable or silent about its base is
+// not evidence of an image that acts on levels, and a 0.15.0 runner accepts the
+// keys and acts on none of them.
+//
+// Mutation (make checkReviewLevelsImage return nil for a record it cannot
+// read): both refusals below disappear and the launches stand.
+func TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord(t *testing.T) {
+	f := newCloudFixture(t)
+	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	levels := filepath.Join(t.TempDir(), "levels.yaml")
+	if err := os.WriteFile(levels, []byte("l2:\n  none: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launch := func(id string) error {
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "--review-levels", levels, "Fix it.")
+		return err
+	}
+	if err := launch("20261007-100000-abcd"); err == nil ||
+		!strings.Contains(err.Error(), "the task's review_levels (l2.none) needs a job image") ||
+		!strings.Contains(err.Error(), "has no build record") || ExitCode(err) != ExitUserError {
+		t.Fatalf("no record: err = %v, want the levels gate's refusal", err)
+	}
+	data, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "web", FugaroVersion: "0.5.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeBucketFile(t, f, imagecheck.RecordKey(appSlug, "web"), string(data))
+	if err := launch("20261007-100000-abce"); err == nil ||
+		!strings.Contains(err.Error(), "the task's review_levels (l2.none) needs a job image") ||
+		!strings.Contains(err.Error(), "does not say which base image it was built from") {
+		t.Fatalf("a record with no base_ref: err = %v, want the levels gate's refusal", err)
+	}
+	// And a dated record is what the launch is judged on: at the release the
+	// gate names, the same launch stands.
+	writeBuildRecord(t, f, appSlug, "web", release0160)
+	if err := launch("20261007-100000-abcf"); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+}
+
+// TestRecipesSkewRefusesTheOwnerFloorOnOldImage: the owner's floor (D722, G1)
+// is the one thing about levels a repository's own configuration cannot
+// express — it lives in the policy node, which only the owner writes — and a
+// run it raises has to be refused on an image whose runner reads no levels at
+// all: a 0.15.0 run drops the floor in silence, which is the state D722 exists
+// to prevent. Driving the whole launch pins the gate's own policy read, the
+// mode the floor is looked up under, and the ask it produces together.
+//
+// Mutation (drop the floor read from launchReviewLevelsAsk, so floor stays
+// nil): the 0.15.0 launch below succeeds.
+func TestRecipesSkewRefusesTheOwnerFloorOnOldImage(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "pro", "--run-id", "20261007-100000-abcd", "Fix it.")
+	if err == nil || !strings.Contains(err.Error(), "the owner's review-level floor") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want the floor's refusal", err)
+	}
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "pro", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("0.16.0: %v", err)
 	}
 }
 
