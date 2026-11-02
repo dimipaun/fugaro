@@ -297,10 +297,11 @@ const (
 // workspace that token belongs to. The secret is held here AND as the entry's
 // value, which is where every other credential of the document lives: the
 // paths that scrub or redact an Entry's value (creds.go's writeForms,
-// probe.go's scrub) read that one, so a consumer whose secret lived only in
-// this struct would be the one credential they walk past. The workspace is a
-// name and not a credential: the read mint refuses a repository of another one
-// by name (G11), and no line this service writes carries a value.
+// probe.go's BundleLoader.Scrub, which every audit line of the service goes
+// through) read that one, so a consumer whose secret lived only here would be
+// the one credential they walk past. The workspace is a name and not a
+// credential: the read mint refuses a repository of another one by name (G11),
+// and no line this service writes carries a value.
 type readConsumer struct {
 	key       secret
 	value     secret
@@ -410,8 +411,9 @@ type Bundle struct {
 	gitToken int
 	// readConsumer is the read consumer's entry, or nil when the document
 	// holds none, under the same rule as appKey: one document key, one entry,
-	// a duplicate refused. The entry's value holds its secret beside these
-	// three fields, so the paths that scrub an Entry's value cover it.
+	// a duplicate refused. It holds the consumer's three fields, and the
+	// entry's value holds the secret as well, so the paths that scrub an
+	// Entry's value cover it.
 	readConsumer *readConsumer
 	// reviewSigning indexes the review-signing entries by their DOCUMENT KEY
 	// (config.ReviewSigningKeySecret / ReviewSigningKeyPreviousSecret), which

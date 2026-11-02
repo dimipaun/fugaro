@@ -1118,6 +1118,13 @@ func TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves(t *testing.T) {
 		// credential — a kind of its own, no tier.
 		{name: "the upstream git token", key: config.BitbucketSecret, wantName: config.BitbucketSecret, wantKind: KindGit, wantTier: "", wantOK: true},
 		{name: "a git token that is not the git token", key: "bitbucket-tokens", wantOK: false},
+		// The Bitbucket read consumer (F21): the third key that is not a model
+		// credential — a kind of its own, no tier, and the one entry of the
+		// document whose value is a mapping rather than a string. The run
+		// consumer beside it is parked with S3, so it is no key at all.
+		{name: "the read consumer", key: BitbucketReadConsumerSecret, wantName: BitbucketReadConsumerSecret, wantKind: KindBitbucketReadConsumer, wantTier: "", wantOK: true},
+		{name: "a consumer that is not the read consumer", key: "bitbucket-read-consumers", wantOK: false},
+		{name: "the parked run consumer", key: "bitbucket-run-consumer", wantOK: false},
 		// The one account name the family may not take: it resolves to the
 		// git entry's own key, so the name would mean two credentials.
 		{name: "an account named like the git token", key: config.ClaudeAccountSecret(config.BitbucketSecret), wantOK: false},
