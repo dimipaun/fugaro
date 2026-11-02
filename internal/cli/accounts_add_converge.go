@@ -276,6 +276,16 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, lc *localcfg.
 		// the fix line names the stage, and this command adds nothing to it.
 		return nil, res.Cause
 	}
+	if len(res.Left) > 0 {
+		// A stage that ended NeedsYou (or Blocked behind one that did) is not a
+		// converged installation: the stages behind it never ran, so the node
+		// the run is admitted by does not carry this account, and the loop
+		// records the reason in Left rather than in Failed. The one-line user
+		// error is the same one fugaro update ends on (init_inputs.go), because
+		// the last line of this command says there is nothing left to run and
+		// that is only true when the run it names is ready.
+		return nil, userErr("%v", res.Left[0].Text)
+	}
 	out := make(map[string]initflow.StageResult, len(res.Stages))
 	for _, st := range res.Stages {
 		out[st.Name] = st

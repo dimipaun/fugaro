@@ -3,6 +3,7 @@ package cli
 import (
 	"maps"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -352,5 +353,49 @@ func TestAccountsAddReportNamesTheListTheAccountEndsUpWith(t *testing.T) {
 		t.Errorf("the published node names no account team-a")
 	} else if want := []string{"github/owner/repo-a", "github/owner/repo-b"}; !slices.Equal(acc.AllowRepos, want) {
 		t.Errorf("the published accounts.team-a.allow_repos = %v, want %v", acc.AllowRepos, want)
+	}
+}
+
+// TestAccountsAddFailsWhenAStageIsLeftForTheOwner is F1: a stage that ends
+// NeedsYou — here the Repository stage of a checkout this project does not list,
+// so onboarding it is a person's job — is not a converged installation. The loop
+// records it in Left and blocks the Policy stage behind it, so the node never
+// carries the account, and a command that read only res.Failed reported the run
+// as ready: exit 0, "Nothing else to run", and a run admitted by a node that
+// names no account. The one-line user error is the same one `fugaro update` ends
+// on (init_inputs.go), because the last line of this command is only true when
+// the run it names is ready.
+//
+// The Repository stage is the one that stops: the checkout's working tree holds
+// a fugaro.yaml that is not the one on its default branch, which the engine
+// reads and this stage will not settle for the owner. The Policy stage is then
+// blocked behind it, and both the NeedsYou reason and the Blocked stages are in
+// the Left and the stage list the run reports.
+func TestAccountsAddFailsWhenAStageIsLeftForTheOwner(t *testing.T) {
+	r := newAddRigWith(t, addRigLocal)
+	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(checkoutYAML("github", "oauth", "aurora", "")+"# edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	if err == nil {
+		t.Fatalf("the command exited 0 with a stage left for the owner:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "git switch -- main") {
+		t.Errorf("the refusal does not carry the stage's own reason: %v", err)
+	}
+	if strings.Contains(out, "Nothing else to run") {
+		t.Errorf("the failed command still ended on its ready line:\n%s", out)
+	}
+	// The publish never ran, and that is the fact the ready line would have
+	// contradicted: the node every run of the project is admitted by carries no
+	// account.
+	if names := r.policy(t).AccountNames(); len(names) != 0 {
+		t.Errorf("the published node names %v, and the Policy stage never ran", names)
 	}
 }
