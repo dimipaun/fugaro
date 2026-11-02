@@ -186,44 +186,64 @@ func modelsWriteLocalConfig(t *testing.T, path string) *localcfg.Config {
 
 // TestModelsCommandsPrintAHostileIDEscaped: a model ID is text from a command
 // line or a branch, and the terminal must not obey it. Every models write
-// prints the ID it was given — in a refusal, in the sentence a no-op ends with,
-// in a diff — and none of those prints it raw: the control byte and the newline
-// come out as "?" (safetext.OneLine), so a session cannot be steered by a model
-// name. A backtick is not a terminal control and is printed as itself; it is
-// CodeSpan, which quotes IDs into markdown reports, that escapes it.
+// refuses a hostile one — a newline is whitespace (config.CheckModelID) and an
+// escape byte keeps the ID out of the provider grammar (pricing.IsAlias) — and
+// what the refusal prints carries neither the escape byte nor a line of its
+// own, so a session cannot be steered by a model name.
 func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 	home, _ := modelsWriteHome(t)
 	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "", ""))
+	// The newline is the shape every models write refuses on its own rule; the
+	// escape byte is what no provider grammar has room for.
 	hostile := "vendor/model-\x1b[31mred\nline`whoami`"
-
+	// The same ID without the newline, so the escape byte alone makes it hostile
+	// and the refusal is the one that quotes the ID back.
+	csi := "vendor/model-\x1b[31mred`whoami`"
+	for _, c := range []struct {
+		what string
+		args func(id string) []string
+	}{
+		{"add", func(id string) []string {
+			return []string{"models", "add", id, "--price-in", "1", "--price-out", "2", "--yes"}
+		}},
+		{"use", func(id string) []string {
+			return []string{"models", "use", "owner/repo-a", "coder", id, "--yes"}
+		}},
+		{"rm", func(id string) []string { return []string{"models", "rm", id, "--yes"} }},
+	} {
+		for _, id := range []string{hostile, csi} {
+			out, errOut, err := execute(t, c.args(id)...)
+			if err == nil {
+				t.Errorf("%s accepted the hostile model ID %q:\n%s", c.what, id, out)
+				continue
+			}
+			// ErrorText is what the top-level error line prints (the package's
+			// own printer), so the safety is asserted where a person reads it
+			// and not only in the error value.
+			for _, printed := range []string{out, errOut, ErrorText(err)} {
+				if strings.ContainsRune(printed, 0x1b) {
+					t.Errorf("%s printed the escape byte raw:\n%s", c.what, printed)
+				}
+				if strings.Contains(printed, "\nline") {
+					t.Errorf("%s let the ID open a line of its own:\n%s", c.what, printed)
+				}
+			}
+		}
+	}
+	// The refusals that quote the ID escape it rather than drop the model: the
+	// owner still reads which model was refused, with the escape sequence gone
+	// and the rest of the text intact.
 	for _, c := range []struct {
 		what string
 		args []string
-		// refused is whether the command refuses the ID outright (add and use
-		// read it as a model ID a launch may pin; rm only looks for it in the
-		// file's own lists and finds nothing).
-		refused bool
 	}{
-		{"add", []string{"models", "add", hostile, "--price-in", "1", "--price-out", "2", "--yes"}, true},
-		{"use", []string{"models", "use", "owner/repo-a", "coder", hostile, "--yes"}, true},
-		{"rm", []string{"models", "rm", hostile, "--yes"}, false},
+		{"add", []string{"models", "add", csi, "--price-in", "1", "--price-out", "2", "--yes"}},
+		{"rm", []string{"models", "rm", csi, "--yes"}},
+		{"use", []string{"models", "use", "owner/repo-a", "coder", csi, "--yes"}},
 	} {
-		out, errOut, err := execute(t, c.args...)
-		if c.refused == (err == nil) {
-			t.Fatalf("%s: err = %v\n%s", c.what, err, out)
-		}
-		for _, printed := range []string{out, errOut} {
-			if strings.ContainsRune(printed, 0x1b) {
-				t.Errorf("%s printed the escape byte raw:\n%s", c.what, printed)
-			}
-			if strings.Contains(printed, "\nline") {
-				t.Errorf("%s let the ID open a line of its own:\n%s", c.what, printed)
-			}
-		}
-		// The escaping happened rather than the text being dropped: the no-op
-		// sentence still names the model the owner asked about.
-		if c.what == "rm" && (!strings.Contains(out, "vendor/model-") || !strings.Contains(out, "?line")) {
-			t.Errorf("rm dropped the model ID instead of escaping it:\n%s", out)
+		_, _, err := execute(t, c.args...)
+		if err == nil || !strings.Contains(ErrorText(err), "vendor/model-") {
+			t.Errorf("%s dropped the model ID instead of escaping it: %v", c.what, err)
 		}
 	}
 }

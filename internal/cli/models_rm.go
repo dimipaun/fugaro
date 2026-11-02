@@ -9,6 +9,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
@@ -119,16 +120,24 @@ func runModelsRm(cmd *cobra.Command, id string, o *modelsRmOptions) error {
 	return nil
 }
 
-// modelsRmRefuseID refuses an ID the config cannot carry: a command that cannot
-// remove an alias or a variant tells the owner so instead of reporting nothing
-// to remove for a key it never looked for. A Claude ID is the owner's routing
-// switch, not a claim, so there is nothing here to drop (D785).
+// modelsRmRefuseID refuses an ID the config cannot carry, the shapes
+// modelsAddRefuseID refuses and in its order: a command that cannot remove an
+// alias or a variant tells the owner so instead of reporting nothing to remove
+// for a key it never looked for — "nothing to remove" for `sonnet` reads as
+// "that model is already gone", which is the one thing it does not mean. A
+// Claude ID is the owner's routing switch, not a claim, so there is nothing
+// here to drop either (D785), and its refusal names that switch.
 func modelsRmRefuseID(id string) error {
 	switch {
 	case isClaudeModel(id):
 		return userErr("%s is a Claude model: Claude models go direct to Anthropic, or down the route the owner's routing.claude switch names, and no provider route claims one, so there is nothing here to remove. Change routing.claude in the project config instead", config.CodeSpan(id))
 	case strings.Contains(id, ":"):
 		return modelsRefuseVariant(id)
+	case pricing.IsAlias(id):
+		return userErr("%s is not an explicit model ID: this command removes the model_prices key, the route claim and the allowed_models entry that name one, and an alias names none of them. Name the vendor/model ID the project config carries", config.CodeSpan(id))
+	}
+	if why := config.CheckModelID(id); why != "" {
+		return userErr("%s: name a model ID the project config may carry", why)
 	}
 	return nil
 }

@@ -160,6 +160,60 @@ func TestModelsRmLeavesAClaimingPatternAndSaysSo(t *testing.T) {
 	}
 }
 
+// TestModelsRmRefusesAnAliasOrAnIDTheConfigCannotCarry: the ID is looked for in
+// the file's own lists, and a name that is not an explicit model ID is in none
+// of them. "nothing to remove" for `sonnet` would read as "that model is
+// already gone" — the one thing it does not mean — so the refusal names the
+// input, as `models add` refuses it.
+func TestModelsRmRefusesAnAliasOrAnIDTheConfigCannotCarry(t *testing.T) {
+	_, path := modelsWriteHome(t)
+	before := readFileString(t, path)
+
+	for _, c := range []struct{ id, want string }{
+		{"sonnet", "not an explicit model ID"},
+		{"vendor/model-latest", "not an explicit model ID"},
+		{strings.Repeat("v", 95) + "/" + strings.Repeat("m", 10), "at most 100 characters"},
+	} {
+		out, _, err := execute(t, "models", "rm", c.id, "--yes")
+		if err == nil {
+			t.Errorf("%s: an ID the config cannot carry was accepted:\n%s", c.id, out)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: the refusal does not say %q: %v", c.id, c.want, err)
+		}
+		if strings.Contains(out, "nothing to remove") {
+			t.Errorf("%s: the refusal still reports nothing to remove:\n%s", c.id, out)
+		}
+		if got := readFileString(t, path); got != before {
+			t.Errorf("%s: the refused rm wrote the file:\n%s", c.id, got)
+		}
+	}
+}
+
+// TestModelsRmReportsNothingForAWellFormedIDTheConfigDoesNotCarry: a
+// vendor/model ID is a shape the config may carry, so `rm bad/id` is not an
+// invalid input — the ID is simply in none of the file's lists, which is what
+// the command reports. The refusals above are for the shapes no list could
+// hold (an alias, whitespace, a length the loader refuses); whether a vendor
+// exists is not something this command can know, and the file naming the model
+// — not the spelling of the ID — is what makes it removeable.
+func TestModelsRmReportsNothingForAWellFormedIDTheConfigDoesNotCarry(t *testing.T) {
+	_, path := modelsWriteHome(t)
+	before := readFileString(t, path)
+
+	out, _, err := execute(t, "models", "rm", "bad/id", "--yes")
+	if err != nil {
+		t.Fatalf("a well-formed model ID the config does not carry was refused: %v", err)
+	}
+	if !strings.Contains(out, "nothing to remove") {
+		t.Errorf("the command does not report that the model is nowhere in the file:\n%s", out)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("removing a model the config does not carry wrote the file:\n%s", got)
+	}
+}
+
 // TestModelsRmRefusesEmptyingTheAllowList: budget.allowed_models is never left
 // as an empty list, which the strict loader refuses (spec §5), so removing the
 // last entry is refused here with that reason and nothing is written.
