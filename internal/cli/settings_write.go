@@ -43,12 +43,13 @@ type settingsEdit struct {
 	What string
 	// Typed asks for the project's name rather than y/N. It is the widening
 	// directions: a loosened ceiling, a floor removed, a followup key turned
-	// on. --yes answers it outside a coding agent's session, where the refusal
-	// above never reached (D1107, which amends D846 for `settings set|unset`
-	// alone); inside one the fence comes first and --yes never lifts it.
+	// on. --yes answers it outside a coding agent's session (D1107, which
+	// amends D846 for `settings set|unset` alone); inside one the marker fence
+	// comes first and --yes never lifts it.
 	Typed bool
-	// TypedWhy is the sentence saying why nothing stands in for the typed
-	// name, shown by the refusal of a session with no terminal.
+	// TypedWhy is the sentence saying why this form is asked for, and who may
+	// answer it: it names --yes where the caller says a flag stands in
+	// (D1107), and the refusal of a session with no terminal repeats it.
 	TypedWhy string
 	// Kind is the document Path is: the local project config, the local project
 	// layer file, or a repository's fugaro.yaml. It is one fact and not two,
