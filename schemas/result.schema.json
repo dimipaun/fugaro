@@ -41,7 +41,7 @@
         "required": ["round", "verdict", "findings"],
         "properties": {
           "round": { "type": "integer", "minimum": 1 },
-          "tier": { "enum": ["first", "senior", "adversarial"], "description": "first: the coder model's first-line review, never decides readiness; senior: the reviewer's; adversarial: level 3's, which reviews after the senior's, so its rejection bounces the run into the cheap loop and this level is not reviewed again (docs/review-levels-ab-jobmax D727). Absent in a run without a first line (senior)." },
+          "tier": { "enum": ["first", "senior", "adversarial"], "description": "first: the coder model's first-line review, which decides readiness only in a run where neither level 2 nor level 3 runs at all (POC, docs/review-levels-ab-jobmax D723); senior: the reviewer's; adversarial: level 3's, which reviews after the senior's, so its rejection bounces the run into the cheap loop and this level is not reviewed again (docs/review-levels-ab-jobmax D727). Absent in a run without a first line (senior)." },
           "verdict": { "type": "string" },
           "findings": { "type": "integer", "minimum": 0 },
           "head": { "type": "string", "minLength": 1, "description": "The commit this review read. A level approves one head, and the levels' heads can differ within a round: a level reviewed again after a fix has the later one, and a level the bounce skipped keeps the earlier one. Absent when the round recorded none, which is every record written before this field existed." },
