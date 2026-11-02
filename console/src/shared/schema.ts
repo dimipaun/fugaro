@@ -2732,8 +2732,8 @@ export interface ModelsListModel {
   readonly note: string
 }
 
-/** ModelsListRepo is one recorded repository's pins, read out of the
- * `fugaro.yaml` at the base branch it runs against. `state` is the CLI's own
+/** ModelsListRepo is one recorded repository's pins, read out of the config
+ * file at the base branch it runs against. `state` is the CLI's own
  * word for what it could read (`ok`, `unknown (no checkout on this machine)`,
  * `unread: <reason>`), the four model keys are absent unless it read the file,
  * and `problems` is the refusals a launch would give for these pins. */

@@ -919,7 +919,7 @@ export const CONSOLE_OPERATIONS = [
   // five subcommands -- `ls`, `search`, `add`, `rm` and `use`
   // (`internal/cli/models.go:33`) -- and the other four are on the never table
   // below as words of this command: `add`, `rm` and `use` edit the project's or
-  // a repository's own `fugaro.yaml`, and `search` takes a positional `<text>`
+  // a repository's own config file, and `search` takes a positional `<text>`
   // a renderer would fill, which is the shape this table exists to keep off the
   // surface. So the console has **no write path into `models`**, and the one
   // read is the row above.
@@ -1582,7 +1582,7 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
   // (`models.list` above, console 0.119.0); the three commands here are the
   // writes beside it -- `add` claims a model on a route and prices it, `rm`
   // drops its claim, price and allow-list entry, and `use` points one
-  // repository's own `fugaro.yaml` at a model in its working tree
+  // repository's own config file at a model in its working tree
   // (`internal/cli/models_add.go:27`, `models_rm.go:20`, `models_use.go:24`).
   // Each edits a configuration a reviewer signed off on, which is exactly the
   // kind of act this table keeps off a screen.
@@ -1612,7 +1612,7 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
   {
     shape: 'command',
     value: 'models use',
-    why: 'a write: it rewrites `agent.models.<role>` in a repository’s own fugaro.yaml in its working tree, and the model it points a role at is a reviewed configuration fact',
+    why: 'a write: it rewrites `agent.models.<role>` in a repository’s own config file in its working tree, and the model it points a role at is a reviewed configuration fact',
     where: 'internal/cli/models_use.go:24',
   },
   {
