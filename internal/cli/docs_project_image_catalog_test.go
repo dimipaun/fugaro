@@ -138,16 +138,28 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"**F14: Exists, as a naming collision. `catalogSince`/`catalogShipped` are the *price* catalog.**",
 		"**F15: Exists, as a collision. `promote` is a Cloud Build step, not a CLI command.**",
 		"**F16: Exists. The `docker` tag has no execution backend today on Cloud Run.**",
-		// The three answered decisions, each stated as answered and as the
-		// recommendation it took.
+		// The seven answered decisions, each stated as answered and as the
+		// recommendation it took, and the one the first round marked answered by
+		// mistake, which is open.
 		"**ANSWERED by the owner, 2026-11-02, as recommended: the PUBLISHED PROJECT POLICY NODE",
-		"ANSWERED by the owner, 2026-11-02, as recommended: yes, and the schedule ALREADY EXISTS.",
-		"ANSWERED by the owner, 2026-11-02, as recommended: the `docker` tag is a CAPABILITY TAG that selects a VM (Cloud Batch) job.",
+		"**ANSWERED by the owner, 2026-11-02, as recommended: a manual pin acts AT DEPLOY TIME and prints a WARNING",
+		"the EXISTING WORKFLOW-SECRET PATH, and the credentials service is UNCHANGED",
+		"the SHARED registry with the EXISTING retention",
+		"an override and a catalog reference used together are REFUSED, and the error names BOTH keys",
+		"the BUILD TASKS START IN 0.16.0",
+		"ANSWERED by the owner, 2026-11-02: VM/Batch only, and there is ONE rule everywhere.",
+		"**D1148** | Should images be rebuilt on a schedule for base-image security updates? (**open question 2**) | **OPEN.** The recommendation: **yes, and the schedule ALREADY EXISTS.**",
 		// The catalog is what a baked image is built from, and it lifts no
 		// refusal.
 		"**The catalog is what a `checkout: baked` image is built FROM; it changes no checkout kind.**",
-		// The tag-cover algorithm's three tie-breaks, and its totality.
+		// The tag-cover algorithm's four cases, its three tie-breaks and its
+		// totality: a pin, the docker rule, the empty set's default, and the
+		// order among covering candidates.
 		"### 3.1 The algorithm",
+		"**A pin is not the algorithm.**",
+		"**The candidate set**",
+		"**An empty needed set picks the default.**",
+		"**Covering candidates**",
 		"**fewest tags**",
 		"**the default, when it qualifies**",
 		"**the lexicographically first name**",
@@ -156,14 +168,14 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		// starts" in words a user reads.
 		"### 3.3 The fail-before-start message",
 		"no image in this project's catalog covers the tags this job needs:",
-		"add an entry that covers the missing tags (fugaro image add <name> --tags …), or add a \"universal\" entry that covers every tag this project uses",
+		"add an entry that covers the missing tags (fugaro image add <name> --tags postgres redis firebase-emulator), or add a \"universal\" entry that covers every tag this project uses",
 		"this job's image is tagged docker, which needs a VM backend: Cloud Run gen-2 has no Docker daemon",
 		// Promote is never automatic.
 		"Nothing is converted unless the command is run",
 		// The nightly triggers, including the one this work adds.
 		"| `catalog-definition` (**new**) |",
 		"| `max-age` (**exists**) |",
-		"This is the **scheduled security rebuild** of D1148",
+		"This is the **scheduled security rebuild** D1148 recommends (open)",
 		// The skew is the verifier list's in shape.
 		"the publisher writes NOTHING when the catalog is empty",
 		// Core, not ee.
@@ -188,8 +200,12 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"the catalog rides the mechanism `verifier_accounts` establishes",
 		"**no task here builds",
 		// The red step each task starts from.
-		"**Red step:** `TestCatalogEntryRejectsAnUnknownSourceKind` and `TestWorkflowImageAndDockerfileStillConflict`",
-		"**Red step:** `TestPolicyNodeOmitsAnEmptyCatalog` fails",
+		"**Red step:** each of these **fails today**, and for a stated reason:",
+		"`TestCatalogEntryRejectsAnUnknownSourceKind` and `TestCatalogOverrideAndReferenceConflict` fail",
+		"`TestWorkflowImageAndDockerfileStillConflict` is **not** a red step",
+		"**Red step:** both of these **fail today**, and for a stated reason:",
+		"`TestPolicyNodeOmitsAnEmptyCatalog` fails because the key does not exist",
+		"`TestOlderCLIRefusesANodeCarryingImageCatalog` is **not** a red step and is not",
 		"**Red step:** `TestCatalogDockerfileIsCopiedUnderBuildsCatalog` fails",
 		"**Red step:** `TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv` fails",
 		"**Red step:** `TestChooseTakesTheFewestCoveringTags` fails",
@@ -215,7 +231,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"**no agent performs any step of it**",
 		"nine steps",
 		// The release slot: the design in 0.16.0 and the build the owner's.
-		"**The build is 0.17.0, and the owner decides**",
+		"**The build is 0.16.0 too — the owner moved it earlier**",
 		"it carries no code",
 		// The one operator entry, and only for an installation that names one.
 		"upgrade every launcher before publishing a catalog",
@@ -228,13 +244,13 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 	readme := readDoc(t, readmePath)
 	projectImageCatalogMustContain(t, readme, readmePath, "fact", []string{
 		"**Status: design only; nothing here is approved and no code follows from this folder.**",
-		"**Design release: 0.16.0**",
-		"**Build release: the owner's decision, recommended 0.17.0**",
-		"**Answered by the owner, 2026-11-02:**",
-		"**D1140** (catalog definitions live in the published project policy node",
-		"**D1148** (scheduled security rebuilds",
-		"**D1149** (the `docker` tag selects the Batch/VM backend",
-		"The other decisions of D1140–D1159 are **open**",
+		"**Release: 0.16.0, design and build together**",
+		"and both are 0.16.0 — nothing waits for a later release.",
+		"**Answered by the owner, 2026-11-02** — seven decisions, each as the recommendation:",
+		"**D1140** (catalog definitions live in the published policy node under the key `image_catalog`",
+		"**D1148 stays OPEN**",
+		"**D1149** (VM/Batch only, and one rule everywhere: on Cloud Run a docker-tagged entry is",
+		"decisions of D1140–D1159 are **open**",
 		"**Answering a decision is not approving a task**",
 		// The relationship to the shared-images design, which is the one note
 		// this work is allowed to add to that folder.

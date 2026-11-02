@@ -7,18 +7,23 @@ and plans the build. The spec's own summary: "Job images move from repo-centric 
 project keeps a small, hand-curated catalog of named Docker images. Repos inherit the project default
 or reference a catalog image. Repo-level images stay as an optional override."
 
-**Design release: 0.16.0** (the owner's ruling, [spec.md](spec.md) §Owner rulings) — this folder, and
-nothing else. **Build release: the owner's decision, recommended 0.17.0**
-([reconciliation.md](reconciliation.md) D1158), the release after this design lands.
+**Release: 0.16.0, design and build together** (the owner's answer, 2026-11-02,
+[reconciliation.md](reconciliation.md) D1158): this folder is the design and PIC1–PIC7 are the build,
+and both are 0.16.0 — nothing waits for a later release.
 
-**Answered by the owner, 2026-11-02:** the three open questions of the spec are answered, each as the
-recommendation — **D1140** (catalog definitions live in the published project policy node, a new
-top-level key `image_catalog`, copied by `fugaro update` and operator-owned), **D1148** (scheduled
-security rebuilds: yes, and the daily image check's `base`/`max-age` triggers already are one) and
-**D1149** (the `docker` tag selects the Batch/VM backend, and a Cloud Run job carrying it is refused
-before it starts). The other decisions of D1140–D1159 are **open**: they are this plan's to write and
-the owner's to answer. **Answering a decision is not approving a task**, and **no task here is
-approved to build until the owner approves the plan** (the owner's ruling, [spec.md](spec.md)).
+**Answered by the owner, 2026-11-02** — seven decisions, each as the recommendation:
+**D1140** (catalog definitions live in the published policy node under the key `image_catalog`, copied
+by `fugaro update` and operator-owned), **D1146** (a manual pin acts at deploy time and prints a
+warning), **D1149** (VM/Batch only, and one rule everywhere: on Cloud Run a docker-tagged entry is
+left out of the candidates unless `docker` is needed, and if it is needed Cloud Run refuses),
+**D1150** (build secrets go through the existing workflow-secret path; the credentials service is
+unchanged), **D1152** (the shared registry, with the existing retention), **D1155** (an override and a
+catalog reference used together are refused, and the error names both keys) and **D1158** (the build
+tasks start in 0.16.0). **D1148 stays OPEN** — this folder's first round marked it answered by
+mistake — with its recommendation: reuse the daily image check's `base`/`max-age` triggers. The other
+decisions of D1140–D1159 are **open**: they are this plan's to write and the owner's to answer.
+**Answering a decision is not approving a task**, and **no task here is approved to build until the
+owner approves the plan** (the owner's ruling, [spec.md](spec.md)).
 
 **Reconciled against** `origin/main` at `1fc82c43` (2026-11-02) and the open pull requests of
 2026-11-02.
@@ -72,7 +77,7 @@ two example project names for **Project A** and **Project B**, noted in its stat
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | **The owner's spec, verbatim**, received 2026-11-02, with one substitution: the two example project names become **Project A** and **Project B** (no customer or organisation name appears in this repository). Nothing else is changed — no typo fixed, no wording edited — and the owner's rulings sit beneath it under **Owner rulings** |
-| [reconciliation.md](reconciliation.md) | Every ambiguity or conflict against the code (**F1–F16**, each Exists, Missing or Conflicts) and the decisions **D1140–D1159**, each with its options and the recommended answer first, the three answered ones marked, plus the tag-cover algorithm (§3), promote and the nightly triggers (§4) and what a merger re-checks (§5). **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Every ambiguity or conflict against the code (**F1–F16**, each Exists, Missing or Conflicts) and the decisions **D1140–D1159**, each with its options and the recommended answer first, the seven answered ones marked, plus the tag-cover algorithm (§3), promote and the nightly triggers (§4) and what a merger re-checks (§5). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks **PIC1–PIC7** (at most 10 files each) with named tests, red steps, SEC flags and gates, the shared-files table, the owner-run live checks and the release slot |
 
 **How a `:line` in this folder reads.** A citation names a file and a symbol, and the number is the
@@ -84,7 +89,7 @@ also states the fact in words.
 
 | Block | Use |
 | --- | --- |
-| **D1140–D1159** | this work's block. **D1140** (where the catalog definitions live — **open question 1**), **D1148** (scheduled security rebuilds — **open question 2**) and **D1149** (the `docker` tag's backend — **open question 3**) are **answered by the owner on 2026-11-02**, each as the recommendation; the rest are **open**. Taken above every number either the merged tree or an open pull request holds: the highest **written** on `main` is **D1139** ([docs/console-settings-edit/reconciliation.md](../console-settings-edit/reconciliation.md), that work's block D1100–D1139), and the highest any open pull request writes is **D1066** ([PR #1602](https://github.com/dimipaun/fugaro/pull/1602)) and **D1040** ([PR #1496](https://github.com/dimipaun/fugaro/pull/1496)). No `D114x`/`D115x` appears anywhere in `docs/` on this tree or in an open pull request's. That is the launcher's **2026-11-02 reading**, taken by grepping every open pull request's head and `docs/` for the numbers they write; **a merger re-reads it** |
+| **D1140–D1159** | this work's block. **D1140** (where the catalog definitions live — **open question 1**), **D1149** (the `docker` tag's backend — **open question 3**), **D1146**, **D1150**, **D1152**, **D1155** and **D1158** are **answered by the owner on 2026-11-02**, each as the recommendation; **D1148** (scheduled security rebuilds — **open question 2**) **stays open**, and so do the rest. Taken above every number either the merged tree or an open pull request holds: the highest **written** on `main` is **D1139** ([docs/console-settings-edit/reconciliation.md](../console-settings-edit/reconciliation.md), that work's block D1100–D1139), and the highest any open pull request writes is **D1066** ([PR #1602](https://github.com/dimipaun/fugaro/pull/1602)) and **D1040** ([PR #1496](https://github.com/dimipaun/fugaro/pull/1496)). No `D114x`/`D115x` appears anywhere in `docs/` on this tree or in an open pull request's. That is the launcher's **2026-11-02 reading**, taken by grepping every open pull request's head and `docs/` for the numbers they write; **a merger re-reads it** |
 | **Findings** | **F1–F16** are this folder's own and start at F1, the way [docs/forge-authorship-images/](../forge-authorship-images/)'s and [docs/c39-review-identity/](../c39-review-identity/)'s do; those folders' F1–Fn are different sets over different trees |
 | **Checks** | **none taken, and the live checks are named rather than numbered.** The register's highest **written** section on `main` is **Check 190**, and open pull requests claim above it; the register's own rule is that a claim above the highest written section is settled at its merge and that whichever of two open claims merges second renumbers itself ([docs/gcp-live-checklist.md](../gcp-live-checklist.md)). So the task that writes a check takes the number free at **its** merge, and [implementation-plan.md](implementation-plan.md) writes each under a name |
 
@@ -92,7 +97,8 @@ also states the fact in words.
 
 **At merge**, two things:
 
-1. **Re-check the D-block.** The answers to D1140/D1148/D1149 stand; what a merger re-reads is the
+1. **Re-check the D-block.** The seven answers (D1140, D1146, D1149, D1150, D1152, D1155, D1158)
+   stand and **D1148 stays open**; what a merger re-reads is the
    **inventory they sit in** — the open pull requests and the merged tree — and renumbers to the first
    free block if D1140 has moved, in every file here that names a number.
 2. **Re-read the `:line` citations** against the tree being merged, under the convention above.
