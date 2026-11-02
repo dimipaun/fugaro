@@ -3827,8 +3827,10 @@ A string-list key takes --add V or --remove V instead of a value. A list
 emptied by --remove is refused: an absent key and an empty list mean different
 things to the loader, so use unset to remove the key.
 
-Loosening a ceiling key (budget.*, governance.*) or turning a followup.* key
-on is confirmed by the project's name typed at a terminal, or by --yes. Writing
+Loosening a ceiling key (budget.*, governance.*, the agent caps
+agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
+adding a name to a followup.* list or turning one of those keys on, is
+confirmed by the project's name typed at a terminal, or by --yes. Writing
 outside a repository is refused in a coding agent's session, --yes included,
 and so is the typed form at any layer: --yes never lifts that fence.
 
