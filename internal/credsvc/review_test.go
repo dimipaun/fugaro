@@ -321,33 +321,65 @@ func TestReviewIdentityRequiresNoBranchAndAtLeastOnePR(t *testing.T) {
 // review job is refused, never downgraded to a review. Its identity is a
 // different act — it means to push — and answering it as a review would hand
 // the read-only set to it.
+//
+// The refusal is the pairing's last step (spec §3.2 step 4), and it is asked
+// on the HTTP path for that reason: both identities are whole by then, so the
+// area rule holds the refusal to exactly one audit line. A claim rule asked
+// inside Verify would refuse a caller the service has no identity to write a
+// line about — zero lines, on a call whose two identities were both verified.
 func TestReviewIdentityWithABranchIsRefused(t *testing.T) {
 	s := newReviewSvc(t)
 	fb := "fugaro/" + s.run
-	_, err := s.verify(s.reviewRunToken(func(c map[string]any) { c["fb"] = fb }), s.reviewJobToken(), s.job)
-	if !errors.Is(err, ErrUnverified) {
-		t.Fatalf("err = %v, want ErrUnverified: a run that pushes is not a review", err)
+	resp, body := s.callTokens(t, callBody("review-with-branch"),
+		s.reviewRunToken(func(c map[string]any) { c["fb"] = fb }), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
 	}
-	if !strings.Contains(err.Error(), "branch") {
-		t.Errorf("err = %q, want it to name the claim that failed", err)
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
 	}
-	if strings.Contains(err.Error(), fb) {
-		t.Errorf("err = %q echoes the branch: an fb is caller text", err)
+	if !strings.Contains(got.Message, "branch") {
+		t.Errorf("the refusal is %q, want it to name the claim that failed", got.Message)
+	}
+	if strings.Contains(got.Message, fb) {
+		t.Errorf("the refusal %q echoes the branch: an fb is caller text", got.Message)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none", n)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: the claim rule comes before it", n)
+	}
+	if lines := auditLines(t, s.audit); len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
 	}
 }
 
 // TestReviewIdentityWithAnEmptyPRListIsRefused: an artifact run pushes nothing
 // and writes no pull request either, so the empty fpr is what tells it from a
 // review — and an fpr that is present and empty is a shape the claim reader
-// admits, which is why the rule is checked here and not there.
+// admits, which is why the rule is checked here and not there. It is the same
+// refusal as the branch's, answered the same way and recorded the same way.
 func TestReviewIdentityWithAnEmptyPRListIsRefused(t *testing.T) {
 	s := newReviewSvc(t)
-	_, err := s.verify(s.reviewRunToken(func(c map[string]any) { c["fpr"] = []any{} }), s.reviewJobToken(), s.job)
-	if !errors.Is(err, ErrUnverified) {
-		t.Fatalf("err = %v, want ErrUnverified: an artifact run is not a review", err)
+	resp, body := s.callTokens(t, callBody("review-no-prs"),
+		s.reviewRunToken(func(c map[string]any) { c["fpr"] = []any{} }), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
 	}
-	if !strings.Contains(err.Error(), "pull request") {
-		t.Errorf("err = %q, want it to name the claim that failed", err)
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+	}
+	if !strings.Contains(got.Message, "pull request") {
+		t.Errorf("the refusal is %q, want it to name the claim that failed", got.Message)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none", n)
+	}
+	if lines := auditLines(t, s.audit); len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
 	}
 }
 

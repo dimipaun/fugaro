@@ -443,17 +443,12 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 		return Identity{}, err
 	}
 	id.Job, id.JobAccount, id.JobClass = req.Job, account, class
-	// The last step of the pairing, and the one the two classes differ in
-	// besides the account: a review caller's run identity must be a review
-	// identity (spec §3.3). It is asked here rather than in the pairing
-	// because it is a fact about the run identity alone — the same rule would
-	// hold wherever the caller's class were decided — and because the refusal
-	// is an ErrUnverified, which is the run identity's own answer.
-	if class == ClassReview {
-		if err := ReviewOf(id); err != nil {
-			return Identity{}, err
-		}
-	}
+	// The review claim rule (spec §3.3) is NOT asked here. It is the pairing's
+	// last step (pairReview), and that is where it is answered — because a
+	// refusal from this function returns Identity{} and is answered by
+	// refuseIdentity, which writes no audit line, while the area rule holds a
+	// refusal to exactly one line once both identities are verified. Both are
+	// by the time the pairing runs.
 	return id, nil
 }
 

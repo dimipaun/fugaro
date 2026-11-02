@@ -237,6 +237,16 @@ func ReviewOf(id Identity) error {
 // admitted to nothing is admitted to nothing); an unreadable child or node is
 // a refusal, because fail closed is a refusal and not a silent nothing.
 func (s *Server) pairReview(ctx context.Context, id Identity) (string, error) {
+	// Step 4 comes first: the claim rule is a fact about the run identity
+	// alone, so it is asked before anything is read — before the table, before
+	// the admissions and, because the pairing runs in ServeHTTP before the stop
+	// flag and before the bundle, before both of those too. Its refusal is an
+	// ErrUnverified through refusePairing and so a refusal this service records
+	// once: asking it inside Verify, which returns an empty Identity on the way
+	// out, was a refusal with no line at all.
+	if err := ReviewOf(id); err != nil {
+		return "", err
+	}
 	ra, ok := s.review[id.JobAccount]
 	if !ok {
 		// The verifier answered a class this service's own table does not
