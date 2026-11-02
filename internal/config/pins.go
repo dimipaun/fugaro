@@ -8,9 +8,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
-// pin is one of an Agent's three pins with the config path a Problem about it
-// points the owner at.
-type pin struct{ path, model string }
+// pin is one of an Agent's pins with the config path a Problem about it points
+// the owner at, and — for a review level's own model — the level's name, which
+// a warning carries in its own sentence as well as in the path.
+type pin struct {
+	path, model string
+	level       string
+}
 
 // pinPaths are the config paths of an Agent's three pins, in the order
 // Agent.PinnedModels returns them. One place, so `validate`, `diagnose` and
@@ -22,9 +26,41 @@ var pinPaths = [...]string{"agent.models.coder", "agent.models.reviewer", "agent
 func pins(a Agent) []pin {
 	out := make([]pin, len(pinPaths))
 	for i, m := range a.PinnedModels() {
-		out[i] = pin{pinPaths[i], m}
+		out[i] = pin{path: pinPaths[i], model: m}
 	}
 	return out
+}
+
+// levelPins are the review levels' own models (L3.1), one per level whose
+// block names a model of its own, under the key the owner wrote it: a level
+// left on the model its role resolves to has no model of its own, and is that
+// role's pin. A level's own model is a model the run charges — its stage runs
+// it and the cap counts it — so PinWarnings warns about it as a pin, under
+// exactly the path the run's own model checks rename a problem about a level
+// to (internal/runner/gateway.go's levelModelPath).
+func levelPins(a Agent) []pin {
+	var out []pin
+	for _, l := range []struct {
+		name string
+		set  *LevelSetting
+	}{{"l1", a.Levels.L1}, {"l2", a.Levels.L2}, {"l3", a.Levels.L3}} {
+		if l.set == nil || l.set.Model == "" {
+			continue
+		}
+		out = append(out, pin{path: "agent.levels." + l.name + ".model", model: l.set.Model, level: l.name})
+	}
+	return out
+}
+
+// prefix names the level a warning is about, "" for a role pin. The warning's
+// own sentence is the only place a level is said on the surfaces that show one
+// without its path (diagnose, the runner's log line), and a level model is one
+// of several pins an owner has to tell apart to fix the right one.
+func (r pin) prefix() string {
+	if r.level == "" {
+		return ""
+	}
+	return "level " + r.level + ": "
 }
 
 // CheckPins is the rule for a run under a budget: the coder, the reviewer and
@@ -63,25 +99,31 @@ func CheckPins(a Agent, prices *pricing.Table) []Problem {
 // but its cap counts a guess until the owner sets the real price under
 // model_prices, which always wins. Callers show these at pin time and in
 // diagnose.
+//
+// A review level's own model is a pin as well, and is warned about as one, in
+// the same words and with its level named (levelPins): the cap counts it at a
+// guess exactly like a role's, and a check that read only the three role keys
+// would leave a run whose level 3 names a model of its own warned about a
+// price nobody set (L4.5).
 func PinWarnings(a Agent, prices *pricing.Table) []Problem {
 	var ps []Problem
 	seen := map[string]bool{}
-	for _, r := range pins(a) {
+	for _, r := range append(pins(a), levelPins(a)...) {
 		m, ok := prices.Lookup(r.model)
 		if !ok || seen[m.ID+r.path] {
 			continue
 		}
 		seen[m.ID+r.path] = true
 		if m.Unverified {
-			ps = append(ps, Problem{Path: r.path, Code: CodeUnverifiedPrice, Message: fmt.Sprintf(
+			ps = append(ps, Problem{Path: r.path, Code: CodeUnverifiedPrice, Message: r.prefix() + fmt.Sprintf(
 				"%s has an unverified placeholder price (%s, %s): set the real one under model_prices; until then the cap counts a guess",
 				r.model, m.PriceSource, m.PriceCheckedAt)})
 		}
 		if w := m.CacheWarning(); w != "" {
-			ps = append(ps, Problem{Path: r.path, Code: pricing.CodeCacheRateDefaulted, Message: w})
+			ps = append(ps, Problem{Path: r.path, Code: pricing.CodeCacheRateDefaulted, Message: r.prefix() + w})
 		}
 		if w := catalogWarning(r.model, m); w != "" {
-			ps = append(ps, Problem{Path: r.path, Code: CodeCatalogPrice, Message: w})
+			ps = append(ps, Problem{Path: r.path, Code: CodeCatalogPrice, Message: r.prefix() + w})
 		}
 	}
 	return ps
