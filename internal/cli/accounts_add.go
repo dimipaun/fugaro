@@ -34,6 +34,7 @@ import (
 type accountsAddOptions struct {
 	repos   string
 	profile string
+	claude  bool
 	yes     bool
 }
 
@@ -62,6 +63,14 @@ checkout's repository root are converged — the same stages fugaro update runs,
 invoked here rather than forked. It ends on the line that says what is left,
 which is a fugaro run and never an update.
 
+--claude runs Anthropic's own claude setup-token on your own terminal first,
+so the login is the one you would have run yourself: it gets your stdin, stdout
+and stderr, and fugaro reads none of what it prints. The token is then read at
+the hidden prompt below, exactly as it is without the flag — that prompt is the
+only source of the value, so a login you cancelled or that failed costs one
+paste rather than the command. A login that failed stores nothing and still
+leaves you the prompt.
+
 Run it at your own terminal: this file decides where a credential may be sent,
 so a coding agent's session is refused, --yes included.`,
 		Args: cobra.ExactArgs(1),
@@ -72,6 +81,7 @@ so a coding agent's session is refused, --yes included.`,
 	f := cmd.Flags()
 	f.StringVar(&o.repos, "repos", "", "the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin)")
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
+	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
@@ -136,8 +146,25 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// so. It is read from the config as it was, before the edit above.
 	_, rotation := lc.ClaudeAccounts[name]
 	what := accountsAddWhat(after, name, profile, accountsAddBeyond(cmd.Context(), repos), rotation)
-	command := accountsAddCommand(name, repos, profile)
+	command := accountsAddCommand(name, repos, profile, o.claude)
 	changed := yamledit.Changed(old, next)
+
+	// §3's act one is screened here and run below, and the split is the owner's
+	// ruling of 2026-11-02: everything that can refuse the login — a coding
+	// agent's session, a terminal that is not there, an exported credential, a
+	// claude fugaro will not run — happens before the diff and before the
+	// confirmation, so nobody is asked to answer for a login that cannot happen
+	// and every refusal leaves the file exactly as it was.
+	var claudeBin string
+	if o.claude {
+		if claudeBin, err = accountsAddClaudePrepare(cmd, sel.Path, what, command); err != nil {
+			return err
+		}
+		// The block a person answers names the program it is about to run, at
+		// the path it resolved to, so the answer is for the login itself and not
+		// for a sentence about it (spec §3.1 step 1).
+		what += fmt.Sprintf("; run %s setup-token on this terminal", pluginwire.Printable(claudeBin))
+	}
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
@@ -164,6 +191,15 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 				sel.Path, marker, what, command)
 		}
 		if err := confirmSettingsWrite(cmd, lc, sel.Path, o.yes, what); err != nil {
+			return err
+		}
+	}
+	// §3's act one itself, after the one confirmation and before the token is
+	// stored below: the login runs on the owner's own terminal because they
+	// answered for it, and what it prints is still not the value that is kept —
+	// the hidden prompt below remains the only token path.
+	if o.claude {
+		if err := accountsAddClaudeRun(cmd, claudeBin); err != nil {
 			return err
 		}
 	}
@@ -408,9 +444,15 @@ func accountsAddPublishedRepos(lc *localcfg.Config, name string) ([]string, bool
 
 // accountsAddCommand is the command a refusal in a coding agent's session
 // prints for the person to run at their own terminal: this same edit, spelled
-// whole, because nothing they type here is remembered.
-func accountsAddCommand(name string, repos []string, profile string) string {
+// whole, because nothing they type here is remembered. It carries --claude when
+// the run that was refused asked for it: the login is half of what that run
+// would have done, and a command without the flag would send the person to a
+// different one.
+func accountsAddCommand(name string, repos []string, profile string, claude bool) string {
 	parts := []string{"fugaro", "accounts", "add", quoteWord(name), "--repos", quoteWord(strings.Join(repos, ","))}
+	if claude {
+		parts = append(parts, "--claude")
+	}
 	if profile != "" {
 		parts = append(parts, "--profile", quoteWord(profile))
 	}

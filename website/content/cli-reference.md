@@ -107,6 +107,14 @@ checkout's repository root are converged — the same stages fugaro update runs,
 invoked here rather than forked. It ends on the line that says what is left,
 which is a fugaro run and never an update.
 
+--claude runs Anthropic's own claude setup-token on your own terminal first,
+so the login is the one you would have run yourself: it gets your stdin, stdout
+and stderr, and fugaro reads none of what it prints. The token is then read at
+the hidden prompt below, exactly as it is without the flag — that prompt is the
+only source of the value, so a login you cancelled or that failed costs one
+paste rather than the command. A login that failed stores nothing and still
+leaves you the prompt.
+
 Run it at your own terminal: this file decides where a credential may be sent,
 so a coding agent's session is refused, --yes included.
 
@@ -116,6 +124,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |

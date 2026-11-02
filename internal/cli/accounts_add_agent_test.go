@@ -3,7 +3,6 @@
 package cli
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -15,15 +14,18 @@ import (
 // because this file decides where a credential may be sent and the person who
 // reads the diff is the one who may make that decision. The loop is over
 // agentenv.Markers itself rather than a copy, so a marker the tree adds is one
-// this command is held to. The fake login on PATH is A3's child; it is here
-// because the refusal must come before anything the command does, and a login
-// that ran would leave its marker file behind.
+// this command is held to.
+//
+// It runs without --claude, so it says nothing about act one: the login is not
+// reached on this path and a login that ran here would prove nothing about it.
+// TestAccountsAddClaudeRefusedInEveryAgentSession is the test that puts the
+// fake login on PATH, passes --claude and asserts its marker file is absent, so
+// a fence that moved off the login's own path fails there.
 func TestAccountsAddRefusesInAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
 			path := accountsAddFixture(t, accountsAddLocal)
 			before := readFileString(t, path)
-			fake := fakeClaude(t, t.TempDir())
 			t.Setenv(marker, "1")
 
 			out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
@@ -49,9 +51,6 @@ func TestAccountsAddRefusesInAnAgentSession(t *testing.T) {
 			}
 			if after := readFileString(t, path); after != before {
 				t.Errorf("the file changed in a coding agent's session:\n%s", after)
-			}
-			if _, statErr := os.Stat(fake.marker); statErr == nil {
-				t.Error("the login ran: the refusal comes before anything the command does")
 			}
 		})
 	}
