@@ -22,8 +22,8 @@ const DefaultOAuthRoot = "https://bitbucket.org"
 // for an access token.
 const oauthTokenPath = "/site/oauth2/access_token"
 
-// exchangeTimeout bounds the exchange when the caller has no client of its
-// own.
+// exchangeTimeout bounds the exchange when the caller's client sets no
+// timeout of its own.
 const exchangeTimeout = 30 * time.Second
 
 // maxAnswerBytes bounds the token answer this reads: it is one small JSON
@@ -44,8 +44,8 @@ type Consumer struct {
 // consumer's own credentials on: what the caller receives is the token.
 //
 // oauthRoot is where the exchange is made, and "" means DefaultOAuthRoot.
-// A refresh token in the answer is not read, so none is forwarded: a holder
-// of the read consumer keeps it, and a caller is never handed one (G5).
+// A refresh token in the answer is not read, so it is neither kept nor
+// forwarded, and a caller is never handed one (G5).
 func MintAccessToken(ctx context.Context, c Consumer, oauthRoot string, hc *http.Client) (string, time.Time, error) {
 	if c.Key == "" || c.Secret == "" {
 		return "", time.Time{}, errors.New("bitbucket: an OAuth consumer's key and secret are both required")
