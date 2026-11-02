@@ -1199,14 +1199,16 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // the call L4.2's bootstrap makes), from the file the run will read, the mode
 // it resolves and the owner's floor.
 //
-// Every read here fails towards asking nothing rather than guessing. A
-// configuration the launcher cannot read is a launch the run's own bootstrap
-// refuses, and a policy node it cannot read is one the launch's own policy
-// gate refuses (launchPolicyGates); inventing levels off either would refuse
-// a launch that works. A resolution that refuses (L1 = L2, an effort a
-// provider route would drop) leaves its own refusal to the runner and to
-// L3.2's launch check, and the levels it did not return are the blocks read
-// here anyway.
+// A policy node the launcher cannot read is one the launch's own policy gate
+// refuses (launchPolicyGates), and inventing a floor off it would refuse a
+// launch that works: that read fails towards asking nothing. The file's own
+// absence does not — it is not a file the run's bootstrap refuses, it is a
+// launch made from outside the repository's checkout (launchFileConfig), and
+// the two things this launch knows without it (the mode --mode asked for and
+// the owner's floor) are resolved against an empty configuration rather than
+// skipped. A resolution that refuses (L1 = L2, an effort a provider route
+// would drop) leaves its own refusal to the runner and to L3.2's launch
+// check, and the levels it did not return are the blocks read here anyway.
 //
 // The mode is the launcher's approximation of the run's: the ref's file with
 // the flag raised over it, as noteRigorRequest reads it, since the
@@ -1217,7 +1219,13 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // level 1's own default alone, which this gate does not judge.
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) string {
 	if cfg == nil {
-		return reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil, false)
+		// No configuration file was read, because the launcher stands
+		// outside the repository's checkout and this run's ref is not in
+		// one either: resolving against an empty configuration keeps the
+		// mode the flag asked for (spec.Rigor) and the owner's floor, and
+		// leaves unseen only what that file would have added — a rigor
+		// default of its own, an agent.levels block, first_line_review.
+		cfg = &config.Config{}
 	}
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level

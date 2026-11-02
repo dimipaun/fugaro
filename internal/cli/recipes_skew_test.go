@@ -432,6 +432,35 @@ func TestRecipesSkewRefusesResolvedL3OnOldImage(t *testing.T) {
 	}
 }
 
+// TestRecipesSkewRefusesResolvedL3OutsideACheckout: the levels a launch
+// resolves are not the task field, and a launch from outside the repository's
+// checkout — `fugaro run --repo acme/app` from anywhere else — reads no
+// configuration file at all (launchFileConfig), which is a different thing
+// from a repository that configures nothing. --mode critical is the
+// launcher's own request and is in the task either way, so the level 3 it
+// resolves is known here too; a 0.15.0 image runs the launch without the
+// adversarial step the mode asks for, in silence.
+//
+// Mutation (return early from launchReviewLevelsAsk when the file's
+// configuration is nil, as an unreadable file's stand-in): the 0.15.0 launch
+// below succeeds.
+func TestRecipesSkewRefusesResolvedL3OutsideACheckout(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	args := []string{"run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abcd", "Fix it."}
+	_, _, err := execute(t, args...)
+	if err == nil || !strings.Contains(err.Error(), "review level 3 (its adversarial step)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want the level 3 refusal", err)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+}
+
 // TestRecipesSkewJudgesAProjectOrCatalogRecipe: the L1 insertion ask is not
 // blind to a recipe the launcher did not read out of a checkout, because a
 // project or catalog recipe never needs one: the launcher embeds its text in
