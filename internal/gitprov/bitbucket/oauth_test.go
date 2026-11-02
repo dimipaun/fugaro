@@ -85,6 +85,23 @@ func TestClientCredentialsExchange(t *testing.T) {
 		}
 	})
 
+	t.Run("a caller's client is bounded and never compresses the answer", func(t *testing.T) {
+		got := exchangeClient(&http.Client{})
+		if got.Timeout == 0 {
+			t.Error("a client with no timeout of its own would hold the exchange open forever")
+		}
+		tr, ok := got.Transport.(*http.Transport)
+		if !ok || !tr.DisableCompression {
+			t.Errorf("the transport this uses = %#v, want one that does not ask for a compressed answer", got.Transport)
+		}
+		if got.Jar != nil || got.CheckRedirect == nil {
+			t.Errorf("the client this uses keeps cookies or follows redirects: %+v", got)
+		}
+		if kept := exchangeClient(&http.Client{Timeout: time.Minute}); kept.Timeout != time.Minute {
+			t.Errorf("a caller's own timeout became %s", kept.Timeout)
+		}
+	})
+
 	t.Run("a redirect is refused, and the credentials go nowhere else", func(t *testing.T) {
 		var landed int
 		elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

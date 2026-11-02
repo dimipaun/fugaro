@@ -110,21 +110,45 @@ func refusal(status int, data []byte) error {
 }
 
 // exchangeClient is the client that makes the exchange: the caller's, with a
-// redirect refused and any cookie jar dropped, or a default one. The request
-// carries the consumer's secret in its Authorization header, so it must not
-// follow a redirect -- net/http would replay that header against a host that
-// only answered the first request -- and it keeps no cookies either.
+// redirect refused, compression off, a bounded timeout and any cookie jar
+// dropped, or a default one built the same way. Whatever the caller passed,
+// the client this returns is a copy, so none of it changes the caller's own.
+//
+// The request carries the consumer's secret in its Authorization header, so
+// it must not follow a redirect -- net/http would replay that header against
+// a host that only answered the first request -- and it keeps no cookies
+// either. A client with no timeout of its own is given one, rather than left
+// to hold the exchange open against an endpoint that never answers.
 func exchangeClient(c *http.Client) *http.Client {
 	out := http.Client{}
 	if c != nil {
 		out = *c
-	} else {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.DisableCompression = true
-		out.Transport = transport
+	}
+	if out.Timeout == 0 {
 		out.Timeout = exchangeTimeout
 	}
 	out.Jar = nil
+	out.Transport = exchangeTransport(out.Transport)
 	out.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &out
+}
+
+// exchangeTransport returns t with compression off, cloned rather than
+// changed, because the answer is one small JSON object: nothing here needs a
+// compressed body, and an endpoint that decides how many bytes get read for
+// the bytes it sends is not one this request hands anything to. A transport
+// that is not http.Transport's -- a caller's own dialer, proxy or TLS config
+// -- is returned as it is: replacing it would take away what the caller put
+// there, and its compression behaviour is then the caller's own choice.
+func exchangeTransport(t http.RoundTripper) http.RoundTripper {
+	if t == nil {
+		t = http.DefaultTransport
+	}
+	tr, ok := t.(*http.Transport)
+	if !ok {
+		return t
+	}
+	clone := tr.Clone()
+	clone.DisableCompression = true
+	return clone
 }
