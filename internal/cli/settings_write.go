@@ -41,12 +41,15 @@ type settingsEdit struct {
 	Old, New []byte
 	// What is the sentence the confirmation shows, naming what changes.
 	What string
-	// Typed asks for the project's name rather than y/N, and --yes never
-	// answers it (D846). It is the widening directions: a loosened ceiling, a
-	// floor removed, a followup key turned on.
+	// Typed asks for the project's name rather than y/N. It is the widening
+	// directions: a loosened ceiling, a floor removed, a followup key turned
+	// on. --yes answers it outside a coding agent's session (D1107, which
+	// amends D846 for `settings set|unset` alone); inside one the marker fence
+	// comes first and --yes never lifts it.
 	Typed bool
-	// TypedWhy is the sentence saying why nothing stands in for the typed
-	// name, shown by the refusal of a session with no terminal.
+	// TypedWhy is the sentence saying why this form is asked for, and who may
+	// answer it: it names --yes where the caller says a flag stands in
+	// (D1107), and the refusal of a session with no terminal repeats it.
 	TypedWhy string
 	// Kind is the document Path is: the local project config, the local project
 	// layer file, or a repository's fugaro.yaml. It is one fact and not two,
@@ -60,7 +63,8 @@ type settingsEdit struct {
 	// the person to run at their own terminal. It is the whole of what the
 	// refusal may produce beside the diff.
 	Command string
-	// Yes is --yes. It answers the y/N confirmation and never the typed one.
+	// Yes is --yes. It answers the y/N confirmation, and the typed one too
+	// wherever the caller says a flag may (D1107).
 	Yes bool
 }
 
@@ -102,7 +106,12 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 		// reads is one block, and the sentence saying what makes this edit
 		// different from the ordinary y/N is part of it.
 		fmt.Fprintf(out, "%s\n", e.TypedWhy)
-		if err := confirmTypedStrict(cmd, lc, e.TypedWhy, e.What); err != nil {
+		// --yes answers the typed form too, and only here: the refusal above
+		// has already decided that this is not a coding agent's session, so
+		// what is left to confirm is the person's own word for it (D1107).
+		if e.Yes {
+			fmt.Fprintln(out, "  confirmed by --yes")
+		} else if err := confirmTypedStrict(cmd, lc, e.TypedWhy, e.What); err != nil {
 			return err
 		}
 	} else if err := confirmSettingsWrite(cmd, lc, e.Path, e.Yes, e.What); err != nil {

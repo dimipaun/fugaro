@@ -4,6 +4,8 @@ A run's coder can be a model served by OpenRouter (the first one is `deepseek/de
 
 This is an experiment, not a default: `agent.models` stays Claude unless a repository names a provider model, and a cheaper run is never "more ready" than a Claude one, because the Claude review alone decides readiness. The provider traffic goes through the same gateway as Claude's, so pinning, the dollar caps and the kill switches hold. The **owner** enables it, in the project's local config, because it sends a repository's code to a third party; a repository's `fugaro.yaml` cannot add a provider, a URL or a price, only name a model the owner has opened to it. Treat the first runs as measurements: the cost to reach a Claude-approved pull request is the number that matters.
 
+**With `fugaro models`:** `fugaro models ls` prints the routes this project has, the models each one claims, what a run can name today and what it would cost, and `fugaro models search <text>` finds a model in the price catalog before you pin it. Both are offline reads — no bucket, no database, no host — so they run anywhere, a coding agent's session included.
+
 ## 1. On the OpenRouter account (before anything in Fugaro)
 
 Fugaro never rewrites a request body, so what the gateway cannot ask for per request has to be set on the account.

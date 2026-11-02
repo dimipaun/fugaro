@@ -46,18 +46,20 @@ func (r *run) parentEnv() map[string]string {
 }
 
 // stagePins are the pins of a stage's role: its model, the background model
-// and its output limit per call. They exist for the gateway's pricing, so
-// without the gateway there are none and a run sets no variable the
-// budget-off runs never set. When the role's model or the background model is
-// served by a provider route, agent.ProviderRouteVars are added: a Claude
-// stage is never touched by them.
+// and its output limit per call. Its model is the review level's own when the
+// stage is a review stage a layer named one for (stageModel), and the role
+// slot's otherwise. They exist for the gateway's pricing, so without the
+// gateway there are none and a run sets no variable the budget-off runs never
+// set. When the stage's model or the background model is served by a provider
+// route, agent.ProviderRouteVars are added: a Claude stage is never touched by
+// them.
 func (r *run) stagePins(stage string) map[string]string {
 	if !r.gatewayOn() {
 		return nil
 	}
-	role := config.StageRole(stage)
+	role := stageRole(stage)
 	a := r.cfg.Agent
-	model, bg := a.ModelFor(role), r.backgroundModel()
+	model, bg := r.stageModel(stage), r.backgroundModel()
 	pins := agent.PinVars(model, bg, a.MaxOutputFor(role))
 	if r.stageOnProviderRoute(model, bg) {
 		maps.Copy(pins, agent.ProviderRouteVars())

@@ -607,13 +607,13 @@ export const CONSOLE_OPERATIONS = [
         key: 'limit',
         kind: 'runLimit',
         required: false,
-        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the window, at most RUNS_LIST_MAX_LIMIT. It needs CLI 0.16.0, the release that carries #1545: in the 0.15 line `--limit` means "read only the newest N", so its totals are the page’s and not the window’s. No caller passes it yet.',
+        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the window, at most RUNS_LIST_MAX_LIMIT. It needs CLI 0.16.0, the release that carries #1545: in the 0.15 line `--limit` means "read only the newest N", so its totals are the page’s and not the window’s. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which passes it only above `RUNS_LIST_PAGE_CLI_FLOOR`; the queue’s own runs part passes neither word.',
       },
       {
         key: 'after',
         kind: 'runAfter',
         required: false,
-        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id. It needs CLI 0.16.0, the release that carries #1545: a 0.15.x CLI refuses the word outright. No caller passes it yet.',
+        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id. It needs CLI 0.16.0, the release that carries #1545: a 0.15.x CLI refuses the word outright. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which sends the last row it drew and only above `RUNS_LIST_PAGE_CLI_FLOOR`.',
       },
     ],
   },
@@ -1120,6 +1120,30 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // The declarations read (coordinator v2 C4, D827): `fugaro coordinator intents
+  // --all --json`, what the fleet's writers have stored, newest first.
+  //
+  // **It has no argument at all**, which is the strongest form of this file's
+  // rule: the whole argv is the row's own words (`src/main/spawn.ts`), so there
+  // is no field a renderer could fill and no way to steer the child anywhere.
+  // `--all` is fixed rather than a control, the way `coordinator status`'s two
+  // are: the screen draws every repository the local config lists, and no
+  // control turns that off.
+  //
+  // Like the stored view beside it, this read asks nothing of the host: the
+  // declarations are the caller's own database node (`roles/firebasedatabase.
+  // viewer`), so no App key is read, no installation token is minted, no
+  // provider is opened and no host is reached. `declared_by` is a *declaration*
+  // -- the string a writer put in its own record -- and never an identity the
+  // host or this console establishes (`src/shared/schema.ts`).
+  {
+    name: 'coordinator.intents',
+    method: 'coordinatorIntents',
+    command: 'coordinator intents',
+    flags: ['--all', '--json'],
+    summary: 'what the fleet’s writers have declared, newest first',
+    args: [],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
@@ -1136,9 +1160,10 @@ export const CONSOLE_OPERATION_NAMES: readonly OperationName[] = Object.freeze(
 
 /** ALLOWED_OPERATION_FLAGS is the whole of what an operation may fix. `--json`
  * asks for the document the console draws; `--url` is `logs RUN --url`, which is
- * its own argv; `--from-store` and `--all` are `coordinator status`'s two, fixed
- * together because the stored view and the project-wide wrapper are one question
- * and no screen control turns either off. Anything else an operation might want
+ * its own argv; `--from-store` is `coordinator status`'s, and `--all` is the
+ * project-wide wrapper that read fixes together with it and that
+ * `coordinator intents` fixes on its own -- in both cases no screen control
+ * turns it off. Anything else an operation might want
  * to fix is on `NEVER_REACHABLE`'s flag rows. */
 export const ALLOWED_OPERATION_FLAGS: readonly string[] = Object.freeze([
   '--json',

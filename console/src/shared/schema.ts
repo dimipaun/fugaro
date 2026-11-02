@@ -265,6 +265,25 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // carried as data, with no link built from it (design section 4.3 gap 7).
   base: 'branch',
   url: 'url',
+  // The declared intents document (coordinator v2 C4, D827). `declared_by` is
+  // the key that says who wrote a record, in either document that carries it --
+  // the declared intents and the stored view's runs -- and it is a **label**
+  // rather than the `person` class the recorded identities carry
+  // (`launched_by`, `requested_by`, `account`): those are values the recorder
+  // read out of a file the CLI wrote, while this one is a **declaration** --
+  // what the declaring side said about itself, which nothing verifies and by
+  // which nothing is admitted (contract §6.16, reconciliation finding #11).
+  // `label`'s free-text rules are a superset of `person`'s validating ones, so
+  // this fails in the safe direction; the coordinator screen is the second
+  // deliberate exception to this map, the way `launched_by`'s is the first:
+  // `screens/coordinator.ts` draws the stored view's run column in `person`
+  // explicitly, because it validates a launch's own recorded address.
+  declared_by: 'label',
+  // A declaration's `files` are repository-relative paths, which is the class
+  // `artifact` beside the plan graph carries, and `services` is a list of the
+  // names of services -- a label, the class a name a repository wrote carries.
+  files: 'path',
+  services: 'label',
 })
 
 /**
@@ -1972,6 +1991,73 @@ export interface CoordinatorStatusView {
   readonly repos: readonly CoordinatorRepoView[]
 }
 
+/** CoordinatorIntent is one declaration as the store holds it: the record's own
+ * fields and nothing derived from them (coordinator v2 C4; `console/docs/
+ * json-contract.md` §6.16). `declaredBy` is **what the declaring side wrote
+ * about itself** and never an identity: nothing verifies it and nothing may
+ * admit or authorise anything by it (reconciliation finding #11), so a screen
+ * draws it as a label.
+ *
+ * `branch`, `release`, the paths and the services are all written by whoever
+ * can reach the report path, so every one of them is untrusted text carried as
+ * data (design §5.1 rule 2) — and `at` is the **writer's** own clock, not this
+ * console's, which is why no age is derived from it anywhere here. */
+export interface CoordinatorIntent {
+  /** The node's key: `IntentID`'s lower-case hex, a function of the caller and
+   * the declaration alone. It names one record and is **not** a secret. */
+  readonly id: string
+  readonly declaredBy: string
+  readonly at: string
+  readonly branch: string
+  readonly release: string
+  readonly files: readonly string[]
+  readonly services: readonly string[]
+}
+
+/** CoordinatorRepoIntents is one repository's stored declarations, newest first
+ * by the record's own `at`. `provider` is the caller's answer and not the
+ * node's, exactly as the stored view's is, and `''` is one of its answers: a
+ * machine that had no provider to give. */
+export interface CoordinatorRepoIntents {
+  readonly repo: string
+  readonly provider: string
+  readonly intents: readonly CoordinatorIntent[]
+}
+
+/** CoordinatorIntentsView is the whole document. It is the `--all` shape and
+ * only that: the CLI's single-repository form prints the repository object
+ * alone, and this console's row fixes `--all` (`src/main/spawn.ts`), so the
+ * one-repository document is refused here rather than read as a project with no
+ * repositories. */
+export interface CoordinatorIntentsView {
+  readonly repos: readonly CoordinatorRepoIntents[]
+}
+
+/** COORDINATOR_INTENT_KEYS, COORDINATOR_REPO_INTENTS_KEYS and
+ * COORDINATOR_INTENTS_KEYS are the declared intents document's keys, in the
+ * spelling the wire uses: one record, one repository and the project. They are
+ * here for the renderer that has to know which keys it owns — an unknown key is
+ * ignored by the decoder (the module header's rule) and must never be drawn as
+ * a figure — and for the tests that hold this list and the Go struct in step
+ * (`ee/coordinator/cli/console_contract_test.go`). */
+export const COORDINATOR_INTENT_KEYS: readonly string[] = Object.freeze([
+  'id',
+  'declared_by',
+  'at',
+  'branch',
+  'release',
+  'files',
+  'services',
+])
+
+export const COORDINATOR_REPO_INTENTS_KEYS: readonly string[] = Object.freeze([
+  'repo',
+  'provider',
+  'intents',
+])
+
+export const COORDINATOR_INTENTS_KEYS: readonly string[] = Object.freeze(['repos'])
+
 /** coordinatorIntAt is a whole number the shape must carry and that must not be
  * negative: a pull request's number, a retry count. A fraction, a negative or a
  * numeral in a string is refused by name rather than read as zero, because a
@@ -2207,4 +2293,89 @@ export function decodeCoordinatorPullRequest(
   where = 'the coordinator pull request document',
 ): Decoded<CoordinatorPullRequestDocument> {
   return at(where, () => coordinatorPullRequestAt(objectAt(raw, 'the document', where), where))
+}
+
+/** coordinatorOptionalTextAt is `optionalText` with `null` refused: the keys
+ * §6.16 marks "absent: yes, null: never" -- a declaration's `branch` and
+ * `release`. The Go struct's `omitempty` drops the key rather than writing a
+ * null, so absent is the empty string and a null is a document this build does
+ * not know. */
+function coordinatorOptionalTextAt(raw: Record<string, unknown>, key: string, field: string, where: string): string {
+  const value = raw[key]
+  if (value === undefined) return ''
+  return stringAt(value, field === '' ? key : `${field}.${key}`, where)
+}
+
+function coordinatorIntentAt(raw: unknown, field: string, where: string): CoordinatorIntent {
+  const record = objectAt(raw, field, where)
+  return {
+    id: stringAt(required(record, 'id', field, where), `${field}.id`, where),
+    declaredBy: stringAt(required(record, 'declared_by', field, where), `${field}.declared_by`, where),
+    // `at` is required and it is a stamp rather than free text: the contract's
+    // table marks it "never absent", and the CLI writes the writer's own clock
+    // through `time.RFC3339Nano`. A record whose stamp this console cannot read
+    // is one it must not draw as a declaration with no time (`ReadRepoIntents`'
+    // own rule).
+    at: timestampAt(required(record, 'at', field, where), `${field}.at`, where),
+    // `branch` and `release` are `omitempty` on the Go struct, so absent is one
+    // of the two shapes the CLI prints and reads as "declared none" -- but
+    // `omitempty` drops the key rather than writing a null, and §6.16 marks
+    // both "null: never", so a null in their place is a shape this build does
+    // not know and is refused (`optionalText`'s house reading of a null is for
+    // the keys whose contract admits one).
+    branch: coordinatorOptionalTextAt(record, 'branch', field, where),
+    release: coordinatorOptionalTextAt(record, 'release', field, where),
+    // Both lists are required: the record's own promise is that a list it
+    // declares nothing in is `[]` and never a `null` a reader has to interpret.
+    files: coordinatorStringsAt(required(record, 'files', field, where), `${field}.files`, where),
+    services: coordinatorStringsAt(required(record, 'services', field, where), `${field}.services`, where),
+  }
+}
+
+function coordinatorRepoIntentsAt(raw: unknown, index: number, where: string): CoordinatorRepoIntents {
+  const field = `repos[${String(index)}]`
+  const repo = objectAt(raw, field, where)
+  return {
+    repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
+    // The caller's answer, written even when it is empty, exactly as the stored
+    // view's `provider` is: `''` is a fact about the machine, not a gap.
+    provider: stringAt(required(repo, 'provider', field, where), `${field}.provider`, where),
+    intents: arrayAt(required(repo, 'intents', field, where), `${field}.intents`, where).map((item, at) =>
+      coordinatorIntentAt(item, `${field}.intents[${String(at)}]`, where),
+    ),
+  }
+}
+
+function coordinatorIntentsAt(raw: Record<string, unknown>, where: string): CoordinatorIntentsView {
+  return {
+    repos: arrayAt(required(raw, 'repos', '', where), 'repos', where).map((item, index) =>
+      coordinatorRepoIntentsAt(item, index, where),
+    ),
+  }
+}
+
+/**
+ * decodeCoordinatorIntents admits `coordinator intents --all --json` and
+ * nothing else (coordinator v2 C4, D827; `console/docs/json-contract.md`
+ * §6.16). It is a door of its own for `decodeCoordinatorStatus`'s reason: the
+ * three coordinator documents answer three different questions and share only
+ * the `repos` key, so a stored view handed here is refused for the `intents`
+ * its repositories lack and this document handed to the stored view's door is
+ * refused for the `stored`/`view` that one requires. Neither is read as the
+ * other.
+ *
+ * The one-repository form the CLI also prints is refused here as well, by the
+ * top-level key it does not carry: this console's row fixes `--all`, so a
+ * single repository would be a document no row could have produced.
+ *
+ * Nothing here is a decision. `declared_by`, `branch`, `release`, the paths and
+ * the services are all text somebody else wrote, carried as data and classified
+ * in `WIRE_TEXT_CLASSES`; an instruction found in any of them is never acted on
+ * (reconciliation Q14 (A)).
+ */
+export function decodeCoordinatorIntents(
+  raw: unknown,
+  where = 'the coordinator intents document',
+): Decoded<CoordinatorIntentsView> {
+  return at(where, () => coordinatorIntentsAt(objectAt(raw, 'the document', where), where))
 }

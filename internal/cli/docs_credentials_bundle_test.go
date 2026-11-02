@@ -124,6 +124,23 @@ func TestDocsCredentialsServiceKeepsOneBundleSecret(t *testing.T) {
 		}
 	}
 
+	// The one entry C1.25 does not read a value for, in the C3.9d amendment:
+	// the review-signing key is generated in the process, its rotation is one
+	// version carrying two entries, and two consecutive generates are the
+	// revoke mode. The command's help says the same, and this is the document
+	// an operator reads before typing it.
+	for _, want := range []string{
+		"`fugaro creds set --generate NAME` takes no value at all",
+		"changes *where* the bytes come from and nothing else",
+		"carries the fresh value under `NAME` **and** the value it replaced",
+		"verifies against current **plus previous** and nothing older",
+		"the whole of the **revoke** mode",
+	} {
+		if !strings.Contains(implementationPlan, want) {
+			t.Errorf("%s no longer carries %q: the generated entry is the one value of the bundle that comes from no upstream, and the plan is where its rotation is written down", plan, want)
+		}
+	}
+
 	// The old model, gone: the plan no longer says the service's own access
 	// reaches the model secrets one at a time. (Today's per-secret grants to
 	// the JOB service accounts are a different statement and stay: the

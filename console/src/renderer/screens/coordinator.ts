@@ -57,9 +57,10 @@
 
 import { measured } from '../../shared/availability'
 import type { Reading, Unit } from '../../shared/availability'
-import { nameableText, sanitizeText } from '../../shared/sanitize'
+import { maskCredentialBlocks, nameableText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import { BUSY_SLOT_CLASS } from '../section'
+import type { SkeletonBlock, SkeletonShape } from '../skeleton'
 import type {
   CoordinatorRecord,
   CoordinatorRepoView,
@@ -331,6 +332,168 @@ export const COORDINATOR_BLIND_HOST_CLASS = 'coordinator-blind-host'
  * the part it fills, the way the launch control's own button does for its form. */
 export const COORDINATOR_QUEUE_JOBS_CLASS = 'coordinator-queue-jobs'
 
+/**
+ * COORDINATOR_JOBS_CLASS is the job list's own section, a sibling of the queue
+ * and the fleet strip: the section the operator asks for, and the one section of
+ * this screen that is **not** part of the tab's first paint.
+ *
+ * The queue answers "what is waiting for a person" and holds at most the two
+ * dozen items the console can draw at once; the job list is the other question
+ * -- every run the window holds, newest first -- and it is read, paged and
+ * expanded on demand (D818, rule 5 of §6.2's opening). Keeping it a section of
+ * its own is what makes its own read, its own mark and its own refusal possible:
+ * a list that failed to read must not take the queue down with it, and a section
+ * the operator never asked for must not be a section that was read.
+ */
+export const COORDINATOR_JOBS_CLASS = 'coordinator-jobs'
+
+/** COORDINATOR_JOBS_HEAD_CLASS carries the window's own figures, and
+ * COORDINATOR_JOBS_LIST_CLASS and COORDINATOR_JOBS_CONTROLS_CLASS are the two
+ * hosts the paged rows and the section's controls are filled into. The three are
+ * hosts rather than content for the queue's reason: the head is written once,
+ * from the first page's `totals`, and the rows are appended to, so a page that
+ * lands never redraws -- and never collapses -- the rows already read. */
+export const COORDINATOR_JOBS_HEAD_CLASS = 'coordinator-jobs-head'
+export const COORDINATOR_JOBS_LIST_CLASS = 'coordinator-jobs-list'
+export const COORDINATOR_JOBS_CONTROLS_CLASS = 'coordinator-jobs-controls'
+
+/** COORDINATOR_JOBS_WINDOW_WORD introduces the head's two figures and says what
+ * they are figures **of**: the window the read was made over, and not the rows
+ * under them. The distinction is the whole of why they are drawn from
+ * `totals` -- a screen that summed the page would draw the page's count under a
+ * word that claims the window. */
+export const COORDINATOR_JOBS_WINDOW_WORD = 'the window holds'
+
+/** COORDINATOR_JOBS_RUNS_WORD and COORDINATOR_JOBS_SPENT_WORD are the head's two
+ * cells, in the order they are drawn: how many runs the window holds, and what
+ * they cost. Both come off the **first page's** `totals` (`runview.Totals`), and
+ * the runs figure is the window's own count -- the CLI sums the window it read,
+ * not the page it printed. */
+export const COORDINATOR_JOBS_RUNS_WORD = 'runs'
+export const COORDINATOR_JOBS_SPENT_WORD = 'spent'
+
+/** COORDINATOR_JOBS_LOAD_WORD is the control that asks for the list at all, and
+ * COORDINATOR_JOBS_OLDER_WORD the control that asks for the page after it. The
+ * first is drawn until the operator presses it; the second only while the page
+ * last read filled every row it asked for, because that is the only state in
+ * which the console knows there may be more. */
+export const COORDINATOR_JOBS_LOAD_WORD = 'Load jobs'
+export const COORDINATOR_JOBS_OLDER_WORD = 'Older 50'
+
+/** COORDINATOR_JOBS_EMPTY_WORD is the console's own sentence for a window the
+ * read answered with no run at all. It is drawn only over a page that was read,
+ * and never while one is in flight. */
+export const COORDINATOR_JOBS_EMPTY_WORD = 'the window holds no run'
+
+/** COORDINATOR_JOBS_BUSY is what the section's own mark says while its read is
+ * out. It names the list and not the page, because the operator is waiting for
+ * the first page of it either way. */
+export const COORDINATOR_JOBS_BUSY = 'Reading the job list…'
+
+/** COORDINATOR_JOBS_LOAD_CLASS and COORDINATOR_JOBS_OLDER_CLASS are the two
+ * controls' hooks, and COORDINATOR_JOB_DETAIL_CLASS is the body one row expands:
+ * hidden until the press, and drawn with the row rather than on it. */
+export const COORDINATOR_JOBS_LOAD_CLASS = 'coordinator-jobs-load'
+export const COORDINATOR_JOBS_OLDER_CLASS = 'coordinator-jobs-older'
+export const COORDINATOR_JOB_DETAIL_CLASS = 'coordinator-job-detail'
+
+/** COORDINATOR_JOBS_PAGE is the page the section asks for, and `--limit`'s value:
+ * fifty rows. It is deliberately **not** `COORDINATOR_LIST_CAP`: that cap is
+ * what this screen may draw at once, and it is twenty. Fifty is the page the
+ * console asks the CLI for, and it is drawn in full -- the cap exists to keep a
+ * single screen's drawing bounded, and a page the operator asked for row by row
+ * is the one list on this screen that is not a summary of something else. It is
+ * well under `RUNS_LIST_MAX_LIMIT` (`src/main/ipc.ts`, 200), which is the
+ * surface's ceiling rather than this screen's choice. */
+export const COORDINATOR_JOBS_PAGE = 50
+
+/** COORDINATOR_JOBS_FLOOR_WORD introduces the console's sentence for a CLI that
+ * is too old to page: `runs ls --limit` cut after the sort and `--after` are
+ * both #1545's, and a 0.15.x CLI either refuses `--after` outright or sums the
+ * page it printed. A screen that asked anyway would draw the page's figures
+ * under the word "the window" -- the one wrong number this section could draw --
+ * so the section draws the sentence and spawns nothing.
+ *
+ * **Its trailing space is the sentence's own.** The version follows it in a span
+ * of its own, and two inline spans are concatenated with nothing between them:
+ * without the space the paragraph reads "this CLI is0.15.3". */
+export const COORDINATOR_JOBS_FLOOR_WORD = 'the job list needs fugaro 0.16.0 and this CLI is '
+
+/** COORDINATOR_JOBS_SHAPE is the section's own skeleton, worn while the first
+ * page is out: the head's line and the rows under it. It is declared here rather
+ * than in `skeleton.ts` because the job list is **not** one of the sections the
+ * tab's first paint marks -- nothing is in flight for it until the operator
+ * presses the control -- so it is not one of `SKELETON_SHAPES.coordinator`'s,
+ * which is the list of the sections a tab's entry reads. */
+export const COORDINATOR_JOBS_SHAPE: SkeletonShape = Object.freeze({
+  section: 'jobs',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row']),
+})
+
+/** COORDINATOR_DESCRIPTION_CLASS is one record's description block (K3): the
+ * element the disclosure reveals and the description is painted into. It is
+ * drawn with the row and `hidden` until the press, so the press is a toggle and
+ * never a rendering. */
+export const COORDINATOR_DESCRIPTION_CLASS = 'coordinator-description'
+
+/** COORDINATOR_DESCRIPTION_HEAD_CLASS is the record's own disclosure: the button
+ * whose press reveals the block and, the first time only, reads the description.
+ * It is a **separate control from the number** -- the number is K2's Open-PR
+ * button, and a press on it opens a browser rather than a block. */
+export const COORDINATOR_DESCRIPTION_HEAD_CLASS = 'coordinator-description-head'
+
+/** COORDINATOR_DESCRIPTION_LINE_CLASS is one line of the description. The body is
+ * drawn **a line at a time**, and it is why the bound below means anything: the
+ * `sentence` class flattens newlines and cuts one text node at
+ * `MAX_TEXT_LENGTH`, so a body drawn as a single node could neither keep the
+ * author's lines nor ever be shown whole. */
+export const COORDINATOR_DESCRIPTION_LINE_CLASS = 'coordinator-description-line'
+
+/** COORDINATOR_DESCRIPTION_ALL_CLASS is the `Show all` control: the press that
+ * draws the lines the bound held back. It is drawn only when there are any, and
+ * it goes with them -- there is no `Show fewer`, because the bound is the state
+ * the block opens in and not a mode. */
+export const COORDINATOR_DESCRIPTION_ALL_CLASS = 'coordinator-description-all'
+
+/** COORDINATOR_DESCRIPTION_EMPTY_CLASS is the console's own sentence for a pull
+ * request whose description the host answered with nothing: a fact about the
+ * pull request, and not the same as a read that did not answer. */
+export const COORDINATOR_DESCRIPTION_EMPTY_CLASS = 'coordinator-description-empty'
+
+/** COORDINATOR_DESCRIPTION_SHOW_WORD and COORDINATOR_DESCRIPTION_HIDE_WORD are
+ * the disclosure's two labels, and both are the console's own: the entry rewrites
+ * the one for the other on the toggle, and neither is ever a document's text. */
+export const COORDINATOR_DESCRIPTION_SHOW_WORD = 'Show description'
+export const COORDINATOR_DESCRIPTION_HIDE_WORD = 'Hide description'
+
+/** COORDINATOR_DESCRIPTION_ALL_WORD is the second control's one word. */
+export const COORDINATOR_DESCRIPTION_ALL_WORD = 'Show all'
+
+/** COORDINATOR_DESCRIPTION_EMPTY_WORD is what the block says for a description
+ * the host did not write. It is deliberately not `n/a`: the field was answered
+ * and it is empty, which is not the same as a value the console would not draw. */
+export const COORDINATOR_DESCRIPTION_EMPTY_WORD = 'the pull request carries no description'
+
+/** COORDINATOR_DESCRIPTION_BUSY is what the block's own mark says while its read
+ * is out. */
+export const COORDINATOR_DESCRIPTION_BUSY = 'Reading the description…'
+
+/** COORDINATOR_DESCRIPTION_LINES is the block's own bound, in lines: the first
+ * twenty of the body, with `Show all` under them. It is the console's own
+ * number rather than the CLI's -- the read answers with the body whole, and what
+ * to draw of it is a decision this screen makes. */
+export const COORDINATOR_DESCRIPTION_LINES = 20
+
+/** COORDINATOR_DESCRIPTION_SHAPE is the block's skeleton, worn while its read is
+ * out: a line of prose and two under it. It is declared here for the job list's
+ * own reason -- nothing is in flight for a description until the operator
+ * presses its disclosure -- so it is not one of `SKELETON_SHAPES.coordinator`'s,
+ * which is the list of the sections a tab's entry reads. */
+export const COORDINATOR_DESCRIPTION_SHAPE: SkeletonShape = Object.freeze({
+  section: 'description',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'line', 'line']),
+})
+
 // ---------------------------------------------------------------------------
 // The elements.
 // ---------------------------------------------------------------------------
@@ -404,6 +567,45 @@ export interface CoordinatorPullButton {
   readonly link: CoordinatorPullLink
 }
 
+/**
+ * CoordinatorDescriptionRequest is the pair one pull request's description is
+ * read with -- `fugaro coordinator show --repo <owner/name> --pr <n> --json`
+ * (coordinator v2 C3, D816) -- and the whole of what the entry sends for it.
+ *
+ * **It is not `CoordinatorPullLink` and it is deliberately a type of its own.**
+ * A destination needs the provider and this read does not: the CLI resolves the
+ * provider itself, out of the same local config the stored view's own field came
+ * from. Two shapes that mean two different things are two types, so neither can
+ * be handed to the other's caller by mistake.
+ */
+export interface CoordinatorDescriptionRequest {
+  readonly repo: string
+  readonly number: number
+}
+
+/**
+ * CoordinatorDescriptionTarget is one description the detail drew a disclosure
+ * for: the button the entry binds, the block it reveals, the slot the read's own
+ * mark goes in, and the pair the read is made of.
+ *
+ * The four are answered together rather than looked up again by class, for the
+ * reason `CoordinatorPullButton` is: what the entry binds and what the screen
+ * drew cannot come apart.
+ */
+export interface CoordinatorDescriptionTarget {
+  readonly element: ScreenElement
+  readonly block: ScreenElement
+  readonly slot: ScreenElement
+  readonly request: CoordinatorDescriptionRequest
+}
+
+/** DrawnCoordinatorDetail is what one repository's detail drew: the numbers that
+ * are buttons (K2) and the descriptions whose disclosure the entry binds (K3). */
+export interface DrawnCoordinatorDetail {
+  readonly pulls: readonly CoordinatorPullButton[]
+  readonly descriptions: readonly CoordinatorDescriptionTarget[]
+}
+
 /** CoordinatorRecordPanel is one record: a pull request with the runs behind it,
  * or the in-flight runs alone. `label` is the console's own name for the record
  * -- the pull request's number, or the newest run's id -- and `title` is the
@@ -413,10 +615,17 @@ export interface CoordinatorPullButton {
  * `link` is the triple the label opens when the console can form one (K2), and
  * `null` where it cannot: a record with no pull request at all, or one whose
  * repository or provider the console will not build a destination from. A `null`
- * is drawn as text, and a label that is a run's id is never a button. */
+ * is drawn as text, and a label that is a run's id is never a button.
+ *
+ * `description` is the pair that read is made of (K3), and it is **not** `link`
+ * with the provider dropped: a node a CLI older than C1 answered carries no
+ * provider, so `link` is `null` there while the description can still be read.
+ * It is `null` where there is nothing to read: a record with no pull request, or
+ * one whose repository or number the console will not ask the CLI about. */
 export interface CoordinatorRecordPanel {
   readonly label: string
   readonly link: CoordinatorPullLink | null
+  readonly description: CoordinatorDescriptionRequest | null
   readonly title: string
   readonly state: string
   readonly draft: boolean
@@ -589,6 +798,56 @@ export interface CoordinatorRunRow {
   readonly halted: boolean
 }
 
+/**
+ * CoordinatorJobRow is one row of the job list, off `runview.Row`'s own fields
+ * and nothing else: the collapsed row draws the id, the repository, the status
+ * and the title, and the expanded body draws the rest -- which is what
+ * "expandable" buys, and why the reader keeps fields no collapsed row draws.
+ *
+ * Every string here is a document's, so every one of them is drawn through
+ * `putText` in the class its wire key declares: a job's title and reason are
+ * written by whoever wrote the task, a repository is a repository, and a branch
+ * is a branch. `cost` is a reading and not a number, so a row whose cost the
+ * document did not carry draws nothing rather than `$0.00`.
+ */
+export interface CoordinatorJobRow {
+  readonly run: string
+  readonly repo: string
+  readonly status: string
+  readonly stage: string
+  readonly outcome: string
+  readonly title: string
+  readonly branch: string
+  readonly reason: string
+  readonly created: string
+  readonly planTask: string
+  readonly launchedBy: string
+  readonly pr: number | null
+  readonly cost: Reading | null
+  readonly changed: readonly string[]
+  readonly changedTotal: number | null
+  readonly changedTruncated: boolean
+}
+
+/** CoordinatorJobsWindow is the head's two figures, and they are **the window's**
+ * -- the first page's own `totals`, summed by the CLI over everything it read
+ * rather than over the rows it printed. Both are readings, so neither can reach
+ * the screen as a bare number, and both are absent together: a head with one
+ * figure and not the other would be claiming half a window. */
+export interface CoordinatorJobsWindow {
+  readonly runs: Reading
+  readonly spent: Reading
+}
+
+/** CoordinatorJobs is one page of the job list: the rows this page printed, the
+ * window's figures off its `totals`, and the cursor the page after it is asked
+ * with (the last row's own id, and `''` when the page named none). */
+export interface CoordinatorJobs {
+  readonly rows: readonly CoordinatorJobRow[]
+  readonly window: CoordinatorJobsWindow | null
+  readonly cursor: string
+}
+
 /** CoordinatorBlindSpot is the line under the queue: the console's own words for
  * what it cannot reach, and the two counts, each a reading so neither can be
  * drawn as a bare figure (D813). */
@@ -706,6 +965,83 @@ export function queueRuns(document: unknown): readonly CoordinatorRunRow[] {
 }
 
 /**
+ * jobsDocument reads one page of `runs ls --json --since 24h --limit=50` into the
+ * console's own shape: the rows, the window's own `totals`, and the cursor the
+ * next page is asked with.
+ *
+ * **It is the second reader of the same document** and it reads it differently
+ * from `queueRuns`, on purpose. The queue asks "which of these is waiting for a
+ * person" and drops everything else; the job list asks "what does this page
+ * hold" and keeps every row the CLI printed, in the CLI's order. The two are
+ * different questions about one document, which is why the queue's reader is not
+ * widened to answer both: a queue that stopped dropping succeeded runs would
+ * draw a hundred jobs nobody is waiting on.
+ *
+ * The cursor is **the last row's own id**, which is what `--after` takes: the CLI
+ * pages on `run`/`run_id`, so the console reads the id back out of the row it
+ * drew rather than computing one. A page whose last row names no id has no
+ * cursor, and the Older control is not offered for it -- paging without one would
+ * ask for the same page again.
+ *
+ * `totals` are the window's, not the page's: since #1545 the CLI cuts what it
+ * prints and sums what it read, so `runs` here may be far above the rows beside
+ * it. That is the figure the head draws, and the one a screen that summed its own
+ * rows would get wrong.
+ */
+export function jobsDocument(document: unknown): CoordinatorJobs {
+  const root = objectAt(document)
+  const raw = root?.['runs']
+  const rows: CoordinatorJobRow[] = []
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      const record = objectAt(entry)
+      if (record === null) continue
+      const run = textAt(record['run']) ?? textAt(record['run_id']) ?? ''
+      // A row that names no run is dropped for the queue's reason: there is no id
+      // to draw, to expand or to page from.
+      if (run === '') continue
+      const files = objectAt(record['changed_files'])
+      const changed = files?.['paths']
+      const cost = objectAt(record['cost'])?.['total_usd']
+      rows.push({
+        run,
+        repo: textAt(record['repo']) ?? '',
+        status: textAt(record['status']) ?? '',
+        stage: textAt(record['stage']) ?? '',
+        outcome: textAt(record['outcome']) ?? '',
+        title: textAt(record['title']) ?? '',
+        branch: textAt(record['branch']) ?? '',
+        reason: textAt(record['reason']) ?? '',
+        created: textAt(record['created']) ?? '',
+        planTask: textAt(record['plan_task']) ?? '',
+        launchedBy: textAt(record['launched_by']) ?? '',
+        pr: typeof record['pr'] === 'number' ? record['pr'] : null,
+        cost: typeof cost === 'number' && Number.isFinite(cost) ? measured(cost) : null,
+        // `changed_files` is `runstore.ChangedFiles`, already bounded by the
+        // store: what the row draws is the set it was given, and the figure
+        // beside it is the document's own `total` -- a count this screen
+        // computed would be a second opinion about how many paths a run changed.
+        changed: Array.isArray(changed)
+          ? changed.filter((one): one is string => typeof one === 'string')
+          : [],
+        changedTotal:
+          files !== null && typeof files['total'] === 'number' ? files['total'] : null,
+        changedTruncated: files !== null && files['truncated'] === true,
+      })
+    }
+  }
+  const totals = objectAt(root?.['totals'])
+  const runs = totals === null ? null : totals['runs']
+  const spent = totals === null ? null : totals['total_usd']
+  const window =
+    typeof runs === 'number' && Number.isFinite(runs) && typeof spent === 'number' && Number.isFinite(spent)
+      ? { runs: measured(runs), spent: measured(spent) }
+      : null
+  const last = rows[rows.length - 1]
+  return { rows, window, cursor: last === undefined ? '' : last.run }
+}
+
+/**
  * recordLabel is the record's own naming rule in the console's words: the pull
  * request's number when the record has one, else the newest run's id, else a
  * dash (`ee/coordinator/view.go` names records the same way). It is the
@@ -811,11 +1147,39 @@ function cut<T>(items: readonly T[]): { readonly drawn: readonly T[]; readonly d
   }
 }
 
+/**
+ * descriptionRequest is the pair one record's description is read with, or
+ * `null` where the console will not make the read at all.
+ *
+ * **It is not `pullLink`, and the difference is why it exists.** A destination
+ * needs the record's provider, which is C1's field on the node; this read does
+ * not, because `coordinator show` resolves the provider itself out of the same
+ * local config the stored view's own field came from. Gating the block on
+ * `pullLink` would therefore take the description away from every installation
+ * whose CLI is older than C1 -- the very node `PULL_PROVIDERS` cannot place --
+ * and a read that needs no provider has no business asking for one.
+ *
+ * The repository is held to the two things the number beside it is held to:
+ * `PULL_REPO`, main's own pattern for the two segments a repository has (it is
+ * stricter than the IPC schema's `repository` kind, and the strictness is what
+ * keeps a path or a walk from reaching `--repo`), and the `repository` text
+ * class, so the read is never made for a string the reader was not shown.
+ */
+function descriptionRequest(record: CoordinatorRecord, repo: string): CoordinatorDescriptionRequest | null {
+  const pr = record.pr
+  if (pr === null) return null
+  if (!Number.isSafeInteger(pr.number) || pr.number < 1) return null
+  if (!PULL_REPO.test(repo)) return null
+  if (!sanitizeText(repo, 'repository', 'repos[].repo').ok) return null
+  return { repo, number: pr.number }
+}
+
 function recordPanel(record: CoordinatorRecord, provider: string, repo: string): CoordinatorRecordPanel {
   const pr = record.pr
   const runs = cut(record.runs)
   return {
     label: recordLabel(record),
+    description: descriptionRequest(record, repo),
     // The record's own number, and never the label: a label that fell back to a
     // run's id names no pull request, so there is no triple to build and the
     // cell stays text.
@@ -1527,6 +1891,193 @@ export function fillCoordinatorTotals(
   }
 }
 
+/**
+ * coordinatorJobsControl is the section's own control, in one of its two words:
+ * the button that asks for the list at all, and the button that asks for the page
+ * after it. Both carry `aria-expanded="false"`, the way the queue's jobs control
+ * and the launch control do, and it is the same state for both: the thing the
+ * press asks for is **not on screen when the control is** -- `Load jobs` is gone
+ * the moment the first page lands, and `Older 50` is the press for a page that has
+ * not been asked for yet.
+ *
+ * They are buttons and never anchors, and neither carries a value from a
+ * document: the cursor the Older control pages with is held by the entry as the
+ * last row it drew, so nothing a document wrote reaches an attribute.
+ */
+export function coordinatorLoadJobsControl(factory: ScreenFactory): ScreenElement {
+  return jobsControl(factory, COORDINATOR_JOBS_LOAD_CLASS, COORDINATOR_JOBS_LOAD_WORD)
+}
+
+/** coordinatorOlderJobsControl is the other one: the press that asks for the page
+ * after the one on screen, with `--after` the last row the console drew. */
+export function coordinatorOlderJobsControl(factory: ScreenFactory): ScreenElement {
+  return jobsControl(factory, COORDINATOR_JOBS_OLDER_CLASS, COORDINATOR_JOBS_OLDER_WORD)
+}
+
+function jobsControl(factory: ScreenFactory, className: string, label: string): ScreenElement {
+  const button = make(factory, 'button', className)
+  button.setAttribute('type', 'button')
+  button.setAttribute('aria-expanded', 'false')
+  literal(button, label)
+  return button
+}
+
+/**
+ * fillCoordinatorJobsHead draws the window's two figures. It is drawn from the
+ * **first** page's `totals` and written once, which is why it is a function of
+ * the page rather than of a count the entry keeps: the figure belongs to the
+ * read, and a head rewritten on every page would be a second chance to draw the
+ * page's number under a word that says the window.
+ *
+ * Nothing is drawn when the document carried no `totals`: a window the console
+ * has not read is not a window of zero runs.
+ */
+export function fillCoordinatorJobsHead(
+  factory: ScreenFactory,
+  window: CoordinatorJobsWindow | null,
+  head: ScreenElement,
+): void {
+  if (window === null) return
+  literal(cell(head, factory, 'span', 'coordinator-jobs-window-word'), COORDINATOR_JOBS_WINDOW_WORD)
+  numberCell(head, factory, COORDINATOR_JOBS_RUNS_WORD, window.runs, 'count', 'coordinator-jobs-window-runs')
+  numberCell(head, factory, COORDINATOR_JOBS_SPENT_WORD, window.spent, 'usd', 'coordinator-jobs-window-spent')
+}
+
+/**
+ * jobCell draws one row: the collapsed line -- the run's id, the repository, the
+ * status and the untrusted title -- and, under it, the body the operator expands.
+ *
+ * **The body is drawn here and hidden, rather than drawn on the press.** Every
+ * string in it is a document's, so drawing it late would be a second place this
+ * screen reads a document -- and the row's own press would then be a rendering
+ * that could fail. It is `hidden` until the press, which is also what makes the
+ * expanded state a fact about the element a test can read.
+ *
+ * The row draws **no button that opens anything**: the job list is a list, and
+ * the console's one write is the launch confirmation (rule 11). A run's id is
+ * text here, exactly as it is in the queue.
+ *
+ * The head itself is a **real `button`**, and not a `div` carrying `role`: it
+ * is the disclosure the row's press opens, and a `div` would need a `tabindex`
+ * and a key handler of its own before Enter and Space did what a click does --
+ * a control that looks pressable to a mouse and is not to a keyboard. The
+ * reset in `base.css` is what makes a button with a line of spans in it read
+ * as the line does.
+ */
+function jobCell(parent: ScreenElement, factory: ScreenFactory, row: CoordinatorJobRow): ScreenElement {
+  const item = cell(parent, factory, 'li', 'coordinator-job')
+  const head = cell(item, factory, 'button', 'coordinator-job-head')
+  head.setAttribute('type', 'button')
+  textCell(head, factory, 'span', row.run, 'runId', 'runs[].run_id', 'coordinator-job-id')
+  if (row.repo !== '') {
+    textCell(head, factory, 'span', row.repo, 'repository', 'runs[].repo', 'coordinator-job-repo')
+  }
+  if (row.status !== '') {
+    textCell(head, factory, 'span', row.status, 'label', 'runs[].status', 'coordinator-job-status')
+  }
+  if (row.outcome !== '') {
+    textCell(head, factory, 'span', row.outcome, 'label', 'runs[].outcome', 'coordinator-job-outcome')
+  }
+  if (row.title !== '') {
+    textCell(head, factory, 'span', row.title, 'sentence', 'runs[].title', 'coordinator-job-title')
+  }
+  const body = cell(item, factory, 'div', COORDINATOR_JOB_DETAIL_CLASS)
+  body.setAttribute('hidden', '')
+  if (row.stage !== '') {
+    textCell(body, factory, 'span', row.stage, 'label', 'runs[].stage', 'coordinator-job-stage')
+  }
+  if (row.branch !== '') {
+    textCell(body, factory, 'span', row.branch, 'branch', 'runs[].branch', 'coordinator-job-branch')
+  }
+  if (row.planTask !== '') {
+    textCell(body, factory, 'span', row.planTask, 'label', 'runs[].plan_task', 'coordinator-job-plan')
+  }
+  if (row.launchedBy !== '') {
+    // The declaration and not an identity, drawn in the person class its wire key
+    // declares -- the same rule the queue's runs follow.
+    textCell(body, factory, 'span', row.launchedBy, 'person', 'runs[].launched_by', 'coordinator-job-by')
+  }
+  if (row.created !== '') {
+    textCell(body, factory, 'span', row.created, 'sentence', 'runs[].created', 'coordinator-job-created')
+  }
+  if (row.pr !== null) {
+    textCell(body, factory, 'span', String(row.pr), 'label', 'runs[].pr', 'coordinator-job-pr')
+  }
+  if (row.cost !== null) {
+    numberCell(body, factory, COORDINATOR_JOBS_SPENT_WORD, row.cost, 'usd', 'coordinator-job-cost')
+  }
+  if (row.reason !== '') {
+    textCell(body, factory, 'span', row.reason, 'sentence', 'runs[].reason', 'coordinator-job-reason')
+  }
+  if (row.changed.length > 0 || row.changedTruncated) {
+    const paths = row.changed.slice(0, COORDINATOR_LIST_CAP)
+    for (const path of paths) {
+      textCell(body, factory, 'span', path, 'path', 'changed_files.paths', 'coordinator-job-file')
+    }
+    // The count left off is the set's own `total`, which the store wrote: the
+    // screen does not count a set it did not read. `truncated` without a total
+    // draws the console's word for a short set and no figure at all.
+    const dropped = row.changedTotal === null ? null : Math.max(0, row.changedTotal - paths.length)
+    if (dropped !== null && dropped > 0) {
+      countCell(body, factory, measured(dropped), 'coordinator-job-more')
+    } else if (row.changedTruncated) {
+      literal(cell(body, factory, 'span', 'coordinator-job-short'), COORDINATOR_TRUNCATED_WORD)
+    }
+  }
+  return item
+}
+
+/**
+ * fillCoordinatorJobs appends one page's rows to the list. **It appends and never
+ * replaces**, which is what keeps a row the operator expanded open when the page
+ * after it lands: the rows already drawn are the operator's own view, and the
+ * press that asked for more is answered under them.
+ */
+export function fillCoordinatorJobs(
+  factory: ScreenFactory,
+  rows: readonly CoordinatorJobRow[],
+  list: ScreenElement,
+): readonly ScreenElement[] {
+  return rows.map((row) => jobCell(list, factory, row))
+}
+
+/**
+ * fillCoordinatorJobsEmpty draws the console's sentence for a window that holds
+ * no run. It is the only thing the list ever says in its own words: every other
+ * word in this section is a document's or a control's.
+ */
+export function fillCoordinatorJobsEmpty(factory: ScreenFactory, list: ScreenElement): void {
+  literal(cell(list, factory, 'p', 'coordinator-jobs-empty'), COORDINATOR_JOBS_EMPTY_WORD)
+}
+
+/**
+ * coordinatorJobsFloorNote draws the console's sentence for a CLI that is too old
+ * to page, and names the version the CLI is. The version line is **main's**, read
+ * by the handshake, and it is drawn through `putText` in the class a version is:
+ * it is text wherever it came from, and a hostile version line is a version line
+ * drawn as text rather than an element or an attribute.
+ */
+export function coordinatorJobsFloorNote(
+  factory: ScreenFactory,
+  version: string,
+): ScreenElement {
+  const note = make(factory, 'p', 'coordinator-jobs-note')
+  literal(cell(note, factory, 'span', 'coordinator-jobs-floor-word'), COORDINATOR_JOBS_FLOOR_WORD)
+  textCell(note, factory, 'span', version, 'label', 'cliVersion', 'coordinator-jobs-floor-version')
+  return note
+}
+
+/** DrawnCoordinatorJobs is the job list's own section: the section the entry
+ * marks, the head the window's figures are written into, the slot its busy mark
+ * goes in, and the two hosts the rows and the controls are filled into. */
+export interface DrawnCoordinatorJobs {
+  readonly section: ScreenElement
+  readonly head: ScreenElement
+  readonly slot: ScreenElement
+  readonly list: ScreenElement
+  readonly controls: ScreenElement
+}
+
 function runCell(parent: ScreenElement, factory: ScreenFactory, run: CoordinatorRunPanel): void {
   const row = cell(parent, factory, 'li', 'coordinator-run')
   textCell(row, factory, 'span', run.id, 'runId', 'runs[].id', 'coordinator-run-id')
@@ -1551,20 +2102,108 @@ function runCell(parent: ScreenElement, factory: ScreenFactory, run: Coordinator
   }
 }
 
+/**
+ * fillCoordinatorDescription draws one pull request's description into the block
+ * the record's disclosure reveals: the body's lines, each through `putText` in
+ * the class its wire key declares (`sentence`, `WIRE_TEXT_CLASSES.body`), and
+ * the `Show all` control when the bound held any back.
+ *
+ * **It is plain text and nothing else.** No markdown is parsed -- the console has
+ * no markdown renderer and adding one would be a parser over untrusted text plus
+ * the link question rule 2 answers with "no" -- no element is built from anything
+ * inside the body, and no address in it becomes a link: the `sentence` class
+ * replaces one with its own marker, and what is left is drawn as characters. The
+ * line element's tag and class are this screen's constants, so nothing the author
+ * wrote reaches a tag, an attribute or a slot.
+ *
+ * **A line at a time, and not one text node.** The class flattens newlines and
+ * cuts a text node at `MAX_TEXT_LENGTH`, so a body drawn whole would lose the
+ * author's lines and could never be shown past 512 characters -- which is what
+ * would make the bound and `Show all` mean nothing. Each line is therefore a text
+ * node of its own, and `showAll` is the block's state rather than the class's.
+ *
+ * **The block is masked before it is split, and that order is the whole of it.**
+ * The class reads one line at a time, and the one redaction that needs a whole
+ * value -- a PEM block, whose body stops at its own BEGIN and END lines -- would
+ * never see one: the markers would be drawn as text and the body left to the
+ * entropy net, which is exactly the leak the review of this block found (a
+ * wrapped body's short last line drawn as key material). `maskCredentialBlocks`
+ * is that masking; what it hands back still carries the author's own newlines,
+ * so the split after it draws the same lines with one value redacted.
+ *
+ * It answers the control it drew, or `null` when there is nothing to show: the
+ * entry binds the press, and the two are answered as a pair for the reason
+ * `fillCoordinatorQueuePart` answers its buttons.
+ */
+export function fillCoordinatorDescription(
+  factory: ScreenFactory,
+  body: string,
+  host: ScreenElement,
+  showAll: boolean,
+): ScreenElement | null {
+  const masked = maskCredentialBlocks(body)
+  if (masked.trim() === '') {
+    // The host answered and wrote nothing. That is a fact about the pull request,
+    // and it is the console's own sentence rather than a blank block -- a block
+    // with nothing in it is what a read that did not answer would look like.
+    literal(cell(host, factory, 'p', COORDINATOR_DESCRIPTION_EMPTY_CLASS), COORDINATOR_DESCRIPTION_EMPTY_WORD)
+    return null
+  }
+  const lines = masked.split(/\r\n|\r|\n/u)
+  for (const line of showAll ? lines : lines.slice(0, COORDINATOR_DESCRIPTION_LINES)) {
+    putText(cell(host, factory, 'div', COORDINATOR_DESCRIPTION_LINE_CLASS), line, 'sentence', 'body')
+  }
+  if (showAll || lines.length <= COORDINATOR_DESCRIPTION_LINES) return null
+  const control = cell(host, factory, 'button', COORDINATOR_DESCRIPTION_ALL_CLASS)
+  control.setAttribute('type', 'button')
+  literal(control, COORDINATOR_DESCRIPTION_ALL_WORD)
+  return control
+}
+
+/** descriptionCell draws one record's description half: the disclosure, and the
+ * block it reveals with the slot the read's own mark goes in.
+ *
+ * The block is drawn with the row and `hidden` until the press, so the press is
+ * a toggle and never a rendering -- the same shape the job list's rows take
+ * (K4). The two are drawn only where the record names a pull request the read can
+ * be made of (`CoordinatorRecordPanel.description`). */
+function descriptionCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  request: CoordinatorDescriptionRequest,
+): CoordinatorDescriptionTarget {
+  const element = cell(parent, factory, 'button', COORDINATOR_DESCRIPTION_HEAD_CLASS)
+  element.setAttribute('type', 'button')
+  element.setAttribute('aria-expanded', 'false')
+  literal(element, COORDINATOR_DESCRIPTION_SHOW_WORD)
+  const block = cell(parent, factory, 'div', COORDINATOR_DESCRIPTION_CLASS)
+  block.setAttribute('hidden', '')
+  const slot = cell(block, factory, 'div', BUSY_SLOT_CLASS)
+  return { element, block, slot, request }
+}
+
+/** DrawnRecord is what one record's row drew: the number that is a button (K2),
+ * or `null`, and the description's disclosure (K3), or `null`. */
+interface DrawnRecord {
+  readonly pull: CoordinatorPullButton | null
+  readonly description: CoordinatorDescriptionTarget | null
+}
+
 /** recordCell draws one pull request as a row: a head line carrying the number,
- * the title and the state of the pull request, and the runs behind it nested
- * under that line. A record with no run keeps the console's own sentence where
- * the list would be, so the row says which of the two it is.
+ * the title and the state of the pull request, the disclosure of its description
+ * under that line, and the runs behind it. A record with no run keeps the
+ * console's own sentence where the list would be, so the row says which of the
+ * two it is.
  *
  * The number is the row's **one** control where the console can form a triple
  * for it (K2), and text where it cannot -- the same rule the queue's subject
- * follows, drawn by the other half of this screen. It answers the pair it drew,
+ * follows, drawn by the other half of this screen. It answers the pairs it drew,
  * for the reason `fillCoordinatorQueuePart` does. */
 function recordCell(
   parent: ScreenElement,
   factory: ScreenFactory,
   record: CoordinatorRecordPanel,
-): CoordinatorPullButton | null {
+): DrawnRecord {
   const row = cell(parent, factory, 'li', 'coordinator-record')
   const head = cell(row, factory, 'div', 'coordinator-record-head')
   // The tag is written out at the call site for `theme-selectors.test.ts`'s
@@ -1599,9 +2238,13 @@ function recordCell(
   const flight = cell(head, factory, 'span', 'coordinator-record-flight')
   if (record.inFlight) literal(flight, COORDINATOR_IN_FLIGHT_WORD)
   else literal(flight, COORDINATOR_FINISHED_WORD)
+  // The description sits between the head and the runs: it is the pull request's
+  // own text, and the runs are what the fleet did about it.
+  const description =
+    record.description === null ? null : descriptionCell(row, factory, record.description)
   if (record.runs.length === 0) {
     literal(cell(row, factory, 'span', 'coordinator-record-noruns'), COORDINATOR_NO_RUNS_WORD)
-    return pull
+    return { pull, description }
   }
   const runs = cell(row, factory, 'ul', 'coordinator-runs')
   for (const run of record.runs) runCell(runs, factory, run)
@@ -1610,7 +2253,7 @@ function recordCell(
     // `countCell` makes: the figure is a reading like every other here.
     putReading(cell(runs, factory, 'li', 'coordinator-more'), measured(record.runsDropped), 'count')
   }
-  return pull
+  return { pull, description }
 }
 
 function collisionCell(parent: ScreenElement, factory: ScreenFactory, collision: CoordinatorCollisionPanel): void {
@@ -1702,19 +2345,22 @@ function repoSummary(
  * could not read. It is a drawing of its own so the entry can make it in a chunk
  * of its own (`entry.ts`), after the summary is on screen.
  *
- * It answers the numbers it drew as buttons, in the order it drew them, for the
+ * It answers the controls it drew -- the numbers that are buttons, in the order
+ * it drew them, and the descriptions whose disclosure the entry binds -- for the
  * reason `fillCoordinatorQueuePart` does. */
 export function repoDetail(
   parent: ScreenElement,
   factory: ScreenFactory,
   panel: CoordinatorRepoPanel,
-): readonly CoordinatorPullButton[] {
+): DrawnCoordinatorDetail {
   const pulls: CoordinatorPullButton[] = []
+  const descriptions: CoordinatorDescriptionTarget[] = []
   if (panel.records.length > 0) {
     const records = cell(parent, factory, 'ul', 'coordinator-records')
     for (const record of panel.records) {
-      const pull = recordCell(records, factory, record)
-      if (pull !== null) pulls.push(pull)
+      const drawn = recordCell(records, factory, record)
+      if (drawn.pull !== null) pulls.push(drawn.pull)
+      if (drawn.description !== null) descriptions.push(drawn.description)
     }
   }
   if (panel.collisions.length > 0) {
@@ -1725,7 +2371,7 @@ export function repoDetail(
     const unread = cell(parent, factory, 'ul', 'coordinator-unreads')
     for (const entry of panel.unread) unreadCell(unread, factory, entry)
   }
-  return pulls
+  return { pulls, descriptions }
 }
 
 /** CoordinatorDetail is one repository's detail: the panel to draw and the host
@@ -1757,6 +2403,12 @@ export interface DrawnCoordinatorFrame {
   readonly blindHost: ScreenElement
   readonly totals: ScreenElement
   readonly totalsSlot: ScreenElement
+  /** the job list's section (K4): drawn empty in the frame, because nothing is
+   * read for it until the operator presses its control, and filled by the entry
+   * from then on. It is a section of the frame and not of the model for that
+   * reason: the model is what a read answered with, and this section's read has
+   * not been made. */
+  readonly jobs: DrawnCoordinatorJobs
 }
 
 /**
@@ -1799,9 +2451,21 @@ export function renderCoordinatorFrame(
   const blindHost = cell(queue, factory, 'div', COORDINATOR_BLIND_HOST_CLASS)
   const totals = cell(root, factory, 'section', COORDINATOR_TOTALS_CLASS)
   const totalsSlot = cell(totals, factory, 'div', BUSY_SLOT_CLASS)
+  const jobsSection = cell(root, factory, 'section', COORDINATOR_JOBS_CLASS)
+  const jobsHead = cell(jobsSection, factory, 'div', COORDINATOR_JOBS_HEAD_CLASS)
+  const jobsSlot = cell(jobsHead, factory, 'div', BUSY_SLOT_CLASS)
+  const jobsList = cell(jobsSection, factory, 'div', COORDINATOR_JOBS_LIST_CLASS)
+  const jobsControls = cell(jobsSection, factory, 'div', COORDINATOR_JOBS_CONTROLS_CLASS)
+  const jobs: DrawnCoordinatorJobs = {
+    section: jobsSection,
+    head: jobsHead,
+    slot: jobsSlot,
+    list: jobsList,
+    controls: jobsControls,
+  }
   const body = cell(root, factory, 'div', COORDINATOR_BODY_CLASS)
   const slot = cell(body, factory, 'div', BUSY_SLOT_CLASS)
-  return { root, body, slot, queue, queueSlot, queueCount, queueEmpty, parts, blindHost, totals, totalsSlot }
+  return { root, body, slot, queue, queueSlot, queueCount, queueEmpty, parts, blindHost, totals, totalsSlot, jobs }
 }
 
 /**
@@ -1843,8 +2507,8 @@ export function fillCoordinatorSummary(
 
 /**
  * renderCoordinator draws the whole screen at once: the frame, the queue, the
- * blind-spot line, the fleet's totals, the summary and every repository's
- * detail.
+ * blind-spot line, the fleet's totals, the job list's own resting state, the
+ * summary and every repository's detail.
  *
  * It is what a caller that has every document in hand draws -- the goldens'
  * mount, and the cases that assert on the tree -- and the entry does **not** use
@@ -1865,6 +2529,12 @@ export function renderCoordinator(
   }
   fillCoordinatorBlind(factory, model, frame.blindHost)
   fillCoordinatorTotals(factory, model, frame.totals)
+  // The job list is drawn in the state a caller that holds every *other*
+  // document is in: the jobs are the one read rule 5 keeps out of a first
+  // paint, so what stands in the section is the control that asks for them --
+  // the same shape the queue's own jobs part draws for the same reason. The
+  // entry fills the section itself when an operator presses it.
+  frame.jobs.controls.append(coordinatorLoadJobsControl(factory))
   for (const detail of fillCoordinatorSummary(factory, model, frame.body)) {
     repoDetail(detail.host, factory, detail.panel)
   }

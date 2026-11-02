@@ -2018,6 +2018,221 @@ document rather than fill it in.
 `--pr` (the pull request number), `--json`, and the cloud flags `--project`,
 `--config`, `--gcp-project` and `--region`.
 
+### 6.16 `fugaro coordinator intents [--all | --repo <owner/name>] [--since <d>] --json` (coordinator v2 C4)
+
+**Command:** `ee/coordinator/cli/coordinator_intents.go` `newCoordinatorIntentsCmd` /
+`runCoordinatorIntents`. **Document:** `coordinator.RepoIntents` and
+`coordinator.StoredProjectIntents` (`ee/coordinator/state.go`), printed by
+`writeCoordinatorJSON` — the same indented-object shape as every other read in
+this set (§9.2). The read behind it is `Store.ReadRepoIntents`, beside
+`Store.ReadRepoView` and through the same store.
+
+**Why it is a read of its own.** The declared intents are a second document from
+the stored view (§6.13), written by a different writer: `coordinator report` and
+every launch's own declarer put one record per declaration under the
+repository's `intents/` node (P4), and the sweep prunes them. The stored view
+joins runs and pull requests and names no declaration at all, so the read-only
+pane of reconciliation §5.8 draws the two documents side by side: what the fleet
+has declared, and what is in flight. **Nothing in this document is derived**: the
+fields are the record's own, as the node holds them.
+
+**The document is one object per repository, and one list with `--all`.** One
+repository (the default, or `--repo`) prints the repository object alone, and
+`--all` wraps them:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repos` | array of repository objects | never | never | every repository the selection names, **in that order** (the local config's repositories, sorted), never in the order the reads finished. The key exists only in `--all`'s document: one repository is printed as the object itself, so a reader never has to unwrap a single-element list |
+
+Each repository object is:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repo` | string | never | never | the repository the caller asked about, `owner/name`, **as the caller spelled it**: the node's key is a slug (a hash of provider and name) and cannot be inverted, so an absent node carries no name to read back. Carried as data and never drawn as a link (design §5.1 rule 2) |
+| `provider` | string | never | never | the git provider kind the caller resolved for this repository — the local config's entry, else the checkout's `fugaro.yaml` — one of `config.Providers`' two words, or `""` when the caller had none to give. It is **the caller's answer and not the node's**, exactly as §6.13's `provider` is, and the key is written even when it is empty |
+| `intents` | array | never | never | every declaration the node holds for this repository, **newest first** by the record's own `at` (ties by `id`, so the order never depends on the order the database listed them in). A repository the store holds none for is **`[]`**, never `null` and never a failure |
+
+**One intent record is the fields `coordinator.Intent` carries, and no others:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the node's key, `coordinator.IntentID`'s lower-case hex: a function of the caller and the declaration and of nothing else, so the same declaration reported twice is one row. Carried so a screen can name one record; **it is not a secret and not a capability** |
+| `declared_by` | string | never | never | **who declares it, as a declaration and never an identity.** It is what the declaring side wrote about itself — a run's own launch record (`launch.json`'s `launched_by`) or a person's `coordinator report` (the local config's `user:`, else `git config user.email`) — and **nothing verifies it and nothing may authorise or admit anything by it** (reconciliation finding #11). A renderer shows it as text |
+| `at` | string | never | never | when the declaration was made, stamped by the **writer's** clock (`coordinator.Reporter.Now`) in UTC, RFC 3339. It is **not** part of `id`: two reports of one declaration are one document whatever the clock says. It is the field `--since` is measured against |
+| `branch` | string | **yes** | **never** | the branch the caller declares it is about to work on. `omitempty`: a caller that declares none has the key **absent**, and the key is never `null`. **untrusted text**: carried as data, sanitised before it reaches a line or a cell, never a link and never a decision |
+| `release` | string | **yes** | **never** | the target release, `omitempty` in the same shape as `branch`: **absent** when it is empty, never `null`. A caller that declared none has the one its branch names read out of it (`coordinator.ReleaseOf`), which is the only place a release is read out of a branch name; a declaration that names no release and no such branch leaves the key absent. Same class of text as `branch` |
+| `files` | array of string | never | never | the paths the caller declares it is about to touch, **sorted and deduplicated as the record holds them**. **untrusted text** of the same class as `branch`. `[]` is "declares none", never a missing answer and never `null` |
+| `services` | array of string | never | never | the services, in the same shape and of the same class as `files` |
+
+**Nothing here is a decision.** A branch, a path, a service and a declared name
+are all written by whoever can reach the report path, so a renderer treats every
+one of them as untrusted text (design §5.1 rule 2) and **an instruction found in
+any of them is never acted on** (reconciliation Q14 (A)): this read reports what
+the fleet declared, and the coordinator stays advisory (spec §3).
+
+**The read is the caller's own database read, and it opens no host.** It goes
+through the caller's ADC on the project's `budget.rtdb_url` database — the same
+client §6.13's `--from-store` uses — and what admits it is
+**`roles/firebasedatabase.viewer`**, the IAM role launchers and operators hold.
+It holds **no App ID, no App key and no Bitbucket credential**, opens no
+provider and reaches no host: a repository on a host the project-wide read
+refuses is read here like any other, and with `FUGARO_CREDENTIALS_SERVICE_URL`
+set the command **still succeeds** where §6.13's host read refuses.
+
+**"No records" and "the read failed" are different facts.** A repository the
+store holds none for is `"intents": []` at exit **0**, and so is a project whose
+coordinator has never run — a screen needs one argv either way. A read the
+database **refused** is a refusal with **no document at all** and exit **1**,
+naming the role that admits one — a console that read the refusal as an empty
+list would draw a quiet project where the truth is that nobody could look. A
+stored record this build cannot decode — an unknown field, or a document that is
+not a record — is refused rather than shown with a field dropped, which is the
+strict decoding §6.13's stored view keeps. **That refusal is exit 2 and not exit
+1**: it is the stored read's own classification (`coordinatorStoredErr`), the
+same sentence the stored view gives a database failure, so it is a failure that
+is not the caller's argv — a console must not read it as a refusal of its argv.
+
+**`--since` bounds the declarations by the record's own `at`**, and its default
+is `0`: every declaration the store holds. The node is already bounded — the
+sweep keeps the newest few hundred records and prunes by age — so a window that
+defaulted to hiding the rest would be a fact a reader never sees.
+
+**The console's row landed in C4c.** This section is the CLI's half of
+coordinator v2 C4, and the console's half is the same task's part c: the spawn
+row, the operation, the preload row and the decoder. Where §5.1's table and the
+allow-lists are is where a row is admitted, and what they admit is **one argv and
+only one** — `coordinator intents --all --json`, the fixed words of
+`console/src/main/spawn.ts`'s row, with an empty argument schema
+(`console/src/main/ipc.ts`) so that no field a renderer sends can reach the
+child. This document states what the CLI prints; it authorises no spawn, and the
+row it now has is the `--all` document alone: the single-repository form below is
+a shape no console row asks for, and the decoder refuses it.
+
+**Version skew.** Every field is additive. A CLI older than this command has no
+such read at all, and the console shows the section as unavailable (the
+availability rule, §1) rather than an error loop. A field added later is a field
+an older console does not draw; a console that requires one must refuse the
+document rather than fill it in.
+
+**Flags** (`newCoordinatorIntentsCmd`): `--repo` (the repository, `owner/name`),
+`--all` (every repository the local config lists), `--since` (the window,
+measured against `at`), `--json`, and the cloud flags `--project`, `--config`,
+`--gcp-project` and `--region`. `--all` with `--repo` is refused rather than
+resolved, the way §6.13's selection refuses it.
+
+### 6.17 `fugaro runs summary --json` (**CLI 0.15.0**)
+
+**Command:** `internal/cli/runs_summary.go` `newRunsSummaryCmd` / `runRunsSummary`.
+**Document:** `summaryDoc`, with its `summaryRepo` rows and its `summaryTotals`,
+indented (`writeSummary`), all in `internal/cli/runs_summary.go` — cited by
+symbol, not by line, for §6.11's reason. This is the fourth command in this
+document the console **does not spawn yet**: it is the read the Project,
+Coordinator and Spend screens' totals are built on, and the section is here so
+the screens that follow read a shape off the code rather than assuming one from
+a design.
+
+**Why it exists: a totals read that opens no run.** `runs ls` (§5) answers by
+reading the runs bucket — one run object per row, its task and its result — and
+that is what makes it a listing and what makes it slow. This read answers from
+the budget database's day nodes (`spend`, `outcomes`, `runs`: the counters the
+caps are enforced against) and from the spend history's daily documents — the
+same two sources §4's `report` reads — over the database's own window of eight
+days, a few hundred kilobytes, in about a second. **Neither the runs bucket nor
+the compute backend is opened**: no run's task, result or transcript is read,
+which is why the compute figure is the archived one alone (its own row below).
+It is a command of its own rather than a totals block on `runs ls --json`
+because the two count different things from different sources — here a run's
+day is the UTC day the budget recorded its spend, there a row is an object in a
+bucket — and two totals under one document name would leave a reader unable to
+say which basis a figure has.
+
+**A run is counted on the UTC day the budget recorded its spend**: the day the
+rollover files it under and the day its money is counted on. The counts
+therefore agree with the budget and **not necessarily with `runs ls`**, whose
+rows are the runs bucket's. A run whose outcome has not settled yet is counted
+in `runs` and in no state, so `runs` is at least the sum of `states`.
+
+**The document is one object, and the window is a span of UTC days ending
+today.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `v` | int | never | never | the document's version, `1` today (`summaryDocVersion`). A consumer that does not know a version refuses the document rather than reading it as the one it does |
+| `project` | string | never | never | the selected project's name: the installation whose budget database and spend history were read |
+| `since` | string | never | never | the window's first UTC day, `YYYY-MM-DD` — a date, never a timestamp and never a clock read at render time. `--since 7d` is today and the six days before it, so this is six days before `until` |
+| `until` | string | never | never | the window's last UTC day, which is today |
+| `repositories` | array of repository rows | never | never | one row per repository either source named in the window, **sorted by `slug`**; `[]` when nothing ran in it. A repository the sources do not mention is not a row: nothing lists the runs bucket to find one |
+| `totals` | object | never | never | the same figures as a repository row, without the two names — the figures table below |
+| `days_unknown` | array of string | never | never | the window's UTC days, ascending, `YYYY-MM-DD`, that **neither source answered for**: their runs and their spend are unknown and are counted in no figure here, so a screen shows the window as partly unknown rather than as a small one. `[]` when both sources answered every day |
+| `notes` | array of string | never | never | what the figures count and what the read could not cover, one line each: the two sources, the day a run is counted on, a source that could not answer with its reason, and how much of the window is unknown. A renderer shows them as text, as it shows any other reason string |
+
+**A repository row carries the figures and the two names the sources hold:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `slug` | string | never | never | the storage key both sources file the repository under — a hash of provider and name, so it is not a name to draw. It is the row's own key and the sort order |
+| `repo` | string | never | never | the repository's `owner/name`, as the day records carry it (the name `fugaro budget set --repo` writes). It falls back to the slug for a repository nothing recorded a display name for, so a renderer treats it as text and never as a link without checking it |
+
+**The figures are the same six keys on a repository row and on `totals`:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `runs` | int | never | never | how many runs the window holds, each counted once on its own day. At least the sum of `states` |
+| `states` | object | never | never | the counts by state. **All six of `succeeded`, `failed`, `halted`, `cancelled`, `infra_error` and `other` are always present**, zero included, so a consumer reads a count without a nil check; a run whose outcome names a status outside the six is counted in `other` rather than dropped or given a key of its own |
+| `spent_micros` | int | never | never | the model money the caps count, in micro-dollars — the budget database's own figure, so nothing is rounded on the way out |
+| `notional_micros` | int | never | never | the part of the model figure a subscription paid, in micro-dollars: it counts toward the plan's limits and is nobody's bill. **It is separate from `spent_micros`, and the two are never summed** |
+| `compute_micros` | int or **null** | never | **yes** | what the runs whose compute was priced came to, in micro-dollars. **null when the row has runs and no run's compute is known** — "not estimated" is not "free", and a renderer draws it as `n/a` — and `0` when the row has no run at all, which is a fact. This read opens no bucket, so a live day's compute is never estimated here |
+| `compute_runs` | int | never | never | how many runs `compute_micros` covers: at most `runs`. A figure covering fewer runs than the window holds is a **lower bound** a consumer can see, and the reason a row's compute is not read as the window's whole |
+
+**A day nothing answered for is named, never counted as zero.** The budget
+database holds the days it has not pruned — today and the eight before it
+(`budget.PruneAfter`) — and the rollover archives each of them as one daily
+document in the spend history. So a day inside the database's window with no
+node is a day nothing ran on, **which is known**, and it is not in
+`days_unknown`; a day older than that window is the history's to answer, and a
+day the history holds no document for is a day nothing ran on too, as long as
+the history answered at all. Only a day **neither** source could answer for is
+listed there, and a window whose days are all unknown is refused rather than
+printed: a document of zeros would read as "nothing ran", which is the opposite
+of what is known.
+
+**"Nothing ran" and "the read failed" are different facts.** Three states a
+project may be in are not failures — no Firebase budget backend, no Firestore
+database, no history mark — and each is reported as itself: the database's own
+days are counted, the older days are named in `days_unknown`, and a `notes`
+line says which of the three it was, because a screen needs a document either
+way. A read a source **refused** or lost is a failure only when the other could
+not answer the window either: then there is **no document at all**, exit **1**
+for a refusal (naming the role that admits the read) and exit **2** for an
+outage — a console that read either as an empty summary would draw a quiet
+project where the truth is that nobody could look. When one source did answer,
+the days the other could not answer for are in `days_unknown` and the note
+names the reason, so the figures a screen gets are the ones that are known and
+the gap is visible rather than filled with zeros.
+
+**The window is always bounded.** `--since` takes the durations `runs ls` and
+`runs stats` take (`7d`, `36h`, `90m`), and a span with no lower bound — `0` —
+is **refused** (exit 1), because a summary is per UTC day and the whole history
+is not a window: the refusal names `--since 7d`, and `--since 365d` for the
+last year, as the way to ask. A window longer than ten years is refused too,
+since the spend history is not built for one.
+
+**Version skew.** Every field is additive within `v: 1` (D784). A CLI older
+than this command has no such read at all, and the console shows the section as
+unavailable (the availability rule, §1) rather than an error loop. A field
+added later is a field an older console does not draw; a console that requires
+one must refuse the document rather than fill it in.
+
+**The console's row is a later task.** This section is the CLI's half of the
+read: the spawn row, the operation and the decoder are **not** in this
+document's scope, so nothing here authorises a spawn — §5.1's table and the
+allow-lists are where a row is admitted, and no row, operation or decoder is
+added by this section.
+
+**Flags** (`newRunsSummaryCmd`): `--repo` (one repository, `owner/name`),
+`--since` (the window, default `7d`), `--json`, and the cloud flags
+`--project`, `--config`, `--gcp-project` and `--region`.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -2080,6 +2295,7 @@ and **not** off this document or the design:
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the coordinator's own read-only installation token, revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
+| `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the
@@ -2099,7 +2315,8 @@ table against the live constructors.
    is by exact argv (design §5.1 rule 6), and the write is on it: `run.launch` is
    the one operation of the surface that writes (V2.5.1a, 2026-10-28/29, the
    surface's twenty-fourth; K2a's `link.openPullRequest` took the surface to
-   twenty-five and writes nothing), and no other argv that writes is reachable
+   twenty-five and writes nothing, and C4c's `coordinator.intents` took it to
+   twenty-six and writes nothing), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

@@ -4447,6 +4447,157 @@ func TestSettingsSchema(t *testing.T) {
 	}
 }
 
+// TestModelsLsSchema holds schemas/models-ls.schema.json to the document
+// `fugaro models ls --json` prints and to the Go constants that document's
+// closed vocabulary is written as. The models, routes and repositories are
+// dynamic — one per line of the owner's config — so the schema cannot pin them
+// by name; what it can pin, and what this test checks, is that the schema
+// loads (a broken $ref between $defs is exactly where a hand edit breaks),
+// that version is modelsLsDocVersion, and that the SOURCE column's four words
+// are the constants the command writes them from. A fifth source, or a
+// renamed one, is red here rather than in a consumer that branches on the
+// column.
+//
+// The document itself is validated against this schema by
+// TestModelsLsJSONMatchesSchema in internal/cli, which is where the command
+// that writes it lives.
+func TestModelsLsSchema(t *testing.T) {
+	raw, err := os.ReadFile("models-ls.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compile(t, "models-ls.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/models_ls.go")
+	version := nodeOf(t, doc, "properties", "version")
+	if version["const"] != float64(1) {
+		t.Errorf("version: const = %v, and the document's first version is 1 (D784)", version["const"])
+	}
+	// The $comment is the pointer from the contract to the code: it must name
+	// a constant this file's own parse found, or it points at nothing.
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "modelsLsDocVersion") || consts["modelsLsDocVersion"] != "1" {
+		t.Errorf("version: $comment = %q, and modelsLsDocVersion in internal/cli/models_ls.go is %q", got, consts["modelsLsDocVersion"])
+	}
+	want := make([]string, 0, 4)
+	for _, name := range []string{"modelsSourceEmbedded", "modelsSourceCatalog", "modelsSourceLocal", "modelsSourceNone"} {
+		if consts[name] == "" {
+			t.Errorf("internal/cli/models_ls.go declares no %s", name)
+			continue
+		}
+		want = append(want, consts[name])
+	}
+	if got := stringsOf(t, doc, "$defs", "model", "properties", "source", "enum"); !slices.Equal(got, want) {
+		t.Errorf("$defs.model.source: the enum is %v, and the command writes %v", got, want)
+	}
+	// Every top-level member the document always carries is required, so a
+	// consumer may read one without a nil check: the three arrays are written
+	// on every run, empty included.
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"version", "routes", "models", "repositories"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+}
+
+// TestSummarySchema pins schemas/summary.schema.json against the command that
+// writes the document: the version constant its $comment names, the state keys
+// a consumer reads a count by, and the members that are always carried.
+func TestSummarySchema(t *testing.T) {
+	raw, err := os.ReadFile("summary.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compile(t, "summary.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/runs_summary.go")
+	v := nodeOf(t, doc, "properties", "v")
+	if v["const"] != float64(1) {
+		t.Errorf("v: const = %v, and the document's first version is 1 (D784)", v["const"])
+	}
+	// The $comment is the pointer from the contract to the code: it must name
+	// a constant this file's own parse found, or it points at nothing.
+	if got, _ := v["$comment"].(string); !strings.Contains(got, "summaryDocVersion") || consts["summaryDocVersion"] != "1" {
+		t.Errorf("v: $comment = %q, and summaryDocVersion in internal/cli/runs_summary.go is %q", got, consts["summaryDocVersion"])
+	}
+	// Every top-level member the document always carries is required, so a
+	// consumer may read one without a nil check: the three arrays are written
+	// on every run, empty included.
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"v", "project", "since", "until", "repositories", "totals", "days_unknown", "notes"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+	// The counts are keyed by runstore's statuses, spelled as the wire names
+	// the run record and the outcome nodes use, plus the bucket a status from
+	// another release lands in. All six are required: a consumer adding them up
+	// reads a key whether or not the window had such a run.
+	states := stringsOf(t, doc, "$defs", "states", "required")
+	for _, key := range []string{"succeeded", "failed", "halted", "cancelled", "infra_error", "other"} {
+		if !slices.Contains(states, key) {
+			t.Errorf("$defs.states: required is %v, and the command counts %q", states, key)
+		}
+	}
+	for _, status := range []runstore.Status{runstore.StatusSucceeded, runstore.StatusFailed, runstore.StatusHalted,
+		runstore.StatusCancelled, runstore.StatusInfraError} {
+		if !slices.Contains(states, string(status)) {
+			t.Errorf("$defs.states: required is %v, and runstore's %q has no key", states, status)
+		}
+	}
+	// A figure covering fewer runs than the window holds is a lower bound, and
+	// "not estimated" is not "free": the schema allows null and no consumer may
+	// read a missing compute as zero.
+	compute := stringsOf(t, doc, "$defs", "figures", "properties", "compute_micros", "type")
+	if !slices.Contains(compute, "null") {
+		t.Errorf("$defs.figures.compute_micros: type is %v, and an unpriced run reads as null rather than 0", compute)
+	}
+}
+
+// goConstValues is every constant declared in a Go file, by name, as the text
+// of its own literal: a string constant's value without its quotes, a number's
+// digits. A constant built from an expression is left out rather than guessed
+// at, which is what the pins above fail on.
+func goConstValues(t *testing.T, path string) map[string]string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		gd, ok := n.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			return true
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range vs.Names {
+				if i >= len(vs.Values) {
+					continue
+				}
+				if lit, ok := vs.Values[i].(*ast.BasicLit); ok {
+					out[name.Name] = strings.Trim(lit.Value, `"`)
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
 // nodeOf is one schema node, walked by property names.
 func nodeOf(t *testing.T, node map[string]any, path ...string) map[string]any {
 	t.Helper()

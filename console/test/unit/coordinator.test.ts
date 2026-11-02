@@ -26,6 +26,7 @@
 // never a derived "5 minutes ago", which would compare two things that are not
 // on the same scale.
 
+import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -44,10 +45,26 @@ import {
   COORDINATOR_BLIND_WORD,
   COORDINATOR_CARRIED_WORD,
   COORDINATOR_COLLISION_WORD,
+  COORDINATOR_DESCRIPTION_ALL_CLASS,
+  COORDINATOR_DESCRIPTION_ALL_WORD,
+  COORDINATOR_DESCRIPTION_CLASS,
+  COORDINATOR_DESCRIPTION_EMPTY_CLASS,
+  COORDINATOR_DESCRIPTION_EMPTY_WORD,
+  COORDINATOR_DESCRIPTION_HEAD_CLASS,
+  COORDINATOR_DESCRIPTION_LINES,
+  COORDINATOR_DESCRIPTION_LINE_CLASS,
+  COORDINATOR_DESCRIPTION_SHOW_WORD,
   COORDINATOR_COLLISIONS_WORD,
   COORDINATOR_DRAFT_WORD,
   COORDINATOR_IN_FLIGHT_COUNT_WORD,
   COORDINATOR_IN_FLIGHT_WORD,
+  COORDINATOR_JOBS_FLOOR_WORD,
+  COORDINATOR_JOBS_LOAD_CLASS,
+  COORDINATOR_JOBS_LOAD_WORD,
+  COORDINATOR_JOBS_OLDER_CLASS,
+  COORDINATOR_JOBS_OLDER_WORD,
+  COORDINATOR_JOBS_RUNS_WORD,
+  COORDINATOR_JOBS_SPENT_WORD,
   COORDINATOR_LAUNCH_WORD,
   COORDINATOR_LIST_CAP,
   COORDINATOR_NO_AGE_WORD,
@@ -85,17 +102,28 @@ import {
   QUEUE_SOURCES,
   buildCoordinatorModel,
   coordinatorJobsControl,
+  coordinatorJobsFloorNote,
+  coordinatorLoadJobsControl,
+  coordinatorOlderJobsControl,
+  fillCoordinatorDescription,
+  fillCoordinatorJobs,
+  fillCoordinatorJobsHead,
+  jobsDocument,
   queueRuns,
   renderCoordinator,
+  renderCoordinatorFrame,
+  repoDetail,
 } from '../../src/renderer/screens/coordinator'
 import type {
   CoordinatorInputs,
   CoordinatorQueueItem,
+  CoordinatorRepoPanel,
   ScreenElement,
   ScreenFactory,
 } from '../../src/renderer/screens/coordinator'
+import { BUSY_SLOT_CLASS } from '../../src/renderer/section'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { PATH_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
+import { PATH_PLACEHOLDER, TOKEN_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
 import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
 import type { CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
@@ -196,12 +224,28 @@ function drawn(node: ScreenElement): string {
     .join(' ')
 }
 
+/** said is the whole tree's text the way a browser concatenates it: every node's
+ * own text, in document order, **with nothing put between them**. `drawn` joins
+ * with a space, so it answers a sentence whose two spans run together as one that
+ * reads -- which is the one thing a case about a sentence's spacing cannot use. */
+function said(node: ScreenElement): string {
+  return walk(node)
+    .map((leaf) => leaf.textContent ?? '')
+    .join('')
+}
+
 /** decodes is a document that must decode, or the failure is the decoder's own
  * sentence rather than an assertion three lines later. */
 function decodes(raw: unknown): CoordinatorStatusView {
   const result = decodeCoordinatorStatus(raw)
   if (!result.ok) throw new Error(result.skew.because)
   return result.value
+}
+
+/** bodyOf is a row's expanded body, which is the one `coordinator-job-detail`
+ * every row carries. */
+function bodyOf(row: ScreenElement): ScreenElement {
+  return one(row, 'coordinator-job-detail')
 }
 
 /** renders draws a document, as the entry point does: the document's own read
@@ -1489,6 +1533,370 @@ describe('the numbers that open a pull request (K2)', () => {
         mainWouldOpen && rowCanDraw,
       )
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The job list (K4).
+// ---------------------------------------------------------------------------
+
+/** LS_DOC is one page of `runs ls --json --since 24h --limit=50`, with the two
+ * figures this section turns on **deliberately different**: the window's own
+ * `totals` say 41 runs, and the page below prints two. A section that summed the
+ * rows it drew would show `2` under a word that claims the window. */
+const LS_DOC = {
+  project: 'a-project',
+  runs: [
+    {
+      run: '20261101-090000-aa01',
+      repo: 'owner/repo-a',
+      status: 'succeeded',
+      stage: 'implement',
+      outcome: 'implemented',
+      title: 'the job that finished',
+      branch: 'feat/a-thing',
+      reason: '',
+      created: '2026-11-01T09:00:00Z',
+      plan_task: 'plans/2026-10-01-a/task-one',
+      launched_by: 'person-1',
+      pr: 1459,
+      cost: { total_usd: 1.25, model_usd: 1.0, compute_usd: 0.25, compute_estimated: true },
+      terminal: true,
+      changed_files: { paths: ['src/a.go'], total: 3 },
+    },
+    {
+      run: '20261101-080000-bb02',
+      repo: 'owner/repo-a',
+      status: 'failed',
+      stage: 'review',
+      outcome: '',
+      title: 'the job that did not finish',
+      branch: '',
+      reason: 'the reviewer refused the change',
+      created: '2026-11-01T08:00:00Z',
+      plan_task: '',
+      launched_by: '',
+      cost: { total_usd: 0.0, model_usd: 0, compute_usd: 0, compute_estimated: false },
+      terminal: true,
+    },
+  ],
+  totals: { runs: 41, model_usd: 9.0, model_notional_usd: 0, compute_usd: 3.5, total_usd: 12.5 },
+  warnings: [],
+}
+
+describe('the job list (K4)', () => {
+  it('draws the window’s own figures in the head and only the page’s rows under them', () => {
+    // D818: the head is the window and the list is the page. The CLI cuts what it
+    // *prints* and sums what it *read*, so the two figures are different numbers
+    // in any real document -- and a section that recomputed the head from the
+    // rows on screen would draw the page's count under the window's word.
+    const page = jobsDocument(LS_DOC)
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobsHead(factory, page.window, frame.jobs.head)
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+
+    expect(figureOf(frame.jobs.head, 'coordinator-jobs-window-runs')).toEqual([
+      COORDINATOR_JOBS_RUNS_WORD,
+      '41',
+    ])
+    expect(figureOf(frame.jobs.head, 'coordinator-jobs-window-spent')).toEqual([
+      COORDINATOR_JOBS_SPENT_WORD,
+      '$12.50',
+    ])
+    expect(all(frame.jobs.list, 'coordinator-job')).toHaveLength(2)
+    expect(
+      drawn(frame.jobs.list),
+      'the list drew the window’s own count, which is the figure a section that summed its rows would show',
+    ).not.toContain('41')
+    // The cursor is the last row's own id: what `--after` takes, read back out of
+    // the row the console drew rather than computed.
+    expect(page.cursor).toBe('20261101-080000-bb02')
+  })
+
+  it('draws a row off the document’s own fields, and keeps the body it expands hidden', () => {
+    const page = jobsDocument(LS_DOC)
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+    const rows = all(frame.jobs.list, 'coordinator-job')
+    const first = rows[0]
+    const second = rows[1]
+    if (first === undefined || second === undefined) throw new Error('the list drew no row')
+
+    expect(textOf(first, 'coordinator-job-id')).toBe('20261101-090000-aa01')
+    expect(textOf(first, 'coordinator-job-repo')).toBe('owner/repo-a')
+    expect(textOf(first, 'coordinator-job-status')).toBe('succeeded')
+    expect(textOf(first, 'coordinator-job-title')).toBe('the job that finished')
+    // A field the document did not carry draws nothing at all: the second row
+    // wrote no outcome, and an empty cell is not a cell saying `unknown`.
+    expect(all(second, 'coordinator-job-outcome')).toEqual([])
+
+    // The body is drawn with the row and hidden, so the press is a toggle rather
+    // than a rendering: every string in it is a document's.
+    const body = one(first, 'coordinator-job-detail')
+    expect(body.getAttribute('hidden'), 'the expanded body is open before the press').toBe('')
+    expect(textOf(body, 'coordinator-job-stage')).toBe('implement')
+    expect(textOf(body, 'coordinator-job-branch')).toBe('feat/a-thing')
+    // The plan task is a `label` on the wire, and a label shaped like a path is
+    // masked by that class: the console draws the masked value, which is what
+    // keeps a document from using this cell to spell a real path.
+    expect(textOf(body, 'coordinator-job-plan')).toBe('plans<path>')
+    expect(textOf(body, 'coordinator-job-by')).toBe('person-1')
+    expect(textOf(body, 'coordinator-job-created')).toBe('2026-11-01T09:00:00Z')
+    expect(textOf(body, 'coordinator-job-pr')).toBe('1459')
+    expect(figureOf(body, 'coordinator-job-cost')).toEqual([COORDINATOR_JOBS_SPENT_WORD, '$1.25'])
+    // The path class masks a repository-relative path in a document the recorder
+    // did not redact, which is the class's whole job: what is drawn is the
+    // placeholder and never a directory of the operator's machine.
+    expect(textOf(body, 'coordinator-job-file')).toBe(PATH_PLACEHOLDER)
+    // The set's own `total` is the document's: three paths, one drawn, two left
+    // off -- a figure this screen subtracted but did not invent.
+    expect(one(body, 'coordinator-job-more').textContent).toBe('2')
+    // The second row's own body: the reason a run stopped, and no cost cell for a
+    // document that carried `0` -- the reading is drawn either way, and the row
+    // that wrote none draws nothing.
+    const secondBody = one(second, 'coordinator-job-detail')
+    expect(textOf(secondBody, 'coordinator-job-reason')).toBe('the reviewer refused the change')
+    expect(all(secondBody, 'coordinator-job-file')).toEqual([])
+  })
+
+  it('draws a document it cannot read as a page of nothing rather than inventing rows', () => {
+    // The reader is the console's own, and a document that is not one draws no
+    // row: the CLI's refusal is the entry's to draw, and a page this screen
+    // cannot read is not a page of zeroes with a head claiming a window.
+    const page = jobsDocument({ runs: 'not a list', totals: { runs: 3, total_usd: 1 } })
+    expect(page.rows).toEqual([])
+    expect(page.cursor).toBe('')
+    expect(page.window?.runs.value).toBe(3)
+    expect(page.window?.spent.value).toBe(1)
+  })
+
+  it('draws the section’s two controls in the console’s own words, and the floor sentence with the version', () => {
+    const load = coordinatorLoadJobsControl(factory)
+    expect(load.getAttribute('class')).toBe(COORDINATOR_JOBS_LOAD_CLASS)
+    expect(load.getAttribute('type')).toBe('button')
+    // Both carry the same state: what the press asks for is not on screen while
+    // the control is, which is what the attribute says.
+    expect(load.getAttribute('aria-expanded')).toBe('false')
+    expect(load.textContent).toBe(COORDINATOR_JOBS_LOAD_WORD)
+    const older = coordinatorOlderJobsControl(factory)
+    expect(older.getAttribute('class')).toBe(COORDINATOR_JOBS_OLDER_CLASS)
+    expect(older.getAttribute('aria-expanded')).toBe('false')
+    expect(older.textContent).toBe(COORDINATOR_JOBS_OLDER_WORD)
+
+    // The floor: the sentence names the release the paged read needs and the
+    // version line the handshake read, and the version is *text* wherever it came
+    // from -- a hostile one is a value drawn, not an element or an attribute.
+    const note = coordinatorJobsFloorNote(factory, '0.15.3+<script>')
+    expect(textOf(note, 'coordinator-jobs-floor-word')).toBe(COORDINATOR_JOBS_FLOOR_WORD)
+    expect(one(note, 'coordinator-jobs-floor-version').textContent).toBe('0.15.3+<script>')
+    // The sentence reads as one: the two spans are inline and nothing separates
+    // them but what the drawing puts there, so the version must not run into
+    // "this CLI is" on the screen. Spelled out rather than built from the
+    // constant, because the space between the two words is the claim.
+    expect(said(note)).toBe('the job list needs fugaro 0.16.0 and this CLI is 0.15.3+<script>')
+  })
+
+  it('renders every string a row draws through the class its wire key declares', () => {
+    // A row is a document's text end to end -- a title somebody wrote, a reason a
+    // stage wrote, a branch, a path -- so every one of them goes through
+    // `putText`: nothing here is `literal`, and no value reaches an attribute.
+    const page = jobsDocument({
+      runs: [
+        {
+          run: '20261101-093000-cc03',
+          repo: 'owner/repo-a',
+          status: 'failed',
+          title: '<img src=x onerror=alert(1)>',
+          branch: 'feat/<script>',
+          reason: 'javascript:alert(1)',
+          changed_files: { paths: ['../etc/passwd'], total: 1 },
+        },
+      ],
+      totals: { runs: 1, total_usd: 0 },
+    })
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+    const row = all(frame.jobs.list, 'coordinator-job')[0]
+    if (row === undefined) throw new Error('the list drew no row')
+    // The title's own class refuses markup, so what is drawn is the sanitizer's
+    // refusal and never the tag it carried.
+    // The title is drawn as text: the harness throws on the attributes a screen
+    // may not set, so a screen that turned this string into an element would have
+    // failed at the call rather than at this assertion -- and no element of the
+    // tag it names exists anywhere under the row.
+    expect(one(row, 'coordinator-job-title').textContent).not.toBe('')
+    expect(walk(row).every((node) => node.tag !== 'img')).toBe(true)
+    expect(textOf(bodyOf(row), 'coordinator-job-reason')).toBe('javascript:alert(1)')
+    expect(one(row, 'coordinator-job-detail').getAttribute('hidden')).toBe('')
+  })
+})
+
+describe('the pull request description (K3)', () => {
+  /** blockOf draws one description into a host of its own and answers the host:
+   * the entry paints the block the record's cell drew, and what a case is about
+   * is what that paint wrote. */
+  function blockOf(body: string, showAll = false): ScreenElement {
+    const host = factory.create('div')
+    fillCoordinatorDescription(factory, body, host, showAll)
+    return host
+  }
+
+  /** empties is what the entry does before it paints a host: the block is drawn
+   * once and painted again, and a paint is the whole of what it holds. */
+  function empties(element: ScreenElement): void {
+    ;(element as FakeScreen).nodes.length = 0
+  }
+
+  /** panelsOf is the model's own repository panels, which is what the entry's
+   * chunk hands `repoDetail`. */
+  function panelsOf(raw: unknown): readonly CoordinatorRepoPanel[] {
+    return buildCoordinatorModel(queueInputs({ view: decodes(raw) })).repos ?? []
+  }
+
+  it('draws the block with the row, hidden, behind the record’s own disclosure', () => {
+    const node = renders(aStore([aRecord({ number: 1458 })]))
+    const block = one(node, COORDINATOR_DESCRIPTION_CLASS)
+    // Drawn with the row and hidden, so the press is a toggle rather than a
+    // rendering -- the same shape the job list's own rows take (K4).
+    expect(block.getAttribute('hidden')).toBe('')
+    const head = one(node, COORDINATOR_DESCRIPTION_HEAD_CLASS)
+    expect(head.tag).toBe('button')
+    expect(head.getAttribute('type')).toBe('button')
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+    expect(head.textContent).toBe(COORDINATOR_DESCRIPTION_SHOW_WORD)
+    // The mark the read wears goes in a slot of the block's own, so the press has
+    // somewhere to put it before anything has been read.
+    expect(all(block, BUSY_SLOT_CLASS)).toHaveLength(1)
+  })
+
+  it('answers the entry the disclosure it binds, with the pair the read is made of', () => {
+    const parent = factory.create('div')
+    const panel = panelsOf(aStore([aRecord({ number: 1458 })]))[0]
+    if (panel === undefined) throw new Error('the store named no repository')
+    const drawn = repoDetail(parent, factory, panel)
+    expect(drawn.descriptions).toHaveLength(1)
+    const target = drawn.descriptions[0]
+    // The pair is the repository's own name and the pull request's number, and
+    // the two are answered beside the elements so the entry sends what the row
+    // was drawn for rather than reading it back out of the DOM.
+    expect(target?.request).toEqual({ repo: 'owner/repo-a', number: 1458 })
+    expect(target?.element).toBe(one(parent, COORDINATOR_DESCRIPTION_HEAD_CLASS))
+    expect(target?.block).toBe(one(parent, COORDINATOR_DESCRIPTION_CLASS))
+  })
+
+  it('draws a hostile description as one text node, with nothing in it built into an element', () => {
+    // The plan's own red step (K3): the host's untrusted author writes this, and
+    // the whole of what the console may do with it is draw it.
+    const hostile = '<script>alert(1)</script> and [click](https://evil.test)'
+    const host = blockOf(hostile)
+    const written = walk(host).filter((node) => (node.textContent ?? '') !== '')
+    // One line in, one text node out: the description is a value, not a document
+    // to parse.
+    expect(written, 'the block wrote more than one text node').toHaveLength(1)
+    const sanitized = sanitizeText(hostile, 'sentence', 'body')
+    if (!sanitized.ok) throw new Error(sanitized.reason)
+    expect(written[0]?.textContent).toBe(sanitized.text)
+    // The markup is characters on the screen -- `<script>` is text -- and no
+    // element of the tag it names exists under the block.
+    expect(written[0]?.textContent).toContain('<script>alert(1)</script>')
+    expect(walk(host).every((node) => node.tag !== 'script')).toBe(true)
+    // The address is the class's own marker and never the URL the author wrote,
+    // and neither string reaches an attribute: the harness throws on the
+    // attributes a screen may not set, so a screen that built a link out of this
+    // would have failed at the call rather than at this assertion.
+    expect(written[0]?.textContent).not.toContain('evil.test')
+    expect(
+      walk(host).every((node) =>
+        [...node.attributes.values()].every(
+          (value) => !value.includes('evil.test') && !value.includes('<script>'),
+        ),
+      ),
+    ).toBe(true)
+    // One line is under the block's own bound, so there is nothing to show.
+    expect(all(host, COORDINATOR_DESCRIPTION_ALL_CLASS)).toEqual([])
+  })
+
+  it('masks a credential block that spans lines before the body is split into them', () => {
+    // The block is split into lines before the class is run over each one, and
+    // the one redaction that needs a whole value -- a PEM block, whose body may
+    // not run past its own BEGIN and END lines -- would never see one: every
+    // line it drew would be a line of key material with no marker in sight. So
+    // the masking runs on the body, and the split runs on what it left.
+    //
+    // The block is **built here** rather than written out: the file holds no
+    // key-shaped literal, and the material is fresh on every run.
+    const begin = ['-----BEGIN', 'PRIVATE KEY-----'].join(' ')
+    const end = ['-----END', 'PRIVATE KEY-----'].join(' ')
+    // Wrapped the way a real block is, and 57 bytes so that the wrap leaves a
+    // short line: a run under the entropy net's own floor is exactly the line
+    // the class keeps whole, which is what a split-then-mask drawing of this
+    // value puts on the screen.
+    const material = randomBytes(57).toString('base64')
+    const wrapped = [material.slice(0, 64), material.slice(64)]
+    const host = blockOf(['before the block', [begin, ...wrapped, end].join('\n'), 'after the block'].join('\n'))
+    const drawn = all(host, COORDINATOR_DESCRIPTION_LINE_CLASS).map((line) => line.textContent ?? '')
+
+    // Every window of the material's own characters over every drawn line: the
+    // key is gone whole, and not one line of it at a time.
+    for (let at = 0; at + 8 <= material.length; at += 1) {
+      const window = material.slice(at, at + 8)
+      expect(
+        drawn.some((line) => line.includes(window)),
+        `a drawn line carries eight characters of the key material`,
+      ).toBe(false)
+    }
+    expect(drawn.join('\n')).toContain(TOKEN_PLACEHOLDER)
+    // The markers the block was written with go with it: what is left of that
+    // value is the placeholder and nothing else.
+    expect(drawn.join('\n')).not.toContain('PRIVATE KEY')
+    // The lines around it are untouched by the masking -- the split still gets
+    // the author's own lines.
+    expect(drawn[0]).toBe('before the block')
+    expect(drawn[drawn.length - 1]).toBe('after the block')
+  })
+
+  it('clips a long description to the console’s twenty lines, and draws every line once Show all is pressed', () => {
+    expect(COORDINATOR_DESCRIPTION_LINES, 'the block’s own bound').toBe(20)
+    const body = Array.from({ length: 60 }, (_unused, index) => `marker-${String(index + 1).padStart(2, '0')}`).join('\n')
+    const host = blockOf(body)
+    const drawnLines = all(host, COORDINATOR_DESCRIPTION_LINE_CLASS)
+    expect(drawnLines, 'the block drew every line of the body').toHaveLength(COORDINATOR_DESCRIPTION_LINES)
+    expect(drawnLines[0]?.textContent).toBe('marker-01')
+    expect(drawnLines[COORDINATOR_DESCRIPTION_LINES - 1]?.textContent).toBe('marker-20')
+    // The bound is this block's and not the text class's: `sentence` caps one
+    // text node at `MAX_TEXT_LENGTH`, so a description drawn as one node could
+    // never be shown whole -- which is why the lines are drawn one at a time.
+    const control = one(host, COORDINATOR_DESCRIPTION_ALL_CLASS)
+    expect(control.textContent).toBe(COORDINATOR_DESCRIPTION_ALL_WORD)
+    expect(control.getAttribute('type')).toBe('button')
+
+    // Show all draws the rest, and the control goes with it: there is nothing
+    // left to show.
+    empties(host)
+    fillCoordinatorDescription(factory, body, host, true)
+    const every = all(host, COORDINATOR_DESCRIPTION_LINE_CLASS)
+    expect(every).toHaveLength(60)
+    expect(every[59]?.textContent).toBe('marker-60')
+    expect(all(host, COORDINATOR_DESCRIPTION_ALL_CLASS)).toEqual([])
+  })
+
+  it('draws the console’s own sentence for a pull request whose description is empty', () => {
+    // A body the host answered with nothing is a fact about the pull request,
+    // and it is drawn in the console's own words rather than as a blank block.
+    const host = blockOf('')
+    expect(textOf(host, COORDINATOR_DESCRIPTION_EMPTY_CLASS)).toBe(COORDINATOR_DESCRIPTION_EMPTY_WORD)
+    expect(all(host, COORDINATOR_DESCRIPTION_LINE_CLASS)).toEqual([])
+    expect(all(host, COORDINATOR_DESCRIPTION_ALL_CLASS)).toEqual([])
+  })
+
+  it('draws no disclosure for a record that names no pull request to read a description of', () => {
+    // A record with no pull request is the in-flight runs alone: there is no
+    // number, so there is nothing a read could be made of and no control that
+    // would ask for one.
+    const bare = { ...(aRecord({}) as Record<string, unknown>), pr: null }
+    const node = renders(aStore([bare]))
+    expect(all(node, COORDINATOR_DESCRIPTION_CLASS)).toEqual([])
+    expect(all(node, COORDINATOR_DESCRIPTION_HEAD_CLASS)).toEqual([])
   })
 })
 

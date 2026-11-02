@@ -188,7 +188,7 @@ func newCoreRoot() *cobra.Command {
 	root.SetVersionTemplate(versionTemplate)
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newPairCmd(), newUserCmd(),
+		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newPairCmd(), newUserCmd(), newModelsCmd(),
 		// The credentials service's own entry point: hidden, and the only
 		// thing the service's image runs (credentials_serve.go, plan task
 		// C1.14). It is registered like every other command so `fugaro
