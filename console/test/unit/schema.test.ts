@@ -2103,7 +2103,12 @@ describe('the declared intents document (coordinator v2 C4)', () => {
     expect(view.repos[0]?.provider).toBe('github')
     // The provider is the caller's answer and not the node's, and `""` is one
     // of its answers rather than a gap: a machine with no provider to give
-    // sends the empty string (C1's additive field, read here the same way).
+    // sends the empty string. What is **not** C1's additive reading is the key
+    // itself: in the stored view an absent or null provider is the empty string,
+    // while this door requires it (`repos[0].provider` is the field a document
+    // without it is refused by) and refuses a null as a not-a-string, which is
+    // the same answer §6.16's "absent: yes, null: never" gets for this record's
+    // `branch` and `release`.
     expect(view.repos[1]?.provider).toBe('')
     const [first, second] = view.repos[0]?.intents ?? []
     expect(first?.id).toBe('a1b2c3d4')

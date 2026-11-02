@@ -149,6 +149,7 @@ import {
   coordinatorJobsFloorNote,
   coordinatorLoadJobsControl,
   coordinatorOlderJobsControl,
+  coordinatorRefreshLine,
   fillCoordinatorDescription,
   fillCoordinatorJobs,
   fillCoordinatorJobsEmpty,
@@ -5308,6 +5309,21 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // press left after a refusal that reads again (the head's own refresh),
         // and that one drops the list and this with it.
         if (!jobsRefusalDrawn) {
+          if (!jobsHeadDrawn) {
+            // A **first** page is the one refusal with no head: the figures the
+            // head holds are a page's `totals`, so the head -- and with it the
+            // stamp's own Refresh -- is drawn only once a page has landed. Here
+            // none has, and without this line the section would hold the CLI's
+            // sentence and no press at all: the head draws the stamp's row with
+            // its one control and no time, because no page was read to date it
+            // with.
+            head.replaceChildren(surface.nodeOf(section.slot))
+            const line = coordinatorRefreshLine(factory)
+            appendTo(section.head, line.root)
+            surface.nodeOf(line.refresh).addEventListener('click', () => {
+              reReadJobs()
+            })
+          }
           appendTo(section.list, refusedScreen(factory, 'runs.list', jobsSentence, theme))
           jobsRefusalDrawn = true
         }
@@ -5558,6 +5574,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         })
       }
       if (intentsSentence !== null) {
+        // The pane's press after a refusal, drawn where the stamp would be and
+        // with no time in it: the refusal is not a dead end, and the one clock in
+        // hand here is the previous read's. It reads the declarations, which is
+        // the read that refused.
+        const line = coordinatorRefreshLine(factory)
+        appendTo(section.host, line.root)
+        surface.nodeOf(line.refresh).addEventListener('click', () => {
+          reReadIntents()
+        })
         appendTo(section.host, refusedScreen(factory, 'coordinator.intents', intentsSentence, theme))
       }
       fillCoordinatorTranscript(factory, model(), section.host)
@@ -5602,6 +5627,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // pane's read ended.
       intentsOut = false
       intents = null
+      // The clock goes with the declarations it belonged to (K5's follow-up): a
+      // read that refused or would not decode leaves this read's own sentence on
+      // the pane, and a stamp still saying `as of 14:05` would date that sentence
+      // with the previous success -- a read that has nothing to do with it.
+      intentsAt = 0
       if (!answer.ok) {
         intentsSentence = answer.sentence
       } else {
