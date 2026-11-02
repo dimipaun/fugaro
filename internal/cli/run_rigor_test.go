@@ -306,7 +306,10 @@ func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f := newCloudFixture(t)
-			writeBuildRecord(t, f, appSlug, "web", release0111)
+			// release0160, not release0111: this case's job image has to run
+			// the level 3 a critical mode's own row resolves, and the levels
+			// gate refuses an image older than reviewLevelsSince.
+			writeBuildRecord(t, f, appSlug, "web", release0160)
 			checkoutWorkflows(t, c.rigorYAML, "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 			id := fmt.Sprintf("20261025-13000%d-abcd", i)
 			args := []string{"run", "--repo", "acme/app", "--run-id", id, "--mode", c.mode}

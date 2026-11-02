@@ -184,6 +184,14 @@ func TestRunReviewModeRefusesLeftoverAllowForks(t *testing.T) {
 	}
 }
 
+// release0160 is a job image whose runner acts on review levels
+// (reviewLevelsSince, L4.2): the first image a launch that resolves level 3,
+// a none, a level's own model or effort, or the owner's floor may run on. A
+// test that wants a critical mode's own level 3 to reach a run unchanged needs
+// this image, not release0111 — the gate refuses anything older
+// (TestRecipesSkewRefusesResolvedL3OnOldImage).
+const release0160 = "ghcr.io/dimipaun/fugaro-base:0.16.0"
+
 // TestRunReviewLevelsFlagWritesTaskField: --review-levels decodes the
 // document it names strictly into the block the task stores (L1.2, D724), so
 // the levels a launcher asks for reach the run as the one field the resolver
@@ -192,7 +200,7 @@ func TestRunReviewModeRefusesLeftoverAllowForks(t *testing.T) {
 // TestRecipesSkewRefusesReviewLevelsOnOldImage's.
 func TestRunReviewLevelsFlagWritesTaskField(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	dir := t.TempDir()
 	good := filepath.Join(dir, "levels.yaml")
 	if err := os.WriteFile(good, []byte("l2:\n  model: deepseek/deepseek-v4-pro\n  effort: high\n  focus: the diff's error handling\nl3:\n  none: true\n"), 0o600); err != nil {
