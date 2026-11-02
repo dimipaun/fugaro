@@ -673,6 +673,24 @@ func TestReduceYarnBerryPatch(t *testing.T) {
 	// and the version the entry resolved to is not in the descriptor: the entry
 	// stays unkeyed rather than keyed on a range.
 	refused(t, "yarn.lock", yarnBerryPatchEntry("typescript@^5.4.0", "optional!builtin<compat/typescript>"), UnkeyedNonRegistry)
+	// What follows the registry's scheme is a version or a range, which is to
+	// say the characters a range is written with and nothing else. A backslash
+	// (`npm:..\evil.tgz` is a path on a Windows tree, and the entry resolved
+	// from whatever it names) and a percent-escape (`npm:5.4.5%3A%3A__archiveUrl=…`,
+	// a locator's own protocol written past the version) are neither of them, in
+	// the descriptor every entry writes and in the patch's inner locator.
+	refused(t, "yarn.lock", "\"typescript@npm:..\\evil.tgz\":\n  version: 5.4.5\n"+
+		"  resolution: \"typescript@npm:5.4.5\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", "\"typescript@npm:5.4.5%3A%3A__archiveUrl=https%3A%2F%2Fevil.example%2Fx.tgz\":\n  version: 5.4.5\n"+
+		"  resolution: \"typescript@npm:5.4.5\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", yarnBerryPatchEntry(`typescript@npm%3A..\evil.tgz`, "optional!builtin<compat/typescript>"), UnkeyedNonRegistry)
+	// The range's own characters are allowed and not only the ones a single
+	// version is written with: comparators, a union and a wildcard are a range
+	// the registry serves.
+	if got := reduced(t, "yarn.lock", "\"typescript@npm:>=5.4.0 <6.0.0 || 4.x\":\n  version: 5.4.5\n"+
+		"  resolution: \"typescript@npm:5.4.5\"\n  checksum: 10c0/abcdef\n"); !slices.Equal(got, []string{factOf("typescript", "5.4.5", "10c0/abcdef")}) {
+		t.Errorf("a range with comparators = %v", got)
+	}
 }
 
 func TestReduceGoSum(t *testing.T) {

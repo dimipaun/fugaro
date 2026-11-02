@@ -1117,14 +1117,24 @@ func yarnRegistryVersion(locator string) (name, version string, ok bool) {
 
 // yarnRegistryRange reports whether what a descriptor states after the
 // registry's own `npm:` scheme is a version or a range rather than a source.
-// A range holds no slash and no colon — `^1.2.3`, `1.2.3`, `*`, a dist-tag —
-// while a URL, a path or another scheme's locator holds one of them, and the
-// scheme is written for a range: `typescript@npm:https://evil.example/x.tgz`
-// states a source in that place, and reading it as the default registry's keys
-// the repository by an artifact the file only claims the registry served.
+// What is written there is a version or a range and nothing else, so the test
+// is the characters a range is written with, and a value holding any other one
+// is a source: `typescript@npm:https://evil.example/x.tgz` states a URL in that
+// place, `npm:..\evil.tgz` a path on a Windows tree, and
+// `npm:5.4.5%3A%3A__archiveUrl=…` a locator's own protocol written past the
+// version. Reading any of them as the default registry's keys the repository by
+// an artifact the file only claims the registry served.
 func yarnRegistryRange(v string) bool {
-	return v != "" && !strings.ContainsAny(v, "/:")
+	return v != "" && strings.Trim(v, yarnRangeChars) == ""
 }
+
+// yarnRangeChars is what a version or a range is written with: the digits and
+// letters of a version or of a dist-tag — `x` and `X` among them, the
+// wildcard — and the punctuation npm's ranges use, a dot, a hyphen and a plus
+// in the version itself and `^ ~ < > = | *` with the space between two
+// comparators in a range. A slash, a colon, a backslash and a percent-escape
+// are none of them.
+const yarnRangeChars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-+^~<>=|* x"
 
 // yarnBuiltinPatch is the name of the built-in compatibility patch a patch
 // descriptor names, and empty for anything else — a patch of the repository's,
