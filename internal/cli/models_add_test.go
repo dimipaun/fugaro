@@ -436,11 +436,11 @@ func TestModelsAddPrintsOnlyFugaroUpdateNext(t *testing.T) {
 	}
 }
 
-// TestModelsAddPrintsTheOneNextNextWhenTheRouteAlreadyClaimedIt: a model the
+// TestModelsAddPrintsTheOneNextLineWhenTheRouteAlreadyClaimedIt: a model the
 // route already serves leaves the providers block alone, so the one command is
 // the whole hand-off — the line that names `update --repo .` is for the claim
 // this command wrote and not for the write itself.
-func TestModelsAddPrintsTheOneNextWhenTheRouteAlreadyClaimedIt(t *testing.T) {
+func TestModelsAddPrintsTheOneNextLineWhenTheRouteAlreadyClaimedIt(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	modelsWriteCheckout(t, modelsWriteHomeDir(t, path), "owner/repo-b", modelsWriteRepoYAML)
 
