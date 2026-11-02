@@ -123,6 +123,31 @@ func TestModelsSearchRefusesAPriceTableItCannotBuild(t *testing.T) {
 	}
 }
 
+// TestModelsSearchSanitisesTheTerm: the search echoes the term it was given
+// twice — quoted in the miss, and bare in the sentence naming the one way to
+// use a model the catalog does not carry — and a term is a string the caller
+// typed. A bidi override would let it read backwards and an ESC[31m would
+// colour the rest of the terminal, so both echoes go through oneLine.
+//
+// Mutation (run, restored): print the term raw at models_search.go:72 and :79
+// and this fails on the raw characters.
+func TestModelsSearchSanitisesTheTerm(t *testing.T) {
+	modelsFixture(t)
+
+	out, _, err := execute(t, "models", "search", "vend‮or\x1b[31m")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, raw := range []string{"‮", "\x1b"} {
+		if strings.Contains(out, raw) {
+			t.Errorf("the search echoes a raw %q from the term:\n%q", raw, out)
+		}
+	}
+	if !strings.Contains(out, "vend?or") {
+		t.Errorf("the term is not echoed at all:\n%s", out)
+	}
+}
+
 // TestModelsSearchEscapesItsCells: a route name is a cell of the hit table,
 // and a tab in it would open a column of its own and shift every column after
 // it. The value is a repo's pin, so it is escaped rather than trusted
