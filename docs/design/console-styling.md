@@ -1196,7 +1196,8 @@ figure animates anywhere (§3.9).
 
 The Coordinator draws the project view: the action queue, the fleet's totals, and one panel
 per repository the installation's config lists, each with the sweep's own marker, the three
-counts beside the repository's name, the records with the runs behind them, the collisions,
+counts beside the repository's name, the records with the pull request's own description and
+the runs behind them, the collisions,
 and the pull requests whose host state no sweep could read. Regions in tree order: the
 screen's source line → the console's sentence about the age the view does not carry →
 `section.coordinator-queue` (the head line: the count of what is waiting, the word it counts
@@ -1250,6 +1251,25 @@ is gated on `RUNS_LIST_PAGE_CLI_FLOOR` (`0.16.0`, the first release carrying #15
 the section draws the console's own sentence naming the version it needs and spawns nothing,
 because in the 0.15 line `--after` is refused outright and `--limit` reads only the newest N —
 a page whose own `totals` would then be the page's.
+
+**The pull request's description is console 0.119.0's K3**, and it is the one read of this
+screen that is made from a row rather than from the tab: a record draws a disclosure between
+its head row and its runs, and **the press is what reads** (`coordinator show --json --repo
+… --pr …`, the row's own repository and number and no other word). The read is made **once
+per pull request per visit** — an expand/collapse cycle draws what the first press read,
+stamped `as of HH:MM` with the one control that reads it again — because a description is the
+one document here that costs the host a token of its own. **The description is drawn as plain
+text and never as markdown**: every line goes through `putText` in the `sentence` class
+(`src/shared/sanitize.ts`), so a `<script>` in it is the characters somebody typed and a
+`[click](…)` in it is not a link, and **no element and no attribute is built from anything
+inside it**. It is clipped to `COORDINATOR_DESCRIPTION_LINES` (20) lines with the console's
+own `Show all` under the clip, and a pull request whose body is empty draws the console's
+sentence rather than a block of nothing. A read that refuses draws its own sentence naming
+`coordinator show` in the block, and under the credentials service that sentence is the
+CLI's own — the console adds no words of its own to a refusal. The block is gated on the
+record's number and the panel's repository and **not** on the row's destination: a
+description needs no provider, so an installation whose CLI predates C1's `provider` field
+still gets it.
 
 **The panel, the strip, the banner and the row are console redesign step 7.** The markup this
 step draws replaces the markup `screens.css`'s Coordinator block met, and that block is
@@ -1320,6 +1340,11 @@ only ever says what it was told.
 | `coordinator-record-chip` | `span` | the host's word for the pull request with the console's own beside it: one chip, because the two are one fact |
 | `coordinator-record-state`, `coordinator-record-draft` | `span`s inside the chip | the host's state (`open`, `merged`, …) and the console's `draft`, and neither is drawn when the document has none |
 | `coordinator-record-flight`, `coordinator-record-noruns` | `span`s | the console's own words: `in flight` or `finished`, and `no run behind it` |
+| `coordinator-description-head` | the record's own disclosure | console 0.119.0's K3: the press that reads `coordinator show --json` for this pull request and reveals the block under it, carrying `aria-expanded` and `type="button"`, and labelled `Show description` or `Hide description` as it stands. Selected **without a tag**, because the class arrives through an exported constant |
+| `coordinator-description` | the block the disclosure opens | the description's own block, drawn with the row and `hidden` until the press — the attribute and the reset's own rule for it, never a `display` written in this block. Tagless for the reason above |
+| `coordinator-description-line` | `div` | one line of the description, drawn through `putText` in the `sentence` class: **plain text, never markdown**, and no line is joined to its neighbour. Tagless |
+| `coordinator-description-all` | `button` | `Show all`, drawn only where the description was longer than the console's own line count, and the console's own words: nothing of the document reaches it. Tagless |
+| `coordinator-description-empty` | `p` | the console's sentence for a pull request that carries no description at all. Tagless |
 | `coordinator-runs` | `ul` | the runs behind the record, nested under the head row behind the hairline a nested panel is separated with (§3.8), drawn only when the record has a run, and cut at the console's cap |
 | `li.coordinator-run` | `li` | one run |
 | `coordinator-run-id` | `span` | the run's id |
@@ -1357,8 +1382,8 @@ only ever says what it was told.
 **This screen emits no `data-*` of its own, so every rule for it is written against a
 class.** It holds no control, no state variant and no selection — the one attribute it
 stamps is the `data-theme` every screen's root carries — and a rule that wanted a `data-*`
-here would be inventing the state it keyed on. Seventeen of the hooks above are selected
-**without a tag**, in three groups. The first four are the screen's own `listCell` and
+here would be inventing the state it keyed on. Twenty-two of the hooks above are selected
+**without a tag**, in four groups. The first four are the screen's own `listCell` and
 `countCell` parameters (`coordinator-file`, `coordinator-service` and `coordinator-more`) and
 `coordinator-count-alert`, which the strip's call to `numberCell` passes the same way: the
 scan that pairs a selector with the tag the renderer draws cannot read a class that arrives
@@ -1375,7 +1400,10 @@ section, its head, its list and its controls are drawn through exported constant
 `coordinator-job-more` arrive through a parameter — `jobsControl`'s own `className` and the
 `...classes` two of the screen's cells take. The nine class names are
 this screen's own, no rule competes for them and the tag would buy no specificity — the same
-ground `coordinator-count-alert` stands on.
+ground `coordinator-count-alert` stands on. **K3's five are the fourth group**, and all five
+are the constant's case: the disclosure, the block, its lines, its `Show all` control and its
+empty sentence are all drawn through exported constants (`COORDINATOR_DESCRIPTION_*_CLASS`),
+because the entry is what wires the press and reads the block back by class.
 
 **Nineteen hooks the stylesheet does not select**, and §2's rule read the other way:
 `coordinator-count-records`, `coordinator-count-inflight`, `coordinator-count-collisions`,
