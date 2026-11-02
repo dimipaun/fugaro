@@ -2142,30 +2142,36 @@ describe('the declared intents document (coordinator v2 C4)', () => {
     expect(second?.release).toBe('')
     expect(second?.files).toEqual([])
     expect(second?.services).toEqual([])
-    // `null` reads as absent too, which is what the contract's table says for
-    // the two optional fields -- and an empty list is the one list a quiet
-    // repository has: never a `null` a screen has to interpret.
+    // An empty list is the one list a quiet repository has: never a `null` a
+    // screen has to interpret.
     const bare = { repos: [{ repo: 'owner/repo-a', provider: '', intents: [] }] }
     expect(decoded(bare).repos[0]?.intents).toEqual([])
-    const nulled = {
+    // **`null` is not the absent shape here.** §6.16's tables mark all three of
+    // `provider`, `branch` and `release` "absent: yes, **null: never**": the Go
+    // struct's `omitempty` drops the key rather than writing a null, so a null
+    // in its place is a document this build does not know, and `optionalText`'s
+    // house reading of one (the empty string) applies to no key of this record.
+    const withRecord = (patch: Record<string, unknown>): unknown => ({
       repos: [
         {
           repo: 'owner/repo-a',
           provider: '',
-          intents: [{ id: 'a1b2c3d4', declared_by: 'person-1', at: '2026-11-02T05:00:00Z', branch: null, release: null, files: [], services: [] }],
+          intents: [{ ...(INTENTS.repos[0]?.intents[0] ?? {}), ...patch }],
         },
       ],
-    }
-    const view = decoded(nulled)
-    expect(view.repos[0]?.intents[0]?.branch).toBe('')
-    expect(view.repos[0]?.intents[0]?.release).toBe('')
-    // `provider` is required and is refused when it is `null`, which `branch`
-    // and `release` are not: those two are `omitempty` and `optionalText`'s
-    // reading of an absent or null one is the house's (the contract's own
-    // "absent means the CLI had nothing to say"), while this key is written
-    // even when it is empty and a null in its place is a shape this build does
-    // not know.
-    expect(decodeCoordinatorIntents({ repos: [{ repo: 'owner/repo-a', provider: null, intents: [] }] }).ok).toBe(false)
+    })
+    expect(refusal(withRecord({ branch: null }))).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].intents[0].branch',
+    })
+    expect(refusal(withRecord({ release: null }))).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].intents[0].release',
+    })
+    expect(refusal({ repos: [{ repo: 'owner/repo-a', provider: null, intents: [] }] })).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].provider',
+    })
   })
 
   it('ignores a key no field of the document is, and refuses the ones a record must carry', () => {

@@ -2295,6 +2295,17 @@ export function decodeCoordinatorPullRequest(
   return at(where, () => coordinatorPullRequestAt(objectAt(raw, 'the document', where), where))
 }
 
+/** coordinatorOptionalTextAt is `optionalText` with `null` refused: the keys
+ * §6.16 marks "absent: yes, null: never" -- a declaration's `branch` and
+ * `release`. The Go struct's `omitempty` drops the key rather than writing a
+ * null, so absent is the empty string and a null is a document this build does
+ * not know. */
+function coordinatorOptionalTextAt(raw: Record<string, unknown>, key: string, field: string, where: string): string {
+  const value = raw[key]
+  if (value === undefined) return ''
+  return stringAt(value, field === '' ? key : `${field}.${key}`, where)
+}
+
 function coordinatorIntentAt(raw: unknown, field: string, where: string): CoordinatorIntent {
   const record = objectAt(raw, field, where)
   return {
@@ -2307,11 +2318,13 @@ function coordinatorIntentAt(raw: unknown, field: string, where: string): Coordi
     // own rule).
     at: timestampAt(required(record, 'at', field, where), `${field}.at`, where),
     // `branch` and `release` are `omitempty` on the Go struct, so absent is one
-    // of the two shapes the CLI prints and reads as "declared none"; `null` is
-    // not a shape the CLI writes, but `optionalText` reads it as absent rather
-    // than refusing a document nothing here depends on.
-    branch: optionalText(record, 'branch', field, where),
-    release: optionalText(record, 'release', field, where),
+    // of the two shapes the CLI prints and reads as "declared none" -- but
+    // `omitempty` drops the key rather than writing a null, and §6.16 marks
+    // both "null: never", so a null in their place is a shape this build does
+    // not know and is refused (`optionalText`'s house reading of a null is for
+    // the keys whose contract admits one).
+    branch: coordinatorOptionalTextAt(record, 'branch', field, where),
+    release: coordinatorOptionalTextAt(record, 'release', field, where),
     // Both lists are required: the record's own promise is that a list it
     // declares nothing in is `[]` and never a `null` a reader has to interpret.
     files: coordinatorStringsAt(required(record, 'files', field, where), `${field}.files`, where),
