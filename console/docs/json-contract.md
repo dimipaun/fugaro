@@ -717,8 +717,31 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--limit`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
-allow-list excludes `--watch` (it is `watch` under another name).
+`--limit`, `--after`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
+flags. The allow-list excludes `--watch` (it is `watch` under another name).
+
+**`--limit=N` and `--after=RUN-ID` are the page and its cursor, and they are the two
+flags the console's `runs ls` row adds to the list above** (D818, the console
+coordinator-v2 plan's C2). `--limit=N` prints the **newest** `N` rows of the window;
+`--after=RUN-ID` starts the listing after that run, in the listing's own order, so a
+page is what the previous page's last row hands on — the two are the console's one
+way to walk a window a row at a time. **Both travel in the `=` form**, one word each,
+the value inside the flag's own word and never a word of its own, so a value can never
+be read as a flag (`--after=--watch` is a cursor the grammar below refuses, not a
+second flag on this argv); and **both are held before a child exists**: the limit is a
+positive integer of at most `RUNS_LIST_MAX_LIMIT` (**200**, this console's own
+ceiling rather than the command's — `--limit 0` is the command's own "every row",
+which is the read the page exists to avoid asking for), and the cursor is a run id in
+the `run_id` grammar of this very section, which is the id a page prints. An id the
+window does not hold stays the command's refusal and not this console's business: only
+the command knows what its window held.
+
+**A page is not a total: `totals` is the whole window's, never the page's.** `--limit`
+shortens what is printed and shortens nothing else — the window is read either way, so
+a page costs what the window costs — and therefore `totals.runs`, the counts behind it
+and every dollar figure in it stay the window's however small the page is. A reader
+that divided one of those figures by the rows it drew would print a number this
+document does not carry, which is the one wrong answer the two flags could produce.
 
 ## 6. The other documents
 
@@ -1971,11 +1994,19 @@ field is (C1): the local config's entry for the repository, else its checkout's
 `fugaro.yaml`. A screen that has just drawn a `provider` from §6.13 and asks for
 a description here is asking the same question of the same resolution.
 
-**The console's row is a later task.** This section is the CLI's half of
-coordinator v2 C3: the spawn row, the operation and the decoder are C3c and are
-**not** in this document's scope, so nothing here authorises a spawn — §5.1's
-table and the allow-lists are where a row is admitted, and they are unchanged by
-this section.
+**The console's row is built on this section.** It is coordinator v2 C3's console
+half: the design's §5.1 table carries `coordinator show --json --repo <owner/name>
+--pr <n>` as the `coordinator.show` / `coordinatorShow` operation
+(`console/src/main/ipc.ts`), whose two arguments are the `repository` and
+`pullRequest` kinds and are both required — the argv above is the whole of what a
+renderer can influence about the child, and there is no key of that schema for a
+token, a host, a path or a flag. The decoder written against the table above is
+`decodeCoordinatorPullRequest` (`console/src/shared/schema.ts`): `number` is the
+one key the document must carry and the one that must be a whole number, the
+other eight are carried as the host's own text (or, for `draft`, its flag), an
+absent or `null` key reads as absent rather than as a value, and a key none of
+the nine is does not reach a screen. A screen that draws a description reads
+this operation and treats `body` as the untrusted block it is.
 
 **Version skew.** Every field is additive. A CLI older than this command has no
 such read at all, and the console shows the section as unavailable (the
@@ -2048,6 +2079,7 @@ and **not** off this document or the design:
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
+| `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the coordinator's own read-only installation token, revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the

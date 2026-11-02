@@ -103,7 +103,7 @@ func TestKeyIgnoresOrderCommentsFormattingRepoNameAndCommands(t *testing.T) {
 		Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")},
 		Tools:      []string{"node@22.11.0"},
 	})
-	want := "key v2\n" +
+	want := "key v3\n" +
 		"base:\"web@" + baseDigest + "\"\n" +
 		`pkg:"\"left-pad\" \"1.3.0\" \"\""` + "\n" +
 		`pkg:"\"react\" \"18.3.1\" \"\""` + "\n" +

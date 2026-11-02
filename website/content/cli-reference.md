@@ -42,6 +42,7 @@ Subcommands:
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
+- `fugaro models` -- Show the models this project can run, and where each is served
 - `fugaro pair` -- Pair a phone with this installation
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
@@ -78,8 +79,46 @@ Flags:
 
 Subcommands:
 
+- `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+
+## `fugaro accounts add`
+
+Declare a named Claude account and the repositories its token may be used by
+
+Declare a named Claude OAuth account in this project's local config.
+
+It writes claude_accounts.<name>.allow_data_to — the repositories the account's
+token may be used by, and the field every other rule is built on — and adds the
+name to one profile's claude_accounts, so the profile's jobs may serve it.
+
+--repos defaults to this checkout's origin repository. A profile that lists
+accounts must write its own allow_repos, and every account it lists must cover
+every repository on it: an account that covers less is refused before the file
+is touched, naming the repositories it is missing, because widening the account
+silently is what that rule exists to prevent.
+
+The token itself is a second command's: this one declares the account, and the
+converge that stores the secret and deploys the jobs is not built yet.
+
+Run it at your own terminal: this file decides where a credential may be sent,
+so a coding agent's session is refused, --yes included.
+
+Usage: `fugaro accounts add NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
+| `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro accounts clear`
 
@@ -2160,6 +2199,98 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for flag |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models`
+
+Show the models this project can run, and where each is served
+
+Show the models this project can name and the routes behind them.
+
+The routes are the owner's providers in the project config, each with the
+models it claims, its fee and the repositories whose code may be sent to it,
+beside the direct Anthropic route. The models are the ones a run can name
+today: an ID a route claims, a model_prices key, a budget.allowed_models entry
+and a model a repository pins.
+
+Both reads are offline: they touch no bucket, no database and no host. What
+they print about the cloud is what the local files already say.
+
+Usage: `fugaro models`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for models |
+
+Subcommands:
+
+- `fugaro models ls` -- Show this project's routes, its models and what each repository runs
+- `fugaro models search` -- Find a model in the built-in price catalog and the Claude table
+
+## `fugaro models ls`
+
+Show this project's routes, its models and what each repository runs
+
+Show, offline, what this project can run.
+
+ROUTES is the owner's providers in the project config — the host, the models
+each claims, its route_fee_pct and the repositories whose code may be sent to
+it — beside the direct Anthropic route. MODELS is every model a run can name
+today (a route's claim, a model_prices key, a budget.allowed_models entry, a
+repository's pin), with the route that serves it, where its price comes from
+and what it costs. ALLOW-LISTS is which repositories each model may be sent
+to. USAGE is each recorded repository's pins, read out of the fugaro.yaml at
+the base branch it runs against.
+
+A repository this machine has no checkout for is unknown, never guessed at.
+The command reaches no bucket, no database and no host.
+
+Usage: `fugaro models ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models search`
+
+Find a model in the built-in price catalog and the Claude table
+
+Find a model this project could run, by a substring of its ID.
+
+The search reads this binary's own tables — the built-in provider price
+catalog and the embedded Claude table — and the selected project config,
+and reaches nothing. A hit shows where its price comes from, the range it
+is charged over and the route of this project that claims it, so a reader
+knows whether the model is usable before running anything. A miss names the
+one way to use a model the catalog does not carry: price it yourself.
+
+Usage: `fugaro models search <text>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for search |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 

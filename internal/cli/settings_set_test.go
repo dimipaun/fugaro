@@ -972,6 +972,36 @@ func TestSettingsSetRefusesAMapKey(t *testing.T) {
 	}
 }
 
+// TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys: the pattern lookup
+// resolves a wildcard registry row only for a spelling settingsGenericKeys
+// carries by name, and `stages.*.claude_account` is the only one it does. A
+// concrete spelling of the project layer's `workflows.*.*` or the project
+// family's `repos.*.*` is refused like any other key the generic path does not
+// write, and nothing is written.
+func TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	before := readFileString(t, localPath)
+	for _, key := range []string{"workflows.build.commands.test", "repos.web.base_branch"} {
+		t.Run(key, func(t *testing.T) {
+			// The rule itself, so the test says which of the two reasons the
+			// refusal has: this key resolves no row here at all.
+			if _, _, ok := settingsWriteLookup(key); ok {
+				t.Errorf("settingsWriteLookup(%q) resolved a wildcard row the generic allowlist does not carry", key)
+			}
+			out, _, err := execute(t, "settings", "set", key, "x", "--yes")
+			if err == nil {
+				t.Fatalf("settings set wrote %s:\n%s", key, out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+			}
+			if readFileString(t, localPath) != before {
+				t.Errorf("the refused write changed the local config")
+			}
+		})
+	}
+}
+
 // TestSettingsSetRepoLayerChecksTheRepoFlag: --repo names a repository, so it
 // goes with --layer repo and nowhere else, it has to be owner/name, and the
 // checkout it names has to be one this machine remembers. Each is a refusal
