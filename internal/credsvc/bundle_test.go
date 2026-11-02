@@ -1098,6 +1098,17 @@ func TestReviewSigningEntryIsALegalBundleKeyAndIsNoModelCredential(t *testing.T)
 	if _, _, err := b.ReviewSigningKey("bob", false); err == nil {
 		t.Error("ReviewSigningKey(bob, false) answered an entry alice's document does not hold for bob")
 	}
+	// And one document key is one entry: the guard is per key, so a doubled
+	// review-signing name is refused whole rather than collapsed to whichever
+	// of the two values the walk read last — the reading a hand-edited bundle
+	// would otherwise get, and the reason the guard keys on the KEY here rather
+	// than on the account: an account's two entries share the account and are
+	// both legal, which the document above is.
+	dup := []byte(config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "twice") + "\n" +
+		config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "again") + "\n")
+	if dupBundle, err := ParseBundle(dup); !errors.Is(err, ErrBundleUnknownKey) || dupBundle != nil {
+		t.Errorf("ParseBundle with one review-signing key twice = (%v, %v), want ErrBundleUnknownKey and no bundle", dupBundle, err)
+	}
 	// Not a cascade credential: the model path is offered the account's token
 	// and nothing else, and the entry's kind is what says so.
 	if got := b.Credentials(); len(got) != 1 || got[0] != (creds.Credential{Name: "alice", Tier: creds.TierA}) {

@@ -275,7 +275,11 @@ type Entry struct {
 	// name is config.GitHubAppKeySecret, which is what the audit line and the
 	// mint's own refusal name it by; the upstream Bitbucket token's is
 	// config.BitbucketSecret, which is the name the proxy's audit line speaks
-	// (R2: names only) and never its value.
+	// (R2: names only) and never its value; a review-signing entry's is its
+	// own document key (config.ReviewSigningKeySecret, or the rotation's
+	// config.ReviewSigningKeyPreviousSecret), which is the name the sign and
+	// verify lines speak — an account is one half of it rather than the whole,
+	// because one account has two entries.
 	Name string
 	// Tier is the cost class (creds.TierA, creds.TierB). It is empty for an
 	// entry that is not a model credential: the App key, the upstream
