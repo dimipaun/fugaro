@@ -106,6 +106,33 @@ workflows:
       build: go build ./...
 `
 
+// modelsWriteRepoPins is a repository's own file pinning the caller's models:
+// the shape `models rm`'s warning is read off. An empty model leaves that key
+// out, so a file may pin one role and nothing else.
+func modelsWriteRepoPins(coder, reviewer, background string) string {
+	models := ""
+	for _, r := range []struct{ key, model string }{
+		{"coder", coder}, {"reviewer", reviewer}, {"background", background},
+	} {
+		if r.model != "" {
+			models += "    " + r.key + ": " + r.model + "\n"
+		}
+	}
+	return `version: 1
+project: aurora
+git:
+  provider: github
+agent:
+  auth: api-key
+  models:
+` + models + `workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+`
+}
+
 // modelsWriteCheckout remembers a checkout of repo carrying fugaroYAML, the way
 // this machine remembers a clone: the repository's own file under the checkout
 // directory, recorded for the project. It is not a git repository — a test that
