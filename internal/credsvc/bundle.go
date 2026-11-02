@@ -223,11 +223,12 @@ func BundleRefusal(err error) string {
 	return ErrBundleUnreadable.Error()
 }
 
-// Kind is what a bundle entry is for. The bundle holds three kinds of thing:
+// Kind is what a bundle entry is for. The bundle holds four kinds of thing:
 // the model credentials the cascade selects, each with a tier, the GitHub
-// App's private key, which the mint signs with, and the upstream Bitbucket
-// credential the git proxy forwards with (D506) — the last two are candidates
-// for nothing (C2.1, B1.2).
+// App's private key, which the mint signs with, the upstream Bitbucket
+// credential the git proxy forwards with (D506) and the per-account
+// review-signing keys the verdict routes compute a MAC with (D1069) — the
+// last three are candidates for nothing (C2.1, B1.2).
 type Kind string
 
 const (
@@ -264,7 +265,8 @@ const (
 type Entry struct {
 	// Kind is what the entry is for: KindModel for a credential the cascade
 	// may select, KindGitHubApp for the App key, KindGit for the upstream
-	// git credential. Credentials answers the model ones alone.
+	// git credential, KindReviewSigning for an account's review-signing key.
+	// Credentials answers the model ones alone.
 	Kind Kind
 	// Name is the credential's name: the Claude account's for tier A
 	// (config.DefaultClaudeAccount for the bare token), and
@@ -276,9 +278,9 @@ type Entry struct {
 	// (R2: names only) and never its value.
 	Name string
 	// Tier is the cost class (creds.TierA, creds.TierB). It is empty for an
-	// entry that is not a model credential: the App key and the upstream
-	// Bitbucket credential are spent nowhere, so neither has a tier to settle
-	// a call against.
+	// entry that is not a model credential: the App key, the upstream
+	// Bitbucket credential and a review-signing key are spent nowhere, so
+	// none of them has a tier to settle a call against.
 	Tier creds.Tier
 	// Key is the document's own key for this credential
 	// (config.ClaudeAccountSecret for a named account). It is not a value.
