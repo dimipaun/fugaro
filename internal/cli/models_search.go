@@ -294,7 +294,7 @@ func endpointsCell(r modelsSearchRow) string {
 	case "zdr":
 		return fmt.Sprintf("%d of %d endpoints", r.ZDREndpoints, r.Endpoints)
 	case "":
-		return "—"
+		return dash("")
 	default:
 		return fmt.Sprintf("%d endpoints", r.Endpoints)
 	}
