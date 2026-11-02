@@ -584,10 +584,17 @@ export const CONSOLE_OPERATIONS = [
       },
       // The page and its cursor (D818, the console coordinator-v2 plan's C2).
       // They are the two arguments the job list was waiting for: the read is
-      // about 248 KB and six seconds for a day of runs, so the screen asks for
-      // a page and walks it with the cursor rather than holding a window it
-      // cannot draw. Both are emitted as one `=`-form word each (`spawn.ts`),
-      // which is what keeps a value from ever reading as a flag.
+      // about 248 KB for a day of runs, so the screen asks for a page and walks
+      // it with the cursor rather than holding a window it cannot draw.
+      //
+      // **A page shrinks the bytes and not the seconds.** Since #1545 `--limit`
+      // cuts what is *printed*: the command still reads the whole window it
+      // prints from, so a day of runs costs its six seconds whether the screen
+      // asks for fifty rows or all of them. What the page buys is a document
+      // the console can hold and a first row it can draw -- the six seconds are
+      // the read's and are paid either way. Both words are emitted as one
+      // `=`-form word each (`spawn.ts`), which is what keeps a value from ever
+      // reading as a flag.
       //
       // **`--limit`'s ceiling is the console's** (`RUNS_LIST_MAX_LIMIT`) and
       // not the CLI's: the command takes any count it can parse, and a
