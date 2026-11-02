@@ -322,6 +322,15 @@ func modelsModelRow(lc *localcfg.Config, table *pricing.Table, id string, row pr
 	default:
 		m.Source = modelsSourceNone
 		m.Refused = table.Refusal(id)
+		if m.Refused == "" {
+			// A model the table never priced and never refused — a route's
+			// claim the catalog does not carry, with no model_prices entry —
+			// has no message of its own, and an empty NOTES cell reads as
+			// "nothing to say" where the row is one a launch refuses. The ID
+			// is the row's first cell, so the sentence does not repeat it
+			// (config's own wording, pins.go and providers.go).
+			m.Refused = "no price: add it under model_prices in the project config"
+		}
 	}
 	m.InputPerM, m.OutputPerM = row.InputPerM, row.OutputPerM
 	if m.AllowedTo == nil {

@@ -247,6 +247,63 @@ func TestModelsLsShowsCatalogAgeAndSpread(t *testing.T) {
 	}
 }
 
+// TestModelsLsSaysWhyAnUnpricedModelHasNoPrice: a model a route claims that
+// nothing prices — the catalog does not carry it and the owner wrote no
+// model_prices entry for it — has no refusal of the table's own, and its NOTES
+// cell was empty, which reads as "nothing to say" on the one row a launch
+// refuses. The reason is config's own wording (pins.go, providers.go), and the
+// ID is the row's first cell, so the sentence does not repeat it.
+func TestModelsLsSaysWhyAnUnpricedModelHasNoPrice(t *testing.T) {
+	home := modelsFixture(t)
+	modelsCheckout(t, home, "owner/repo-a", modelsRepoYAML)
+
+	out, _, err := execute(t, "models", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	models := modelsSection(t, out, "MODELS")
+	line := ""
+	for _, l := range strings.Split(models, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "vendor/model-x ") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("the MODELS section has no row for vendor/model-x:\n%s", models)
+	}
+	if !strings.Contains(line, "no price: add it under model_prices in the project config") {
+		t.Errorf("vendor/model-x's row is %q, and the row carries no price and no reason given", strings.TrimSpace(line))
+	}
+
+	raw, _, err := execute(t, "models", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	var doc struct {
+		Models []struct {
+			ID      string `json:"id"`
+			Source  string `json:"source"`
+			Refused string `json:"refused"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	for _, m := range doc.Models {
+		if m.ID != "vendor/model-x" {
+			continue
+		}
+		if m.Source != modelsSourceNone {
+			t.Errorf("vendor/model-x's source is %q, and nothing prices it", m.Source)
+		}
+		if m.Refused == "" {
+			t.Error("vendor/model-x's row has no refused member, so a consumer cannot say why it is unusable")
+		}
+		return
+	}
+	t.Errorf("the document has no row for vendor/model-x:\n%s", raw)
+}
+
 // TestModelsLsJSONMatchesSchema validates the document the command writes
 // against schemas/models-ls.schema.json, the contract a consumer reads it by
 // (D784).
