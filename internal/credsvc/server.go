@@ -27,38 +27,56 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// The two paths the service serves, spelled as Anthropic spells them: the
-// in-runner gateway forwards a run's request here instead of to
-// api.anthropic.com, so the path is the one the SDK built.
+// The two Anthropic paths the service serves, spelled as Anthropic spells them:
+// the in-runner gateway forwards a run's request here instead of to
+// api.anthropic.com, so the path is the one the SDK built. The mint's and the
+// sign route's paths are this service's own contract and are declared beside
+// the routes themselves (github.go, verdict.go).
 const (
 	MessagesPath    = "/v1/messages"
 	CountTokensPath = "/v1/messages/count_tokens"
+	// SignPath is the path a review run signs its artifact's digest on
+	// (C3.9e). It is not an Anthropic path: the request and the answer are
+	// this service's own contract.
+	SignPath = "/v1/review/sign"
 )
 
 // routeAct is the ONE rule for the two facts an audit line carries about the
 // call rather than about what the service did with it: the purpose the call
 // asked for, and the credential name a line for it may carry (C1.13).
 //
-// It exists so the rule is written once. The two routes are two acts of the
-// service — a proxied model call (C1.11) and a mint (C2.1) — and every refusal
-// either route answers has to be recorded as the act the run asked for and not
-// as the branch it was answered in, whether that refusal is taken before the
-// route is branched on (the binding and the stop switches in ServeHTTP) or
-// inside the route's own code (the mint's own refusals, github.go's refuseMint
-// and auditMint). Two spellings of one rule is how they drift: a mint's
-// refusals named the App key while the stop-switch refusal named nothing until
-// this rule replaced both.
+// It exists so the rule is written once. The routes are three acts of the
+// service — a proxied model call (C1.11), a mint (C2.1) and a signature over a
+// review run's digest (C3.9e) — and every refusal a route answers has to be
+// recorded as the act the run asked for and not as the branch it was answered
+// in, whether that refusal is taken before the route is branched on (the
+// binding and the stop switches in ServeHTTP) or inside the route's own code
+// (the mint's own refusals, github.go's refuseMint and auditMint). Two
+// spellings of one rule is how they drift: a mint's refusals named the App key
+// while the stop-switch refusal named nothing until this rule replaced both.
 //
 // The credential answers for the mint because the App key is what the endpoint
 // issues from: it is the endpoint's own name for it and not something read out
 // of the bundle, so it is known before the bundle is read and after it alike,
 // and a mint's line that named no credential would be a mint an operator
-// cannot account for. A model call's line names none here: which credential a
-// model call used, or would have used, is the cascade's answer and not the
-// route's, and a refusal taken before one was chosen has no name to carry.
+// cannot account for. A model call's line names none here, and so does a sign's:
+// which credential a model call used, or would have used, is the cascade's
+// answer and not the route's, and a sign line's credential is the CALLER'S
+// account's review-signing key — a name the route cannot read off a path.
+// Either way a refusal taken before one was chosen has no name to carry.
 func routeAct(path string) (purpose, credential string) {
-	if path == MintPath {
+	switch path {
+	case MintPath:
 		return PurposeMint, config.GitHubAppKeySecret
+	case SignPath:
+		// The sign route's credential is the account's review-signing key
+		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
+		// account, which the pairing resolves, so the route names the purpose
+		// and leaves the credential to the handler — which fills it in from
+		// the account once the key is in hand, the same way the cascade fills
+		// in a model call's. A refusal answered before the handler has no
+		// account to name and so carries none.
+		return PurposeReviewSign, ""
 	}
 	return PurposeForward, ""
 }
@@ -207,6 +225,15 @@ type Config struct {
 	// probing a credential, which lapses on its own and is never deleted.
 	// *rtdb.Client is one.
 	Probes ProbeLeases
+	// Signs is the create-only write the one-signature mark is taken with
+	// (C3.9e, D1074): the sign route's own node, which is why it is neither
+	// DB's business nor State's. It may be nil, and a nil one is a service
+	// that signs nothing — the route refuses rather than answering a
+	// signature the mark would have bounded, and the refusal says so. It is
+	// not required at construction because an installation that deploys no
+	// review job signs nothing and is a service this build starts.
+	// *rtdb.Client is one.
+	Signs SignMarks
 	// AuditLog is where the service's audited acts are written (C1.13): every
 	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
 	// included. There is one writer and one handler — Server.audit is the ONLY
@@ -494,12 +521,13 @@ func NewServer(cfg Config) (*Server, error) {
 // credential is the App key, the only one that endpoint has.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath && r.URL.Path != MintPath) {
+	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath &&
+		r.URL.Path != MintPath && r.URL.Path != SignPath) {
 		// There is no other route, and in particular no admin route: D143's
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+" and "+MintPath)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+" and "+SignPath)
 		return
 	}
 	req, err := RequestFromHTTP(r)
@@ -616,6 +644,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mint(ctx, w, r, id, ja)
+		return
+	}
+	if r.URL.Path == SignPath {
+		// The sign route (C3.9e). Everything above it is its admission and
+		// nothing below it is: the two identities have been verified, the
+		// pairing — for a review caller, the class's own, with the claim rule
+		// of §3.3 — has fixed the repository the frame binds, and the
+		// operator's stop flag has been read, so a stopped service signs
+		// nothing. It reads the bundle itself, because the account's
+		// review-signing key is in it, and it reads no policy and consults no
+		// cascade: a signature is not a model credential and no tier or
+		// admission has anything to say about it. The class is the route's own
+		// gate and the handler makes it, because the key is the CALLER'S
+		// account's.
+		s.sign(ctx, w, r, id, req, purpose)
 		return
 	}
 	// The project's policy, and the request itself, are read before the bundle:

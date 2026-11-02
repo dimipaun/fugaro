@@ -102,16 +102,38 @@ const (
 	// a tier the App key does not have would be a mint this file had made
 	// unauditable.
 	PurposeMint = "mint"
+	// PurposeReviewSign is the signature a review run asks the service for over
+	// its artifact's digest (C3.9e). The credential's name is the account's
+	// review-signing key (config.ReviewSigningKeySecret), which — like the App
+	// key — is not a model credential of the cascade and has no tier, so a sign
+	// line carries the key's name and no tier, and a tier on it is refused
+	// (checked) rather than recorded. See credentialWithoutTier.
+	PurposeReviewSign = "review_sign"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
 // for.
 func ValidPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeForward, PurposeProbe, PurposeMint:
+	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign:
 		return true
 	}
 	return false
+}
+
+// credentialWithoutTier reports whether a purpose's credential is one the
+// cascade never had: the App key a mint signs a JWT with, and the review-signing
+// key a sign line names. Neither is a model credential, neither is spent on a
+// call, and neither therefore has a tier — so a line of one of these purposes
+// names a credential and NO tier, and a tier on it is a tier this service never
+// assigned.
+//
+// It is one function because the two rules that read it (the tier refusal and
+// the both-or-neither rule, checked) have to agree about who the exemption
+// covers: a purpose added to one and not the other would be a line that is
+// refused for a credential it correctly carries.
+func credentialWithoutTier(purpose string) bool {
+	return purpose == PurposeMint || purpose == PurposeReviewSign
 }
 
 // StatusOK is the one status that is not a refusal: a credential answered —
@@ -439,20 +461,21 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"job", refusalMissing}
 	case ev.Credential != "" && !ValidCredentialName(ev.Credential):
 		return AuditEvent{}, auditRefusal{"credential", refusalMalformed}
-	case ev.Purpose == PurposeMint && ev.Tier != "":
-		// The App key a mint names is not a model credential of the cascade and
-		// has no tier, so a tier here is one this service never assigned: the
-		// line would be recording a fact the service does not have, and C2.1's
-		// mint would be auditable only by writing one.
+	case credentialWithoutTier(ev.Purpose) && ev.Tier != "":
+		// The credential a mint names (the App key) and the one a sign line
+		// names (the review-signing key) are not model credentials of the
+		// cascade and have no tier, so a tier here is one this service never
+		// assigned: the line would be recording a fact the service does not
+		// have, and those two acts would be auditable only by writing one.
 		return AuditEvent{}, auditRefusal{"tier", refusalUnexpected}
-	case ev.Purpose != PurposeMint && (ev.Credential == "") != (ev.Tier == ""):
+	case !credentialWithoutTier(ev.Purpose) && (ev.Credential == "") != (ev.Tier == ""):
 		// The both-or-neither rule the wire already keeps (SetCredentialHeaders,
 		// CredentialHeaders): a line naming one without the other is not one
 		// this service writes, and a reader that guessed the missing half
-		// would be reading an answer the service did not give. A mint is the one
-		// purpose it does not hold for, because its credential is the App key
-		// and the App key has no tier to pair with the name — which is why the
-		// tier is refused above rather than required here.
+		// would be reading an answer the service did not give. A mint and a
+		// sign are the purposes it does not hold for, because their credential
+		// has no tier to pair with the name — which is why the tier is refused
+		// above rather than required here.
 		return AuditEvent{}, auditRefusal{"credential", refusalMissing}
 	case ev.Tier != "" && !ValidTier(ev.Tier):
 		return AuditEvent{}, auditRefusal{"tier", refusalUnknown}
