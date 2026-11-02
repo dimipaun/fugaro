@@ -103,7 +103,27 @@ line and the one bundle container. The second is **U7** of that same work stream
 precondition of the sign route** (**D1074**, [spec.md](spec.md) §7): an owner-run live observation that a
 subprocess inside the review container cannot reach the network at all — the instance metadata server
 included — because the container's own untrusted test code is what would otherwise be able to ask this
-service to sign. The sign route does not start before that observation has returned.
+service to sign.
+
+**U7 is ANSWERED (2026-11-01): both fences exist and both hold**, and the probe's record is
+[docs/cloud-senior-review/](../cloud-senior-review/)'s (Check 125 step 6, and its reconciliation's U7 row
+for the whole observation and its five caveats). The sign route's precondition is met for the environment
+the probe took — an ordinary coding job on Cloud Run gen2, a real kernel, uid 1000, no capabilities — and
+three of the answer's caveats are requirements this route's own tests carry rather than notes:
+
+- **a namespace stops a child reading the *parent's* `/proc`, not the variables it was handed at start**,
+  so a child this route's tests start is started from an explicit environment — `env -i` plus an allow-list
+  — and `TestSignRouteIsUnreachableFromTheMutantEnvironment` pins both halves: the child's environment
+  holds exactly the allow-list, and the route refuses it;
+- **`unshare -rn` removes all networking, loopback included**, so the fence is the tool or test child's and
+  never the agent's, whose model calls need the loopback gateway: the route's test starts its child without
+  the fence for that reason, and asserts the thing the route owes (a process that holds no identity signs
+  nothing) rather than the namespace itself;
+- **the evidence for the private `/proc` is the visible-PID drop, not a `$PPID` read** — `$PPID` reads 0
+  inside the namespace, which is partly an artifact — so nothing here rests on that read.
+
+The environment's own emptiness is **CSR4b**'s pin (`TestMutationSubprocessCarriesNoTokenInItsEnvironment`);
+this folder asserts what its own route owes from that environment.
 
 Nothing here is approved by being written down. **Answering a decision is not approving a task.**
 
