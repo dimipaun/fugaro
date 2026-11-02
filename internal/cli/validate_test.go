@@ -2990,6 +2990,65 @@ func TestValidateLevelsRefusalIsSanitised(t *testing.T) {
 	}
 }
 
+// TestValidateLevelsRefusesProviderEffort pins D725 at the launcher (L3.2):
+// a level whose model a provider route claims and which sets an effort is
+// refused before a launch is paid for. The two keys are written by separate
+// commands — `fugaro models use` names the reviewer, `fugaro settings set`
+// writes agent.levels.l2.effort — so the file is one an installation can
+// reach without ever seeing the refusal, and the run's own ResolveLevels was
+// the only place that caught it, once a job had already started. The effort
+// would look applied and do nothing there: a provider stage runs with
+// MAX_THINKING_TOKENS=0 (G5), so the reviewer would run at its own default and
+// the operator would never know.
+//
+// Mutation (drop reviewLevelProblems from the checks newValidateCmd runs):
+// this test fails, finding the provider-served effort valid.
+func TestValidateLevelsRefusesProviderEffort(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n" +
+		"  models: { coder: claude-sonnet-5-5, reviewer: deepseek/deepseek-v4.1-flash, background: claude-haiku-4-5 }\n" +
+		"  levels: { l2: { effort: high } }"
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit = %d, want the D725 refusal (out %q)", ExitCode(err), out)
+	}
+	// The D725 refusal is the only thing wrong with this file: the coder, the
+	// reviewer, the background model and the budget are all in order, so an
+	// operator reading the output is pointed at the effort and nothing else.
+	if !strings.Contains(err.Error(), "has 1 problem(s)") {
+		t.Errorf("err = %v, want the effort refusal alone (out %q)", err, out)
+	}
+	for _, want := range []string{"l2.effort", `"high"`, "openrouter", "MAX_THINKING_TOKENS=0", "D725"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("validate's refusal lacks %q:\n%s", want, out)
+		}
+	}
+	// --json carries the refusal as a problem at the key the operator fixes.
+	out, _, err = execute(t, "validate", "--json", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("--json: err = %v (out %q)", err, out)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Valid || len(got.Problems) != 1 || got.Problems[0].Path != "agent.levels" || !strings.Contains(got.Problems[0].Message, "D725") {
+		t.Fatalf("json = %+v, want one problem at agent.levels naming D725", got)
+	}
+	// What is refused is the effort on a provider route, not the effort
+	// itself: D725 accepts it for a Claude model, where the stage applies it
+	// (L4.3, agent.EffortVars), so the same file with a Claude reviewer is
+	// valid. Without this half a change that refused every agent.levels
+	// effort would leave the test above passing.
+	claude := budgetProject(t, budget, strings.Replace(coder, "deepseek/deepseek-v4.1-flash", "claude-sonnet-5-5", 1))
+	out, _, err = execute(t, "validate", claude)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a Claude reviewer with an effort is valid: %v (%q)", err, out)
+	}
+}
+
 // TestReviewFloorUnpublishableWarns: the owner's review-level floor lives in
 // the owner-only policy node, and `fugaro project policy publish` is the only
 // thing that puts it there — a publish that needs a budget.mode for the node's
