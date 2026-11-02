@@ -4469,6 +4469,64 @@ func TestModelsLsSchema(t *testing.T) {
 	}
 }
 
+// TestSummarySchema pins schemas/summary.schema.json against the command that
+// writes the document: the version constant its $comment names, the state keys
+// a consumer reads a count by, and the members that are always carried.
+func TestSummarySchema(t *testing.T) {
+	raw, err := os.ReadFile("summary.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compile(t, "summary.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/runs_summary.go")
+	v := nodeOf(t, doc, "properties", "v")
+	if v["const"] != float64(1) {
+		t.Errorf("v: const = %v, and the document's first version is 1 (D784)", v["const"])
+	}
+	// The $comment is the pointer from the contract to the code: it must name
+	// a constant this file's own parse found, or it points at nothing.
+	if got, _ := v["$comment"].(string); !strings.Contains(got, "summaryDocVersion") || consts["summaryDocVersion"] != "1" {
+		t.Errorf("v: $comment = %q, and summaryDocVersion in internal/cli/runs_summary.go is %q", got, consts["summaryDocVersion"])
+	}
+	// Every top-level member the document always carries is required, so a
+	// consumer may read one without a nil check: the three arrays are written
+	// on every run, empty included.
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"v", "project", "since", "until", "repositories", "totals", "days_unknown", "notes"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+	// The counts are keyed by runstore's statuses, spelled as the wire names
+	// the run record and the outcome nodes use, plus the bucket a status from
+	// another release lands in. All six are required: a consumer adding them up
+	// reads a key whether or not the window had such a run.
+	states := stringsOf(t, doc, "$defs", "states", "required")
+	for _, key := range []string{"succeeded", "failed", "halted", "cancelled", "infra_error", "other"} {
+		if !slices.Contains(states, key) {
+			t.Errorf("$defs.states: required is %v, and the command counts %q", states, key)
+		}
+	}
+	for _, status := range []runstore.Status{runstore.StatusSucceeded, runstore.StatusFailed, runstore.StatusHalted,
+		runstore.StatusCancelled, runstore.StatusInfraError} {
+		if !slices.Contains(states, string(status)) {
+			t.Errorf("$defs.states: required is %v, and runstore's %q has no key", states, status)
+		}
+	}
+	// A figure covering fewer runs than the window holds is a lower bound, and
+	// "not estimated" is not "free": the schema allows null and no consumer may
+	// read a missing compute as zero.
+	compute := stringsOf(t, doc, "$defs", "figures", "properties", "compute_micros", "type")
+	if !slices.Contains(compute, "null") {
+		t.Errorf("$defs.figures.compute_micros: type is %v, and an unpriced run reads as null rather than 0", compute)
+	}
+}
+
 // goConstValues is every constant declared in a Go file, by name, as the text
 // of its own literal: a string constant's value without its quotes, a number's
 // digits. A constant built from an expression is left out rather than guessed

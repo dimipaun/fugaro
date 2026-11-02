@@ -855,6 +855,28 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The declarations read (coordinator v2 C4, D827): `coordinator intents --all
+    // --json`, what the fleet's writers have stored, newest first. It is
+    // `coordinator status`'s shape rather than `coordinator show`'s -- `words`
+    // carries the whole argv and `args` is empty -- and that is the security
+    // answer here: there is no field a renderer could fill, so no word of the
+    // argv is caller-influenced at all.
+    //
+    // `--all` is a fixed word and not a control. The stored view is the caller's
+    // own database node (`declared_by` included) and the command wraps it
+    // project-wide itself; there is no argument that narrows it to one
+    // repository, and `--repo`/`--since` -- which the CLI does have -- are on no
+    // row here. It takes `--project`/`--config` like every other read (rule 3),
+    // because the command resolves the local config the way the project view
+    // does, and it writes nothing: no credential of the host's is minted, no
+    // provider is opened and nothing is sent anywhere.
+    operation: 'coordinator.intents',
+    words: ['coordinator', 'intents', '--all', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
     // **The launch, and the console's only write** (design §5.1 rule 11, D22).
     // The row is rule 11's argv word for word: `run --task-file - --json
     // --run-id <id> --repo <owner/name> [--title=<T>] [--plan-task=<P>]

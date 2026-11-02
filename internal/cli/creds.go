@@ -146,6 +146,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.AnthropicSecret + `                the project's Anthropic API key (tier B)
   ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
   ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
+  ` + credsvc.BitbucketReadConsumerSecret + `             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   ` + config.ReviewSigningKeySecret(config.DefaultClaudeAccount) + `  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
   ` + config.ClaudeOAuthTokenPrefix + `<account>` + config.ReviewSigningKeySuffix + `     a named account's review-signing key (no tier, and --generate's NAME too)
@@ -537,7 +538,8 @@ func secretForms(value []byte) []string {
 // or its own answer to the re-read — hands back every other credential in the
 // bundle, each of them as readable as the one being written. The forms are the
 // document as it was sent (agent.Redact registers its lines and its JSON escape
-// too), every value the loader finds in it, raw and base64, and the new value
+// too), every secret the loader finds in it (credsvc.Bundle.Secrets: each
+// entry's value and the read consumer's key), raw and base64, and the new value
 // itself.
 //
 // The document is parsed rather than assumed: a document the loader refuses
@@ -548,8 +550,12 @@ func writeForms(doc, value []byte) []string {
 	forms := secretForms(doc)
 	forms = append(forms, secretForms(value)...)
 	if b, err := credsvc.ParseBundle(doc); err == nil {
-		for _, e := range b.Entries() {
-			forms = append(forms, secretForms([]byte(e.Value()))...)
+		// The bundle's secrets, not its entries' values: the read consumer's
+		// OAuth client key is a credential the entry's value does not carry
+		// (credsvc.Bundle.Secrets), and a server that names the one field it
+		// refused hands that key back where a value would have been redacted.
+		for _, v := range b.Secrets() {
+			forms = append(forms, secretForms([]byte(v))...)
 		}
 	}
 	return forms
@@ -567,9 +573,10 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	// The name is checked before the project is selected, so a name that is
 	// not a bundle key (a value pasted into the argument position, say) is
 	// refused without a cloud call and without being echoed.
-	// The kind is kept, not just checked: it is what says whether this name's
-	// value is one line (every model credential and the upstream Bitbucket
-	// token) or a PEM (the App key).
+	// The kind is kept, not just checked: it is what says what shape this
+	// name's value has to be — one line (every model credential and the
+	// upstream Bitbucket token), a PEM (the App key), or a mapping of key,
+	// secret and workspace (the Bitbucket read consumer).
 	_, kind, _, ok := credsvc.CredentialKey(name)
 	if !ok {
 		return credsNameRefusal()
@@ -625,9 +632,20 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	// exists in the version that retires the old key rather than a version
 	// later (spec §6.3).
 	doc, window := before.raw, ""
-	if generate {
+	switch {
+	case generate:
 		doc, window, err = setReviewSigningRotation(doc, name, config.ReviewSigningKeyPreviousSecret(account), string(value))
-	} else {
+	case kind == credsvc.KindBitbucketReadConsumer:
+		// The one entry whose value is not a string: the operator's value is
+		// the entry's whole mapping, and it is put in as it was read, not as
+		// text. This is the one place the bytes are parsed for it:
+		// validateBundleValue leaves the shape to this call, so the node that is
+		// validated here is the node the document gets.
+		var valueNode *yaml.Node
+		if valueNode, err = readConsumerNode(value); err == nil {
+			doc, err = setBundleEntryValue(doc, name, valueNode)
+		}
+	default:
 		doc, err = setBundleEntry(doc, name, string(value))
 	}
 	if err != nil {
@@ -781,9 +799,9 @@ func credsDisabledRefusal(id, did string) error {
 // pasted value can land in (the rule `fugaro secrets set`'s own name check
 // follows), and nothing this command prints may carry a value.
 func credsNameRefusal() error {
-	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), or the review-signing names %s and %s<account>%s, which --generate writes. Nothing was read and nothing was written",
-		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret,
-		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix)
+	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), %s (the Bitbucket read consumer), or the review-signing names %s and %s<account>%s, which --generate writes. The read consumer's value is %s. Nothing was read and nothing was written",
+		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret, credsvc.BitbucketReadConsumerSecret,
+		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape)
 }
 
 // credsGenerateNameRefusal refuses --generate for a NAME that is not an
@@ -840,10 +858,10 @@ func credsDocRefusal(id string, err error) error {
 // readBundleValue reads NAME's value, whose shape KIND decides. It is
 // readSecret's shape (secrets.go) — a terminal gets a hidden prompt, anything
 // else is read to EOF — with this command's own rules: a model credential and
-// the upstream Bitbucket token are one line each, and the GitHub App's key is
-// the one entry that is a PEM, which the hidden prompt cannot take (it reads
-// one line), so that name comes in on stdin and a terminal is refused before
-// anything is read. The bound is the
+// the upstream Bitbucket token are one line each; the GitHub App's key is a PEM
+// and the Bitbucket read consumer is a mapping of three fields, and the hidden
+// prompt cannot take either (it reads one line), so those two names come in on
+// stdin and a terminal is refused before anything is read. The bound is the
 // loader's per-credential one rather than Secret Manager's.
 //
 // The value never comes from an argument, a flag or the environment: this
@@ -852,16 +870,19 @@ func credsDocRefusal(id string, err error) error {
 // has one and silently keeping it would store a credential the service cannot
 // use.
 func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name string, kind credsvc.Kind) ([]byte, error) {
-	multiline := kind == credsvc.KindGitHubApp
 	var raw []byte
 	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		// The one refusal made before the prompt: a PEM is many lines, the
-		// hidden prompt reads one, and a prompt that took the -----BEGIN line
-		// and then failed would have made the operator paste a private key
-		// into a terminal for nothing. The sentence is readSecret's own for
-		// the same case (secrets.go), with this command's name.
-		if multiline {
+		// The refusals made before the prompt: these two values are many lines,
+		// the hidden prompt reads one, and a prompt that took a first line and
+		// then failed would have made the operator paste a private key, or a
+		// consumer secret, into a terminal for nothing. The PEM's sentence is
+		// readSecret's own for the same case (secrets.go), with this command's
+		// name.
+		switch kind {
+		case credsvc.KindGitHubApp:
 			return nil, userErr("%s is a private key, which spans several lines and the hidden prompt can't take; redirect it from the key file: fugaro creds set %s < PATH-TO-THE-KEY-FILE", name, name)
+		case credsvc.KindBitbucketReadConsumer:
+			return nil, userErr("%s is %s, which spans several lines and the hidden prompt can't take; redirect it from a file: fugaro creds set %s < PATH-TO-THE-FILE", name, readConsumerShape, name)
 		}
 		b, err := readHidden(ctx, f, prompt, name)
 		if err != nil {
@@ -892,9 +913,10 @@ func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name s
 // per-credential limit, which a longer value would break, so it is refused
 // here rather than by the service later. What shape the value has to be is
 // KIND's: a model credential and the upstream Bitbucket token are one line
-// with no whitespace at either end (`fugaro secrets set`'s rule), and the App
-// key is one PEM block that the service's own mint can parse. Errors never
-// quote the value.
+// with no whitespace at either end (`fugaro secrets set`'s rule), the App key
+// is one PEM block that the service's own mint can parse, and the Bitbucket
+// read consumer's shape is readConsumerNode's — run once, at the write, so the
+// node it answers is the node the document gets. Errors never quote the value.
 func validateBundleValue(raw []byte, kind credsvc.Kind) error {
 	switch {
 	case len(raw) == 0:
@@ -906,12 +928,26 @@ func validateBundleValue(raw []byte, kind credsvc.Kind) error {
 	case bytes.IndexByte(raw, 0) >= 0:
 		return userErr("the value holds a NUL byte")
 	}
-	if kind == credsvc.KindGitHubApp {
+	switch kind {
+	case credsvc.KindGitHubApp:
 		return validateAppKeyPEM(raw)
+	case credsvc.KindBitbucketReadConsumer:
+		// The one value that is not a line of text, so the one-line rules below
+		// are not it. Its SHAPE is not checked here either: readConsumerNode is
+		// what says the shape is right, and it runs once, in credsSet, where the
+		// node it answers is the node the write stores. Checking it here as well
+		// would be a second parse of the same bytes for one write — this one's
+		// tree, every field's tag and style rewritten in it, thrown away and the
+		// bytes parsed again for the tree that is stored.
+		//
+		// The bound above is this command's own, and the whole mapping is read
+		// and stored under it: one limit for every value, rather than three
+		// times the per-field bound the loader applies to a mapping.
+		return nil
 	}
 	switch {
 	case bytes.ContainsAny(raw, "\r\n"):
-		return userErr("the value spans several lines: every credential the bundle holds is one line, except the GitHub App's key, which is a PEM and is set with fugaro creds set %s < PATH-TO-THE-KEY-FILE", config.GitHubAppKeySecret)
+		return userErr("the value spans several lines: every credential the bundle holds is one line, except the GitHub App's key, which is a PEM and is set with fugaro creds set %s < PATH-TO-THE-KEY-FILE, and the Bitbucket read consumer, whose value is %s", config.GitHubAppKeySecret, readConsumerShape)
 	case len(bytes.TrimSpace(raw)) != len(raw):
 		return userErr("the value starts or ends with whitespace, most likely a copy-and-paste slip")
 	}
@@ -954,6 +990,79 @@ func validateAppKeyPEM(raw []byte) error {
 	return nil
 }
 
+// readConsumerShape is what the Bitbucket read consumer's value has to be, in
+// the words the refusals below use. It is said once because three of them say
+// it, and an operator who reads one of them and then another should not have to
+// work out whether the two are the same rule.
+const readConsumerShape = "a YAML mapping of exactly key, secret and workspace, one field per line"
+
+// readConsumerNode reads the read consumer's value (F21, BB2), which is the one
+// entry of the bundle that is not a single string: a mapping of exactly key,
+// secret and workspace. It is read on stdin, from a file the operator wrote in
+// that shape, and it is read as YAML so the three fields are named rather than
+// positional — the operator has the consumer's page in front of them and copies
+// three labelled values out of it.
+//
+// Each field's value is forced to a string, as every other entry's value is
+// (setBundleNode): a workspace or a secret that looks like a number is the text
+// the operator pasted, not a number, and the loader would refuse the unquoted
+// form of it. A field that is a list or a nested mapping is refused here rather
+// than stored, because it is not a string under any reading.
+//
+// No refusal repeats a byte of a field's value: the fields are named (three
+// words this command's own message supplies) and nothing the operator pasted
+// is. The node it answers is the node the document gets, so these bytes are
+// parsed once per write (credsSet) and not once to be checked and once to be
+// stored.
+//
+// The whole mapping is stored under this command's per-credential bound, not
+// under the loader's per-FIELD one: the loader holds each field to
+// MaxBundleValueBytes and the document to MaxBundleBytes, so a mapping of three
+// maximal fields is a document it would accept, while readBundleValue reads at
+// most MaxBundleValueBytes from stdin and validateBundleValue refuses one over
+// it. One limit for every value is what the help text says and what an operator
+// can hold in mind; a consumer's key, a secret and a workspace are a few hundred
+// bytes, so nothing an operator has is near it.
+func readConsumerNode(raw []byte) (*yaml.Node, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		// The parse error is not wrapped: a YAML error quotes the document it
+		// failed on, and that document is a credential.
+		return nil, userErr("the value must be %s; nothing was written", readConsumerShape)
+	}
+	root := &doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) != 1 {
+			return nil, userErr("the value must be %s; nothing was written", readConsumerShape)
+		}
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return nil, userErr("the value must be %s; nothing was written", readConsumerShape)
+	}
+	seen := make(map[string]bool, 3)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		f, fv := root.Content[i], root.Content[i+1]
+		switch f.Value {
+		case "key", "secret", "workspace":
+		default:
+			return nil, userErr("the value must be %s, and it holds a field that is not one of the three; nothing was written", readConsumerShape)
+		}
+		if seen[f.Value] {
+			return nil, userErr("the value holds %s twice; nothing was written", f.Value)
+		}
+		seen[f.Value] = true
+		if fv.Kind != yaml.ScalarNode {
+			return nil, userErr("%s must be one line of text; nothing was written", f.Value)
+		}
+		fv.Tag, fv.Style = "!!str", yaml.DoubleQuotedStyle
+	}
+	if !seen["key"] || !seen["secret"] || !seen["workspace"] {
+		return nil, userErr("the value must be %s; nothing was written", readConsumerShape)
+	}
+	return root, nil
+}
+
 // setBundleEntry is the modify half of the read-modify-write: raw (the
 // document as it is, possibly empty) with key set to value, re-emitted.
 //
@@ -962,11 +1071,18 @@ func validateAppKeyPEM(raw []byte) error {
 // its quoting, its order — and the writer cannot be the thing that rewrites a
 // credential nobody touched.
 func setBundleEntry(raw []byte, key, value string) ([]byte, error) {
+	return setBundleEntryValue(raw, key, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+}
+
+// setBundleEntryValue is setBundleEntry for a value that is already the node
+// the entry holds: the read consumer's mapping (readConsumerNode), which is
+// the one entry of the bundle that is not one line of text.
+func setBundleEntryValue(raw []byte, key string, value *yaml.Node) ([]byte, error) {
 	doc, root, err := bundleNodes(raw)
 	if err != nil {
 		return nil, err
 	}
-	setBundleNode(root, key, value)
+	setBundleNodeValue(root, key, value)
 	return marshalBundle(doc)
 }
 
@@ -1022,10 +1138,15 @@ func bundleNodes(raw []byte) (*yaml.Node, *yaml.Node, error) {
 	return &doc, bundleMapping(&doc), nil
 }
 
-// setBundleNode sets key to value in root, replacing the entry's value node
-// where the key is already there and appending both where it is not.
+// setBundleNode sets key to the one-line value in root, as setBundleNodeValue
+// does with the node.
 func setBundleNode(root *yaml.Node, key, value string) {
-	valueNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+	setBundleNodeValue(root, key, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+}
+
+// setBundleNodeValue sets key to valueNode in root, replacing the entry's value
+// node where the key is already there and appending both where it is not.
+func setBundleNodeValue(root *yaml.Node, key string, valueNode *yaml.Node) {
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		if root.Content[i].Value == key {
 			root.Content[i+1] = valueNode

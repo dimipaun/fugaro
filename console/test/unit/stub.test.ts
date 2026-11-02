@@ -52,6 +52,10 @@ describe('the stub’s command keys', () => {
       // request read next to the project view's, and the second row here whose
       // child mints a credential of the host's (`run`'s below is the first).
       'coordinator show',
+      // Coordinator v2 C4's `coordinator.intents` / `coordinatorIntents`: the
+      // declarations the fleet's writers stored, and the one row here with no
+      // argument at all -- its words are the whole argv.
+      'coordinator intents',
       'run',
     ])
     // The console's one spawn table, which since the owner's design ruling of
