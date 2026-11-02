@@ -345,8 +345,9 @@ func TestMutationRefusesMoreThanOneMutant(t *testing.T) {
 
 // TestMutationRevertsOnFailure: the revert is not the child's good ending. A
 // test that never ran (the name matches nothing, so `go test` exits 0 having
-// run nothing) and one that will not finish both leave the worktree holding
-// the bytes the check read.
+// run nothing), one that will not finish, and an apply that failed partway
+// through its own truncated write all leave the worktree holding the bytes the
+// check read.
 //
 // The second arm's deadline is short enough to land while the child is still
 // running: with an empty build cache the child compiles the package first, and
@@ -391,6 +392,38 @@ func TestMutationRevertsOnFailure(t *testing.T) {
 			t.Fatalf("the check took %s: the deadline did not bound the child", elapsed)
 		}
 		mutationRequireReverted(t, r, "strict.go", own)
+	})
+	t.Run("an apply that fails", func(t *testing.T) {
+		r, _ := mutationReview(t, mutationAsk(t, `,"mutate":[{"file":"strict.go","test":"TestStrict"}]`))
+		own := mutationSeed["strict.go"] + "\n// the runner's own copy of this file\n"
+		mutationWrite(t, r, "strict.go", own)
+		// The apply opens with O_TRUNC and then writes, so a write that fails
+		// leaves the file holding what it managed to put there — half a mutant,
+		// which is the shape this test is about. No filesystem produces that on
+		// request, so the write is the one the test replaces (mutationApply).
+		apply := mutationApply
+		mutationApply = func(rt *os.Root, name string, data []byte) error {
+			f, err := rt.OpenFile(name, os.O_WRONLY|os.O_TRUNC, 0o644)
+			if err != nil {
+				return err
+			}
+			if _, err := f.Write(data[:len(data)/2]); err != nil {
+				f.Close()
+				return err
+			}
+			if err := f.Close(); err != nil {
+				return err
+			}
+			return errors.New("the write stopped halfway")
+		}
+		t.Cleanup(func() { mutationApply = apply })
+		if err := r.runMutationCheck(context.Background()); err == nil {
+			t.Fatal("an apply that never happened ended the check as if the mutant had been applied")
+		}
+		mutationRequireReverted(t, r, "strict.go", own)
+		if got := len(r.reviewHeads[0].Mutation); got != 0 {
+			t.Errorf("a check whose mutant was never applied recorded %d checks, want none: %+v", got, r.reviewHeads[0].Mutation)
+		}
 	})
 }
 

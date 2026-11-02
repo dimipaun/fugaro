@@ -428,6 +428,33 @@ func writeMutationFile(rt *os.Root, name string, data []byte) error {
 	return f.Close()
 }
 
+// mutationApply is writeMutationFile as the apply calls it, a var for the same
+// reason mutationFence is one: the write this code has to survive is an
+// O_TRUNC that truncated the file before it failed, which no filesystem the
+// tests may touch produces on request. The revert is deliberately not behind
+// the seam — it is the half the test reads.
+var mutationApply = writeMutationFile
+
+// revertMutationFile puts the bytes the check read back into the worktree and
+// proves it: the write's own return says that it returned, and "reverted" is
+// what the artifact records and what everything after the check reads. It is a
+// function rather than the tail of the run because the apply fails through it
+// too — O_TRUNC truncates before the write that failed, so the head's own bytes
+// have to go back on that path as well.
+func revertMutationFile(root *os.Root, file string, before []byte) error {
+	if err := writeMutationFile(root, file, before); err != nil {
+		return fmt.Errorf("the mutant of %s could not be reverted, and the worktree still holds it: %w", file, err)
+	}
+	back, err := readMutationFile(root, file)
+	if err != nil {
+		return fmt.Errorf("the mutant of %s could not be read back after the revert: %w", file, err)
+	}
+	if !bytes.Equal(back, before) {
+		return fmt.Errorf("the mutant of %s was not reverted: %s holds %d bytes where the check read %d", file, file, len(back), len(before))
+	}
+	return nil
+}
+
 // runMutationCheck runs the mutation check the task asked for
 // (fugaro review --mutate <file:test>, D885) against the reviewed head's
 // worktree, and records what it observed on that head — which is where the
@@ -487,22 +514,24 @@ func (r *run) runMutationCheck(ctx context.Context) error {
 		return r.recordMutationCheck(check, err)
 	}
 	check.Applied = applied
-	if err := writeMutationFile(root, file, mutated); err != nil {
+	if err := mutationApply(root, file, mutated); err != nil {
+		// The apply truncates the file before it writes, so a write that failed
+		// partway left the head holding part of a mutant: the bytes the check
+		// read go back before this returns, whatever the write's reason was.
+		// The apply's own error is still the one reported — the check did not
+		// run — and the revert's is added to it when that failed too, since a
+		// worktree holding a truncated file is the worse of the two.
+		if backErr := revertMutationFile(root, file, before); backErr != nil {
+			return fmt.Errorf("the mutant of %s could not be applied (%v), and the head's own bytes could not be put back: %w", check.File, err, backErr)
+		}
 		return fmt.Errorf("the mutant could not be applied to %s: %w", check.File, err)
 	}
 	result := runMutationChild(ctx, r.env, work, mutationPackage(check.File), check.Test)
 	// The revert happens on every path from here, before anything reads the
 	// worktree again: a check that failed, timed out or never started still
 	// leaves the head's own bytes behind it.
-	if err := writeMutationFile(root, file, before); err != nil {
-		return fmt.Errorf("the mutant of %s could not be reverted, and the worktree still holds it: %w", check.File, err)
-	}
-	back, err := readMutationFile(root, file)
-	if err != nil {
-		return fmt.Errorf("the mutant of %s could not be read back after the revert: %w", check.File, err)
-	}
-	if !bytes.Equal(back, before) {
-		return fmt.Errorf("the mutant of %s was not reverted: %s holds %d bytes where the check read %d", check.File, check.File, len(back), len(before))
+	if err := revertMutationFile(root, file, before); err != nil {
+		return err
 	}
 	check.Observed = mutationObservedOf(result.exit, result.output, result.timedOut)
 	if result.spawnErr != nil {
