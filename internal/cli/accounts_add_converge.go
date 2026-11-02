@@ -260,8 +260,10 @@ var (
 // The run's own confirmation is this command's (spec §2.5: one confirmation,
 // which the person already answered), which is why the loop is given Yes, and
 // why it carries asJSON: the stages and the loop print progress through the
-// run's own writer, which newInitRun routes to stderr under asJSON, so this
-// command's stdout is its answer alone.
+// run's own writer, which newInitRun routes to stderr under asJSON, and the
+// command's own writer is pointed at stderr for the length of the run besides,
+// which is what keeps a stage that prints to cmd.OutOrStdout() directly — the
+// policy stage's diff — off the stdout this command's answer is on.
 func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, path string, old []byte) (map[string]initflow.StageResult, error) {
 	o := &initOptions{door: "accounts add", yes: true, nonInteractive: true, asJSON: true}
 	r := newInitRun(cmd, o)
@@ -271,7 +273,16 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, lc *localcfg.
 		return nil, err
 	}
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
+	// The run's own writer is stderr under asJSON, which newInitRun arranges,
+	// and that is not the whole of it: a stage that prints to cmd.OutOrStdout()
+	// directly — the policy stage's publish diff and its confirmation are the
+	// loudest — would land on this command's stdout, where its answer is. The
+	// command is pointed at stderr for the length of the run, the way the other
+	// captures in this file do it, so stdout is the answer alone.
+	answer := cmd.OutOrStdout()
+	cmd.SetOut(cmd.ErrOrStderr())
 	res, err := initflow.Run(ctx, accountsAddStages(e), e.options())
+	cmd.SetOut(answer)
 	if err != nil {
 		return nil, userErr("%v", err)
 	}

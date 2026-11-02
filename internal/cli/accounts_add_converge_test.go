@@ -477,6 +477,31 @@ func TestAccountsAddFailsWhenAStageIsLeftForTheOwner(t *testing.T) {
 	}
 }
 
+// TestAccountsAddKeepsTheStagesOffItsStdout is F4: the stages print through the
+// command's own writer, and this command's stdout is its answer alone — a person
+// who pipes `fugaro accounts add` out gets the block, and nothing a stage said on
+// the way there. The run's own writer is stderr under asJSON, which newInitRun
+// arranges (init.go), and that is not the whole of it: the policy stage's publish
+// diff and its confirmation are written to cmd.OutOrStdout() directly, so they
+// reached stdout while the run was in flight. The stage's diff is the marker
+// here, and the two streams are asserted separately: it is on stderr, where the
+// run's account of itself belongs, and it is off stdout.
+func TestAccountsAddKeepsTheStagesOffItsStdout(t *testing.T) {
+	r := newAddRig(t)
+	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
+
+	stage := projectpolicy.PathShared() + ": the local config states what the node does not carry"
+	if strings.Contains(out, stage) {
+		t.Errorf("the policy stage's diff is on the command's stdout:\n%s", out)
+	}
+	if !strings.Contains(errOut, stage) {
+		t.Errorf("the policy stage's diff reached neither stream, and the run's own account of what it published is one a person reads; stderr:\n%s", errOut)
+	}
+	if !strings.Contains(out, "Nothing else to run") {
+		t.Errorf("the command's stdout carries no answer:\n%s", out)
+	}
+}
+
 // TestAccountsAddDeployLineOnlyClaimsADeploymentForChanged is F2: the deploy row
 // names the job this run wrote, so it says `+ <job>` for the one state that
 // applied — Changed — and for no other. Every other state is the stage's own
