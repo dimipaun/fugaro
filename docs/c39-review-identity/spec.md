@@ -260,7 +260,7 @@ the permissions. If CSR1 has not landed, the review mint cannot land either — 
 
 Unchanged from the mint the service already answers: GitHub's own installation token, **one hour**,
 minted on demand and refreshed by the `Token(ctx, minValid)` contract the in-job
-`github.ServiceTokens` source already holds (`internal/gitprov/github/apptoken.go:381` is the type, `:438`
+`github.ServiceTokens` source already holds (`internal/gitprov/github/apptoken.go:405` is the type, `:462`
 its `Token`); it lives in the
 review container's memory for the run's length and is **never written down, never mounted and never handed
 in at launch** — D893 (c)'s whole point. The review variant carries the service's URL in its environment

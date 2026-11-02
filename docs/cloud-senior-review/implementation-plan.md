@@ -643,7 +643,7 @@ on `/v1/messages`.**
 - **The read-only token, fetched and never handed in (D893 (c)).** The variant carries the
   credentials-service URL in its environment (`FUGARO_CREDENTIALS_SERVICE_URL`, the same variable
   `internal/cli/run.go`'s `credentialsServiceLaunchEnv` sets today), and the job's git provider is
-  installed from `github.ServiceTokens` (`internal/gitprov/github/apptoken.go:381`) — the keyless
+  installed from `github.ServiceTokens` (`internal/gitprov/github/apptoken.go:405`) — the keyless
   source already in the tree — so the token is **fetched by name from the service at the moment it is
   needed and refreshed by the `Token(ctx, minValid)` contract**. Nothing is handed in: no per-launch
   secret is created, and the execution environment carries no token value. The request carries the

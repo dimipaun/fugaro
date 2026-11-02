@@ -539,7 +539,7 @@ met** (§6's **E7** and D893's own entry below say exactly what is missing).
   an execution object. The design recommended (a); the owner took (c), which is the stronger channel
   where it works and carries a **precondition the reviewer cannot ship without** (below).
   **How it works, on the code that is already there.** The keyless path exists and is wired:
-  `internal/gitprov/github.ServiceTokens` (`apptoken.go:381`, the type; its doc comment sits above
+  `internal/gitprov/github.ServiceTokens` (`apptoken.go:405`, the type; its doc comment sits above
   it) is the `gitprov.TokenSource` a
   provider installs when the job's environment carries `FUGARO_CREDENTIALS_SERVICE_URL` — the fact
   `internal/cli/run.go`'s `credentialsServiceLaunchEnv` puts on an opted-in installation's execution —
