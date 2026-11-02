@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -178,7 +179,7 @@ func modelsRmPrice(path string, lc *localcfg.Config, id string, next *[]byte) er
 
 // modelsRmAllow drops the model's budget.allowed_models entry.
 func modelsRmAllow(path string, lc *localcfg.Config, id string, next *[]byte) error {
-	if lc.Budget == nil || !containsString(lc.Budget.AllowedModels, id) {
+	if lc.Budget == nil || !slices.Contains(lc.Budget.AllowedModels, id) {
 		return nil
 	}
 	out, err := yamledit.RemoveListItem(*next, []string{"budget", "allowed_models"}, id)
