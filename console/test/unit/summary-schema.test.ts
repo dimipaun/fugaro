@@ -190,6 +190,13 @@ describe('the runs summary document (§6.17)', () => {
       ['totals', 'notional_micros'],
       ['totals', 'compute_micros'],
       ['totals', 'compute_runs'],
+      // A repository row's own figures, read through the array: `totals` and a
+      // row are the same six keys, and a decoder that required them of one and
+      // not the other would answer a row with `undefined` where a screen draws
+      // a figure.
+      ['repositories', '0', 'runs'],
+      ['repositories', '0', 'compute_micros'],
+      ['repositories', '1', 'states', 'infra_error'],
     ]
     for (const path of required) {
       const refusal = refusalOf(without(path))
@@ -234,6 +241,31 @@ describe('the money the document carries', () => {
     // A row where the two differ in which one is zero is carried as it is.
     expect(view.repositories[1]?.spentMicros).toBe(0)
     expect(view.repositories[1]?.notionalMicros).toBe(900_000)
+  })
+
+  it('refuses a `compute_micros` that is neither a number nor null', () => {
+    // The mutant this pins: a `compute_micros` read as "null unless it looks
+    // like a number", which answers a retyped figure with "not estimated"
+    // instead of refusing it -- the same wrong figure as reading `null` as `0`,
+    // by the other route, and invisible to the `null` case above because the
+    // value it draws is the same one. `'0'` and `false` are what that mutant
+    // swallows; `1.5` is the second half of the check this decoder does make
+    // (a fraction of a micro-dollar is not a count), and the object and array
+    // are the two shapes a JSON writer reaches for when it means "nothing".
+    //
+    // Both places the figure appears: `totals` and a repository row. A decoder
+    // that checked only the totals would leave a row's own figure lenient.
+    for (const value of ['0', false, 1.5, true, '400000', {}, []]) {
+      for (const [path, field] of [
+        [['totals', 'compute_micros'], 'totals.compute_micros'],
+        [['repositories', '0', 'compute_micros'], 'repositories[0].compute_micros'],
+      ] as const) {
+        const refusal = refusalOf(replacing(path, value))
+        const at = `${path.join('.')} = ${JSON.stringify(value)}`
+        expect(refusal.name, at).toBe('not-a-number')
+        expect(refusal.field, at).toBe(field)
+      }
+    }
   })
 
   it('refuses a negative figure, which is not a document this console knows', () => {
