@@ -1694,7 +1694,7 @@ describe('the job list (K4)', () => {
     // failed at the call rather than at this assertion -- and no element of the
     // tag it names exists anywhere under the row.
     expect(one(row, 'coordinator-job-title').textContent).not.toBe('')
-    expect(walk(row).every((node) => node.tagName !== 'IMG')).toBe(true)
+    expect(walk(row).every((node) => node.tag !== 'img')).toBe(true)
     expect(textOf(bodyOf(row), 'coordinator-job-reason')).toBe('javascript:alert(1)')
     expect(one(row, 'coordinator-job-detail').getAttribute('hidden')).toBe('')
   })

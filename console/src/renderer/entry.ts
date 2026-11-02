@@ -4692,7 +4692,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let jobsDrawn = 0
     let jobsHeadDrawn = false
     let jobsOut = false
-    let jobsAskedOlder = false
+    /** jobsListedAsked is whether **this** list has been asked for a page. It is
+     * this section's own flag and not the queue's `jobsAsked`: the two are
+     * separate sections of the same screen (the queue's runs part and the job
+     * list), each with its own read and its own control, and a press on one must
+     * not draw the other as if it had been read. */
+    let jobsListedAsked = false
     let jobsAttempts = 0
     let jobsToken = 0
     /** jobsSentence is the section's own refusal, for this visit and no longer:
@@ -5013,14 +5018,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (fresh.length > 0) {
         bindJobRows(fillCoordinatorJobs(factory, fresh, section.list))
         jobsDrawn = jobsListed.rows.length
-      } else if (jobsAsked && jobsListed.window !== null) {
+      } else if (jobsListedAsked && !jobsOut && jobsListed.rows.length === 0 && jobsListed.window !== null) {
         // A page that was read and printed no row: the only state in which the
         // console may say the window holds nothing. `window !== null` is what
         // says a page answered at all, so a read still out draws neither.
         list.replaceChildren()
         fillCoordinatorJobsEmpty(factory, section.list)
       }
-      if (!jobsAsked) {
+      if (!jobsListedAsked) {
         const control = coordinatorLoadJobsControl(factory, false)
         appendTo(section.controls, control)
         surface.nodeOf(control).addEventListener('click', () => {
@@ -5054,7 +5059,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (jobsOut || jobsTooOld) return
       const section = mount(false).jobs
       jobsOut = true
-      jobsAsked = true
+      jobsListedAsked = true
       jobsAttempts += 1
       jobsToken = coordinatorJobsRead.start()
       coordinatorJobsRead.mark(
