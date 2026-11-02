@@ -187,16 +187,18 @@ func TestSettingsSetRepoLayerIsAllowedInAnAgentSession(t *testing.T) {
 }
 
 // TestSettingsSetLooseningACeilingAsksForTheTypedProjectName: loosening a
-// ceiling key asks for the project's name rather than y/N, and --yes never
-// stands in for the typed form (D846).
+// ceiling key asks for the project's name typed at a terminal. --yes answers
+// that same form outside a coding agent's session (D1107), and this is the path
+// that passes it to nothing: no terminal and no flag is still a refusal.
 func TestSettingsSetLooseningACeilingAsksForTheTypedProjectName(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
 	if err == nil {
-		t.Fatal("--yes confirmed a loosened ceiling")
+		t.Fatal("a widening with no terminal and no --yes was written")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -359,15 +361,17 @@ func TestSettingsUnsetRemovesTheKeyRatherThanWritingTheDefault(t *testing.T) {
 }
 
 // TestSettingsUnsetOfACeilingAsksForTheTypedProjectName: removal crosses the
-// same boundary as loosening, so --yes does not stand in for the typed name
-// (spec §4.3).
+// same boundary as loosening (spec §4.3), so with no terminal and no --yes it
+// is refused; --yes is the other answer D1107 allows outside a coding agent's
+// session.
 func TestSettingsUnsetOfACeilingAsksForTheTypedProjectName(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 	before := readFileString(t, path)
-	_, _, err := execute(t, "settings", "unset", "budget.per_run_usd", "--layer", "repo", "--yes")
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "unset", "budget.per_run_usd", "--layer", "repo")
 	if err == nil {
-		t.Fatal("--yes confirmed the removal of a ceiling")
+		t.Fatal("removing a ceiling with no terminal and no --yes was written")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -761,9 +765,10 @@ func TestSettingsSetLooseningAGovernanceCeilingAsksForTheTypedProjectName(t *tes
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("governance:\n  review_ratio: 0.5\n"))
 	before := readFileString(t, path)
-	_, _, err := execute(t, "settings", "set", "governance.review_ratio", "0.9", "--layer", "repo", "--yes")
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "governance.review_ratio", "0.9", "--layer", "repo")
 	if err == nil {
-		t.Fatal("--yes confirmed a loosened governance ceiling")
+		t.Fatal("a governance ceiling with no terminal and no --yes was written")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -783,14 +788,15 @@ func TestSettingsSetLooseningAGovernanceCeilingAsksForTheTypedProjectName(t *tes
 
 // TestSettingsSetTypedTheProjectLayersGovernanceBlock: the project layer's own
 // `layer.governance.*` is the same ceiling under the prefix SD14 gives it, so
-// it is typed exactly as `governance.*` is, --yes included.
+// it is typed exactly as `governance.*` is.
 func TestSettingsSetTypedTheProjectLayersGovernanceBlock(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteLayerFile(t, "governance:\n  review_ratio: 0.5\n")
 	before := readFileString(t, path)
-	_, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project", "--yes")
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project")
 	if err == nil {
-		t.Fatal("--yes confirmed a loosened layer ceiling")
+		t.Fatal("a layer ceiling with no terminal and no --yes was written")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -817,11 +823,12 @@ func TestSettingsSetTreatsEveryBooleanSpellingAsTurningAFollowupKeyOn(t *testing
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
+	noTerminal(t)
 	for _, spelling := range []string{"true", "True", "TRUE", "yes", "Yes", "on"} {
 		t.Run(spelling, func(t *testing.T) {
-			_, _, err := execute(t, "settings", "set", "followup.allow_public", spelling, "--layer", "repo", "--yes")
+			_, _, err := execute(t, "settings", "set", "followup.allow_public", spelling, "--layer", "repo")
 			if err == nil {
-				t.Fatalf("--yes confirmed followup.allow_public %s", spelling)
+				t.Fatalf("followup.allow_public %s was turned on with no terminal and no --yes", spelling)
 			}
 			if !strings.Contains(err.Error(), "typed confirmation") {
 				t.Errorf("the refusal does not name the typed form: %v", err)
@@ -861,9 +868,10 @@ func TestSettingsSetComparesACeilingAgainstTheValueARunGets(t *testing.T) {
 
 	// The repository's file writes no cap; the layer below holds 10, so 50
 	// raises what a run gets and is the typed form.
-	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
 	if err == nil {
-		t.Fatal("--yes confirmed a cap that raises what a run gets above the layer below")
+		t.Fatal("a cap that raises what a run gets was written with no terminal and no --yes")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -885,9 +893,9 @@ func TestSettingsSetComparesACeilingAgainstTheValueARunGets(t *testing.T) {
 	// below, so a write between the two raises the file's own ceiling even
 	// though a run still gets the layer's.
 	loose := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 50\n"))
-	_, _, err = execute(t, "settings", "set", "budget.per_run_usd", "20", "--layer", "repo", "--yes")
+	_, _, err = execute(t, "settings", "set", "budget.per_run_usd", "20", "--layer", "repo")
 	if err == nil {
-		t.Fatal("--yes confirmed a cap that raises the file's own ceiling")
+		t.Fatal("a cap that raises the file's own ceiling was written with no terminal and no --yes")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -1105,14 +1113,16 @@ func TestSettingsSetReparsesTheRepoAndLayerDocuments(t *testing.T) {
 
 // TestSettingsSetAddOnACeilingAsksForTheTypedProjectName: a member added to a
 // ceiling's list widens it — the list is what a run may use — so --add on a
-// ceiling is the typed form, --yes included (D846).
+// ceiling is the typed form (D846). --yes is the other answer to it outside a
+// coding agent's session (D1107); this is the path with no terminal and none.
 func TestSettingsSetAddOnACeilingAsksForTheTypedProjectName(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  allowed_models:\n    - claude-sonnet-5\n"))
 	before := readFileString(t, path)
-	_, _, err := execute(t, "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo", "--yes")
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo")
 	if err == nil {
-		t.Fatal("--yes confirmed a model added to a ceiling")
+		t.Fatal("a model added to a ceiling with no terminal and no --yes was written")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -1131,15 +1141,17 @@ func TestSettingsSetAddOnACeilingAsksForTheTypedProjectName(t *testing.T) {
 }
 
 // TestSettingsSetTurningAFollowupKeyOnAsksForTheTypedProjectName: a follow-up
-// key turned on widens who can steer a run, so the typed name confirms it and
-// --yes does not stand in (D846).
+// key turned on widens who can steer a run, so the typed name confirms it. With
+// no terminal and no --yes it is refused; --yes is the second answer D1107
+// allows outside a coding agent's session.
 func TestSettingsSetTurningAFollowupKeyOnAsksForTheTypedProjectName(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
-	_, _, err := execute(t, "settings", "set", "followup.allow_public", "true", "--layer", "repo", "--yes")
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "followup.allow_public", "true", "--layer", "repo")
 	if err == nil {
-		t.Fatal("--yes turned a followup key on")
+		t.Fatal("a followup key was turned on with no terminal and no --yes")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -1266,9 +1278,10 @@ func TestSettingsCeilingBaseIsNeverLooserThanTheFile(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 50\n"))
 
-	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "60", "--layer", "repo", "--yes")
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "60", "--layer", "repo")
 	if err == nil {
-		t.Fatal("--yes confirmed a cap that raises the file's own ceiling")
+		t.Fatal("a cap that raises the file's own ceiling was written with no terminal and no --yes")
 	}
 	if !strings.Contains(err.Error(), "typed confirmation") {
 		t.Errorf("the refusal does not name the typed form: %v", err)
@@ -1336,8 +1349,8 @@ func TestSettingsLoosensReadsZeroAsNoCap(t *testing.T) {
 // TestSettingsSetTypesAWriteThatRemovesACap: the command-line half of the same
 // rule, over every ceiling key at every layer it may be written at. Writing 0
 // has exactly the effect `unset` has, and `unset` is the typed form, so a
-// write of 0 is refused without the project's own name however it is spelled
-// and --yes does not stand in; the file is left as it was.
+// write of 0 is refused without the project's own name however it is spelled,
+// so with no terminal and no --yes the file is left as it was.
 func TestSettingsSetTypesAWriteThatRemovesACap(t *testing.T) {
 	cases := []struct {
 		key, layer, cap string
@@ -1374,9 +1387,10 @@ func TestSettingsSetTypesAWriteThatRemovesACap(t *testing.T) {
 			}
 			before := readFileString(t, path)
 
-			_, _, err := execute(t, "settings", "set", c.key, "0", "--layer", c.layer, "--yes")
+			noTerminal(t)
+			_, _, err := execute(t, "settings", "set", c.key, "0", "--layer", c.layer)
 			if err == nil {
-				t.Fatal("--yes removed a cap without the project's own name")
+				t.Fatal("a cap was removed with no terminal and no --yes")
 			}
 			if !strings.Contains(err.Error(), "typed confirmation") {
 				t.Errorf("the refusal does not name the typed form: %v", err)
