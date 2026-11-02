@@ -1046,7 +1046,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'repo',
         kind: 'repository',
         required: true,
-        why: 'the repository the pull request is in, as the CLI’s own canonical `owner/name`. The read resolves the repository’s provider from it (the local config’s entry, else the checkout’s `fugaro.yaml`) and mints the installation token for it, so it is the one word that decides whose credential is used — and it is a repository, never a host, a URL or a path.',
+        why: 'the repository the pull request is in, as the CLI’s own canonical `owner/name`. The read resolves the repository’s provider from it — the local config’s entry, else the checkout’s own config file, the same resolution the stored view above makes — and mints the installation token for it, so it is the one word that decides whose credential is used. It is a repository, never a host, a URL or a path.',
       },
       {
         key: 'pr',

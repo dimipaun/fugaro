@@ -298,7 +298,7 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 				if _, err := os.Stat(filepath.Join("../../..", cite)); err != nil {
 					t.Errorf("%s cites %q, which is not in the tree: %v", doc.path, cite, err)
 				}
-			case strings.HasPrefix(cite, "coordinator.") && cite != coordinatorOperation:
+			case strings.HasPrefix(cite, "coordinator.") && !coordinatorOperations[cite]:
 				cited++
 				name := strings.TrimPrefix(cite, "coordinator.")
 				if !slices.Contains(decls, name) {
@@ -312,10 +312,17 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 	}
 }
 
-// coordinatorOperation is the console's own name for the read (its IPC
-// operation), not a symbol of the library: the documents write it in the same
-// `coordinator.`-qualified shape a citation takes.
-const coordinatorOperation = "coordinator.status"
+// coordinatorOperations are the console's own names for its two reads of this
+// package's commands (their IPC operations), not symbols of the library: the
+// documents write them in the same `coordinator.`-qualified shape a citation
+// takes, so without this list the check above would read each one as a citation
+// of a symbol ee/coordinator does not declare. Both are written on the design's
+// own §5.1 rows and on `console/docs/json-contract.md` §6.13 and §6.15, one per
+// command, and `console/src/main/ipc.ts` is where each name is declared.
+var coordinatorOperations = map[string]bool{
+	"coordinator.status": true,
+	"coordinator.show":   true,
+}
 
 // coordinatorDecls appends every top-level name declared by the non-test Go
 // files of the package at dir: the functions, types and values a citation can
