@@ -1,8 +1,14 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
@@ -294,4 +300,223 @@ func TestModelsSearchIsOffline(t *testing.T) {
 	if _, _, err := execute(t, "models", "search", "deepseek", "--cloud", "gcp"); err == nil {
 		t.Error("models search takes --cloud: the search has no cloud path to select")
 	}
+}
+
+// modelsSearchTextRows is the read's hit table as the three cells a row is
+// identified by — ID, SOURCE, TIER — in the order they are printed. It is what
+// the document is held against: the two carry the same hits. A data row is one
+// whose second cell is a source; the header, the "models matching" line and a
+// miss's two sentences are not rows.
+func modelsSearchTextRows(out string) [][3]string {
+	rows := [][3]string{}
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		if len(f) < 3 {
+			continue
+		}
+		switch f[1] {
+		case modelsSourceCatalog, modelsSourceEmbedded, modelsSourceLocal:
+			rows = append(rows, [3]string{f[0], f[1], f[2]})
+		}
+	}
+	return rows
+}
+
+// TestModelsSearchJSONMatchesSchema validates the document the command writes
+// against schemas/models-search.schema.json, the contract a consumer reads it
+// by (D784), and holds it to the read: one object per hit of the table, in the
+// same order, carrying the row as data rather than as a cell.
+func TestModelsSearchJSONMatchesSchema(t *testing.T) {
+	modelsFixture(t)
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "models-search.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := doc.(map[string]any)["$id"].(string)
+	if id == "" {
+		t.Fatal("schemas/models-search.schema.json has no $id")
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, doc); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var hits struct {
+		V      int    `json:"v"`
+		Query  string `json:"query"`
+		Models []struct {
+			ID           string       `json:"id"`
+			Source       string       `json:"source"`
+			Tier         string       `json:"tier"`
+			Route        string       `json:"route"`
+			InputPerM    *searchRange `json:"input_per_m"`
+			OutputPerM   *searchRange `json:"output_per_m"`
+			Endpoints    int          `json:"endpoints"`
+			ZDREndpoints int          `json:"zdr_endpoints"`
+			Context      int64        `json:"context_tokens"`
+			MaxOutput    int64        `json:"max_output_tokens"`
+		} `json:"models"`
+	}
+
+	sources := map[string]bool{}
+	// One term per source the fixture holds: the catalog's DeepSeek row, an
+	// embedded Claude row, and a model only the owner's own model_prices
+	// prices.
+	for _, q := range []string{"deepseek", "claude-haiku", "vendor/model-y"} {
+		out, _, err := execute(t, "models", "search", q, "--json")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(out))
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Fatalf("the document does not match schemas/models-search.schema.json: %v\n%s", err, out)
+		}
+		hits.Models = nil
+		if err := json.Unmarshal([]byte(out), &hits); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if hits.V != 1 {
+			t.Errorf("v = %d, and the document's first version is 1 (D784)", hits.V)
+		}
+		if hits.Query != q {
+			t.Errorf("query = %q, and the search was given %q", hits.Query, q)
+		}
+		// The rows are the read's own, in the same order, so a consumer of the
+		// document sees exactly what the table shows. The table's TIER cell is
+		// a dash on a row no tier prices, which is the document's absent tier.
+		text, _, err := execute(t, "models", "search", q)
+		if err != nil {
+			t.Fatalf("%v\n%s", err, text)
+		}
+		printed := modelsSearchTextRows(text)
+		if len(printed) != len(hits.Models) {
+			t.Fatalf("%q: the document has %d hits, and the read prints %d:\n%s", q, len(hits.Models), len(printed), text)
+		}
+		for i, m := range hits.Models {
+			sources[m.Source] = true
+			tier := m.Tier
+			if tier == "" {
+				tier = dash("")
+			}
+			if want := [3]string{m.ID, m.Source, tier}; printed[i] != want {
+				t.Errorf("%q: hit %d is %v, and the read prints %v", q, i, want, printed[i])
+			}
+		}
+	}
+	for _, want := range []string{"catalog", "embedded", "local"} {
+		if !sources[want] {
+			t.Errorf("the document carries no %q row (it has %v)", want, sources)
+		}
+	}
+
+	// A catalog hit carries the tier's own range as numbers and the endpoints
+	// behind it, rather than the cell the read formats, and the route the
+	// selected project claims the model on.
+	out, _, err := execute(t, "models", "search", "deepseek", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	hits.Models = nil
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	tiers := map[string]bool{}
+	for _, m := range hits.Models {
+		if m.Source != modelsSourceCatalog {
+			continue
+		}
+		tiers[m.Tier] = true
+		if m.InputPerM == nil || m.OutputPerM == nil {
+			t.Errorf("%s/%s: the hit carries no price range (%v, %v)", m.ID, m.Tier, m.InputPerM, m.OutputPerM)
+			continue
+		}
+		if m.InputPerM.Min > m.InputPerM.Max || m.OutputPerM.Min > m.OutputPerM.Max {
+			t.Errorf("%s/%s: the range runs backwards (%v, %v)", m.ID, m.Tier, m.InputPerM, m.OutputPerM)
+		}
+		if m.Endpoints < 1 || m.ZDREndpoints > m.Endpoints {
+			t.Errorf("%s/%s: endpoints = %d and zdr_endpoints = %d", m.ID, m.Tier, m.Endpoints, m.ZDREndpoints)
+		}
+		if m.Context < 1 || m.MaxOutput < 1 {
+			t.Errorf("%s/%s: context = %d and max_output_tokens = %d, and the catalog carries both", m.ID, m.Tier, m.Context, m.MaxOutput)
+		}
+		if m.Route != "openrouter" {
+			t.Errorf("%s/%s: route = %q, and the fixture's one route claims the row", m.ID, m.Tier, m.Route)
+		}
+	}
+	for _, tier := range []string{"zdr", "all"} {
+		if !tiers[tier] {
+			t.Errorf("the catalog hit carries no %q tier (it has %v)", tier, tiers)
+		}
+	}
+
+	// A miss is an empty array, not a missing member: a consumer iterates it.
+	miss, _, err := execute(t, "models", "search", "vendor/nothing-here", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, miss)
+	}
+	if !strings.Contains(miss, `"models": []`) {
+		t.Errorf("a miss carries no empty models array:\n%s", miss)
+	}
+}
+
+// searchRange is one dimension's price range as the document carries it.
+type searchRange struct {
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+}
+
+// TestModelsSearchJSONKeepsItsValuesAsData: the document is data, so an ID and
+// the term reach a consumer as the bytes the table and the caller hold —
+// encoding/json escapes a control character rather than printing it raw, and
+// hands back the same string — where the read marks them for the terminal
+// (cellOneLine, oneLine). An ID is never a control character in either form.
+func TestModelsSearchJSONKeepsItsValuesAsData(t *testing.T) {
+	modelsFixture(t)
+	cat := shippedCatalog(t)
+	const id = "vendor/mo\u202edel\x1b[31m\tbed"
+	cat.Models[id] = cat.Models["deepseek/deepseek-v4-flash"]
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) { return cat, nil }
+	t.Cleanup(func() { loadCatalog = old })
+
+	// The term is a substring of the ID the table holds and carries a control
+	// character of its own, so one run covers both values.
+	const term = "mo‮del\x1b[31m"
+	out, _, err := execute(t, "models", "search", term, "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("the document carries a raw ESC, so it is not the data the table holds:\n%q", out)
+	}
+	var doc struct {
+		Query  string `json:"query"`
+		Models []struct {
+			ID string `json:"id"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if doc.Query != term {
+		t.Errorf("query = %q, and the search was given %q", doc.Query, term)
+	}
+	for _, m := range doc.Models {
+		if m.ID == id {
+			return
+		}
+	}
+	t.Errorf("the document does not carry the ID the table holds (%q):\n%s", id, out)
 }
