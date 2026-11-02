@@ -50,6 +50,7 @@ in this order:
 | `0.116.0` | Peach |
 | `0.117.0` | Pear |
 | `0.118.0` | Plum |
+| `0.119.0` | Pomelo |
 
 **Granny Smith, Golden Delicious and Crab are not on the list**, and neither is Lemon: a
 name that spells "Apple" puts the word in a console release's title, and the desktop app is

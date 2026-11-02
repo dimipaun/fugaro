@@ -396,7 +396,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// readers to switch commands for nothing
 	// (TestNoDoorsFlagHelpNamesTheOtherDoor).
 	covers := "a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it)"
-	never := "creating a project, linking a billing account, the Firestore database's location, or a secret value"
+	never := "creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node"
 	if d.takes("forget") {
 		// update is also the door that runs the checkout's own steps, whose
 		// cloud half is the image refresh: every one of its billable builds —
@@ -409,7 +409,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		// this door's never list; the two that cannot arise here at all are
 		// still true of --yes wherever they can (they are the other door's
 		// flags, refused by name here).
-		never = "creating a project, linking a billing account, or a secret value"
+		never = "creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node"
 	}
 	// The agent clause is about what leaves this machine, and about how far
 	// such a session actually gets: the writes on this machine's own files are
