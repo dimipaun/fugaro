@@ -69,18 +69,25 @@ var (
 //     capabilities (the probe's own finding: plain `unshare -n` is refused).
 //   - -p --mount-proc gives the child a /proc of its own, so the runner's
 //     environment is not readable through /proc/1/environ.
-//   - -k keeps the deadline honest: with -f, the child of `unshare` is PID 1
-//     of that namespace, so killing the process this code started would leave
-//     the test itself running.
+//
+// --kill-child (-k is not a spelling util-linux gives it: the deployed image's
+// unshare answers "invalid option -- 'k'") would make the deadline's kill
+// reach the namespace's own init, which is the test itself: without it the
+// orphan of a killed `unshare` runs on until it finishes, and the deadline is
+// a bound on how long this code WAITS (mutationWaitDelay closes the pipes) and
+// not on the orphan's own life. It is not part of what the probe measured, so
+// it is not added here on the strength of an assumption — the mechanism is the
+// argv the owner measured and nothing more.
 //
 // A fence that will not start is never skipped: the check is refused instead,
 // because a mutant run unfenced is the exposure D891(a) exists to close.
 //
 // A var rather than a const so that a test can run a child without the fence:
 // whether unshare is usable is a property of the execution environment (the
-// probe measured it in Cloud Run gen 2; a test container makes no such
-// promise), and what the tests here pin is the check's own behaviour.
-var mutationFence = []string{"unshare", "-rnpfk", "--mount-proc"}
+// probe measured it in Cloud Run gen 2; another container makes no such
+// promise), and what the tests here pin is the check's own behaviour — and,
+// separately, this argv.
+var mutationFence = []string{"unshare", "-rnpf", "--mount-proc"}
 
 // mutationDeadline bounds one mutant's child. It is generous for one package's
 // test — the child compiles that package first, and a head's own tests can be
@@ -116,6 +123,10 @@ const mutationOutputCap = 64 << 10
 // token down. What is named here is the toolchain's own locations —
 // reviewToolchainVars' set, without which `go` does not resolve under the
 // review home — plus HOME, PATH and TMPDIR.
+//
+// PWD is deliberately not one of them: the `go` command sets it for the test
+// binary it starts, out of that binary's own working directory, and a value
+// this code passed would be the one thing the child's toolchain then corrects.
 var mutationEnvNames = []string{
 	"HOME", "PATH", "TMPDIR",
 	"MISE_DATA_DIR", "MISE_CONFIG_DIR", "MISE_GLOBAL_CONFIG_FILE", "MISE_CACHE_DIR",

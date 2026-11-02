@@ -1,0 +1,534 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
+)
+
+// The mutation check's tests (D885, D891(a), CSR4b). The child is started for
+// real — the head is a real clone of a real remote and `go test` runs in it —
+// but unfenced (mutationUnfenced): whether unshare is usable is a property of
+// the execution environment, which the owner's probe measured in the deployed
+// image and this one makes no promise about (U7). What the fence IS is pinned
+// by TestMutationSubprocessCarriesNoTokenInItsEnvironment, so the argv the
+// child would really be started with is a fact a test refuses to let drift.
+
+// mutationSeed is the reviewed head these tests check out: a Go module whose
+// package holds one boolean literal a test reads, a test that never finishes,
+// and a test that reports the environment it was started with. The head's own
+// tests are what a mutant runs — the check asks whether they would have caught
+// the edit, which only they can answer.
+var mutationSeed = map[string]string{
+	"go.mod": "module example.invalid/head\n\ngo 1.21\n",
+	"strict.go": `package head
+
+const strict = true
+
+func Strict() bool { return strict }
+`,
+	"strict_test.go": `package head
+
+import "testing"
+
+func TestStrict(t *testing.T) {
+	if !Strict() {
+		t.Fatal("strict is off")
+	}
+}
+`,
+	"env_test.go": `package head
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestChildEnvironment(t *testing.T) {
+	dir := os.Getenv("TMPDIR")
+	if dir == "" {
+		t.Fatal("TMPDIR is not set")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "child-env.txt"), []byte(strings.Join(os.Environ(), "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+`,
+	"slow_test.go": `package head
+
+import (
+	"testing"
+	"time"
+)
+
+func TestSlow(t *testing.T) {
+	time.Sleep(30 * time.Second)
+}
+`,
+}
+
+// mutationMarker is what every name the child must not be handed holds in the
+// runner's environment here. It is deliberately not key-shaped: what the test
+// proves is that a variable outside the allow-list does not reach the child,
+// and a value that could be mistaken for a credential would be one.
+const mutationMarker = "runner-environment-value-that-must-not-reach-the-child"
+
+// mutationAsk is the task the review job was launched with, decoded through
+// task.Parse so the ask travels the way it really does: the field, the strict
+// decode that refuses a name this build does not know, and the validation. ask
+// is the field's own JSON, ",mutate":[…] or "" for a review that asked for
+// none.
+func mutationAsk(t *testing.T, ask string) *task.Spec {
+	t.Helper()
+	spec, err := task.Parse([]byte(fmt.Sprintf(
+		`{"version":1,"run_id":%q,"repo":"acme/app","ref":"main","review_prs":[7]%s}`, svcRunID, ask)))
+	if err != nil {
+		t.Fatalf("the task a review job is launched with: %v", err)
+	}
+	return spec
+}
+
+// mutationGoBin is the Go toolchain's own bin directory. It goes first on the
+// child's PATH because this repository's own `go` is a mise shim that resolves
+// a version out of the repository it is started in, and the mutant runs in a
+// worktree that has no mise.toml to resolve one from; the job image's own
+// environment holds the installed toolchain's bin directory directly
+// (images/base/Dockerfile), so this is the PATH a review job has rather than a
+// test-only arrangement. The test process's own PATH is pointed at it too, so
+// that the child is started from the toolchain itself rather than from the
+// shim.
+func mutationGoBin(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Fatalf("resolving this toolchain's GOROOT: %v", err)
+	}
+	bin := filepath.Join(strings.TrimSpace(string(out)), "bin")
+	if _, err := os.Stat(filepath.Join(bin, "go")); err != nil {
+		t.Fatalf("the toolchain's own go: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return bin
+}
+
+// mutationReview is the review job's run as the check meets it: a real clone
+// of a real remote (so a push would be a push), the head resolved, the
+// review job's own environment — the job's marker, variables that must not
+// reach the child, and a toolchain the child resolves through — and the
+// worktree at r.d.WorkDir. It returns the run and the remote it cloned.
+func mutationReview(t *testing.T, spec *task.Spec) (*run, string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	bin := mutationGoBin(t)
+	remote := testutil.NewRemote(t, mutationSeed)
+	work := filepath.Join(t.TempDir(), "work")
+	repo, err := gitops.OpenOrClone(context.Background(), work, remote, gitops.IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, tmp, cache := t.TempDir(), t.TempDir(), t.TempDir()
+	path := bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	r := svcRun(t, config.AuthCascade, func(r *run) {
+		r.repo, r.spec, r.review = repo, spec, true
+		r.reviewHeads = []reviewHead{{Number: 7, SHA: testutil.Git(t, work, "rev-parse", "HEAD")}}
+		r.d.WorkDir, r.d.StateDir = work, state
+		r.env = []string{
+			"PATH=" + path,
+			"HOME=" + state,
+			"TMPDIR=" + tmp,
+			"GOCACHE=" + cache,
+			"ANTHROPIC_API_KEY=" + mutationMarker,
+			"CLAUDE_CODE_OAUTH_TOKEN=" + mutationMarker,
+			"FUGARO_UNLISTED_VALUE=" + mutationMarker,
+			EnvReviewJob + "=1",
+		}
+		r.d.Env = r.env
+	})
+	return r, remote
+}
+
+// mutationUnfenced runs the check's child without the fence. Whether unshare
+// works is the execution environment's business and not this test's (U7), and
+// what the check does with the child's ending is what these tests are for.
+func mutationUnfenced(t *testing.T) {
+	t.Helper()
+	fence := mutationFence
+	mutationFence = nil
+	t.Cleanup(func() { mutationFence = fence })
+}
+
+// mutationWrite puts the runner's own copy of a seed file into the worktree:
+// bytes the head's own commit does not hold, so that a revert which reaches
+// for git rather than for what the runner read cannot pass for one.
+func mutationWrite(t *testing.T, r *run, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(r.d.WorkDir, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mutationRead is what the worktree holds for a path now.
+func mutationRead(t *testing.T, r *run, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(r.d.WorkDir, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// mutationRequireReverted is the one claim every arm makes: the worktree holds
+// the bytes the check read, whatever the child's ending was.
+func mutationRequireReverted(t *testing.T, r *run, name, want string) {
+	t.Helper()
+	if got := mutationRead(t, r, name); got != want {
+		t.Fatalf("%s holds %q after the check, want the bytes the check read (%q)", name, got, want)
+	}
+}
+
+// mutationRefusePush installs a pre-receive hook on the remote that refuses
+// every push and leaves a marker behind, so that a check which pushed at all
+// cannot do it silently (refused_test.go's refuseAll is the same trick for the
+// harness). It returns the marker's path.
+func mutationRefusePush(t *testing.T, remote string) string {
+	t.Helper()
+	marker := filepath.Join(t.TempDir(), "pushed")
+	hook := "#!/bin/sh\ncat >/dev/null\ntouch " + marker + "\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(remote, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return marker
+}
+
+// mutationRefs is every ref the remote holds: a push adds one or moves one.
+func mutationRefs(t *testing.T, remote string) string {
+	t.Helper()
+	return testutil.Git(t, remote, "for-each-ref", "--format=%(refname) %(objectname)")
+}
+
+// mutationTaskSchema is the published task schema, compiled: the ask's own
+// rules live in internal/task and in schemas/ as two copies, and a test that
+// checks one of them here checks the other too.
+func mutationTaskSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "schemas", "task.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := doc.(map[string]any)["$id"].(string)
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, doc); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sch
+}
+
+// mutationInstance is a task as JSON, for the schema to refuse or accept.
+func mutationInstance(t *testing.T, ask string) any {
+	t.Helper()
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(fmt.Sprintf(
+		`{"version":1,"run_id":%q,"repo":"acme/app","ref":"main","review_prs":[7]%s}`, svcRunID, ask)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inst
+}
+
+// TestMutationAppliesRunsRevertsAndPushesNothing: the check flips the head's
+// own boolean literal, runs the head's own named test against it, reverts the
+// file to the bytes it read, and reaches no push.
+//
+// The worktree is given bytes the head's commit does not hold before the check
+// runs, so the revert is the runner's memory or it is nothing: `git checkout
+// -- strict.go` would put the committed bytes back and fail the last assertion
+// (spec §2 — a revert through git would let the reviewed head's own
+// .gitattributes filters, core.fsmonitor and hooks choose what the revert
+// runs). The remote's pre-receive hook refuses every push and leaves a marker,
+// and its refs are compared before and after, so "never pushes" is a fact
+// rather than the absence of an error.
+func TestMutationAppliesRunsRevertsAndPushesNothing(t *testing.T) {
+	mutationUnfenced(t)
+	r, remote := mutationReview(t, mutationAsk(t, `,"mutate":[{"file":"strict.go","test":"TestStrict"}]`))
+	own := mutationSeed["strict.go"] + "\n// the runner's own copy of this file\n"
+	mutationWrite(t, r, "strict.go", own)
+	marker := mutationRefusePush(t, remote)
+	before := mutationRefs(t, remote)
+
+	if err := r.runMutationCheck(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	checks := r.reviewHeads[0].Mutation
+	if len(checks) != 1 {
+		t.Fatalf("mutation_checks = %+v, want one check", checks)
+	}
+	c := checks[0]
+	if c.File != "strict.go" || c.Test != "TestStrict" {
+		t.Errorf("check = %+v, want strict.go's TestStrict", c)
+	}
+	if c.Observed != "fail" {
+		t.Fatalf("observed = %q, want fail: the head's own TestStrict reads the flipped literal", c.Observed)
+	}
+	if !strings.Contains(c.Applied, "line 3") || !strings.Contains(c.Applied, "true -> false") {
+		t.Errorf("applied = %q, want the boolean literal on line 3 flipped", c.Applied)
+	}
+	if !c.Reverted {
+		t.Error("the artifact does not say the mutant was reverted")
+	}
+	mutationRequireReverted(t, r, "strict.go", own)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Error("the mutation check pushed: the remote's pre-receive hook ran")
+	}
+	if after := mutationRefs(t, remote); after != before {
+		t.Errorf("the remote's refs changed under the check:\nbefore %q\nafter  %q", before, after)
+	}
+}
+
+// TestMutationRefusesMoreThanOneMutant: one mutant is all a review runs, and
+// the refusal happens before anything is read out of the worktree. The runner
+// refuses it again for a hand-built task.json, and the launcher's own two
+// boundaries — the strict decoder's validation and the published schema —
+// refuse it before a job is ever started.
+func TestMutationRefusesMoreThanOneMutant(t *testing.T) {
+	one := `,"mutate":[{"file":"strict.go","test":"TestStrict"}]`
+	two := `,"mutate":[{"file":"strict.go","test":"TestStrict"},{"file":"env_test.go","test":"TestChildEnvironment"}]`
+
+	spec := mutationAsk(t, "")
+	spec.Mutate = []task.Mutate{{File: "strict.go", Test: "TestStrict"}, {File: "env_test.go", Test: "TestChildEnvironment"}}
+	r, _ := mutationReview(t, spec)
+	err := r.runMutationCheck(context.Background())
+	if !errors.Is(err, errMutationRefused) {
+		t.Fatalf("err = %v, want the check's own refusal", err)
+	}
+	if len(r.reviewHeads[0].Mutation) != 0 {
+		t.Errorf("mutation_checks = %+v, want none: a refused check records nothing", r.reviewHeads[0].Mutation)
+	}
+
+	if _, err := task.Parse([]byte(fmt.Sprintf(
+		`{"version":1,"run_id":%q,"repo":"acme/app","ref":"main","review_prs":[7]%s}`, svcRunID, two))); err == nil {
+		t.Error("task.Parse accepts two mutants, and one mutant is all a review runs")
+	}
+	schema := mutationTaskSchema(t)
+	if err := schema.Validate(mutationInstance(t, one)); err != nil {
+		t.Errorf("the published task schema refuses the ask this check exists for: %v", err)
+	}
+	if err := schema.Validate(mutationInstance(t, two)); err == nil {
+		t.Error("the published task schema accepts two mutants, and one mutant is all a review runs")
+	}
+}
+
+// TestMutationRevertsOnFailure: the revert is not the child's good ending. A
+// test that never ran (the name matches nothing, so `go test` exits 0 having
+// run nothing) and one that will not finish both leave the worktree holding
+// the bytes the check read.
+//
+// The second arm's deadline is short enough to land while the child is still
+// running: with an empty build cache the child compiles the package first, and
+// either way TestSlow's own 30 seconds outlast it, which the elapsed bound
+// below is what says.
+func TestMutationRevertsOnFailure(t *testing.T) {
+	unfenced := mutationUnfenced
+	t.Run("a test that never ran", func(t *testing.T) {
+		unfenced(t)
+		r, _ := mutationReview(t, mutationAsk(t, `,"mutate":[{"file":"strict.go","test":"NoSuchTest"}]`))
+		own := mutationSeed["strict.go"] + "\n// the runner's own copy of this file\n"
+		mutationWrite(t, r, "strict.go", own)
+		if err := r.runMutationCheck(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		check := r.reviewHeads[0].Mutation[0]
+		if check.Observed != "error" {
+			t.Fatalf("observed = %q, want error: no test ran, and nothing was shown about the mutant", check.Observed)
+		}
+		if !check.Reverted {
+			t.Error("a check whose child ran nothing still records the revert it made")
+		}
+		mutationRequireReverted(t, r, "strict.go", own)
+	})
+	t.Run("a test that will not finish", func(t *testing.T) {
+		unfenced(t)
+		deadline := mutationDeadline
+		mutationDeadline = 2 * time.Second
+		t.Cleanup(func() { mutationDeadline = deadline })
+		r, _ := mutationReview(t, mutationAsk(t, `,"mutate":[{"file":"strict.go","test":"TestSlow"}]`))
+		own := mutationSeed["strict.go"] + "\n// the runner's own copy of this file\n"
+		mutationWrite(t, r, "strict.go", own)
+		start := time.Now()
+		if err := r.runMutationCheck(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		check := r.reviewHeads[0].Mutation[0]
+		if check.Observed != "timeout" {
+			t.Fatalf("observed = %q, want timeout", check.Observed)
+		}
+		if elapsed := time.Since(start); elapsed > 20*time.Second {
+			t.Fatalf("the check took %s: the deadline did not bound the child", elapsed)
+		}
+		mutationRequireReverted(t, r, "strict.go", own)
+	})
+}
+
+// TestMutationAbsentUnlessAskedFor: a review that asked for no check runs
+// none, records none, and says so in the artifact as [] rather than null — and
+// an ask that reaches a run which is not the independent review job is
+// refused rather than run, since the check is the review job's own business.
+func TestMutationAbsentUnlessAskedFor(t *testing.T) {
+	r, _ := mutationReview(t, mutationAsk(t, ""))
+	if err := r.runMutationCheck(context.Background()); err != nil {
+		t.Fatalf("a review that asked for no check ran something: %v", err)
+	}
+	if r.reviewHeads[0].Mutation != nil {
+		t.Errorf("mutation_checks = %+v, want none", r.reviewHeads[0].Mutation)
+	}
+	b, err := json.Marshal(mutationChecksOf(r.reviewHeads[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "[]" {
+		t.Errorf("mutation_checks marshals as %s, want []: a reader tells a review that ran none apart from one that ran one, and null is neither", b)
+	}
+
+	asked, _ := mutationReview(t, mutationAsk(t, `,"mutate":[{"file":"strict.go","test":"TestStrict"}]`))
+	asked.d.Env = slices.DeleteFunc(asked.d.Env, func(kv string) bool {
+		return strings.HasPrefix(kv, EnvReviewJob+"=")
+	})
+	asked.env = asked.d.Env
+	if err := asked.runMutationCheck(context.Background()); !errors.Is(err, errMutationRefused) {
+		t.Fatalf("err = %v, want a refusal: this run is not the independent review job", err)
+	}
+	if len(asked.reviewHeads[0].Mutation) != 0 {
+		t.Errorf("mutation_checks = %+v, want none: the refusal happens before the worktree is touched", asked.reviewHeads[0].Mutation)
+	}
+}
+
+// TestMutationSubprocessCarriesNoTokenInItsEnvironment: the child's
+// environment is an allow-list and not the runner's. The fence does not reach
+// the variables a child is handed — a namespace stops it reading the runner's
+// /proc and reaching the network, and the runner still chooses what it passes
+// down (U7's first caveat) — so what is handed down is env -i plus
+// mutationEnvNames and mutationEnvFixed, pinned here from the child's own side:
+// the head's own test writes the environment it was started with to the
+// TMPDIR it was given.
+//
+// The fence's own argv is pinned here too. It is the one requirement these
+// tests cannot exercise (see the file's comment), and it carries three things
+// the design turns on: -n denies the child every network, which is why the
+// AGENT never runs under it (the gateway is on the loopback); -p with
+// --mount-proc leaves it no view of the runner's own /proc; and -r is what
+// makes unshare work at all in a container with no capabilities (U7).
+func TestMutationSubprocessCarriesNoTokenInItsEnvironment(t *testing.T) {
+	want := []string{"unshare", "-rnpf", "--mount-proc"}
+	if !slices.Equal(mutationFence, want) {
+		t.Errorf("mutationFence = %v, want %v: the mutant's child is started with a network namespace, a user namespace and a /proc of its own, or it is not started at all", mutationFence, want)
+	}
+	mutationUnfenced(t)
+	r, _ := mutationReview(t, mutationAsk(t, `,"mutate":[{"file":"strict.go","test":"TestChildEnvironment"}]`))
+	if err := r.runMutationCheck(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if check := r.reviewHeads[0].Mutation[0]; check.Observed != "pass" {
+		t.Fatalf("observed = %q, want pass: the head's own test runs and the mutant is in another file of its package", check.Observed)
+	}
+	witness := filepath.Join(envLookup(r.env, "TMPDIR"), "child-env.txt")
+	data, err := os.ReadFile(witness)
+	if err != nil {
+		t.Fatalf("the child's own test did not run, so nothing is known about its environment: %v", err)
+	}
+	held := map[string]string{}
+	for _, kv := range strings.Split(string(data), "\n") {
+		if name, value, ok := strings.Cut(kv, "="); ok && name != "" {
+			held[name] = value
+		}
+	}
+	// PWD is the one name the child's own toolchain adds: the `go` command
+	// sets it for the test binary it starts, out of the child's own working
+	// directory — the worktree — and never out of the runner's environment.
+	allowed := slices.Concat(mutationEnvNames, []string{"GOPROXY", "GOTOOLCHAIN", "PWD"})
+	for name, value := range held {
+		if !slices.Contains(allowed, name) {
+			t.Errorf("the child holds %s=%q, which the allow-list does not name: its environment is the runner's rather than env -i plus this list", name, value)
+		}
+		if value == mutationMarker {
+			t.Errorf("the child holds the runner's own value for %s: the fence does not reach the variables a child is handed", name)
+		}
+	}
+	for _, name := range []string{"HOME", "PATH", "TMPDIR", "GOCACHE"} {
+		if _, ok := held[name]; !ok {
+			t.Errorf("the child does not hold %s, and the toolchain resolves through it", name)
+		}
+	}
+	if held["GOPROXY"] != "off" || held["GOTOOLCHAIN"] != "local" {
+		t.Errorf("GOPROXY=%q GOTOOLCHAIN=%q, want off and local: a fence that leaves the child no network turns a missing module into a fast, legible failure instead of a download that hangs", held["GOPROXY"], held["GOTOOLCHAIN"])
+	}
+}
+
+// TestMutationObservedVocabularyIsClosed: the four words §3 fixes are the
+// whole vocabulary a coordinator routes on, and no fifth is written or read.
+// The two arms that look like verdicts are the reason the vocabulary is a
+// function of the child's ending rather than of its exit status: `go test`
+// exits 1 for a build failure as well as for a failing test, and exits 0 when
+// -run matched nothing at all — which recorded as the mutant surviving would
+// report the one finding a coordinator acts on when in fact no test ran.
+func TestMutationObservedVocabularyIsClosed(t *testing.T) {
+	four := []string{"pass", "fail", "error", "timeout"}
+	if !slices.Equal(reviewObserved, four) {
+		t.Fatalf("reviewObserved = %v, want %v", reviewObserved, four)
+	}
+	cases := []struct {
+		why      string
+		exit     int
+		output   string
+		timedOut bool
+		want     string
+	}{
+		{"a test that ran and passed", 0, "ok  \texample.invalid/head\t0.002s\n", false, "pass"},
+		{"a test that ran and failed", 1, "--- FAIL: TestStrict (0.00s)\nFAIL\n", false, "fail"},
+		{"a mutant that does not compile", 1, "# example.invalid/head\nstrict.go:3:13: undefined: x\nFAIL\texample.invalid/head [build failed]\n", false, "error"},
+		{"a test name that matched nothing", 0, "testing: warning: no tests to run\nok  \texample.invalid/head\t0.002s [no tests to run]\n", false, "error"},
+		{"a package with no test files", 0, "?   \texample.invalid/head\t[no test files]\n", false, "error"},
+		{"a child this code's deadline killed", 0, "", true, "timeout"},
+		{"a go tool that failed outright", 2, "go: cannot find main module\n", false, "error"},
+	}
+	for _, c := range cases {
+		got := mutationObservedOf(c.exit, []byte(c.output), c.timedOut)
+		if got != c.want {
+			t.Errorf("%s: observed = %q, want %q", c.why, got, c.want)
+		}
+		if !slices.Contains(four, got) {
+			t.Errorf("%s: observed = %q, which is not one of the four words", c.why, got)
+		}
+	}
+	for _, word := range []string{"pass", "fail", "error", "timeout", "flaky", "PASS", "skipped", ""} {
+		_, err := recordMutationCheck(ReviewMutationCheck{File: "strict.go", Test: "TestStrict", Observed: word})
+		if in := slices.Contains(four, word); in && err != nil {
+			t.Errorf("recordMutationCheck refused %q, one of the four: %v", word, err)
+		} else if !in && err == nil {
+			t.Errorf("recordMutationCheck accepted %q, and the four words are the whole vocabulary", word)
+		}
+	}
+}
