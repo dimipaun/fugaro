@@ -2328,8 +2328,48 @@ Flags:
 
 Subcommands:
 
+- `fugaro models add` -- Let this project run a model: claim it on a route and price it
 - `fugaro models ls` -- Show this project's routes, its models and what each repository runs
+- `fugaro models rm` -- Stop letting this project run a model: drop its claim, price and allow-list entry
 - `fugaro models search` -- Find a model in the built-in price catalog and the Claude table
+- `fugaro models use` -- Point one repository's own config at a model, in its working tree
+
+## `fugaro models add`
+
+Let this project run a model: claim it on a route and price it
+
+Add a model to this project's own config.
+
+The model ID is appended to a route's models — the exact ID, never a
+pattern — and a model the built-in price catalog does not price needs
+--price-in and --price-out (dollars per million tokens), which write a
+model_prices entry. When budget.allowed_models is set the ID is appended to
+it; when it is absent it stays absent.
+
+Only the keys it changes are rewritten: every comment and every other key of
+the file is kept.
+
+The change reaches a run through `fugaro update`, which publishes the policy
+node: a model_prices entry and a budget.allowed_models entry are what a run
+reads from there. A route's own claim is not — a run routes by the copy of
+the providers block in its job's environment — so a repository routes to the
+model once `fugaro update --repo .` has been run in its checkout.
+
+Usage: `fugaro models add <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--price-in` | float64 | `0` | no | input price, dollars per million tokens (required for a model the catalog does not price) |
+| `--price-out` | float64 | `0` | no | output price, dollars per million tokens (required for a model the catalog does not price) |
+| `--route` | string | "" | no | the route that claims the model (default: the route that claims it already, or the only one) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro models ls`
 
@@ -2366,6 +2406,43 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro models rm`
+
+Stop letting this project run a model: drop its claim, price and allow-list entry
+
+Remove a model from this project's own config.
+
+The model's exact entry is dropped from the route's models, its model_prices
+entry and its budget.allowed_models entry. A pattern that claims the model
+is left, and the command says so: the model stays usable until the route's
+own list stops covering it.
+
+A repository that pins the model is not refused (D783). It is a warning:
+the repositories this machine can read that pin it are named, with the role
+each names it in, and so are the repositories it cannot read. The next run
+of each one fails at launch with no provider for the model, until the pin is
+changed with `fugaro models use` or the model is added back.
+
+Only the keys it changes are rewritten: every comment and every other key of
+the file is kept. `fugaro update` publishes the policy node, which carries the
+model_prices and budget.allowed_models halves of the removal to the runs that
+read it; the route's own claims are in the copy of the providers block each
+job holds, so a repository stops routing to the model when `fugaro update
+--repo .` is run in its checkout.
+
+Usage: `fugaro models rm <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro models search`
 
 Find a model in the built-in price catalog and the Claude table
@@ -2390,6 +2467,38 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for search |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models use`
+
+Point one repository's own config at a model, in its working tree
+
+Prepare the change to a repository's own fugaro.yaml that makes one role run
+a model, in the checkout's working tree for the owner to review and commit.
+
+The switch is judged the way a launch judges it: a route of the project config
+must claim the model and its allow_data_to must name the repository, the model
+must be priced, budget.allowed_models must admit it, and the repository's own
+agent.auth and budget must support a provider model. A failure is a refusal
+with nothing written, and the message names the `fugaro models add` that would
+fix a missing claim or price.
+
+Only agent.models.<role> changes: every comment and every other byte of the
+file is kept. The command never commits, pushes or opens a pull request — the
+change reaches runs when the owner's own branch is merged to the base branch,
+which is what every run reads.
+
+Usage: `fugaro models use <repo> <coder|reviewer|background> <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for use |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
