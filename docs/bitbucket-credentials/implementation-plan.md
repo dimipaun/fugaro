@@ -458,13 +458,12 @@ T2.3's coordinator-account half returns in BB5.
   - `deploy/terraform/gcp/modules/installation/credentials.tf` and `variables.tf`, for the person
     invoker grant;
   - `internal/infra/tf/cover.go`, deliberately, for a role granted to a new kind of principal.
-- **Not in this list, and why.** BB4 adds no file that writes the variable, because it is not a new
-  publication: it names the credentials service's own URL, which the published
-  `credentials_service` block already carries. That block's writer is `credentialsServiceBlock`
-  (`internal/cli/init.go`), on the machine that deployed the service, and its merger is
-  `localcfg.MergeShared` (`internal/localcfg/shared.go`); BB4 changes neither, and it adds no key
-  to `sharedForbidden`, because the value has to travel. What BB4 adds is the reader — the
-  `ee/coordinator/cli/coordinator.go` entry above, and the opener it resolves the URL into.
+- **Not in this list, and why.** No file above writes the variable, because BB4 publishes nothing
+  new: the writer it reads from already exists — `credentialsServiceBlock`
+  (`internal/cli/init.go`), which writes the published `credentials_service` block on the machine
+  that deployed the service — and so does the merger between the writer and the command,
+  `localcfg.MergeShared` (`internal/localcfg/shared.go`). BB4 changes neither, and it adds no key
+  to `sharedForbidden`, because the value has to travel.
 - **Tests:**
   - `TestPersonCallerOnlyOnReadRoute`;
   - `TestPersonCallerRefusedOtherAccounts`;
