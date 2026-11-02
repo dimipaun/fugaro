@@ -170,9 +170,25 @@ func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 	if len(cfg.JobAccounts) != 1 || cfg.JobAccounts[0] != want[0] {
 		t.Fatalf("job accounts = %+v, want %+v", cfg.JobAccounts, want)
 	}
-	// Every piece NewServer requires is built here, and the one thing that is
-	// deliberately left empty is the shared project jobs' accounts (Global
-	// Constraint 6: per-repository jobs only until C3.9).
+	// The repository table is the same rows read the other way round
+	// (RepositoryTableFor), and it is pinned by value for the same reason the
+	// accounts are: it is what resolves a review caller's slug to the
+	// repository the pairing is made against, so a table that lost a row would
+	// refuse review calls for a repository this installation serves.
+	wantRepos := map[string]string{"acme-webapp-cf67624405f4121a": "github/acme/webapp"}
+	if len(cfg.Repos) != len(wantRepos) {
+		t.Fatalf("repository table = %v, want %v", cfg.Repos, wantRepos)
+	}
+	for slug, repo := range wantRepos {
+		if got := cfg.Repos[slug]; got != repo {
+			t.Errorf("repository table[%q] = %q, want %q", slug, got, repo)
+		}
+	}
+	// Every piece NewServer requires is built here, and the two sets that are
+	// deliberately left empty are the shared project jobs' accounts (Global
+	// Constraint 6: per-repository jobs only until C3.9) and the review jobs'
+	// (this command reads no policy, so the accounts a review job runs as are
+	// not in its configuration to name; CSR7 is the task that fills them).
 	for _, missing := range []struct {
 		name string
 		set  bool
@@ -190,6 +206,9 @@ func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 		if !missing.set {
 			t.Errorf("the configuration has no %s: the service cannot serve without it", missing.name)
 		}
+	}
+	if len(cfg.ReviewAccounts) != 0 {
+		t.Errorf("review accounts = %+v, want none: this command reads no policy, so it names no review job", cfg.ReviewAccounts)
 	}
 	if _, err := credsvc.NewServer(cfg); err != nil {
 		t.Fatalf("NewServer refused the configuration a complete environment builds: %v", err)

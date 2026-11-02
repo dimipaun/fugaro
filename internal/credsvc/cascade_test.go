@@ -10,6 +10,7 @@ package credsvc
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"net/http"
 	"slices"
@@ -351,6 +352,72 @@ func TestCascadeUsesAdmittedAccountsOnly(t *testing.T) {
 	}
 	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
 		t.Errorf("the admissions read were %v, want just this repository's", got)
+	}
+}
+
+// TestReviewCallerIsOfferedNoTierBOrCAndNoOtherAccount: the offering rule a
+// review caller must not widen (spec §10's cascade bullet). `candidates` is the
+// one place that decides which credentials a call may be served by, and for a
+// review caller its answer is the pairing's ONE account at tier A — never
+// another tier-A account's entry, and never a tier B or C one.
+//
+// The bundle holds a second tier-A account and the project's paid key, and the
+// fixture's policy is `fallback: auto`, so there is something for the ladder to
+// fall to and the class is the only reason it does not: with the pairing's
+// account exhausted the call is refused with the typed wait and the upstream
+// sees nothing at all, where the same state under the repository class reaches
+// the paid key (TestCascadeAutoFallsToB).
+func TestReviewCallerIsOfferedNoTierBOrCAndNoOtherAccount(t *testing.T) {
+	s := newReviewSvc(t)
+	b, err := s.server.cfg.Bundles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("loading the fixture's own bundle: %v", err)
+	}
+	all := b.Credentials()
+	if !slices.ContainsFunc(all, func(c creds.Credential) bool { return c.Tier == creds.TierB }) {
+		t.Fatal("the fixture's bundle holds no tier-B credential, so this test has nothing to keep the caller away from")
+	}
+	if !slices.ContainsFunc(all, func(c creds.Credential) bool { return c.Tier == creds.TierA && c.Name != testReviewAccount }) {
+		t.Fatal("the fixture's bundle holds no other tier-A account, so this test has nothing to keep the caller away from")
+	}
+
+	id := Identity{Slug: s.slug, JobAccount: testReviewSA, JobClass: ClassReview}
+	cands, skipped, err := s.server.candidates(context.Background(), id, testRepo, b)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if len(cands) != 1 || cands[0].Name != testReviewAccount || cands[0].Tier != creds.TierA {
+		t.Fatalf("the review caller was offered %v, want exactly the pairing's account %q at tier A", cands, testReviewAccount)
+	}
+	reported := map[string]Tried{}
+	for _, t2 := range skipped {
+		reported[t2.Name] = t2
+	}
+	for _, c := range all {
+		if c.Name == testReviewAccount && c.Tier == creds.TierA {
+			continue
+		}
+		got, ok := reported[c.Name]
+		if !ok {
+			t.Errorf("the credential %q (%s) was neither offered nor reported as not admitted", c.Name, wireTier(c.Tier))
+			continue
+		}
+		if got.Reason != ReasonNotAdmitted {
+			t.Errorf("the credential %q was reported as %q, want %q", c.Name, got.Reason, ReasonNotAdmitted)
+		}
+		if got.Tier != wireTier(c.Tier) {
+			t.Errorf("the credential %q was reported at tier %q, want %q", c.Name, got.Tier, wireTier(c.Tier))
+		}
+	}
+
+	s.hold(testReviewAccount, s.now.Add(-time.Minute), s.now.Add(6*time.Hour))
+	resp, body := s.callTokens(t, callBody("review-tier"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusExhaustedUntil {
+		t.Fatalf("the answer is %d, want the typed wait (%d): the review caller has nothing to fall to: %s",
+			resp.StatusCode, StatusExhaustedUntil, body)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Fatalf("the upstream saw %d requests, want none: a review call never reaches the paid key", n)
 	}
 }
 
