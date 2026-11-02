@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -111,6 +112,70 @@ func TestNewValidates(t *testing.T) {
 			t.Errorf("New(%+v) succeeded", o)
 		}
 	}
+}
+
+// TestStaticTokenUnchanged: Options.Token behaves exactly as it did before a
+// TokenSource existed here. The token is wrapped into a source rather than
+// left as a second path, so the API call and GitAuth both go the same way as
+// a minted token's -- and a caller that does pass a source gets that source's
+// tokens, with the life they carry.
+func TestStaticTokenUnchanged(t *testing.T) {
+	const token = "bb-token-1234"
+	p, err := New(Options{Workspace: "acme", Slug: "web", Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.tokens != gitprov.TokenSource(staticToken(token)) {
+		t.Fatalf("tokens = %#v, want the static token wrapped into a source of its own", p.tokens)
+	}
+
+	a, err := p.GitAuth(ctx, 30*time.Minute)
+	if err != nil || a.Username != GitUsername || a.Token != token || !a.Expires.IsZero() {
+		t.Fatalf("auth = %+v, %v", a, err)
+	}
+
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		io.WriteString(w, `{"is_private":true}`)
+	}))
+	defer srv.Close()
+	q, err := New(Options{Workspace: "acme", Slug: "web", Token: token, BaseURL: srv.URL + "/2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Repository(ctx); err != nil {
+		t.Fatalf("Repository: %v", err)
+	}
+	if auth != "Bearer "+token {
+		t.Fatalf("the API call sent %q, want the static token as a bearer header", auth)
+	}
+
+	t.Run("a source replaces the static token", func(t *testing.T) {
+		want := time.Now().Add(time.Hour).Truncate(time.Second)
+		src := fixedTokenSource{token: "minted-token-5678", expires: want}
+		r, err := New(Options{Workspace: "acme", Slug: "web", Token: token, TokenSource: src})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := r.GitAuth(ctx, time.Minute)
+		if err != nil || got.Token != src.token || !got.Expires.Equal(want) {
+			t.Fatalf("auth = %+v, %v, want the source's token and its expiry", got, err)
+		}
+		if got.Env != nil {
+			t.Errorf("auth env = %v, want none: a Bitbucket token needs no agent variable", got.Env)
+		}
+	})
+}
+
+// fixedTokenSource answers every mint with one token and one expiry.
+type fixedTokenSource struct {
+	token   string
+	expires time.Time
+}
+
+func (s fixedTokenSource) Token(context.Context, time.Duration) (string, time.Time, error) {
+	return s.token, s.expires, nil
 }
 
 // TestLabelsWarnOnce covers the user-approved ruling that Bitbucket Cloud

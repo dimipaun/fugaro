@@ -25,13 +25,23 @@ const DefaultBaseURL = "https://api.bitbucket.org/2.0"
 // token; Cloud Build image builds use it too.
 const GitUsername = "x-token-auth"
 
+// apiMinValid is how long a token used for an API call must stay valid.
+const apiMinValid = 2 * time.Minute
+
 // Options configure a Provider.
 type Options struct {
 	Workspace string // the repository's workspace
 	Slug      string // the repository slug
 	Token     string // Bitbucket access token: Repositories read/write, Pull requests read/write
-	BaseURL   string // API root; empty means DefaultBaseURL
-	HTTP      *http.Client
+	// TokenSource is where this provider's access tokens come from, for a
+	// caller that does not hold one: a token minted for a read, or from a
+	// consumer the credentials service keeps. It wins over Token when both
+	// are set -- a provider told its tokens are minted elsewhere must not
+	// fall back to a token that was also passed -- and when it is nil the
+	// static Token is wrapped into a source of its own.
+	TokenSource gitprov.TokenSource
+	BaseURL     string // API root; empty means DefaultBaseURL
+	HTTP        *http.Client
 	// Warn, when set, receives adapter warnings meant for the run's log:
 	// once, the first time a PRSpec with non-empty Labels is seen
 	// (Bitbucket Cloud pull requests have no labels, so they are silently
@@ -44,6 +54,7 @@ type Options struct {
 type Provider struct {
 	o        Options
 	api      *httpjson.Client
+	tokens   gitprov.TokenSource
 	warnOnce sync.Once
 
 	identityMu   sync.Mutex
@@ -51,13 +62,27 @@ type Provider struct {
 	selfUUID     string // the token's user's uuid; "" when GET /user was refused
 }
 
+// staticToken is a gitprov.TokenSource over one token that does not expire: a
+// Bitbucket access token is one, so a caller that passes Options.Token keeps
+// exactly the behaviour it had before a source existed here -- no expiry, no
+// mint -- and the provider needs no second path for it.
+type staticToken string
+
+func (t staticToken) Token(context.Context, time.Duration) (string, time.Time, error) {
+	return string(t), time.Time{}, nil
+}
+
 // New returns a Provider for o.
 func New(o Options) (*Provider, error) {
 	if o.Workspace == "" || o.Slug == "" {
 		return nil, errors.New("bitbucket: workspace and repository slug are required")
 	}
-	if o.Token == "" {
-		return nil, errors.New("bitbucket: a Bitbucket access token is required")
+	tokens := o.TokenSource
+	if tokens == nil {
+		if o.Token == "" {
+			return nil, errors.New("bitbucket: a Bitbucket access token or a token source is required")
+		}
+		tokens = staticToken(o.Token)
 	}
 	if o.BaseURL == "" {
 		o.BaseURL = DefaultBaseURL
@@ -65,12 +90,19 @@ func New(o Options) (*Provider, error) {
 	if o.Warn == nil {
 		o.Warn = func(string) {}
 	}
-	token := o.Token
-	return &Provider{o: o, api: &httpjson.Client{
+	p := &Provider{o: o, tokens: tokens}
+	p.api = &httpjson.Client{
 		BaseURL: o.BaseURL, HTTP: o.HTTP,
 		Header: http.Header{"Accept": {"application/json"}},
-		Auth:   func(context.Context) (string, error) { return "Bearer " + token, nil },
-	}}, nil
+		Auth: func(ctx context.Context) (string, error) {
+			tok, _, err := p.tokens.Token(ctx, apiMinValid)
+			if err != nil {
+				return "", err
+			}
+			return "Bearer " + tok, nil
+		},
+	}
+	return p, nil
 }
 
 type pullRequest struct {
@@ -317,10 +349,16 @@ func (p *Provider) Comment(ctx context.Context, pr gitprov.PR, body string) erro
 	return nil
 }
 
-// GitAuth implements gitprov.Provider. A Bitbucket access token is used
-// as is (design §6.2); it does not expire during a run.
-func (p *Provider) GitAuth(context.Context, time.Duration) (gitprov.GitAuth, error) {
-	return gitprov.GitAuth{Username: GitUsername, Token: p.o.Token}, nil
+// GitAuth implements gitprov.Provider. The token is this provider's source's:
+// a static one is used as is (design §6.2) and comes back with no expiry,
+// because it does not expire during a run, and a minted one comes back with
+// the life its mint gave it, so a caller knows when to ask again.
+func (p *Provider) GitAuth(ctx context.Context, minValid time.Duration) (gitprov.GitAuth, error) {
+	tok, expires, err := p.tokens.Token(ctx, minValid)
+	if err != nil {
+		return gitprov.GitAuth{}, err
+	}
+	return gitprov.GitAuth{Username: GitUsername, Token: tok, Expires: expires}, nil
 }
 
 // Repository implements gitprov.Provider.

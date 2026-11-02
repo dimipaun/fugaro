@@ -305,13 +305,12 @@ func bitbucketCitedPaths(doc string) []string {
 //
 // The list shrinks as the tasks land, and the test says so when it does not:
 // T0.1's own file left it in the commit that wrote this guard and T0.2's in the
-// commit that registered the checks, and T1.1's two files left it after T1.1
-// landed, so all of them are checked like every other cited path now.
+// commit that registered the checks, T1.1's two files left it after T1.1 landed
+// and BB1's two after BB1 landed, so all of them are checked like every other
+// cited path now.
 var bitbucketWillCreate = map[string]string{
 	// S2, retargeted 2026-11-01: `coordinator show` reads Bitbucket through the
 	// service's read consumer.
-	"internal/gitprov/bitbucket/oauth.go":              "BB1",
-	"internal/gitprov/bitbucket/oauth_test.go":         "BB1",
 	"scripts/live-checks/check145.sh":                  "BB3",
 	"scripts/live-checks/check145_test.sh":             "BB3",
 	"internal/credsvc/bitbucket.go":                    "BB4",
