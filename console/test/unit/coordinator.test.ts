@@ -44,6 +44,15 @@ import {
   COORDINATOR_BLIND_WORD,
   COORDINATOR_CARRIED_WORD,
   COORDINATOR_COLLISION_WORD,
+  COORDINATOR_DESCRIPTION_ALL_CLASS,
+  COORDINATOR_DESCRIPTION_ALL_WORD,
+  COORDINATOR_DESCRIPTION_CLASS,
+  COORDINATOR_DESCRIPTION_EMPTY_CLASS,
+  COORDINATOR_DESCRIPTION_EMPTY_WORD,
+  COORDINATOR_DESCRIPTION_HEAD_CLASS,
+  COORDINATOR_DESCRIPTION_LINES,
+  COORDINATOR_DESCRIPTION_LINE_CLASS,
+  COORDINATOR_DESCRIPTION_SHOW_WORD,
   COORDINATOR_COLLISIONS_WORD,
   COORDINATOR_DRAFT_WORD,
   COORDINATOR_IN_FLIGHT_COUNT_WORD,
@@ -95,19 +104,23 @@ import {
   coordinatorJobsFloorNote,
   coordinatorLoadJobsControl,
   coordinatorOlderJobsControl,
+  fillCoordinatorDescription,
   fillCoordinatorJobs,
   fillCoordinatorJobsHead,
   jobsDocument,
   queueRuns,
   renderCoordinator,
   renderCoordinatorFrame,
+  repoDetail,
 } from '../../src/renderer/screens/coordinator'
 import type {
   CoordinatorInputs,
   CoordinatorQueueItem,
+  CoordinatorRepoPanel,
   ScreenElement,
   ScreenFactory,
 } from '../../src/renderer/screens/coordinator'
+import { BUSY_SLOT_CLASS } from '../../src/renderer/section'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { PATH_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
 import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
@@ -1714,6 +1727,136 @@ describe('the job list (K4)', () => {
     expect(walk(row).every((node) => node.tag !== 'img')).toBe(true)
     expect(textOf(bodyOf(row), 'coordinator-job-reason')).toBe('javascript:alert(1)')
     expect(one(row, 'coordinator-job-detail').getAttribute('hidden')).toBe('')
+  })
+})
+
+describe('the pull request description (K3)', () => {
+  /** blockOf draws one description into a host of its own and answers the host:
+   * the entry paints the block the record's cell drew, and what a case is about
+   * is what that paint wrote. */
+  function blockOf(body: string, showAll = false): ScreenElement {
+    const host = factory.create('div')
+    fillCoordinatorDescription(factory, body, host, showAll)
+    return host
+  }
+
+  /** empties is what the entry does before it paints a host: the block is drawn
+   * once and painted again, and a paint is the whole of what it holds. */
+  function empties(element: ScreenElement): void {
+    ;(element as FakeScreen).nodes.length = 0
+  }
+
+  /** panelsOf is the model's own repository panels, which is what the entry's
+   * chunk hands `repoDetail`. */
+  function panelsOf(raw: unknown): readonly CoordinatorRepoPanel[] {
+    return buildCoordinatorModel(queueInputs({ view: decodes(raw) })).repos ?? []
+  }
+
+  it('draws the block with the row, hidden, behind the record’s own disclosure', () => {
+    const node = renders(aStore([aRecord({ number: 1458 })]))
+    const block = one(node, COORDINATOR_DESCRIPTION_CLASS)
+    // Drawn with the row and hidden, so the press is a toggle rather than a
+    // rendering -- the same shape the job list's own rows take (K4).
+    expect(block.getAttribute('hidden')).toBe('')
+    const head = one(node, COORDINATOR_DESCRIPTION_HEAD_CLASS)
+    expect(head.tag).toBe('button')
+    expect(head.getAttribute('type')).toBe('button')
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+    expect(head.textContent).toBe(COORDINATOR_DESCRIPTION_SHOW_WORD)
+    // The mark the read wears goes in a slot of the block's own, so the press has
+    // somewhere to put it before anything has been read.
+    expect(all(block, BUSY_SLOT_CLASS)).toHaveLength(1)
+  })
+
+  it('answers the entry the disclosure it binds, with the pair the read is made of', () => {
+    const parent = factory.create('div')
+    const panel = panelsOf(aStore([aRecord({ number: 1458 })]))[0]
+    if (panel === undefined) throw new Error('the store named no repository')
+    const drawn = repoDetail(parent, factory, panel)
+    expect(drawn.descriptions).toHaveLength(1)
+    const target = drawn.descriptions[0]
+    // The pair is the repository's own name and the pull request's number, and
+    // the two are answered beside the elements so the entry sends what the row
+    // was drawn for rather than reading it back out of the DOM.
+    expect(target?.request).toEqual({ repo: 'owner/repo-a', number: 1458 })
+    expect(target?.element).toBe(one(parent, COORDINATOR_DESCRIPTION_HEAD_CLASS))
+    expect(target?.block).toBe(one(parent, COORDINATOR_DESCRIPTION_CLASS))
+  })
+
+  it('draws a hostile description as one text node, with nothing in it built into an element', () => {
+    // The plan's own red step (K3): the host's untrusted author writes this, and
+    // the whole of what the console may do with it is draw it.
+    const hostile = '<script>alert(1)</script> and [click](https://evil.test)'
+    const host = blockOf(hostile)
+    const written = walk(host).filter((node) => (node.textContent ?? '') !== '')
+    // One line in, one text node out: the description is a value, not a document
+    // to parse.
+    expect(written, 'the block wrote more than one text node').toHaveLength(1)
+    const sanitized = sanitizeText(hostile, 'sentence', 'body')
+    if (!sanitized.ok) throw new Error(sanitized.reason)
+    expect(written[0]?.textContent).toBe(sanitized.text)
+    // The markup is characters on the screen -- `<script>` is text -- and no
+    // element of the tag it names exists under the block.
+    expect(written[0]?.textContent).toContain('<script>alert(1)</script>')
+    expect(walk(host).every((node) => node.tag !== 'script')).toBe(true)
+    // The address is the class's own marker and never the URL the author wrote,
+    // and neither string reaches an attribute: the harness throws on the
+    // attributes a screen may not set, so a screen that built a link out of this
+    // would have failed at the call rather than at this assertion.
+    expect(written[0]?.textContent).not.toContain('evil.test')
+    expect(
+      walk(host).every((node) =>
+        [...node.attributes.values()].every(
+          (value) => !value.includes('evil.test') && !value.includes('<script>'),
+        ),
+      ),
+    ).toBe(true)
+    // One line is under the block's own bound, so there is nothing to show.
+    expect(all(host, COORDINATOR_DESCRIPTION_ALL_CLASS)).toEqual([])
+  })
+
+  it('clips a long description to the console’s twenty lines, and draws every line once Show all is pressed', () => {
+    expect(COORDINATOR_DESCRIPTION_LINES, 'the block’s own bound').toBe(20)
+    const body = Array.from({ length: 60 }, (_unused, index) => `marker-${String(index + 1).padStart(2, '0')}`).join('\n')
+    const host = blockOf(body)
+    const drawnLines = all(host, COORDINATOR_DESCRIPTION_LINE_CLASS)
+    expect(drawnLines, 'the block drew every line of the body').toHaveLength(COORDINATOR_DESCRIPTION_LINES)
+    expect(drawnLines[0]?.textContent).toBe('marker-01')
+    expect(drawnLines[COORDINATOR_DESCRIPTION_LINES - 1]?.textContent).toBe('marker-20')
+    // The bound is this block's and not the text class's: `sentence` caps one
+    // text node at `MAX_TEXT_LENGTH`, so a description drawn as one node could
+    // never be shown whole -- which is why the lines are drawn one at a time.
+    const control = one(host, COORDINATOR_DESCRIPTION_ALL_CLASS)
+    expect(control.textContent).toBe(COORDINATOR_DESCRIPTION_ALL_WORD)
+    expect(control.getAttribute('type')).toBe('button')
+
+    // Show all draws the rest, and the control goes with it: there is nothing
+    // left to show.
+    empties(host)
+    fillCoordinatorDescription(factory, body, host, true)
+    const every = all(host, COORDINATOR_DESCRIPTION_LINE_CLASS)
+    expect(every).toHaveLength(60)
+    expect(every[59]?.textContent).toBe('marker-60')
+    expect(all(host, COORDINATOR_DESCRIPTION_ALL_CLASS)).toEqual([])
+  })
+
+  it('draws the console’s own sentence for a pull request whose description is empty', () => {
+    // A body the host answered with nothing is a fact about the pull request,
+    // and it is drawn in the console's own words rather than as a blank block.
+    const host = blockOf('')
+    expect(textOf(host, COORDINATOR_DESCRIPTION_EMPTY_CLASS)).toBe(COORDINATOR_DESCRIPTION_EMPTY_WORD)
+    expect(all(host, COORDINATOR_DESCRIPTION_LINE_CLASS)).toEqual([])
+    expect(all(host, COORDINATOR_DESCRIPTION_ALL_CLASS)).toEqual([])
+  })
+
+  it('draws no disclosure for a record that names no pull request to read a description of', () => {
+    // A record with no pull request is the in-flight runs alone: there is no
+    // number, so there is nothing a read could be made of and no control that
+    // would ask for one.
+    const bare = { ...(aRecord({}) as Record<string, unknown>), pr: null }
+    const node = renders(aStore([bare]))
+    expect(all(node, COORDINATOR_DESCRIPTION_CLASS)).toEqual([])
+    expect(all(node, COORDINATOR_DESCRIPTION_HEAD_CLASS)).toEqual([])
   })
 })
 

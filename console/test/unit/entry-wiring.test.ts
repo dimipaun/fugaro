@@ -137,6 +137,11 @@ import {
 } from '../../src/renderer/skeleton'
 import {
   COORDINATOR_BUSY,
+  COORDINATOR_DESCRIPTION_BUSY,
+  COORDINATOR_DESCRIPTION_CLASS,
+  COORDINATOR_DESCRIPTION_HIDE_WORD,
+  COORDINATOR_DESCRIPTION_LINE_CLASS,
+  COORDINATOR_DESCRIPTION_SHOW_WORD,
   COORDINATOR_LAUNCH_WORD,
   COORDINATOR_NO_AGE_WORD,
   COORDINATOR_OPEN_SPEND_WORD,
@@ -188,10 +193,10 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the ten reads `entry.ts` may reach for (`ReadBridge`, the
- * same ten), by the name the preload exposes. Every one of them is on the fake
- * bridge below, and every one records its call -- so "this read was never made"
- * is a claim this suite can make about any of them. */
+/** READ_METHODS is the eleven reads `entry.ts` may reach for (`ReadBridge`, the
+ * same eleven), by the name the preload exposes. Every one of them is on the
+ * fake bridge below, and every one records its call -- so "this read was never
+ * made" is a claim this suite can make about any of them. */
 const READ_METHODS = [
   'subscribeLive',
   'showBudget',
@@ -199,6 +204,7 @@ const READ_METHODS = [
   'listRuns',
   'statsRuns',
   'coordinatorStatus',
+  'coordinatorShow',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
@@ -2286,7 +2292,15 @@ function queueBridge(
   // The base's list is the same array its own reads append to; it is typed
   // `readonly` because a case reads it, and this helper is the one writer.
   const calls = base.calls as { name: string; args: unknown }[]
-  for (const name of ['coordinatorStatus', 'listRuns', 'planStatus', 'showBudget', 'launchRun', 'openPullRequest']) {
+  for (const name of [
+    'coordinatorStatus',
+    'coordinatorShow',
+    'listRuns',
+    'planStatus',
+    'showBudget',
+    'launchRun',
+    'openPullRequest',
+  ]) {
     base.bridge[name] = (args: unknown): unknown => {
       calls.push({ name, args })
       const answer = answers[name]
@@ -4852,6 +4866,132 @@ function aFullPage(): readonly string[] {
   rows.push(LS_LAST_ID)
   return rows
 }
+
+/** aPullRequest is one `coordinator show --json` document: one pull request as
+ * the host has it, whole. `body` is the field the read exists for. */
+function aPullRequest(body: string): Readonly<Record<string, unknown>> {
+  return {
+    number: 7,
+    url: 'https://example.invalid/owner/repo-a/pull/7',
+    title: 'a title someone wrote',
+    body,
+    state: 'open',
+    draft: true,
+    branch: 'feat/a-thing',
+    base: 'main',
+    author: 'person-1',
+  }
+}
+
+/** descriptionBlock is the block one record's row drew, which is the element the
+ * description is painted into. */
+function descriptionBlock(document: FakeDocument): FakeNode {
+  const block = classed(panelOf(document), COORDINATOR_DESCRIPTION_CLASS)[0]
+  if (block === undefined) throw new Error('the row drew no description block')
+  return block
+}
+
+/** coordinatorBridge is the Coordinator screen's own reads, with the description
+ * read answered by the case: the committed fixture's one pull request is
+ * `owner/repo-a`'s #7. */
+function coordinatorBridge(answers: Readonly<Record<string, AReply>>): FakeBridge {
+  return queueBridge({
+    coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+    planStatus: () => planStatusReply(QUEUE_PLAN),
+    showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    ...answers,
+  })
+}
+
+describe('the description the entry reads on demand (K3)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** land is one read and the chunk the screen draws its records on: the
+   * microtasks a landing settles, and then the clock the queued detail runs on
+   * (a `setTimeout(…, 0)` per repository, which is the freeze the chunks are
+   * for). */
+  async function land(): Promise<void> {
+    await flush()
+    await vi.advanceTimersByTimeAsync(10)
+    await flush()
+  }
+
+  it('reads one pull request on the first expand, and draws what it read on the second', async () => {
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = coordinatorBridge({
+      coordinatorShow: (args) => {
+        asked.push(args as Record<string, unknown>)
+        return { ok: true, data: { document: aPullRequest('the first line\nthe second line') } }
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await land()
+
+    // Nothing is read until the operator asks: the row is drawn with its
+    // disclosure and the block that disclosure opens, hidden.
+    expect(asked, 'the description was read without being asked for').toEqual([])
+    const block = descriptionBlock(document)
+    expect(block.attributes.get('hidden')).toBe('')
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toEqual([])
+
+    // The press is the read, and the pair is the row's own repository and number
+    // -- nothing the console read back out of the DOM.
+    const head = buttonLabelled(panelOf(document), COORDINATOR_DESCRIPTION_SHOW_WORD)
+    head.click()
+    expect(asked).toEqual([{ repo: 'owner/repo-a', pr: 7 }])
+    // A press is answered in the frame it happened in: the block is revealed and
+    // the section's own mark is up in it.
+    expect(block.attributes.get('hidden')).toBeUndefined()
+    expect(head.textContent).toBe(COORDINATOR_DESCRIPTION_HIDE_WORD)
+    expect(holdsText(block, COORDINATOR_DESCRIPTION_BUSY)).toBe(true)
+
+    await land()
+    // The description, one line at a time, in the block the row already drew --
+    // with the stamp that says when it was read.
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS).map((line) => line.textContent)).toEqual([
+      'the first line',
+      'the second line',
+    ])
+    expect(classed(block, STAMP_CLASS)).toHaveLength(1)
+    expect(holdsText(block, COORDINATOR_DESCRIPTION_BUSY)).toBe(false)
+
+    // An expand/collapse cycle is not a second read: the second expand draws the
+    // document the first one read.
+    head.click()
+    expect(block.attributes.get('hidden')).toBe('')
+    expect(head.textContent).toBe(COORDINATOR_DESCRIPTION_SHOW_WORD)
+    head.click()
+    expect(asked, 'the second expand read the description again').toHaveLength(1)
+    expect(block.attributes.get('hidden')).toBeUndefined()
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toHaveLength(2)
+  })
+
+  it('draws a refused description read as its own sentence, naming the command', async () => {
+    // The credentials-service refusal is the CLI's own sentence
+    // (`ee/coordinator/cli/coordinator.go`), and this block draws it as it came:
+    // the console adds no words of its own to a refusal, and the refusal names
+    // the command it is the refusal of.
+    const credentials = 'the credentials service holds the GitHub App key and this command holds none'
+    const { bridge } = coordinatorBridge({ coordinatorShow: () => ({ ok: false, reason: credentials }) })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await land()
+    buttonLabelled(panelOf(document), COORDINATOR_DESCRIPTION_SHOW_WORD).click()
+    await land()
+
+    const block = descriptionBlock(document)
+    expect(classed(block, 'unavailable-operation')[0]?.textContent).toBe('coordinator.show')
+    expect(holdsText(block, credentials)).toBe(true)
+    // A refusal is not a block with an empty description in it.
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toEqual([])
+  })
+})
 
 describe('the frame a tab answers in, and the read it does not wait for', () => {
   beforeEach(() => {

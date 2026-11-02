@@ -83,8 +83,13 @@ import { formatReading, measured, notional, readNumber, unavailable } from '../s
 import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
 import type { RigorView } from '../shared/rigor'
-import { decodeCoordinatorStatus, decodePlanStatus, decodeSnapshot } from '../shared/schema'
-import type { CoordinatorStatusView, PlanStatusView } from '../shared/schema'
+import {
+  decodeCoordinatorPullRequest,
+  decodeCoordinatorStatus,
+  decodePlanStatus,
+  decodeSnapshot,
+} from '../shared/schema'
+import type { CoordinatorPullRequestDocument, CoordinatorStatusView, PlanStatusView } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
@@ -138,21 +143,30 @@ import {
   coordinatorJobsFloorNote,
   coordinatorLoadJobsControl,
   coordinatorOlderJobsControl,
+  fillCoordinatorDescription,
   fillCoordinatorJobs,
   fillCoordinatorJobsEmpty,
   fillCoordinatorJobsHead,
   jobsDocument,
+  COORDINATOR_DESCRIPTION_BUSY,
+  COORDINATOR_DESCRIPTION_HIDE_WORD,
+  COORDINATOR_DESCRIPTION_SHAPE,
+  COORDINATOR_DESCRIPTION_SHOW_WORD,
 } from './screens/coordinator'
 import type {
+  CoordinatorDescriptionRequest,
+  CoordinatorDescriptionTarget,
   CoordinatorJobs,
   CoordinatorModel,
   CoordinatorPullButton,
   CoordinatorQueueAction,
   CoordinatorQueueSource,
   CoordinatorRunRow,
+  DrawnCoordinatorDetail,
   DrawnCoordinatorFrame,
   ScreenElement,
 } from './screens/coordinator'
+import type { SectionRead } from './section'
 import { PROJECTS_BUSY, buildProjectsModel, fillProjects, renderProjectsFrame } from './screens/projects'
 import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
 import {
@@ -415,9 +429,10 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the ten reads the screens make (Task 3.4c; console L5b added
+ * ReadBridge is the eleven reads the screens make (Task 3.4c; console L5b added
  * `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`, GV2.3b
- * added `planStatus`), named one by one
+ * added `planStatus`, coordinator v2 K3 added `coordinatorShow`), named one by
+ * one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -434,13 +449,14 @@ export interface ReadBridge {
   listRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   statsRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  coordinatorShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   diagnoseRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the ten reads over the structural bridge. A missing
+/** readBridgeFrom is the eleven reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -469,6 +485,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     listRuns: (args) => ask('listRuns', args),
     statsRuns: (args) => ask('statsRuns', args),
     coordinatorStatus: (args) => ask('coordinatorStatus', args),
+    coordinatorShow: (args) => ask('coordinatorShow', args),
     diagnoseRun: (args) => ask('diagnoseRun', args),
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
@@ -2334,6 +2351,37 @@ function spendViewKey(project: string, controls: SpendControls): string {
  * without either being read as a local time. */
 function nowStamp(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
+/**
+ * CoordinatorDescriptionState is one pull request's description as the visit on
+ * screen holds it (K3).
+ *
+ * **The read is made once per pull request and the answer is kept**, which is
+ * what the four fields are for: `asked` is whether the disclosure has ever been
+ * pressed (the press is what makes the read, and a second one makes none),
+ * `document` is what the CLI answered with, `at` is the console clock it was read
+ * at -- the stamp beside it -- and `sentence` is the refusal it left instead.
+ * `open` and `showAll` are the block's two states and belong to the operator
+ * rather than to the read.
+ *
+ * `read` is the section's own lifecycle, one per description, for the reason the
+ * screen's other sections have one each: a description's mark belongs to the
+ * block it was drawn for and to nothing else. `target` is the drawing it is bound
+ * to, held here rather than in the map's key because a repaint of the panel draws
+ * the row -- and therefore the button and the block -- again.
+ */
+interface CoordinatorDescriptionState {
+  open: boolean
+  asked: boolean
+  showAll: boolean
+  document: CoordinatorPullRequestDocument | null
+  at: number
+  sentence: string | null
+  attempt: number
+  token: number
+  readonly read: SectionRead
+  target: CoordinatorDescriptionTarget
 }
 
 /**
@@ -4562,6 +4610,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * presses `Load jobs`, so its mark is only ever put up by a press. */
   const coordinatorJobsRead = sectionRead({ factory, theme })
 
+  /** coordinatorDescriptions is the visit on screen's description reads (K3),
+   * keyed by the repository and the pull request number.
+   *
+   * It is held here rather than inside `showCoordinator` for the job list's own
+   * reason: **leaving the tab has to end every read it started**, and each
+   * description has a lifecycle of its own rather than one of the four shared
+   * sections -- nothing is in flight for a description until its disclosure is
+   * pressed, so a single mark for all of them would put a section's busy state
+   * on blocks nobody asked about. */
+  const coordinatorDescriptions = new Map<string, CoordinatorDescriptionState>()
+
   /** coordinatorChunk is the timer the detail is drawn on. It is held here
    * rather than inside a visit because leaving the tab has to stop it: the
    * chunks draw into a tree the operator has left. */
@@ -4587,6 +4646,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // and the token that would have drawn it is what makes it a read this visit
     // no longer owns.
     coordinatorJobsRead.end()
+    // Every description the visit read, for that reason and one of its own: a
+    // description's mark lives in a block of the row that asked for it, and the
+    // row is gone with the tab.
+    for (const state of coordinatorDescriptions.values()) state.read.end()
+    coordinatorDescriptions.clear()
   }
 
   /**
@@ -4864,6 +4928,172 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           })
         })
       }
+    }
+
+    /** descriptionKey is the row a description belongs to: the repository and
+     * the number the press carried, and nothing read back out of the DOM. */
+    const descriptionKey = (request: CoordinatorDescriptionRequest): string =>
+      cacheKey([request.repo, String(request.number)])
+
+    /**
+     * stateFor is one row's description read, made on that row's first press and
+     * kept for the rest of the visit -- which is what makes an expand/collapse
+     * cycle a redraw of what was read rather than a second read of the host
+     * (K3). A repaint draws the row again as new elements, so a state already
+     * held is re-pointed at the row now on screen.
+     */
+    const stateFor = (target: CoordinatorDescriptionTarget): CoordinatorDescriptionState => {
+      const held = coordinatorDescriptions.get(descriptionKey(target.request))
+      if (held !== undefined) {
+        held.target = target
+        return held
+      }
+      const made: CoordinatorDescriptionState = {
+        open: false,
+        asked: false,
+        showAll: false,
+        document: null,
+        at: 0,
+        sentence: null,
+        attempt: 0,
+        token: 0,
+        read: sectionRead({ factory, theme }),
+        target,
+      }
+      coordinatorDescriptions.set(descriptionKey(target.request), made)
+      return made
+    }
+
+    /** bindDescriptions makes every disclosure the screen drew a press. */
+    const bindDescriptions = (targets: readonly CoordinatorDescriptionTarget[]): void => {
+      for (const target of targets) {
+        surface.nodeOf(target.element).addEventListener('click', () => {
+          toggleDescription(target)
+        })
+      }
+    }
+
+    /**
+     * toggleDescription is the disclosure's press: it opens or closes the block
+     * the row drew, and **the first press on a row is the read** (K3). A row
+     * already read draws what it read, stamp and all, so the operator's second
+     * look is answered out of the visit rather than out of the host.
+     *
+     * The label and `aria-expanded` are written here rather than redrawn,
+     * because the disclosure is a control of the row and the row is not
+     * rebuilt: a press must be answered in the frame it happened in.
+     */
+    const toggleDescription = (target: CoordinatorDescriptionTarget): void => {
+      const state = stateFor(target)
+      state.open = !state.open
+      const control = surface.nodeOf(target.element)
+      control.setAttribute('aria-expanded', state.open ? 'true' : 'false')
+      control.textContent = state.open ? COORDINATOR_DESCRIPTION_HIDE_WORD : COORDINATOR_DESCRIPTION_SHOW_WORD
+      const block = surface.nodeOf(target.block)
+      if (!state.open) {
+        block.setAttribute('hidden', '')
+        return
+      }
+      block.removeAttribute('hidden')
+      if (state.asked) {
+        paintDescription(state)
+        return
+      }
+      state.asked = true
+      askForDescription(state)
+    }
+
+    /**
+     * askForDescription makes one pull request's read: `coordinator show` with
+     * the repository and the number the row was drawn from, and no other word.
+     * It is made from a press and never from `start`, for the job list's own
+     * reason -- nothing is in flight for a description nobody asked for.
+     */
+    const askForDescription = (state: CoordinatorDescriptionState): void => {
+      state.attempt += 1
+      state.token = state.read.start()
+      state.read.mark(
+        state.token,
+        state.target.block,
+        state.target.slot,
+        COORDINATOR_DESCRIPTION_BUSY,
+        COORDINATOR_DESCRIPTION_SHAPE,
+      )
+      // Nothing is painted here, and that is the rule the mark is for: a block
+      // being read for the first time holds the mark alone, and one being read
+      // again keeps the description already in it, dimmed under the mark. A
+      // paint would clear the slot the mark is in.
+      void loadDescription(state, state.attempt)
+    }
+
+    /** reReadDescription is the stamp's own control: it drops what was drawn and
+     * reads the pull request again. The first press's read is the same read, so
+     * a refresh is not a second kind of it. */
+    const reReadDescription = (state: CoordinatorDescriptionState): void => {
+      state.document = null
+      state.sentence = null
+      state.at = 0
+      askForDescription(state)
+    }
+
+    /** loadDescription makes the read and draws what it answered.
+     *
+     * The attempt is checked before anything is drawn, and the row is looked up
+     * again after the await: a press a later one superseded -- or a row a
+     * repaint has dropped -- must never have an answer drawn into the tree the
+     * operator is looking at. */
+    const loadDescription = async (state: CoordinatorDescriptionState, attempt: number): Promise<void> => {
+      const { repo, number } = state.target.request
+      const answer = documentOf(await bridge.coordinatorShow({ repo, pr: number }))
+      if (state.attempt !== attempt) return
+      if (stale(mine)) return
+      if (coordinatorDescriptions.get(descriptionKey(state.target.request)) !== state) return
+      if (!answer.ok) {
+        state.sentence = answer.sentence
+      } else {
+        const decoded = decodeCoordinatorPullRequest(answer.data, 'coordinator.show')
+        if (!decoded.ok) {
+          state.sentence = decoded.skew.because
+        } else {
+          state.sentence = null
+          state.document = decoded.value
+          state.at = Date.now()
+        }
+      }
+      state.read.settle(state.token)
+      surface.nodeOf(state.target.slot).replaceChildren()
+      paintDescription(state)
+    }
+
+    /**
+     * paintDescription draws the block one row's description is drawn in: the
+     * refusal if the read refused, else the lines and the stamp if it answered,
+     * else nothing at all under the mark of a read still in flight.
+     *
+     * The block is emptied to its slot and never to nothing (`clearSection`),
+     * because the mark of the read belongs in that slot and a repaint that took
+     * the slot with it would take the mark too -- a read in flight would then be
+     * a block that looks like an empty description.
+     */
+    const paintDescription = (state: CoordinatorDescriptionState): void => {
+      const target = state.target
+      clearSection(target.block, target.slot)
+      if (state.sentence !== null) {
+        appendTo(target.block, refusedScreen(factory, 'coordinator.show', state.sentence, theme))
+        return
+      }
+      if (state.document === null) return
+      const stamp = renderStamp(factory, state.at)
+      appendTo(target.block, stamp.root)
+      surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+        reReadDescription(state)
+      })
+      const control = fillCoordinatorDescription(factory, state.document.body, target.block, state.showAll)
+      if (control === null) return
+      surface.nodeOf(control).addEventListener('click', () => {
+        state.showAll = true
+        paintDescription(state)
+      })
     }
 
     /**
@@ -5200,6 +5430,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      */
     const paintBody = (cached: boolean): void => {
       stopCoordinatorChunks()
+      // Every description read ends here with the rows that asked for it: the
+      // block a description is drawn in belongs to a row this paint is about to
+      // replace, and an answer landing in a tree the operator can no longer see
+      // is a read nothing will draw. The view itself is re-read below, so the
+      // descriptions of a new view are reads of their own rather than the old
+      // view's answers drawn under a new stamp.
+      for (const state of coordinatorDescriptions.values()) state.read.end()
+      coordinatorDescriptions.clear()
       const drawn = mount(false)
       clearSection(drawn.body, drawn.slot)
       if (view === null) {
@@ -5232,7 +5470,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // The repository's numbers are bound in the chunk that drew them, so a
         // press is answered by the visit that is on screen -- and the chunk's
         // own staleness check above covers them with the rows they belong to.
-        bindPulls(repoDetail(detail.host, factory, detail.panel))
+        // The rows' description disclosures are bound here with them: they are
+        // controls of the same row, and the chunk is what drew the row.
+        const detailDrawn = repoDetail(detail.host, factory, detail.panel)
+        bindPulls(detailDrawn.pulls)
+        bindDescriptions(detailDrawn.descriptions)
         if (next < details.length) coordinatorChunk = setTimeout(step, 0)
       }
       if (details.length > 0) coordinatorChunk = setTimeout(step, 0)
