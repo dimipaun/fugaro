@@ -249,12 +249,28 @@ var credentialsTest *credentialsWiring
 // process's log handler. Nothing is guessed and nothing is defaulted: a
 // missing or malformed name is a refusal that names it.
 //
-// The one set left empty on purpose is the shared project jobs' accounts
-// (AuthConfig.SharedJobAccounts): under Global Constraint 6 this service
-// admits runs in per-repository jobs only until the phase-3 shared-job rules
-// land, and an empty set is that statement rather than a fact the deployment
-// has to make. The day those rules land it is a read of the policy this
-// service already reads (credsvc.SharedJobAccountsFor), not a variable.
+// The sets left empty on purpose are the two project-job ones. The shared
+// project jobs' accounts (AuthConfig.SharedJobAccounts) are empty because
+// under Global Constraint 6 this service admits runs in per-repository jobs
+// only until the phase-3 shared-job rules land, and an empty set is that
+// statement rather than a fact the deployment has to make. The day those rules
+// land it is a read of the policy this service already reads
+// (credsvc.SharedJobAccountsFor), not a variable.
+//
+// The review-only variant's accounts (AuthConfig.ReviewJobAccounts and
+// Config.ReviewAccounts, which are the same list) are empty for a reason that
+// is the deployment's rather than this command's: the accounts are
+// credsvc.ReviewJobAccountsFor over the published policy, and this command
+// reads no policy at all — it builds its configuration from the seven
+// variables above and never touches the database, which is the property that
+// keeps the service's start-up independent of the installation's state (and
+// the reason a policy read here would make the configuration fail for a
+// reason no operator could see in it). An empty set is the fail-closed
+// statement it is for the shared set: this installation admits no review job,
+// and every caller of that class is refused. It is also the state of every
+// installation until the variant's jobs exist at all — CSR7 is the task that
+// deploys them — and the wiring that fills the set belongs with it, where the
+// accounts it names are accounts a deployment has created.
 //
 // A REFUSAL NAMES A VARIABLE, NEVER A VALUE.
 //
@@ -295,7 +311,7 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err := credentialsServiceAudience(env[envCredentialsServiceURL]); err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
-	accounts, err := credentialsServiceJobAccounts(env[envJobAccounts], env[envProject], env[envGCPProject])
+	accounts, repos, err := credentialsServiceJobAccounts(env[envJobAccounts], env[envProject], env[envGCPProject])
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
@@ -359,7 +375,12 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// NewServer (NewProbeAuditor arms it with this service's loader).
 		AuditLog:    log.Handler(),
 		JobAccounts: accounts,
-		Log:         log,
+		// The repository table, which is the pairing's second step for a
+		// review caller (C3.9a) and is read from this variable's own input
+		// above rather than from the published policy: the table must be the
+		// one the per-repository bindings are made from.
+		Repos: repos,
+		Log:   log,
 	}, nil
 }
 
@@ -409,10 +430,22 @@ func credentialsServiceAudience(raw string) error {
 	return nil
 }
 
-// credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the binding
-// table NewServer is given: one account per (repository, workflow), derived
-// from the triple by the one derivation the deployer used
-// (credsvc.JobAccountsFor over task.Slug and gcp.ServiceAccountID).
+// credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the two things
+// NewServer is given that this variable holds: the binding table, one account
+// per (repository, workflow), derived from the triple by the one derivation
+// the deployer used (credsvc.JobAccountsFor over task.Slug and
+// gcp.ServiceAccountID), and the repository table, which is those same rows
+// read the other way round (credsvc.RepositoryTableFor: the slug a run
+// identity carries to the canonical repository name the published policy
+// speaks).
+//
+// The repository table is what pairs a review caller with a run (C3.9a): a
+// review job's account names no repository, so the run identity's own slug is
+// the only repository the call can be about, and it is resolved here rather
+// than guessed from the slug's own text. Its input is this variable and not
+// the published policy, because the table must be the one the per-repository
+// bindings are made from — a service that resolved a slug another way could
+// pair an account with a repository its own binding table disagrees about.
 //
 // The document is strict: a JSON array of objects with exactly those three
 // fields, all of them non-empty. Terraform writes it from an input the owner
@@ -424,7 +457,7 @@ func credentialsServiceAudience(raw string) error {
 // An empty array is refused here rather than left to NewServer: the two agree
 // (NewServer refuses a table that binds nothing), and refusing it by name says
 // which variable was empty, which is the thing an operator has to fix.
-func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]credsvc.JobAccount, error) {
+func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]credsvc.JobAccount, map[string]string, error) {
 	var jobs []struct {
 		Provider string `json:"provider"`
 		Repo     string `json:"repo"`
@@ -433,10 +466,10 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&jobs); err != nil {
-		return nil, fmt.Errorf("%s is not the installation's job accounts: it must be a JSON array of {\"provider\": ..., \"repo\": ..., \"workflow\": ...} objects, one per job whose service account may call the service. Nothing was started and no credential was issued", envJobAccounts)
+		return nil, nil, fmt.Errorf("%s is not the installation's job accounts: it must be a JSON array of {\"provider\": ..., \"repo\": ..., \"workflow\": ...} objects, one per job whose service account may call the service. Nothing was started and no credential was issued", envJobAccounts)
 	}
 	if len(jobs) == 0 {
-		return nil, fmt.Errorf("%s names no job, so the service would bind no run to a repository: an empty table refuses every caller, and a service that admits nobody is one an operator would read as healthy while every run halted. Nothing was started and no credential was issued", envJobAccounts)
+		return nil, nil, fmt.Errorf("%s names no job, so the service would bind no run to a repository: an empty table refuses every caller, and a service that admits nobody is one an operator would read as healthy while every run halted. Nothing was started and no credential was issued", envJobAccounts)
 	}
 	byProvider := map[string][]credsvc.RepoJob{}
 	for i, j := range jobs {
@@ -445,11 +478,12 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 			// one value in this environment that can hold a name an operator
 			// would not want in a log, and the refusal has to be actionable
 			// without it.
-			return nil, fmt.Errorf("%s: entry %d has no provider, repository or workflow (all three are required: the account's name is derived from the repository and the workflow, and the repository's slug from the provider and the repository)", envJobAccounts, i)
+			return nil, nil, fmt.Errorf("%s: entry %d has no provider, repository or workflow (all three are required: the account's name is derived from the repository and the workflow, and the repository's slug from the provider and the repository)", envJobAccounts, i)
 		}
 		byProvider[j.Provider] = append(byProvider[j.Provider], credsvc.RepoJob{Repo: j.Repo, Workflow: j.Workflow})
 	}
 	out := make([]credsvc.JobAccount, 0, len(jobs))
+	repos := make(map[string]string, len(jobs))
 	for _, provider := range slices.Sorted(maps.Keys(byProvider)) {
 		accts, err := credsvc.JobAccountsFor(fugaroProject, gcpProject, provider, byProvider[provider])
 		if err != nil {
@@ -457,11 +491,20 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 			// is left is actionable because the entry above has been checked
 			// for its three fields, so what can be wrong here is the provider
 			// or the repository's shape.
-			return nil, fmt.Errorf("%s names a job whose service account cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name, because the account's name is derived from the two rather than configured. Nothing was started and no credential was issued", envJobAccounts)
+			return nil, nil, fmt.Errorf("%s names a job whose service account cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name, because the account's name is derived from the two rather than configured. Nothing was started and no credential was issued", envJobAccounts)
+		}
+		table, err := credsvc.RepositoryTableFor(fugaroProject, gcpProject, provider, byProvider[provider])
+		if err != nil {
+			// Unreachable: the same input has just been derived above. The
+			// branch is here rather than a second copy of the table's rule,
+			// because a table spelled anywhere but RepositoryTableFor would be
+			// a slug resolved one way for a binding and another for a review.
+			return nil, nil, fmt.Errorf("%s names a job whose repository cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name. Nothing was started and no credential was issued", envJobAccounts)
 		}
 		out = append(out, accts...)
+		maps.Copy(repos, table)
 	}
-	return out, nil
+	return out, repos, nil
 }
 
 // The host's own bounds. A proxied model call is long-lived -- it streams a
