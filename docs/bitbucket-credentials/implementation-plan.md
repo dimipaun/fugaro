@@ -413,13 +413,33 @@ T2.3's coordinator-account half returns in BB5.
     `bitbucket.ServiceReadTokens`, the new client half, instead of refusing with
     `coordinator.ErrBitbucket`. The GitHub path is unchanged, and the read refuses
     `FUGARO_BITBUCKET_API_URL` (G10).
-  - The command needs the service's URL, and it gets **a variable of its own**:
-    `FUGARO_BITBUCKET_READ_SERVICE_URL`, which the published shared config carries to a person's
-    machine and which only the Bitbucket opener reads. Not `FUGARO_CREDENTIALS_SERVICE_URL`: that
-    one makes `coordinatorAppCredential` refuse, so setting it on a person's machine would turn
-    their **GitHub** read off as well (F2, F23 — the same reason the coordinator job gets
-    `FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL` rather than the general one). With no variable,
-    Bitbucket is refused exactly as on `main`, and GitHub is untouched (G8).
+  - The command needs the service's URL, and it gets **a name of its own** for it:
+    `FUGARO_BITBUCKET_READ_SERVICE_URL`, which only the Bitbucket opener reads. Not
+    `FUGARO_CREDENTIALS_SERVICE_URL`: that one makes `coordinatorAppCredential` refuse, so setting
+    it on a person's machine would turn their **GitHub** read off as well (F2, F23 — the same reason
+    the coordinator job gets `FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL` rather than the general
+    one).
+  - **Where the value comes from, and who writes it.** It is the installation's **existing**
+    published `credentials_service` block — `localcfg.CredentialsService.URL` — which
+    `credentialsServiceBlock` (`internal/cli/init.go`) writes from Terraform's own outputs on the
+    machine that deployed the service, and which `localcfg.MergeShared` merges into every machine's
+    config, the local block winning. So **BB4 publishes nothing new and adds no config key**: the
+    writer already exists, and the same block already carries this URL for `fugaro run`. The
+    environment variable is an override on top of it (for a test, or an operator pointing one
+    machine elsewhere); the command resolves the block into the Bitbucket opener's own handle, which
+    is what keeps the GitHub path — which flips on `FUGARO_CREDENTIALS_SERVICE_URL` alone —
+    untouched.
+  - **Operator-owned, and not in `sharedForbidden`.** Only the machine that ran `fugaro update`
+    writes the block, from Terraform; a person never types the URL, and `localcfg` validates it as a
+    Cloud Run URL when it loads (`validCredentialsServiceURL`). It stays out of `sharedForbidden`
+    because it has to travel — forbidding the key would mean every person sets the URL by hand,
+    which is the operator step the plan is written to avoid. The residual exposure is honest and
+    inherited, not BB4's: whoever can write the runs bucket could repoint that block, and both this
+    read and the C3.9 chain's verifier send a person's ID token to whatever it names. The anchor
+    check in `ParseShared` and `docs/design/shared-config.md` §5 are what stand against that today,
+    and a third caller class does not make that worse.
+  - With no block and no override, Bitbucket is refused exactly as on `main`, and GitHub is
+    untouched (G8).
   - **The stop switch:** take the read consumer out of the bundle. The person class is honoured only
     while the bundle holds one.
 - **Files:**
@@ -433,10 +453,18 @@ T2.3's coordinator-account half returns in BB5.
   - `internal/gitprov/bitbucket/service.go` (new) and `internal/gitprov/bitbucket/service_test.go`
     (new);
   - `ee/coordinator/cli/coordinator.go` and `ee/coordinator/view.go`, plus C3's own `show` file,
-    which C3 creates (console-coordinator-v2 C3);
+    `ee/coordinator/cli/coordinator_show.go`, which C3 has already landed on `main` (#1546), and
+    `ee/coordinator/cli/coordinator_show_test.go` beside it;
   - `deploy/terraform/gcp/modules/installation/credentials.tf` and `variables.tf`, for the person
     invoker grant;
   - `internal/infra/tf/cover.go`, deliberately, for a role granted to a new kind of principal.
+- **Not in this list, and why.** BB4 adds no file that writes the variable, because it is not a new
+  publication: it names the credentials service's own URL, which the published
+  `credentials_service` block already carries. That block's writer is `credentialsServiceBlock`
+  (`internal/cli/init.go`), on the machine that deployed the service, and its merger is
+  `localcfg.MergeShared` (`internal/localcfg/shared.go`); BB4 changes neither, and it adds no key
+  to `sharedForbidden`, because the value has to travel. What BB4 adds is the reader — the
+  `ee/coordinator/cli/coordinator.go` entry above, and the opener it resolves the URL into.
 - **Tests:**
   - `TestPersonCallerOnlyOnReadRoute`;
   - `TestPersonCallerRefusedOtherAccounts`;
@@ -467,7 +495,7 @@ T2.3's coordinator-account half returns in BB5.
     their GitHub read off, which is the whole reason it is not `FUGARO_CREDENTIALS_SERVICE_URL`;
   - `TestServicePathRefusesAPIRootOverride`;
   - `TestServiceReadTokensRedacted`.
-- **Command:** `go test ./internal/credsvc -run 'PersonCaller|ReadMint|RunIdentityRefusedOnRead' -count=1 && go test ./internal/gitprov/bitbucket -run ServiceRead -count=1 && GOFLAGS=-p=2 go test ./ee/coordinator/... -count=1 -timeout 40m`.
+- **Command:** `go test ./internal/credsvc -run 'PersonCaller|PersonClass|ReadMint|NewRoutesAuditConsumerKind|RunIdentityRefusedOnRead' -count=1 && go test ./internal/gitprov/bitbucket -run 'ServiceRead|ServicePath' -count=1 && GOFLAGS=-p=2 go test ./ee/coordinator/... -count=1 -timeout 40m`.
 - **Depends on:** BB1, BB2 and BB3 (Check 145 passed, B3/O4), and the C3.9 chain's **C3.9f/g**
   (B2).
 - **Red step:** run `TestPersonCallerOnlyOnReadRoute` against an admission that returns a generic
@@ -549,7 +577,7 @@ T2.10 (Check 146). It comes after BB4 because it reuses the read mint BB4 builds
     - a Bitbucket-only installation with the coordinator on (no App key).
 
     Also the `internal/infra` tests for `Coordinator`.
-- **Command:** `go test ./internal/credsvc -run 'CoordinatorCaller|RunIdentityRefusedOnRead' -count=1 && go test ./ee/coordinator/... -run Bitbucket -count=1 && bash scripts/live-checks/check146_test.sh`, then
+- **Command:** `go test ./internal/credsvc -run 'CoordinatorCaller|CoordinatorClass|RunIdentityRefusedOnRead' -count=1 && GOFLAGS=-p=2 go test ./ee/coordinator/... -run 'Sweep|LocalStatus' -count=1 -timeout 40m && GOFLAGS=-p=2 go test ./internal/cli -run 'Sweep|LocalStatusBitbucket' -count=1 && bash scripts/live-checks/check146_test.sh`, then
   `terraform fmt -check -recursive deploy/terraform`, then
   `terraform -chdir=deploy/terraform/gcp/roots/installation init -backend=false -lockfile=readonly`,
   `validate` and `test` (with `TF_DATA_DIR` outside the tree), then `scripts/gen-golden-plans.sh`,
@@ -974,7 +1002,7 @@ changes.
 
 | File | Writers (level) |
 | --- | --- |
-| `ee/coordinator/cli/coordinator.go` | T1.1 (L0), BB5 (L3) |
+| `ee/coordinator/cli/coordinator.go` | T1.1 (L0), BB4 (L2), BB5 (L3) |
 | `ee/coordinator/cli/coordinator_view.go`, `coordinator_view_test.go`, `ee/coordinator/state.go`, `state_test.go` | T1.1 (L0) |
 | `scripts/live-checks/check145.sh`, `check145_test.sh` | BB3 (L0) |
 | `scripts/live-checks/check146.sh`, `check146_test.sh` | BB5 (L3) |
@@ -988,7 +1016,8 @@ changes.
 | `ee/coordinator/project.go` | BB5 (L3) |
 | `docs/credentials-service/runbook.md`, `docs/git-providers.md` | T2.6 (L3) |
 | `docs/gcp-live-checklist.md` | T0.2 (L0) |
-| `deploy/terraform/gcp/modules/installation/*`, `roots/installation/*`, `internal/infra/firebase.go`, `projectjobs.go`, `tfvars.go`, `internal/cli/init_firebase.go`, `internal/infra/tf/cover.go`, `internal/infra/tf/testdata/golden/*` | BB5 (L3) |
+| `deploy/terraform/gcp/modules/installation/*`, `internal/infra/tf/cover.go`, `internal/infra/tf/testdata/golden/*` | BB4 (L2), BB5 (L3) |
+| `roots/installation/*`, `internal/infra/firebase.go`, `projectjobs.go`, `tfvars.go`, `internal/cli/init_firebase.go` | BB5 (L3) |
 | `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_bitbucket_security_test.go` | T2.11 (L4) |
 | `console/**`, `console/docs/json-contract.md`, `docs/design/desktop-console.md` | T1.2 (L1) |
 
