@@ -25,6 +25,10 @@ package cli
 //   - TestCoordinatorIntentsSinceBoundsTheDeclarations: --since is measured
 //     against the record's own clock, and 0 is every declaration the store
 //     holds.
+//   - TestCoordinatorIntentsReadsWithTheCredentialsServiceSet: the read is the
+//     database's and the caller's, so the installation whose App key lives in
+//     its credentials service — the ordinary one — is served here exactly as
+//     it is everywhere else, where §6.13's host read refuses.
 
 import (
 	"context"
@@ -38,6 +42,7 @@ import (
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -314,5 +319,49 @@ func TestCoordinatorIntentsSinceBoundsTheDeclarations(t *testing.T) {
 	all := f.read(t, "coordinator", "intents", "--all", "--json")
 	if len(all.Repos[0].Intents) != 2 {
 		t.Errorf("--since 0 printed %d declarations, want every one the store holds", len(all.Repos[0].Intents))
+	}
+}
+
+// TestCoordinatorIntentsReadsWithTheCredentialsServiceSet: §6.16's own
+// sentence, tested — with the installation's credentials service on, this read
+// still succeeds where the host read refuses. The service holds the App's key
+// (C2.2, D145), so §6.13's project-wide read has no credential here to mint its
+// token with and is refused (TestCoordinatorStatusFromStoreWithService is that
+// half); this read mints nothing and opens nothing, so the caller's own
+// database credential serves it and it answers the same in that environment as
+// in any other. Without this, "the console child needs no key" is a claim with
+// nothing behind it on the ordinary installation — the one that keeps its key
+// in the service.
+func TestCoordinatorIntentsReadsWithTheCredentialsServiceSet(t *testing.T) {
+	f := newCoordinatorIntentsFixture(t)
+	at := fcli.LsNow().Add(-time.Hour).UTC().Truncate(time.Second)
+	f.declare(t, "acme/app", at, coordinator.Intent{DeclaredBy: "person-1", Release: "0.13.0"})
+	noStoreOpens(t)
+	// The environment that makes the difference: the service holds the App's
+	// key, and this process holds no App credential of its own either.
+	t.Setenv(providers.EnvGitHubAppID, "")
+	t.Setenv(providers.EnvGitHubAppKey, "")
+	t.Setenv(providers.EnvCredentialsServiceURL, "https://credentials.example.com/")
+
+	read := f.read(t, "coordinator", "intents", "--all", "--json")
+	if len(read.Repos) != 2 {
+		t.Fatalf("with the credentials service set, the read printed %d repositories, want both", len(read.Repos))
+	}
+	if len(read.Repos[0].Intents) != 1 {
+		t.Fatalf("with the credentials service set, %s printed %d declarations, want the one it holds",
+			read.Repos[0].Repo, len(read.Repos[0].Intents))
+	}
+	if declaredBy := string(read.Repos[0].Intents[0]["declared_by"]); declaredBy != `"person-1"` {
+		t.Errorf("the declaration printed as %s, want the one the store holds", declaredBy)
+	}
+	if len(read.Repos[1].Intents) != 0 {
+		t.Errorf("%s printed %d declarations, want the empty list it holds", read.Repos[1].Repo, len(read.Repos[1].Intents))
+	}
+	// The declarations are the ones the store holds, read through the same
+	// document shape a console decodes: a command that served this environment
+	// by minting, or by asking the service for a run's token, would fail above
+	// rather than print anything at all.
+	if want := at.Format(time.RFC3339); string(read.Repos[0].Intents[0]["at"]) != `"`+want+`"` {
+		t.Errorf("the declaration's at = %s, want %s", read.Repos[0].Intents[0]["at"], want)
 	}
 }
