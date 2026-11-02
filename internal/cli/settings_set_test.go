@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -597,6 +598,180 @@ func TestSettingsSetUnknownKeyHintNamesOnlyKeysItCouldWrite(t *testing.T) {
 				t.Errorf("the hint does not name %s:\n%s", c.want, hint)
 			}
 		})
+	}
+}
+
+// settingsRefusalHint is the nearest-names tail of a refusal: the rows it
+// named, or a failure when it named none.
+func settingsRefusalHint(t *testing.T, err error) string {
+	t.Helper()
+	_, hint, ok := strings.Cut(err.Error(), "the nearest are ")
+	if !ok {
+		t.Fatalf("the refusal names no nearest keys: %v", err)
+	}
+	return hint
+}
+
+// settingsRefusedNames is the keys a refusal's hint named, in the order it
+// printed them.
+func settingsRefusedNames(hint string) []string {
+	out := []string{}
+	for _, name := range strings.Split(hint, ", ") {
+		if name = strings.TrimSpace(name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// settingsHintNeverNames pins the keys a write's hint must never name: the rows
+// this command refuses by name — budget.mode and budget.per_day_usd — the
+// installation's own plumbing an endpoints.* name is part of, and a row the
+// registry marks Sensitive, whose value the diff would print.
+func settingsHintNeverNames(t *testing.T, hint string) {
+	t.Helper()
+	refused := []string{"budget.per_day_usd", "budget.mode", "budget.firebase_api_key"}
+	for _, row := range settings.Rows() {
+		if strings.HasPrefix(row.Key, "endpoints.") || row.Sensitive {
+			refused = append(refused, row.Key)
+		}
+	}
+	for _, key := range refused {
+		if strings.Contains(hint, key) {
+			t.Errorf("the hint names %s, which this command refuses:\n%s", key, hint)
+		}
+	}
+}
+
+// settingsWriteFixtures lays out this machine's three writable documents — the
+// local project config, the local project layer file and a checkout's
+// fugaro.yaml — so a test can probe a key in the layer it is set in.
+func settingsWriteFixtures(t *testing.T) {
+	t.Helper()
+	settingsWriteHome(t)
+	settingsWriteLayerFile(t, "")
+	settingsWriteCheckout(t, settingsRepoYAML(""))
+}
+
+// settingsProbeItem is the item --add writes when a test only needs to know
+// whether a key takes a list: a plain string, which a label, a reviewer and a
+// model ID all take.
+const settingsProbeItem = "probe-item"
+
+// settingsProbeItems are the items of the list keys whose validator is
+// stricter than "any string": budget.allowed_models refuses a name that is not
+// an explicit model ID (config.CheckModelID) and followup.trusted refuses
+// anything but a GitHub numeric user ID. The probe writes the item its key
+// needs, and every other key takes settingsProbeItem.
+var settingsProbeItems = map[string]string{
+	"budget.allowed_models": "claude-probe-9-9",
+	"followup.trusted":      "100000002",
+}
+
+// settingsAddLands reports whether `--add` lands on key, in the layer the row
+// is set in. It asks the command rather than a second list, so what "a key that
+// takes a list" means is the documents' own loaders' answer.
+func settingsAddLands(t *testing.T, key string) bool {
+	t.Helper()
+	row, ok := settings.Lookup(key)
+	if !ok {
+		t.Fatalf("%s is not a registry row", key)
+	}
+	layer := settingsDefaultLayer(row)
+	if layer == "" {
+		t.Fatalf("%s may be set in no layer a write lands in", key)
+	}
+	item := settingsProbeItem
+	if strict, ok := settingsProbeItems[key]; ok {
+		item = strict
+	}
+	_, _, err := execute(t, "settings", "set", key, "--add", item, "--layer", layer, "--yes")
+	return err == nil
+}
+
+// TestSettingsSetUnknownKeyHintNamesOnlyRowsTheWriteAccepts: the refusal's
+// nearest names come from the rows this command accepts, and never from a
+// registry row it refuses (spec §4.4). The allowlist alone is not that set: it
+// carries the blocks whole, so `agent.model` reaches the hint through the
+// `agent.` prefix while the models family owns the row and `settings set`
+// refuses it, and the hint that answered `budget.mod` with it sent the person
+// from this refusal to the next one.
+func TestSettingsSetUnknownKeyHintNamesOnlyRowsTheWriteAccepts(t *testing.T) {
+	settingsWriteHome(t)
+	_, _, err := execute(t, "settings", "set", "budget.mod", "1", "--layer", "local", "--yes")
+	if err == nil {
+		t.Fatal("settings set wrote the unknown key budget.mod")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit code = %d, want %d", ExitCode(err), ExitUserError)
+	}
+	hint := settingsRefusalHint(t, err)
+	settingsHintNeverNames(t, hint)
+	named := settingsRefusedNames(hint)
+	if len(named) == 0 {
+		t.Fatalf("the refusal named no key at all: %v", err)
+	}
+	for _, key := range named {
+		if _, err := settingsWriteRow(key); err != nil {
+			t.Errorf("the hint names %s, which this command refuses: %v", key, err)
+		}
+	}
+}
+
+// TestSettingsSetAddHintNamesOnlyListKeysTheWriteAccepts: `--add` and `--remove`
+// edit a string-list key, so the hint that answers a misspelling of one names
+// the keys that take a list and nothing else. A scalar row answered `--add`
+// with itself sends the person from this refusal to the loader's, which is
+// where `--add` on a scalar ends.
+func TestSettingsSetAddHintNamesOnlyListKeysTheWriteAccepts(t *testing.T) {
+	settingsWriteFixtures(t)
+	_, _, err := execute(t, "settings", "set", "budget.mod", "--add", settingsProbeItem, "--layer", "local", "--yes")
+	if err == nil {
+		t.Fatal("settings set --add wrote the unknown key budget.mod")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit code = %d, want %d", ExitCode(err), ExitUserError)
+	}
+	hint := settingsRefusalHint(t, err)
+	settingsHintNeverNames(t, hint)
+	named := settingsRefusedNames(hint)
+	if len(named) == 0 {
+		t.Fatalf("the refusal named no key at all: %v", err)
+	}
+	for _, key := range named {
+		if _, err := settingsWriteRow(key); err != nil {
+			t.Errorf("the hint names %s, which this command refuses: %v", key, err)
+		}
+		if !settingsAddLands(t, key) {
+			t.Errorf("the hint names %s, where --add does not land:\n%s", key, hint)
+		}
+	}
+	if !strings.Contains(hint, "budget.allowed_models") {
+		t.Errorf("the hint names no list key near budget.mod:\n%s", hint)
+	}
+}
+
+// TestSettingsAddHintListKeysAreTheKeysThatTakeAList: the list the --add hint
+// draws from is the write path's own answer and not a second opinion. Every row
+// the write accepts is probed once, in the layer it is set in, and the probe
+// has to agree with the list: --add lands on the rows it names and the
+// document's own loader refuses it on the rest. A list key added to the
+// registry later — or a row that stops taking one — fails here, where a stale
+// list would leave the hint naming keys that cannot take it.
+func TestSettingsAddHintListKeysAreTheKeysThatTakeAList(t *testing.T) {
+	settingsWriteFixtures(t)
+	accepted := 0
+	for _, row := range settings.Rows() {
+		if !settingsHintRow(row) {
+			continue
+		}
+		accepted++
+		if got, want := settingsAddLands(t, row.Key), settingsHintListKeys[row.Key]; got != want {
+			t.Errorf("%s: --add lands = %v, the hint's list says %v", row.Key, got, want)
+		}
+	}
+	if accepted < len(settingsHintListKeys) {
+		t.Fatalf("probed %d accepted rows, fewer than the hint's own list carries", accepted)
 	}
 }
 

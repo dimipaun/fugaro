@@ -246,10 +246,25 @@ Every write ends with one line: next: fugaro update.`,
 // says a map-valued key has no generic form *always*, so `workflows.*.commands.
 // test` is refused as a map entry and not as a key nobody listed.
 func settingsWriteRow(key string) (settings.Row, error) {
+	return settingsWriteRowHinted(key, false)
+}
+
+// settingsWriteListRow is settingsWriteRow for an --add or a --remove: the same
+// row and the same refusals, and a hint narrowed to the keys that take a list,
+// because a scalar answered `--add` with itself is a name the person has to
+// come back from.
+func settingsWriteListRow(key string) (settings.Row, error) {
+	return settingsWriteRowHinted(key, true)
+}
+
+// settingsWriteRowHinted is settingsWriteRow with list saying whether the write
+// is an --add or a --remove. list reaches no refusal but the unknown-key one:
+// which rows this path writes is the same question either way.
+func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 	row, registry, ok := settingsWriteLookup(key)
 	if !ok {
 		return settings.Row{}, userErr("%s: no setting has that name; the nearest are %s",
-			key, strings.Join(nearestSettings(key, settingsWriteHintRows()), ", "))
+			key, strings.Join(nearestSettings(key, settingsWriteHintRows(list)), ", "))
 	}
 	if row.Sensitive {
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
@@ -321,20 +336,62 @@ func settingsPatternMatch(pattern, key string) bool {
 	return true
 }
 
+// settingsHintRow reports whether a write's hint may name row: the rows
+// settingsWriteRow accepts, and the whole of them. The read's own hint names
+// every registry row, which is right there — a read covers the whole registry —
+// but a write covers the rows this command writes, and a hint drawn from
+// anything wider sends a person from one refusal to the next. Spec §4.4 puts it
+// as "never with a registry row this path refuses", and the allowlist is not
+// the whole of that set: it carries blocks whole, so `agent.model` reaches a
+// hint through the `agent.` prefix while the models family owns the row and
+// `settings set` refuses it. A Sensitive row is refused here for a reason of
+// its own — the diff a write shows would print its value — and a key with a
+// varying segment is a map entry with no generic form.
+//
+// The refusals are settingsWriteRow's own, asked in its own order, so the two
+// cannot disagree about what this path writes.
+func settingsHintRow(row settings.Row) bool {
+	if row.Sensitive {
+		return false
+	}
+	if _, family := settingsFamilyCommands[row.Owner]; family {
+		return false
+	}
+	if strings.Contains(row.Key, "*") {
+		return false
+	}
+	return settingsGenericKey(row.Key)
+}
+
+// settingsHintListKeys are the string-list keys of the accept set: the rows
+// `--add` and `--remove` edit, and so the only rows a hint drawn for those two
+// flags may name. The registry carries no key type, so the list stands here
+// beside the refusal that needs it, and
+// TestSettingsAddHintListKeysAreTheKeysThatTakeAList probes every row the write
+// path accepts and holds this table to the documents' own loaders: a list key
+// added later is that test's failure, not a hint that quietly stops naming it.
+var settingsHintListKeys = map[string]bool{
+	"budget.allowed_models":        true, // config.Budget.AllowedModels
+	"followup.trusted":             true, // config.Followup.Trusted
+	"git.pr.labels":                true, // config.PRSettings.Labels
+	"git.pr.reviewers":             true, // config.PRSettings.Reviewers
+	"layer.defaults.git.pr.labels": true, // config.LayerPR.Labels
+}
+
 // settingsWriteHintRows are the registry rows a write's unknown-key refusal may
-// name as its nearest. The read's own hint names every row, which is right
-// there: a read covers the whole registry. A write covers the allowlist, so a
-// hint drawn from the whole registry sends a person from one refusal to the
-// next — `budget.per_day_usd` and `budget.mode` are rows the read prints and
-// the write refuses by name, and answering a misspelling of one with it is a
-// name this command was never able to write.
-func settingsWriteHintRows() []settings.Row {
+// name as its nearest: the accept set, narrowed to the list keys when list says
+// the write is an --add or a --remove.
+func settingsWriteHintRows(list bool) []settings.Row {
 	rows := settings.Rows()
 	out := make([]settings.Row, 0, len(rows))
 	for _, row := range rows {
-		if settingsGenericKey(row.Key) {
-			out = append(out, row)
+		if !settingsHintRow(row) {
+			continue
 		}
+		if list && !settingsHintListKeys[row.Key] {
+			continue
+		}
+		out = append(out, row)
 	}
 	return out
 }
@@ -869,7 +926,11 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 			value = args[1]
 		}
 	}
-	row, err := settingsWriteRow(key)
+	lookup := settingsWriteRow
+	if list {
+		lookup = settingsWriteListRow
+	}
+	row, err := lookup(key)
 	if err != nil {
 		return err
 	}
