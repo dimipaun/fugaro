@@ -736,6 +736,14 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a review-signing name at the length bound", config.ReviewSigningKeyPreviousSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen)) + ": " + fakeCred(t, "x") + "\n"},
 		{"a review-signing name one byte over the length bound", config.ReviewSigningKeyPreviousSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen+1)) + ": " + fakeCred(t, "x") + "\n"},
 		{"a dash-heavy review-signing account over the account length bound", config.ReviewSigningKeySecret("a"+strings.Repeat("-a", 30)) + ": " + fakeCred(t, "x") + "\n"},
+		// The one reserved ACCOUNT name is legal as a review-signing entry's
+		// account part, and both sides read it that way: the reservation exists
+		// because that account's derived SECRET would be the git entry's own
+		// key, and the review-signing name is a different name — the service can
+		// never ask for its key, no account of it can be configured, and
+		// refusing it here would refuse a whole document over an entry no
+		// caller reads.
+		{"a review-signing entry for the reserved account name", config.ReviewSigningKeySecret(config.BitbucketSecret) + ": " + fakeCred(t, "x") + "\n"},
 		{"the exact count bound", many.String()},
 		{"an unknown key", "antropic-api-key: " + fakeCred(t, "x") + "\n"},
 		{"an account name outside the rule", "claude-oauth-token-9alice: " + fakeCred(t, "x") + "\n"},
