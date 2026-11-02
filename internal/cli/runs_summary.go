@@ -436,11 +436,8 @@ func summaryDocument(project string, from, to int64, read summaryRead) summaryDo
 		a.runs += max(r.Runs, 0)
 		for k, n := range r.Outcomes {
 			// A count below zero is not a count -- a window's nodes can
-			// disagree, and a history document can hold one an older release
-			// miscounted -- so it counts as nothing rather than pulling the
-			// repository's row below zero. The money is added the same way
-			// (summaryAdd), and the database's rollup clamps its own counters
-			// the same way (budget's clamp0).
+			// disagree -- so it counts as nothing, as the money is added
+			// (summaryAdd) and as the database's rollup clamps its counters.
 			a.states[summaryState(k)] += max(n, 0)
 		}
 		a.spent, a.notional = summaryAdd(a.spent, r.SpentMicros), summaryAdd(a.notional, r.NotionalMicros)
