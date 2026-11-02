@@ -3,16 +3,23 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 func TestCheckRecipeImage(t *testing.T) {
@@ -287,6 +294,436 @@ func TestRecipesSkewRefusesRepositoryAdversarialOnOldImage(t *testing.T) {
 	}
 }
 
+// TestRecipesSkewRefusesReviewLevelsOnOldImage: a launch that asks for review
+// levels needs a job image whose runner acts on them (L1.2, reviewLevelsSince,
+// 0.16.0). 0.15.0 decodes the task's review_levels and agent.levels and acts
+// on neither, so a launch it accepted would run with the block dropped in
+// silence — no `none`, no level's own model or effort — and the run would be
+// the very one the launcher asked not to have. A base image that is not a
+// release cannot be dated, so it only warns, and an image at the release or
+// later is not gated at all.
+func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		ReviewLevels: &config.ReviewLevels{L2: &config.LevelSetting{Off: true}}}
+	ask := reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil, false)
+	if want := "the task's review_levels (l2.none)"; ask != want {
+		t.Fatalf("ask = %q, want %q", ask, want)
+	}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", ask, &warn)
+		return warn.String(), err
+	}
+	// 0.15.0 is the release the field and the keys shipped in, and still
+	// drops every one of them: the gate is 0.16.0, the release L4.2 acts on
+	// levels in.
+	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.14.0", "ghcr.io/dimipaun/fugaro-base:0.15.0"} {
+		warn, err := check(baseRef)
+		if err == nil || !strings.Contains(err.Error(), "needs a job image whose runner knows the review levels (review_levels, agent.levels) (fugaro 0.16.0 or later)") || ExitCode(err) != ExitUserError {
+			t.Fatalf("%s: warn = %q, err = %v", baseRef, warn, err)
+		}
+		if warn != "" {
+			t.Errorf("%s: warning %q, want none", baseRef, warn)
+		}
+	}
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.16.0"); err != nil {
+		t.Fatalf("0.16.0: warn = %q, err = %v", warn, err)
+	}
+	warn, err := check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The same launch on a checkout: clone workflow, whose job has no derived
+	// image and so no build record: the gate raises checkCloneImageSince's
+	// threshold on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.15.0"}
+	var cloneWarn bytes.Buffer
+	err = checkCloneReviewLevelsImage(&lc, spec, ask, &cloneWarn)
+	if err == nil || !strings.Contains(err.Error(), "fugaro 0.16.0 or later") || !strings.Contains(err.Error(), "release 0.15.0") || ExitCode(err) != ExitUserError {
+		t.Fatalf("clone 0.15.0: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.16.0"
+	if err := checkCloneReviewLevelsImage(&lc, spec, ask, &bytes.Buffer{}); err != nil {
+		t.Fatalf("clone 0.16.0: %v", err)
+	}
+	// A launch that asks for no levels at all is never gated, whatever its
+	// image is: an empty block says nothing about any level
+	// (config.writesLevel), and neither does a task with no block.
+	if ask := reviewLevelsAsk(config.Levels{}, &config.ReviewLevels{L2: &config.LevelSetting{}}, nil, nil, false); ask != "" {
+		t.Errorf("an empty block asked %q, want nothing", ask)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	if err := checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", "", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a launch that asks nothing: %v", err)
+	}
+	// The configuration's own block asks too: agent.levels is a key only a
+	// runner that acts on levels reads, and 0.15.0 accepts the file and
+	// ignores what it says.
+	cfg := &config.Config{}
+	cfg.Agent.Levels.L1 = &config.LevelSetting{Model: "deepseek/deepseek-v4-pro"}
+	if ask := reviewLevelsAsk(config.Levels{}, nil, cfg, nil, false); ask != "fugaro.yaml's agent.levels (l1.model)" {
+		t.Errorf("agent.levels.l1.model asked %q", ask)
+	}
+	// The owner's floor is the third: it is read from the owner-only policy
+	// node (D722, G1) by a runner at reviewLevelsSince or later alone.
+	if ask := reviewLevelsAsk(config.Levels{}, nil, nil, []policy.Level{policy.LevelL2}, false); ask != "the owner's review-level floor" {
+		t.Errorf("the owner's floor asked %q", ask)
+	}
+}
+
+// TestRecipesSkewRefusesResolvedL3OnOldImage: the gate judges the run the
+// launch resolves, not only the task field. At critical the mode's own row
+// turns level 3 on with nothing in the task and nothing in fugaro.yaml
+// (L2.2), and the run inserts a first-line step in a recipe that carries none
+// (O7) — neither reaches the task as a field, and a 0.15.0 runner would run
+// the loop without them, refusing no recipe over a step it never reaches.
+func TestRecipesSkewRefusesResolvedL3OnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	cfg := &config.Config{}
+	levels, _, err := config.ResolveLevels(config.LevelInputs{Config: cfg, Mode: rigor.Critical})
+	if err != nil {
+		t.Fatalf("resolving a critical run's levels: %v", err)
+	}
+	if !levels.L3.On {
+		t.Fatal("critical resolved without level 3")
+	}
+	ask := reviewLevelsAsk(levels, spec.ReviewLevels, cfg, nil, false)
+	if want := "review level 3 (its adversarial step)"; ask != want {
+		t.Fatalf("ask = %q, want %q", ask, want)
+	}
+	// The task field alone would have missed it: this launch carries no
+	// block, and the run's own mode is what asks for the level.
+	if only := reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil, false); only != "" {
+		t.Fatalf("the task field alone asked %q, want nothing", only)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	var warn bytes.Buffer
+	err = checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", ask, &warn)
+	if err == nil || !strings.Contains(err.Error(), "review level 3 (its adversarial step) needs a job image whose runner knows the review levels (review_levels, agent.levels) (fugaro 0.16.0 or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: warn = %q, err = %v", warn.String(), err)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	if err := checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", ask, &bytes.Buffer{}); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+	// A level the run inserts is the other thing no flag carries: a loop
+	// recipe with no first-line step of its own, with the first-line review
+	// on (O7, D723).
+	rcp, ps := recipe.Parse([]byte("version: 1\nname: mine\nsteps:\n  - review: {}\n"))
+	if len(ps) > 0 {
+		t.Fatalf("parsing the recipe: %v", ps)
+	}
+	loop := &config.Config{}
+	loop.Agent.FirstLineReview = "on"
+	levels, _, err = config.ResolveLevels(config.LevelInputs{Config: loop, Mode: rigor.Startup, Recipe: rcp})
+	if err != nil {
+		t.Fatalf("resolving a startup run's levels: %v", err)
+	}
+	if !levels.L1.Inserted {
+		t.Fatal("a recipe with no first-line step resolved without an inserted level 1")
+	}
+	if ask := reviewLevelsAsk(levels, nil, loop, nil, false); ask != "review level 1 (a first-line step the run inserts)" {
+		t.Errorf("an inserted level 1 asked %q", ask)
+	}
+}
+
+// TestRecipesSkewRefusesResolvedL3OutsideACheckout: the levels a launch
+// resolves are not the task field, and a launch from outside the repository's
+// checkout — `fugaro run --repo acme/app` from anywhere else — reads no
+// configuration file at all (launchFileConfig), which is a different thing
+// from a repository that configures nothing. --mode critical is the
+// launcher's own request and is in the task either way, so the level 3 it
+// resolves is known here too; a 0.15.0 image runs the launch without the
+// adversarial step the mode asks for, in silence.
+//
+// Mutation (return early from launchReviewLevelsAsk when the file's
+// configuration is nil, as an unreadable file's stand-in): the 0.15.0 launch
+// below succeeds.
+func TestRecipesSkewRefusesResolvedL3OutsideACheckout(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	args := []string{"run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abcd", "Fix it."}
+	_, _, err := execute(t, args...)
+	if err == nil || !strings.Contains(err.Error(), "review level 3 (its adversarial step)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want the level 3 refusal", err)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+}
+
+// TestRecipesSkewRefusesLevelsCarriedByTheTaskLayerOutsideACheckout: a
+// launch from outside the repository's checkout reads no fugaro.yaml
+// (TestRecipesSkewRefusesResolvedL3OutsideACheckout), but it is not without
+// configuration: the task carries the project layer itself (spec.ProjectLayer,
+// embedProjectLayer), and the layer's defaults are what any file of that
+// repository would have been resolved over. A layer that turns critical on
+// by default resolves level 3 with no flag at all, and a layer that writes
+// defaults.agent.levels writes a level block; a 0.15.0 image runs either
+// launch in silence, so both are the gate's to refuse.
+//
+// Mutation (resolve the empty configuration as before the fix, dropping the
+// layer, in launchReviewLevelsAsk's nil-config branch): the 0.15.0 launches
+// below succeed.
+func TestRecipesSkewRefusesLevelsCarriedByTheTaskLayerOutsideACheckout(t *testing.T) {
+	for _, tc := range []struct{ name, layer, ask string }{
+		// The layer's own mode: no --mode, no task field, level 3 from
+		// defaults.rigor.
+		{"the layer's rigor default", layerWithDefaults("  rigor: { default: critical }\n"),
+			"review level 3 (its adversarial step)"},
+		// The layer's own levels block (L1.3): the resolution turns no level
+		// on, and the block alone is what the 0.15.0 runner cannot read.
+		{"the layer's agent.levels", strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+			"  agent: { auth: api-key, levels: { l3: { model: deepseek/deepseek-v4-pro } } }\n", 1),
+			"fugaro.yaml's agent.levels (l3.model)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			publishedLayer(t, f, tc.layer)
+			isolateCache(t)
+			testutil.IsolateGit(t)
+			t.Chdir(t.TempDir())
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "Fix it.")
+			if err == nil || !strings.Contains(err.Error(), tc.ask) || ExitCode(err) != ExitUserError {
+				t.Fatalf("0.15.0: err = %v, want the refusal naming %q", err, tc.ask)
+			}
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+			if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+				t.Fatalf("0.16.0: %v", err)
+			}
+		})
+	}
+}
+
+// TestRecipesSkewRefusesAResolutionThatRefused: config.ResolveLevels returns
+// zero levels beside its refusal, and zero reads as "no level is on" — the
+// fail-open direction. Since L3.2 the launch refuses on that refusal itself,
+// before the task is written, and on every image: a run this launcher may not
+// make is not a launch whose image is worth judging, and a runner older than
+// reviewLevelsSince is never handed it at all. The configuration here is the
+// L1 = L2 guard's (D721): first_line_review on with agent.models naming the
+// coder and the reviewer the same model, so level 1 and level 2 resolve to it,
+// and the run's own bootstrap refuses the same task (L4.2).
+//
+// Mutation (read the refusal's zero levels as its answer, as `levels, _, _ :=
+// config.ResolveLevels(...)` does): the launches below succeed.
+func TestRecipesSkewRefusesAResolutionThatRefused(t *testing.T) {
+	f := newCloudFixture(t)
+	checkoutWorkflows(t, "  first_line_review: \"on\"\n  models: { coder: deepseek/deepseek-v4-pro, reviewer: deepseek/deepseek-v4-pro }\n",
+		"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	for _, image := range []string{"ghcr.io/dimipaun/fugaro-base:0.15.0", "ghcr.io/dimipaun/fugaro-base:0.16.0"} {
+		writeBuildRecord(t, f, appSlug, "web", image)
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abcd", "Fix it.")
+		if err == nil || !strings.Contains(err.Error(), "l2.model and l1.model are both deepseek/deepseek-v4-pro") || ExitCode(err) != ExitUserError {
+			t.Fatalf("%s: err = %v, want the same-model refusal", image, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("the refused launches started %d executions, want none", n)
+	}
+}
+
+// TestRecipesSkewJudgesAProjectOrCatalogRecipe: the L1 insertion ask is not
+// blind to a recipe the launcher did not read out of a checkout, because a
+// project or catalog recipe never needs one: the launcher embeds its text in
+// the task when it resolves the name (taskRecipeEmbedding), so the task's own
+// bytes are the recipe the run gets and its steps are judged from them, the
+// same as a repository recipe's.
+//
+// Mutation (drop the embedded text from the gate's read, so a project or
+// catalog recipe reaches config.ResolveLevels as nil): the 0.15.0 launch below
+// succeeds, silently dropping the first-line step the run would insert.
+func TestRecipesSkewJudgesAProjectOrCatalogRecipe(t *testing.T) {
+	for _, tc := range []struct{ name, recipe, text string }{
+		{"a project recipe", "mine", "version: 1\nname: mine\nsteps:\n  - review: {}\n"},
+		{"a catalog recipe", "solo", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			if tc.text != "" {
+				projectRecipesFixture(t, f, map[string]string{tc.recipe: tc.text})
+			}
+			checkoutWorkflows(t, "  first_line_review: \"on\"\n", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", tc.recipe, "--mode", "pro", "--run-id", "20261007-100000-abcd", "Fix it.")
+			if err == nil || !strings.Contains(err.Error(), "review level 1 (a first-line step the run inserts) needs a job image") || ExitCode(err) != ExitUserError {
+				t.Fatalf("0.15.0: err = %v, want the level 1 refusal", err)
+			}
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+			if _, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", tc.recipe, "--mode", "pro", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+				t.Fatalf("0.16.0: %v", err)
+			}
+		})
+	}
+}
+
+// TestRecipesSkewJudgesARecipeItCannotRead: a repository recipe carries its
+// name alone in the task (the runner reads the file at the ref), so a launch
+// whose checkout has not got that file leaves the recipe's steps unknown
+// rather than absent — config.ResolveLevels then reports Inserted false
+// because it was handed no recipe, and reading that as "no first-line step to
+// insert" would be the one direction this gate must not fail in: a 0.15.0
+// runner would drop the insertion in silence. Unknown asks, the conservative
+// way every other gate here treats a file it cannot read.
+func TestRecipesSkewJudgesARecipeItCannotRead(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	// Not a checkout of acme/app at all, which is the shape of every way this
+	// read fails: repoRecipeForGate returns nil for each of them.
+	unread := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "mine", Source: "repo"}}
+	rcp, unknown := launchRecipeForLevels(ctx, unread)
+	if rcp != nil || !unknown {
+		t.Fatalf("recipe = %+v, unknown = %v, want an unreadable repository recipe", rcp, unknown)
+	}
+	// The ask then says what it could not settle, rather than nothing.
+	cfg := &config.Config{}
+	cfg.Agent.FirstLineReview = "on"
+	levels, _, err := config.ResolveLevels(config.LevelInputs{Config: cfg, Mode: rigor.Pro})
+	if err != nil {
+		t.Fatalf("resolving a pro run's levels: %v", err)
+	}
+	if !levels.L1.On || levels.L1.Inserted {
+		t.Fatalf("levels = %+v, want level 1 on with no insertion known", levels)
+	}
+	if ask := reviewLevelsAsk(levels, nil, cfg, nil, unknown); ask !=
+		"review level 1 (a first-line step the run inserts unless its recipe carries one, and this checkout has not got that file)" {
+		t.Errorf("an unreadable recipe asked %q", ask)
+	}
+	// Two controls, so the ask is not simply always on: the runner's own
+	// choice carries no name to read (the catalog default, whose file writes
+	// a first_line step), and a recipe in the task's own text was read.
+	if rcp, unknown := launchRecipeForLevels(ctx, &task.Spec{Version: 1, Repo: "acme/app", Recipe: nil}); rcp != nil || unknown {
+		t.Errorf("the runner's own choice: recipe = %+v, unknown = %v", rcp, unknown)
+	}
+	embedded := &task.Spec{Version: 1, Repo: "acme/app", Recipe: &task.Recipe{Name: "mine", Source: "project",
+		YAML: "version: 1\nname: mine\nsteps:\n  - review: {}\n"}}
+	if rcp, unknown := launchRecipeForLevels(ctx, embedded); rcp == nil || unknown {
+		t.Errorf("a recipe the task carries: recipe = %+v, unknown = %v", rcp, unknown)
+	}
+	if ask := reviewLevelsAsk(levels, nil, cfg, nil, false); ask != "" {
+		t.Errorf("a recipe that was read asked %q, want nothing", ask)
+	}
+}
+
+// TestRecipesSkewRefusesReviewLevelsOnACloneWorkflow: a checkout: clone
+// workflow's job runs the installation's base image directly and has no build
+// record of its own, so the gate's second call site — the clone branch of
+// finishLaunch — judges base_images.base instead (checkCloneReviewLevelsImage,
+// the clone half of checkImageSince). A launch that asks for levels is refused
+// there too, naming the base image's release.
+//
+// Mutation (pass "" as the ask on the clone branch's call,
+// `checkCloneReviewLevelsImage(env.lc, spec, "", warn)`): the 0.15.0 launch
+// below succeeds, and the run drops the level it asked for.
+func TestRecipesSkewRefusesReviewLevelsOnACloneWorkflow(t *testing.T) {
+	launch := func(t *testing.T, base string) error {
+		t.Helper()
+		f := newCloudFixture(t)
+		f.appendConfig(t, "base_images: {base: "+base+"}\n")
+		checkoutWorkflows(t, "", "  web: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+		levels := filepath.Join(t.TempDir(), "levels.yaml")
+		if err := os.WriteFile(levels, []byte("l3:\n  none: true\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--review-levels", levels, "Fix it.")
+		return err
+	}
+	err := launch(t, "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	if err == nil || !strings.Contains(err.Error(), "the task's review_levels (l3.none)") ||
+		!strings.Contains(err.Error(), "release 0.15.0") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want the clone refusal naming the base image's release", err)
+	}
+	if err := launch(t, "ghcr.io/dimipaun/fugaro-base:0.16.0"); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+}
+
+// TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord: the gate's judge is
+// the build record, which is what says which binary the image runs: a launch
+// that asks for levels and has no record to read is refused rather than waved
+// through — a record that is missing, unreadable or silent about its base is
+// not evidence of an image that acts on levels, and a 0.15.0 runner accepts the
+// keys and acts on none of them.
+//
+// Mutation (make checkReviewLevelsImage return nil for a record it cannot
+// read): both refusals below disappear and the launches stand.
+func TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord(t *testing.T) {
+	f := newCloudFixture(t)
+	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	levels := filepath.Join(t.TempDir(), "levels.yaml")
+	if err := os.WriteFile(levels, []byte("l2:\n  none: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launch := func(id string) error {
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "--review-levels", levels, "Fix it.")
+		return err
+	}
+	if err := launch("20261007-100000-abcd"); err == nil ||
+		!strings.Contains(err.Error(), "the task's review_levels (l2.none) needs a job image") ||
+		!strings.Contains(err.Error(), "has no build record") || ExitCode(err) != ExitUserError {
+		t.Fatalf("no record: err = %v, want the levels gate's refusal", err)
+	}
+	data, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "web", FugaroVersion: "0.5.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeBucketFile(t, f, imagecheck.RecordKey(appSlug, "web"), string(data))
+	if err := launch("20261007-100000-abce"); err == nil ||
+		!strings.Contains(err.Error(), "the task's review_levels (l2.none) needs a job image") ||
+		!strings.Contains(err.Error(), "does not say which base image it was built from") {
+		t.Fatalf("a record with no base_ref: err = %v, want the levels gate's refusal", err)
+	}
+	// And a dated record is what the launch is judged on: at the release the
+	// gate names, the same launch stands.
+	writeBuildRecord(t, f, appSlug, "web", release0160)
+	if err := launch("20261007-100000-abcf"); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+}
+
+// TestRecipesSkewRefusesTheOwnerFloorOnOldImage: the owner's floor (D722, G1)
+// is the one thing about levels a repository's own configuration cannot
+// express — it lives in the policy node, which only the owner writes — and a
+// run it raises has to be refused on an image whose runner reads no levels at
+// all: a 0.15.0 run drops the floor in silence, which is the state D722 exists
+// to prevent. Driving the whole launch pins the gate's own policy read, the
+// mode the floor is looked up under, and the ask it produces together.
+//
+// Mutation (drop the floor read from launchReviewLevelsAsk, so floor stays
+// nil): the 0.15.0 launch below succeeds.
+func TestRecipesSkewRefusesTheOwnerFloorOnOldImage(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "pro", "--run-id", "20261007-100000-abcd", "Fix it.")
+	if err == nil || !strings.Contains(err.Error(), "the owner's review-level floor") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want the floor's refusal", err)
+	}
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "pro", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+}
+
 // TestAdversarialSinceHasAReleaseBullet: adversarialSince names 0.16.0, which
 // is not tagged, so docs/release.md's Before-you-tag list is what holds the
 // constant to the release actually cut — the job every other *Since constant's
@@ -310,6 +747,34 @@ func TestAdversarialSinceHasAReleaseBullet(t *testing.T) {
 	for _, want := range []string{"adversarial", "not tagged yet"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's adversarialSince bullet does not say %q", want)
+		}
+	}
+}
+
+// TestReviewLevelsSinceHasAReleaseBullet: reviewLevelsSince names 0.16.0, which
+// is not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does (TestAdversarialSinceHasAReleaseBullet). Nothing else ties the
+// number the gate accepts to the release whose runner acts on levels, and a
+// release that landed them elsewhere would otherwise keep refusing images that
+// can run them.
+func TestReviewLevelsSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `reviewLevelsSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no reviewLevelsSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+reviewLevelsSince+"\"`") {
+		t.Errorf("docs/release.md's reviewLevelsSince bullet does not carry the constant's release (%q)", reviewLevelsSince)
+	}
+	for _, want := range []string{"review_levels", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's reviewLevelsSince bullet does not say %q", want)
 		}
 	}
 }

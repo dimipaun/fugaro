@@ -1041,6 +1041,9 @@
         "user": {
           "default": "unset = none"
         },
+        "verifier_accounts": {
+          "default": "unset = none: nobody may ask the credentials service to verify a signature"
+        },
         "version": {
           "default": "unset = the file is refused (version: 1 is required)"
         },

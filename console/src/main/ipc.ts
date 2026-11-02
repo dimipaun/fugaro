@@ -466,6 +466,15 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * comment below says why its one argument is the console's closed set of windows
  * and why it is withheld with the Spend screen's reads.
  *
+ * **`models ls --json` is this surface's twentieth argv** (console 0.119.0's
+ * read-only models panel; the CLI half is M1, #1553, and
+ * `console/docs/json-contract.md` §6.18 describes its document). It is the one
+ * argv here whose **group** the console may otherwise not touch: `fugaro models`
+ * has four other words -- `search`, `add`, `rm` and `use` -- and each is on the
+ * never table below, the three writers as commands and all four as words of
+ * `models`, so this row is the group's whole reachable argv. It takes no
+ * argument at all and its child reaches no bucket, no database and no host.
+ *
  * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
  * no CLI command can be asked for). **The two `link.` operations are the ones
@@ -899,6 +908,47 @@ export const CONSOLE_OPERATIONS = [
         why: '`accounts ls` resolves this checkout’s origin without `--repo`, which a Finder-launched app does not have.',
       },
     ],
+  },
+  // The Project tab's read-only models panel (console 0.119.0; the owner's
+  // ruling of 2026-11-02, and SECURITY-SENSITIVE because a new row on this
+  // surface always is). `fugaro models ls --json`: the selected project's
+  // routes, the models a run can name today and each recorded repository's
+  // pins. The panel is a later task; this is the main process's half.
+  //
+  // **It is the group's only word the console may drive.** `fugaro models` has
+  // five subcommands -- `ls`, `search`, `add`, `rm` and `use`
+  // (`internal/cli/models.go:33`) -- and the other four are on the never table
+  // below as words of this command: `add`, `rm` and `use` edit the project's or
+  // a repository's own config file, and `search` takes a positional `<text>`
+  // a renderer would fill, which is the shape this table exists to keep off the
+  // surface. So the console has **no write path into `models`**, and the one
+  // read is the row above.
+  //
+  // **No argument at all**, the strongest form of this rule's closed schema:
+  // the command is cobra's `NoArgs`, `--json` is a fixed word of the spawn row
+  // and the cloud group's `--project`/`--config` are the installation's -- so
+  // there is no field a renderer could fill. The read is **offline**: the CLI's
+  // own comment says it reaches no bucket, no database and no host, so this
+  // child mints nothing of the host's, opens no provider and spends nothing,
+  // and its document is what the local files already say.
+  //
+  // **It carries no spend and no cap**, so it is deliberately not in
+  // `REDUCED_VIEW_OPERATIONS` below: the model *prices* it draws are the
+  // catalog's own per-million-token figures rather than what this project
+  // spent, and the reduced mode withholds the screens that read money the
+  // operator's runs spent. `spent_micros`, `notional_micros` and a cap are
+  // words this document does not have.
+  //
+  // It needs CLI 0.16.0 (`MODELS_LIST_CLI_FLOOR`, `src/shared/version.ts`):
+  // `models ls` landed after v0.15.0 (#1553), so a 0.15.x CLI has no such verb
+  // and answers `unknown command "ls"`.
+  {
+    name: 'models.list',
+    method: 'listModels',
+    command: 'models ls',
+    flags: ['--json'],
+    summary: 'the project’s routes, the models a run can name, and each repository’s pins',
+    args: [],
   },
   {
     name: 'cli.version',
@@ -1526,6 +1576,72 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'recipes publish',
     why: 'a write: it publishes a recipe',
     where: 'internal/cli/recipes.go:327',
+  },
+  // **The models group's writers, and the two shapes its fence is drawn in.**
+  // `fugaro models ls --json` is the group's one reachable word
+  // (`models.list` above, console 0.119.0); the three commands here are the
+  // writes beside it -- `add` claims a model on a route and prices it, `rm`
+  // drops its claim, price and allow-list entry, and `use` points one
+  // repository's own config file at a model in its working tree
+  // (`internal/cli/models_add.go:27`, `models_rm.go:20`, `models_use.go:24`).
+  // Each edits a configuration a reviewer signed off on, which is exactly the
+  // kind of act this table keeps off a screen.
+  //
+  // **Two shapes, and the order between them is deliberate.** The three
+  // `command` rows refuse the command paths themselves, and the `argv` rows
+  // under them refuse the four *words* wherever an operation under `models`
+  // spells them -- the command path or the flags -- which is what covers a
+  // mutation the command rows do not: a future operation whose command is
+  // `models add <id>` (the shape `run --task-file -` has) is not the command
+  // `models add` and would slip past a command row alone. Each `command` row
+  // must stay **above** the `argv` row carrying its word: an operation driving
+  // `models add` matches both, and `isNeverReachable` answers with the first,
+  // which `console/test/unit/ipc.test.ts` asserts per row.
+  {
+    shape: 'command',
+    value: 'models add',
+    why: 'a write: it appends the model to a route’s own list in the project config and writes a model_prices entry and a budget.allowed_models entry for it, so it changes what every run of the project may name and spend on',
+    where: 'internal/cli/models_add.go:27',
+  },
+  {
+    shape: 'command',
+    value: 'models rm',
+    why: 'a write: it drops the model’s claim, its price and its allow-list entry from the project config, which stops every run that names it',
+    where: 'internal/cli/models_rm.go:20',
+  },
+  {
+    shape: 'command',
+    value: 'models use',
+    why: 'a write: it rewrites `agent.models.<role>` in a repository’s own config file in its working tree, and the model it points a role at is a reviewed configuration fact',
+    where: 'internal/cli/models_use.go:24',
+  },
+  {
+    shape: 'argv',
+    command: 'models',
+    value: 'add',
+    why: 'the write above, refused as a word of this command as well: a `models` argv that spells `add` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
+    where: 'internal/cli/models_add.go:27',
+  },
+  {
+    shape: 'argv',
+    command: 'models',
+    value: 'rm',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/models_rm.go:20',
+  },
+  {
+    shape: 'argv',
+    command: 'models',
+    value: 'use',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/models_use.go:24',
+  },
+  {
+    shape: 'argv',
+    command: 'models',
+    value: 'search',
+    why: 'a read, and the one word of this group that takes a **positional** `<text>` a renderer would fill: this surface reads the project’s models with `models ls`, which takes no argument at all, and a free word a caller chooses is the shape this table keeps off it — the CLI’s own search is a terminal’s verb',
+    where: 'internal/cli/models_search.go:21 (Use: "search <text>")',
   },
   {
     shape: 'command',

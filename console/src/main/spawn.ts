@@ -810,6 +810,32 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The Project tab's read-only models panel (console 0.119.0, the
+    // `models.list` operation; SECURITY-SENSITIVE, because a new row on this
+    // table always is). `fugaro models ls --json` is **the group's only
+    // reachable word**: `add`, `rm`, `use` and `search` are each on
+    // `src/main/ipc.ts`'s never table as a word of this command, so this row is
+    // the one way into `models` and the words below are the whole of its argv.
+    //
+    // **No argument.** The command is cobra's `NoArgs` with one flag of its own
+    // (`--json`, a fixed word here) plus the cloud group's two, and it has no
+    // positional word and no control a screen sets -- so `args` is empty and no
+    // word of the argv is caller-influenced. It takes `--project`/`--config`
+    // like every other read of a project (rule 3): the document is the
+    // *selected* project's routes, models and repositories.
+    //
+    // The read is offline -- the CLI's own comment says it "reaches no bucket,
+    // no database and no host", so the child opens no provider, mints no
+    // credential of the host's and spends nothing -- which is why this row is
+    // on the table at all rather than being a cloud read a screen must
+    // rate-limit.
+    operation: 'models.list',
+    words: ['models', 'ls', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
     // The handshake, and the one row that carries no `--project` (rule 3).
     operation: 'cli.version',
     words: ['version'],

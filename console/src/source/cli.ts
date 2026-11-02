@@ -575,6 +575,17 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('accounts.inventory', args)
   }
 
+  /** listModels reads `models ls --json`: the project's routes, the models a run
+   * can name and each repository's pins (console 0.119.0, the owner's ruling of
+   * 2026-11-02; contract §6.18). The argv is the spawn row's own words -- the
+   * command, `--json` and the installation's `--project` -- because the
+   * operation takes no argument at all, and the read is offline: the CLI's own
+   * comment says it reaches no bucket, no database and no host, so this child
+   * mints nothing of the host's. */
+  listModels(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('models.list', args)
+  }
+
   environmentReport(args: ValidatedArguments): Promise<Snapshot> {
     // The one one-shot read that carries a `--dir` (the installation's directory
     // or the private one), because doctor's checks are about the checkout it is
@@ -1068,6 +1079,12 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),
     listSecrets: (args) => read('secrets.inventory', (source) => source.listSecrets(args)),
     listAccounts: (args) => read('accounts.inventory', (source) => source.listAccounts(args)),
+    /** listModels has no precondition and no cadence, for coordinatorIntents's
+     * reason: the read is the installation's own project config and the price
+     * catalog it already has, with no bucket, no database and no host behind it,
+     * so there is no directory on this machine to refuse for and nothing to be
+     * gained by holding a floor between two calls. */
+    listModels: (args) => read('models.list', (source) => source.listModels(args)),
     environmentReport: (args) => read('environment.report', (source) => source.environmentReport(args)),
     forget: drop,
     close: drop,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -981,6 +982,84 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 		}
 		if strings.Contains(string(b), "review_floor") {
 			t.Errorf("a policy with no floor marshals one: %s", b)
+		}
+	}
+}
+
+// TestVerifierAccountsIsUnknownToAReaderThatPredatesIt is the key's skew as a
+// test rather than a sentence (C3.9g3, D1075): this binary reads a node that
+// carries verifier_accounts and lists no unknown key at all, while a reader
+// older than the key — the one every CLI was before this release — lists it and
+// refuses the node. The older reader is not reached by spelling a key this
+// package does not model, because knownTopLevelKeys holds this one: the same
+// fixture node is decoded twice, once under this key set and once under a copy
+// of the list as it stood before the key.
+func TestVerifierAccountsIsUnknownToAReaderThatPredatesIt(t *testing.T) {
+	raw := []byte(`{"version": 4, "verifier_accounts": ["person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"]}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: verifier_accounts is a key this Fugaro reads", p.UnknownKeys)
+	}
+	if want := []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}; !slices.Equal(p.VerifierAccounts, want) {
+		t.Errorf("VerifierAccounts = %v, want %v", p.VerifierAccounts, want)
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, "verifier_accounts")
+	q, found, err := decodeWithKeys(raw, preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the key refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{"verifier_accounts"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
+	}
+}
+
+// TestVerifierAccountsDecodeRefusesAMisspeltEntry: an entry is the bare address
+// a Google ID token's email claim carries, never the user:/serviceAccount:
+// member spelling the installation's IAM lists are written with, so a
+// misspelt one is refused where the operator can see it rather than read as a
+// list that admits nobody.
+func TestVerifierAccountsDecodeRefusesAMisspeltEntry(t *testing.T) {
+	// A written empty list is no list, and a policy that sets none marshals no
+	// member: the publisher writes this struct, so the absence of the member is
+	// what keeps a project naming no verifier byte for byte what it was.
+	for _, tc := range []struct{ name, body, want string }{
+		{"a member spelling", `["serviceAccount:person-1@example.com"]`, "is an IAM member spelling"},
+		{"the user: spelling", `["user:person-1@example.com"]`, "is an IAM member spelling"},
+		{"an address with no domain", `["person-1@"]`, "is not an email address"},
+		{"an address with no local part", `["@example.com"]`, "is not an email address"},
+		{"no address at all", `["person-1"]`, "is not an email address"},
+		{"an empty entry", `[""]`, "is not an email address"},
+		{"an address with a space", `["person-1 @example.com"]`, "is not an email address"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(`{"version": 4, "verifier_accounts": ` + tc.body + `}`))
+			if err == nil || p != nil || !found || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Decode = (%v, %v, %v), want a refusal naming %q", p, found, err, tc.want)
+			}
+		})
+	}
+	for _, raw := range []string{`{"version": 4}`, `{"version": 4, "verifier_accounts": null}`, `{"version": 4, "verifier_accounts": []}`} {
+		q, _, err := Decode([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(q.VerifierAccounts) != 0 {
+			t.Errorf("Decode(%s).VerifierAccounts = %v, want none", raw, q.VerifierAccounts)
+		}
+		b, err := json.Marshal(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "verifier_accounts") {
+			t.Errorf("a policy with no verifier list marshals one: %s", b)
 		}
 	}
 }

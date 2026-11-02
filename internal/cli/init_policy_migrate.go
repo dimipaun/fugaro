@@ -516,7 +516,7 @@ func (m *policyMigration) printGenerationState(w io.Writer) {
 // adds members too (the version) and the diff has to say which is which.
 func derivedMembers(moved, raw []byte) []string {
 	var out []string
-	for _, key := range []string{bitbucketTokenKey, bitbucketAPIRootsKey} {
+	for _, key := range []string{bitbucketTokenKey, bitbucketAPIRootsKey, verifierAccountsKey} {
 		before, was, err := jsonMember(raw, key)
 		if err == nil && was && !projectpolicy.IsNull(before) {
 			continue
@@ -532,6 +532,7 @@ func derivedMembers(moved, raw []byte) []string {
 const (
 	bitbucketTokenKey    = "bitbucket_token"
 	bitbucketAPIRootsKey = "bitbucket_api_roots"
+	verifierAccountsKey  = "verifier_accounts"
 	policyMigrationWhat  = "this rewrites the published policy node in place"
 	policyPublishWhat    = "this rewrites the published policy node in place, from your local config"
 	policyReseedWhat     = "this re-seeds your local config from the published policy node"
@@ -540,9 +541,10 @@ const (
 
 // withDerivedMembers patches into the node the members a publish would have
 // derived from the project's local config and the node cannot state — the
-// bitbucket_token block and the bitbucket_api_roots allow-list — using the
-// publisher's own functions (DeriveBitbucketToken, and the config's
-// bitbucket_api_roots, which the publisher copies). The returned node is the
+// bitbucket_token block, the bitbucket_api_roots allow-list and the
+// verifier_accounts list — using the publisher's own functions
+// (DeriveBitbucketToken, and the config's bitbucket_api_roots and
+// verifier_accounts, which the publisher copies). The returned node is the
 // input byte for byte when there was nothing to add.
 //
 // It runs whether or not the migration would have refused, and before it: a
@@ -581,6 +583,18 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
 		var err error
 		if node, err = patchPolicyJSON(node, bitbucketAPIRootsKey, lc.BitbucketAPIRoots); err != nil {
 			return raw, userErr("carrying %s's %s allow-list into the policy: %v", lc.Name, bitbucketAPIRootsKey, err)
+		}
+	}
+	// The verifier list travels the same way and is copied for the same reason:
+	// it reaches the service through this node, so a node the migration rewrote
+	// without it would be a route the owner named and that the credentials
+	// stage can no longer read (C3.9g3, D1075). A config silent about the list
+	// states none — which is the node's own answer, and the node is what is
+	// being migrated — so only a written list is carried.
+	if !carries(verifierAccountsKey) && len(lc.VerifierAccounts) > 0 {
+		var err error
+		if node, err = patchPolicyJSON(node, verifierAccountsKey, lc.VerifierAccounts); err != nil {
+			return raw, userErr("carrying %s's %s verifier list into the policy: %v", lc.Name, verifierAccountsKey, err)
 		}
 	}
 	return node, nil

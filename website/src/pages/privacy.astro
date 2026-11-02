@@ -261,9 +261,10 @@ const repo = site.facts.repository
           Reports</strong>, a switch in its own menu, off until you tick it. With it ticked, the
           next launch of the console sends a crash to Sentry, hosted in the European Union. A
           report holds the exception's type and the code frames it was thrown from, each an
-          app-relative file with its function name, its line and its column, and no message, no
-          path, no user name, no environment and no host name. Untick the switch and the next
-          launch stops sending.
+          app-relative file with its function name, its line and its column, plus the console's
+          own version and the build's debug images — the two things that make a stack trace
+          readable — and no message, no path, no user name, no environment and no host name.
+          Untick the switch and the next launch stops sending.
         </p>
       </div>
 

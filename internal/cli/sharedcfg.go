@@ -201,7 +201,12 @@ type SharedAnchor struct {
 // runner reads and fails closed on — precisely because the shared file is
 // writable by any launcher. A floor in this file would be the launcher the
 // floor is meant to bind, setting it.
-var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "bitbucket_api_roots", "update_check", "secret_rotation_days", "secret_expires", "review_floor"}
+//
+// verifier_accounts is that case from the other side (C3.9g3, D1068):
+// localcfg.Config.Shared nils it as well, because the list is what the
+// credentials service admits to its verify route, and a launcher who could
+// write the file could admit its own address there.
+var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "bitbucket_api_roots", "update_check", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin

@@ -288,7 +288,40 @@ export function runsSummarySupported(version: string): boolean {
 }
 
 /**
- * meetsCliFloor is the one patch-level comparison all four floors above are
+ * MODELS_LIST_CLI_FLOOR is the oldest CLI that has the models read at all,
+ * `models ls --json` (contract §6.18).
+ *
+ * **It is the command's floor and not a flag's**, exactly as
+ * `RUNS_SUMMARY_CLI_FLOOR` above is: `models ls` landed after v0.15.0 (#1553),
+ * so a 0.15.x CLI has no such word at all and answers `unknown command "ls"`
+ * for it -- a failure the operator can do nothing about and one a screen would
+ * draw as a broken project. The floor is therefore asked before the read is
+ * offered, and a console below it draws the section as unavailable with the
+ * version it needs rather than spawning a child that cannot answer.
+ *
+ * It is a patch-level floor rather than a range membership for the reason the
+ * four floors above it are: `0.15.2` is inside a minor this console reads and
+ * is below this one, so `SUPPORTED_CLI_MINORS` and `classifyCliVersion` cannot
+ * answer it.
+ */
+export const MODELS_LIST_CLI_FLOOR = '0.16.0'
+
+/**
+ * modelsListSupported answers whether one version line may be asked for the
+ * project's models read, by comparing it against `MODELS_LIST_CLI_FLOOR` at the
+ * patch level.
+ *
+ * **No caller passes it yet.** The caller is the Project tab's models panel in
+ * `src/renderer/entry.ts`, and that panel is the task after this one: no spawn
+ * passes `models ls` today, so this predicate is the rule that task asks rather
+ * than a comparison it writes itself.
+ */
+export function modelsListSupported(version: string): boolean {
+  return meetsCliFloor(version, MODELS_LIST_CLI_FLOOR)
+}
+
+/**
+ * meetsCliFloor is the one patch-level comparison all five floors above are
  * asked by, so a rule learned on one of them cannot be missing from the others.
  *
  * The order of the tests is the rule, and each refusal is on the safe side of a

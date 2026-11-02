@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The crash reporter's wiring, held to its four promises (desktop-console plan
+// The crash reporter's wiring, held to its five promises (desktop-console plan
 // Task 2.1, the SDK slice; the owner's rulings D733 and D734 of 2026-10-30,
 // which design section 7.4 does not describe yet and Task 2.2 amends).
 //
@@ -35,7 +35,15 @@
 //      was sent. Round B moved them out of this file, where each of them could
 //      only assert what the fake had been told to do, and into a real Electron
 //      main process running the pinned SDK.
+//   5. **Every event names the release the symbol upload files the maps under.**
+//      Symbolication is a lookup by release and debug id, so a report whose
+//      release is a string nobody uploaded under is a report no map is ever
+//      found for. The upload's release is `console/package.json`'s version, the
+//      wiring asks Electron for that same string, and the case below reads both
+//      -- the script's by running it, the wiring's out of the options it hands
+//      the SDK -- rather than restating either.
 
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -89,7 +97,23 @@ const utility = vi.hoisted(() => {
   }
 })
 
-vi.mock('electron', () => ({ utilityProcess: utility.process }))
+/** app is the `electron.app` the mocked `electron` module answers with: the one
+ * thing the wiring asks Electron itself for, which is the app's own version. It
+ * is a holder rather than a constant because the version a *build* answers with is
+ * stamped by electron-builder from the tag, and the test below sets it to the
+ * version `console/package.json` declares -- which is what the release job's tag
+ * check makes a packaged app's answer. */
+const app = vi.hoisted(() => ({ version: '0.0.0', getVersionCalls: 0 }))
+
+vi.mock('electron', () => ({
+  app: {
+    getVersion: () => {
+      app.getVersionCalls += 1
+      return app.version
+    },
+  },
+  utilityProcess: utility.process,
+}))
 
 vi.mock('@sentry/electron/main', () => ({
   init: (options: Record<string, unknown>) => {
@@ -219,7 +243,45 @@ function hostileEvent(appRoot: string): CrashEvent & Record<string, unknown> {
   }
 }
 
+/** declaredVersion is the version `console/package.json` declares. It is the
+ * string `scripts/upload-sentry-symbols.mjs` files the maps under, and -- in a
+ * build the release job cut -- the string `app.getVersion()` answers with, because
+ * electron-builder stamps the app's version from the tag and the job refuses a tag
+ * whose X.Y.Z is not this file's. A checkout's `app.getVersion()` reads the same
+ * file, which is why this is the version the mock answers with. */
+const declaredVersion = String(
+  (JSON.parse(readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8')) as {
+    version: unknown
+  }).version,
+)
+
+/** uploadedRelease is the `--release` a real run of the symbol upload passes to
+ * `sentry-cli`, read out of the script itself rather than restated here. The CLI is
+ * `/bin/echo`: the script hands it the whole argv and prints back what it did, so
+ * the string below is the one a real upload files the maps under, and nothing is
+ * uploaded to anything. The run is the *upload* run -- no argument -- because that
+ * is the one that names a release. */
+function uploadedRelease(): string {
+  const script = fileURLToPath(new URL('../../scripts/upload-sentry-symbols.mjs', import.meta.url))
+  const run = spawnSync(process.execPath, [script], {
+    env: {
+      PATH: process.env.PATH ?? '',
+      SENTRY_AUTH_TOKEN: 'placeholder',
+      SENTRY_SYMBOLS_CLI: '/bin/echo',
+    },
+    encoding: 'utf8',
+  })
+  expect(run.status, run.stderr).toBe(0)
+  const line = run.stdout.split('\n').find((one) => one.includes('sourcemaps upload'))
+  if (line === undefined) throw new Error(`the script ran no sourcemaps upload: ${run.stdout}`)
+  const release = /--release ([^ ]+)/.exec(line)
+  if (release === null) throw new Error(`the upload names no release: ${line}`)
+  return release[1] as string
+}
+
 beforeEach(() => {
+  app.version = declaredVersion
+  app.getVersionCalls = 0
   harness.initOptions = []
   harness.integrations = []
   harness.sent = []
@@ -576,6 +638,46 @@ describe('what the client is told', () => {
     // The `'none'` the wiring passes is the mode `handleRejection` answers with
     // nothing at all: the function is the two branches above and no third.
     expect(rejection.slice(rejection.indexOf('function handleRejection'))).not.toMatch(/mode === "none"/)
+  })
+
+  it('sends every event under the release the symbol upload files the maps under', () => {
+    // The one property symbolication cannot survive without (the owner's ruling
+    // of 2026-11-02): the source maps are uploaded under
+    // `--release <console/package.json's version>` and an event is looked up under
+    // the release it names, so a wiring that let the SDK default to
+    // `name@version` would send an event whose release the upload never named --
+    // and whose `@` `./crash`'s `RELEASE_RE` refuses, which is not a wrong release
+    // but no release at all.
+    const appRoot = tempAppRoot()
+    const uploaded = uploadedRelease()
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    const options = harness.initOptions[0] ?? {}
+    // The wiring asks the app for its own version -- which electron-builder
+    // stamped from the tag, and which the release job refuses to differ from
+    // `console/package.json` -- and that string is the upload's.
+    expect(app.getVersionCalls, 'the wiring asked the app rather than the SDK default').toBe(1)
+    expect(options.release).toBe(uploaded)
+    expect(options.release).toBe(declaredVersion)
+    // What the SDK then does with that option is one line of the pinned core, and
+    // it is pinned rather than assumed: an event that carries no release of its
+    // own is stamped from the option before `beforeSend` runs -- which is how an
+    // uncaught exception, whose event has no release, reaches the wire naming the
+    // build its maps were filed under.
+    const prepareEvent = readFileSync(
+      join(fileURLToPath(new URL('../..', import.meta.url)), 'node_modules/@sentry/core/build/cjs/utils/prepareEvent.js'),
+      'utf8',
+    )
+    expect(prepareEvent).toContain('if (!event.release && release) {')
+    expect(prepareEvent).toContain('event.release = release;')
+    // ...and the scrubber keeps it, so what reaches the wire names the build its
+    // maps were filed under. The event handed to `beforeSend` is the hostile one
+    // with the option's release stamped onto it, which is that pinned line and
+    // nothing else: this file's SDK is a fake, so the one step between the option
+    // and the callback is written here rather than pretended away.
+    const beforeSend = options.beforeSend as (event: CrashEvent) => { readonly release?: string }
+    const kept = beforeSend({ ...hostileEvent(appRoot), release: options.release })
+    expect(kept.release).toBe(uploaded)
+    void handle.close()
   })
 
   it('sends errors only: no transaction and no log leaves, whatever the client is handed', () => {

@@ -162,6 +162,17 @@ const (
 	// table of emails would be a second derivation that can drift from the
 	// accounts the deployer created.
 	envJobAccounts = "FUGARO_JOB_ACCOUNTS"
+	// envVerifierAccounts is the identities that may ask the verify route
+	// whether a verdict's signature is this service's: a JSON array of bare
+	// addresses (the coordinator's account, and the owner's for a manual
+	// check). It is the ONE name this process reads as optional, and the only
+	// one outside credentialsServiceEnvNames: that list is what the service
+	// REQUIRES, and the module renders this entry only on an installation
+	// that named a verifier, so a name inside it would turn "an installation
+	// that never opted in" into "a service that refuses to start". Absent or
+	// empty is the empty list the verify route already refuses every caller
+	// with (C3.9g2, D1068).
+	envVerifierAccounts = "FUGARO_VERIFIER_ACCOUNTS"
 )
 
 // credentialsServiceEnvNames is the whole of this command's environment: the
@@ -292,12 +303,24 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	// init's cover holds its container to (credentialsServiceEnv). An empty
 	// variable is not a value the module can set: Terraform writes each of
 	// these from an input the installation has, so an empty one is a
-	// deployment that is wrong rather than a deployment with a default.
+	// deployment that is wrong rather than a deployment with a default. The
+	// verifier list below is the one name the service reads as optional and
+	// the rest are not.
 	env := map[string]string{}
 	for _, k := range credentialsServiceEnvNames {
 		if env[k] = getenv(k); env[k] == "" {
 			return credsvc.Config{}, userErr("the credentials service needs %s in its environment (the installation module sets it on the service, and it is the whole of how this process is configured: there is no flag, no config file and no default)", k)
 		}
+	}
+	// Outside that loop, because the module renders this entry only on an
+	// installation that named a verifier: an absent value is the empty list
+	// the verify route already refuses every caller with, not a service that
+	// will not start (C3.9g2, D1068). A value that is present and is not the
+	// list the module renders is a deployment that is wrong, and is refused
+	// here rather than silently read as empty.
+	verifiers, err := credentialsServiceVerifiers(getenv(envVerifierAccounts))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
 	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
@@ -355,9 +378,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		FirebaseProject: env[envFirebaseFP],
 		Audience:        env[envCredentialsServiceURL],
 		JobAccounts:     emails,
-		Keys:            credsvc.NewGoogleKeys(),
-		JobKeys:         credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
-		Outcomes:        credsvc.RTDBOutcomes{DB: db},
+		// The verify route's own class (C3.9f, D1068): the accounts that may
+		// ask whether a verdict's signature is this service's. Empty is the
+		// state every installation starts in, and the route answers every
+		// caller with the class's refusal rather than the process failing.
+		VerifierAccounts: verifiers,
+		Keys:             credsvc.NewGoogleKeys(),
+		JobKeys:          credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		Outcomes:         credsvc.RTDBOutcomes{DB: db},
 	})
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
@@ -434,6 +462,31 @@ func credentialsServiceAudience(raw string) error {
 		return fmt.Errorf("%s is not the service's own URL: it must be the https URL Cloud Run serves this revision on, with no path, query or fragment (a caller's Google ID token is minted for exactly that audience, so anything else admits nobody). Nothing was started and no credential was issued", envCredentialsServiceURL)
 	}
 	return nil
+}
+
+// credentialsServiceVerifiers turns FUGARO_VERIFIER_ACCOUNTS into the verify
+// route's class (C3.9f, D1068): a JSON array of bare addresses, which is what
+// the module renders from the installation's verifier_accounts.
+//
+// An absent or empty value is an EMPTY list and not a refusal, because the
+// module renders the entry only on an installation that named a verifier: a
+// service that would not start without it would be one every installation that
+// never opted in could not run. A value that is present and is not that array
+// is a deployment that is wrong, so it is refused by name — and the refusal
+// names the variable and never an entry, because the entries are accounts of
+// people and the environment is this process's own. Whether an entry is an
+// address at all is credsvc.NewAuthenticator's to say (a verifier is matched
+// against a Google ID token's email claim, and that fold is the one that
+// decides), so this function only holds the document to its shape.
+func credentialsServiceVerifiers(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var verifiers []string
+	if err := json.Unmarshal([]byte(raw), &verifiers); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's verifier list: it must be a JSON array of the bare email addresses a Google ID token carries, one per identity that may ask the service to verify a signature. Nothing was started and no credential was issued", envVerifierAccounts)
+	}
+	return verifiers, nil
 }
 
 // credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the two things

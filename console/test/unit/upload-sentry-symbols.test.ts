@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// `scripts/upload-sentry-symbols.mjs`, held to the two things that matter about
-// it: that a build with no token does nothing at all, and that a build with one
-// runs exactly three commands, with the arguments the crash reporter's frames
-// need, and with the token in the environment rather than on an argv.
+// `scripts/upload-sentry-symbols.mjs`, held to the three things that matter
+// about it: that a run with no token does nothing at all, that the `inject` run
+// stamps `dist/main` and nothing else, and that the default run uploads what the
+// stamp wrote -- each command whole, with the arguments the crash reporter's
+// frames need, and with the token in the environment rather than on an argv.
+//
+// **Two runs, and their order is the release's.** `inject` rewrites
+// `console/dist/main` in place, so it has to run after `npm run build` writes
+// those files and before `electron-builder` copies them into the app: a build
+// that rebuilds between the two runs throws the ids away, and a pack that
+// happens before the first one ships an app with no id in it. The upload run
+// comes after the pack, because `debug-files upload` reads the bundle. This file
+// pins what each run *runs*; the release workflow's own test pins where the two
+// runs sit.
 //
 // **The CLI is faked, and the fake writes down what it was handed.** It is a
 // `/bin/sh` script in a temporary directory that appends its own argv to a file
@@ -14,10 +24,10 @@
 // variable to a placeholder to take the upload path, and what the fake records
 // is whether a non-empty value was there, which is the fact this file is about.
 //
-// The three commands are pinned whole rather than by shape. An argument that
-// drifts -- org, project, release, one of the two directories -- is a release
-// whose symbols are filed where nothing looks for them, which is a failure that
-// only shows up as an unreadable stack trace in a crash report.
+// The commands are pinned whole rather than by shape. An argument that drifts --
+// org, project, release, one of the two directories -- is a release whose
+// symbols are filed where nothing looks for them, which is a failure that only
+// shows up as an unreadable stack trace in a crash report.
 
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -83,10 +93,13 @@ function fakeCli(dir: string, code: number): string {
 
 /** Runs the script with exactly the environment given -- never the suite's own,
  * which would put whatever `SENTRY_AUTH_TOKEN` a machine happened to carry into
- * the test. */
-function runScript(env: Record<string, string>): { readonly status: number | null; readonly stdout: string } {
-  const result = spawnSync(process.execPath, [script], { env, encoding: 'utf8' })
-  return { status: result.status, stdout: result.stdout }
+ * the test -- and with the arguments given, so one helper covers both runs. */
+function runScript(
+  env: Record<string, string>,
+  args: readonly string[] = [],
+): { readonly status: number | null; readonly stdout: string; readonly stderr: string } {
+  const result = spawnSync(process.execPath, [script, ...args], { env, encoding: 'utf8' })
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 
 /** The lines the fake recorded, in order, or [] when it was never run. */
@@ -139,10 +152,68 @@ describe('the symbol upload with no token', () => {
       expect(recorded(record)).toEqual([])
     }
   })
+
+  it('is dormant in the inject run as well, printing the same line', () => {
+    const dir = scratch()
+    const record = path.join(dir, 'record')
+    const env = { PATH: process.env.PATH ?? '', SENTRY_SYMBOLS_CLI: fakeCli(dir, 0), FAKE_RECORD: record }
+    const { status, stdout } = runScript(env, ['inject'])
+    expect(status).toBe(0)
+    expect(stdout).toBe(`${SKIP_LINE}\n`)
+    // The inject rewrites files in place and needs no credential -- `sentry-cli
+    // sourcemaps inject` never reaches the network -- but a build with no token
+    // is a build nobody asked for symbols from, so it is skipped with the same
+    // line rather than run. That is the state a checkout, a fork's CI and the
+    // warm-up pack of the release job are in.
+    expect(recorded(record)).toEqual([])
+  })
+})
+
+describe('the inject run', () => {
+  it('runs one command, the inject, on the built main process, and nothing else', () => {
+    const dir = scratch()
+    const { env, record } = uploadEnv(dir)
+    const { status } = runScript(env, ['inject'])
+    expect(status).toBe(0)
+    const mainJs = path.join(consoleRoot, 'dist', 'main')
+    // One command, and no upload: this run is the one that happens *before* the
+    // pack, when the bundle `debug-files upload` reads does not exist yet, and
+    // an upload here would file maps for a build the app has not been made from.
+    expect(recorded(record).filter((line) => line.startsWith('argv:'))).toEqual([
+      `argv: sourcemaps inject --org fugaro --project fugaro-console --release 9.9.9 ${mainJs}`,
+    ])
+  })
+
+  it('reaches the CLI with the token in its environment and nowhere else', () => {
+    const dir = scratch()
+    const { env, record } = uploadEnv(dir)
+    runScript(env, ['inject'])
+    const lines = recorded(record)
+    expect(lines.filter((line) => line.startsWith('token_in_env:'))).toEqual(['token_in_env:yes'])
+    const argv = lines.filter((line) => line.startsWith('argv:'))
+    expect(argv).toHaveLength(1)
+    for (const line of argv) expect(line).not.toContain(PLACEHOLDER_TOKEN)
+  })
+
+  it('refuses an argument that is not `inject`, without running the CLI', () => {
+    // A typo would otherwise run the *other* run: `inject` misspelled is the
+    // upload, which in the release job's first step would read a bundle that has
+    // not been packed yet -- or, in a checkout, upload maps nobody asked for.
+    for (const args of [['Inject'], ['upload'], ['--inject'], ['inject', 'extra']]) {
+      const dir = scratch()
+      const record = path.join(dir, 'record')
+      const { env } = uploadEnv(dir)
+      const { status, stdout, stderr } = runScript(env, args)
+      expect(status, `${args.join(' ')} must be refused`).not.toBe(0)
+      expect(stdout).toBe('')
+      expect(stderr).toContain('inject')
+      expect(recorded(record)).toEqual([])
+    }
+  })
 })
 
 describe('the symbol upload with a token', () => {
-  it('runs the three commands, in order, with the exact arguments', () => {
+  it('runs the two uploads, in order, with the exact arguments', () => {
     const dir = scratch()
     const { env, record } = uploadEnv(dir)
     const { status } = runScript(env)
@@ -154,9 +225,20 @@ describe('the symbol upload with a token', () => {
       // the upload before the maps went up), and native debug files are keyed by
       // the debug id inside them rather than by a release.
       `argv: debug-files upload --org fugaro --project fugaro-console ${path.join(dir, 'release', 'mac-universal')}`,
-      `argv: sourcemaps inject --org fugaro --project fugaro-console --release 9.9.9 ${mainJs}`,
       `argv: sourcemaps upload --org fugaro --project fugaro-console --release 9.9.9 ${mainJs}`,
     ])
+  })
+
+  it('uploads and never injects: the stamp is the other run, before the pack', () => {
+    // The mutation this catches: `inject` back in this list. Injecting here
+    // rewrites the same files the upload has just read, after the app has been
+    // packed from them -- so the ids would go into a build that no longer exists
+    // and the maps that went up would describe neither the app nor the next
+    // build.
+    const dir = scratch()
+    const { env, record } = uploadEnv(dir)
+    runScript(env)
+    expect(recorded(record).filter((line) => line.includes('sourcemaps inject'))).toEqual([])
   })
 
   it('reaches the CLI with the token in its environment and nowhere else', () => {
@@ -167,12 +249,11 @@ describe('the symbol upload with a token', () => {
     expect(lines.filter((line) => line.startsWith('token_in_env:'))).toEqual([
       'token_in_env:yes',
       'token_in_env:yes',
-      'token_in_env:yes',
     ])
     // The other half, and the one the process table would expose: no operand of
-    // any of the three commands equals or contains the token.
+    // either command equals or contains the token.
     const argv = lines.filter((line) => line.startsWith('argv:'))
-    expect(argv).toHaveLength(3)
+    expect(argv).toHaveLength(2)
     for (const line of argv) expect(line).not.toContain(PLACEHOLDER_TOKEN)
   })
 
@@ -181,7 +262,6 @@ describe('the symbol upload with a token', () => {
     const { env, record } = uploadEnv(dir)
     runScript(env)
     expect(recorded(record).filter((line) => line.startsWith('org:'))).toEqual([
-      'org:fugaro project:fugaro-console url:https://de.sentry.io/',
       'org:fugaro project:fugaro-console url:https://de.sentry.io/',
       'org:fugaro project:fugaro-console url:https://de.sentry.io/',
     ])
@@ -193,12 +273,12 @@ describe('the symbol upload with a token', () => {
     const { env, record } = uploadEnv(dir)
     delete env.SENTRY_SYMBOLS_RELEASE
     runScript(env)
-    // The two commands that take a release, and the one that does not:
+    // The command that takes a release, and the one that does not:
     // `debug-files upload` matches by the debug id inside the files it is
     // handed, so the version names nothing there and the CLI refuses the
     // argument.
     const argv = recorded(record).filter((one) => one.startsWith('argv:'))
-    expect(argv.filter((line) => line.includes('sourcemaps'))).toHaveLength(2)
+    expect(argv.filter((line) => line.includes('sourcemaps'))).toHaveLength(1)
     for (const line of argv.filter((one) => one.includes('sourcemaps'))) {
       expect(line).toContain(`--release ${declared}`)
     }
@@ -207,13 +287,28 @@ describe('the symbol upload with a token', () => {
     }
   })
 
+  it('tags the inject run with the same release, read the same way', () => {
+    // The stamp and the upload have to agree: the id `inject` writes into the
+    // file and the map is looked up under the release the map was filed under,
+    // so a run that read one version and a run that read another would file
+    // maps no event can reach.
+    const dir = scratch()
+    const declared = String((JSON.parse(readFileSync(path.join(consoleRoot, 'package.json'), 'utf8')) as { version: unknown }).version)
+    const { env, record } = uploadEnv(dir)
+    delete env.SENTRY_SYMBOLS_RELEASE
+    runScript(env, ['inject'])
+    expect(recorded(record).filter((line) => line.startsWith('argv:'))).toEqual([
+      `argv: sourcemaps inject --org fugaro --project fugaro-console --release ${declared} ${path.join(consoleRoot, 'dist', 'main')}`,
+    ])
+  })
+
   it('stops at the first failure and exits with the CLI’s own code', () => {
     const dir = scratch()
     const { env, record } = uploadEnv(dir, 3)
     const { status } = runScript(env)
     expect(status).toBe(3)
-    // And it stopped there: the two commands after the failing one never ran, so
-    // a release never uploads maps for a build whose debug files did not go up.
+    // And it stopped there: the command after the failing one never ran, so a
+    // release never uploads maps for a build whose debug files did not go up.
     expect(recorded(record).filter((line) => line.startsWith('argv:'))).toEqual([
       `argv: debug-files upload --org fugaro --project fugaro-console ${path.join(dir, 'release', 'mac-universal')}`,
     ])
