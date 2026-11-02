@@ -106,12 +106,15 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 
 - **Files:** `internal/cli/settings.go` (`--project` and `--config` on the group, spelled and
   documented exactly as §3.4 rule 3 spells them for every other command, and passed down to the two
-  writes), `internal/cli/settings_read.go` (`readSettings` fills `Project`, `Config` and `Checkout`
-  in its `localcfg.SelectInput` from the flags), `internal/cli/settings_set.go` (`settingsSelection`
-  does the same for the write path), `internal/cli/settings_aim_test.go` (new), and
-  `internal/localcfg/select.go` **only if** the selector's step order has to change — which this
-  plan does not expect and which the task must not do without saying so, because that file is shared
-  with every command that resolves a project.
+  writes), `internal/cli/settings_read.go` (`readSettings` fills `Project` and `Config` in its
+  `localcfg.SelectInput` from the flags, and `Checkout` deliberately not: a checkout in the input
+  puts the command at the selector's step 3, ahead of `$FUGARO_PROJECT` and `$FUGARO_CONFIG`, so it
+  would resolve the working directory's project rather than the one the flags named, and refuse in
+  any checkout whose `fugaro.yaml` names no project — a change to the unaimed read, which P1 may not
+  make), `internal/cli/settings_set.go` (`settingsAimedSelection` does the same for the write path),
+  `internal/cli/settings_aim_test.go` (new), and `internal/localcfg/select.go` **only if** the
+  selector's step order has to change — which this plan does not expect and which the task must not
+  do without saying so, because that file is shared with every command that resolves a project.
 - **Interface:** `fugaro settings [KEY|GLOB ...] --project NAME [--config PATH]` and `fugaro
   settings set|unset KEY … --project NAME [--config PATH]`; the same two flags, the same precedence,
   the same `--config`-wins-over-`--project` rule `localcfg.Select` already implements at steps 1 and

@@ -2,9 +2,12 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/agentenv"
 )
 
 // settingsAimHome is the aim tests' fixture: a config home holding two
@@ -173,5 +176,102 @@ func TestSettingsAimDoesNotChangeTheUnaimedRead(t *testing.T) {
 	}
 	if got := *rowOf(t, doc, "max_parallel", "project").Value; got != "7" {
 		t.Errorf("max_parallel = %q, want %q", got, "7")
+	}
+}
+
+// settingsAimDisagreement runs one write whose two flags name different
+// installations and holds it to the refusal. The write path resolves the pair
+// through its own selection, so the read's refusal of the same pair says nothing
+// about it: a write that kept only --config would edit basalt's file and report
+// success, which is a silent write into an installation the person did not name
+// — and the one thing the console's caller cannot recover from.
+func settingsAimDisagreement(t *testing.T, op string, rest ...string) {
+	t.Helper()
+	first, second := settingsAimHome(t)
+	beforeFirst, beforeSecond := readFileString(t, first), readFileString(t, second)
+
+	argv := append([]string{"settings", op}, rest...)
+	argv = append(argv, "--layer", "local", "--project", "aurora", "--config", second, "--yes")
+	out, _, err := execute(t, argv...)
+	if err == nil {
+		t.Fatalf("%s resolved --project aurora with a --config naming basalt:\n%s", op, out)
+	}
+	for _, want := range []string{"aurora", "basalt"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if readFileString(t, first) != beforeFirst || readFileString(t, second) != beforeSecond {
+		t.Errorf("the refused %s changed a config", op)
+	}
+}
+
+// TestSettingsSetAimedAtTwoInstallationsIsRefused: the write's own selection
+// refuses the disagreeing pair, naming both. --yes is passed so that the
+// selection is the only thing that can refuse: with the pair accepted, the write
+// would go through and land in the installation --config names.
+func TestSettingsSetAimedAtTwoInstallationsIsRefused(t *testing.T) {
+	settingsAimDisagreement(t, "set", "max_parallel", "9")
+}
+
+// TestSettingsUnsetAimedAtTwoInstallationsIsRefused: `unset` resolves its
+// installation through the same selection and is held to the same refusal —
+// removing a key from whichever installation the environment happened to pick
+// is the same silent write in the other direction.
+func TestSettingsUnsetAimedAtTwoInstallationsIsRefused(t *testing.T) {
+	settingsAimDisagreement(t, "unset", "max_parallel")
+}
+
+// TestSettingsAimedWriteInAnAgentSessionIsRefused: aiming a write does not lift
+// the fence. The aim says which installation the edit is about; it says nothing
+// about who is asking, and the refusal comes first with --yes answering nothing
+// (D1107). The command the refusal prints carries the aim, because the person
+// who pastes it at their own terminal has the same environment as the session
+// that was refused: without the two flags the pasted command would edit whichever
+// installation that environment selects. The loop is over agentenv.Markers itself
+// rather than a copy, so a marker the tree adds is one this rule is held to.
+//
+// The config sits in a directory with a space in its name, so the printed
+// command has to quote the path: a person copies that one line, and an unquoted
+// path would arrive as two arguments.
+func TestSettingsAimedWriteInAnAgentSessionIsRefused(t *testing.T) {
+	for _, marker := range agentenv.Markers {
+		t.Run(marker, func(t *testing.T) {
+			first, second := settingsAimHome(t)
+			beforeFirst, beforeSecond := readFileString(t, first), readFileString(t, second)
+
+			dir := filepath.Join(t.TempDir(), "aimed installation")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			aimed := filepath.Join(dir, "basalt.yaml")
+			if err := os.WriteFile(aimed, []byte(beforeSecond), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(marker, "1")
+
+			_, _, err := execute(t, "settings", "set", "max_parallel", "9", "--layer", "local", "--project", "basalt", "--config", aimed, "--yes")
+			if err == nil {
+				t.Fatal("--yes lifted the agent-session fence for a write aimed at an installation")
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			if !strings.Contains(err.Error(), marker) {
+				t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
+			}
+			if !strings.Contains(err.Error(), "--project basalt") {
+				t.Errorf("the printed command drops --project, so pasting it edits whichever installation this environment selects: %v", err)
+			}
+			if !strings.Contains(err.Error(), "--config '"+aimed+"'") {
+				t.Errorf("the printed command does not carry --config %s as one quoted word: %v", aimed, err)
+			}
+			if !strings.Contains(err.Error(), "nothing was written") {
+				t.Errorf("the refusal does not say nothing was written: %v", err)
+			}
+			if readFileString(t, first) != beforeFirst || readFileString(t, second) != beforeSecond || readFileString(t, aimed) != beforeSecond {
+				t.Error("the refused write changed a config in a coding agent's session")
+			}
+		})
 	}
 }
