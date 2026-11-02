@@ -5201,6 +5201,52 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     ])
   })
 
+  it('keeps the rows already drawn when the page after them is refused', async () => {
+    // The rows are **appended, never redrawn**, and a refusal is no exception: the
+    // page the operator asked for failed, and the page they were reading did not.
+    // Taking the list down to say so would take their own reading of it -- the
+    // rows they had expanded -- down with the sentence.
+    const first = holding()
+    const second = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : second.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(COORDINATOR_JOBS_PAGE)
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_OLDER_WORD).click()
+    second.release({ ok: false, reason: RUNS_REFUSAL })
+    await flush()
+
+    // The rows the first page drew are still there, one refusal and no more is
+    // drawn beside them, and the sentence is the CLI's own words for the read
+    // that failed -- the section's refusal names the operation it made.
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(COORDINATOR_JOBS_PAGE)
+    const refusals = classed(panelOf(document), 'unavailable-operation')
+    expect(refusals).toHaveLength(1)
+    expect(refusals.map((node) => node.textContent)).toContain('runs.list')
+    expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+    // No control offers the same failure again; the head's own refresh is the one
+    // press left, and it reads the window from the top.
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+  })
+
   it('stamps the page it drew, and reads the window again from the top when the stamp’s Refresh is pressed', async () => {
     const first = holding()
     const again = holding()

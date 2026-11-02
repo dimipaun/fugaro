@@ -700,8 +700,11 @@ test.describe('the Coordinator view in the dashboard', () => {
     // whole screen: the records under it are still there.
     const jobs = page.locator(`${THE_VIEW} section.coordinator-jobs`)
     await expect(jobs).toHaveCount(1)
+    // The two words are the sentence, separator included: what a browser gives
+    // this paragraph is the word -- which carries the space -- and the version,
+    // so the fixture builds the expectation the same way the drawing does.
     await expect(jobs.locator('p.coordinator-jobs-note')).toHaveText(
-      `${COORDINATOR_JOBS_FLOOR_WORD} ${CLI_VERSION_BUILT_AGAINST}`,
+      `${COORDINATOR_JOBS_FLOOR_WORD}${CLI_VERSION_BUILT_AGAINST}`,
     )
     await expect(jobs.locator('button.coordinator-jobs-load')).toHaveCount(0)
     await expect(jobs.locator('button.coordinator-jobs-older')).toHaveCount(0)

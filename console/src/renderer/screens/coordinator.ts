@@ -416,8 +416,12 @@ export const COORDINATOR_JOBS_PAGE = 50
  * both #1545's, and a 0.15.x CLI either refuses `--after` outright or sums the
  * page it printed. A screen that asked anyway would draw the page's figures
  * under the word "the window" -- the one wrong number this section could draw --
- * so the section draws the sentence and spawns nothing. */
-export const COORDINATOR_JOBS_FLOOR_WORD = 'the job list needs fugaro 0.16.0 and this CLI is'
+ * so the section draws the sentence and spawns nothing.
+ *
+ * **Its trailing space is the sentence's own.** The version follows it in a span
+ * of its own, and two inline spans are concatenated with nothing between them:
+ * without the space the paragraph reads "this CLI is0.15.3". */
+export const COORDINATOR_JOBS_FLOOR_WORD = 'the job list needs fugaro 0.16.0 and this CLI is '
 
 /** COORDINATOR_JOBS_SHAPE is the section's own skeleton, worn while the first
  * page is out: the head's line and the rows under it. It is declared here rather

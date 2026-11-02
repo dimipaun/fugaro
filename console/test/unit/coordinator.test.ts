@@ -210,6 +210,16 @@ function drawn(node: ScreenElement): string {
     .join(' ')
 }
 
+/** said is the whole tree's text the way a browser concatenates it: every node's
+ * own text, in document order, **with nothing put between them**. `drawn` joins
+ * with a space, so it answers a sentence whose two spans run together as one that
+ * reads -- which is the one thing a case about a sentence's spacing cannot use. */
+function said(node: ScreenElement): string {
+  return walk(node)
+    .map((leaf) => leaf.textContent ?? '')
+    .join('')
+}
+
 /** decodes is a document that must decode, or the failure is the decoder's own
  * sentence rather than an assertion three lines later. */
 function decodes(raw: unknown): CoordinatorStatusView {
@@ -1663,6 +1673,11 @@ describe('the job list (K4)', () => {
     const note = coordinatorJobsFloorNote(factory, '0.15.3+<script>')
     expect(textOf(note, 'coordinator-jobs-floor-word')).toBe(COORDINATOR_JOBS_FLOOR_WORD)
     expect(one(note, 'coordinator-jobs-floor-version').textContent).toBe('0.15.3+<script>')
+    // The sentence reads as one: the two spans are inline and nothing separates
+    // them but what the drawing puts there, so the version must not run into
+    // "this CLI is" on the screen. Spelled out rather than built from the
+    // constant, because the space between the two words is the claim.
+    expect(said(note)).toBe('the job list needs fugaro 0.16.0 and this CLI is 0.15.3+<script>')
   })
 
   it('renders every string a row draws through the class its wire key declares', () => {
