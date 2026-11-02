@@ -4507,6 +4507,103 @@ func TestModelsLsSchema(t *testing.T) {
 	}
 }
 
+// TestModelsSearchSchema holds schemas/models-search.schema.json to the
+// document `fugaro models search <text> --json` prints and to the Go constants
+// that document's closed vocabulary is written as. The hits are dynamic — one
+// per row of the built-in catalog, the embedded Claude table and the owner's
+// model_prices — so the schema cannot pin them by name; what it can pin, and
+// what this test checks, is that the schema loads (a broken $ref between $defs
+// is exactly where a hand edit breaks), that v is modelsSearchDocVersion, and
+// that the SOURCE column's three words are the constants the command writes
+// them from. A fourth source, or a renamed one, is red here rather than in a
+// consumer that branches on the column: `none` is deliberately not one of
+// them, because a model with no price is a miss and never a hit.
+//
+// The document itself is validated against this schema by
+// TestModelsSearchJSONMatchesSchema in internal/cli, which is where the command
+// that writes it lives.
+func TestModelsSearchSchema(t *testing.T) {
+	raw, err := os.ReadFile("models-search.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compile(t, "models-search.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/models_search.go")
+	v := nodeOf(t, doc, "properties", "v")
+	if v["const"] != float64(1) {
+		t.Errorf("v: const = %v, and the document's first version is 1 (D784)", v["const"])
+	}
+	// The $comment is the pointer from the contract to the code: it must name
+	// a constant this file's own parse found, or it points at nothing.
+	if got, _ := v["$comment"].(string); !strings.Contains(got, "modelsSearchDocVersion") || consts["modelsSearchDocVersion"] != "1" {
+		t.Errorf("v: $comment = %q, and modelsSearchDocVersion in internal/cli/models_search.go is %q", got, consts["modelsSearchDocVersion"])
+	}
+	// The sources the command writes its rows from are declared beside the
+	// `models ls` document's own, which is the one place that vocabulary
+	// lives.
+	sourceConsts := goConstValues(t, "../internal/cli/models_ls.go")
+	want := make([]string, 0, 3)
+	for _, name := range []string{"modelsSourceEmbedded", "modelsSourceCatalog", "modelsSourceLocal"} {
+		if sourceConsts[name] == "" {
+			t.Errorf("internal/cli/models_ls.go declares no %s", name)
+			continue
+		}
+		want = append(want, sourceConsts[name])
+	}
+	if got := stringsOf(t, doc, "$defs", "hit", "properties", "source", "enum"); !slices.Equal(got, want) {
+		t.Errorf("$defs.hit.source: the enum is %v, and the command writes %v", got, want)
+	}
+	// Every top-level member the document always carries is required, so a
+	// consumer may read one without a nil check: models is written on every
+	// run, empty on a miss included.
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"v", "query", "models"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+	// A price is a range and both ends are always there: a consumer adds up a
+	// hit without a nil check per end.
+	price := stringsOf(t, doc, "$defs", "price", "required")
+	for _, key := range []string{"min", "max"} {
+		if !slices.Contains(price, key) {
+			t.Errorf("$defs.price: required is %v, and a range always carries %q", price, key)
+		}
+	}
+	// Every hit names the row it is and the route a run would send it down;
+	// route is empty for a model no route serves, so it is required rather
+	// than absent.
+	hitReq := stringsOf(t, doc, "$defs", "hit", "required")
+	for _, key := range []string{"id", "source", "route"} {
+		if !slices.Contains(hitReq, key) {
+			t.Errorf("$defs.hit: required is %v, and a hit always carries %q", hitReq, key)
+		}
+	}
+	// The two endpoint counts are the catalog's own, so they are optional here
+	// and 0 is a figure: a model whose endpoints are none of them ZDR-eligible
+	// carries a real 0, and a consumer must be able to tell that from a row the
+	// catalog does not price, which carries neither member.
+	zdr := nodeOf(t, doc, "$defs", "hit", "properties", "zdr_endpoints")
+	if zdr["minimum"] != float64(0) {
+		t.Errorf("$defs.hit.zdr_endpoints: minimum = %v, and 0 ZDR endpoints is a count a model may carry", zdr["minimum"])
+	}
+	for _, key := range []string{"endpoints", "zdr_endpoints"} {
+		if slices.Contains(hitReq, key) {
+			t.Errorf("$defs.hit: required is %v, and %q is a catalog row's own member", hitReq, key)
+		}
+	}
+	// The count is the column the read prints it in: a consumer told to look at
+	// another one would read the wrong figure off the table.
+	if got, _ := zdr["description"].(string); !strings.Contains(got, "ENDPOINTS") || strings.Contains(got, "TIER") {
+		t.Errorf("$defs.hit.zdr_endpoints: the description is %q, and the count is the read's ENDPOINTS column", got)
+	}
+}
+
 // TestSummarySchema pins schemas/summary.schema.json against the command that
 // writes the document: the version constant its $comment names, the state keys
 // a consumer reads a count by, and the members that are always carried.
