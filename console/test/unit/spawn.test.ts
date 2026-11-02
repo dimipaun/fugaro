@@ -947,19 +947,24 @@ describe('the spawn table and the argv it builds', () => {
     // Every value here is a form the CLI itself takes for `runs summary
     // --since` (`parseSince`) and this surface still refuses: the set is the
     // screens' two windows, and the whole history is the read the command
-    // exists to make unnecessary. **The validator is the gate** -- a window's
-    // membership is a fact about the set and not about a word's shape, so
-    // `argvFor` never sees one of these: the caller that reaches it is
-    // `read('runs.summary', …)`, which hands it the validator's own answer.
+    // exists to make unnecessary. **Both guards refuse it**: the validator
+    // (`ipc.ts`'s `summarySince`) is the renderer's gate, and the argv builder
+    // re-checks the membership for the `limit` case's reason -- a bound asked
+    // in one place is a bound the next caller can miss, and the window this one
+    // admits by accident is the whole history.
     for (const since of ['0', '30d', '2d', '36h', '12w', '2026-10-16', '7D', ' 7d', '7d ', '']) {
       expect(validateArguments('runs.summary', { since }).ok, JSON.stringify(since)).toBe(false)
+      expect(
+        () => argvFor('runs.summary', { since }, safeContext()),
+        JSON.stringify(since),
+      ).toThrow(/not a window this console will pass/)
     }
     for (const since of ['7d', '1d']) {
       expect(validateArguments('runs.summary', { since }).ok, since).toBe(true)
-      expect(() => argvFor('runs.summary', { since }, safeContext()), since).not.toThrow()
+      expect(argvFor('runs.summary', { since }, safeContext()), since).toContain(`--since=${since}`)
     }
-    // What the argv builder does refuse is a word an argv could not carry at
-    // all -- the spawn alphabet's own half of the two guards.
+    // What the spawn alphabet refuses on top of that is a word an argv could
+    // not carry at all -- the builder's other half.
     for (const since of ['a b', '$(id)', 'a;b', 'a\u0000b']) {
       expect(() => argvFor('runs.summary', { since }, safeContext()), JSON.stringify(since)).toThrow()
     }

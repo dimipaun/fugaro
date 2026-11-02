@@ -113,7 +113,7 @@ import { homedir, tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { dirname, isAbsolute, join } from 'node:path'
 
-import { CONSOLE_OPERATIONS, RUNS_LIST_MAX_LIMIT, isNeverReachable } from './ipc'
+import { CONSOLE_OPERATIONS, RUNS_LIST_MAX_LIMIT, SUMMARY_SINCE_WINDOWS, isNeverReachable } from './ipc'
 import type { ArgumentKind, OperationName, ValidatedArgument, ValidatedArguments } from './ipc'
 import type { SpawnLogWriter } from './spawnlog'
 // The WSL seam, and the one import that closes a cycle: `wsl.ts` imports this
@@ -1207,10 +1207,20 @@ export function argvFor(
       case 'summarySince': {
         // One word, `--since=<window>`: the window stays inside the flag's own
         // word, so it can never be read as a flag -- the design's reason for the
-        // `=` form on this row (design §5.1 rule 6). The set itself is the
-        // validator's (`ipc.ts`'s `summarySince`), so what is left here is the
-        // one word an argv could not carry at all.
-        if (typeof value !== 'string' || value === '' || !isSafeArgumentValue(value)) {
+        // `=` form on this row (design §5.1 rule 6).
+        //
+        // **The membership is asked again here rather than trusted**, the way
+        // the `limit` case re-asks its bound: the schema is the renderer's gate
+        // (`ipc.ts`'s `summarySince`) and this is the argv's, and the window the
+        // two could disagree about is the whole history -- `0` is `parseSince`'s
+        // "no lower bound", which is exactly the read the command exists to make
+        // unnecessary. `isSafeArgumentValue` stays on top of that for the words
+        // no member of the set can be.
+        if (
+          typeof value !== 'string' ||
+          !SUMMARY_SINCE_WINDOWS.includes(value) ||
+          !isSafeArgumentValue(value)
+        ) {
           refused(`${operation}'s ${spec.key} is not a window this console will pass to the CLI`)
         }
         argv.push(`${spec.flag ?? ''}${value}`)
