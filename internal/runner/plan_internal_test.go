@@ -209,24 +209,37 @@ func TestPlanStepsFollowTheLevels(t *testing.T) {
 	}) {
 		t.Fatalf("level 1 on: %v", got)
 	}
-	// Level 3 on with no step for it: the plan gains one after the review, and
-	// it bounces to the cheap loop the first_line step leaves (O7).
+	// Level 3 on with a step of its own: the catalog default writes
+	// `adversarial: {}`, so the plan runs the step the recipe wrote, taken as
+	// written — it does not bounce.
 	withL3 := []planStep{
+		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
+		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
+		{Kind: recipe.StepAdversarial, Rounds: rigor.AdversarialDefault(rigor.Critical), FirstRounds: 2},
+	}
+	if got := planOf(def, planLevels(true, true, true), a, nil, rigor.Critical); !slices.Equal(got, withL3) {
+		t.Fatalf("the recipe's own level 3: %v, want %v", got, withL3)
+	}
+	// Level 3 on with no step for it: a loop recipe that carries none gains one
+	// after the review, and it bounces to the cheap loop the first_line step
+	// leaves (O7).
+	plain := parseRecipe(t, "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: {}\n")
+	inserted := []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
 		{Kind: recipe.StepAdversarial, Rounds: rigor.AdversarialDefault(rigor.Critical), Bounce: true, FirstRounds: 2},
 	}
-	if got := planOf(def, config.Levels{
+	if got := planOf(plain, config.Levels{
 		L1: config.ResolvedLevel{On: true},
 		L2: config.ResolvedLevel{On: true},
 		L3: config.ResolvedLevel{On: true, Inserted: true},
-	}, a, nil, rigor.Critical); !slices.Equal(got, withL3) {
-		t.Fatalf("level 3 inserted: %v, want %v", got, withL3)
+	}, a, nil, rigor.Critical); !slices.Equal(got, inserted) {
+		t.Fatalf("level 3 inserted: %v, want %v", got, inserted)
 	}
 	// Level 3 on with no first line under it: the bounce has nothing to bounce
 	// to, so the step carries no first-line rounds and behaves as a plain
 	// review (planStep.FirstRounds).
-	noCheap := planOf(def, config.Levels{
+	noCheap := planOf(plain, config.Levels{
 		L2: config.ResolvedLevel{On: true},
 		L3: config.ResolvedLevel{On: true, Inserted: true},
 	}, a, nil, rigor.Critical)
