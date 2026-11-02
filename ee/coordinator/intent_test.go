@@ -271,6 +271,148 @@ func TestReportRefusesADeclarationLongerThanARecord(t *testing.T) {
 	}
 }
 
+// TestCleanList is cleanList's whole contract as a table, and it is a contract
+// about a caller's own text rather than a tidy-up: what the record does to the
+// file and service lists — drop the empty entries, collapse duplicates, sort —
+// is what makes two spellings of one declaration one document, and what keeps
+// a null out of a record whose empty list means "declares none".
+//
+// What is NOT in the table is as much the contract as what is: a blank entry, a
+// space around a name and a control character are the caller's own text and are
+// kept exactly as it wrote them. Trimming or refusing one would be the report
+// path editing a declaration, which is advice in another costume and is the one
+// thing the report path may not grow.
+//
+// Hand mutation this fails on: dropping the empty-entry filter (the record
+// carries the empty name, and two callers who declared the same thing in
+// different spellings stop sharing a document), sorting without Compact (a
+// duplicate survives), trimming an entry (the two lists stop being the caller's
+// own text), or sorting the caller's own slice in place (the row "the caller's
+// own list is not the record's" below).
+func TestCleanList(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"a nil list answers an empty one", nil, []string{}},
+		{"an empty list stays empty", []string{}, []string{}},
+		{"the empty entry is dropped", []string{"", "internal/cli", ""}, []string{"internal/cli"}},
+		{"a blank entry is the caller's own text and is kept", []string{"", " ", "b"}, []string{" ", "b"}},
+		{"a duplicate collapses", []string{"b", "a", "b", "a"}, []string{"a", "b"}},
+		{"surrounding whitespace is kept", []string{" b", "b "}, []string{" b", "b "}},
+		{"a control character is kept", []string{"b", "\x01a", "a"}, []string{"\x01a", "a", "b"}},
+		{"the order is the sorted one, whatever order the caller wrote", []string{"c", "a", "b"}, []string{"a", "b", "c"}},
+		{"a path and its own prefix are two names in one list", []string{"internal/cli/run.go", "internal/cli"}, []string{"internal/cli", "internal/cli/run.go"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := cleanList(c.in)
+			if !slices.Equal(got, c.want) {
+				t.Errorf("cleanList(%q) = %q, want %q", c.in, got, c.want)
+			}
+			// The record's promise, and the reason the answer is a slice and
+			// not nil: an empty list is "declares none", and a null is a shape
+			// every reader of the record would have to interpret.
+			if got == nil {
+				t.Error("cleanList answered nil: the record would carry a null where it means \"declares none\"")
+			}
+		})
+	}
+
+	// The caller's own list is not the record's. Normalise assigns the answer
+	// back onto its own copy of the Intent, so a cleanList that sorted in place
+	// would reorder the list the caller still holds — and the caller's Intent
+	// is its own document until it is reported.
+	own := []string{"c", "", "a"}
+	cleanList(own)
+	if want := []string{"c", "", "a"}; !slices.Equal(own, want) {
+		t.Errorf("cleanList reordered the caller's own list: %q, want %q", own, want)
+	}
+}
+
+// TestIntentIDIsANodeKey: the record's ID is the node's key, and the property
+// the whole record's shape rests on is that it is always a key the database
+// takes — a branch, a path or a service holding a dot, a slash, a bracket or a
+// control character cannot reach the key, because coordpath.DocumentID answers
+// lower-case hex (intent.go's own argument, and the reason a caller who reaches
+// the report path cannot write outside the intents node).
+//
+// The declaration below is hostile on purpose: every part of it carries a
+// character a database key may not hold. The ID that comes out holds none of
+// them, and the store takes the path it names without a refusal — which is the
+// check, asserted on the ID rather than inferred from a successful report.
+func TestIntentIDIsANodeKey(t *testing.T) {
+	hostile := Intent{
+		DeclaredBy: "someone@example.com",
+		Branch:     "release/v0.16.0/../..",
+		Release:    "0.16.0\x00[",
+		Files:      []string{"../internal/cli/run.go", "a\nb.go"},
+		Services:   []string{"internal/coordinator", "x.y"},
+	}
+	id := IntentID(hostile)
+	if strings.ContainsAny(id, "./$#[]") || strings.ContainsFunc(id, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		t.Errorf("IntentID(%+v) = %q, which is not a database key", hostile, id)
+	}
+	s := testStore(t)
+	if _, _, err := s.Read(testCtx(t), PathIntent("acme-webapp", id), nil); err != nil {
+		t.Errorf("the store refuses the path the ID names, so the record could not be written: %v", err)
+	}
+}
+
+// TestStoreRefusesAnIntentIDThatIsNotANodeKey: the other half of the same
+// check. IntentID never produces one of these — it is hex — so the store's own
+// fence is what stands between an ID that is not a key and the database, and it
+// has to hold for every caller that builds a path out of an ID (PathIntent) and
+// not only for this package's own.
+//
+// "Refused before any store read or write" is the assertion rather than a
+// nicety: the fake's credentials are empty afterwards, so the refusal happened
+// in this process and no request was made, and the intents node is untouched.
+//
+// Hand mutation this fails on: dropping validPath from internal/rtdb's get and
+// put (every path here reaches the database, and the fake records a credential
+// for each one).
+func TestStoreRefusesAnIntentIDThatIsNotANodeKey(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c, err := rtdb.New(f.URL, rtdb.Auth{IDToken: func() string { return "idtok" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(c)
+	ctx := testCtx(t)
+	slug := "acme-webapp"
+	// Every ID here is one the report path can never mint, and every one of
+	// them is refused for the reason named: the segment it would make is not a
+	// key. The bound is internal/rtdb's own (a key of more than 768
+	// characters), written here as the literal the database measures.
+	for _, c := range []struct{ name, id string }{
+		{"a traversal", ".."},
+		{"a traversal through the intents node", "../view"},
+		{"a dot anywhere in the name", "dead.beeF"},
+		{"a bracket", "abcdef[]"},
+		{"an empty segment between two separators", "abcdef//012345"},
+		{"a control character", "abcdef\x00"},
+		{"a name over the database's own key bound", strings.Repeat("c", 769)},
+	} {
+		path := PathIntent(slug, c.id)
+		if _, _, err := s.Read(ctx, path, nil); err == nil {
+			t.Errorf("%s: Read(%s) = nil, want a refusal", c.name, path)
+		}
+		if err := s.Put(ctx, path, "etag", map[string]any{"x": 1}); err == nil {
+			t.Errorf("%s: Put(%s) = nil, want a refusal", c.name, path)
+		}
+		if err := s.Write(ctx, path, map[string]any{"x": 1}); err == nil {
+			t.Errorf("%s: Write(%s) = nil, want a refusal", c.name, path)
+		}
+	}
+	if got := f.Credentials(); len(got) != 0 {
+		t.Errorf("a refused ID reached the database: %d requests carried a credential", len(got))
+	}
+	if v := f.Value(PathIntents(slug)); v != nil {
+		t.Errorf("a refused ID wrote %v", v)
+	}
+}
+
 // children is the keys of a node of the fake database, sorted; nil when the
 // node is not there.
 func children(f *gcpfake.RTDB, path string) []string {
