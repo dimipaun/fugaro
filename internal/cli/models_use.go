@@ -90,6 +90,13 @@ func runModelsUse(cmd *cobra.Command, repo, role, id string, o *modelsUseOptions
 	if err := settingsReparse(target, next); err != nil {
 		return err
 	}
+	after, ps := config.Parse(next)
+	if len(ps) > 0 {
+		return userErr("%s would not read back after the edit: %s", path, ps[0].String())
+	}
+	if err := modelsUseJudge(ctx, lc, cfg, after, path, repo, role, id); err != nil {
+		return err
+	}
 
 	what := fmt.Sprintf("point %s's %s at %s", repo, role, id)
 	command := fmt.Sprintf("fugaro models use %s %s %s", repo, role, id)
@@ -108,6 +115,58 @@ func runModelsUse(cmd *cobra.Command, repo, role, id string, o *modelsUseOptions
 		fmt.Fprintf(cmd.OutOrStdout(), "the change is in %s's working tree and nowhere else: review it, commit it on your own branch and merge that to the base branch — every run reads the base branch, and this command never commits or pushes\n", oneLine(repo))
 	}
 	return nil
+}
+
+// modelsUseJudge holds the edited file against the rules `fugaro validate`
+// reports, so the pin this command prepares is one a launch takes whatever those
+// rules learn later. Reading them through the same functions is the difference
+// between judging a pin and re-stating some of its rules: the file's own
+// budget.allowed_models — the tighter of the two lists, and the one a launch
+// merges — was the rule the checks here re-stated by omission, and only the
+// rules themselves can say how many more there are.
+//
+// Only a problem the edit introduces is a refusal. A file that already fails
+// validate is its owner's to fix, and a switch that has nothing to do with that
+// problem refusing on its behalf would be this command's second, wrong verdict
+// on the same file; a problem the edit removes is an improvement.
+//
+// The rules read the repository from the checkout the command runs in, exactly
+// as validate reads the file in hand. For a remembered checkout elsewhere that
+// is not this file's repository, so their allow_data_to lines are dropped rather
+// than trusted: modelsUseCheck has already ruled on allow_data_to for the
+// repository this file belongs to, and a line about another checkout's
+// repository is a refusal no launch of this file would make (providerProblems
+// drops the same lines for its own "the repository is unknown here" state).
+func modelsUseJudge(ctx context.Context, lc *localcfg.Config, before, after *config.Config, path, repo, role, id string) error {
+	was := map[string]bool{}
+	for _, p := range modelsUseProblems(ctx, lc, before, path) {
+		was[p.String()] = true
+	}
+	_, here := checkoutOriginAt("")
+	for _, p := range modelsUseProblems(ctx, lc, after, path) {
+		if was[p.String()] {
+			continue
+		}
+		if !strings.EqualFold(here, repo) && strings.Contains(p.Message, "allow_data_to") {
+			continue
+		}
+		return userErr("%s would not launch with %s pinned for %s: %s", path, config.CodeSpan(id), role, p.String())
+	}
+	return nil
+}
+
+// modelsUseProblems is one file as validate's own rules find it: the budget,
+// provider and routing rules, over the same tables validate reads — the owner's
+// own routes, with no layer merged, which is what `models use` edits — and with
+// the roles the effective recipe leaves. The project config's own error is nil
+// here: this command resolved it, or it refused before reading the file.
+func modelsUseProblems(ctx context.Context, lc *localcfg.Config, cfg *config.Config, path string) []config.Problem {
+	ecfg := withRecipeRoles(filepath.Dir(path), cfg)
+	claimed := lc.Providers
+	problems, _, _ := budgetProblems(ctx, ecfg, lc, claimed)
+	pp, _, _ := providerProblems(ctx, ecfg, lc, claimed)
+	rp, _ := routingProblems(ctx, ecfg, lc, claimed, nil)
+	return append(append(problems, pp...), rp...)
 }
 
 // modelsUseRefuseID refuses what no pin may carry: a ":" variant and an alias

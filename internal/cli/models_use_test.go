@@ -98,6 +98,55 @@ workflows:
       build: go build ./...
 `
 
+// modelsUseFileAllowedYAML is the repository's file with an allow-list of its
+// own: the project's list admits the model the switch names, this file's does
+// not, and the file is the tighter of the two — the one a launch is judged
+// under (policy.Merge).
+const modelsUseFileAllowedYAML = `version: 1
+project: aurora
+git:
+  provider: github
+agent:
+  auth: api-key
+  models:
+    coder: deepseek/deepseek-v4-flash
+    reviewer: claude-sonnet-5-5
+budget:
+  mode: enforce
+  per_run_usd: 10
+  allowed_models:
+    - deepseek/deepseek-v4-flash
+    - deepseek/deepseek-v4-pro
+    - claude-sonnet-5-5
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+`
+
+// modelsUseClaudeCoderYAML is the commented file with a background pin: a
+// Claude coder leaves the background requests with no model of the run's own
+// (config.EffectiveBackground, which derives it only from a provider coder), and
+// a run under an allow-list refuses a role that names none — so the file that
+// pins a Claude coder names the background model itself.
+const modelsUseClaudeCoderYAML = `version: 1
+project: aurora
+git:
+  provider: github
+agent:
+  auth: api-key
+  models:
+    coder: deepseek/deepseek-v4-flash
+    reviewer: claude-sonnet-5-5
+    background: deepseek/deepseek-v4-flash
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+`
+
 // modelsUseHome is the fixture: the project above, and no coding-agent marker
 // set, so a write that is meant to land is not fenced by the session the test
 // binary happens to run in.
@@ -206,6 +255,84 @@ func TestModelsUseRefusesAnUnpricedModel(t *testing.T) {
 	}
 }
 
+// TestModelsUseRefusesAModelTheFileItselfDoesNotAllow: the repository's own
+// budget.allowed_models is the tighter list, so the switch it forbids is
+// refused here rather than written into a file `fugaro validate` then refuses.
+// The launch reads the merged list (policy.Merge), so this command reads it
+// through validate's own rules and not from the project config alone.
+func TestModelsUseRefusesAModelTheFileItselfDoesNotAllow(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseFileAllowedYAML)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-x", "--yes")
+	if err == nil {
+		t.Fatal("a model the file's own allow-list does not name was accepted")
+	}
+	if !strings.Contains(err.Error(), "allowed_models") {
+		t.Errorf("the refusal does not name the list that forbids it: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused switch wrote the file:\n%s", got)
+	}
+}
+
+// TestModelsUseWritesAModelBothListsAllow: the list above is a list, not a
+// wall: a model both lists admit is written as it was before, so the rule
+// refuses the file's own exclusions and nothing else.
+func TestModelsUseWritesAModelBothListsAllow(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseFileAllowedYAML)
+
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(readFileString(t, path), "coder: deepseek/deepseek-v4-pro") {
+		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
+	}
+}
+
+// modelsUseBrokenReviewerYAML is a file whose reviewer already fails validate:
+// vendor/model-q is claimed by a route the price table cannot price. The switch
+// under test has nothing to do with it.
+const modelsUseBrokenReviewerYAML = `version: 1
+project: aurora
+git:
+  provider: github
+agent:
+  auth: api-key
+  models:
+    coder: deepseek/deepseek-v4-flash
+    reviewer: vendor/model-q
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+`
+
+// TestModelsUseWritesIntoAFileThatAlreadyFailsValidate: only the problem the
+// edit introduces is a refusal. A file whose reviewer is already unpriced is
+// its owner's to fix, and a switch that has nothing to do with that reviewer
+// refusing on its behalf would be a second, wrong verdict on the same file —
+// the coder's own pin is one a launch takes.
+func TestModelsUseWritesIntoAFileThatAlreadyFailsValidate(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseBrokenReviewerYAML)
+
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	if err != nil {
+		t.Fatalf("the switch was refused over a problem the file already had: %v\n%s", err, out)
+	}
+	if !strings.Contains(readFileString(t, path), "coder: deepseek/deepseek-v4-pro") {
+		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
+	}
+	if !strings.Contains(readFileString(t, path), "reviewer: vendor/model-q") {
+		t.Errorf("the edit rewrote a line it does not own:\n%s", readFileString(t, path))
+	}
+}
+
 // TestModelsUseRefusesAProviderModelUnderOAuth: a provider model is an api-key
 // run's (config.CheckProviderAuth), so a repository whose file runs on oauth is
 // refused the switch rather than handed a pin no launch would take.
@@ -269,10 +396,11 @@ func TestModelsUseJudgesTheBackgroundRoleAsALaunchWould(t *testing.T) {
 // TestModelsUsePinsAClaudeModelWithNoRoute: a Claude ID needs no route of the
 // project config — it goes to Anthropic — so the missing-route refusal is for a
 // vendor/model ID a route has not opened, never for one of these. The pin is
-// written, and the price of the spelling the table carries is what lets it.
+// written (the file names its background model, since a Claude coder derives
+// none), and the price of the spelling the table carries is what lets it.
 func TestModelsUsePinsAClaudeModelWithNoRoute(t *testing.T) {
 	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseClaudeCoderYAML)
 
 	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "claude-sonnet-5-5", "--yes")
 	if err != nil {
