@@ -626,6 +626,13 @@ func TestReduceYarnBerryPatch(t *testing.T) {
 	refused(t, "yarn.lock", "\"typescript@npm:^5.4.0\":\n  version: 5.4.5\n  resolution: \"typescript@patch:typescript@npm%3A5.4.5#./patches/evil.patch\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
 	refused(t, "yarn.lock", "\"lodash@npm:^1.0.0\":\n  version: 1.0.0\n  resolution: \"lodash@patch:evil-pkg@npm%3A1.0.0#optional!builtin<compat/typescript>\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
 	refused(t, "yarn.lock", "\"typescript@npm:^5.4.0\":\n  version: 5.4.5\n  resolution: \"typescript@patch:typescript@npm%3Ahttps://evil.example/x.tgz#optional!builtin<compat/typescript>\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	// The header's own read is the mirror of that one, and a header is read for
+	// every descriptor it lists: one whose first descriptor is a plain range and
+	// whose second is a patch of the repository's own states a source the
+	// registry never served, and a read that let the second descriptor's refusal
+	// go would key the entry as the plain range the first one names, with the
+	// resolution line beside it saying nothing about the patch either.
+	refused(t, "yarn.lock", "\"typescript@npm:^5.4.0, typescript@patch:typescript@npm%3A^5.4.0#./patches/evil.patch\":\n  version: 5.4.5\n  resolution: \"typescript@npm:5.4.5\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
 	// A descriptor is `name@patch:…` and the branch above reads that one: a
 	// resolution line written `patch:` with no package name before it is not a
 	// descriptor, and reading it as the registry's keys the entry as the plain
