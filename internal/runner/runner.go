@@ -2850,19 +2850,20 @@ func (r *run) levelFocus(level policy.Level) string {
 	return resolvedLevel(r.levels, level).Focus
 }
 
-// reviewEffort is a review stage's reasoning effort as the level answers it and
-// as it reaches the stage: the level's own effort and EffortVars' variables for
-// the stage's route, the two answers a reader of it needs. The effort is "" and
-// the variables are nil for a stage that is not a review one, for a level with
-// no effort of its own, and for a provider route, whose calls run with thinking
-// off (G5, D725) -- an empty effort is then the same statement the stage's own
-// environment makes.
+// reviewStageEffort is a review stage's reasoning effort as the level answers
+// it and as it reaches the stage: the level's own effort and EffortVars'
+// variables for the stage's route, the two answers a reader of it needs. The
+// effort is "" and the variables are nil for a stage that is not a review one,
+// for a level with no effort of its own, and for a provider route, whose calls
+// run with thinking off (G5, D725) -- an empty effort is then the same
+// statement the stage's own environment makes.
 //
 // It exists so the one rule is spelled once: reviewFacts records the effort that
 // reached the stage and applyStageEffort merges the variables into the stage's
 // pins, and both have to ask the same question of the level, the pins and the
-// route.
-func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
+// route. It is named apart from the review artifact's own reviewEffort, which
+// reads the verdict block's one effort off the same ladder and answers it alone.
+func (r *run) reviewStageEffort(stage string) (string, map[string]string, error) {
 	s, ok := reviewStageOf(stage)
 	if !ok {
 		return "", nil, nil
@@ -2891,7 +2892,7 @@ func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
 // environment makes. Nothing is answered for a stage that is not a review one.
 func (r *run) reviewFacts(stage string) (model, effort string) {
 	model = r.stageModel(stage)
-	effort, _, err := r.reviewEffort(stage)
+	effort, _, err := r.reviewStageEffort(stage)
 	if err != nil {
 		return model, ""
 	}
@@ -2907,7 +2908,7 @@ func (r *run) reviewFacts(stage string) (model, effort string) {
 // review, for a level with no effort, or for a provider route, whose calls run
 // with thinking off (G5, D725).
 func (r *run) applyStageEffort(stage string, pins map[string]string) (map[string]string, error) {
-	_, vars, err := r.reviewEffort(stage)
+	_, vars, err := r.reviewStageEffort(stage)
 	if err != nil {
 		return pins, err
 	}
