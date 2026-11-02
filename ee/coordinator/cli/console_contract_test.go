@@ -376,3 +376,105 @@ func receiverName(recv *ast.FieldList) string {
 	}
 	return ""
 }
+
+// coordinatorShowSection is the contract's §6.15, from its heading to the next
+// heading of its level or above: `coordinator show`'s document (coordinator v2
+// C3). It is read apart from §6.13 because the two document different reads of
+// different shapes, and a check that read the whole document would pass on a
+// field named in either.
+func coordinatorShowSection(t *testing.T) string {
+	t.Helper()
+	doc := readFileString(t, coordinatorContractPath)
+	const head = "### 6.15 "
+	i := strings.Index(doc, head)
+	if i < 0 {
+		t.Fatalf("%s no longer carries the %q section `coordinator show` is documented in", coordinatorContractPath, head)
+	}
+	body := doc[i:]
+	if j := strings.Index(body[1:], "\n## "); j >= 0 {
+		body = body[:j+1]
+	}
+	if len(body) < 1000 {
+		t.Fatalf("%s's §6.15 is %d bytes: the section boundary moved and these checks would read almost nothing", coordinatorContractPath, len(body))
+	}
+	return body
+}
+
+// TestConsoleContractNamesEveryShowField: §6.15's field table lists exactly the
+// json keys coordinator.PRDocument carries, in both directions — the same check
+// §6.13 gets, for the same reason. The document is flat and its table is the
+// only one in the section, so a key added to the struct and not to the table is
+// a field the console's decoder was never told about, and a key in the table
+// that the struct does not carry is a reader written against a field no command
+// emits.
+func TestConsoleContractNamesEveryShowField(t *testing.T) {
+	listed := coordinatorListedKeys(t, coordinatorShowSection(t))
+	if len(listed) < 9 {
+		t.Fatalf("%s's §6.15 table lists %d key-shaped names: the table shape changed and this test stopped looking", coordinatorContractPath, len(listed))
+	}
+	rt := reflect.TypeOf(coordinator.PRDocument{})
+	real := map[string]bool{}
+	for i := 0; i < rt.NumField(); i++ {
+		tag := rt.Field(i).Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		key := strings.Split(tag, ",")[0]
+		real[key] = true
+		if !listed[key] {
+			t.Errorf("%s's §6.15 table never lists the json field %q, which coordinator.PRDocument carries", coordinatorContractPath, key)
+		}
+	}
+	for key := range listed {
+		if !real[key] {
+			t.Errorf("%s's §6.15 field table names %q, which is not a json key of coordinator.PRDocument: a field invented rather than read", coordinatorContractPath, key)
+		}
+	}
+}
+
+// TestConsoleContractNamesOnlyRealShowFlags: every --flag §6.15 writes on a line
+// naming its command is a flag of newCoordinatorShowCmd, read off cobra rather
+// than against a list kept here, and the heading's argv is the command the row
+// names. It is the check that keeps a document from promising the console a flag
+// the command does not have — on a read whose argv reaches a host.
+func TestConsoleContractNamesOnlyRealShowFlags(t *testing.T) {
+	body := coordinatorShowSection(t)
+	cmd := newCoordinatorShowCmd()
+	real := map[string]bool{}
+	cmd.Flags().VisitAll(func(f *pflag.Flag) { real[f.Name] = true })
+	for _, want := range []string{"repo", "pr", "json", "project", "config"} {
+		if !real[want] {
+			t.Errorf("coordinator show has no --%s, and %s documents it as one of the command's flags", want, coordinatorContractPath)
+		}
+	}
+
+	const head = "### 6.15 `fugaro coordinator show"
+	if i := strings.Index(body, head); i < 0 {
+		t.Fatalf("%s's §6.15 heading is not the command's argv any more: want %q", coordinatorContractPath, head)
+	}
+	for _, want := range []string{"--repo", "--pr", "--json"} {
+		if !strings.Contains(body[:strings.Index(body, "\n")], want) {
+			t.Errorf("%s's §6.15 heading no longer names %s: the row the console spawns is what the console passes", coordinatorContractPath, want)
+		}
+	}
+
+	named := 0
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.Contains(line, "newCoordinatorShowCmd") {
+			continue
+		}
+		named++
+		for _, m := range coordinatorFlagRE.FindAllStringSubmatch(line, -1) {
+			name := strings.TrimRight(m[1], "-")
+			if name == "" {
+				continue
+			}
+			if !real[name] {
+				t.Errorf("%s's §6.15 names --%s as a flag of newCoordinatorShowCmd, and the command has no such flag", coordinatorContractPath, name)
+			}
+		}
+	}
+	if named == 0 {
+		t.Fatalf("%s's §6.15 no longer names newCoordinatorShowCmd: these checks would pass vacuously", coordinatorContractPath)
+	}
+}

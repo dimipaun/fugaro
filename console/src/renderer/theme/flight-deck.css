@@ -3510,7 +3510,8 @@ div.coordinator-record-head {
   min-height: var(--row-height);
 }
 
-span.coordinator-record-label {
+span.coordinator-record-label,
+button.coordinator-record-label {
   color: var(--text);
   font-family: var(--font-mono);
   font-weight: var(--weight-medium);
@@ -3806,10 +3807,38 @@ span.coordinator-queue-kind {
 /* The subject -- a pull request's number, a run's id, a task's id -- in the
  * mono every key on this screen is drawn in, and the scope, the repository and
  * the title beside it in the tones the record rows already use. */
-span.coordinator-queue-subject {
+span.coordinator-queue-subject,
+button.coordinator-queue-subject {
   color: var(--text);
   font-family: var(--font-mono);
   font-weight: var(--weight-medium);
+}
+
+/* A pull request's number is a button where the console can form the triple the
+ * main process builds the destination from, and text where it cannot (K2), and
+ * the two are meant to read alike: the reset below takes the browser's chrome
+ * off the button, so a row's number looks the same whichever it is, and the
+ * underline on hover and on focus is the second channel that says it can be
+ * pressed -- never a tone alone, which is the rule every state on this theme
+ * follows (§3.5). The row's own height is the hit target: `--row-height` is the
+ * smallest the design's tokens give, and these rows are the dense reference the
+ * screen is for, so the number does not get a 44px box of its own. */
+button.coordinator-record-label,
+button.coordinator-queue-subject {
+  min-height: var(--row-height);
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+button.coordinator-record-label:hover,
+button.coordinator-record-label:focus-visible,
+button.coordinator-queue-subject:hover,
+button.coordinator-queue-subject:focus-visible {
+  text-decoration: underline;
 }
 
 span.coordinator-queue-scope,
