@@ -465,6 +465,50 @@ func TestRecipesSkewRefusesResolvedL3OutsideACheckout(t *testing.T) {
 	}
 }
 
+// TestRecipesSkewRefusesLevelsCarriedByTheTaskLayerOutsideACheckout: a
+// launch from outside the repository's checkout reads no fugaro.yaml
+// (TestRecipesSkewRefusesResolvedL3OutsideACheckout), but it is not without
+// configuration: the task carries the project layer itself (spec.ProjectLayer,
+// embedProjectLayer), and the layer's defaults are what any file of that
+// repository would have been resolved over. A layer that turns critical on
+// by default resolves level 3 with no flag at all, and a layer that writes
+// defaults.agent.levels writes a level block; a 0.15.0 image runs either
+// launch in silence, so both are the gate's to refuse.
+//
+// Mutation (resolve the empty configuration as before the fix, dropping the
+// layer, in launchReviewLevelsAsk's nil-config branch): the 0.15.0 launches
+// below succeed.
+func TestRecipesSkewRefusesLevelsCarriedByTheTaskLayerOutsideACheckout(t *testing.T) {
+	for _, tc := range []struct{ name, layer, ask string }{
+		// The layer's own mode: no --mode, no task field, level 3 from
+		// defaults.rigor.
+		{"the layer's rigor default", layerWithDefaults("  rigor: { default: critical }\n"),
+			"review level 3 (its adversarial step)"},
+		// The layer's own levels block (L1.3): the resolution turns no level
+		// on, and the block alone is what the 0.15.0 runner cannot read.
+		{"the layer's agent.levels", strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+			"  agent: { auth: api-key, levels: { l3: { model: deepseek/deepseek-v4-pro } } }\n", 1),
+			"fugaro.yaml's agent.levels (l3.model)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			publishedLayer(t, f, tc.layer)
+			isolateCache(t)
+			testutil.IsolateGit(t)
+			t.Chdir(t.TempDir())
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "Fix it.")
+			if err == nil || !strings.Contains(err.Error(), tc.ask) || ExitCode(err) != ExitUserError {
+				t.Fatalf("0.15.0: err = %v, want the refusal naming %q", err, tc.ask)
+			}
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+			if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+				t.Fatalf("0.16.0: %v", err)
+			}
+		})
+	}
+}
+
 // TestRecipesSkewRefusesAResolutionThatRefused: config.ResolveLevels returns
 // zero levels beside its refusal, and zero reads as "no level is on" — the
 // fail-open direction. A resolution that refuses is a configuration the run's

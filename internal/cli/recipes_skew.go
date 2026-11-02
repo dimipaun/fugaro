@@ -1204,9 +1204,10 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // launch that works: that read fails towards asking nothing. The file's own
 // absence does not — it is not a file the run's bootstrap refuses, it is a
 // launch made from outside the repository's checkout (launchFileConfig), and
-// the two things this launch knows without it (the mode --mode asked for and
-// the owner's floor) are resolved against an empty configuration rather than
-// skipped. A resolution that refuses (L1 = L2, an effort a provider route
+// what this launch knows without it is resolved rather than skipped: the mode
+// --mode asked for, the owner's floor, and the project layer the task carries
+// (launchLayerConfig), which is the configuration half no checkout was needed
+// to read. A resolution that refuses (L1 = L2, an effort a provider route
 // would drop) keeps its own refusal to make — the runner's bootstrap and
 // L3.2's launch check — but its zero levels are not read as its answer: the
 // mode's own row is the part a refusal cannot take away, and the level it
@@ -1222,12 +1223,15 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) string {
 	if cfg == nil {
 		// No configuration file was read, because the launcher stands
-		// outside the repository's checkout and this run's ref is not in
-		// one either: resolving against an empty configuration keeps the
-		// mode the flag asked for (spec.Rigor) and the owner's floor, and
-		// leaves unseen only what that file would have added — a rigor
-		// default of its own, an agent.levels block, first_line_review.
-		cfg = &config.Config{}
+		// outside the repository's checkout and this run's ref is not in one
+		// either. It is not without configuration all the same: the task
+		// carries the project layer itself, and resolving over that layer
+		// keeps the mode the flag asked for (spec.Rigor), the owner's floor,
+		// and the layer's own defaults — a rigor default of its own, an
+		// agent.levels block — which is the part an empty configuration
+		// would hide, and hidden it is a level a runner older than
+		// reviewLevelsSince drops in silence.
+		cfg = launchLayerConfig(spec)
 	}
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
@@ -1250,6 +1254,37 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		}
 	}
 	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown)
+}
+
+// launchLayerConfig is the configuration a launch from outside the
+// repository's checkout resolves: the project layer the task carries
+// (spec.ProjectLayer, embedProjectLayer), resolved over a fugaro.yaml that
+// is nothing but the anchoring that layer applies to — its own project and
+// gcp_project, which is the whole of what the file the launcher could not
+// read contributes here. Nothing settles whether that layer really applies
+// to the run (the file that would say so is the one that could not be read),
+// and the reading taken is the conservative one: a layer the run turns out
+// not to use can only make this gate ask for an image that acts on levels,
+// where a layer the run does use and this gate ignored is a level the run
+// drops in silence.
+//
+// A layer that does not parse or does not resolve leaves the empty
+// configuration. embedProjectLayer parsed the layer before storing it, so
+// neither happens for a task this launcher wrote; a layer that will not read
+// back is a run's own problem to refuse, not a skew this gate names.
+func launchLayerConfig(spec *task.Spec) *config.Config {
+	if spec.ProjectLayer == nil {
+		return &config.Config{}
+	}
+	l, ps := config.ParseProjectLayer([]byte(spec.ProjectLayer.YAML), config.LayerAnchor{})
+	if len(ps) > 0 {
+		return &config.Config{}
+	}
+	anchor := []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", l.Project, l.GCPProject))
+	if c, _, ps := config.Resolve(anchor, l); len(ps) == 0 {
+		return c
+	}
+	return &config.Config{}
 }
 
 // launchRecipeForLevels is the recipe launchReviewLevelsAsk judges the levels
