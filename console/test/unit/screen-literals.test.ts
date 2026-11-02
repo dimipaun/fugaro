@@ -257,6 +257,8 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'a word of `COORDINATOR_TRANSCRIPT_QUESTIONS`, the console\'s own frozen table of the pane\'s three fixed questions (console 0.119.0, K5), so no document string reaches the sink',
     },
+    STAMP_REFRESH_LABEL:
+      'the console\'s own word for the stamp\'s one control (`src/renderer/section.ts`), the label `renderStamp` already writes on every screen\'s Refresh: K4\'s and K5\'s follow-ups draw the row a **refused** read is left with (`coordinatorRefreshLine`), and its control is the console\'s press and never a string a document chose',
   },
   // The two drawings console 0.116.1 adds: the panel's reading placeholder and
   // the Graph's no-checkout card. Neither is handed a document string that
