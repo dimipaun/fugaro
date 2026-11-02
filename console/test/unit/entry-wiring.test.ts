@@ -4972,11 +4972,12 @@ describe('the description the entry reads on demand (K3)', () => {
     expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toHaveLength(2)
   })
 
-  it('draws a refused description read as its own sentence, naming the command', async () => {
+  it('draws a refused description read as its own sentence, naming the operation it refused', async () => {
     // The credentials-service refusal is the CLI's own sentence
     // (`ee/coordinator/cli/coordinator.go`), and this block draws it as it came:
-    // the console adds no words of its own to a refusal, and the refusal names
-    // the command it is the refusal of.
+    // the console adds no words of its own to a refusal, and what names the read
+    // is the operation id every `refusedScreen` draws -- `coordinator.show`, not
+    // the command line and not the console's word for either.
     const credentials = 'the credentials service holds the GitHub App key and this command holds none'
     const { bridge } = coordinatorBridge({ coordinatorShow: () => ({ ok: false, reason: credentials }) })
     const document = await boot(bridge, new FakeDocument())

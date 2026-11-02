@@ -1264,9 +1264,11 @@ text and never as markdown**: every line goes through `putText` in the `sentence
 `[click](…)` in it is not a link, and **no element and no attribute is built from anything
 inside it**. It is clipped to `COORDINATOR_DESCRIPTION_LINES` (20) lines with the console's
 own `Show all` under the clip, and a pull request whose body is empty draws the console's
-sentence rather than a block of nothing. A read that refuses draws its own sentence naming
-`coordinator show` in the block, and under the credentials service that sentence is the
-CLI's own — the console adds no words of its own to a refusal. The block is gated on the
+sentence rather than a block of nothing. A read that refuses draws its own sentence in the
+block, naming its own operation — the id `coordinator.show`, which is what
+`refusedScreen` draws in `span.unavailable-operation` for every refusal on every screen —
+and under the credentials service that sentence is the CLI's own — the console adds no words
+of its own to a refusal. The block is gated on the
 record's number and the panel's repository and **not** on the row's destination: a
 description needs no provider, so an installation whose CLI predates C1's `provider` field
 still gets it.
