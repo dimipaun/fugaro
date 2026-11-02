@@ -640,7 +640,7 @@ land as **one pull request**, for the reason C3.9g1 gives for g2 being one chang
   `internal/settings/registry.go` (the key's row: without it `TestRegistryCoversEveryConfigField`,
   `internal/settings/registry_test.go:98`, is red for any new `localcfg.Config` key), and
   `internal/cli/project_policy_test.go` (the node's own tests, where `review_floor`'s are —
-  `TestVerifierAccountsIsPublishedAndKeptWhenTheConfigIsSilent`,
+  `TestVerifierAccountsIsKeptWhenTheConfigIsSilent`,
   `TestVerifierAccountsIsDroppedOnAnExplicitEmptyList`, `TestSharedConfigRefusesTheVerifierList` and the
   drift that names the member when the node lacks it — so this task opens no test file the floor's own
   tests do not already use).
