@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -219,10 +221,14 @@ func reviewJobRun(t *testing.T, edit func(*run)) (*run, *reviewService) {
 		r.d.StateDir = t.TempDir()
 		r.d.WorkDir = t.TempDir()
 		r.d.Env = []string{EnvReviewJob + "=1"}
-		r.rec = &runstore.Record{Version: 1, RunID: svcRunID, Repo: "acme/app", Ref: "main", Stage: "review"}
+		r.rec = &runstore.Record{Version: 1, RunID: svcRunID, Repo: "acme/app", Stage: "review"}
 		// The review stage's own level, which is what the artifact's reviewer
-		// block records: read through the ladder the stage reads it through
-		// rather than a second answer beside it.
+		// block records: the model written into the level's own config block
+		// with the run's own setter (stageModel reads it there) and the
+		// effort in the resolved set (reviewEffort reads it there), so the
+		// artifact carries the two answers the stage itself runs on rather
+		// than a second pair written beside them.
+		r.setLevelModel(policy.LevelL2, "claude-opus-5-5")
 		r.levels = config.Levels{L2: config.ResolvedLevel{On: true, Model: "claude-opus-5-5", Effort: "high"}}
 		r.review = true
 		r.reviewHeads = []reviewHead{{Number: reviewJobPR, SHA: reviewJobHead, Base: "main"}}
@@ -648,12 +654,23 @@ func TestReviewJobStageIsNotParsedAsAnInRunVerdict(t *testing.T) {
 		t.Errorf("a coding run's review stage is asked for %s, want VerdictSchema", got)
 	}
 
-	// And the reader the review job's result must never reach: ParseVerdict
-	// answers an artifact with a synthesized blocker finding about the parser,
-	// which is what F23 is about. The artifact's own reader answers it with the
-	// reviewer's verdict instead.
-	if v := ParseVerdict(res); len(v.Findings) != 1 || !strings.Contains(v.Findings[0].Summary, "no parseable verdict") {
-		t.Fatalf("ParseVerdict on the artifact's shape answered %+v, want its own blocking sentence", v)
+	// And the reader the review job's result must never reach (F23). The two
+	// formats share the key `verdict` and nothing else, so an artifact handed
+	// to the in-run reader is either refused -- its `fix first` is not one of
+	// the two words that reader has, so it answers a synthesized blocker about
+	// the parser, which is a code finding nobody wrote -- or, worse, read as a
+	// PASS with no findings at all, because the artifact carries no `findings`
+	// key. Both answers are about a shape the reader was never meant to see,
+	// which is why reviewMode's review-job arm decodes with the artifact's
+	// reader instead (D890).
+	refused := reviewResult(t, reviewAnswerOf("fix first", "one read is in the wrong order",
+		ReviewIssue{Severity: "major", Class: "security", File: "a.go", Line: 1,
+			Summary: "a summary", Fix: "a fix", Evidence: "the evidence"}))
+	if v := ParseVerdict(refused); len(v.Findings) != 1 || !strings.Contains(v.Findings[0].Summary, "no parseable verdict") {
+		t.Fatalf("ParseVerdict on the artifact's shape answered %+v, want its own blocking sentence about the parser", v)
+	}
+	if v := ParseVerdict(res); v.Verdict != "ship" || len(v.Findings) != 0 {
+		t.Fatalf("the in-run reader read an artifact as %+v: it read %d findings, and this test's premise is that an artifact fed to it is a pass with none. If that changed, reviewMode's review-job arm is what still keeps the two apart -- and this test needs to say so again", v, len(v.Findings))
 	}
 	art, err := decodeReviewAnswer(res.Structured)
 	if err != nil {
@@ -746,7 +763,7 @@ func TestReviewArtifactIsSignedByTheCredentialsService(t *testing.T) {
 	if !reviewSignatureLine.Match(sig) {
 		t.Errorf("the sidecar is not one line of lowercase hex: %q", sig)
 	}
-	if want := svc.sign(digest); string(sig) != want {
+	if want := svc.sign(digest) + "\n"; string(sig) != want {
 		t.Errorf("the sidecar holds %q, want the service's own answer", sig)
 	}
 	want := []string{ReviewArtifactName, ReviewSignName, ReviewMarkdownName}
@@ -830,10 +847,14 @@ func TestVerifyRefusesAnUnsignedArtifact(t *testing.T) {
 		}
 	}
 	// A signature that is genuinely the service's, but not over these bytes: a
-	// signature lifted from another object is not a verdict about this one.
-	other, otherSig := signedReviewArtifact(t, svc, reviewArtifactFixture(t))
+	// signature lifted from another object is not a verdict about this one. The
+	// other object is the same review with one field changed, so the pair
+	// differs only in the bytes the digest is over.
+	elsewhere := reviewArtifactFixture(t)
+	elsewhere.Overview = "the same review of a different change"
+	other, otherSig := signedReviewArtifact(t, svc, elsewhere)
 	if bytes.Equal(other, data) {
-		t.Fatal("the fixture is not deterministic, so this test cannot tell two objects apart")
+		t.Fatal("editing the fixture did not change its bytes, so this test cannot tell two objects apart")
 	}
 	if _, err := VerifyReviewArtifact(ctx, data, otherSig, reviewWant(), svc.verifier()); err == nil {
 		t.Error("a signature over another object verified")

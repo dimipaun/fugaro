@@ -232,6 +232,33 @@ func clipBaseInstructions(files []baseInstruction, max int) (kept []baseInstruct
 // so rev is a fallback and the reviewer must restrict itself to the branch's
 // own commits.
 func ReviewPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool) string {
+	return reviewBrief(review, promptFile, rev, size, baseUnread, inRunVerdictAsk)
+}
+
+// inRunVerdictAsk is the ask every review stage but the independent review
+// job's ends with: the two words the in-run format reads (verdict.go).
+const inRunVerdictAsk = "When you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
+
+// reviewArtifactAsk is the independent review job's ask, in place of the in-run
+// one. The job's result is the artifact (D890, F23), so the two formats share
+// no producer either: a reviewer asked for "ship"/"changes" would answer a
+// shape whose reader refuses it, and the words mean different things — the
+// artifact's third outcome, reject, is the one no in-run verdict can express
+// (D884, F11). What it says about the fields is the shape's own: every section
+// is required, and an answer that stops early is a failed review (D886).
+const reviewArtifactAsk = "When you are done, answer with the JSON object the schema asks for: \"verdict\" is \"ship\" if nothing must change before this is merged, \"fix first\" if a fix round should address what you found, or \"reject\" if a person should look at this rather than an automated fix; \"overview\", \"security\", \"performance\" and \"test_coverage\" are your own paragraphs, and every issue carries its severity, its class, the file and line you read, a summary, the fix you suggest and the evidence you read. Fill in every field: an answer that stops early is a failed review rather than a shorter one."
+
+// reviewArtifactPrompt is the review job's brief: ReviewPrompt's own answer --
+// the same scope, scoring contract and huge-diff and base-unreadable notes --
+// with the artifact's ask in place of the in-run one.
+func reviewArtifactPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool) string {
+	return reviewBrief(review, promptFile, rev, size, baseUnread, reviewArtifactAsk)
+}
+
+// reviewBrief is the review stage's prompt with the given ask: what a reviewer
+// is shown is the same whatever shape its verdict takes, and only the last
+// sentence differs.
+func reviewBrief(review, promptFile, rev string, size DiffSize, baseUnread bool, ask string) string {
 	scope := fmt.Sprintf("Review the changes on this branch against %s (see `git diff %s...HEAD`). Do not modify any files.", rev, rev)
 	if gitops.IsFullSHA(rev) {
 		scope = ownRangeNote(rev) + "\n\n" + scope
@@ -242,7 +269,7 @@ func ReviewPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool
 	if baseUnread {
 		scope = baseUnreadNote(rev) + "\n\n" + scope
 	}
-	tail := "\n\n" + reviewScoring + "\n\nWhen you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
+	tail := "\n\n" + reviewScoring + "\n\n" + ask
 	switch {
 	case strings.HasPrefix(review, "/"):
 		return review + " " + scope + tail

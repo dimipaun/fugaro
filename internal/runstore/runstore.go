@@ -171,6 +171,14 @@ const (
 	TierFirst       = "first"
 	TierSenior      = "senior"
 	TierAdversarial = "adversarial"
+	// TierIndependent is the independent review job's own tier
+	// (docs/cloud-senior-review, O4): the review the coordinator launched as
+	// its own run on a named account, whose verdict is a signed artifact
+	// rather than an in-run pair. It is DISPLAY-ONLY — it tells a reader
+	// which reviewer wrote the entry and carries no authority: the signed
+	// artifact is the only authority on that run's outcome, and the entry's
+	// Verdict stays one of the record's own two words.
+	TierIndependent = "independent"
 )
 
 // MaxReviewScopeFiles bounds each path list a review-scope comparison
