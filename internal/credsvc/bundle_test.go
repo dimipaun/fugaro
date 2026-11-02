@@ -369,6 +369,39 @@ func TestBundleBitbucketReadConsumer(t *testing.T) {
 	}
 }
 
+// TestScrubRemovesTheReadConsumerKeyAndSecret: the read consumer is the one
+// credential of the bundle whose material is more than the entry's value. The
+// secret is the value (so every path that walks entries already covers it) and
+// the OAuth client key sits beside it, in the same entry and in no value at
+// all — so a scrub that walks values alone leaves the key readable in an audit
+// line, a log line or an error, and the key is credential material: it is what
+// the read mint names itself to Bitbucket with.
+//
+// The workspace is the control. It is a name and not a credential (the read
+// mint refuses a repository of another workspace BY NAME, G11), so it stays
+// readable: a scrub that redacted it would be redacting the words of ordinary
+// prose.
+//
+// Mutation (run, restore): drop the key from what the scrub walks, and the
+// line below comes back carrying it.
+func TestScrubRemovesTheReadConsumerKeyAndSecret(t *testing.T) {
+	key, secret, workspace := fakeCred(t, "consumer-key"), fakeCred(t, "consumer-secret"), fakeCred(t, "consumer-workspace")
+	doc := []byte(readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: " + workspace + "\n")
+	l := &BundleLoader{Source: &scriptedSource{docs: [][]byte{doc}}}
+	if _, err := l.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := l.Scrub("credential=" + key + " secret=" + secret + " workspace=" + workspace)
+	for _, v := range []string{key, secret} {
+		if strings.Contains(got, v) {
+			t.Errorf("the scrub left the consumer's material in %q", got)
+		}
+	}
+	if !strings.Contains(got, workspace) {
+		t.Errorf("the scrub redacted the workspace, which is a name: %q", got)
+	}
+}
+
 // TestBundleRefusesRunConsumerUntilS3: the second consumer (F21) is PARKED
 // with S3, and the parked kind is not a credential of the bundle: the loader
 // refuses a document that holds it, whole, as a key it does not know. It is

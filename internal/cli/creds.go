@@ -537,7 +537,8 @@ func secretForms(value []byte) []string {
 // or its own answer to the re-read — hands back every other credential in the
 // bundle, each of them as readable as the one being written. The forms are the
 // document as it was sent (agent.Redact registers its lines and its JSON escape
-// too), every value the loader finds in it, raw and base64, and the new value
+// too), every secret the loader finds in it (credsvc.Bundle.Secrets: each
+// entry's value and the read consumer's key), raw and base64, and the new value
 // itself.
 //
 // The document is parsed rather than assumed: a document the loader refuses
@@ -548,8 +549,12 @@ func writeForms(doc, value []byte) []string {
 	forms := secretForms(doc)
 	forms = append(forms, secretForms(value)...)
 	if b, err := credsvc.ParseBundle(doc); err == nil {
-		for _, e := range b.Entries() {
-			forms = append(forms, secretForms([]byte(e.Value()))...)
+		// The bundle's secrets, not its entries' values: the read consumer's
+		// OAuth client key is a credential the entry's value does not carry
+		// (credsvc.Bundle.Secrets), and a server that names the one field it
+		// refused hands that key back where a value would have been redacted.
+		for _, v := range b.Secrets() {
+			forms = append(forms, secretForms([]byte(v))...)
 		}
 	}
 	return forms

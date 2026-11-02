@@ -295,11 +295,12 @@ const (
 // readConsumer is the value of the read consumer's entry (F21, D361): the
 // OAuth consumer the read mint exchanges for a short-lived token, and the
 // workspace that token belongs to. The secret is held here AND as the entry's
-// value, which is where every other credential of the document lives: the
-// paths that scrub or redact an Entry's value (creds.go's writeForms,
-// probe.go's BundleLoader.Scrub, which every audit line of the service goes
-// through) read that one, so a consumer whose secret lived only here would be
-// the one credential they walk past. The workspace is a name and not a
+// value, which is where every other credential of the document lives: both
+// halves of the consumer's material are credential strings, and Bundle.Secrets
+// — what creds.go's writeForms and probe.go's BundleLoader.Scrub (every audit
+// line of the service goes through it) walk — answers them together, so a
+// consumer whose secret lived only here, or whose key lived nowhere they look,
+// would be the one credential they walk past. The workspace is a name and not a
 // credential: the read mint refuses a repository of another one by name (G11),
 // and no line this service writes carries a value.
 type readConsumer struct {
@@ -441,6 +442,39 @@ func (b *Bundle) Credentials() []creds.Credential {
 			continue
 		}
 		out = append(out, creds.Credential{Name: e.Name, Tier: e.Tier})
+	}
+	return out
+}
+
+// Secrets is every string of the bundle that must never be rendered: the value
+// of every entry, and the read consumer's OAuth client key, which is credential
+// material the entry's value does not carry (the entry's value is the
+// consumer's secret, readConsumerValue). It is what the paths that redact walk
+// — creds.go's writeForms and probe.go's Scrub, which every audit line of the
+// service goes through — and it is one list rather than one per credential
+// kind, because a path that walked the values alone would be the one path that
+// left a consumer's key readable.
+//
+// It is for those paths and for nothing else: a caller that wants a credential
+// to attach to a call asks for the kind it means (BitbucketReadConsumer,
+// BitbucketToken, AppKey, ReviewSigningKey), which is also what keeps a
+// credential's own reader to one place (Q6).
+//
+// The workspace is deliberately absent. It is a name and not a credential —
+// the read mint refuses a repository of another workspace BY NAME (G11) — and
+// redacting a name would redact the words of ordinary prose.
+func (b *Bundle) Secrets() []string {
+	if b == nil {
+		return nil
+	}
+	out := make([]string, 0, len(b.entries)+1)
+	for _, e := range b.entries {
+		if v := e.Value(); v != "" {
+			out = append(out, v)
+		}
+	}
+	if rc := b.readConsumer; rc != nil && rc.key.value != "" {
+		out = append(out, rc.key.value)
 	}
 	return out
 }

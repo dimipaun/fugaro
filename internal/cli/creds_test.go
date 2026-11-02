@@ -1132,6 +1132,40 @@ func TestCredsCommandsNeverLogAValue(t *testing.T) {
 	assertNoValue(t, out+errOut+err.Error(), value)
 }
 
+// The read consumer's key is the half of a credential's material that a
+// redaction walking the loader's VALUES walks past: the entry's value is the
+// consumer's secret, and the OAuth client key is a field beside it. The whole
+// document is one of writeForms' forms, so a server that repeats the whole
+// request is covered either way — what is not is a server that names the one
+// piece it refused, which is the echo this test makes and the shape a real
+// refusal has (a provider says which credential it rejected, not the document
+// it never saw).
+//
+// The workspace is the control: it is a name, so it is in the line and it
+// stays readable — the line is redacted in the two places a credential is and
+// nowhere else.
+func TestCredsCommandsNeverLogTheConsumerKey(t *testing.T) {
+	f := credsFixtureFor(t)
+	key := credsValue(t, "consumerkey")
+	secret := credsValue(t, "consumersecret")
+	// A name-shaped workspace, as a real one is: it shares no run of bytes
+	// with either value, so what stays in the line is the name and nothing of
+	// a credential.
+	workspace := "workspace-a"
+	f.seed(t, []byte("bitbucket-read-consumer:\n  key: "+key+"\n  secret: "+secret+"\n  workspace: "+workspace+"\n"))
+	f.FailAddVersion = "the consumer " + key + " / " + secret + " of " + workspace + " was refused"
+	value := credsValue(t, "echoed")
+	out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.ClaudeOAuthToken)
+	if err == nil {
+		t.Fatal("a refused write succeeded")
+	}
+	if !strings.Contains(err.Error(), workspace) {
+		t.Fatalf("the server's line did not reach the error, so this proves nothing: %v", err)
+	}
+	assertNoValue(t, out+errOut+err.Error(), key, secret, value)
+	assertRedacted(t, out+errOut+err.Error(), key, secret)
+}
+
 // The upstream Bitbucket token (D506) is an entry of the same document and
 // written by the same command, so it is held to the same rules: the value
 // comes from stdin and from nowhere else, the write is the loader's document,
