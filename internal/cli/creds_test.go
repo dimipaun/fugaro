@@ -1210,6 +1210,120 @@ func TestCredsSetBitbucketToken(t *testing.T) {
 	})
 }
 
+// TestCredsSetBitbucketConsumerFromStdin: the read consumer (F21, BB2) is the
+// one credential of the bundle whose value is not one line of text, so it is
+// the one `creds set` takes as a mapping — key, secret and workspace — and it
+// takes it from stdin and from nowhere else. What the write lands is that
+// mapping under the document's own key, and the service's own loader reads the
+// three fields back out of it, so a consumer written here is one the read mint
+// can exchange for a token.
+//
+// The shape is this command's own rule and not the loader's alone: a value that
+// is not a mapping of exactly those three fields is refused before the write,
+// the document keeps the bytes it had, and no refusal repeats a byte of either
+// secret — which is what makes it safe to paste two of them into this command.
+func TestCredsSetBitbucketConsumerFromStdin(t *testing.T) {
+	consumer := credsvc.BitbucketReadConsumerSecret
+	t.Run("stdin only", func(t *testing.T) {
+		f := credsFixtureFor(t)
+		existing := credsValue(t, "existing")
+		key, secret, workspace := credsValue(t, "consumerkey"), credsValue(t, "consumersecret"), credsValue(t, "workspace")
+		f.seed(t, []byte(config.ClaudeOAuthToken+": "+existing+"\n"))
+		piped := "key: " + key + "\nsecret: " + secret + "\nworkspace: " + workspace + "\n"
+
+		out, errOut, err := executeStdin(t, piped, "creds", "set", consumer)
+		if err != nil {
+			t.Fatalf("creds set %s = %v (stderr %q)", consumer, err, errOut)
+		}
+		if !strings.Contains(errOut, "dropped the value's trailing newline") {
+			t.Errorf("the dropped trailing newline was not said: %q", errOut)
+		}
+		if n := f.writes(); n != 1 {
+			t.Fatalf("%d version(s) written, want 1", n)
+		}
+		written := f.Latest(f.id)
+		b, err := credsvc.ParseBundle(written)
+		if err != nil {
+			t.Fatalf("the service's loader refuses the document this command wrote: %v", err)
+		}
+		gotKey, gotSecret, gotWorkspace, ok := b.BitbucketReadConsumer()
+		if !ok {
+			t.Fatalf("the document holds no %s entry", consumer)
+		}
+		if gotKey != key || gotSecret != secret || gotWorkspace != workspace {
+			t.Errorf("the loader reads back another consumer than the one piped in (key %v, secret %v, workspace %v)",
+				gotKey != key, gotSecret != secret, gotWorkspace != workspace)
+		}
+		// The entry is a MAPPING under its key in the document a person opens,
+		// and not a one-line string that happens to hold the fields.
+		if !strings.Contains(string(written), consumer+":\n") {
+			t.Errorf("the consumer is not a mapping under its key:\n%s", written)
+		}
+		// It is no model credential: the other entry keeps its bytes and the
+		// cascade is offered it alone.
+		if e, ok := b.Lookup(config.DefaultClaudeAccount); !ok || e.Value() != existing {
+			t.Errorf("the default account's entry = %v, want the bytes it already had", ok)
+		}
+		if got := b.Credentials(); len(got) != 1 || got[0].Name != config.DefaultClaudeAccount {
+			t.Errorf("Credentials() = %v, want the model credential alone", got)
+		}
+		assertNoValue(t, out+errOut, key, secret, workspace, existing)
+	})
+
+	t.Run("a value that is not the shape", func(t *testing.T) {
+		key, secret, workspace := credsValue(t, "consumerkey"), credsValue(t, "consumersecret"), credsValue(t, "workspace")
+		for _, tc := range []struct {
+			name string
+			doc  string
+			want string
+		}{
+			{"one line", secret + "\n", readConsumerShape},
+			{"no workspace", "key: " + key + "\nsecret: " + secret + "\n", readConsumerShape},
+			{"a field the entry does not define", "key: " + key + "\nsecret: " + secret + "\nworkspace: " + workspace + "\nrepositories: [" + workspace + "]\n", "a field that is not one of the three"},
+			{"a misspelt field", "key: " + key + "\nsecret: " + secret + "\nworkspaces: " + workspace + "\n", "a field that is not one of the three"},
+			{"a field twice", "key: " + key + "\nkey: " + key + "\nsecret: " + secret + "\nworkspace: " + workspace + "\n", "holds key twice"},
+			{"a field that is a list", "key: " + key + "\nsecret: " + secret + "\nworkspace: [" + workspace + "]\n", "must be one line of text"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				f := credsFixtureFor(t)
+				existing := credsValue(t, "existing")
+				f.seed(t, []byte(config.ClaudeOAuthToken+": "+existing+"\n"))
+
+				out, errOut, err := executeStdin(t, tc.doc, "creds", "set", consumer)
+				if err == nil || ExitCode(err) != ExitUserError {
+					t.Fatalf("creds set %s with %s = %v, want a user error", consumer, tc.name, err)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("the refusal is %q, want it to say %q", err, tc.want)
+				}
+				if n := f.writes(); n != 0 {
+					t.Fatalf("%d version(s) written for a refused value", n)
+				}
+				if got := f.value(t); got != config.ClaudeOAuthToken+": "+existing+"\n" {
+					t.Errorf("the document changed: %q", got)
+				}
+				assertNoValue(t, out+errOut+err.Error(), key, secret, workspace, existing)
+			})
+		}
+	})
+
+	// The second consumer is parked with S3 and is not a name this command
+	// writes: a hand-written run consumer halts every model call and every
+	// GitHub mint, and the loader refuses the whole document it appears in.
+	t.Run("the parked run consumer", func(t *testing.T) {
+		f := credsFixtureFor(t)
+		f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+		out, errOut, err := executeStdin(t, "key: "+credsValue(t, "key")+"\n", "creds", "set", "bitbucket-run-consumer")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("creds set bitbucket-run-consumer = %v, want a refusal", err)
+		}
+		if n := f.writes(); n != 0 {
+			t.Fatalf("%d version(s) written for the parked name", n)
+		}
+		assertNoValue(t, out+errOut, credsValue(t, "key"))
+	})
+}
+
 // `creds ls` names the git entry as it names every other one — its NAME in the
 // document's own spelling, PRESENT, and the version's time — and never a byte
 // of its value. The kind is what decides the accessor the service uses, and it
