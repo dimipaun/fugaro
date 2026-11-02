@@ -200,7 +200,13 @@ func coordinatorRepoIntents(ctx context.Context, env *fcli.Cloud, store *coordin
 // is another writer's text, so every one of them goes through the sanitiser
 // before it reaches the terminal.
 func writeCoordinatorIntents(w io.Writer, r coordinator.RepoIntents) error {
-	fmt.Fprintf(w, "%s: %d declarations\n", safetext.TableCell(r.Repo), len(r.Intents))
+	// One is one declaration, not "1 declarations": the line is a sentence about
+	// a person's project and not a machine's count.
+	noun := "declarations"
+	if len(r.Intents) == 1 {
+		noun = "declaration"
+	}
+	fmt.Fprintf(w, "%s: %d %s\n", safetext.TableCell(r.Repo), len(r.Intents), noun)
 	if len(r.Intents) == 0 {
 		fmt.Fprintln(w, "nothing declared: no intent record is stored under this repository")
 		fmt.Fprintf(w, "\n%s\n", coordinatorIntentsNote)

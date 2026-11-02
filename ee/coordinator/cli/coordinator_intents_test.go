@@ -222,6 +222,30 @@ func TestCoordinatorIntentsTextIsSafeAndSaysWhatDeclaredByIs(t *testing.T) {
 	if !strings.Contains(out, coordinatorIntentsNote) {
 		t.Errorf("the text output does not carry the sentence that says what declared by is:\n%s", out)
 	}
+	// The count line reads as a person's sentence, so one declaration is one
+	// declaration: "1 declarations" is the one place this output addresses
+	// nobody in particular and reads as a machine's.
+	if !strings.Contains(out, "acme/app: 1 declaration\n") || strings.Contains(out, "1 declarations") {
+		t.Errorf("the count line for one declaration = %q, want \"acme/app: 1 declaration\"", firstLine(out))
+	}
+
+	f.declare(t, "acme/app", fcli.LsNow().Add(-time.Minute), coordinator.Intent{
+		DeclaredBy: "person-2", Branch: "release/v0.13.0",
+	})
+	out, errOut, err = execute(t, "coordinator", "intents", "--repo", "acme/app")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if !strings.Contains(out, "acme/app: 2 declarations\n") {
+		t.Errorf("the count line for two declarations = %q, want \"acme/app: 2 declarations\"", firstLine(out))
+	}
+}
+
+// firstLine is the header of a text read, which is what the count assertions
+// above are about: the rest of the output is the table the note follows.
+func firstLine(out string) string {
+	line, _, _ := strings.Cut(out, "\n")
+	return line
 }
 
 func TestCoordinatorIntentsRefusesAReadTheDatabaseDenies(t *testing.T) {
