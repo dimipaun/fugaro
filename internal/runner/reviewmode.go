@@ -48,6 +48,12 @@ type reviewHead struct {
 	// "" when the provider reported none, which falls back to the run's own
 	// ref.
 	Base string
+	// Mutation is the check the runner applied, ran and reverted against this
+	// head's own worktree, as the artifact's mutation_checks carries it (D885,
+	// CSR4b). It is recorded on the head rather than beside the run because it
+	// is evidence about this head's worktree, and because the artifact's
+	// writer reads the head and never a second copy of the run's state.
+	Mutation []ReviewMutationCheck
 }
 
 // checkReviewPRs resolves and validates every pull request r.spec.ReviewPRs
@@ -577,6 +583,22 @@ func (r *run) reviewMode(ctx context.Context) {
 	// user level, and a settings file baked into it would configure a session
 	// that reads the reviewed head (D894(a), agent.ReviewHome).
 	if err := r.useReviewHome(); err != nil {
+		r.failReviewInfra(ctx, err)
+		return
+	}
+	// The mutation check the task asked for (fugaro review --mutate, D885)
+	// runs here and not earlier or later: the head is checked out and the
+	// review home is in place, which is what the child's toolchain resolves
+	// against, and the prompt below is built and the stage started only once
+	// the worktree holds the head's own bytes again. An ask this run cannot
+	// turn into a check ends the review with its own reason; a check that ran
+	// is evidence the artifact carries and never a verdict, so it ends
+	// nothing (runMutationCheck).
+	if err := r.runMutationCheck(ctx); err != nil {
+		if errors.Is(err, errMutationRefused) {
+			r.endReviewInvalidVerdict(ctx, r.redact(err.Error()))
+			return
+		}
 		r.failReviewInfra(ctx, err)
 		return
 	}

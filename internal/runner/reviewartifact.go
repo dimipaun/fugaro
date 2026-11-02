@@ -852,7 +852,7 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 		Security:       answer.Security,
 		Performance:    answer.Performance,
 		TestCoverage:   answer.TestCoverage,
-		MutationChecks: []ReviewMutationCheck{},
+		MutationChecks: mutationChecksOf(head),
 	}
 	secrets := r.secretList()
 	art = redactReviewArtifact(art, secrets)

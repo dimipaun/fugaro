@@ -55,7 +55,23 @@ var deniedBinaryReads = []string{
 	"Read(**/*.heic)", "Read(**/*.tiff)",
 }
 
-var deniedReviewTools = []string{}
+// deniedReviewTools are denied in a review stage's managed settings, for the
+// whole of the stage (D891(a), F24). The independent review job runs a mutant
+// of the reviewed head's own code (internal/runner's mutation check), and the
+// one thing that must not be reachable from inside the reviewer is a way to
+// run anything: Bash is the shell every other tool can be spelled in, Edit,
+// Write and NotebookEdit are the file writes that would let the reviewer edit
+// the head it is judging rather than report on it, and Read(/proc/**) is the
+// runner's own process — its environment, its command lines, its file
+// descriptors — which a reviewed pull request's text must never be able to
+// ask the reviewer to fetch. The stage's own runner applies, runs and reverts
+// the mutant with a subprocess of its own (D891(a)), so nothing here is
+// needed to do the review's work.
+//
+// The posture that makes these rules a control rather than a sentence is
+// CSR4a's (ReviewSettingSources, the managed file, the review home): a project
+// or user settings file cannot put back what this denies.
+var deniedReviewTools = []string{"Bash", "Edit", "Write", "NotebookEdit", "Read(/proc/**)"}
 
 // DenyRules is the permissions deny list a stage's managed settings carry:
 // the web tools when denyWeb, and the review stage's binary reads when

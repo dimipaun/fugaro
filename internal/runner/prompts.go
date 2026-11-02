@@ -276,7 +276,15 @@ const inRunVerdictAsk = "When you are done, give your verdict: \"ship\" if nothi
 // artifact's third outcome, reject, is the one no in-run verdict can express
 // (D884, F11). What it says about the fields is the shape's own: every section
 // is required, and an answer that stops early is a failed review (D886).
-const reviewArtifactAsk = "When you are done, answer with the JSON object the schema asks for: \"verdict\" is \"ship\" if nothing must change before this is merged, \"fix first\" if a fix round should address what you found, or \"reject\" if a person should look at this rather than an automated fix; \"overview\", \"security\", \"performance\" and \"test_coverage\" are your own paragraphs, and every issue carries its severity, its class, the file and line you read, a summary, the fix you suggest and the evidence you read. Fill in every field: an answer that stops early is a failed review rather than a shorter one."
+//
+// The last two sentences are D891(a)'s posture as the reviewer reads it. The
+// stage's managed settings deny Bash, Edit, Write, NotebookEdit and
+// Read(/proc/**) for the whole of it (agent.DenyRules), so a reviewer that
+// tried to run the tests itself would spend its turns on refusals; and a
+// mutation check is the runner's own (the runner applies the mutant, runs the
+// test and reverts, internal/runner's mutation.go), so the reviewer is told
+// the result is beside its verdict rather than asked to produce one.
+const reviewArtifactAsk = "When you are done, answer with the JSON object the schema asks for: \"verdict\" is \"ship\" if nothing must change before this is merged, \"fix first\" if a fix round should address what you found, or \"reject\" if a person should look at this rather than an automated fix; \"overview\", \"security\", \"performance\" and \"test_coverage\" are your own paragraphs, and every issue carries its severity, its class, the file and line you read, a summary, the fix you suggest and the evidence you read. Fill in every field: an answer that stops early is a failed review rather than a shorter one. This stage has no shell: Bash, Edit, Write, NotebookEdit and reads under /proc are refused, so read the diff and the tree and reason about them. A mutation check was run by Fugaro if one was asked for, and its result is recorded beside your verdict: you are asked for none of it."
 
 // reviewArtifactPrompt is the review job's brief: ReviewPrompt's own answer --
 // the same scope, the same anchored axes and the same huge-diff and

@@ -69,6 +69,20 @@
       "maxItems": 4,
       "uniqueItems": true
     },
+    "mutate": {
+      "type": "array",
+      "description": "The mutation check the launch asked for (fugaro review --mutate <file:test>, docs/cloud-senior-review D885): the file in the reviewed head the runner flips a boolean literal in, and the test that must kill it. At most one, and only for a review of exactly one pull request — the rules the `dependentRequired` and `allOf` entries below carry, and the ones task.Spec.Validate applies: the check runs the head's own code in a subprocess of the review job's own (D891(a)), and one worktree holds the whole review only when one pull request was resolved. task.Parse decodes with DisallowUnknownFields, so a runner before the release that reads this field refuses the whole spec — which is why a launch that would set it is gated at launch (internal/cli/recipes_skew.go's mutateSince) rather than left for the job to refuse. Needs a 0.15.0 runner.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "test"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/]+(/[^/]+)*\\.go$", "description": "Go source inside the reviewed worktree, spelled relative and slash-separated. The pattern is the ask's own shape — no leading slash, no empty segment, a .go suffix — and what confines the path to the worktree is the runner's own read through an os.Root with an Lstat in front of it: that refuses a symlink rather than following it, and a path with a \".\" or \"..\" segment never reaches it (internal/runner's mutationFile)." },
+          "test": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "The Go test that must fail once the mutant is applied. The runner quotes it before handing it to `go test -run`, so this is the ask's own shape rather than the only thing between a name and that flag." }
+        }
+      },
+      "maxItems": 1
+    },
     "overrides": {
       "type": "object",
       "additionalProperties": false,
@@ -242,11 +256,13 @@
   "dependentRequired": {
     "branch": ["pr", "previous_run"],
     "pr": ["branch", "previous_run"],
-    "previous_run": ["branch", "pr"]
+    "previous_run": ["branch", "pr"],
+    "mutate": ["review_prs"]
   },
   "allOf": [
     { "not": { "allOf": [{ "required": ["review_prs"] }, { "anyOf": [{ "required": ["branch"] }, { "required": ["pr"] }, { "required": ["previous_run"] }] }] } },
-    { "not": { "allOf": [{ "required": ["ab"] }, { "properties": { "overrides": { "required": ["model"] } }, "required": ["overrides"] }] } }
+    { "not": { "allOf": [{ "required": ["ab"] }, { "properties": { "overrides": { "required": ["model"] } }, "required": ["overrides"] }] } },
+    { "if": { "required": ["mutate"] }, "then": { "properties": { "review_prs": { "maxItems": 1 } } } }
   ],
   "if": { "not": { "anyOf": [{ "required": ["branch"] }, { "required": ["review_prs"] }] } },
   "then": { "required": ["task"], "properties": { "task": { "minLength": 1 } } }
