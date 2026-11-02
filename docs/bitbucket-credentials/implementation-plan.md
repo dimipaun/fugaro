@@ -53,9 +53,10 @@ one-pull-request read, which refuses Bitbucket today with `coordinator.ErrBitbuc
   consumer the credentials service holds. Never the runs' write-capable tokens (Q3: no write
   anywhere).
 - **B2, answered: (b), through a service route.** A **person caller class** on the credentials
-  service's read mint, like C3.9f's verifier class. It follows C3.9f: it reuses the person-caller
-  authentication and the verify route's audit relaxations. So "BB4, `show` for Bitbucket" depends on
-  the C3.9 chain.
+  service's read mint, like C3.9f's verifier class. It follows C3.9f for the person-caller
+  **authentication**, and it **extends the Caller-without-Job relaxation to the read-mint purpose
+  only** — its own new purpose, carrying a Repository, which is a shape neither the verify purpose
+  nor a job purpose has. So "BB4, `show` for Bitbucket" depends on the C3.9 chain.
 - **B3, answered: yes.** Check 145, owner-run, is a precondition before the first read mint. This is
   O4.
 - **B4, answered: accept and document** the custody of the read consumer. This is O6.
@@ -378,9 +379,19 @@ T2.3's coordinator-account half returns in BB5.
     run identity.
   - **This is C3.9f's mechanism.** The review-identity design (PR #1514) gives the credentials
     service a verifier class for a person, and BB4 **follows** it rather than inventing a second
-    way to be a person: it reuses the person-caller authentication and the verify route's audit
-    relaxations, and it adds a route of its own to the same admission. So BB4 depends on C3.9f and
-    C3.9g, and "`show` for Bitbucket" depends on the C3.9 chain.
+    way to be a person: it reuses the person-caller **authentication**, and it adds a route of its
+    own to the same admission. So BB4 depends on C3.9f and C3.9g, and "`show` for Bitbucket" depends
+    on the C3.9 chain.
+  - **The audit relaxation is BB4's own, and it is narrow.** C3.9f relaxes `audit.go` for the
+    **verify purpose and no further**, so BB4 does not inherit it: it **extends the
+    Caller-without-Job relaxation to the read-mint purpose only**. That purpose is new, and the
+    shape it carries is new too — a Caller with a **Repository** and no Job and no Run, where the
+    verify purpose has no Repository and a job purpose has no Caller at all. Every job purpose still
+    refuses that shape, and `TestReadMintAuditShapeRefusedUnderJobPurposes` pins it: a
+    caller-without-job event carrying a Repository, written under `PurposeForward`, `PurposeProbe`
+    or `PurposeMint`, is refused exactly as it is today. The relaxation widens which **callers**
+    may be recorded, never what a line must carry: a mint still fails closed when its line cannot be
+    written (G2).
   - **Which role admits a person — the reading taken, stated because more than one exists.** The
     class admits the installation's **operators** (`internal/infra/firebase.go`), the people list
     that already mints run tokens and reads the database. The alternative is to admit launchers as
@@ -437,6 +448,9 @@ T2.3's coordinator-account half returns in BB5.
     "read" consumer with write scopes;
   - `TestReadMintRefusesAnotherWorkspace`: a repository in another workspace is refused, by name;
   - `TestReadMintAuditedOnce`;
+  - `TestReadMintAuditShapeRefusedUnderJobPurposes`: the read-mint's audit shape — a Caller, no Job,
+    a Repository, no Run — is refused under `PurposeForward`, `PurposeProbe` and `PurposeMint`, so
+    the relaxation BB4 extends reaches the read-mint purpose and stops there;
   - `TestReadMintFailsClosedUnaudited`;
   - `TestReadMintRefusedWithoutReadConsumer`;
   - `TestReadMintNeverForwardsRefreshToken`;
@@ -571,9 +585,10 @@ runbook now says.*
     it, and the old one is deleted.
   - In `docs/git-providers.md`: the coordinator's Bitbucket paragraph (D361, D362), and the App key's
     second holder (D365).
-  - **who the read consumer is minted to** (B1, B2): a person running `coordinator show`, through the
-    person caller class, and the coordinator job for `coordinator status` and the sweep, through the
-    coordinator class. The read consumer itself is unchanged.
+  - **who the read consumer is minted to** (B1, B2): a person, through the **person class**, for
+    `coordinator show` and for that person's own local `coordinator status`; and the coordinator
+    job, through the **coordinator class**, for the sweep. One caller class per command: nothing a
+    person runs goes through the coordinator class. The read consumer itself is unchanged.
   - The run consumer's scopes come with S3 (T3.5).
 - **Files:**
   - `docs/credentials-service/runbook.md`;

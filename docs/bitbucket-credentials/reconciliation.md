@@ -523,10 +523,13 @@ coordinator job:
   consumer the credentials service holds (D361, D362). Never the runs' write-capable tokens: Q3's
   "no write anywhere" holds.
 - **B2 = (b), through a service route.** A **person caller class** on the credentials service's read
-  mint, like the review-identity design's verifier class (PR #1514, its C3.9f). It follows C3.9f: it
-  reuses the person-caller authentication and the verify route's audit relaxations, and it is
-  coupled to C3.9's classes — the review class (C3.9a) and the verifier class (C3.9f). The CLI never
-  reads the bundle for this. So the Bitbucket `show` depends on the C3.9 chain.
+  mint, like the review-identity design's verifier class (PR #1514, its C3.9f). It follows C3.9f for
+  the person-caller **authentication** — and for nothing else: C3.9f relaxes `audit.go` for the
+  verify purpose "and no further", so BB4 **extends the Caller-without-Job relaxation to the
+  read-mint purpose only**, a new purpose of its own carrying a Repository, where the verify purpose
+  has none and a job purpose has no Caller at all. It is coupled to C3.9's classes — the review
+  class (C3.9a) and the verifier class (C3.9f). The CLI never reads the bundle for this. So the
+  Bitbucket `show` depends on the C3.9 chain.
 - **B3 = yes.** Check 145, owner-run, is a precondition before the first read mint. That is O4.
 - **B4 = accept and document** the read consumer's custody. That is O6.
 - **B5 = yes.** After `show`, `coordinator status` and the sweep also gain Bitbucket, through the
@@ -546,7 +549,10 @@ optional service is deployed (F13, tension T2). What changes is **who the first 
 person running `coordinator show`, whose one-pull-request read refuses Bitbucket today with
 `coordinator.ErrBitbucket` exactly as `coordinator status` does, rather than the coordinator job.
 The coordinator job's own class is not dropped; it follows, as the second caller on the same route,
-and it is what gives `coordinator status` and the sweep their Bitbucket read.
+and it is what gives **the sweep** its Bitbucket read. A person's own `coordinator status` does
+**not** go through it: it goes through the person class, exactly as `show` does, because the caller
+is the same person at the same machine. One caller class per command: `show` and a person's
+`status` are the person class, the sweep is the coordinator class.
 
 **The person class, as designed.** It admits the installation's **operators**, by the verified email
 of the Google ID token a `fugaro` command mints for them — the same mechanism the coordinator's own
@@ -575,9 +581,10 @@ person (D367). The service gives out two kinds of short-lived token:
 
 - **Read tokens, to a person running `coordinator show` and to the coordinator job.** This is a new
   caller class at the service (D362, F11). **Amended 2026-11-01 (B2):** it is two admissions on one
-  route — the **person class** (the installation's operators), which serves `coordinator show`, and
-  the **coordinator class** (the coordinator account), which serves `coordinator status` and the
-  sweep. Both take no run identity, and both are audited.
+  route, one per caller — the **person class** (the installation's operators), which serves
+  `coordinator show` and a person's own local `coordinator status`, and the **coordinator class**
+  (the coordinator account), which serves the sweep and nothing a person runs. Both take no run
+  identity, and both are audited.
 - **Write tokens for runs. PARKED with S3 (2026-10-26).** These go only to an allow-listed
   repository's own job with a live run identity, and every mint is audited (D363, T1).
 
