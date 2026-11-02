@@ -4,13 +4,17 @@
 [reconciliation.md](reconciliation.md) §4's decisions **are all answered** — D891, D892, D893 and D894
 with the options named below, and the owner's seven rulings of 2026-11-01 (**O1–O7**) amending the ones
 they touch. An answered decision is not an
-approval to start: **every task still carries its own gate**, and two of them are hard. **E7** (the
+approval to start: **every task still carries its own gate**, and one of them is hard. **E7** (the
 credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's
-merge path, and **U7** (an owner-run live observation) gates CSR4b's launch **and the first slice's
-signed `ship` path**, through the routing design **#1514**'s **D1074** (its **C3.9e**). A task starts
+merge path. **U7** (the owner-run live observation of the deployed fence) **is ANSWERED
+(2026-11-01)** — both fences hold — so it gates nothing **for the environment it probed**, an ordinary
+coding job on Cloud Run gen2 (if CSR7's review-only variant runs somewhere else, Check 125's step 7
+confirms again there), and the same answer is the observation the
+routing design **#1514**'s **D1074** (its **C3.9e**) made a precondition of the first slice's signed
+`ship` path. A task starts
 only when the decisions and the gates it names are satisfied. **CSR4a carries D894(a)'s configuration
 posture and waits on nothing** — it is standalone hardening of a stage that exists today — while
-**CSR4b carries D885's mutation machinery and does not start until U7's probe has returned**.
+**CSR4b carries D885's mutation machinery and U7's probe has returned, so it waits on CSR3 alone**.
 
 **The task ids are prefixed `CSR`, and that is deliberate.** This design's tasks were `R1–R7` in an
 earlier draft, and the rigor work stream's own tasks are **R0** and **R1** — so wherever both are
@@ -63,7 +67,7 @@ E3 (publish stages)          ─┴─▶ CSR1 (read-only token) ─▶ CSR7 (th
                                           E7 (credentials service, │                              └─▶ CSR5 (findings→brief)
                                           enabled + admitting a    │
                                           project-scoped job) ─────┘
-   CSR4a (stage config, standalone, first)   CSR3 (the artifact, runner-side) ─▶ CSR4b (mutation, after U7)   CSR6 (gates, docs, release) last
+   CSR4a (stage config, standalone, first)   CSR3 (the artifact, runner-side) ─▶ CSR4b (mutation)   CSR6 (gates, docs, release) last
 ```
 
 **CSR1 before CSR7 before CSR2**, because a command that launches a job must be able to say what that job
@@ -73,12 +77,13 @@ signing, which is runner-side work needing no launch command, so E7 does not rea
 so). **CSR3 before CSR5**, because the fix brief reads the artifact CSR3
 defines. **CSR4b is independent of CSR5** and can ship after CSR3 in either order; **D891 is answered —
 option (a) — so CSR4b is unblocked** and carries the machinery the answer names (a token-scrubbed
-subprocess with egress denied, and Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` denied for the
-rest of the stage), **on one condition: the
-answer assumes a fence nobody has measured, so U7 is an owner-run live observation taken before CSR4b
-launches — not the task's first step, because it cannot be measured hermetically and this plan's rule
-is hermetic tests only** — and **CSR4b does not start until that observation has returned**; if the fence
-is not there the owner is asked again and the fallbacks are D891's (b) or (c) (see CSR4b). **CSR4a is
+subprocess with egress denied, started from an explicit environment rather than an inherited one —
+U7's caveat 1 — and Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` denied for the
+rest of the stage). **The condition it was written on has been met:** the answer assumes a fence, and
+**U7's owner-run live observation — the one measurement that cannot be hermetic, because the fence is a
+property of the deployed execution environment — ran on 2026-11-01 and found both fences present and
+holding**, so **CSR4b no longer waits on it**; had the fence been absent the owner would have been
+asked again and the fallbacks are D891's (b) or (c) (see CSR4b). **CSR4a is
 the other half of the old CSR4 and it waits on nothing:** it is D894(a)'s configuration posture —
 the reviewer's Claude session loads no configuration from the head it reviews, and is given the base's
 `CLAUDE.md` and `.claude/rules` in its place (**O6**) — applied to the `review` stage itself, which
@@ -103,9 +108,15 @@ must both hold before the chain works, and only one of them is reachable from `f
    reviewer's model calls through, admitted for the review run's account alone.
 
 So **CSR7 cannot run, CSR2 cannot run, and the coordinator's `ship` → merge path cannot be built** until
-E7 is met. **And U7 holds the same `ship` path, not CSR4b alone:** the routing design **#1514**'s
-**D1074** (its **C3.9e**) makes the owner-run observation a precondition of the first slice's signed
-`ship` path, so that path is built after the probe returns as well. **CSR1, CSR3, CSR4a and CSR4b are
+E7 is met. **And the `ship` path carried the same observation, not CSR4b alone — and that half is
+cleared:** the routing design **#1514**'s
+**D1074** (its **C3.9e**) makes an owner-run probe of the sandbox environment a precondition of the
+first slice's signed `ship` path, and **U7's probe is that observation** — taken on the sandbox
+installation on 2026-11-01, finding both fences present and holding — so **that precondition is met
+for the environment the probe ran in and not as a claim about every environment**: it was an ordinary
+coding job on Cloud Run gen2, and if **CSR7**'s review-only variant runs anywhere else, **Check 125's
+step 7 re-confirms it there** (U7's caveat 4).
+**CSR1, CSR3, CSR4a and CSR4b are
 unaffected** — none of them launches or authenticates a job, and CSR3 in
 particular is **runner-side and needs no command** (it says so in its own block, and it does not
 depend on CSR2). **CSR5 and CSR6 are gated transitively, through CSR2**: CSR5 ships the fix brief CSR2's `show`
@@ -416,33 +427,49 @@ byte-for-byte as they are today until a later task tightens them.**
 
 **Decision:** D885 and **D891 — answered by the owner with option (a), which this task is the machinery
 for**. **Findings:** F13, **F24**. **Depends on:** CSR3. **Unblocked:** the answer is
-(a), so the task is neither dropped nor reduced, and it carries the machinery in its own files — **but
-it launches only after U7's owner-run live observation has returned** (below).
+(a), so the task is neither dropped nor reduced, and it carries the machinery in its own files — and
+**U7's owner-run live observation has returned (2026-11-01), so the task waits on CSR3 alone**.
 
-- **The gate before this task launches — U7, a standalone owner-run probe, not a test CSR4b can write.**
-  D891(a) assumes egress can be denied for a child process inside the container, and **no network
-  namespace or `unshare` in Cloud Run's gen2 has been checked** — **nor whether that child can be
-  given a `/proc` of its own** (a PID namespace with its own `/proc` mount, or a different uid), which
-  is the residual §7 states. That is a property of the **deployed
+- **U7, the standalone owner-run probe that was this task's gate — ANSWERED (2026-11-01), so the task
+  is unblocked.** D891(a) assumes egress can be denied for a child process inside the container, and
+  **no network namespace or `unshare` in Cloud Run's gen2 had been checked** — **nor whether that child
+  can be given a `/proc` of its own** (a PID namespace with its own `/proc` mount, or a different uid),
+  which is the residual §7 states. That is a property of the **deployed
   execution environment**, so **it cannot be measured hermetically** — and this plan's rule is
-  hermetic tests only, no live call and no real job (above), which means the observation is **not the
-  task's first step and not something the task does at all**. It is the owner's, taken **before CSR4b
-  launches**, and it is **Check 125's step 6** ([spec.md](spec.md) §8). **It is deliberately not asked
+  hermetic tests only, no live call and no real job (above), which is why the observation was **never
+  the task's first step and not something the task does at all**. It is the owner's, and it is
+  **Check 125's step 6** ([spec.md](spec.md) §8). **It is deliberately not asked
   through the mutation check, and the first draft of this bullet got that wrong:** running `fugaro
-  review --mutate` to answer U7 would need CSR2's command and this task's mutation code, and CSR4b may not
-  start until U7 returns — a question asked by the thing whose existence it decides. So the probe is
+  review --mutate` to answer U7 would need CSR2's command and this task's mutation code, and CSR4b could
+  not start until U7 returned — a question asked by the thing whose existence it decides. So the probe is
   **standalone**: a one-off execution of the deployed job image whose entrypoint forks a child that
   tries to reach the network **and the instance metadata server**, tries to read the parent's
   environment through `/proc`, and is fenced with a network namespace (`unshare -n` where the image has
   it) **and a PID namespace with its own `/proc` mount, or a different uid, whichever the platform
   allows** — recording which of the three outcomes it saw, exactly as [spec.md](spec.md) §8's step 6
-  describes it. **Check 125's step 7 is the
-  confirmation afterwards**, on the mutation path that actually uses the fence. **CSR4b does not start
-  until step 6 has returned**, and **the answer decides the task**: if a child can be fenced, the rest
-  of this task proceeds as written; **if it cannot, the task stops and the owner is asked again** —
-  the fallbacks are D891's **(b)** (no mutation check in the reviewer at all) or **(c)** (the check in
+  describes it. **What it saw is the first outcome:** on the sandbox installation — run
+  **`20261101-210556-146e`**, on a real kernel (6.9.12, not gVisor), Cloud Run gen2, uid 1000,
+  no capabilities, `NoNewPrivs`
+  1 — `unshare -rn` and `unshare -rnpf --mount-proc` leave the child with no network, and
+  `unshare -rpf --mount-proc` and `unshare -rnpf --mount-proc` give it a `/proc` of its own, while
+  `unshare -n`, `setpriv` and `runuser` are refused; unfenced, the child reached the internet and both
+  metadata addresses and read the parent's environment and `/proc/1/environ`. **So the task proceeds as
+  written, with U7's caveats as requirements on it:** the mutant/test child **starts from an explicit
+  environment** (`env -i` plus an allow-list) and never inherits the runner's, because the namespace
+  stops it reading the parent's `/proc` and not the variables it was handed (caveat 1 — the same
+  requirement on #1514's **C3.9e**'s sandbox, which is the other place a child is started); the
+  "parent environ denied" half is partly an artifact (`$PPID` reads 0 in there) and the evidence is
+  the drop in visible PIDs (caveat 2); **only the
+  tool or test child is fenced and never the agent**, because `unshare -rn` removes the loopback the
+  agent's model calls need (caveat 3); and because the probe ran
+  under the agent's shell in an ordinary coding job, **if CSR7's review-only variant runs in a
+  different execution environment, Check 125's step 7 confirms again** (caveat 4). Caveat 5 is the
+  reason all of this is a requirement rather than hardening: the unfenced baseline exposure is real.
+  Had a child been unfenceable, the task would have stopped and the owner been asked again — the
+  fallbacks are D891's **(b)** (no mutation check in the reviewer at all) or **(c)** (the check in
   a separate execution), both of which are a different task, and the design does not quietly fall back
-  to `denyWeb`. **Nothing in this task's Files is opened before that probe returns.**
+  to `denyWeb`. **Check 125's step 7 stays the confirmation afterwards**, on the mutation path that
+  actually uses the fence. **Nothing in this task's Files is held by the probe any longer.**
 - **Files:** `internal/runner/mutation.go` (new), `internal/runner/mutation_test.go` (new),
   `internal/runner/reviewartifact.go` (the `mutation_checks` field it fills),
   `internal/runner/prompts.go`, **`internal/agent/settings.go`** + `settings_test.go` (D891(a): the
@@ -471,13 +498,19 @@ it launches only after U7's owner-run live observation has returned** (below).
   worktree root, a symlink is refused rather than followed, the reviewer's input is size-bounded with
   the truncation recorded, and submodules and LFS objects are not fetched under the read-only token.
   **How egress is denied inside a Cloud Run container is U7**
-  ([reconciliation.md](reconciliation.md) §6), and it is **the standalone owner-run probe above**:
-  until it returns, D891(a) is an answered decision with an unmeasured mechanism, not a fact.
+  ([reconciliation.md](reconciliation.md) §6), and **U7 is answered — the standalone owner-run probe
+  above found both fences present and holding** — so the mechanism is measured rather than assumed:
+  the subprocess runs under a network namespace with a `/proc` of its own (`unshare -rnpf
+  --mount-proc`, or `unshare -rn` with the private `/proc` from `unshare -rpf --mount-proc`), and it
+  **starts from an explicit environment** (`env -i` plus an allow-list), because the fence does not
+  reach the variables a child is handed (U7's caveat 1).
 - **Tests:** `TestMutationAppliesRunsRevertsAndPushesNothing` (the git fake records no push, and the
   reverted bytes are the ones the runner read rather than what `git checkout --` would produce),
   `TestMutationRefusesMoreThanOneMutant`, `TestMutationRevertsOnFailure` (a test that errors still
   leaves the worktree clean), `TestMutationAbsentUnlessAskedFor`,
-  `TestMutationSubprocessCarriesNoTokenInItsEnvironment`,
+  `TestMutationSubprocessCarriesNoTokenInItsEnvironment` (which per U7's caveat 1 also pins that the
+  child's environment is the explicit `env -i` allow-list and not the runner's — a namespace does not
+  reach the variables a child is handed),
   `TestMutationObservedVocabularyIsClosed` (**§3's four words and no fifth**: every value the check
   can write is one of `pass`, `fail`, `error`, `timeout`, and a fifth is refused — the vocabulary a
   coordinator routes on cannot be a free-form string, and the `error` and `timeout` arms are the ones
