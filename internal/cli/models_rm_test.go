@@ -95,6 +95,49 @@ func TestModelsRmWarnsForRepositoriesWithoutACheckout(t *testing.T) {
 	}
 }
 
+// TestModelsRmWarnsNothingWhenThereIsNothingToRemove: a model of neither the
+// config nor its price table is not removed by this command, so it is not a
+// break this command makes either — a repository that pins it keeps a run that
+// works, and the warning that names the pin would send the owner to repair a
+// break nothing caused (D783's warning is about a removal).
+func TestModelsRmWarnsNothingWhenThereIsNothingToRemove(t *testing.T) {
+	home, path := modelsWriteHome(t)
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-q", "claude-sonnet-5-5", ""))
+	before := readFileString(t, path)
+
+	out, _, err := execute(t, "models", "rm", "vendor/model-q", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "warning:") {
+		t.Errorf("a removal that did not happen warned about the break it would make:\n%s", out)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("removing a model the config does not carry wrote the file:\n%s", got)
+	}
+}
+
+// TestModelsRmWarnsWithoutTheNoProviderLineWhileAPatternStillClaimsIt: removing
+// the exact entry and the allow-list entry is a change, so the warning is due —
+// but a provider still serves the model, through the pattern the command
+// deliberately leaves, so the sentence that says no provider serves it would be
+// false, and the sentence that says the pattern still claims it is the true one.
+func TestModelsRmWarnsWithoutTheNoProviderLineWhileAPatternStillClaimsIt(t *testing.T) {
+	home, _ := modelsWriteHome(t)
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "", ""))
+
+	out, _, err := execute(t, "models", "rm", "deepseek/deepseek-v4-flash", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "warning:") || !strings.Contains(out, "still claimed") {
+		t.Errorf("the removal of a pinned model printed neither warning nor the pattern's line:\n%s", out)
+	}
+	if strings.Contains(out, "no provider serves it") {
+		t.Errorf("a model a route still claims is reported as unserved:\n%s", out)
+	}
+}
+
 // TestModelsRmLeavesAClaimingPatternAndSaysSo: only the exact entry is removed
 // (spec §5). A pattern that claims the model keeps claiming it, and the command
 // says so rather than leaving the owner to think the model is unusable now.

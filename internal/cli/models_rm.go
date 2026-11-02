@@ -68,6 +68,18 @@ func runModelsRm(cmd *cobra.Command, id string, o *modelsRmOptions) error {
 		return err
 	}
 
+	changed := yamledit.Changed(old, next)
+	// What the file would carry after the removal is read from the bytes the
+	// write lands, never reasoned about from the edit this command made: the
+	// warning's own sentence — no provider serves the model — is true of a config
+	// the model is gone from, and only that config can say whether it is.
+	var after *localcfg.Config
+	if changed {
+		if after, err = modelsReparseLocal(sel.Path, next); err != nil {
+			return err
+		}
+	}
+
 	what := fmt.Sprintf("remove %s from the project config", id)
 	if claim.route != "" {
 		what += fmt.Sprintf(" (route %s claims it no longer)", claim.route)
@@ -78,10 +90,15 @@ func runModelsRm(cmd *cobra.Command, id string, o *modelsRmOptions) error {
 	// The warning is about the break this removal makes, so it follows the write:
 	// a refused one — a coding agent's session, a file the edit cannot splice —
 	// left every pin where it was, and a warning would send the owner to repair
-	// a break nothing caused.
-	modelsRmWarn(cmd, lc, id)
+	// a break nothing caused. A removal that removed nothing (an ID of neither
+	// the config nor its price table) makes no break either, and modelsRmServes
+	// answers for the rest: a model a route still serves is not one the next run
+	// fails without.
+	if changed {
+		modelsRmWarn(cmd, lc, id, modelsRmServes(after, id))
+	}
 	out := cmd.OutOrStdout()
-	if yamledit.Changed(old, next) && claim.by != "" {
+	if changed && claim.by != "" {
 		fmt.Fprintf(out, "%s is still claimed by %s on route %s: a pattern is not this command's to remove\n", oneLine(id), oneLine(claim.by), oneLine(claim.route))
 	}
 	if claim.route == "" && claim.by == "" {
@@ -199,8 +216,13 @@ func modelsRmAllow(path string, lc *localcfg.Config, id string, next *[]byte) er
 
 // modelsRmWarn is the whole of the protection D783 leaves: it names every
 // repository and role this machine can see that pins the model, every
-// repository it cannot read, and what the next run of each one does.
-func modelsRmWarn(cmd *cobra.Command, lc *localcfg.Config, id string) {
+// repository it cannot read, and what the next run of each one does. The second
+// sentence is the break itself — the run has no provider for the model — and it
+// is printed only for a file the model is really gone from (served): a route
+// that goes on claiming it, by the pattern this command deliberately leaves, is
+// a run that still launches, and a warning saying otherwise would send the owner
+// to change a pin that needs no change.
+func modelsRmWarn(cmd *cobra.Command, lc *localcfg.Config, id string, served bool) {
 	pins, unseen := modelsModelPinned(lc, id)
 	if len(pins) == 0 && len(unseen) == 0 {
 		return
@@ -208,11 +230,26 @@ func modelsRmWarn(cmd *cobra.Command, lc *localcfg.Config, id string) {
 	out := cmd.OutOrStdout()
 	if len(pins) > 0 {
 		fmt.Fprintf(out, "warning: %s is pinned by %s\n", oneLine(id), modelsPinsSentence(pins))
-		fmt.Fprintf(out, "warning: the next run of %s fails at launch: no provider serves it once the claim is gone. Change the pin with `fugaro models use <repo> coder|reviewer|background %s`, or put the model back with `fugaro models add %s`\n", pluralRepos(pins), oneLine(id), oneLine(id))
+		if !served {
+			fmt.Fprintf(out, "warning: the next run of %s fails at launch: no provider serves it once the claim is gone. Change the pin with `fugaro models use <repo> coder|reviewer|background %s`, or put the model back with `fugaro models add %s`\n", pluralRepos(pins), oneLine(id), oneLine(id))
+		}
 	}
 	if len(unseen) > 0 {
 		fmt.Fprintf(out, "warning: this machine cannot read %s (no checkout here), so a pin there is unknown: run `fugaro models ls` in that checkout to see it\n", strings.Join(unseen, ", "))
 	}
+}
+
+// modelsRmServes reports whether the file this removal wrote still serves the
+// model: a route claims it — by the pattern the removal deliberately leaves, or
+// by an exact entry on another route — or its budget.allowed_models goes on
+// naming it. The edited config answers, not this command's account of its own
+// edit, so the sentence about the next run having no provider is printed only
+// where there is none.
+func modelsRmServes(after *localcfg.Config, id string) bool {
+	if _, _, ok := config.ProviderFor(after.Providers, id); ok {
+		return true
+	}
+	return after.Budget != nil && slices.Contains(after.Budget.AllowedModels, id)
 }
 
 // pluralRepos is "that run" for one repository and "those runs" for more, so
