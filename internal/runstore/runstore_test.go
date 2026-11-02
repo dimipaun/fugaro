@@ -94,6 +94,68 @@ func TestRecordRoundTripsOAuthAccount(t *testing.T) {
 	}
 }
 
+// TestStageAccountsIsAdditive is D876's own compatibility claim (spec §11.5 of
+// docs/accounts-add): the record gains a second, new field beside the scalar it
+// already has, so a record written before it decodes unchanged, the format's
+// version does not move, an empty map is omitted rather than written as an empty
+// object, and oauth_account keeps the meaning it had — the account the run used
+// last, never a stage's.
+func TestStageAccountsIsAdditive(t *testing.T) {
+	s := newStore(t)
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(),
+		// The run used team-a last (the review stage's own override, and the
+		// account the run ended on), while implement ran on the project
+		// default: the two fields answer two different questions and both are
+		// kept.
+		OAuthAccount:  "team-a",
+		StageAccounts: map[string]string{"implement": "team-b", "review": "team-a"},
+	}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.StageAccounts, rec.StageAccounts) {
+		t.Fatalf("ReadRecord stage_accounts = %+v, want %+v", got.StageAccounts, rec.StageAccounts)
+	}
+	if got.OAuthAccount != "team-a" {
+		t.Errorf("oauth_account = %q, want the account the run used last (team-a): the per-stage answer is stage_accounts' and not this field's", got.OAuthAccount)
+	}
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1: the field is additive", got.Version)
+	}
+
+	// Empty is omitted, like oauth_account's own convention: a run that
+	// recorded no per-stage account writes the record it always wrote.
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "stage_accounts") {
+		t.Fatalf("an empty StageAccounts encoded the field: %s", data)
+	}
+
+	// A record written before this field existed still parses, version and
+	// all, and carries no map.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","oauth_account":"team-a","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatalf("old record: %v", err)
+	}
+	if got.StageAccounts != nil {
+		t.Errorf("old record stage_accounts = %+v, want none", got.StageAccounts)
+	}
+	if got.OAuthAccount != "team-a" || got.Version != 1 {
+		t.Errorf("old record = %+v, want its own oauth_account and version 1", got)
+	}
+}
+
 // TestRecordRoundTripsToleratedFindings: what a mode let through survives the
 // round trip — the findings themselves, with the count, and not only the
 // number reviews carries (docs/rigor-modes T3.4, D9, F19) — and a record

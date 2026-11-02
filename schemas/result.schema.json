@@ -11,7 +11,13 @@
     "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "repo": { "type": "string" },
     "workflow": { "type": "string" },
-    "oauth_account": { "type": "string", "maxLength": 64 },
+    "oauth_account": { "type": "string", "maxLength": 64, "description": "The named Claude OAuth account this run's agent.auth: oauth workflow used last (docs/accounts-add spec §11.2): one scalar for the whole run." },
+    "stage_accounts": {
+      "type": "object",
+      "description": "The Claude OAuth account that served each stage, keyed by stage name (docs/accounts-add spec §11.5, D876). Declared ahead of the runner's stage-start resolution, which is the writer that fills it, so it is written and read by nothing yet: additive, and oauth_account keeps its meaning.",
+      "propertyNames": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"] },
+      "additionalProperties": { "type": "string", "maxLength": 64 }
+    },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
     "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
     "stage": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"], "description": "The step the run is in. plan and render are a mode: artifact run's optional plan stage and its render step (design artifact-runs.md §3)." },

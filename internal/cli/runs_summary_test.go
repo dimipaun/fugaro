@@ -516,6 +516,68 @@ func TestSummarySaturatesASumThatWouldWrap(t *testing.T) {
 	}
 }
 
+// TestSummaryCountsAreNeverNegative: the counts are derived by adding the
+// window's day records together, and a record can carry an outcome count below
+// zero — a document whose run and outcome nodes disagree, or one an older
+// release miscounted. A count below zero is not a count, so it is added as
+// nothing: the repository's row and the window's total stay at or above zero,
+// in the document the console reads and in the table a person reads alike.
+func TestSummaryCountsAreNeverNegative(t *testing.T) {
+	f := newSummaryFixture(t)
+	today, archived := f.day(0), f.day(2)
+	f.seedDB(t, summaryRun{day: today, slug: appSlug, repo: "acme/app", status: "succeeded", spent: 1_000_000, seq: 1})
+	// The archived day as the history holds it: two runs, a count for one of
+	// them and a count below zero for another. The database has pruned the day,
+	// so this document is the only figure of it, and the summary's own fold is
+	// what must clamp.
+	rec := budget.DayRecord{Repo: "acme/app", Slug: appSlug, Date: budget.DayDate(archived),
+		Version: budget.DayRecordVersion, Final: true, SpentMicros: 1_000_000, Runs: 2,
+		Outcomes: map[string]int64{"succeeded": 2, "failed": -3}}
+	f.fs.Set(budget.SpendCollection, rec.DocID(), rec.ToFields())
+
+	got, out := summaryJSON(t)
+	if len(got.Repositories) != 1 {
+		t.Fatalf("repositories = %+v", got.Repositories)
+	}
+	row := got.Repositories[0]
+	if row.States["succeeded"] != 3 || row.States["failed"] != 0 || row.Runs != 3 {
+		t.Errorf("repositories[0] = %+v, want the live day's count and the archived day's positive one, and no failed run", row)
+	}
+	for _, states := range []map[string]int64{row.States, got.Totals.States} {
+		for state, n := range states {
+			if n < 0 {
+				t.Errorf("states[%q] = %d, and a count below zero is not a count:\n%s", state, n, out)
+			}
+		}
+	}
+	if got.Totals.States["succeeded"] != 3 || got.Totals.States["failed"] != 0 || got.Totals.Runs != 3 {
+		t.Errorf("totals = %+v", got.Totals)
+	}
+	// The clamped figure is the document's figure, so it is the one the
+	// contract's own minimum of 0 allows.
+	summarySchemaValid(t, out)
+
+	// The table is drawn from the same figures, so it carries no count below
+	// zero either: a "-3" a person reads is the defect this clamps.
+	table, errOut, err := execute(t, "runs", "summary")
+	if err != nil {
+		t.Fatalf("runs summary: %v (%s)", err, errOut)
+	}
+	rows := map[string][]string{}
+	for _, line := range strings.Split(table, "\n") {
+		if fs := strings.Fields(line); len(fs) > 0 {
+			if _, ok := rows[fs[0]]; !ok {
+				rows[fs[0]] = fs
+			}
+		}
+	}
+	for _, first := range []string{"acme/app", "TOTAL"} {
+		if got, want := strings.Join(rows[first], " "), first+" 3 3 0 0 0 0 0 $2 $0 n/a"; got != want {
+			t.Errorf("the %s row = %q, want %q\n%s", first, got, want, table)
+		}
+	}
+}
+
 // TestSummaryRefusesAnUnboundedWindow: a summary is per UTC day, so a window
 // with no lower bound has no days to report and is refused rather than
 // answered with a figure that means something else.
@@ -558,13 +620,12 @@ func TestSummaryRefusesAForeignBudgetDatabase(t *testing.T) {
 	}
 }
 
-// TestSummaryDocMatchesSchema validates the document the command writes against
-// schemas/summary.schema.json, the contract a consumer reads it by (D784).
-func TestSummaryDocMatchesSchema(t *testing.T) {
-	f := newSummaryFixture(t)
-	f.seed(t, summaryRun{day: f.day(0), slug: appSlug, repo: "acme/app", status: "succeeded", spent: 1_000_000, seq: 1})
-	_, out := summaryJSON(t)
-
+// summarySchemaValid fails the test when out is not a document
+// schemas/summary.schema.json allows: the contract a consumer reads the
+// document by (D784), so a figure or a shape outside it is one no consumer can
+// read. The counts' own minimum is 0, which is the property the clamp keeps.
+func summarySchemaValid(t *testing.T, out string) {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "summary.schema.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -592,6 +653,16 @@ func TestSummaryDocMatchesSchema(t *testing.T) {
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("the document does not match schemas/summary.schema.json: %v\n%s", err, out)
 	}
+}
+
+// TestSummaryDocMatchesSchema validates the document the command writes against
+// schemas/summary.schema.json, the contract a consumer reads it by (D784).
+func TestSummaryDocMatchesSchema(t *testing.T) {
+	f := newSummaryFixture(t)
+	f.seed(t, summaryRun{day: f.day(0), slug: appSlug, repo: "acme/app", status: "succeeded", spent: 1_000_000, seq: 1})
+	_, out := summaryJSON(t)
+
+	summarySchemaValid(t, out)
 	// The members a consumer reads without a nil check are written on every
 	// run, empty included: a null array would be a shape the schema's own
 	// type does not allow and a consumer's loop would crash on.
