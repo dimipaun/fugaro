@@ -301,3 +301,62 @@ func TestRunReviewLevelsFlagRefusesHostileDocuments(t *testing.T) {
 		})
 	}
 }
+
+// TestRunRefusesLevelsBelowFloor pins G1 at the launcher (L3.2, D722): a task
+// that writes none for a level the owner's floor requires is refused before
+// the task is written, so no job starts and nothing is left in the runs bucket
+// under a run id that never launched. The floor is read from the owner-only
+// policy node, which no launcher can write, and the run's own bootstrap
+// refuses the same task a second time (L4.2) — a task written straight to the
+// bucket meets the same rule.
+//
+// Mutation (drop the refusal from launchReviewLevelsAsk, answering only the
+// ask): this test fails, finding the launch accepted and a job started.
+func TestRunRefusesLevelsBelowFloor(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l2"]}}`)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release0160)
+	dir := t.TempDir()
+	levels := filepath.Join(dir, "levels.yaml")
+	if err := os.WriteFile(levels, []byte("l2:\n  none: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantRefused(t, f.cloudFixture, "l2: none is refused: the owner's floor for mode pro requires this level (D722)",
+		"run", "--repo", "acme/app", "--mode", "pro", "--run-id", budgetRun, "--review-levels", levels, "Fix it.")
+	if storedTask(t, f.cloudFixture) {
+		t.Fatal("the refused launch wrote a task")
+	}
+}
+
+// TestRunGatesResolvedLevelsOnImage: what the launch asks of the job image is
+// the run's resolved levels, not the task's review_levels field (L3.2, L1.2).
+// At critical the mode's own row turns level 3 on with nothing in the task and
+// nothing in fugaro.yaml (L2.2), and a runner older than reviewLevelsSince
+// would run the loop without the adversarial step in silence — so the launch
+// is refused, and the same launch stands on the image that acts on levels.
+//
+// Mutation (build the ask from spec.ReviewLevels alone, dropping the
+// resolution): the 0.15.0 launch below succeeds.
+func TestRunGatesResolvedLevelsOnImage(t *testing.T) {
+	f := newCloudFixture(t)
+	args := func(run string) []string {
+		return []string{"run", "--repo", "acme/app", "--mode", "critical", "--run-id", run, "Fix it."}
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	_, _, err := execute(t, args("20261007-100000-abcd")...)
+	if err == nil || !strings.Contains(err.Error(), "review level 3 (its adversarial step)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want the level 3 refusal", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("the refused launch started %d executions, want none", n)
+	}
+	writeBuildRecord(t, f, appSlug, "web", release0160)
+	if _, _, err := execute(t, args("20261007-100000-abce")...); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+	// The task itself carries no level field: what was judged is the level the
+	// mode resolved, which only the resolution knows.
+	if spec := readSpec(t, f, "20261007-100000-abce"); spec.ReviewLevels != nil {
+		t.Fatalf("review_levels = %+v, want none", spec.ReviewLevels)
+	}
+}
