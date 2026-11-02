@@ -7,8 +7,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -922,6 +924,72 @@ func TestCredsLsNeverTouchesSecretManagerInJSONShape(t *testing.T) {
 	if f.writes() != 0 {
 		t.Errorf("the listing wrote %d version(s)", f.writes())
 	}
+}
+
+// reviewSigningKeyValue is a review-signing entry's fixture value: the 32-byte
+// hex spelling the entry holds (D1069), derived at run time from this file's
+// own value helper so no file carries a key-shaped literal and two entries of
+// one document never share a value.
+func reviewSigningKeyValue(t *testing.T, tag string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(credsValue(t, tag)))
+	return hex.EncodeToString(sum[:])
+}
+
+// TestCredsLsNamesTheReviewSigningEntryAndNoValue: a review-signing key is a
+// bundle ENTRY, so the listing names it the way it names every other
+// credential — by its document key, which spells the account and, for the
+// rotation's second entry, the window — and prints no byte of its value, which
+// is the rule every row of this command keeps and the reason the row set is the
+// document's entries rather than a table of kinds: a second, per-kind spelling
+// of the closed set is one the loader would not hold.
+func TestCredsLsNamesTheReviewSigningEntryAndNoValue(t *testing.T) {
+	f := credsFixtureFor(t)
+	values := []string{
+		credsValue(t, "oauth"),
+		reviewSigningKeyValue(t, "current"),
+		reviewSigningKeyValue(t, "previous"),
+	}
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+values[0]+"\n"+
+		config.ReviewSigningKeySecret("alice")+": "+values[1]+"\n"+
+		config.ReviewSigningKeyPreviousSecret("alice")+": "+values[2]+"\n"))
+
+	out, errOut, err := execute(t, "creds", "ls")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	for _, want := range []string{config.ClaudeOAuthToken, config.ReviewSigningKeySecret("alice"), config.ReviewSigningKeyPreviousSecret("alice")} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing does not name %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "yes"); n != 3 {
+		t.Errorf("%d rows are present, want 3:\n%s", n, out)
+	}
+	assertNoValue(t, out+errOut, values...)
+
+	// The same listing as JSON: the review-signing names are rows of their own,
+	// the row shape is the one every other row has, and the values are still
+	// nowhere in it.
+	out, errOut, err = execute(t, "creds", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	var doc credsList
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	var names []string
+	for _, r := range doc.Credentials {
+		if !r.Present || r.Changed != doc.Changed {
+			t.Errorf("row %+v", r)
+		}
+		names = append(names, r.Name)
+	}
+	if want := []string{config.ClaudeOAuthToken, config.ReviewSigningKeySecret("alice"), config.ReviewSigningKeyPreviousSecret("alice")}; !slices.Equal(names, want) {
+		t.Errorf("names = %q, want %q", names, want)
+	}
+	assertNoValue(t, out+errOut, values...)
 }
 
 // An unreadable, absent, empty or unparseable bundle is a NAMED failure and
