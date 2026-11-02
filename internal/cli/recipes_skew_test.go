@@ -600,6 +600,34 @@ func TestAdversarialSinceHasAReleaseBullet(t *testing.T) {
 	}
 }
 
+// TestReviewLevelsSinceHasAReleaseBullet: reviewLevelsSince names 0.16.0, which
+// is not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does (TestAdversarialSinceHasAReleaseBullet). Nothing else ties the
+// number the gate accepts to the release whose runner acts on levels, and a
+// release that landed them elsewhere would otherwise keep refusing images that
+// can run them.
+func TestReviewLevelsSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `reviewLevelsSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no reviewLevelsSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+reviewLevelsSince+"\"`") {
+		t.Errorf("docs/release.md's reviewLevelsSince bullet does not carry the constant's release (%q)", reviewLevelsSince)
+	}
+	for _, want := range []string{"review_levels", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's reviewLevelsSince bullet does not say %q", want)
+		}
+	}
+}
+
 // TestCheckCloneImageSince (review finding 1, HIGH): checkCloneImageSince
 // judges base_images.base's own release directly, since a checkout: clone
 // workflow's job has no derived image and so no build record to judge. One
