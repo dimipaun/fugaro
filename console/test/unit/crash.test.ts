@@ -998,7 +998,7 @@ describe('crash', () => {
             image({ debug_id: DEBUG_ID.toUpperCase() }),
             image({ debug_id: `${inert('gh', 'p_', 'a'.repeat(36))}` }),
             image({ debug_id: undefined }),
-            // And a type that is not the one lowercase word an image type is.
+            // And a type that is not one of the six an image type may be.
             image({ type: 'Source Map' }),
             image({ type: 7 }),
             // A value that is not an image at all.
@@ -1017,6 +1017,35 @@ describe('crash', () => {
     })
     expect(JSON.stringify(scrubbed)).not.toContain(HOME_PATH)
     expect(JSON.stringify(scrubbed)).not.toContain('person-1')
+  })
+
+  it('the image type is one of the six the service has, and a word it does not know is dropped', () => {
+    // **The type is an exact list, not a shape.** A shape (`[a-z][a-z0-9_]{0,15}`)
+    // admits every lowercase word a library, a frame file or a sentence could put
+    // in the field, and the report would carry it: `dimi` is well formed and means
+    // nothing, and a symbolicator given a type it does not know has an image it
+    // cannot use -- while an operator reading the report sees a word that looks
+    // like a fact about their build. The six are the ones the service and the SDK
+    // agree on, and anything else is refused the way a malformed one is.
+    const image = (type: unknown): Record<string, unknown> => ({
+      type,
+      code_file: `${APP_ROOT}/dist/main/index.js`,
+      debug_id: DEBUG_ID,
+    })
+    const kept = ['sourcemap', 'macho', 'elf', 'pe', 'wasm', 'proguard']
+    const scrubbed = scrubCrashEvent({ debug_meta: { images: kept.map(image) } }, APP_ROOT)
+    expect(scrubbed.debug_meta?.images.map((one) => one.type)).toEqual(kept)
+    for (const type of ['dimi', 'sourcemaps', 'Sourcemap', 'sourcemap ', 'map', 'app', 'a', 'x86_64']) {
+      expect(
+        scrubCrashEvent({ debug_meta: { images: [image(type)] } }, APP_ROOT),
+        `${JSON.stringify(type)} is not a type the service has, so the image is not sent`,
+      ).toEqual({})
+      // And it is dropped from a list rather than taking the list with it: the
+      // images around it are still looked up.
+      expect(
+        scrubCrashEvent({ debug_meta: { images: [image(type), image('sourcemap')] } }, APP_ROOT),
+      ).toEqual({ debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] } })
+    }
   })
 
   it('an oversized image list is cut, and a list with nothing usable in it is no field at all', () => {

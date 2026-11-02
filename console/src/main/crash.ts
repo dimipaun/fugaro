@@ -444,12 +444,13 @@ const MAX_DEBUG_IMAGES = 64
  * and a lookup under it finds nothing. */
 const DEBUG_ID_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/
 
-/** IMAGE_TYPE_RE is the shape of an image type: the one lower-case word the SDK
- * and the service agree on (`sourcemap`, `macho`, `elf`, `pe`, `wasm`,
- * `proguard`), bounded at 16 characters. A type the service does not know is a
- * value from somewhere else -- a sentence, a file name -- and it is not this
- * module's to invent a meaning for. */
-const IMAGE_TYPE_RE = /^[a-z][a-z0-9_]{0,15}$/
+/** IMAGE_TYPES are the image types this report may carry, and the list is
+ * **exact** rather than a shape: a symbolicator is asked to resolve a frame
+ * against an image of one of these six kinds, and a word outside them -- however
+ * well formed -- is a value from somewhere else. A shape would admit every
+ * lowercase word a library, a file name or a sentence could put in the field, and
+ * the report would carry it as though it were a fact about the build. */
+const IMAGE_TYPES: readonly string[] = ['sourcemap', 'macho', 'elf', 'pe', 'wasm', 'proguard']
 
 /** QUERY_MARKERS are where a URL's query and its fragment begin, and neither is
  * part of a file's name: `x.js?token=<x>` is a file name with a credential after
@@ -610,7 +611,7 @@ function scrubDebugImage(image: unknown, appRoot: string): ScrubbedDebugImage | 
   const type = fields.type
   const codeFile = fields.code_file
   const debugId = fields.debug_id
-  if (typeof type !== 'string' || !IMAGE_TYPE_RE.test(type)) return undefined
+  if (typeof type !== 'string' || !IMAGE_TYPES.includes(type)) return undefined
   if (typeof debugId !== 'string' || !DEBUG_ID_RE.test(debugId)) return undefined
   if (typeof codeFile !== 'string') return undefined
   const relative = appRelative(codeFile, appRoot)
