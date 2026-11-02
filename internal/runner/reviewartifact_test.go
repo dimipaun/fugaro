@@ -226,7 +226,7 @@ func reviewJobRun(t *testing.T, edit func(*run)) (*run, *reviewService) {
 		// The review stage's own level, which is what the artifact's reviewer
 		// block records: the model written into the level's own config block
 		// with the run's own setter (stageModel reads it there) and the
-		// effort in the resolved set (reviewEffort reads it there), so the
+		// effort in the resolved set (artifactReviewEffort reads it there), so the
 		// artifact carries the two answers the stage itself runs on rather
 		// than a second pair written beside them.
 		r.setLevelModel(policy.LevelL2, "claude-opus-5-5")
