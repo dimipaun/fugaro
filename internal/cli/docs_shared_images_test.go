@@ -55,8 +55,8 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		// §2.4's encoding rule, which review round 2 found missing: the three
 		// fields are each their own literal, the third always written, so two
 		// different triples can never be one fact — and the key's version moved
-		// with the change.
-		"key v2",
+		// with the change, as it did again for §2.3's Yarn patch rule.
+		"key v3",
 		"Each of the three is its own quoted literal, one space between",
 		"The three fields are encoded apart because a fact must be injective",
 		"which the spelling without per-field quoting could not say",
@@ -92,6 +92,14 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		// and a Pipfile entry with no hashes is read through its own index.
 		"and the `packages` entry for the same x are one package and one fact",
 		"**every** range it lists, not only the first",
+		// The fix round's Yarn patch rule: the patch's name is read exactly and
+		// a registry scheme states a range, so a path holding `builtin<…>`, a
+		// chain of patches and a URL after `npm:` all leave the repository
+		// unkeyed rather than keying it on what they happen to hold.
+		"is cut at the `::version=…&hash=…` query a lock appends",
+		"**Anything else leaves the repository unkeyed**",
+		"whose `patch:` descriptor states no `npm%3A` inner range stays **unkeyed**",
+		"Only a patch that is **exactly** a built-in one is keyed.",
 		"An entry that states no hashes is keyed only when the lock says it came from PyPI's own index",
 		"That convention is the one place the key rests on a file it does not read",
 		// Round 3's follow-up: a `@registry:` key names a registry rather than a
