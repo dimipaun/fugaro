@@ -371,10 +371,6 @@ func writeSignAnswer(w http.ResponseWriter, body []byte) {
 	_, _ = w.Write(body)
 }
 
-// ---------------------------------------------------------------------------
-// The verify route (C3.9f, D1068, §5.3–§5.6)
-// ---------------------------------------------------------------------------
-
 // signatureRE is the shape of the signature a verify call presents: the
 // lowercase hex of the 32 bytes of an HMAC-SHA-256, which is what the sign
 // route renders. It is held to this shape before any key is read, so a
