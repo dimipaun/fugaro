@@ -2345,8 +2345,10 @@ Only the keys it changes are rewritten: every comment and every other key of
 the file is kept.
 
 The change reaches a run through `fugaro update`, which publishes the policy
-node and re-converges each repository's job: there is no second command to
-remember.
+node: a model_prices entry and a budget.allowed_models entry are what a run
+reads from there. A route's own claim is not — a run routes by the copy of
+the providers block in its job's environment — so a repository routes to the
+model once `fugaro update --repo .` has been run in its checkout.
 
 Usage: `fugaro models add <id>`
 
@@ -2417,7 +2419,11 @@ of each one fails at launch with no provider for the model, until the pin is
 changed with `fugaro models use` or the model is added back.
 
 Only the keys it changes are rewritten: every comment and every other key of
-the file is kept. The change reaches a run through `fugaro update`.
+the file is kept. `fugaro update` publishes the policy node, which carries the
+model_prices and budget.allowed_models halves of the removal to the runs that
+read it; the route's own claims are in the copy of the providers block each
+job holds, so a repository stops routing to the model when `fugaro update
+--repo .` is run in its checkout.
 
 Usage: `fugaro models rm <id>`
 

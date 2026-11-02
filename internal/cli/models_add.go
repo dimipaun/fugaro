@@ -38,8 +38,10 @@ func newModelsAddCmd() *cobra.Command {
 			"Only the keys it changes are rewritten: every comment and every other key of\n" +
 			"the file is kept.\n\n" +
 			"The change reaches a run through `fugaro update`, which publishes the policy\n" +
-			"node and re-converges each repository's job: there is no second command to\n" +
-			"remember.",
+			"node: a model_prices entry and a budget.allowed_models entry are what a run\n" +
+			"reads from there. A route's own claim is not — a run routes by the copy of\n" +
+			"the providers block in its job's environment — so a repository routes to the\n" +
+			"model once `fugaro update --repo .` has been run in its checkout.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.priceInSet = cmd.Flags().Changed("price-in")
@@ -102,7 +104,18 @@ func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 	}
 	out := cmd.OutOrStdout()
 	if yamledit.Changed(old, next) {
-		fmt.Fprintln(out, "next: fugaro update")
+		// The hand-off names the one command this change really needs. The policy
+		// node carries the price and the allow-list entry, so `fugaro update`
+		// publishes those; the claim lives in the providers block each job holds
+		// its own copy of, which only that repository's `fugaro update --repo .`
+		// writes (jobConfigCopyPolicyNote). E2's converge is what makes the claim
+		// reach every recorded repository from the one command, and the plan
+		// records that M3/M4 do not ship in a release before it.
+		if claim.by == "" {
+			fmt.Fprintln(out, "next: fugaro update, then fugaro update --repo . in each repository that should run the model")
+		} else {
+			fmt.Fprintln(out, "next: fugaro update")
+		}
 	}
 	if claim.by != "" {
 		fmt.Fprintf(out, "%s is already claimed by %s on route %s: the route is unchanged\n", oneLine(id), oneLine(claim.by), oneLine(route))

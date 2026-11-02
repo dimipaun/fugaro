@@ -318,9 +318,13 @@ func TestModelsAddBacksUpAndWritesAtomically(t *testing.T) {
 	}
 }
 
-// TestModelsAddPrintsOnlyFugaroUpdateNext: the hand-off is the one command the
-// HARD RULE allows. No `project policy publish`, no `update --repo` per
-// repository, no second command to remember (D780, D787).
+// TestModelsAddPrintsOnlyFugaroUpdateNext: the hand-off is `fugaro update`, the
+// one command of the HARD RULE, and never `project policy publish` — the price
+// and the allow-list entry reach every run from its publish. The claim is the
+// exception the help text states: it lives in the providers block each job
+// holds its own copy of, so the line names `update --repo .` too — until E2's
+// converge re-converges the recorded repositories from the one command, which
+// the plan records M3/M4 do not ship without (D780, D787).
 func TestModelsAddPrintsOnlyFugaroUpdateNext(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	modelsWriteCheckout(t, modelsWriteHomeDir(t, path), "owner/repo-b", modelsWriteRepoYAML)
@@ -329,13 +333,31 @@ func TestModelsAddPrintsOnlyFugaroUpdateNext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	if !strings.Contains(out, "next: fugaro update, then fugaro update --repo . in each repository that should run the model\n") {
+		t.Errorf("the hand-off does not name both halves of the change:\n%s", out)
+	}
+	if strings.Contains(out, "policy publish") {
+		t.Errorf("the hand-off names `project policy publish`, which is not a command the owner runs:\n%s", out)
+	}
+}
+
+// TestModelsAddPrintsTheOneNextNextWhenTheRouteAlreadyClaimedIt: a model the
+// route already serves leaves the providers block alone, so the one command is
+// the whole hand-off — the line that names `update --repo .` is for the claim
+// this command wrote and not for the write itself.
+func TestModelsAddPrintsTheOneNextWhenTheRouteAlreadyClaimedIt(t *testing.T) {
+	_, path := modelsWriteHome(t)
+	modelsWriteCheckout(t, modelsWriteHomeDir(t, path), "owner/repo-b", modelsWriteRepoYAML)
+
+	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro", "--price-in", "1", "--price-out", "2", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
 	if !strings.Contains(out, "next: fugaro update\n") {
 		t.Errorf("the hand-off is not `next: fugaro update`:\n%s", out)
 	}
-	for _, forbidden := range []string{"policy publish", "update --repo", "fugaro update --"} {
-		if strings.Contains(out, forbidden) {
-			t.Errorf("the hand-off names %q:\n%s", forbidden, out)
-		}
+	if strings.Contains(out, "update --repo") {
+		t.Errorf("a write that left the providers block alone names the repository command:\n%s", out)
 	}
 }
 

@@ -32,7 +32,11 @@ func newModelsRmCmd() *cobra.Command {
 			"of each one fails at launch with no provider for the model, until the pin is\n" +
 			"changed with `fugaro models use` or the model is added back.\n\n" +
 			"Only the keys it changes are rewritten: every comment and every other key of\n" +
-			"the file is kept. The change reaches a run through `fugaro update`.",
+			"the file is kept. `fugaro update` publishes the policy node, which carries the\n" +
+			"model_prices and budget.allowed_models halves of the removal to the runs that\n" +
+			"read it; the route's own claims are in the copy of the providers block each\n" +
+			"job holds, so a repository stops routing to the model when `fugaro update\n" +
+			"--repo .` is run in its checkout.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runModelsRm(cmd, args[0], &o) },
 	}
