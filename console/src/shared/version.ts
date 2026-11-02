@@ -260,13 +260,15 @@ export function runsListPageSupported(version: string): boolean {
  * v0.15.0, so a 0.15.x CLI has no such verb and answers `unknown command "summary"`
  * -- a failure the operator can do nothing about and one a screen would draw as a
  * broken project. The floor is therefore asked before the read is offered at all,
- * the way the two floors above are asked before their flags go out, and a console
- * below it draws the section as unavailable with the version it needs rather than
- * spawning a child that cannot answer.
+ * the way each of the three floors above it is asked before what it gates goes
+ * out -- a launch for `LAUNCH_CLI_FLOOR`, a flag for the other two -- and a
+ * console below it draws the section as unavailable with the version it needs
+ * rather than spawning a child that cannot answer.
  *
  * It is a patch-level floor rather than a range membership for the reason the
- * three above are: `0.15.2` is inside a minor this console reads and is below
- * this one, so `SUPPORTED_CLI_MINORS` and `classifyCliVersion` cannot answer it.
+ * three floors above it are: `0.15.2` is inside a minor this console reads and
+ * is below this one, so `SUPPORTED_CLI_MINORS` and `classifyCliVersion` cannot
+ * answer it.
  */
 export const RUNS_SUMMARY_CLI_FLOOR = '0.16.0'
 
