@@ -839,8 +839,9 @@ const (
 	// all, so nothing says where the version came from.
 	yarnSourceUnstated yarnSourceKind = iota
 	// yarnSourceDefaultRegistry: the ecosystem's default registry — Berry's
-	// npm: scheme for a registry package, patch: for one whose artifact a patch
-	// file changed, virtual: for a projection of one, and Yarn 1's tarball URL
+	// npm: scheme for a registry package, a patch descriptor whose patch is one
+	// Yarn ships (read through the inner locator that descriptor states),
+	// virtual: for a projection of one, and Yarn 1's tarball URL
 	// at registry.npmjs.org or registry.yarnpkg.com. The name and the version
 	// are enough to say which artifact the version is.
 	yarnSourceDefaultRegistry
@@ -1190,7 +1191,12 @@ func classifyYarnSource(value string) (yarnSourceKind, string) {
 			return yarnSourceOther, source
 		}
 		return yarnSourceDefaultRegistry, source
-	case strings.HasPrefix(source, "patch:"), strings.HasPrefix(source, "virtual:"):
+	// A patch descriptor is `name@patch:…` and the branch above is what reads
+	// one; a value written `patch:` with no name before it is no descriptor, so
+	// nothing here says which package it patches or what the patch installs, and
+	// it is a source this reader cannot key. Reading it as the registry's would
+	// key the entry as the plain package while the patch was never read.
+	case strings.HasPrefix(source, "virtual:"):
 		return yarnSourceDefaultRegistry, source
 	case defaultRegistryURL(source, npmRegistries...):
 		return yarnSourceDefaultRegistry, source

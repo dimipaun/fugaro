@@ -596,6 +596,14 @@ func TestReduceYarnBerryPatch(t *testing.T) {
 	if got := reduced(t, "yarn.lock", resolutionOnly); !slices.Equal(got, []string{patched}) {
 		t.Errorf("a patch named only in the resolution line = %v, want %v", got, []string{patched})
 	}
+	// A descriptor is `name@patch:…` and the branch above reads that one: a
+	// resolution line written `patch:` with no package name before it is not a
+	// descriptor, and reading it as the registry's keys the entry as the plain
+	// package while the patch the line names is never read at all. The
+	// repository then installs a patched artifact and takes the unpatched set's
+	// image.
+	refused(t, "yarn.lock", "\"typescript@npm:^5.4.0\":\n  version: 5.4.5\n"+
+		"  resolution: \"patch:typescript@npm%3A5.4.5#./patches/evil.patch\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
 	// A descriptor whose inner locator names another package is an alias's
 	// shape, not a patch of this one: the version and the checksum beside it
 	// are that package's, so the entry is refused rather than keyed under the
