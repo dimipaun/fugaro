@@ -489,6 +489,350 @@ func TestReviewMintServesTheReadOnlySetForTheRunsRepository(t *testing.T) {
 	}
 }
 
+// TestReviewMintRefusesARunIdentityWithABranch: a coding run launched into the
+// review job is refused at the mint and never downgraded to a review, because
+// the identity it carries is a different act — it means to push — and answering
+// it as a review would serve it the read-only set.
+//
+// The refusal is the corresponding one of the mint's two decisions (D1065): the
+// endpoint stops, at last, refusing the class outright, and what is left in
+// front of it is the pairing — the claim rule included — so the sentence the
+// caller gets is the claim rule's own, naming the claim that failed.
+func TestReviewMintRefusesARunIdentityWithABranch(t *testing.T) {
+	s, gh := reviewMintSvc(t)
+	fb := "fugaro/" + s.run
+	run := s.reviewRunToken(func(c map[string]any) { c["fb"] = fb })
+	resp, body := s.mintTokens(t, mintBody(testAppID), run, s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+	}
+	if !strings.Contains(got.Message, "branch") {
+		t.Errorf("the refusal is %q, want the claim rule's own sentence: a caller refused for its shape has to be told which claim failed", got.Message)
+	}
+	if strings.Contains(got.Message, fb) {
+		t.Errorf("the refusal %q echoes the branch: an fb is caller text", got.Message)
+	}
+	if n := gh.count(); n != 0 {
+		t.Errorf("GitHub saw %d requests, want none: no installation token was asked for", n)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: the claim rule comes before it", n)
+	}
+	if lines := mintAuditLines(t, s); len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+	}
+
+	// The chooser asks the same rule, and it has to: it is the function that
+	// picks the set, and the class alone does not carry the shape. What it must
+	// never do is answer a review-class identity the run's write set, and what
+	// it must never do either is serve the run's set by default to a class this
+	// service does not mint for (Global Constraint 6). Through the HTTP path
+	// above neither is reachable — the pairing refuses first — so the calls
+	// below are the chooser itself.
+	shape, err := s.verify(run, s.reviewJobToken(), s.job)
+	if err != nil {
+		t.Fatalf("the fixture's own identity is not one Verify answers: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		id   Identity
+	}{
+		{"a review identity carrying a branch", shape},
+		{"a class this service does not mint for", Identity{Slug: s.slug, Run: s.run, JobAccount: testSharedSA, JobClass: ClassShared}},
+	} {
+		perms, err := mintPermissions(tc.id)
+		if err == nil {
+			t.Errorf("mintPermissions served the set %v to %s", perms, tc.name)
+			continue
+		}
+		if !errors.Is(err, ErrUnverified) {
+			t.Errorf("the refusal for %s is %v, want an ErrUnverified", tc.name, err)
+		}
+		if perms != nil {
+			t.Errorf("the refusal for %s carried a set: %v", tc.name, perms)
+		}
+	}
+}
+
+// TestReviewMintRefusesARunIdentityWithNoPullRequests: an artifact run pushes
+// nothing and writes no pull request either, so the empty fpr is what tells it
+// from a review — and an fpr that is present and empty is a shape the claim
+// reader admits, which is why the rule is asked at the pairing and not read off
+// the claim. It is the branch's refusal in every other respect.
+func TestReviewMintRefusesARunIdentityWithNoPullRequests(t *testing.T) {
+	s, gh := reviewMintSvc(t)
+	resp, body := s.mintTokens(t, mintBody(testAppID),
+		s.reviewRunToken(func(c map[string]any) { c["fpr"] = []any{} }), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+	}
+	if !strings.Contains(got.Message, "pull request") {
+		t.Errorf("the refusal is %q, want it to name the claim that failed", got.Message)
+	}
+	if n := gh.count(); n != 0 {
+		t.Errorf("GitHub saw %d requests, want none: no installation token was asked for", n)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: the claim rule comes before it", n)
+	}
+	if lines := mintAuditLines(t, s); len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+	}
+}
+
+// TestReviewMintRefusesARepositoryTheAccountIsNotAdmittedFor: D1064's third
+// step, read on the route this task opens. The repository is the run identity's
+// own slug resolved through the table, and the calling account's admission to
+// it is the model path's own check — the intersection of the repository's node,
+// the shared node's offer and the two allow-lists — so a review job whose
+// account the owner has not admitted to that repository is refused rather than
+// served a token for it.
+//
+// Both halves are here because both are the same intersection, and each alone
+// is a way the repository can be withdrawn: the child node that does not name
+// the account, and the project's allow-list that has dropped the repository
+// (`fugaro project repos rm`, which leaves the child untouched).
+func TestReviewMintRefusesARepositoryTheAccountIsNotAdmittedFor(t *testing.T) {
+	t.Run("the repository's node does not name the account", func(t *testing.T) {
+		s, gh := reviewMintSvc(t)
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc("default"))
+		resp, body := s.mintTokens(t, mintBody(testAppID), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		got := refusal(t, resp.StatusCode, body)
+		if got.Error != ErrorUnverifiedRunIdentity {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+		}
+		if !strings.Contains(got.Message, "admitted") {
+			t.Errorf("the refusal is %q, want it to name the admission that failed", got.Message)
+		}
+		if n := gh.count(); n != 0 {
+			t.Errorf("GitHub saw %d requests, want none: no installation token was asked for", n)
+		}
+		if n := s.src.readCount(); n != 0 {
+			t.Errorf("the bundle was read %d times, want none: the pairing comes before it", n)
+		}
+		if lines := mintAuditLines(t, s); len(lines) != 1 {
+			t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+		}
+	})
+	t.Run("the project's allow-list does not name the repository", func(t *testing.T) {
+		s, gh := reviewMintSvc(t)
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocAllowRepos(
+			`["`+testOtherRepo+`"]`,
+			`"default": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]},
+			"`+testAccount+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]}`))
+		resp, body := s.mintTokens(t, mintBody(testAppID), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if n := gh.count(); n != 0 {
+			t.Errorf("GitHub saw %d requests, want none", n)
+		}
+		if n := s.src.readCount(); n != 0 {
+			t.Errorf("the bundle was read %d times, want none: the pairing comes before it", n)
+		}
+	})
+}
+
+// TestReviewMintRefusesBeforeReadingTheBundle: the refusal order is part of the
+// contract, and it is the code's to fix: unverified identities, the class the
+// mint does not admit, the pairing (the claim rule with it), the stop flag, the
+// bundle, and the mint. Two facts hold it on this route, and neither is about
+// the text of a refusal.
+//
+// The first is that the pairing is asked BEFORE the stop flag: a caller whose
+// claim rule fails is answered the pairing's refusal even while the operator's
+// switch is on, which is the order ServeHTTP makes the two in and not a second
+// arrangement for the new class. The second is that a caller the pairing admits
+// is refused by the switch with the bundle unread — the switch is read before
+// the one document that holds every credential, exactly as the comment on the
+// order says — so a stopped service reads no key material at all.
+func TestReviewMintRefusesBeforeReadingTheBundle(t *testing.T) {
+	t.Run("the pairing is asked before the stop flag", func(t *testing.T) {
+		s, gh := reviewMintSvc(t)
+		s.kills.global = true
+		resp, body := s.mintTokens(t, mintBody(testAppID),
+			s.reviewRunToken(func(c map[string]any) { c["fb"] = "fugaro/" + s.run }), s.reviewJobToken(), s.job)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: the pairing comes first, so the switch is not what refuses this caller: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		got := refusal(t, resp.StatusCode, body)
+		if got.Error != ErrorUnverifiedRunIdentity {
+			t.Errorf("the refusal is %q, want %q: the stop flag's state_unavailable would mean the order is the other way round", got.Error, ErrorUnverifiedRunIdentity)
+		}
+		if !strings.Contains(got.Message, "branch") {
+			t.Errorf("the refusal is %q, want the claim rule's own sentence", got.Message)
+		}
+		if n := gh.count(); n != 0 {
+			t.Errorf("GitHub saw %d requests, want none", n)
+		}
+		if n := s.src.readCount(); n != 0 {
+			t.Errorf("the bundle was read %d times, want none: the pairing comes before the switch and before the bundle", n)
+		}
+		if lines := mintAuditLines(t, s); len(lines) != 1 {
+			t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+		}
+	})
+	t.Run("the stop flag is answered with the bundle unread", func(t *testing.T) {
+		s, gh := reviewMintSvc(t)
+		s.kills.repos[s.slug] = true
+		resp, body := s.mintTokens(t, mintBody(testAppID), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+		}
+		got := refusal(t, resp.StatusCode, body)
+		if got.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+		}
+		if n := gh.count(); n != 0 {
+			t.Errorf("GitHub saw %d requests, want none: a stopped service mints nothing", n)
+		}
+		if n := s.src.readCount(); n != 0 {
+			t.Errorf("the bundle was read %d times, want none: the switch is read before the one document that holds every credential", n)
+		}
+		if lines := mintAuditLines(t, s); len(lines) != 1 {
+			t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+		}
+	})
+}
+
+// TestMintRefusalsAreAuditedAndCarryNoToken: every refusal this endpoint
+// answers is recorded exactly once (C1.13) and hands out no token — the two
+// properties the endpoint is held to whichever class called it, swept over the
+// refusals C3.9b is about and over the ones it has to leave alone.
+//
+// The sweep is a table because the property is the same for all of them and
+// what differs is only how the caller failed: the review class's two refusals
+// on this route (the claim rule and the repository's admission), the repository
+// class's binding refusal, and the endpoint's own refusal of a body it cannot
+// read. Each is an answer the run halts on, so each one's line is the only
+// record that the act was asked for at all.
+func TestMintRefusalsAreAuditedAndCarryNoToken(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		errType string
+		call    func(*testing.T) (*svc, *ghFake, *http.Response, []byte)
+	}{
+		{
+			name:    "a review identity carrying a branch",
+			status:  StatusUnverified,
+			errType: ErrorUnverifiedRunIdentity,
+			call: func(t *testing.T) (*svc, *ghFake, *http.Response, []byte) {
+				s, gh := reviewMintSvc(t)
+				resp, body := s.mintTokens(t, mintBody(testAppID),
+					s.reviewRunToken(func(c map[string]any) { c["fb"] = "fugaro/" + s.run }), s.reviewJobToken(), s.job)
+				return s, gh, resp, body
+			},
+		},
+		{
+			name:    "a review identity naming no pull request",
+			status:  StatusUnverified,
+			errType: ErrorUnverifiedRunIdentity,
+			call: func(t *testing.T) (*svc, *ghFake, *http.Response, []byte) {
+				s, gh := reviewMintSvc(t)
+				resp, body := s.mintTokens(t, mintBody(testAppID),
+					s.reviewRunToken(func(c map[string]any) { c["fpr"] = []any{} }), s.reviewJobToken(), s.job)
+				return s, gh, resp, body
+			},
+		},
+		{
+			name:    "a review account not admitted to the run's repository",
+			status:  StatusUnverified,
+			errType: ErrorUnverifiedRunIdentity,
+			call: func(t *testing.T) (*svc, *ghFake, *http.Response, []byte) {
+				s, gh := reviewMintSvc(t)
+				s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc("default"))
+				resp, body := s.mintTokens(t, mintBody(testAppID), s.reviewRunToken(), s.reviewJobToken(), s.job)
+				return s, gh, resp, body
+			},
+		},
+		{
+			name:    "a run identity that is not the calling job's",
+			status:  StatusUnverified,
+			errType: ErrorUnverifiedRunIdentity,
+			call: func(t *testing.T) (*svc, *ghFake, *http.Response, []byte) {
+				s, gh := mintSvc(t, nil)
+				other := testSlug(t, testOtherRepoPath)
+				run := s.runToken(func(c map[string]any) {
+					c["fs"] = other
+					c["sub"] = "r~" + other + "~" + s.run
+					c["user_id"] = c["sub"]
+				})
+				resp, body := s.mintTokens(t, mintBody(testAppID), run, s.jobToken(), s.job)
+				return s, gh, resp, body
+			},
+		},
+		{
+			name:    "a body this contract cannot read",
+			status:  StatusUnavailable,
+			errType: ErrorStateUnavailable,
+			call: func(t *testing.T) (*svc, *ghFake, *http.Response, []byte) {
+				s, gh := reviewMintSvc(t)
+				resp, body := s.mintTokens(t, mintBody("not-a-number"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+				return s, gh, resp, body
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, gh, resp, body := tc.call(t)
+			if resp.StatusCode != tc.status {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, tc.status, body)
+			}
+			if got := refusal(t, resp.StatusCode, body); got.Error != tc.errType {
+				t.Errorf("the refusal is %q, want %q", got.Error, tc.errType)
+			}
+			var ans MintResponse
+			if err := decodeStrict(body, &ans); err == nil {
+				t.Errorf("the refusal carries a mint's answer: %+v", ans)
+			}
+			for _, secret := range []string{gh.token, pemCore(t)} {
+				if strings.Contains(string(body), secret) {
+					t.Errorf("the refusal's body carries %q", secret)
+				}
+				if strings.Contains(s.audit.String(), secret) {
+					t.Errorf("the refusal's audit line carries %q", secret)
+				}
+				if strings.Contains(s.logs.String(), secret) {
+					t.Errorf("the refusal wrote %q to the service's log", secret)
+				}
+			}
+			if n := gh.count(); n != 0 {
+				t.Errorf("GitHub saw %d requests for a refused mint, want none", n)
+			}
+			if n := s.src.readCount(); n != 0 {
+				t.Errorf("the bundle was read %d times, want none: every refusal above is answered before it", n)
+			}
+			lines := mintAuditLines(t, s)
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+			}
+			checkAuditShape(t, lines[0])
+			for field, want := range map[string]any{
+				"purpose":    PurposeMint,
+				"credential": config.GitHubAppKeySecret,
+				"status":     tc.errType,
+				"run":        s.run,
+				"tier":       "",
+			} {
+				if got := lines[0][field]; got != want {
+					t.Errorf("the refusal's line records %s = %v, want %q", field, got, want)
+				}
+			}
+		})
+	}
+}
+
 // TestSharedJobCallerIsStillRefusedOnEveryRoute: the gate is narrowed by this
 // task and not lifted (F2, Global Constraint 6). A coding shared project job's
 // account is refused on every route the service has — the model path and its
