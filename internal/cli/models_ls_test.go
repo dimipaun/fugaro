@@ -173,6 +173,102 @@ func TestModelsLsListsRoutesModelsAllowListsAndUsage(t *testing.T) {
 	}
 }
 
+// TestModelsLsRefusesAModelTheAllowListLeavesOut: budget.allowed_models is the
+// project's own list of the models a run may name, and a model the list leaves
+// out is refused for every repository even though a route serves it
+// (modelsAllowedTo). The two rows pinned here are the two shapes that reach
+// that branch: an embedded Claude ID, which the direct route serves and which
+// would otherwise read "every repository", and a catalog row the openrouter
+// route's deepseek/* claim serves. claude-sonnet-5-5 is the control — the list
+// carries it and it goes direct, so it still reads "every repository", and a
+// read that refused every model would not pass this.
+//
+// Mutation (run, restored): drop the allowed_models branch of modelsAllowedTo
+// (models_ls.go:345) and both rows fail, in the text read and in the document.
+func TestModelsLsRefusesAModelTheAllowListLeavesOut(t *testing.T) {
+	modelsFixture(t)
+	// Each with the route it has, so a failure here is the allow-list and not a
+	// model nothing serves at all.
+	leftOut := []struct{ id, route string }{
+		{"claude-opus-5-5", config.RouteDirect},
+		{"deepseek/deepseek-v4-pro", "openrouter"},
+	}
+
+	out, _, err := execute(t, "models", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	allow := map[string]string{}
+	for _, l := range strings.Split(modelsSection(t, out, "ALLOW-LISTS"), "\n") {
+		f := strings.Fields(l)
+		if len(f) < 2 || f[0] == "MODEL" {
+			continue
+		}
+		allow[f[0]] = strings.Join(f[1:], " ")
+	}
+	for _, c := range leftOut {
+		got, ok := allow[c.id]
+		if !ok {
+			t.Errorf("the ALLOW-LISTS section has no row for %s:\n%s", c.id, out)
+			continue
+		}
+		if got != "no repository" {
+			t.Errorf("%s reads %q, and budget.allowed_models leaves it out: a model the list leaves out is refused for every repository", c.id, got)
+		}
+	}
+	if got := allow["claude-sonnet-5-5"]; got != "every repository" {
+		t.Errorf("claude-sonnet-5-5 reads %q: the list carries it and it goes direct, so every repository may use it", got)
+	}
+
+	raw, _, err := execute(t, "models", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	var doc struct {
+		Models []struct {
+			ID    string `json:"id"`
+			Route string `json:"route"`
+			// Raw, so the assertion is about the member itself: a null and an
+			// empty array both decode into a []string, and a consumer of the
+			// document reads them differently (the schema requires the array).
+			AllowedTo json.RawMessage `json:"allowed_to"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	// The document is indented, so a member with contents is written over
+	// several lines: compacted, the assertion below is about the value rather
+	// than about the encoder's layout.
+	compact := func(raw json.RawMessage) string {
+		var b bytes.Buffer
+		if err := json.Compact(&b, raw); err != nil {
+			t.Fatalf("%v\n%s", err, raw)
+		}
+		return b.String()
+	}
+	routes, allowed := map[string]string{}, map[string]string{}
+	for _, m := range doc.Models {
+		routes[m.ID], allowed[m.ID] = m.Route, compact(m.AllowedTo)
+	}
+	for _, c := range leftOut {
+		route, ok := routes[c.id]
+		if !ok {
+			t.Errorf("the document has no row for %s:\n%s", c.id, raw)
+			continue
+		}
+		if route != c.route {
+			t.Errorf("%s's route is %q, want %q: this test is about a model the allow-list leaves out, not one nothing serves", c.id, route, c.route)
+		}
+		if got := allowed[c.id]; got != "[]" {
+			t.Errorf("%s's allowed_to is %s, and budget.allowed_models leaves it out", c.id, got)
+		}
+	}
+	if got := allowed["claude-sonnet-5-5"]; got != `["*"]` {
+		t.Errorf("claude-sonnet-5-5's allowed_to is %s: the list carries it and it goes direct", got)
+	}
+}
+
 // TestModelsLsUnknownWithoutACheckout: a recorded repository this machine has
 // no checkout for is shown as unknown, never guessed at (D793).
 func TestModelsLsUnknownWithoutACheckout(t *testing.T) {
