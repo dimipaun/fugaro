@@ -1241,7 +1241,11 @@ section's own. **The head is the window and the list is the page**: the two figu
 rows are the first page's own `totals`, which the CLI sums over everything it read, and they
 are never recomputed from the rows on screen — with `--limit` the two are different numbers by
 construction (C2, #1545). A row is a **real button** whose press reveals the body drawn under
-it and `hidden` until then, so the expansion is a toggle and never a rendering. The paged read
+it and `hidden` until then, so the expansion is a toggle and never a rendering. **The head
+says when the list on screen was read** (`as of HH:MM`, `section.ts`'s stamp) with the one
+control that reads the window again from the top: a page of a moving `--since 24h` window is a
+snapshot, and a refresh drops the pages and the cursor with it, because a cursor belongs to the
+window those rows came from. The paged read
 is gated on `RUNS_LIST_PAGE_CLI_FLOOR` (`0.16.0`, the first release carrying #1545): below it
 the section draws the console's own sentence naming the version it needs and spawns nothing,
 because in the 0.15 line `--after` is refused outright and `--limit` reads only the newest N —
@@ -1333,7 +1337,7 @@ only ever says what it was told.
 | `coordinator-unread-reason`, `coordinator-unread-retry` | `span`s | the reason a sweep gave, and when it may retry |
 | `coordinator-unread-carried` | `span` | the console's answer to whether the state shown is the last one a sweep did read |
 | `section.coordinator-jobs` | the job list's section | console 0.119.0's K4: the runs of the last day, drawn on the frame the other two sections take, and read only when the operator asks for them |
-| `coordinator-jobs-head` | `div` | the window's own line: the console's introducing word, the two figures the **first page's `totals`** carries, and the slot the section's own busy mark is put in |
+| `coordinator-jobs-head` | `div` | the window's own line: the console's introducing word, the two figures the **first page's `totals`** carries, the slot the section's own busy mark is put in, and — once a page has landed — the `console-stamp` line saying when it was read, with the refresh control that reads the window again from the top |
 | `coordinator-jobs-window-word` | `span` | the introducing words, `the window holds` |
 | `coordinator-jobs-window-runs`, `coordinator-jobs-window-spent` | the head's two cells | which figure each cell is — hook names only, like the strip's cells above: how many runs the window holds and what it spent, each drawn through `numberCell` and so already carrying `coordinator-count`'s cell and §2.10's reading |
 | `coordinator-jobs-list` | `div` | the host the rows are drawn into: what the pages read so far hold, and nothing of its own |

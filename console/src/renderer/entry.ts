@@ -4692,6 +4692,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let jobsDrawn = 0
     let jobsHeadDrawn = false
     let jobsOut = false
+    /** jobsAt is the console clock the page on screen was read at, and
+     * jobsStamped whether the head already says so. The list is a snapshot of a
+     * moving window (`--since 24h`), so the line that says **when** it was read
+     * is the difference between "this is the window" and "this is the window as
+     * of 14:05" -- and the control beside it is the door the operator's own
+     * doubt goes through. */
+    let jobsAt = 0
+    let jobsStamped = false
     /** jobsListedAsked is whether **this** list has been asked for a page. It is
      * this section's own flag and not the queue's `jobsAsked`: the two are
      * separate sections of the same screen (the queue's runs part and the job
@@ -4982,10 +4990,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * -- and it is never rewritten from a later page, whose `totals` are the same
      * window's.
      *
-     * The section offers exactly one control at a time: `Load jobs` until the ask
-     * has been made, `Older 50` while the page last read filled every row it
-     * asked for, and neither once that page came back short -- the only state in
-     * which the console knows the window ends where the drawing does. A refused
+     * The head also carries the line that says **when** the list was read, with
+     * the one control that reads the window again: a page of a moving window is a
+     * snapshot, and a snapshot with no stamp is a figure the operator cannot tell
+     * from a live one. `Load jobs` and `Older 50` are the section's own controls
+     * and stand under the list, which is where the press that fills them belongs.
+     *
+     * The section offers exactly one of those two at a time: `Load jobs` until
+     * the ask has been made, `Older 50` while the page last read filled every row
+     * it asked for, and neither once that page came back short -- the only state
+     * in which the console knows the window ends where the drawing does. A refused
      * read draws the CLI's own sentence in the rows' place and no control at all,
      * because a button that asks again for a read just refused offers the same
      * failure; an installation whose CLI is older than the paged read draws the
@@ -5014,6 +5028,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         fillCoordinatorJobsHead(factory, jobsListed.window, section.head)
         jobsHeadDrawn = true
       }
+      if (jobsHeadDrawn && !jobsStamped) {
+        // The stamp is the head's, drawn once with the figures it belongs to and
+        // wired to the one thing a reader who doubts it can do: read the window
+        // again from the top. Both the pages and the cursor go with it -- a
+        // refresh that kept the old cursor would page under a window that is no
+        // longer the one those rows came from.
+        const stamp = renderStamp(factory, jobsAt)
+        appendTo(section.head, stamp.root)
+        surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+          reReadJobs()
+        })
+        jobsStamped = true
+      }
       const fresh = jobsListed.rows.slice(jobsDrawn)
       if (fresh.length > 0) {
         bindJobRows(fillCoordinatorJobs(factory, fresh, section.list))
@@ -5041,6 +5068,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           askForJobPage(jobsListed.cursor)
         })
       }
+    }
+
+    /**
+     * reReadJobs is the stamp's own control: it drops what the pages drew and
+     * reads the window again from the top. The first page is the one that
+     * carries the window's own `totals`, so a refresh is the same read as the
+     * operator's first press and not a second kind of read.
+     */
+    const reReadJobs = (): void => {
+      if (jobsOut) return
+      const section = mount(false).jobs
+      // The head and the rows go with the pages they came from. `jobsHeadDrawn`
+      // alone would rebuild the figures **over** the old ones -- the head is
+      // filled, not replaced -- and a stamp beside a window that is now being
+      // read again would be a claim about a read that no longer stands.
+      surface.nodeOf(section.head).replaceChildren(surface.nodeOf(section.slot))
+      surface.nodeOf(section.list).replaceChildren()
+      jobsListed = { rows: [], window: null, cursor: '' }
+      jobsDrawn = 0
+      jobsHeadDrawn = false
+      jobsStamped = false
+      jobsSentence = null
+      lastFullPage = false
+      askForJobPage(null)
     }
 
     /**
@@ -5099,6 +5150,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       } else {
         const page = jobsDocument(answer.data)
         jobsSentence = null
+        jobsAt = Date.now()
         // The rows accumulate and the window is written once: a later page's
         // `totals` are the same window's, and a page that carried none must not
         // take the first page's away.

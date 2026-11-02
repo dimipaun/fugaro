@@ -151,6 +151,7 @@ import {
   COORDINATOR_JOBS_BUSY,
   COORDINATOR_JOBS_EMPTY_WORD,
   COORDINATOR_JOBS_FLOOR_WORD,
+  COORDINATOR_JOBS_HEAD_CLASS,
   COORDINATOR_JOBS_LIST_CLASS,
   COORDINATOR_JOBS_LOAD_WORD,
   COORDINATOR_JOBS_OLDER_WORD,
@@ -5198,6 +5199,55 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       COORDINATOR_JOBS_RUNS_WORD,
       '41',
     ])
+  })
+
+  it('stamps the page it drew, and reads the window again from the top when the stamp’s Refresh is pressed', async () => {
+    const first = holding()
+    const again = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : again.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    // Nothing has been read, so there is nothing to stamp: the line says when a
+    // page was read, and a section nothing answered draws neither it nor a
+    // figure.
+    expect(classed(panelOf(document), STAMP_AT_CLASS)).toEqual([])
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
+    await flush()
+
+    // The head says when the list on screen was read -- a page of a moving
+    // `--since 24h` window is a snapshot, and the words are the console's.
+    const head = classed(panelOf(document), COORDINATOR_JOBS_HEAD_CLASS)[0]
+    if (head === undefined) throw new Error('the section drew no head')
+    expect(textIn(head, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+
+    // Its own control reads the window **again from the top**: the pages drawn
+    // and the cursor go with it, because a cursor belongs to the window those
+    // rows came from, and the read that replaces it is the first page's.
+    const refresh = classed(head, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the stamp drew no refresh control')
+    refresh.click()
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toEqual({ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE })
+    expect(classed(panelOf(document), 'coordinator-job')).toEqual([])
+
+    again.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(1)
   })
 
   it('draws a refused job list as the CLI’s own sentence for runs ls, with no control beside it', async () => {
