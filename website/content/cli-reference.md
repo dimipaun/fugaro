@@ -3326,6 +3326,7 @@ Subcommands:
 - `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
+- `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
 
 ## `fugaro runs digest`
 
@@ -3574,6 +3575,65 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs summary`
+
+Count the window's runs and their spend, without reading a run object
+
+Count the runs of a window by repository and by state, and total what they
+spent, from the budget database and the spend history alone.
+
+The figures come from the day counters the caps are enforced against: the
+budget database's spend, outcomes and runs nodes for the days it still holds,
+and the spend history's daily documents for the days the rollover has
+archived. No run object is read, so no run's task, result or transcript is
+opened and the runs bucket is never listed: this is the read a listing cannot
+be, and it answers in about a second over the database's own window.
+
+A run is counted on the UTC day the database recorded its spend, which is the
+day the rollover files it under, so the window and the counts agree with the
+budget and not necessarily with runs ls, whose rows are the runs bucket's.
+Runs that have not settled are counted in runs and in no state. SPENT is the
+model money the caps count; NOTIONAL is the part a subscription paid, which
+counts toward the plan's limits and is nobody's bill. The two are separate and
+are never summed. COMPUTE is what the runs whose compute was priced came to,
+and is n/a when no run's compute is known: this read opens no bucket, so a live
+day's compute is never estimated here, and 'not estimated' is never shown as
+free.
+
+An unknown day is named, never counted as zero. The budget database holds the
+days it has not pruned (today and the 8 before it); every older day is
+the spend history's to answer, and a project whose history cannot answer at all
+-- no Firebase backend, no database, no history mark -- names the days it
+cannot know in days_unknown and counts nothing on them. A day inside the
+database's window with no node is a day nothing ran on, which is known.
+
+A window is a span of UTC days ending today: --since 7d is today and the six
+days before it. The whole history is not a window, so --since 0 is refused.
+
+--json prints {v, project, since, until, repositories[], totals, days_unknown,
+notes}; repositories and totals carry {slug, repo, runs, states{}, spent_micros,
+notional_micros, compute_micros, compute_runs}, and states carries all of
+succeeded, failed, halted, cancelled, infra_error and other.
+
+Usage: `fugaro runs summary`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for summary |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name) |
+| `--since` | string | `7d` | no | the window of UTC days ending today (7d, 36h, 90m; a summary is per day, so 0 is refused) |
 
 Subcommands:
 

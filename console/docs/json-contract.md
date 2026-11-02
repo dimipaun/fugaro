@@ -2115,6 +2115,119 @@ measured against `at`), `--json`, and the cloud flags `--project`, `--config`,
 `--gcp-project` and `--region`. `--all` with `--repo` is refused rather than
 resolved, the way §6.13's selection refuses it.
 
+### 6.17 `fugaro runs summary --json` (**CLI 0.15.0**)
+
+**Command:** `internal/cli/runs_summary.go` `newRunsSummaryCmd` / `runRunsSummary`.
+**Document:** `summaryDoc`, with its `summaryRepo` rows and its `summaryTotals`,
+indented (`writeSummary`), all in `internal/cli/runs_summary.go` — cited by
+symbol, not by line, for §6.11's reason. This is the fourth command in this
+document the console **does not spawn yet**: it is the read the Project,
+Coordinator and Spend screens' totals are built on, and the section is here so
+the screens that follow read a shape off the code rather than assuming one from
+a design.
+
+**Why it exists: a totals read that opens no run.** `runs ls` (§5) answers by
+reading the runs bucket — one run object per row, its task and its result — and
+that is what makes it a listing and what makes it slow. This read answers from
+the budget database's day nodes (`spend`, `outcomes`, `runs`: the counters the
+caps are enforced against) and from the spend history's daily documents — the
+same two sources §4's `report` reads — over the database's own window of eight
+days, a few hundred kilobytes, in about a second. **Neither the runs bucket nor
+the compute backend is opened**: no run's task, result or transcript is read,
+which is why the compute figure is the archived one alone (its own row below).
+It is a command of its own rather than a totals block on `runs ls --json`
+because the two count different things from different sources — here a run's
+day is the UTC day the budget recorded its spend, there a row is an object in a
+bucket — and two totals under one document name would leave a reader unable to
+say which basis a figure has.
+
+**A run is counted on the UTC day the budget recorded its spend**: the day the
+rollover files it under and the day its money is counted on. The counts
+therefore agree with the budget and **not necessarily with `runs ls`**, whose
+rows are the runs bucket's. A run whose outcome has not settled yet is counted
+in `runs` and in no state, so `runs` is at least the sum of `states`.
+
+**The document is one object, and the window is a span of UTC days ending
+today.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `v` | int | never | never | the document's version, `1` today (`summaryDocVersion`). A consumer that does not know a version refuses the document rather than reading it as the one it does |
+| `project` | string | never | never | the selected project's name: the installation whose budget database and spend history were read |
+| `since` | string | never | never | the window's first UTC day, `YYYY-MM-DD` — a date, never a timestamp and never a clock read at render time. `--since 7d` is today and the six days before it, so this is six days before `until` |
+| `until` | string | never | never | the window's last UTC day, which is today |
+| `repositories` | array of repository rows | never | never | one row per repository either source named in the window, **sorted by `slug`**; `[]` when nothing ran in it. A repository the sources do not mention is not a row: nothing lists the runs bucket to find one |
+| `totals` | object | never | never | the same figures as a repository row, without the two names — the figures table below |
+| `days_unknown` | array of string | never | never | the window's UTC days, ascending, `YYYY-MM-DD`, that **neither source answered for**: their runs and their spend are unknown and are counted in no figure here, so a screen shows the window as partly unknown rather than as a small one. `[]` when both sources answered every day |
+| `notes` | array of string | never | never | what the figures count and what the read could not cover, one line each: the two sources, the day a run is counted on, a source that could not answer with its reason, and how much of the window is unknown. A renderer shows them as text, as it shows any other reason string |
+
+**A repository row carries the figures and the two names the sources hold:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `slug` | string | never | never | the storage key both sources file the repository under — a hash of provider and name, so it is not a name to draw. It is the row's own key and the sort order |
+| `repo` | string | never | never | the repository's `owner/name`, as the day records carry it (the name `fugaro budget set --repo` writes). It falls back to the slug for a repository nothing recorded a display name for, so a renderer treats it as text and never as a link without checking it |
+
+**The figures are the same six keys on a repository row and on `totals`:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `runs` | int | never | never | how many runs the window holds, each counted once on its own day. At least the sum of `states` |
+| `states` | object | never | never | the counts by state. **All six of `succeeded`, `failed`, `halted`, `cancelled`, `infra_error` and `other` are always present**, zero included, so a consumer reads a count without a nil check; a run whose outcome names a status outside the six is counted in `other` rather than dropped or given a key of its own |
+| `spent_micros` | int | never | never | the model money the caps count, in micro-dollars — the budget database's own figure, so nothing is rounded on the way out |
+| `notional_micros` | int | never | never | the part of the model figure a subscription paid, in micro-dollars: it counts toward the plan's limits and is nobody's bill. **It is separate from `spent_micros`, and the two are never summed** |
+| `compute_micros` | int or **null** | never | **yes** | what the runs whose compute was priced came to, in micro-dollars. **null when the row has runs and no run's compute is known** — "not estimated" is not "free", and a renderer draws it as `n/a` — and `0` when the row has no run at all, which is a fact. This read opens no bucket, so a live day's compute is never estimated here |
+| `compute_runs` | int | never | never | how many runs `compute_micros` covers: at most `runs`. A figure covering fewer runs than the window holds is a **lower bound** a consumer can see, and the reason a row's compute is not read as the window's whole |
+
+**A day nothing answered for is named, never counted as zero.** The budget
+database holds the days it has not pruned — today and the eight before it
+(`budget.PruneAfter`) — and the rollover archives each of them as one daily
+document in the spend history. So a day inside the database's window with no
+node is a day nothing ran on, **which is known**, and it is not in
+`days_unknown`; a day older than that window is the history's to answer, and a
+day the history holds no document for is a day nothing ran on too, as long as
+the history answered at all. Only a day **neither** source could answer for is
+listed there, and a window whose days are all unknown is refused rather than
+printed: a document of zeros would read as "nothing ran", which is the opposite
+of what is known.
+
+**"Nothing ran" and "the read failed" are different facts.** Three states a
+project may be in are not failures — no Firebase budget backend, no Firestore
+database, no history mark — and each is reported as itself: the database's own
+days are counted, the older days are named in `days_unknown`, and a `notes`
+line says which of the three it was, because a screen needs a document either
+way. A read a source **refused** or lost is a failure only when the other could
+not answer the window either: then there is **no document at all**, exit **1**
+for a refusal (naming the role that admits the read) and exit **2** for an
+outage — a console that read either as an empty summary would draw a quiet
+project where the truth is that nobody could look. When one source did answer,
+the days the other could not answer for are in `days_unknown` and the note
+names the reason, so the figures a screen gets are the ones that are known and
+the gap is visible rather than filled with zeros.
+
+**The window is always bounded.** `--since` takes the durations `runs ls` and
+`runs stats` take (`7d`, `36h`, `90m`), and a span with no lower bound — `0` —
+is **refused** (exit 1), because a summary is per UTC day and the whole history
+is not a window: the refusal names `--since 7d`, and `--since 365d` for the
+last year, as the way to ask. A window longer than ten years is refused too,
+since the spend history is not built for one.
+
+**Version skew.** Every field is additive within `v: 1` (D784). A CLI older
+than this command has no such read at all, and the console shows the section as
+unavailable (the availability rule, §1) rather than an error loop. A field
+added later is a field an older console does not draw; a console that requires
+one must refuse the document rather than fill it in.
+
+**The console's row is a later task.** This section is the CLI's half of the
+read: the spawn row, the operation and the decoder are **not** in this
+document's scope, so nothing here authorises a spawn — §5.1's table and the
+allow-lists are where a row is admitted, and no row, operation or decoder is
+added by this section.
+
+**Flags** (`newRunsSummaryCmd`): `--repo` (one repository, `owner/name`),
+`--since` (the window, default `7d`), `--json`, and the cloud flags
+`--project`, `--config`, `--gcp-project` and `--region`.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
