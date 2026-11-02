@@ -47,6 +47,7 @@ import {
   LAUNCH_CLI_FLOOR,
   NOTICE_REASONS,
   REDUCED_VIEWS,
+  RUNS_LIST_PAGE_CLI_FLOOR,
   SKEW_HEADLINES,
   SUPPORTED_CLI_MINORS,
   UNREADABLE_VERSION,
@@ -57,6 +58,7 @@ import {
   launchSupported,
   parseCliVersion,
   renderVersionSkew,
+  runsListPageSupported,
   skewSentence,
   unreadableCompatibility,
   unreadableReason,
@@ -490,6 +492,84 @@ describe('budgetComputeSupported', () => {
     const inRange = SUPPORTED_CLI_MINORS.includes(`${floorMajor}.${String(floorMinor)}`)
     expect(atFloor.mode).toBe(inRange ? 'ok' : 'reduced')
     expect(hidesView(atFloor, 'caps')).toBe(!inRange)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The runs-list page floor.
+// ---------------------------------------------------------------------------
+
+describe('runsListPageSupported', () => {
+  it('is the release that carries the paged read, and the boundary is a patch', () => {
+    // #1545, in 0.16.0: `--limit` cuts what is *printed* after the sort instead
+    // of meaning "read only the newest N", and `--after` becomes a cursor on the
+    // row's own `run_id`. The 0.15 line is inside the range this console reads
+    // and below this floor, which is exactly what a range membership cannot
+    // answer.
+    expect(RUNS_LIST_PAGE_CLI_FLOOR).toBe('0.16.0')
+    const floor = parseCliVersion(RUNS_LIST_PAGE_CLI_FLOOR)
+    if (!floor.ok || floor.version.kind !== 'release') throw new Error(RUNS_LIST_PAGE_CLI_FLOOR)
+    expect(floor.version.patch, 'the floor stopped being a patch inside its minor').toBe(0)
+  })
+
+  it('places every line around the floor the way a patch comparison does', () => {
+    // The boundary table, read through the predicate itself: the line, the
+    // answer it must get, and why. The two patch steps around the floor are the
+    // whole point of a patch comparison -- `0.15.9` is one patch below it and
+    // `0.16.1` one above -- and `1.0.0` is the far side of both of the
+    // comparison's early exits.
+    const boundary: readonly {
+      readonly line: string
+      readonly supported: boolean
+      readonly why: string
+    }[] = [
+      { line: '0.15.9', supported: false, why: 'the last patch of 0.15, which has neither word' },
+      { line: '0.16.0', supported: true, why: 'the floor: the release that carries #1545' },
+      { line: '0.16.1', supported: true, why: 'one patch above the floor' },
+      { line: '1.0.0', supported: true, why: 'above it on the major, the comparison’s first exit' },
+      { line: '0.16', supported: true, why: 'a minor names its own x.y.0, which is the floor' },
+      { line: '0.16.0+build.7', supported: true, why: 'a build tail is the same release' },
+    ]
+    for (const row of boundary) {
+      expect(runsListPageSupported(row.line), `${row.line}: ${row.why}`).toBe(row.supported)
+    }
+  })
+
+  it('refuses a prerelease at the floor, which the parser alone would admit', () => {
+    // The one row whose answer is not the number's: `parseCliVersion` reads
+    // `0.16.0-rc.1` as the release 0.16.0 -- a comparison that stopped at the
+    // parse would put a release candidate on the offering side of a floor it has
+    // not been measured against -- and `meetsCliFloor` refuses **every** core
+    // carrying a `-`. So the prerelease falls below the floor, on the safe side
+    // of a spend: the console draws the console's own sentence naming the
+    // version it needs rather than paging with a build nobody has run this read
+    // against.
+    expect(parseCliVersion('0.16.0-rc.1').ok, 'the prerelease no longer parses at all').toBe(true)
+    expect(runsListPageSupported('0.16.0-rc.1')).toBe(false)
+    // And the same rule one release up, where the number alone would be far
+    // above the floor.
+    expect(runsListPageSupported('1.0.0-rc.1')).toBe(false)
+  })
+
+  it('refuses a line it cannot place, rather than paging with an older CLI', () => {
+    // The malformed lines, each refused for a reason the floor's own comment
+    // states: a `dev` build and an empty answer cannot be placed at all, and
+    // everything else is not the version line a release prints -- including a
+    // `git describe` tail, which is a release number with a suffix this console
+    // does not compare.
+    const unplaceable = [
+      '',
+      'dev',
+      'devel',
+      'the binary did not answer',
+      '0',
+      '0.16.0\n0.17.0',
+      '0.1234567890.0',
+      '1.0.0-3-gabc1234',
+    ]
+    for (const line of unplaceable) {
+      expect(runsListPageSupported(line), JSON.stringify(line)).toBe(false)
+    }
   })
 })
 

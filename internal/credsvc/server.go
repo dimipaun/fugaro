@@ -39,15 +39,22 @@ const (
 	// (C3.9e). It is not an Anthropic path: the request and the answer are
 	// this service's own contract.
 	SignPath = "/v1/review/sign"
+	// VerifyPath is the path a coordinator asks whether a verdict's signature
+	// is one this service made (C3.9f). It is the sign route's counterpart and
+	// is served to a caller class of its own: a verifier holds no run identity,
+	// so this path is answered ahead of the shared request parse that every
+	// other route is read by (ServeHTTP).
+	VerifyPath = "/v1/review/verify"
 )
 
 // routeAct is the ONE rule for the two facts an audit line carries about the
 // call rather than about what the service did with it: the purpose the call
 // asked for, and the credential name a line for it may carry (C1.13).
 //
-// It exists so the rule is written once. The routes are three acts of the
-// service — a proxied model call (C1.11), a mint (C2.1) and a signature over a
-// review run's digest (C3.9e) — and every refusal a route answers has to be
+// It exists so the rule is written once. The routes are four acts of the
+// service — a proxied model call (C1.11), a mint (C2.1), a signature over a
+// review run's digest (C3.9e) and an answer about one (C3.9f) — and every
+// refusal a route answers has to be
 // recorded as the act the run asked for and not as the branch it was answered
 // in, whether that refusal is taken before the route is branched on (the
 // binding and the stop switches in ServeHTTP) or inside the route's own code
@@ -59,15 +66,23 @@ const (
 // issues from: it is the endpoint's own name for it and not something read out
 // of the bundle, so it is known before the bundle is read and after it alike,
 // and a mint's line that named no credential would be a mint an operator
-// cannot account for. A model call's line names none here, and so does a sign's:
-// which credential a model call used, or would have used, is the cascade's
-// answer and not the route's, and a sign line's credential is the CALLER'S
-// account's review-signing key — a name the route cannot read off a path.
-// Either way a refusal taken before one was chosen has no name to carry.
+// cannot account for. A model call's line names none here, and so do a sign's
+// and a verify's: which credential a model call used, or would have used, is the
+// cascade's answer and not the route's, and a sign or a verify line's credential
+// is an account's review-signing key — a name the route cannot read off a path,
+// because it is the CALLER'S account (a sign's) or the account the caller NAMED
+// (a verify's). Either way a refusal taken before one was chosen has no name to
+// carry.
 func routeAct(path string) (purpose, credential string) {
 	switch path {
 	case MintPath:
 		return PurposeMint, config.GitHubAppKeySecret
+	case VerifyPath:
+		// A verify line's credential is the named account's review-signing key
+		// — the key the answer was computed with — and, like the sign route's,
+		// that name is not in the path. The handler fills it in once the
+		// bundle has it; a refusal answered before then carries none.
+		return PurposeReviewVerify, ""
 	case SignPath:
 		// The sign route's credential is the account's review-signing key
 		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
@@ -285,6 +300,11 @@ type Config struct {
 // Verifier is the part of C1.10's authenticator the service calls.
 type Verifier interface {
 	Verify(ctx context.Context, req Request) (Identity, error)
+	// VerifyVerifier admits the caller of the verify route, which presents a
+	// token and no Request at all (C3.9f): the path is answered ahead of
+	// RequestFromHTTP, so the two identity headers a Request is built from are
+	// not there to read.
+	VerifyVerifier(ctx context.Context, tok string) (string, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
@@ -493,6 +513,18 @@ func NewServer(cfg Config) (*Server, error) {
 // (C2.1, D145), and the policy, the cascade and the shape of a model call are
 // none of its business.
 //
+// The verify route (C3.9f) does not share it at all, and it is the ONE route
+// answered ahead of the shared parse. Every route above is admitted by
+// RequestFromHTTP, which reads the two identity headers, and by Verify, which
+// refuses a call that carries no run identity — and a verifier holds none: it is
+// not a run of this installation and not a job of it. Left behind that parse, the
+// route would refuse every verifier before the class was ever consulted, and the
+// whole route would be dead configuration (spec §5.4). So the path is recognised
+// first, the one token it carries is verified on its own by its own class, and
+// its refusal is that class's own typed refusal — after which everything the
+// verifier's handler needs is the call's own body and the key the account it
+// names would be at.
+//
 // What this path answers is recorded (C1.13), one line per call: the issuance
 // the cascade's answer is (cascade.go's answer), and every refusal from the
 // binding on — the pairing of the two identities, the stop switches, the
@@ -522,12 +554,20 @@ func NewServer(cfg Config) (*Server, error) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath &&
-		r.URL.Path != MintPath && r.URL.Path != SignPath) {
+		r.URL.Path != MintPath && r.URL.Path != SignPath && r.URL.Path != VerifyPath) {
 		// There is no other route, and in particular no admin route: D143's
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+" and "+SignPath)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+" and "+VerifyPath)
+		return
+	}
+	if r.URL.Path == VerifyPath {
+		// The one route that is answered before the shared parse, and it has to
+		// be: RequestFromHTTP reads the two identity headers below and Verify
+		// refuses a call with no run identity, while the caller of this route
+		// holds none and never will (C3.9f, spec §5.4).
+		s.verify(ctx, w, r)
 		return
 	}
 	req, err := RequestFromHTTP(r)
