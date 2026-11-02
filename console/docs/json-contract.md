@@ -2051,8 +2051,8 @@ and when, reads here. This is the only command that prints them.
 | `at` | string | never | never | an RFC 3339 instant in UTC: when the caller declared it, stamped by the **writer's own clock** (`Reporter.Now`), and never the read's. It is not part of `id`: two reports of one declaration are one record whatever the clock says |
 | `branch` | string | **yes** | never | the branch the caller is about to work on. **Absent** when it declared none (`omitempty`), which is not an empty branch: a screen tells the two apart by the key's presence |
 | `release` | string | **yes** | never | the target release the caller declared. **Absent** when it declared none — and it is **not** derived here from the branch, which is §6.13's `release` field's job in the view and a claim this read does not make |
-| `files` | array | never | never | the paths the caller is about to touch, sorted and deduplicated by the writer (`Intents.Normalise`). `[]` is "declares none" and never a null. Every entry is **untrusted text of the same kind as `declared_by`**: a path-shaped string a renderer draws as data, never resolves, opens or runs |
-| `services` | array | never | never | the services, the same way and with the same rule |
+| `files` | array | never | **yes** | the paths the caller is about to touch, sorted and deduplicated by the writer (`coordinator.Intent.Normalise`, which `Reporter.Report` applies before it writes). `[]` is "declares none". **`null` is reachable and means the same thing**: a record the report path wrote always carries the key, and a node written without it prints the zero slice, which is `null` — a screen reads `null` and `[]` alike as "declares none" and never as a list to iterate. Every entry is **untrusted text of the same kind as `declared_by`**: a path-shaped string a renderer draws as data, never resolves, opens or runs |
+| `services` | array | never | **yes** | the services, the same way and with the same rule: `null` and `[]` both read as "declares none" |
 
 **Every string in a record is another writer's, and it is carried as data.**
 `declared_by`, `branch`, `release` and every entry of `files` and `services` were
@@ -2081,8 +2081,12 @@ opened, no App ID, no App key and no Bitbucket credential is read**, and it
 works with `FUGARO_CREDENTIALS_SERVICE_URL` set, where the project-wide read
 refuses. A project with no `budget.rtdb_url` is refused **naming
 `fugaro update --firebase-project`**, exit **1**, like every other read of the
-database. **Exit codes: 1 for a refusal of the caller's own environment or argv,
-and no other code: this read never reaches a host.**
+database. **Exit codes: 1 for a refusal of the caller's own environment or argv** —
+a project with no database, a read the database refused, a `--since` that is not a
+window — and **2 for a failure of the database itself**, an address that does not
+answer (`coordinatorStoredErr` maps everything that is not a refusal onto the
+remote code). **This read never reaches a host**, so no host's own failure is one
+of the codes it can print.
 
 **The console's half of this section is not built yet.** Coordinator v2's C4 is
 landing as two changes, as C3 did: this section documents the CLI's document and
