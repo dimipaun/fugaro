@@ -1062,11 +1062,25 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 // providers it may send code to does not (design docs/design/project-centric.md
 // §6.1). repo "" is an unknown repository, which no provider may serve.
 //
+// A review level's own model is a pin of its own (agent.levels.lN.model,
+// ResolveLevels L3.1): it runs in place of the role slot the level sits in
+// (runner stageModel, L4.5), so the coder, the reviewer and the background do
+// not cover it, and a Claude level model under provider pins is a call to
+// Anthropic this rule has to see. A level that names no model runs its slot's,
+// which the three already judge, and one that is off has no model to read
+// (LevelSetting.validate refuses none beside one).
+//
 // Callers ask this only where the gateway is on and enforcing: without it a
 // provider model is refused (CheckProviderGateway) and every call would go to
 // Anthropic, which AnthropicKeyNeeded decides.
 func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
-	for _, model := range []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)} {
+	models := []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)}
+	for _, l := range []*LevelSetting{a.Levels.L1, a.Levels.L2, a.Levels.L3} {
+		if l != nil && l.Model != "" {
+			models = append(models, l.Model)
+		}
+	}
+	for _, model := range models {
 		if _, p, ok := ProviderFor(providers, model); !ok || !p.AllowsData(repo) {
 			return true
 		}

@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -39,7 +42,8 @@ func newAccountsAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add NAME",
 		Short: "Declare a named Claude account and the repositories its token may be used by",
-		Long: `Declare a named Claude OAuth account in this project's local config.
+		Long: `Declare a named Claude OAuth account in this project, and converge the
+installation on it.
 
 It writes claude_accounts.<name>.allow_data_to — the repositories the account's
 token may be used by, and the field every other rule is built on — and adds the
@@ -51,8 +55,12 @@ every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
 
-The token itself is a second command's: this one declares the account, and the
-converge that stores the secret and deploys the jobs is not built yet.
+Then it converges, in one command and behind the one confirmation above: the
+token is stored project-wide as a new version of the account's own secret, the
+account's broken mark is cleared, and the publisher, the job set and this
+checkout's repository root are converged — the same stages fugaro update runs,
+invoked here rather than forked. It ends on the line that says what is left,
+which is a fugaro run and never an update.
 
 Run it at your own terminal: this file decides where a credential may be sent,
 so a coding agent's session is refused, --yes included.`,
@@ -127,23 +135,45 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// token written for it replaces the one in use, and the confirmation says
 	// so. It is read from the config as it was, before the edit above.
 	_, rotation := lc.ClaudeAccounts[name]
+	what := accountsAddWhat(after, name, profile, accountsAddBeyond(cmd.Context(), repos), rotation)
+	command := accountsAddCommand(name, repos, profile)
+	changed := yamledit.Changed(old, next)
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
 		Old:     old,
 		New:     next,
-		What:    accountsAddWhat(name, after.ClaudeAccounts[name].AllowDataTo, profile, accountsAddBeyond(cmd.Context(), repos), rotation),
+		What:    what,
 		Kind:    settingsDocLocal,
-		Command: accountsAddCommand(name, repos, profile),
+		Command: command,
 		Yes:     o.yes,
 	}); err != nil {
 		return err
 	}
+	// A file that was already what this command would write — a rotation
+	// re-run, the account declared and the profile serving it — returns from
+	// applySettingsEdit before its refusal and before its confirmation, and
+	// both are still owed here: the converge below reads the token from stdin,
+	// stores a new version of it project-wide and clears the account's mark,
+	// which is the write the refusal is about and the change the confirmation
+	// is about. A session writes nothing, --yes included (spec §2.4), and the
+	// marker fence comes first, as it does in applySettingsEdit.
+	if !changed {
+		if marker := agentMarker(os.Getenv); marker != "" {
+			return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
+				sel.Path, marker, what, command)
+		}
+		if err := confirmSettingsWrite(cmd, lc, sel.Path, o.yes, what); err != nil {
+			return err
+		}
+	}
 	if profile == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "no profile serves %s yet: this project's jobs do not select it until one does\n", name)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "next: %s is declared, and its token is not stored yet\n", name)
-	return nil
+	// The converge (spec §2.2 steps 5–8). It runs on the file the edit above
+	// wrote — the stages read it, and the account is in it — and on its bytes,
+	// which the engines take for the same reason `fugaro update` does.
+	return accountsAddConverge(cmd.Context(), cmd, after, sel.Path, next, name, profile, repos)
 }
 
 // accountsAddRepos is the repository list: the flag, or the checkout the
@@ -249,7 +279,7 @@ func accountsAddSubsetRule(after *localcfg.Config, name, profile string) error {
 		covered := after.ClaudeAccounts[listed].AllowDataTo
 		missing := []string{}
 		for _, r := range allow {
-			if !slices.Contains(covered, r) {
+			if !accountsAddCovers(covered, after.Profiles[profile].Provider, r) {
 				missing = append(missing, r)
 			}
 		}
@@ -273,6 +303,33 @@ func accountsAddSubsetRule(after *localcfg.Config, name, profile string) error {
 	return nil
 }
 
+// accountsAddCovers reports whether an account's allow_data_to covers one
+// entry of the profile's own allow_repos.
+//
+// The two lists spell a repository differently, and the difference is the whole
+// reason this is a function: allow_data_to holds `owner/name` slugs — that is
+// the shape config.ValidateClaudeAccounts holds it to, and the shape --repos
+// writes — while a profile's allow_repos holds the canonical
+// `provider/owner/name`, which is what the published node carries and what
+// projectpolicy.ValidPattern validates. So the question "does this account
+// cover this repository" is asked through projectpolicy.Canonical, the one
+// function publish derives accounts.<name>.allow_repos with, and an entry that
+// is already canonical matches literally too. Comparing the two lists
+// string-against-string is what refused a real project config: its profile
+// admits github/owner/repo-a, the account's allow_data_to says owner/repo-a,
+// and the string comparison reads that as "not covered".
+func accountsAddCovers(covered []string, provider, pattern string) bool {
+	for _, slug := range covered {
+		if slug == pattern {
+			return true
+		}
+		if canonical, err := projectpolicy.Canonical(provider, slug); err == nil && canonical == pattern {
+			return true
+		}
+	}
+	return false
+}
+
 // accountsAddBeyond is the repositories --repos names beyond the checkout the
 // command runs in: the widening the confirmation says out loud. With no
 // checkout there is no default to be measured against, so every named
@@ -291,17 +348,26 @@ func accountsAddBeyond(ctx context.Context, repos []string) []string {
 	return out
 }
 
-// accountsAddWhat is the one confirmation's text (D868, spec §2.6): the two
-// keys the command writes, and — only when the token may reach a repository
-// beyond this checkout — the sentence saying what that widening means. The
-// rest of the block is printed either way, so the confirmation a person reads
-// is never a bare y.
+// accountsAddWhat is the one confirmation's text (D868, spec §2.6): every
+// change the command makes — the two keys it writes, the secret it stores
+// project-wide, the policy node it publishes, the job it deploys — and, only
+// when the token may reach a repository beyond this checkout, the sentence
+// saying what that widening means. The rest of the block is printed either way,
+// so the confirmation a person reads is never a bare y.
+//
+// It is one confirmation for the whole command and not two: the converge is
+// what --yes covers here, and a person who read this block and answered it has
+// answered for the stages too (spec §2.5).
 //
 // The list is the one the account ends up with, read back from the config this
 // would write, and not the --repos it was given: re-declaring an account adds
 // to the list it already has, and a confirmation that named the flag would
-// print a shorter list than the file it asks to write.
-func accountsAddWhat(name string, allow []string, profile string, beyond []string, rotation bool) string {
+// print a shorter list than the file it asks to write. The published list is
+// the derivation's — the account's repositories qualified with the provider of
+// the profile that serves it — so what the node will carry is stated, not
+// guessed.
+func accountsAddWhat(lc *localcfg.Config, name, profile string, beyond []string, rotation bool) string {
+	allow := lc.ClaudeAccounts[name].AllowDataTo
 	what := fmt.Sprintf("declare claude_accounts.%s.allow_data_to = [%s]", pluginwire.Printable(name), strings.Join(allow, ", "))
 	if rotation {
 		what += " (a rotation: the account already exists, and the token written for it replaces the one in use)"
@@ -309,10 +375,35 @@ func accountsAddWhat(name string, allow []string, profile string, beyond []strin
 	if profile != "" {
 		what += fmt.Sprintf("; profile profiles.%s.claude_accounts += %s", pluginwire.Printable(profile), pluginwire.Printable(name))
 	}
+	what += fmt.Sprintf("; secret a new version of %s (project-wide)", config.ClaudeAccountSecret(name))
+	if repos, ok := accountsAddPublishedRepos(lc, name); ok {
+		what += fmt.Sprintf("; publish accounts.%s.allow_repos = [%s] into the policy node", pluginwire.Printable(name), strings.Join(repos, ", "))
+	} else {
+		what += "; publish the policy node from the config this writes"
+	}
+	if profile != "" {
+		what += fmt.Sprintf("; deploy %s (and its service account)",
+			pluginwire.Printable(gcp.ProjectJobName(profile, lc.Profiles[profile].Provider, name)))
+	} else {
+		what += "; deploy no job: no profile serves it yet"
+	}
 	if len(beyond) > 0 {
 		what += fmt.Sprintf("; a launcher that may start a run on %s can have that run print %s's token", strings.Join(beyond, ", "), pluginwire.Printable(name))
 	}
 	return what
+}
+
+// accountsAddPublishedRepos is the list accounts.<name>.allow_repos will carry,
+// through the derivation the Policy stage itself publishes with
+// (projectPublishMembers): ok is false for an account no profile names, which
+// has no entry in the block at all.
+func accountsAddPublishedRepos(lc *localcfg.Config, name string) ([]string, bool) {
+	members, err := projectPublishMembers(lc)
+	if err != nil {
+		return nil, false
+	}
+	acc, ok := members[name]
+	return acc.AllowRepos, ok
 }
 
 // accountsAddCommand is the command a refusal in a coding agent's session
