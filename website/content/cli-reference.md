@@ -87,7 +87,8 @@ Subcommands:
 
 Declare a named Claude account and the repositories its token may be used by
 
-Declare a named Claude OAuth account in this project's local config.
+Declare a named Claude OAuth account in this project, and converge the
+installation on it.
 
 It writes claude_accounts.<name>.allow_data_to — the repositories the account's
 token may be used by, and the field every other rule is built on — and adds the
@@ -99,8 +100,12 @@ every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
 
-The token itself is a second command's: this one declares the account, and the
-converge that stores the secret and deploys the jobs is not built yet.
+Then it converges, in one command and behind the one confirmation above: the
+token is stored project-wide as a new version of the account's own secret, the
+account's broken mark is cleared, and the publisher, the job set and this
+checkout's repository root are converged — the same stages fugaro update runs,
+invoked here rather than forked. It ends on the line that says what is left,
+which is a fugaro run and never an update.
 
 Run it at your own terminal: this file decides where a credential may be sent,
 so a coding agent's session is refused, --yes included.
