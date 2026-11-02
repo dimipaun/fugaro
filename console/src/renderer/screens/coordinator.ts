@@ -728,14 +728,23 @@ function recordLabel(record: CoordinatorRecord): string {
  * screen lists and main does not is a press that opens nothing -- but a
  * provider this screen refuses is a number drawn as text, which is the safe
  * direction to be wrong in.
+ *
+ * It is exported for the one case that holds it equal to main's
+ * (`coordinator.test.ts`, K2): a copy is only safe while it is still a copy, and
+ * drift here is silent in both directions -- text nobody can press, or a button
+ * that opens nothing.
  */
-const PULL_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbucket'])
+export const PULL_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbucket'])
 
 /** PULL_REPO is main's own `PULL_REQUEST_REPO_RE`, character for character:
  * exactly the two segments a repository has, each beginning with a letter or a
  * digit. It is stricter than the `repository` kind the IPC schema accepts, and
  * the strictness is the point -- a value that is already a path or one that
- * walks is refused here rather than pasted into a URL later. */
+ * walks is refused here rather than pasted into a URL later.
+ *
+ * Main does not export its pattern, so the claim above is held by a test rather
+ * than by a reader's eye: `coordinator.test.ts` reads both literals out of the
+ * two sources and compares them (K2). */
 const PULL_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**

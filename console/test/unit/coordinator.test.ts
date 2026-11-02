@@ -26,11 +26,15 @@
 // never a derived "5 minutes ago", which would compare two things that are not
 // on the same scale.
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
 import { SPAWN_COMMANDS, argvFor, assertSpawnSurface } from '../../src/main/spawn'
 import type { SpawnCommand } from '../../src/main/spawn'
+import { PULL_REQUEST_PROVIDERS, pullRequestUrl } from '../../src/main/window'
 import { putText } from '../../src/renderer/app'
 import { capsOf } from '../../src/renderer/screens/spend'
 import {
@@ -76,6 +80,7 @@ import {
   COORDINATOR_TOTAL_PLANS_WORD,
   COORDINATOR_TOTAL_REPOS_WORD,
   COORDINATOR_UNREAD_WORD,
+  PULL_PROVIDERS,
   QUEUE_SOURCES,
   buildCoordinatorModel,
   coordinatorJobsControl,
@@ -89,7 +94,7 @@ import type {
   ScreenFactory,
 } from '../../src/renderer/screens/coordinator'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { PATH_PLACEHOLDER, type TextClass } from '../../src/shared/sanitize'
+import { PATH_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
 import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
 import type { CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
@@ -1325,6 +1330,22 @@ describe('the action queue (K1)', () => {
   })
 })
 
+/** COORDINATOR_SOURCE and WINDOW_SOURCE are the two modules whose copies of one
+ * rule the K2 cases below hold together. */
+const COORDINATOR_SOURCE = join(__dirname, '..', '..', 'src', 'renderer', 'screens', 'coordinator.ts')
+const WINDOW_SOURCE = join(__dirname, '..', '..', 'src', 'main', 'window.ts')
+
+/** patternLiteralOf is the regex literal a module declares one name with, read
+ * out of the source rather than taken off the module: main does not export
+ * `PULL_REQUEST_REPO_RE`, and what the two comments claim is about the
+ * **characters** of the pattern -- two spellings of one rule are the same value,
+ * so comparing the values could not see the drift in the text. */
+function patternLiteralOf(source: string, name: string): string {
+  const found = new RegExp(`^const ${name} = (.+)$`, 'm').exec(source)?.[1]?.trim()
+  if (found === undefined) throw new Error(`no \`const ${name} = ...\` in the source it is declared in`)
+  return found
+}
+
 describe('the numbers that open a pull request (K2)', () => {
   /** A_GOOD_NODE is the one node K2 draws a button for: a provider the console
    * has a route for, and the `owner/name` the store's own key is. Everything
@@ -1404,6 +1425,65 @@ describe('the numbers that open a pull request (K2)', () => {
       expect([label.tag, label.textContent], because).toEqual(['span', '#1458'])
       expect(label.getAttribute('aria-label'), because).toBeNull()
       expect(drawn(node), because).not.toContain(repo)
+    }
+  })
+
+  it('lists the providers the main process has a route for, in the main process’s own order', () => {
+    // The screen cannot ask main before it draws, so its own list is a second
+    // copy of the builder's, and a copy is only safe while it is still a copy.
+    // Drift is silent in both directions: a provider main gained and the screen
+    // did not is a number drawn as text that nobody can press, and one the screen
+    // gained and main did not is a button that opens nothing. Main's list is read
+    // off its own module rather than out of its source, because it is
+    // `PULL_REQUEST_ROUTES`' keys and has no literal of its own.
+    expect(PULL_PROVIDERS).toEqual(PULL_REQUEST_PROVIDERS)
+  })
+
+  it('holds the main process’s own repository pattern, character for character', () => {
+    // The doc comment beside `PULL_REPO` claims the pattern is main's "character
+    // for character", and this is where that claim is a fact about two strings
+    // rather than a reader's eye. The pattern is the half that decides whether a
+    // repository a document wrote becomes part of a URL, so a copy that drifted
+    // in one alternative would be a rule the two halves of the console disagree
+    // about -- and neither would say so.
+    const mine = patternLiteralOf(readFileSync(COORDINATOR_SOURCE, 'utf8'), 'PULL_REPO')
+    const theirs = patternLiteralOf(readFileSync(WINDOW_SOURCE, 'utf8'), 'PULL_REQUEST_REPO_RE')
+    expect(mine.startsWith('/') && mine.endsWith('/'), 'the literal was not read as a pattern').toBe(true)
+    expect(mine, 'the screen’s repository pattern is no longer main’s').toBe(theirs)
+  })
+
+  it('draws a button for exactly the repositories the main process would open and the row can draw', () => {
+    // The two cases above hold the copies equal; this one holds the **decision**
+    // equal, which is what a reader of the screen is affected by. Making a number
+    // a button is the conjunction of two authorities that are not this file's:
+    // main's own builder (which answers a destination only for a provider with a
+    // route, an `owner/name` in the host's alphabet and a whole positive number)
+    // and the `repository` text class (which is what the cell beside the number
+    // draws). A repository this screen refuses and main would open is a number
+    // that could have been pressable -- a gap, and the safe direction. A button
+    // main would refuse is the other direction, and it is the one this case
+    // exists for: a press that opens nothing is a control no reader can tell from
+    // a broken console.
+    const long = `${'a'.repeat(150)}/${'b'.repeat(150)}`
+    const table: readonly (readonly [string, string])[] = [
+      ['the store’s own repository', 'owner/repo-a'],
+      ['a repository with a dot and a dash', 'owner/repo.b-c'],
+      ['a repository with an underscore and a digit', 'owner_1/repo-2'],
+      ['a walk inside a segment', 'owner/a..b'],
+      ['a repository past the class’s bound', long],
+      ['a traversal', 'owner/../evil'],
+      ['a repository with a space', 'owner/repo a'],
+      ['a repository with a query', 'owner/repo?x=1'],
+      ['a repository with no owner', 'owner'],
+    ]
+    for (const [because, repo] of table) {
+      const node = drawsQueue({ view: decodes(aStore([aRecord({})], { provider: 'github', repo })) })
+      const drawnAsButton = one(node, 'coordinator-record-label').tag === 'button'
+      const mainWouldOpen = pullRequestUrl('github', repo, 1458) !== null
+      const rowCanDraw = sanitizeText(repo, 'repository', 'repos[].repo').ok
+      expect(drawnAsButton, `${because}: ${String(mainWouldOpen)} and ${String(rowCanDraw)}`).toBe(
+        mainWouldOpen && rowCanDraw,
+      )
     }
   })
 })
