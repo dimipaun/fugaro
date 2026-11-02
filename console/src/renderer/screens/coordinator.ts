@@ -59,7 +59,7 @@ import { measured } from '../../shared/availability'
 import type { Reading, Unit } from '../../shared/availability'
 import { maskCredentialBlocks, nameableText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
-import { BUSY_SLOT_CLASS } from '../section'
+import { BUSY_SLOT_CLASS, STAMP_CLASS, STAMP_REFRESH_CLASS, STAMP_REFRESH_LABEL } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
 import type {
   CoordinatorIntent,
@@ -2161,6 +2161,38 @@ export function coordinatorJobsFloorNote(
   literal(cell(note, factory, 'span', 'coordinator-jobs-floor-word'), COORDINATOR_JOBS_FLOOR_WORD)
   textCell(note, factory, 'span', version, 'label', 'cliVersion', 'coordinator-jobs-floor-version')
   return note
+}
+
+/** DrawnRefreshLine is the line a read that **refused** is drawn with: the row
+ * the stamp is, and the one control that row holds. */
+export interface DrawnRefreshLine {
+  readonly root: ScreenElement
+  readonly refresh: ScreenElement
+}
+
+/**
+ * coordinatorRefreshLine draws the line a refused read is left with: the stamp's
+ * own row and its one control, and **no `as of` anywhere in it**.
+ *
+ * A refusal is not a dead end (K4's and K5's follow-ups). The stamp is drawn with
+ * what a read answered -- the window's figures, the declarations -- so a section
+ * whose **first** read was refused has nothing to draw it beside, and would hold
+ * the CLI's own sentence and no press at all. This is that press, on its own: the
+ * same read the section makes when the operator's first press is made again.
+ *
+ * **No time is claimed.** A stamp says when what is on screen was read; a read
+ * that refused read nothing, and the only clock in hand is the *previous* read's
+ * -- dating the CLI's sentence with it would date the sentence with a read that
+ * has nothing to do with it. So the row is the stamp's (`p.console-stamp`, one
+ * rule for both) with the control as its only child.
+ */
+export function coordinatorRefreshLine(factory: ScreenFactory): DrawnRefreshLine {
+  const root = make(factory, 'p', STAMP_CLASS)
+  const refresh = make(factory, 'button', STAMP_REFRESH_CLASS)
+  refresh.setAttribute('type', 'button')
+  literal(refresh, STAMP_REFRESH_LABEL)
+  root.append(refresh)
+  return { root, refresh }
 }
 
 /** DrawnCoordinatorJobs is the job list's own section: the section the entry
