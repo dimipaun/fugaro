@@ -173,7 +173,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// The converge (spec §2.2 steps 5–8). It runs on the file the edit above
 	// wrote — the stages read it, and the account is in it — and on its bytes,
 	// which the engines take for the same reason `fugaro update` does.
-	return accountsAddConverge(cmd.Context(), cmd, after, sel.Path, next, name, repos)
+	return accountsAddConverge(cmd.Context(), cmd, after, sel.Path, next, name, profile, repos)
 }
 
 // accountsAddRepos is the repository list: the flag, or the checkout the

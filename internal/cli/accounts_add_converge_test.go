@@ -358,6 +358,81 @@ func TestAccountsAddReportNamesTheListTheAccountEndsUpWith(t *testing.T) {
 	}
 }
 
+// twoProfilesLocal is the fixture of the profile the flag resolved: two
+// profiles (standard, which the project requires, and zeta), each writing its
+// own allow_repos and each able to serve team-a. The alphabetically first of
+// them already lists the account, which is the state a project is
+// in when a second profile takes the account on — and the only state in which
+// reading the profile back off the file can name a profile this run was not
+// about.
+const twoProfilesLocal = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
+user: test@example.com
+base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }
+profiles:
+  standard:
+    provider: github
+    cpu: 2
+    memory: 8Gi
+    timeout_class: 6h
+    allow_repos:
+      - github/owner/repo-a
+    claude_accounts:
+      - team-a
+  zeta:
+    provider: github
+    cpu: 2
+    memory: 8Gi
+    timeout_class: 6h
+    allow_repos:
+      - github/owner/repo-a
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+repos:
+  owner/repo-a: { provider: github, github_app_id: "12345", workflows: [web] }
+`
+
+// TestAccountsAddReportNamesTheProfileTheRunResolved is F5: --profile is what
+// decides whose claude_accounts gains the name and whose job the confirmation
+// names, and every line of the block has to be about that profile. Reading the
+// served profile back off the file instead answers a different question — "which
+// profile lists this account" — and it has no single answer once two profiles
+// list it: the block then names the alphabetically first of them, a profile this
+// run's confirmation never mentioned and whose job this run did not deploy.
+func TestAccountsAddReportNamesTheProfileTheRunResolved(t *testing.T) {
+	r := newAddRigWith(t, twoProfilesLocal)
+	out, _ := r.add(t, "team-a", "--repos", "owner/repo-a", "--profile", "zeta")
+
+	// Both profiles carry the account after the edit, which is what makes the
+	// answer undecidable from the file alone.
+	lc := r.addLocal(t)
+	for _, p := range []string{"standard", "zeta"} {
+		if !slices.Contains(lc.Profiles[p].ClaudeAccounts, "team-a") {
+			t.Fatalf("profiles.%s.claude_accounts = %v, want team-a listed", p, lc.Profiles[p].ClaudeAccounts)
+		}
+	}
+
+	if line := accountsAddRow(t, out, "profile"); !strings.Contains(line, "zeta") || strings.Contains(line, "standard") {
+		t.Errorf("the profile line is %q, want the --profile this run was about (zeta)", line)
+	}
+	// The deploy line is the same profile's, for the same reason: the job this
+	// run wrote is zeta's, and standard's job was not deployed by this run.
+	job := gcp.ProjectJobName("zeta", "github", "team-a")
+	if line := accountsAddRow(t, out, "deploy"); !strings.Contains(line, job) {
+		t.Errorf("the deploy line is %q, want the job of the profile this run was about (%s)", line, job)
+	}
+	if other := gcp.ProjectJobName("standard", "github", "team-a"); strings.Contains(out, other) {
+		t.Errorf("the block names %s, and this run's --profile was zeta:\n%s", other, out)
+	}
+}
+
 // TestAccountsAddFailsWhenAStageIsLeftForTheOwner is F1: a stage that ends
 // NeedsYou — here the Repository stage of a checkout this project does not list,
 // so onboarding it is a person's job — is not a converged installation. The loop

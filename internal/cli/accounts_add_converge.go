@@ -47,7 +47,11 @@ import (
 // command says there is nothing left to run, so a token that was not stored or
 // a job set that was not deployed must stop the command rather than be
 // announced as done. Re-running the command repairs it (spec §2.2).
-func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, path string, old []byte, name string, repos []string) error {
+// profile is the one the command resolved and the confirmation named, passed
+// down rather than read off the file again: a project whose profiles list the
+// account in more than one place would otherwise report a different profile
+// than the one this run's edit — and its confirmation — were about.
+func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, path string, old []byte, name, profile string, repos []string) error {
 	env, err := openCloudFor(ctx, after)
 	if err != nil {
 		return err
@@ -88,7 +92,7 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	// stage's own (readPolicyNode) and not a second one — nothing is written
 	// here, and a node this reader cannot read says so instead.
 	allow, unpublished := accountsAddNodeAccount(ctx, after, name)
-	accountsAddReport(cmd, after, stages, name, repos, version, mark, check, allow, unpublished)
+	accountsAddReport(cmd, after, stages, name, profile, repos, version, mark, check, allow, unpublished)
 	return nil
 }
 
@@ -341,7 +345,7 @@ func accountsAddCheck(cmd *cobra.Command, repo string) (accountsListDoc, error) 
 // results and the command's own read-back. A step that was skipped says so in
 // the stage's words, so a project with no budget backend is a sentence rather
 // than a silent "published".
-func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, name string, repos []string, version, mark string, check accountsListDoc, allow []string, unpublished string) {
+func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, name, profile string, repos []string, version, mark string, check accountsListDoc, allow []string, unpublished string) {
 	w := cmd.OutOrStdout()
 	secret := config.ClaudeAccountSecret(name)
 	row := func(label, value, rest string) {
@@ -358,7 +362,14 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 	// list than the file now holds. It is A1's confirmation's own source, for
 	// A1's reason (accountsAddWhat).
 	row("repos", strings.Join(lc.ClaudeAccounts[name].AllowDataTo, ", "), "claude_accounts."+pluginwire.Printable(name)+".allow_data_to")
-	profile := accountsAddProfileOf(lc, name)
+	// The profile the command resolved, which is the one the confirmation named
+	// and whose claude_accounts the edit above wrote. Read off the file only
+	// when there is none: a project where two profiles list the account has no
+	// single answer to read back, and the alphabetically first of them is not
+	// the one this run was about.
+	if profile == "" {
+		profile = accountsAddProfileOf(lc, name)
+	}
 	if profile != "" {
 		row("profile", profile, "profiles."+pluginwire.Printable(profile)+".claude_accounts += "+pluginwire.Printable(name))
 	}
