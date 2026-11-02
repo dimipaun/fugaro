@@ -376,6 +376,34 @@ func TestSummaryRefusesAnUnboundedWindow(t *testing.T) {
 	}
 }
 
+// TestSummaryRefusesAForeignBudgetDatabase: the live half reads the database's
+// own day nodes, so a budget.rtdb_url pointing at another project's database
+// would print that project's counts and spend under this project's name — a
+// wrong answer, not a missing one. The /fugaro/project mark is the ownership
+// question every other reader of the database asks (checkDBProject), and the
+// summary asks it too: the refusal names the project the database belongs to
+// and prints no figure.
+func TestSummaryRefusesAForeignBudgetDatabase(t *testing.T) {
+	f := newSummaryFixture(t)
+	f.seed(t, summaryRun{day: f.day(0), slug: appSlug, repo: "acme/app", status: "succeeded", spent: 1_000_000, seq: 1})
+	// The same fixture, with the database marked as another project's.
+	f.db.Set(budget.PathProject, "someone-else")
+
+	out, errOut, err := execute(t, "runs", "summary", "--json")
+	if err == nil {
+		t.Fatalf("runs summary answered over another project's budget database: %s", out)
+	}
+	if got := exitCode(t, err); got != ExitUserError {
+		t.Errorf("the refusal is exit %d, want %d: %v", got, ExitUserError, err)
+	}
+	if !strings.Contains(errOut+err.Error(), "someone-else") {
+		t.Errorf("the refusal does not name the project the database belongs to: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out, "spent_micros") || strings.Contains(out, "repositories") {
+		t.Errorf("the refusal printed figures:\n%s", out)
+	}
+}
+
 // TestSummaryDocMatchesSchema validates the document the command writes against
 // schemas/summary.schema.json, the contract a consumer reads it by (D784).
 func TestSummaryDocMatchesSchema(t *testing.T) {
