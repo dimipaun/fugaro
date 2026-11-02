@@ -88,7 +88,15 @@ func runModelsRm(cmd *cobra.Command, id string, o *modelsRmOptions) error {
 	if claim.route != "" {
 		what += fmt.Sprintf(" (route %s claims it no longer)", claim.route)
 	}
-	if err := modelsEditLocal(cmd, lc, sel, old, next, what, "fugaro models rm "+id, o.yes); err != nil {
+	// No Typed: every half of a removal takes something out of the file, and
+	// D846 reserves the project's own name for the writes that widen.
+	if err := modelsEditLocal(cmd, lc, sel, settingsEdit{
+		Old:     old,
+		New:     next,
+		What:    what,
+		Command: "fugaro models rm " + id,
+		Yes:     o.yes,
+	}); err != nil {
 		return err
 	}
 	// The warning is about the break this removal makes, so it follows the write:

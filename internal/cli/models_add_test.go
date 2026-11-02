@@ -278,6 +278,101 @@ func TestModelsAddRefusesInAnAgentSessionEvenWithYes(t *testing.T) {
 	}
 }
 
+// TestModelsAddAsksForTheTypedProjectNameForAClaim: appending a claim is a
+// widening — the route serves the model, so a repository of this project may
+// pin it and send its code there — and D846 reserves a widening for the
+// project's own name, typed, the form `settings set budget.allowed_models
+// --add` already asks for. --yes answers it outside a coding agent's session
+// (D1107), and a run with neither the flag nor a terminal writes nothing.
+func TestModelsAddAsksForTheTypedProjectNameForAClaim(t *testing.T) {
+	_, path := modelsWriteHome(t)
+	before := readFileString(t, path)
+
+	noTerminal(t)
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
+	if err == nil {
+		t.Fatal("a widening with no terminal and no --yes was written")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused write changed the file:\n%s", got)
+	}
+
+	// --yes is the person's own word for it without a terminal, and it is the
+	// typed form it answers here and not the ordinary y/N: the refusal above is
+	// the same command with the flag left off.
+	out, _, err = execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	if err != nil {
+		t.Fatalf("--yes did not answer the typed confirmation outside a session: %v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "vendor/model-z") {
+		t.Errorf("--yes wrote nothing:\n%s", got)
+	}
+
+	// And the form itself: the project's name, typed at a terminal.
+	_, path = modelsWriteHome(t)
+	before = readFileString(t, path)
+	fakeTerminal(t)
+	out, _, err = executeStdin(t, "aurora\n", "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Type aurora to confirm") {
+		t.Errorf("the confirmation does not ask for the project's name:\n%s", out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "vendor/model-z") {
+		t.Errorf("the typed confirmation wrote nothing:\n%s", got)
+	}
+	if got := readFileString(t, path); got == before {
+		t.Error("the confirmed write changed nothing")
+	}
+}
+
+// TestModelsAddAsksForTheTypedProjectNameForAnAllowListEntry: the other
+// widening of one add is the allow-list entry, which decides what a run of this
+// project may use — the very key `settings set budget.allowed_models --add`
+// makes the typed form — so an add whose claim the route already served is the
+// typed form too, and not the ordinary y/N.
+func TestModelsAddAsksForTheTypedProjectNameForAnAllowListEntry(t *testing.T) {
+	_, path := modelsWriteHome(t)
+	before := readFileString(t, path)
+
+	noTerminal(t)
+	_, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro", "--price-in", "1", "--price-out", "2")
+	if err == nil {
+		t.Fatal("a widening with no terminal and no --yes was written")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused write changed the file:\n%s", got)
+	}
+}
+
+// TestModelsAddAsksForNoTypedNameWhenNothingWidens: a model the route already
+// claims and the allow-list already names leaves both widening halves alone, so
+// the write of the price alone is the ordinary y/N — one `y` at a terminal, and
+// no project name to type. The typed form is for the widening directions D846
+// reserves it for, and not for every write.
+func TestModelsAddAsksForNoTypedNameWhenNothingWidens(t *testing.T) {
+	_, path := modelsWriteHome(t)
+
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "y\n", "models", "add", "vendor/model-x", "--price-in", "3", "--price-out", "4")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "Type aurora to confirm") {
+		t.Errorf("a write that widens nothing asked for the project's name:\n%s", out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "input_per_m: 3") {
+		t.Errorf("the ordinary confirmation did not write the price:\n%s", got)
+	}
+}
+
 // TestModelsAddBacksUpAndWritesAtomically: the write keeps the old bytes in a
 // backup beside the file, the way `fugaro update` rewrites the same document
 // (spec §9), and the comments and keys the edit does not touch survive it

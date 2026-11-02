@@ -40,10 +40,17 @@ func modelsLocalFile() (localcfg.Selection, *localcfg.Config, error) {
 }
 
 // modelsEditLocal is one edit of the selected local project config, checked and
-// written. The bytes are the caller's: it read Old and produced New.
-func modelsEditLocal(cmd *cobra.Command, lc *localcfg.Config, sel localcfg.Selection, old, next []byte, what, command string, yes bool) error {
-	if yamledit.Changed(old, next) {
-		after, err := modelsReparseLocal(sel.Path, next)
+// written. The bytes are the caller's: it read Old and produced New. This
+// helper supplies the two fields of the edit its caller cannot know — the
+// selected file's path, and that the document is that file, outside every
+// repository, which is the half of the coding-agent fence (SD9) — and leaves
+// the confirmation to the caller, whose Typed and TypedWhy carry D846: the
+// widening halves of an edit are the project's own name, the tightening ones
+// the ordinary y/N.
+func modelsEditLocal(cmd *cobra.Command, lc *localcfg.Config, sel localcfg.Selection, e settingsEdit) error {
+	e.Path, e.Kind = sel.Path, settingsDocLocal
+	if yamledit.Changed(e.Old, e.New) {
+		after, err := modelsReparseLocal(sel.Path, e.New)
 		if err != nil {
 			return err
 		}
@@ -55,15 +62,7 @@ func modelsEditLocal(cmd *cobra.Command, lc *localcfg.Config, sel localcfg.Selec
 			return userErr("the project config this would write does not price its models: %v", err)
 		}
 	}
-	return applySettingsEdit(cmd, lc, settingsEdit{
-		Path:    sel.Path,
-		Old:     old,
-		New:     next,
-		What:    what,
-		Kind:    settingsDocLocal,
-		Command: command,
-		Yes:     yes,
-	})
+	return applySettingsEdit(cmd, lc, e)
 }
 
 // modelsReparseLocal holds the edited bytes against the strict loader the

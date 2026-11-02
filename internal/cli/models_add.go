@@ -98,8 +98,25 @@ func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 		return err
 	}
 
+	// D846's two widening halves: the claim, which puts the model on a route a
+	// repository may send its code to, and the allow-list entry, which is the key
+	// `settings set budget.allowed_models --add` already makes the typed form.
+	// Either one asks for the project's own name — or --yes, outside a coding
+	// agent's session (D1107). A step that changed nothing (the note it returned
+	// is empty) widens nothing.
+	claimAppended, allowAppended := claim.by == "", allowed.summary != ""
 	what := modelsAddWhat(id, route, claim, price, allowed)
-	if err := modelsEditLocal(cmd, lc, sel, old, next, what, modelsAddCommand(id, o), o.yes); err != nil {
+	edit := settingsEdit{
+		Old:     old,
+		New:     next,
+		What:    what,
+		Command: modelsAddCommand(id, o),
+		Yes:     o.yes,
+	}
+	if claimAppended || allowAppended {
+		edit.Typed, edit.TypedWhy = true, modelsAddTypedWhy(claimAppended, allowAppended)
+	}
+	if err := modelsEditLocal(cmd, lc, sel, edit); err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()
@@ -342,6 +359,25 @@ func modelsAddAllow(path string, lc *localcfg.Config, id string, next *[]byte) (
 		full:    "budget.allowed_models now names " + id + ": without it no run could use the model",
 		summary: "budget.allowed_models gains it",
 	}, nil
+}
+
+// modelsAddTypedWhy is the sentence D846's typed confirmation shows before it
+// asks for the project's own name, for the wideness of the edit at hand: the
+// claim is where code may go, the allow-list entry is what a run of this
+// project may use, and an add that is both names both. It ends the way every
+// typed confirmation's sentence does — the project's name, or the one flag that
+// stands in for it outside a coding agent's session (D1107).
+func modelsAddTypedWhy(claim, allow bool) string {
+	var widens string
+	switch {
+	case claim && allow:
+		widens = "this widens where code may go and raises a limit: the route then serves the model, so a repository of this project may pin it and have its code sent there, and a run of this project may use it"
+	case claim:
+		widens = "this widens where code may go: the route then serves the model, so a repository of this project may pin it and have its code sent there"
+	default:
+		widens = "this raises a limit: budget.allowed_models decides which models a run of this project may use, and it names one more"
+	}
+	return widens + ", so the project's own name is what confirms it, or --yes outside a coding agent's session"
 }
 
 // modelsAddWhat is the confirmation's own line: the short half of each step, so
