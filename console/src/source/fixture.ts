@@ -558,6 +558,10 @@ export class FixtureSource implements FugaroSource {
     return this.#document('coordinator.status', args)
   }
 
+  coordinatorShow(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('coordinator.show', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('run.diagnose', args)
   }
