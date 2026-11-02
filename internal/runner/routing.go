@@ -7,6 +7,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
 // applyRouting rewrites the run's Claude pins through the project's routing
@@ -279,8 +280,10 @@ type pinSlot struct {
 	set func(string)
 }
 
-// pinSlots are the run's three pins, in PinnedModels' order: what the agent is
-// given as the coder, the reviewer and the background model.
+// pinSlots are the run's pins: what the agent is given as the coder, the
+// reviewer and the background model — the three of PinnedModels' order, which
+// every rule that judges a pin reads — followed by each review level's own
+// model, which is a pin of the level's stage and of nothing else (L4.5).
 func (r *run) pinSlots() []pinSlot {
 	a := &r.cfg.Agent
 	// A role reads models.<role>, else agent.model: the rewrite goes back to
@@ -300,6 +303,21 @@ func (r *run) pinSlots() []pinSlot {
 	}
 	bg := pinSlot{get: func() string { return a.Models.Background }, set: func(m string) { a.Models.Background = m }}
 	slots := []pinSlot{slot(&a.Models.Coder, config.RoleCoder), slot(&a.Models.Reviewer, config.RoleReviewer), bg}
+	for _, s := range reviewStages {
+		// A review level's own model is a pin of its own (L4.5): it is the
+		// model the level's stage runs, and a switch naming it has to move it
+		// exactly as it moves the slot the level sits in.
+		block := r.levelBlockFor(s.level)
+		slots = append(slots, pinSlot{
+			get: func() string {
+				if *block == nil {
+					return ""
+				}
+				return (*block).Model
+			},
+			set: func(m string) { r.setLevelModel(s.level, m) },
+		})
+	}
 	if r.shadow {
 		// The champion's coder is pinned nowhere in a challenger arm, but the
 		// plan is derived from it (bootstrap): the switch rewrites it as it
@@ -308,4 +326,154 @@ func (r *run) pinSlots() []pinSlot {
 		slots = append(slots, pinSlot{get: func() string { return r.championCoder }, set: func(m string) { r.championCoder = m }})
 	}
 	return slots
+}
+
+// The review levels' own models (L4.5). A stage pins one of the run's role
+// slots — the coder's or the reviewer's — and a review level may name a model
+// of its own on top of the slot it sits in (config.ResolveLevels, L3.1):
+// level 1 runs in the coder's stage, levels 2 and 3 in the reviewer's. Every
+// consumer that has to agree on which model a stage runs reads stageModel,
+// because a stage whose pins named one model and whose gateway set named
+// another would have every call of it refused as not pinned for the stage.
+
+// stageAdversarial is level 3's stage: the recipe step's own name, which L4.2
+// puts in the plan after the review step.
+const stageAdversarial = string(recipe.StepAdversarial)
+
+// reviewStage is one review level's stage: the name the runner opens it
+// under, the level it is, and the role slot it pins when no layer names it a
+// model of its own.
+type reviewStage struct {
+	stage string
+	level policy.Level
+	role  config.Role
+}
+
+// reviewStages are the three review stages, in the order they run.
+var reviewStages = []reviewStage{
+	{"review_first", policy.LevelL1, config.RoleCoder},
+	{"review", policy.LevelL2, config.RoleReviewer},
+	{stageAdversarial, policy.LevelL3, config.RoleReviewer},
+}
+
+// reviewStageOf is the review stage named stage.
+func reviewStageOf(stage string) (reviewStage, bool) {
+	for _, s := range reviewStages {
+		if s.stage == stage {
+			return s, true
+		}
+	}
+	return reviewStage{}, false
+}
+
+// stageRole is the role slot a stage pins. It is config.StageRole plus the
+// adversarial stage: that function answers the coder's role for a stage name
+// it does not know, and level 3 is a review — the reviewer's slot, its output
+// limit and its role's model. L4.2 teaches config.StageRole the new stage, and
+// until then TestStageRoleAgreesWithConfig pins the two answers together for
+// the stages both know, so the disagreement is this one line and not a second
+// ladder.
+func stageRole(stage string) config.Role {
+	if stage == stageAdversarial {
+		return config.RoleReviewer
+	}
+	return config.StageRole(stage)
+}
+
+// stageModel is the model a stage runs: the review level's own model when the
+// stage is a review stage a layer named one for, and the role slot's
+// otherwise.
+func (r *run) stageModel(stage string) string {
+	if s, ok := reviewStageOf(stage); ok {
+		if m := r.levelModel(s.level); m != "" {
+			return m
+		}
+	}
+	return r.cfg.Agent.ModelFor(stageRole(stage))
+}
+
+// levelModel is the model the level's own block names, "" for a level no
+// layer wrote or one whose block names no model: the level then runs the
+// model its role slot answers.
+func (r *run) levelModel(level policy.Level) string {
+	if b := r.levelBlock(level); b != nil {
+		return b.Model
+	}
+	return ""
+}
+
+// levelBlock is the level's block in the run's configuration, nil for a level
+// no layer wrote.
+func (r *run) levelBlock(level policy.Level) *config.LevelSetting {
+	return *r.levelBlockFor(level)
+}
+
+// levelBlockFor is where the level's block lives: the merged configuration's
+// own agent.levels, allocated on demand. Writing the resolved models there is
+// what makes the whole run agree — applyRouting's rule, applied to the levels
+// — so every consumer reads one answer rather than resolving again.
+func (r *run) levelBlockFor(level policy.Level) **config.LevelSetting {
+	lv := &r.cfg.Agent.Levels
+	switch level {
+	case policy.LevelL1:
+		return &lv.L1
+	case policy.LevelL2:
+		return &lv.L2
+	default:
+		return &lv.L3
+	}
+}
+
+// setLevelModel writes the level's model into its own block, allocating the
+// block for a level no layer wrote: the resolved model of a level that runs
+// is a fact about the run, not a default left to a second resolution.
+func (r *run) setLevelModel(level policy.Level, model string) {
+	block := r.levelBlockFor(level)
+	if *block == nil {
+		*block = &config.LevelSetting{}
+	}
+	(*block).Model = model
+}
+
+// resolvedLevel is the level's own answer in a resolved set.
+func resolvedLevel(levels config.Levels, level policy.Level) config.ResolvedLevel {
+	switch level {
+	case policy.LevelL1:
+		return levels.L1
+	case policy.LevelL2:
+		return levels.L2
+	default:
+		return levels.L3
+	}
+}
+
+// applyLevels resolves the run's three review levels (config.ResolveLevels,
+// L3.1) and writes every level that runs into the run's own configuration, so
+// the model a level names is the model its stage pins, the route it is served
+// by and the gateway admits for it. It returns the resolution, its warnings
+// and the refusal that stops the run; a refused resolution writes nothing,
+// since the models of a set of levels the run may not use must not reach a
+// stage.
+//
+// It is the levels' half of the runner: reading the task's review_levels, the
+// owner's floor and the recipe is L4.2's, and it calls this with the inputs it
+// has. It has to run before applyRouting (resolvePolicy), which rewrites the
+// pins of the models the switch names: a level written after that rewrite
+// would keep the canonical ID its own role slot had already moved off.
+func (r *run) applyLevels(in config.LevelInputs) (config.Levels, []config.Warning, error) {
+	in.Config = r.cfg
+	levels, warns, err := config.ResolveLevels(in)
+	if err != nil {
+		return levels, warns, err
+	}
+	for _, s := range reviewStages {
+		lv := resolvedLevel(levels, s.level)
+		if !lv.On || lv.Model == "" {
+			// A level that does not run carries no model, and "" is Claude
+			// Code's own default rather than an ID to pin.
+			continue
+		}
+		r.setLevelModel(s.level, lv.Model)
+	}
+	return levels, warns, nil
 }
