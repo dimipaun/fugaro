@@ -66,16 +66,28 @@ func claudeLoginReady(in io.Reader, out io.Writer) (string, error) {
 	case err != nil:
 		return "", userErr("%v", err)
 	}
-	// A path the lookup resolves to and nothing can run — a directory, which is
-	// the standing §3.1 case — is refused here rather than by the child: the
-	// confirmation below is answered for a login that will run, and this is the
-	// last refusal that can be made before the person is asked. A path that
-	// disappears between this and the run is the child's own start error, which
-	// is why that path stays a refusal of its own.
-	if info, statErr := os.Stat(bin); statErr == nil && info.IsDir() {
-		return "", userErr("claude resolves to %s, which is a directory and not a program; fugaro does not run it from there", pluginwire.Printable(bin))
+	// A path the lookup resolves to and nothing can run is refused here, before
+	// the person is asked to answer for it. runClaudeLoginBinary asks the same
+	// question again on the far side of that answer: this check is early on
+	// purpose, and the confirmation between the two is an arbitrarily long
+	// window, so the early answer is never the one the child is started on.
+	if err := claudeLoginRunnable(bin); err != nil {
+		return "", err
 	}
 	return bin, nil
+}
+
+// claudeLoginRunnable is the standing §3.1 case — a path the lookup resolves to
+// that is a directory, which nothing can run. It is checked twice, and the two
+// checks are not the same question: the first is what refuses a login that
+// cannot happen before anyone is asked to confirm it (so a refusal leaves the
+// file as it was), and the second is the one that stands between the answer and
+// the fork, where the path is a name somebody else may have replaced.
+func claudeLoginRunnable(bin string) error {
+	if info, err := os.Stat(bin); err == nil && info.IsDir() {
+		return userErr("claude resolves to %s, which is a directory and not a program; fugaro does not run it from there", pluginwire.Printable(bin))
+	}
+	return nil
 }
 
 // runClaudeLoginBinary runs claude setup-token at bin on the owner's own
@@ -90,6 +102,13 @@ func claudeLoginReady(in io.Reader, out io.Writer) (string, error) {
 // (§3.3). A child that could not start at all is a refusal, because there is
 // no status to report and nothing the owner could have answered.
 func runClaudeLoginBinary(bin string, in io.Reader, out, errOut io.Writer) error {
+	// Asked again on this side of the confirmation, immediately before anything
+	// is announced or started: the answer that was given was for a login that
+	// will run, and between it and here the path is only a name. A refusal still
+	// says nothing about a login starting, so it comes before the line below.
+	if err := claudeLoginRunnable(bin); err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "  running: %s setup-token\n", pluginwire.Printable(bin))
 
 	// Holding the signal is the whole point and nothing reads the channel:

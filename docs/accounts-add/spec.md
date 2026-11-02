@@ -253,12 +253,6 @@ anything but `y` (or `--yes`) mints nothing and stores nothing:
    sits between the owner and the login: no pseudo-terminal, no copier, no raw-mode switch, no parse of
    what it prints. The owner answers whatever Anthropic asks — a browser, a code, a prompt — exactly as
    if they had typed `claude setup-token` themselves, because that is what is running.
-
-1. **Act one — the login, in the owner's own terminal.** Fugaro finds the binary, confirms it, and runs
-   `claude setup-token` as a child that **inherits the owner's own stdin, stdout and stderr**. Nothing
-   sits between the owner and the login: no pseudo-terminal, no copier, no raw-mode switch, no parse of
-   what it prints. The owner answers whatever Anthropic asks — a browser, a code, a prompt — exactly as
-   if they had typed `claude setup-token` themselves, because that is what is running.
 2. **Act two — one paste.** When the login has printed the token and returned, the command asks for it
    at the **hidden prompt** it uses without `--claude` (§2.2 step 3). What the owner pastes there is
    the only token the command ever stores.
