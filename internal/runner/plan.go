@@ -114,6 +114,33 @@ func stepLevel(k recipe.StepKind) (policy.Level, bool) {
 // levelOn is whether a resolved level runs.
 func levelOn(levels config.Levels, l policy.Level) bool { return resolvedLevel(levels, l).On }
 
+// levelStep is stepLevel's inverse: the recipe step a review level runs in, ""
+// for a level the plan has no step for.
+func levelStep(l policy.Level) recipe.StepKind {
+	switch l {
+	case policy.LevelL1:
+		return recipe.StepFirstLine
+	case policy.LevelL2:
+		return recipe.StepReview
+	case policy.LevelL3:
+		return recipe.StepAdversarial
+	}
+	return ""
+}
+
+// recipeHasStep reports whether the recipe carries a step of kind.
+func recipeHasStep(rcp *recipe.Recipe, kind recipe.StepKind) bool {
+	if rcp == nil || kind == "" {
+		return false
+	}
+	for _, s := range rcp.Steps {
+		if s.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // planRecipe is the recipe's steps as the run's resolved levels leave them: a
 // level that does not run has its step dropped (L2.1's O7), and a level that
 // runs and the recipe has no step for is inserted in the level's fixed place —
@@ -179,6 +206,13 @@ func planOf(rcp *recipe.Recipe, levels config.Levels, a config.Agent, reviewOver
 			// the step (rigor.AdversarialDefault): the senior review's rounds
 			// are not a fallback for it, since a mode's row is two numbers and
 			// only one of them is the senior review's.
+			//
+			// The bound is recipe.MaxReviewRounds, and it is the recipe's own:
+			// the parser applies that limit to every step but first_line
+			// (recipe.parse), so a max_rounds an adversarial step carries is
+			// never above the number setRounds holds it inside. A bound of its
+			// own here would have to move with the parser's, and a smaller one
+			// would clamp a step the recipe accepted in silence.
 			set := a.AdversarialRounds
 			if s.MaxRounds > 0 {
 				set = s.MaxRounds
@@ -233,6 +267,30 @@ func requiredSteps(rcp *recipe.Recipe, levels config.Levels) []recipe.StepKind {
 	return out
 }
 
+// checkLevelSteps is the contract planRecipe reads and cannot check: a level
+// that runs and whose recipe has no step for it must be marked Inserted, or
+// planRecipe leaves it out of the plan — and out of requiredSteps with it,
+// since that walks planRecipe too — and checkPlan's comparison of the two
+// would agree with itself. The level would then be one the launcher's gates
+// promised and the run never held, which is what this file's guard exists to
+// prevent.
+//
+// config.levels.inserts sets it for exactly this case, and nothing else in the
+// run knows which step a level runs in: a resolution that stopped setting it
+// would corrupt the plan in silence.
+func checkLevelSteps(rcp *recipe.Recipe, levels config.Levels) error {
+	for _, l := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
+		if !levelOn(levels, l) || resolvedLevel(levels, l).Inserted {
+			continue
+		}
+		if kind := levelStep(l); recipeHasStep(rcp, kind) {
+			continue
+		}
+		return fmt.Errorf("level %s is on and the recipe has no %s step for it, but the level is not marked inserted, so the plan would drop it", levelNames[l], levelStep(l))
+	}
+	return nil
+}
+
 // checkPlan refuses a plan that would silently drop a step the run's resolved
 // levels require. The plan is what runs, so a step planRecipe built and planOf
 // lost would be a review level the launcher's gates promised and the run never
@@ -246,6 +304,9 @@ func requiredSteps(rcp *recipe.Recipe, levels config.Levels) []recipe.StepKind {
 // runs no rounds is refused because that is the same drop, one step later: the
 // step is in the plan and never runs.
 func checkPlan(rcp *recipe.Recipe, levels config.Levels, plan []planStep) error {
+	if err := checkLevelSteps(rcp, levels); err != nil {
+		return err
+	}
 	required := requiredSteps(rcp, levels)
 	if len(required) == 0 {
 		return errors.New("the plan has no review step at all: every review level the run resolved is off, so nothing would decide whether the pull request is ready")

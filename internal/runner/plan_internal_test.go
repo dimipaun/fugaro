@@ -315,6 +315,39 @@ func TestPlanAdversarialRounds(t *testing.T) {
 	}
 }
 
+// TestCheckPlanLevelSteps is planRecipe's own contract, which checkPlan has to
+// state because planRecipe cannot: a level that runs and whose recipe has no
+// step for it must be marked Inserted, or planRecipe leaves it out of the plan
+// *and* out of requiredSteps, and the comparison below agrees with itself while
+// the level the launcher's gates promised never runs. config.ResolveLevels sets
+// the mark for exactly that case, so a resolution that stopped setting it is
+// the failure this pins.
+func TestCheckPlanLevelSteps(t *testing.T) {
+	plain := parseRecipe(t, "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: {}\n")
+	// Level 3 on, its step absent from the recipe and no mark: refused, and the
+	// refusal names the level rather than the plan's shape, which is the same
+	// plan either way.
+	unmarked := planLevels(true, true, true)
+	err := checkPlan(plain, unmarked, []planStep{
+		{Kind: recipe.StepFirstLine, Rounds: 2},
+		{Kind: recipe.StepReview, Rounds: 1},
+	})
+	if err == nil || !strings.Contains(err.Error(), "level 3") || !strings.Contains(err.Error(), "adversarial") {
+		t.Fatalf("checkPlan(level 3 on, no adversarial step, not inserted) = %v, want the level named as dropped", err)
+	}
+	// The same levels with the mark the resolver sets: planRecipe inserts the
+	// step in level 3's fixed place, and the plan it built is accepted.
+	inserted := unmarked
+	inserted.L3 = config.ResolvedLevel{On: true, Inserted: true}
+	plan := planOf(plain, inserted, config.Agent{}, nil, rigor.Critical)
+	if len(plan) != 3 || plan[2].Kind != recipe.StepAdversarial || !plan[2].Bounce {
+		t.Fatalf("planOf(inserted level 3) = %+v, want the adversarial step inserted after the review step, with bounce", plan)
+	}
+	if err := checkPlan(plain, inserted, plan); err != nil {
+		t.Fatalf("checkPlan(inserted level 3) = %v, want it accepted: planRecipe inserts the step", err)
+	}
+}
+
 // TestCheckPlan pins the two things the run's levels require of its plan: no
 // plan skips the senior review, and no plan drops a step a resolved level
 // needs. planOf walks planRecipe's steps itself, so this guard is a guard
