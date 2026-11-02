@@ -721,7 +721,7 @@ func TestSettingsSetRefusesASensitiveKeyAndNeverPrintsItsValue(t *testing.T) {
 // which is the cap every repository the layer templates runs with.
 func TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings(t *testing.T) {
 	for _, key := range []string{
-		"budget.per_run_usd", "budget.allowed_models",
+		"budget.per_run_usd", "budget.mode", "budget.allowed_models",
 		"governance.review_ratio", "governance.stage_budget",
 		"layer.governance.review_ratio",
 		"agent.max_budget_usd", "agent.max_run_tokens",
@@ -734,6 +734,30 @@ func TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings(t *testing.T) {
 	for _, key := range []string{"git.base_branch", "agent.review_rounds", "followup.allow_public", "layer.defaults.git.provider"} {
 		if settingsCeilingKey(key) {
 			t.Errorf("settingsCeilingKey(%q) = true, and it is no ceiling", key)
+		}
+	}
+}
+
+// TestSettingsLoosensRanksABudgetMode: budget.mode is a ceiling whose values
+// are ordered, not compared as numbers: enforce is the tightest, then observe,
+// then off, and only a write that moves down the order is a loosening
+// (policy.Merge's order). The write path never reaches this — the allowlist
+// refuses budget.mode — but the publish door does, so a node republished at a
+// stronger mode has to stay outside the loosening it would otherwise be.
+func TestSettingsLoosensRanksABudgetMode(t *testing.T) {
+	cases := []struct {
+		old, new string
+		want     bool
+	}{
+		{"enforce", "observe", true},
+		{"enforce", "off", true},
+		{"observe", "enforce", false},
+		{"observe", "off", true},
+		{"enforce", "enforce", false},
+	}
+	for _, tc := range cases {
+		if got := settingsLoosens("budget.mode", tc.old, tc.new); got != tc.want {
+			t.Errorf("settingsLoosens(budget.mode, %q, %q) = %v, want %v", tc.old, tc.new, got, tc.want)
 		}
 	}
 }

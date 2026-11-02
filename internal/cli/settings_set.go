@@ -610,6 +610,24 @@ func settingsTrue(value string) bool {
 	return yaml.Unmarshal([]byte(value), &b) == nil && b
 }
 
+// settingsModeRank orders budget.mode's values loosest first, so a write that
+// lowers the rank is a loosening (policy.Merge's order: enforce > observe > off).
+// `settings set` never writes budget.mode — the allowlist refuses it — but this
+// comparison has a second caller, the publish door: policyCeilingMembers names
+// budget.mode and policyLoosening hands each member to settingsLoosens, so a
+// node republished at a weaker mode is a loosening there and one republished at
+// a stronger mode is not.
+func settingsModeRank(mode string) int {
+	switch mode {
+	case "enforce":
+		return 2
+	case "observe":
+		return 1
+	default:
+		return 0
+	}
+}
+
 // settingsCeilingBase is the value a ceiling write is compared against (D846):
 // the tighter of what the file holds and what a run gets today, which the
 // read's own resolver answers — the shared or published node, the project
@@ -669,10 +687,16 @@ func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 }
 
 // settingsLoosens reports whether newValue is looser than oldValue for a
-// ceiling key: a larger cap, a cap removed, or a wider model list. A key no
-// layer sets has nothing to loosen, so a first write of a cap is never the
-// typed form — a first write of 0 is, because 0 is not a cap.
+// ceiling key: a larger cap, a cap removed, a weaker mode, or a wider model
+// list. A key no layer sets has nothing to loosen, so a first write of a cap
+// is never the typed form — a first write of 0 is, because 0 is not a cap.
 func settingsLoosens(key, oldValue, newValue string) bool {
+	if key == "budget.mode" {
+		if oldValue == "" {
+			return false
+		}
+		return settingsModeRank(newValue) < settingsModeRank(oldValue)
+	}
 	if key == "budget.allowed_models" {
 		if oldValue == "" {
 			return false
