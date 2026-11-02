@@ -84,12 +84,18 @@ import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
 import type { RigorView } from '../shared/rigor'
 import {
+  decodeCoordinatorIntents,
   decodeCoordinatorPullRequest,
   decodeCoordinatorStatus,
   decodePlanStatus,
   decodeSnapshot,
 } from '../shared/schema'
-import type { CoordinatorPullRequestDocument, CoordinatorStatusView, PlanStatusView } from '../shared/schema'
+import type {
+  CoordinatorIntentsView,
+  CoordinatorPullRequestDocument,
+  CoordinatorStatusView,
+  PlanStatusView,
+} from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
@@ -152,6 +158,8 @@ import {
   COORDINATOR_DESCRIPTION_HIDE_WORD,
   COORDINATOR_DESCRIPTION_SHAPE,
   COORDINATOR_DESCRIPTION_SHOW_WORD,
+  COORDINATOR_TRANSCRIPT_BUSY,
+  fillCoordinatorTranscript,
 } from './screens/coordinator'
 import type {
   CoordinatorDescriptionRequest,
@@ -429,10 +437,10 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the eleven reads the screens make (Task 3.4c; console L5b added
+ * ReadBridge is the twelve reads the screens make (Task 3.4c; console L5b added
  * `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`, GV2.3b
- * added `planStatus`, coordinator v2 K3 added `coordinatorShow`), named one by
- * one
+ * added `planStatus`, coordinator v2 K3 added `coordinatorShow` and K5 added
+ * `coordinatorIntents`), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -450,13 +458,14 @@ export interface ReadBridge {
   statsRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  coordinatorIntents(args: Readonly<Record<string, unknown>>): Promise<unknown>
   diagnoseRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the eleven reads over the structural bridge. A missing
+/** readBridgeFrom is the twelve reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -486,6 +495,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     statsRuns: (args) => ask('statsRuns', args),
     coordinatorStatus: (args) => ask('coordinatorStatus', args),
     coordinatorShow: (args) => ask('coordinatorShow', args),
+    coordinatorIntents: (args) => ask('coordinatorIntents', args),
     diagnoseRun: (args) => ask('diagnoseRun', args),
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
@@ -4613,6 +4623,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * read is not started on entry: nothing is in flight for it until the operator
    * presses `Load jobs`, so its mark is only ever put up by a press. */
   const coordinatorJobsRead = sectionRead({ factory, theme })
+  /** The transcript pane's own read (K5): `coordinator intents --all --json`,
+   * started with the tab's other reads and painted the moment it lands. The pane
+   * is the fourth section of this screen and the last region of the frame, and
+   * its own stamp is this read's clock -- the declarations are a snapshot of what
+   * the store holds, and the questions under them are answered from the stored
+   * view the body already read. */
+  const coordinatorTranscriptRead = sectionRead({ factory, theme })
 
   /** coordinatorDescriptions is the visit on screen's description reads (K3),
    * keyed by the repository and the pull request number.
@@ -4650,6 +4667,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // and the token that would have drawn it is what makes it a read this visit
     // no longer owns.
     coordinatorJobsRead.end()
+    // The pane's read ends with it too: the declarations are drawn in a section
+    // the tab took with it.
+    coordinatorTranscriptRead.end()
     // Every description the visit read, for that reason and one of its own: a
     // description's mark lives in a block of the row that asked for it, and the
     // row is gone with the tab.
@@ -4725,6 +4745,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let runs: readonly CoordinatorRunRow[] | null = null
     let plans: PlanStatusView | null = null
     let caps: SpendCaps | null = null
+    /** The pane's own read (K5): the declarations the store holds, the sentence a
+     * refused read left, the console clock it was read at, and whether it is
+     * still out. `null` is "not answered", which the pane draws as no declaration
+     * at all rather than as a fleet that has declared nothing. */
+    let intents: CoordinatorIntentsView | null = null
+    let intentsSentence: string | null = null
+    let intentsAt = 0
+    let intentsOut = false
+    let intentsAttempt = 0
+    let intentsToken = 0
     /** sentences is each refused read's own sentence, for this visit and no
      * longer: the next visit's read replaces it rather than inheriting it, so a
      * `budget show` the CLI refused once is not refused for the session. */
@@ -4817,6 +4847,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         caps: capsHidden ? null : caps,
         checkout,
         capsHidden,
+        intents,
       })
 
     /** wants is whether this visit reads one source at all, and `again` is the
@@ -4887,6 +4918,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           skeleton ? COORDINATOR_SHAPE : undefined,
         )
       }
+      // The pane's mark carries no skeleton: its own read is a document of a few
+      // lines per declaration, and a skeleton is the shape of a section whose
+      // drawing is large enough to be worth promising a shape for.
+      if (intentsOut) {
+        coordinatorTranscriptRead.mark(
+          intentsToken,
+          drawn.transcript.section,
+          drawn.transcript.slot,
+          COORDINATOR_TRANSCRIPT_BUSY,
+        )
+      }
     }
 
     /**
@@ -4907,6 +4949,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (!out.has('document')) {
         coordinatorBodyRead.settle(bodyToken)
         surface.nodeOf(drawn.slot).replaceChildren()
+      }
+      if (!intentsOut) {
+        coordinatorTranscriptRead.settle(intentsToken)
+        surface.nodeOf(drawn.transcript.slot).replaceChildren()
       }
     }
 
@@ -5483,6 +5529,98 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (details.length > 0) coordinatorChunk = setTimeout(step, 0)
     }
 
+    /**
+     * paintTranscript fills the read-only pane (K5): the stamp the declarations
+     * were read at, the CLI's own sentence where that read refused, the
+     * declarations themselves and the three questions the console asks the stored
+     * view.
+     *
+     * The host is emptied to its slot and never to nothing (`clearSection`),
+     * because the mark of a read in flight belongs in that slot and a repaint
+     * that took the slot with it would take the mark too -- a read under way
+     * would then look like a pane that had answered with nothing.
+     *
+     * **The stamp is the clock what is on screen was read at** -- this read's,
+     * drawn with the declarations it belongs to -- and its Refresh is the one
+     * control the pane holds: it reads the declarations again and nothing else,
+     * because the questions under them are the stored view's and that view has a
+     * Refresh of its own in the body above.
+     */
+    const paintTranscript = (): void => {
+      const drawn = mount(false)
+      const section = drawn.transcript
+      clearSection(section.host, section.slot)
+      if (intentsAt !== 0) {
+        const stamp = renderStamp(factory, intentsAt)
+        appendTo(section.host, stamp.root)
+        surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+          reReadIntents()
+        })
+      }
+      if (intentsSentence !== null) {
+        appendTo(section.host, refusedScreen(factory, 'coordinator.intents', intentsSentence, theme))
+      }
+      fillCoordinatorTranscript(factory, model(), section.host)
+      // A repaint made while this read is still out -- another section's landing
+      // repaints the pane too -- has just taken the mark out of the slot with
+      // everything else, so it goes back up over what was drawn.
+      if (intentsOut) {
+        coordinatorTranscriptRead.mark(
+          intentsToken,
+          section.section,
+          section.slot,
+          COORDINATOR_TRANSCRIPT_BUSY,
+        )
+      }
+    }
+
+    /**
+     * reReadIntents is the pane's own Refresh: it reads the store again. The
+     * read is the same read the tab made on entry, so a refresh is not a second
+     * kind of it, and it is the one read of this screen the operator can ask
+     * again on its own: the declarations are what the fleet's writers have
+     * stored since, and the questions under them are the stored view's.
+     *
+     * What is already drawn stays drawn under the mark, with the clock it was
+     * read at: the figures on screen are still what that read answered, and a
+     * refresh that blanked them would be a pane that had lost its own answer to
+     * a read that has not landed.
+     */
+    const reReadIntents = (): void => {
+      if (intentsOut) return
+      intentsAttempt += 1
+      intentsOut = true
+      intentsToken = coordinatorTranscriptRead.start()
+      paintTranscript()
+      void loadIntents(intentsAttempt)
+    }
+
+    /** loadIntents makes the pane's read, `coordinator intents --all --json`. The
+     * attempt is checked before anything is drawn and `stale(mine)` after it, so
+     * an answer to a read the operator has already asked again -- or to one from
+     * a tab they have left -- never lands under another view. */
+    const loadIntents = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.coordinatorIntents({}))
+      if (intentsAttempt !== attempt) return
+      intentsOut = false
+      if (stale(mine)) return
+      intents = null
+      if (!answer.ok) {
+        intentsSentence = answer.sentence
+      } else {
+        const decoded = decodeCoordinatorIntents(answer.data, 'coordinator.intents')
+        if (!decoded.ok) {
+          intentsSentence = decoded.skew.because
+        } else {
+          intentsSentence = null
+          intents = decoded.value
+          intentsAt = Date.now()
+        }
+      }
+      settleDone(mount(false))
+      paintTranscript()
+    }
+
     /** draw is what every read does when its own answer arrives and this visit
      * still owns the screen: the sections that read belongs to are painted, and
      * the ones that are done have their marks taken down. */
@@ -5492,6 +5630,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       paintQueue()
       if (TOTALS_SOURCES.includes(source)) paintTotals()
       if (source === 'document') paintBody(false)
+      // The pane is repainted on every landing and not only on its own read's:
+      // its questions are answered from the stored view, so the document's
+      // arrival is what fills them, and the declarations drawn earlier are
+      // redrawn beside them rather than taken down.
+      paintTranscript()
     }
 
     /** loadDocument makes the stored-view read. It is the panel of repositories
@@ -5597,6 +5740,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      *
      * `again` is the stamp's Refresh: it asks every source again whatever this
      * session holds, which is the whole of what the control is for.
+     *
+     * **The pane's read is one of them** (K5): `coordinator intents --all
+     * --json` goes out in this same turn, after the stored view and never after
+     * an answer of it, and it is not gated by a source: the declarations are
+     * what the pane draws first, so nothing about them waits on the view.
      */
     const start = (again = false): void => {
       const sources = QUEUE_SOURCES.filter((source) => wants(source, again))
@@ -5607,6 +5755,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       queueToken = coordinatorQueueRead.start()
       totalsToken = coordinatorTotalsRead.start()
       bodyToken = coordinatorBodyRead.start()
+      // The pane's token and its flag are taken before the frame is mounted,
+      // because that is where the marks are drawn: a read started after it would
+      // leave the pane looking answered with nothing while its read was out.
+      intentsAttempt += 1
+      intentsOut = true
+      intentsToken = coordinatorTranscriptRead.start()
       mount(true)
       // The job list is drawn with the rest of the frame and marked busy by
       // nobody: its read has not been asked for, and the control it draws is the
@@ -5620,6 +5774,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         else if (source === 'plans') void loadPlans(attempt)
         else void loadBudget(attempt)
       }
+      void loadIntents(intentsAttempt)
     }
 
     /**
@@ -5689,6 +5844,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       paintTotals()
       paintBody(true)
       paintJobs()
+      // The pane's questions are the stored view's, and a session that already
+      // holds that view answers them here, before anything is awaited: the
+      // declarations wait for the pane's own read either way.
+      paintTranscript()
     }
     start()
   }

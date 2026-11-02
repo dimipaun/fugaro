@@ -153,6 +153,8 @@ import {
   COORDINATOR_RETRY_WORD,
   COORDINATOR_SOURCE_LINE,
   COORDINATOR_TOTALS_BUSY,
+  COORDINATOR_TRANSCRIPT_BUSY,
+  COORDINATOR_TRANSCRIPT_CLASS,
   COORDINATOR_JOBS_BUSY,
   COORDINATOR_JOBS_CLASS,
   COORDINATOR_JOBS_EMPTY_WORD,
@@ -193,8 +195,8 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the eleven reads `entry.ts` may reach for (`ReadBridge`, the
- * same eleven), by the name the preload exposes. Every one of them is on the
+/** READ_METHODS is the twelve reads `entry.ts` may reach for (`ReadBridge`, the
+ * same twelve), by the name the preload exposes. Every one of them is on the
  * fake bridge below, and every one records its call -- so "this read was never
  * made" is a claim this suite can make about any of them. */
 const READ_METHODS = [
@@ -205,6 +207,7 @@ const READ_METHODS = [
   'statsRuns',
   'coordinatorStatus',
   'coordinatorShow',
+  'coordinatorIntents',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
@@ -2309,6 +2312,16 @@ function queueBridge(
         : answer(args)
     }
   }
+  // The pane's own read (K5) is the one that answers with a document rather
+  // than a refusal when a case says nothing about it: every case in this file
+  // that opens the Coordinator is a case about something else, and a refusal by
+  // default would put a second refusal -- naming `coordinator.intents` -- on a
+  // page whose own case asserts it has one.
+  const intents = answers['coordinatorIntents']
+  base.bridge['coordinatorIntents'] = (args: unknown): unknown => {
+    calls.push({ name: 'coordinatorIntents', args })
+    return intents === undefined ? { ok: true, data: { document: { repos: [] } } } : intents(args)
+  }
   return base
 }
 
@@ -3269,6 +3282,32 @@ const BUDGET_REFUSAL = 'the budget read refused, in the CLI’s own words'
 const REPORT_REFUSAL = 'the report read refused, in the CLI’s own words'
 const RUNS_REFUSAL = 'the run list refused, in the CLI’s own words'
 const COORDINATOR_REFUSAL = 'the coordinator read refused, in the CLI’s own words'
+const INTENTS_REFUSAL = 'the declared intents read refused, in the CLI’s own words'
+
+/** AN_INTENTS_DOCUMENT is one stored declaration in the `--all` shape the
+ * pane's own read prints (`coordinator intents --all --json`, K5). The person
+ * who declared it is a value the store holds and never an identity anything is
+ * admitted by (reconciliation finding #11), which is why the case reads it back
+ * as the text it is. */
+const AN_INTENTS_DOCUMENT = {
+  repos: [
+    {
+      repo: 'owner/repo-a',
+      provider: 'github',
+      intents: [
+        {
+          id: '0123456789abcdef0123456789abcdef',
+          declared_by: 'person-1',
+          at: '2026-11-02T08:00:00Z',
+          branch: 'feat/a-thing',
+          release: '0.119.0',
+          files: ['console/src/renderer/entry.ts'],
+          services: [],
+        },
+      ],
+    },
+  ],
+}
 
 describe('the placeholder a tab switch draws', () => {
   beforeEach(() => {
@@ -5060,7 +5099,12 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // the queue, the fleet's totals, the panel of repositories -- because each
     // is a read of its own and none of them waits for another (the owner's rule
     // of 2026-10-31, drawn).
-    expect(busyLabels(document)).toEqual([COORDINATOR_QUEUE_BUSY, COORDINATOR_TOTALS_BUSY, COORDINATOR_BUSY])
+    expect(busyLabels(document)).toEqual([
+      COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_TOTALS_BUSY,
+      COORDINATOR_BUSY,
+      COORDINATOR_TRANSCRIPT_BUSY,
+    ])
     expect(skeletonsOf(document)).toEqual(SKELETON_SHAPES.coordinator.map((shape) => shape.section))
     expect(classed(panelOf(document), 'coordinator-detail')).toEqual([])
 
@@ -5125,7 +5169,12 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     await flush()
     buttonFor(document, 'coordinator').click()
     expect(stamped(document), 'the stale view was served without its stamp').not.toBeNull()
-    expect(busyLabels(document)).toEqual([COORDINATOR_QUEUE_BUSY, COORDINATOR_TOTALS_BUSY, COORDINATOR_BUSY])
+    expect(busyLabels(document)).toEqual([
+      COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_TOTALS_BUSY,
+      COORDINATOR_BUSY,
+      COORDINATOR_TRANSCRIPT_BUSY,
+    ])
     await flush()
     expect(calls.filter((call) => call.name === 'coordinatorStatus').length).toBe(2)
   })
@@ -5152,19 +5201,28 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const document = await boot(bridge, new FakeDocument())
     const before = calls.length
     buttonFor(document, 'coordinator').click()
-    // **Nothing is awaited, and that is the claim**: the three calls went out in
+    // **Nothing is awaited, and that is the claim**: the four calls went out in
     // the click's own turn, so none of them is a consequence of another. A
     // screen that asked for the plan tasks after the stored view had answered
     // would show one call here, and the queue would be behind the slowest read
     // of the page. `listRuns` is not among them: the jobs are the read this tab
-    // does not make until the operator asks.
+    // does not make until the operator asks. The pane's own read is the fourth
+    // (K5): the declarations it draws first are a document of their own, and a
+    // pane that waited for the stored view would be the all-or-nothing redraw
+    // the same rule forbids.
     expect(calls.slice(before).map((call) => call.name)).toEqual([
       'coordinatorStatus',
       'planStatus',
       'showBudget',
+      'coordinatorIntents',
     ])
     // While they are all out, each section says what it is reading.
-    expect(busyLabels(document)).toEqual([COORDINATOR_QUEUE_BUSY, COORDINATOR_TOTALS_BUSY, COORDINATOR_BUSY])
+    expect(busyLabels(document)).toEqual([
+      COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_TOTALS_BUSY,
+      COORDINATOR_BUSY,
+      COORDINATOR_TRANSCRIPT_BUSY,
+    ])
 
     // The budget is the smallest of the three and answers first: its refusal is
     // on the screen while the pull requests and the plan tasks -- the two reads
@@ -5223,6 +5281,69 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
         (part) => classed(part, 'unavailable-operation')[0]?.textContent ?? null,
       ),
     ).toEqual([null, null, null, 'budget.show'])
+  })
+
+  it('draws the pane’s declared intents when the pane’s own read lands, and says when it read them', async () => {
+    // K5: the pane has a read of its own -- `coordinator intents --all --json`
+    // -- so it draws nothing until that read answers, and what it draws then
+    // carries the console's own clock. The stored view is answered here and the
+    // declarations are held, which is what tells the two halves apart: the
+    // questions under them are the view's and are already up, and the lines
+    // above them are the document that has not landed.
+    const intents = holding()
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: () => intents.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'coordinator').click()
+    expect(
+      calls.slice(before).map((call) => call.name),
+      'the pane’s read is not one of the reads the tab makes on entry',
+    ).toContain('coordinatorIntents')
+    expect(busyLabels(document)).toContain(COORDINATOR_TRANSCRIPT_BUSY)
+    await flush()
+    // The stored view answered and the declarations have not: the three
+    // questions are up, answered off the view, and the lines above them are not
+    // -- a read that has not answered draws no declaration at all, and the pane
+    // never draws the empty store's own sentence for a document it does not
+    // have.
+    expect(classed(panelOf(document), 'coordinator-transcript-question')).toHaveLength(3)
+    expect(classed(panelOf(document), 'coordinator-transcript-intent')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-transcript-repo')).toEqual([])
+    expect(holdsText(panelOf(document), COORDINATOR_TRANSCRIPT_WORD)).toBe(true)
+
+    intents.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-transcript-repo')[0]?.textContent).toBe('owner/repo-a')
+    expect(classed(panelOf(document), 'coordinator-transcript-intent')).toHaveLength(1)
+    expect(classed(panelOf(document), 'coordinator-transcript-declaration')[0]?.textContent).toBe('person-1')
+    expect(stamped(document), 'the pane drew no clock of its own').toMatch(/^as of \d\d:\d\d$/)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('names `coordinator intents` when the pane’s own read is refused', async () => {
+    // The pane is a read of its own, so a refusal is its own section's and
+    // names its own command: the stored view answered, and its panels are not
+    // taken down for a read that is not theirs.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: () => ({ ok: false, reason: INTENTS_REFUSAL }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    const pane = classed(panelOf(document), 'coordinator-transcript')[0]
+    if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
+    expect(classed(pane, 'unavailable-operation')[0]?.textContent).toBe('coordinator.intents')
+    expect(holdsText(pane, INTENTS_REFUSAL)).toBe(true)
+    expect(classed(panelOf(document), 'coordinator-detail').length).toBeGreaterThan(0)
+    expect(busyLabels(document)).toEqual([])
   })
 
   it('spawns no runs ls for the job list until Load jobs is pressed, and pages from the last row it drew', async () => {

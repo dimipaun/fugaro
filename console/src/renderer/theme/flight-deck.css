@@ -3790,12 +3790,13 @@ span.coordinator-unread-retry {
  * for the same reason.
  * ------------------------------------------------------------------------- */
 
-/* The screen's three sections take the frame the redesign gives a panel
+/* The screen's four sections take the frame the redesign gives a panel
  * (`section.coordinator-repo`): the same ground, the same hairline and the same
  * radius, because they are the same kind of block on the same screen. */
 .coordinator-queue,
 .coordinator-totals,
-.coordinator-jobs {
+.coordinator-jobs,
+.coordinator-transcript {
   margin-bottom: var(--section-gap);
   padding: var(--panel-pad);
   background: var(--surface);
@@ -4234,6 +4235,155 @@ span.coordinator-job-short {
  * does. */
 p.coordinator-jobs-empty,
 p.coordinator-jobs-note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* ---- The read-only transcript pane (console 0.119.0, K5) ----------------- */
+
+/* The screen's fourth section: what the fleet's orchestrators have declared, and
+ * the stored view's answers to three questions the console composes itself. It
+ * takes the panel frame with the other three (the rule at the top of this block)
+ * and holds **no input of any kind** -- the declarations are read, never written,
+ * and the front door that would write one is not built (D820, D827). Nothing
+ * below gives an element a field's shape, because there is no field.
+ *
+ * **The four hooks the screen draws with a literal class name are qualified with
+ * the tag it draws them as** (`p.coordinator-transcript-word` and its three
+ * neighbours); every other hook in this block arrives through an exported
+ * constant (`COORDINATOR_TRANSCRIPT_CLASS` and its neighbours), which the
+ * selector scan reads as a parameter and cannot pair with a tag, so a rule
+ * spelled `p.coordinator-transcript-intent` would be refused as a tag nothing
+ * draws. The class names are this screen's own and no rule competes for them, so
+ * the tag would buy no specificity -- the same reason K1's and K4's blocks are
+ * written the way they are.
+ * ------------------------------------------------------------------------- */
+
+/* The pane's own name, above everything it draws. It is a heading rather than a
+ * figure, so it takes the tone the queue's own word takes and no mono. */
+p.coordinator-transcript-word {
+  margin: 0 0 var(--space-sm);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+/* The host the entry fills: the stamp, the declarations and the questions, in
+ * the order they were drawn. It holds no state of its own -- the section's mark
+ * is what says a read is still out -- so all this gives it is the rhythm. */
+.coordinator-transcript-host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* One repository's declarations: the repository in the mono every key on this
+ * screen is drawn in, over the lines that declare something about it. */
+.coordinator-transcript-repo {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* One declaration: its fields on a line that folds, with the hairline every
+ * record row on this screen draws under it. */
+.coordinator-transcript-intent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin: 0;
+  padding: 0 0 var(--space-2xs);
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+/* The word that introduces a declaration, in the small caps the record rows give
+ * the same word. */
+span.coordinator-transcript-declared-word {
+  color: var(--text-3);
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* **The declaring side's own words, and the tone that says what they are.** The
+ * value is a declaration and never an identity: nothing verifies it and nothing
+ * may be admitted by it (reconciliation finding #11), so it is drawn quietly and
+ * in the italic the console keeps for a claim rather than for a fact. */
+.coordinator-transcript-declaration {
+  color: var(--text-2);
+  font-style: italic;
+}
+
+/* The writer's own clock, which is not this console's and carries no age: the
+ * pane never derives one from it, so it is drawn as the store wrote it and in
+ * the quiet tone the pane's own prose takes. */
+.coordinator-transcript-at {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* What the declaration is about -- the branch, the release, the paths and the
+ * services -- in the small mono the screen's other keys are drawn in. Each is
+ * written by whoever can reach the report path, so each is drawn as data: this
+ * rule gives them a tone and nothing else. */
+.coordinator-transcript-branch,
+.coordinator-transcript-release,
+.coordinator-transcript-file,
+.coordinator-transcript-service {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* One of the three questions the console asks the stored view, with the answers
+ * under it. The question is the console's own word and the answers are the
+ * view's, so the block is a column and the two read differently. */
+.coordinator-transcript-question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.coordinator-transcript-question-word {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* One repository's answer: the repository, then the fact. It is indented under
+ * its question, which is what makes the question the line it belongs to, and it
+ * carries the answer's own tone -- what is inside it is the store's text
+ * whichever field it came from. */
+.coordinator-transcript-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin: 0;
+  padding-left: var(--space-sm);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+/* The sweep's own marker, drawn in the word the record rows use for it. */
+span.coordinator-transcript-stale-word {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* The two sentences the pane says in its own words: the front door that is not
+ * built, and a question the stored view answers with nothing. Both are the
+ * console's prose about its own gap, so they take the quiet tone the queue's
+ * note does. */
+p.coordinator-transcript-missing,
+.coordinator-transcript-none {
   margin: 0;
   color: var(--text-3);
   font-size: var(--text-xs);
