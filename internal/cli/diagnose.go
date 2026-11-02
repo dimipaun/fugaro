@@ -399,10 +399,11 @@ func reviewLine(r runstore.ReviewSummary) string {
 
 // reviewsOf is the record's review rounds for the document: the record's own
 // order, bounded at diagnoseReviews, and redacted like every other string here
-// -- Model and Effort included, because the record is an object a hand can
-// edit and neither is a value a reader may trust to be the runner's own
-// vocabulary. nil for a record with none, so the key is absent rather than an
-// empty list.
+// -- Model, Effort and Head included, and the tier and the verdict too, which
+// the write path validates to its own three words and a hand-edited record need
+// not: they are strings on the wire, and the block's own enums are redacted for
+// the same reason (toleratedOf). nil for a record with none, so the key is
+// absent rather than an empty list.
 func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runstore.ReviewSummary {
 	if len(reviews) == 0 {
 		return nil
@@ -412,6 +413,7 @@ func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runs
 		if len(out) == diagnoseReviews {
 			break
 		}
+		r.Tier, r.Verdict = red(r.Tier), red(r.Verdict)
 		r.Model, r.Effort, r.Head = red(r.Model), red(r.Effort), red(r.Head)
 		out = append(out, r)
 	}

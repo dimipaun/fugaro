@@ -1692,6 +1692,63 @@ func TestDiagnoseSaysWhenTheReviewListIsCut(t *testing.T) {
 	}
 }
 
+// TestDiagnoseRedactsEveryStringOfAReviewRound: the tier and the verdict are
+// enums on the write path, but they are strings on the wire and a hand-edited
+// record can put anything in them, so every string of a review round goes
+// through the document's own redaction — the tier and the verdict included, as
+// a tolerated finding's own three enums do.
+func TestDiagnoseRedactsEveryStringOfAReviewRound(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	const id = "20260101-000032-abcd"
+	head := strings.Repeat("a", 40)
+	seedReviewersRun(t, f, id, []runstore.ReviewSummary{
+		{Round: 1, Tier: runstore.TierAdversarial, Verdict: "ship " + secret,
+			Findings: 1, Head: head, Model: "model " + secret, Effort: "effort " + secret},
+		// A tier that is no longer one of the three once it is redacted: the
+		// block's own label falls back to the outer reviewer, which is what it
+		// does for any tier this build does not know.
+		{Round: 2, Tier: runstore.TierSenior + " " + secret, Verdict: "changes " + secret, Findings: 2},
+	})
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(human, secret) {
+		t.Fatalf("the Reviews block prints the secret:\n%s", human)
+	}
+	for _, want := range []string{
+		"  round 1 adversarial: ship [REDACTED], 1 finding (model model [REDACTED], effort effort [REDACTED], at " + head[:7] + ")\n",
+		"  round 2 senior: changes [REDACTED], 2 findings\n",
+	} {
+		if !strings.Contains(human, want) {
+			t.Errorf("diagnose does not print %q:\n%s", want, human)
+		}
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("the document carries the secret:\n%s", out)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(d.Reviews) != 2 {
+		t.Fatalf("reviews = %+v, want two entries", d.Reviews)
+	}
+	if got := d.Reviews[0]; got.Tier != runstore.TierAdversarial || got.Verdict != "ship [REDACTED]" ||
+		got.Model != "model [REDACTED]" || got.Effort != "effort [REDACTED]" || got.Head != head {
+		t.Errorf("the first round = %+v", got)
+	}
+	if got := d.Reviews[1]; got.Tier != "senior [REDACTED]" || got.Verdict != "changes [REDACTED]" {
+		t.Errorf("the second round's enums read tier %q, verdict %q, want both redacted", got.Tier, got.Verdict)
+	}
+}
+
 // seedReviewersRun stores a finished run under id whose record carries the
 // given review rounds and nothing else the diagnosis reads.
 func seedReviewersRun(t *testing.T, f *cloudFixture, id string, reviews []runstore.ReviewSummary) {
