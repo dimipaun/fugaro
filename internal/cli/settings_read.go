@@ -146,7 +146,8 @@ func readMS(d time.Duration) int64 {
 func readSettings(ctx context.Context, o settingsOptions, now time.Time) (*settingsRead, error) {
 	r := &settingsRead{now: now}
 	in := localcfg.SelectInput{
-		Project:    os.Getenv("FUGARO_PROJECT"),
+		Config:     o.config,
+		Project:    o.project,
 		EnvProject: os.Getenv("FUGARO_PROJECT"),
 		EnvConfig:  os.Getenv("FUGARO_CONFIG"),
 		Getenv:     os.Getenv,
