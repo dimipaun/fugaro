@@ -998,6 +998,30 @@ describe('the spawn table and the argv it builds', () => {
     ).toThrow(/--project/)
   })
 
+  it('fails a table whose `=`-form flags are not the ones the surface names (C2)', () => {
+    // The runs list is the first row that is a read and carries `=`-form words,
+    // and the check that holds them to `EQUALS_FORM_FLAGS` is two-sided. Both
+    // directions are mutations of the real table, so a later edit that drops
+    // either half fails here: a row writing an `=`-form flag the table does not
+    // name, and a row writing a named one as a separate word.
+    const withFlag = (key: string, flag: string): SpawnCommand[] =>
+      SPAWN_COMMANDS.map((row) =>
+        row.operation === 'runs.list'
+          ? { ...row, args: row.args.map((spec) => (spec.key === key ? { ...spec, flag } : spec)) }
+          : row,
+      )
+    // `--since` is a plain word here; in `=` form it is a permission the table
+    // does not carry, and `assertArgvFlags` would refuse it only at spawn time.
+    expect(() => assertSpawnSurface(withFlag('since', '--since='))).toThrow(/EQUALS_FORM_FLAGS/)
+    // `--limit=` is a member; written without its `=` the row no longer declares
+    // the prefix the table admits, and `argvFor` would build the word
+    // `--limit50` from the flag and the number it renders.
+    expect(() => assertSpawnSurface(withFlag('limit', '--limit'))).toThrow(/EQUALS_FORM_FLAGS/)
+    // ...and the real row passes it, so neither case is one that refuses every
+    // table: the two mutations above are what the check is for.
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
   it('fails a table with a command-bearing operation missing from it', () => {
     expect(() => assertSpawnSurface(SPAWN_COMMANDS.filter((row) => row.operation !== 'runs.list'))).toThrow(
       /runs.list has no row/,
