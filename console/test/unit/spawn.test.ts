@@ -779,11 +779,11 @@ describe('the spawn table and the argv it builds', () => {
     // A key the row does not declare never reaches an element, which is the
     // rule that keeps a payload from smuggling a flag in -- and the two flags
     // the command owns but no row declares are refused like any other word.
-    for (const value of [{ repo: 'acme/app' }, { since: '3d' }, { all: true }, { token: 'x' }, { json: true }]) {
-      expect(() => argvFor('coordinator.intents', value, safeContext()), JSON.stringify(value)).toThrow(
-        /does not declare/,
-      )
-    }
+    expect(() => argvFor('coordinator.intents', { repo: 'acme/app' }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('coordinator.intents', { since: '3d' }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('coordinator.intents', { all: true }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('coordinator.intents', { token: 'x' }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('coordinator.intents', { json: true }, safeContext())).toThrow(/does not declare/)
     // The argv's whole flag list is the row's two words plus the console's own
     // `--project`: no credential, no host, no path and no other command's flag.
     const argv = argvFor('coordinator.intents', {}, safeContext({ project: 'chosen' }))

@@ -3416,7 +3416,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-two of the surface's twenty-seven operations,
+    // The non-vacuity half: twenty-three of the surface's twenty-seven operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -3433,7 +3433,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // list. **`link.openPullRequest` is too, and for the same reason**: a pull
     // request number is repository state rather than money, so the mode has
     // nothing to withhold from it.
-    expect(THE_OPEN_OPERATIONS.length).toBe(22)
+    expect(THE_OPEN_OPERATIONS.length).toBe(23)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

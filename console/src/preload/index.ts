@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-six names
+ * is not a name and a method is still a compile error, and the twenty-seven names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -172,6 +172,15 @@ export const BRIDGE_VERSION = 1
  * pull request with a token carrying `contents: write`. This row's is the
  * coordinator's own read-only installation token, which is what its two
  * arguments and no third key are for (`src/main/ipc.ts`).
+ *
+ * **Coordinator v2 C4 added the twenty-seventh** (`coordinator.intents` /
+ * `coordinatorIntents`, what the fleet's writers have declared, newest first --
+ * D827) and left the other twenty-six exactly where they were. It sits directly
+ * under `coordinator.show`, the same subject asked a third way. It is the first
+ * row here with **no argument at all**: the whole argv is `src/main/spawn.ts`'s
+ * row, `--all --json`, so no word of it is caller-influenced -- and like the
+ * project view above it, its child mints nothing of the host's: the
+ * declarations are the caller's own database node.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -231,6 +240,15 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // what a renderer can influence about the argv, and no credential of the host's
   // reaches this surface, the reply or a log line.
   ['coordinator.show', 'coordinatorShow'],
+  // The declarations read (coordinator v2 C4, D827): `coordinator intents --all
+  // --json`, what the fleet's writers have stored, newest first. One row here
+  // for the same reason as every other -- a method that took the operation as
+  // an argument is the shape rule 5 forbids -- and this row's method is the
+  // plainest case of it: the operation has no argument, so the row declares
+  // none and `--all` is a word of the argv rather than a control. `declared_by`
+  // comes back as a **declaration** -- the string a writer put in its own
+  // record -- never as an identity this process establishes.
+  ['coordinator.intents', 'coordinatorIntents'],
   // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
   // rule 11, D22). One row, like every other: the five fields are the
   // operation's own closed schema. What this method *does* is ask the main
@@ -244,7 +262,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-six string literals, not `string`. It is the type of the `operations` list
+ * twenty-seven string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -364,7 +382,7 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-six *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-seven *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
  * object literal those twenty-six properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`

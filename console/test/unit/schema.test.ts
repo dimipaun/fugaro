@@ -2116,12 +2116,21 @@ describe('the declared intents document (coordinator v2 C4)', () => {
     // The order is the document's: newest first, by the writer's own clock,
     // which is the CLI's sort and not this decoder's.
     expect(second?.id).toBe('e5f6a7b8')
-    // Every key of the shape, in the spelling the wire uses: the Go struct is
-    // read for the same list (`COORDINATOR_INTENT_KEYS`) in the ee package's
-    // console-contract test.
-    expect(Object.keys(first ?? {}).sort()).toEqual([...COORDINATOR_INTENT_KEYS].sort())
+    // Every key of the shape, in the spelling the wire uses -- read off the
+    // *document*, because the decoded record is the camelCase this console
+    // draws from. The Go struct is read for the same three lists in the ee
+    // package's console-contract test.
+    const wireRecord = (INTENTS.repos[0]?.intents[0] ?? {}) as Record<string, unknown>
+    expect(Object.keys(wireRecord).sort()).toEqual([...COORDINATOR_INTENT_KEYS].sort())
     expect(Object.keys(INTENTS.repos[0] ?? {}).sort()).toEqual([...COORDINATOR_REPO_INTENTS_KEYS].sort())
     expect(Object.keys(INTENTS).sort()).toEqual([...COORDINATOR_INTENTS_KEYS].sort())
+    // ...and the decoded record has every one of them, under this console's own
+    // spelling: `declared_by` is the one key the two spellings differ on, and
+    // that is on purpose (`declaredBy` is the JavaScript name, the wire keeps
+    // the record's).
+    expect(Object.keys(first ?? {}).sort()).toEqual(
+      ['at', 'branch', 'declaredBy', 'files', 'id', 'release', 'services'],
+    )
   })
 
   it('reads a declaration that names no branch and no release as absent, and a quiet repository as empty', () => {
@@ -2142,15 +2151,21 @@ describe('the declared intents document (coordinator v2 C4)', () => {
       repos: [
         {
           repo: 'owner/repo-a',
-          provider: null,
+          provider: '',
           intents: [{ id: 'a1b2c3d4', declared_by: 'person-1', at: '2026-11-02T05:00:00Z', branch: null, release: null, files: [], services: [] }],
         },
       ],
     }
     const view = decoded(nulled)
-    expect(view.repos[0]?.provider).toBe('')
     expect(view.repos[0]?.intents[0]?.branch).toBe('')
     expect(view.repos[0]?.intents[0]?.release).toBe('')
+    // `provider` is required and is refused when it is `null`, which `branch`
+    // and `release` are not: those two are `omitempty` and `optionalText`'s
+    // reading of an absent or null one is the house's (the contract's own
+    // "absent means the CLI had nothing to say"), while this key is written
+    // even when it is empty and a null in its place is a shape this build does
+    // not know.
+    expect(decodeCoordinatorIntents({ repos: [{ repo: 'owner/repo-a', provider: null, intents: [] }] }).ok).toBe(false)
   })
 
   it('ignores a key no field of the document is, and refuses the ones a record must carry', () => {
@@ -2162,11 +2177,14 @@ describe('the declared intents document (coordinator v2 C4)', () => {
     // record must carry: a declaration with no record of who made it, no id to
     // name it by, or no lists at all is a document this console cannot draw.
     const record = INTENTS.repos[0]?.intents[0] ?? {}
-    const only = (patch: Record<string, unknown>): unknown => ({
-      repos: [{ repo: 'owner/repo-a', provider: 'github', intents: [{ ...record, ...patch }] }],
+    // `only` takes the record *whole*, so a key deleted from it really is gone
+    // -- a patch spread over the original would put it back.
+    const only = (full: Record<string, unknown>): unknown => ({
+      repos: [{ repo: 'owner/repo-a', provider: 'github', intents: [full] }],
     })
+    const withField = (patch: Record<string, unknown>): Record<string, unknown> => ({ ...record, ...patch })
     for (const key of ['id', 'declared_by', 'at', 'files', 'services']) {
-      const stripped = { ...record } as Record<string, unknown>
+      const stripped = withField({})
       delete stripped[key]
       expect(refusal(only(stripped))).toMatchObject({
         name: 'missing',
@@ -2176,19 +2194,19 @@ describe('the declared intents document (coordinator v2 C4)', () => {
     // A field the record does carry of the wrong type is refused by name rather
     // than read as nothing, which is what keeps a number in `declared_by` from
     // reaching a screen.
-    expect(refusal(only({ declared_by: 42 }))).toMatchObject({
+    expect(refusal(only(withField({ declared_by: 42 })))).toMatchObject({
       name: 'not-a-string',
       field: 'repos[0].intents[0].declared_by',
     })
-    expect(refusal(only({ files: 'src/a.go' }))).toMatchObject({
+    expect(refusal(only(withField({ files: 'src/a.go' })))).toMatchObject({
       name: 'not-an-array',
       field: 'repos[0].intents[0].files',
     })
-    expect(refusal(only({ files: [7] }))).toMatchObject({
+    expect(refusal(only(withField({ files: [7] })))).toMatchObject({
       name: 'not-a-string',
       field: 'repos[0].intents[0].files[0]',
     })
-    expect(refusal(only({ at: 'yesterday' }))).toMatchObject({
+    expect(refusal(only(withField({ at: 'yesterday' })))).toMatchObject({
       name: 'not-a-timestamp',
       field: 'repos[0].intents[0].at',
     })
