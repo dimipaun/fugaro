@@ -1011,35 +1011,12 @@ func decodeReviewFloor(raw json.RawMessage) (map[rigor.Mode][]policy.Level, erro
 	return floor, nil
 }
 
-// ValidVerifierAccounts checks the node's verifier list, entry by entry: each
-// one the bare address a Google ID token's email claim carries, and never one
-// of the IAM member spellings (user:, serviceAccount:) the installation's
-// launcher, operator and budget-admin lists are written with.
-//
-// The distinction is the whole rule rather than a style (C3.9g3, D1068): the
-// service matches this list against the claim the caller's ID token verified,
-// not against an IAM binding, so an entry written as a member spelling admits
-// nobody — a list the operator believes names a verifier and that admits no
-// caller at all. Refusing it here names the entry where the operator can see
-// it, which is the point of validating the node rather than trusting it: the
-// node is hand-writable, and the operator's own file is where the list is
-// written.
-//
-// Exported for the one caller outside this package that has to apply it: the
-// local config's loader, whose top-level verifier_accounts travels to this
-// node, so the load and the publish cannot disagree about what an entry means.
+// ValidVerifierAccounts holds the node's verifier list to policy.ValidVerifierAccounts,
+// the one rule the local config's loader shares: it lives in internal/policy
+// because the loader cannot import this package without a cycle in the live
+// tests of internal/backend/gcp.
 func ValidVerifierAccounts(accounts []string) error {
-	for i, addr := range accounts {
-		at := fmt.Sprintf("projectpolicy: verifier_accounts[%d]", i)
-		if strings.Contains(addr, ":") {
-			return fmt.Errorf("%s: %q is an IAM member spelling, and a verifier is not an IAM binding: an entry is the bare address a Google ID token's email claim carries (for example fugaro-coordinator@<gcp-project>.iam.gserviceaccount.com), never \"user:%s\" or \"serviceAccount:%s\"", at, addr, addr, addr)
-		}
-		local, domain, ok := strings.Cut(addr, "@")
-		if !ok || local == "" || domain == "" || strings.Contains(domain, "@") || strings.ContainsAny(addr, " \t\r\n") {
-			return fmt.Errorf("%s: %q is not an email address: an entry is the bare address a Google ID token's email claim carries (for example fugaro-coordinator@<gcp-project>.iam.gserviceaccount.com)", at, addr)
-		}
-	}
-	return nil
+	return policy.ValidVerifierAccounts(accounts)
 }
 
 // validCloneURLs checks the clone_urls block, entry by entry: each key a

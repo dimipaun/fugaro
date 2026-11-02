@@ -33,7 +33,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -1674,7 +1673,7 @@ func (c *Config) validate() error {
 	// address an ID token's email claim carries — would be a list the operator
 	// believes names a verifier and that admits nobody. The publish holds the
 	// node to the same function, so the file and the node cannot disagree.
-	if err := projectpolicy.ValidVerifierAccounts(c.VerifierAccounts); err != nil {
+	if err := policy.ValidVerifierAccounts(c.VerifierAccounts); err != nil {
 		bad("%v", err)
 	}
 	for repo, r := range c.Repos {
