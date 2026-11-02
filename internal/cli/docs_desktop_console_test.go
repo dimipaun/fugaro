@@ -398,6 +398,10 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}),
 		reflect.TypeOf(planStatusTotals{}),
+		// §6.17, the jobs-free totals read (CLI 0.15.0).
+		reflect.TypeOf(summaryDoc{}),
+		reflect.TypeOf(summaryRepo{}),
+		reflect.TypeOf(summaryTotals{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -617,6 +621,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
 		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
+		// §6.17, the same three shapes as the test above (CLI 0.15.0).
+		reflect.TypeOf(summaryDoc{}), reflect.TypeOf(summaryRepo{}),
+		reflect.TypeOf(summaryTotals{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -923,6 +930,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// ones, which this command carries and `plan graph` does not — are checked
 	// against this constructor like any other command's.
 	"plan status": newPlanStatusCmd,
+	// §6.17 documents the jobs-free totals read (CLI 0.15.0). Like §6.11, the
+	// console does not spawn it yet -- the Project, Coordinator and Spend
+	// screens are the task that follows -- but the document describes its
+	// flags, so they are checked against this constructor like any other
+	// command's.
+	"runs summary": newRunsSummaryCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
