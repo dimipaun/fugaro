@@ -444,7 +444,14 @@ the list is what an operator writes, and the path that reads it is new:
   (`internal/cli/sharedcfg.go:204`), where `bitbucket_api_roots` and `review_floor` sit for the same reason,
   because a launcher who could write this list could admit its own address to the verify route. Each entry
   is a bare address (the `email` claim this list is matched against), never an IAM
-  member spelling. One config edit, the same publication the owner already makes, and no second command.
+  member spelling. **A config that is silent about the list keeps what is published, and an explicit empty
+  one clears it**: one rule with two writers, because the list reaches the service by two paths — the node
+  (`fugaro update`'s policy stage) and the service's own variable (the same run's credentials stage, §9) —
+  and a machine whose config predates the key must neither publish a node without it nor render the
+  variable null, which would empty a route another machine set up. So `verifier_accounts:` absent takes
+  what the node carries, `verifier_accounts: []` clears the list (the node is then published without the
+  key, exactly as an installation that never set one), and there is no third spelling. One config edit, the
+  same publication the owner already makes, and no second command.
 
 ### 5.5 What the audit line says
 
@@ -804,15 +811,23 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   sets the field therefore starts the same service it starts today, with a route that refuses every caller,
   rather than one that refuses to start; Check 96's "the seven names the config builder reads" stays true.
   **Where that value comes from is answered, and it costs the upgrade no operator step** (**D1075**,
-  answered by the owner on 2026-11-01; [reconciliation.md](reconciliation.md) §3): the verifier list is
-  **derived** from the published project policy `fugaro update` already reads — the node's top-level
-  `verifier_accounts`, copied from the local configuration by update's own policy stage (C3.9g3) — the source
-  `internal/infra/tfvars.go`'s `Credentials()` (`:289`) and `CredentialsJobAccounts` (`:343`) already read —
-  so naming verifiers is the publication the owner already makes and not a new act. Nothing is added to the
-  upgrade for it: no command, no flag and no second local configuration file, and an installation whose
-  published policy names no verifier keeps the variable null and the route unreachable while the service
-  starts as it does today. The two readings the answer rejects — a second, unpublished local configuration,
-  or a value derived from the coordinator's deployment — are stated there with their costs.
+  answered by the owner on 2026-11-01 and re-read on 2026-11-02, when he ruled the key stays published and
+  the installation reads it; [reconciliation.md](reconciliation.md) §3): the list is a **new top-level key
+  of the published policy node**, `verifier_accounts`, written from the local configuration by update's own
+  policy stage (C3.9g3). It is a field this slice adds, and not a value **derived** from a field that
+  already existed: the node's whole key set (`internal/projectpolicy/policy.go:269`–`:276`) holds no
+  identity, which is why the reading that would have avoided a new key has nothing to stand on. The
+  service's variable is built by the same run from that node: the update's credentials stage
+  (`internal/cli/init_credentials.go`) reads it and hands the list to `internal/infra/tfvars.go`'s
+  `Credentials()` (`:289`), which takes the local configuration's own list when it states one and the node's
+  otherwise — the keep rule §5.4 states, applied here because the credentials stage runs before the policy
+  stage (`internal/cli/init_stages.go:168`–`:187`): what it reads is the node the previous `fugaro update`
+  left, which is exactly where a second operator's machine finds a list its own config does not carry. Nothing
+  is added to the upgrade for it: no
+  command, no flag and no second local configuration file, and an installation whose published policy names
+  no verifier keeps the variable null and the route unreachable while the service starts as it does today.
+  The two readings the answer rejects — a second, unpublished local configuration, or a value derived from
+  the coordinator's deployment — are stated there with their costs.
 - **An installation already opted in converges with an ordinary `fugaro update`** for everything this
   slice adds to *code*: the classes, the routes, the refusals, the audit purposes. The service's image is
   re-pinned by `fugaro update` already.
@@ -837,13 +852,21 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   (`init_policy_migrate.go:578`) — because the operator is the one who can fix a misspelling
   (`internal/projectpolicy/policy.go:261`). So **once a verifier is published, every teammate on an older
   CLI cannot launch until they upgrade**, which is why its publisher **omits the key when the list is
-  empty**: an installation that does not use the reviewer publishes no member at all, and its node is byte
+  empty** — empty meaning the effective list of §5.4, this config's own when it states one and the node's
+  otherwise: an installation that does not use the reviewer publishes no member at all, and its node is byte
   for byte what it was before the key existed (`internal/cli/project_cmd.go:797`–`:798`, the rule `review_floor`
-  already follows). The release notes carry that as an operator step — **`### For operators`: upgrade every
-  launcher before naming a verifier** — and an installation that names none takes no step at all. **No
+  already follows). **How that older reader is tested is stated rather than implied**: `knownTopLevelKeys`
+  holds the key today, so a test cannot reach the older reader by picking a different key — it decodes the
+  fixture node **twice**, once under the current key set and once under a **copy of the list as it stood
+  before this key** — which is why `Decode` (`internal/projectpolicy/policy.go:696`) reads its key set
+  through a parameter the package's own test can pass, the loop at `:723` being where the list is built —
+  and the second decode is the node an older CLI refuses and an older runner logs. The release notes carry
+  that as an operator step — **`### For operators`: upgrade every launcher before naming a verifier** — and
+  an installation that names none takes no step at all. **No
   `Version` bump**: `Version` refuses a node for a reader that must **enforce** a key
   (`internal/projectpolicy/version.go:36`–`45`), nothing enforces this one from the node (the service reads
-  its own **environment**, C3.9g1), and the key's own refusal already names the upgrade as the move. `schemas/` gains nothing: the policy node is not one of the JSON
+  its own **environment**, C3.9g1), and the key's own refusal already names the upgrade as the move.
+  `schemas/` gains nothing: the policy node is not one of the JSON
   Schemas there, and its members are held by `internal/projectpolicy`'s own decode. Where the review work
   adds fields, E6 is that work's rule.
 - **The review variant's own environment is CSR7's, and this slice asks for one change in it**: under ruling

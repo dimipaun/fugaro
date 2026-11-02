@@ -3,7 +3,7 @@
 **Nothing here is approved to build, and every decision is answered.** The owner answered
 [reconciliation.md](reconciliation.md) §3's **D1062–D1075** on 2026-11-01 — D1062–D1071 as recommended,
 D1072 as 0.16.0, D1063 as amended by that day's ruling O1, D1073/D1074 as the review added them, and D1075 as
-the published policy's derivation — so
+the published policy's new top-level key, `verifier_accounts`, copied from the local configuration — so
 each task below is written to an answer and not to a recommendation. Each
 task touches at most 10 files, names its tests, starts with a red step, and ends at the gates below.
 [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md) keeps
@@ -56,7 +56,7 @@ them and renames none of them.
 | 1 | C3.9b | C3.9a, and **CSR1 merged** (the set it serves) |
 | 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074) |
 | 3 | C3.9f | C3.9a, C3.9c, C3.9e (the frame the verify route recomputes) |
-| 4 | C3.9g1, C3.9g2, C3.9g3 | C3.9e, C3.9f; the three are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1), and g3 is g1's source and carries the release's one `### For operators` entry (see C3.9g3); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
+| 4 | C3.9g1, C3.9g2, C3.9g3 | C3.9e, C3.9f; the three are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1), g3 is g1's source and carries the release's one `### For operators` entry (see C3.9g3), and g2's stage reads the node g3 publishes to fill the variable g1 defines (see the two); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
 
 ## Where each decision lands
 
@@ -68,7 +68,7 @@ them and renames none of them.
 | D1065 which token set | C3.9b | D1071 who generates the bytes | C3.9d |
 | D1066 the repository, and the table | C3.9a (the table), C3.9b (the mint's use) | D1072 the release slot | §"Release slot" |
 | D1067 what is signed | C3.9e | D1073 the framed message | C3.9e (built), C3.9f (recomputed) |
-| D1074 one signature per run, and U7 | C3.9e | D1075 the verifier list's value (**answered**: the published policy) | C3.9g3 (the published field), C3.9g1 (the variable and the type), C3.9g2 (the wiring) |
+| D1074 one signature per run, and U7 | C3.9e | D1075 the verifier list's value (**answered**: the published policy) | C3.9g3 (the published field and the keep rule), C3.9g1 (the variable, the type and the writer), C3.9g2 (the wiring, and the stage that reads the node) |
 
 ## Where each finding lands
 
@@ -490,14 +490,20 @@ for review size, not for sequencing.
   (`deploy/terraform/gcp/modules/installation/credentials.tf:398`–`:448`) **only when the field is set** —
   which is what the two halves of §9's claim rest on: an installation that never sets it renders the same
   seven names and its plan is byte-for-byte unchanged, while the fixture that does set it plans **eight**.
-- **The type and the writer.** `CredentialsServiceSpec` gains the field
-  (`internal/infra/tfvars.go:180`) and `Credentials()` fills it (`:289`) from the configuration it already
-  reads the service's other fields from — the source `fugaro update` holds and publishes as the policy, the
-  same one `CredentialsJobAccounts` (`:343`) reads the job table from — so the value is not an operator's
-  new act. **D1075 is answered** (2026-11-01) as exactly this derivation — the published policy, so **no
-  operator step** — and it records the two rejected readings with their costs. **The field itself is C3.9g3's**, below: it is
-the node key this bullet's writer reads, and this task's nine files leave no room under the ten a task may
-touch here (`:8`).
+- **The type and the writer, and where the value comes from.** `CredentialsServiceSpec` gains the field
+  (`internal/infra/tfvars.go:180`) and `Credentials()` fills it (`:289`) from the **published node** — the
+  key `verifier_accounts` is C3.9g3's, below — so the value is still not an operator's new act: the local
+  configuration is where the owner edits it, `fugaro update`'s policy stage publishes it, and the same
+  run's credentials stage reads the node back and hands the list to this writer (that read and its call
+  site are C3.9g2's, below; this task owns the variable, its type and its writer). The writer takes the
+  **configuration's own list when it states one and the node's otherwise** — the keep rule, stated once in
+  `internal/localcfg` (C3.9g3) because two writers apply it, this one and the publisher — so a second
+  operator whose config predates the key neither renders this variable null, which would empty a route the
+  owner set up from another machine, nor republishes the node without it. **D1075 is answered**
+  (2026-11-01, and re-read by the owner on 2026-11-02: the key stays published, as the **new top-level key
+  `verifier_accounts`, copied from the local configuration** and not a value derived from a field that
+  already existed), so **no operator step** — the field is additive to the node, and it records the two
+  rejected readings with their costs.
 - **One allow-list grows by exactly one, and it refuses a name it does not know**:
   `internal/infra/tf/cover.go`'s `credentialsServiceEnv` (`:792`), which is what one `fugaro update`
   confirmation covers and which must name the entry the module can now render.
@@ -510,39 +516,45 @@ touch here (`:8`).
   empty value is an empty verifier list. Check 96's own sentence — "the seven names the config builder
   reads" — stays true, and so does the guard that reads it
   (`internal/cli/docs_check96_test.go:436`–`:437`).
-- **The tests that hold it, and why they move together.** `TestGoldenCredentialsServiceCarriesItsSevenNames`
-  (`internal/infra/tf/credentials_golden_test.go:95`) compares the golden plan's environment to
-  `credentialsServiceEnv` in **both** directions, so the fixture that sets the field
-  (`internal/infra/testdata/installation-credentials.tfvars.json`) makes the plan carry eight names and the
-  test's `want` map — and the test's own name, which counts them, from
-  `TestGoldenCredentialsServiceCarriesItsSevenNames` to `TestGoldenCredentialsServiceCarriesItsNames` —
-  grows with it. The golden plan
+- **The tests that hold it, and why they move together.** `TestGoldenCredentialsServiceCarriesItsNames` —
+  today `TestGoldenCredentialsServiceCarriesItsSevenNames`
+  (`internal/infra/tf/credentials_golden_test.go:95`), the name this change renames because its `want` map
+  counts the names the plan carries — compares the golden plan's environment to `credentialsServiceEnv` in **both**
+  directions, so the fixture that sets the field
+  (`internal/infra/testdata/installation-credentials.tfvars.json`) makes the plan carry eight names, and the
+  test's `want` map and its name grow with it. The golden plan
   (`internal/infra/tf/testdata/golden/installation-credentials.plan.json`) is regenerated with
   `scripts/gen-golden-plans.sh` rather than hand-edited. The tftest's exact env map
   (`deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`, the `assert` that holds the whole
   environment as a map and whose message and comment today refuse an eighth entry) gains the name — and the
   sentence that counts the names — in the run that **sets** the field, while its unset run keeps its own
   `length(…) == 7` assertion — the byte-for-byte half held as a test rather than asserted in prose.
-- **Files (9):** `deploy/terraform/gcp/modules/installation/variables.tf` (the variable),
+- **Files (10):** `deploy/terraform/gcp/modules/installation/variables.tf` (the variable),
   `deploy/terraform/gcp/roots/installation/variables.tf` (its pass-through),
   `deploy/terraform/gcp/modules/installation/credentials.tf` (the conditional `env` entry),
   `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` (the exact map, and the unset
-  run's seven), `internal/infra/tfvars.go` (the field and the writer), `internal/infra/tf/cover.go` (the
-  allow-list), `internal/infra/tf/credentials_golden_test.go` (the map, and the test's name),
-  `internal/infra/testdata/installation-credentials.tfvars.json` (the fixture that sets the field) and
+  run's seven), `internal/infra/tfvars.go` (the field, the writer and the value it takes: this config's
+  list, else the published one), `internal/infra/tf/cover.go` (the allow-list),
+  `internal/infra/tf/credentials_golden_test.go` (the map, and the test's name),
+  `internal/infra/installation_test.go` (the writer's own cases, beside the ones `Credentials()` already
+  has: the configuration's list when it states one, the published list when it states none, and no entry at
+  all when the effective list is empty), `internal/infra/testdata/installation-credentials.tfvars.json`
+  (the fixture that sets the field) and
   `internal/infra/tf/testdata/golden/installation-credentials.plan.json` (regenerated).
 - **Red step:** `TestGoldenCredentialsServiceCarriesItsNames` fails while the cover's allow-list still holds
-  seven names and the plan carries eight, and the tftest's exact-map assertion fails while the module renders
-  seven where the run's variables set the field.
+  seven names and the plan carries eight, the tftest's exact-map assertion fails while the module renders
+  seven where the run's variables set the field, and the writer's own cases fail while `Credentials()` reads
+  the configuration alone.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/infra/tf/ -run 'Credentials' -count=1`; `go test -tags terraform
+  ./internal/infra/ -run 'Credentials' -count=1`; `go test -tags terraform
   ./internal/infra/...`; and `terraform fmt -check -recursive deploy/terraform` with the installation root's
   own `validate` and `test`, which is where the tftest runs.
 
 ## C3.9g3. The published field the verifier list comes from (D1063, D1070, F2)
 
-C3.9g1's source, and the one field this slice adds to a published format. C3.9g1's nine files leave the
-ten-file rule (`:8`) no room for it, so the field is a task of its own; the three land as **one pull request**, for
-the reason C3.9g1 gives for g2 being one change with g1.
+C3.9g1's source, and the one field this slice adds to a published format. C3.9g1's ten files leave the
+ten-file rule (`:8`) no room for the key and the rule it needs, so the field is a task of its own; the three
+land as **one pull request**, for the reason C3.9g1 gives for g2 being one change with g1.
 
 - **What the operator writes, and where it is published.** The local configuration's top-level
   `verifier_accounts` — the shape `bitbucket_api_roots` already has (`internal/localcfg/localcfg.go:184`),
@@ -559,6 +571,18 @@ the reason C3.9g1 gives for g2 being one change with g1.
   `operators` and `budget_admins` are written with, which are IAM bindings rather than identity claims
   (`internal/infra/tfvars.go:59`). A misspelt entry is refused where the operator can see it, rather than
   read as a list that admits nobody.
+- **A config that is silent keeps the node's list, and an explicit empty one clears it — one rule, two
+  writers.** The rule is `internal/localcfg`'s, beside the field, because **two** writers apply it and they
+  are in two packages: this task's publisher (`buildProjectPolicy`, beside `keepReviewFloor` at
+  `internal/cli/project_cmd.go:815`, which is the same shape for the same reason — a value the node is the
+  only place for) and C3.9g1's tfvars writer, which would otherwise render the variable null from a config
+  that merely predates the key. So `verifier_accounts` **absent** takes what the node carries — the node is
+  published unchanged, and the service's variable keeps its list; `verifier_accounts: []` **clears** it —
+  the key leaves the node (the omit-when-empty rule below) and the variable goes back to null, which is how
+  a route is turned off on purpose; and there is no third spelling, because there is nothing else a
+  "removal" could mean. The pair is held by `TestVerifierAccountsIsKeptWhenTheConfigIsSilent` and
+  `TestVerifierAccountsIsDroppedOnAnExplicitEmptyList` (C3.9g3's own node tests, below) and by
+  `internal/cli/init_credentials_test.go`'s two cases on the service's side (C3.9g2).
 - **No `Version` bump, and a skew that is the CLI's and the operator's.** The key is **top-level**, so it is
   not a member inside a block (a newer member is what a bump is for, `internal/projectpolicy/version.go:36`–`45`),
   and `Version` stays 4: that field refuses a node for a reader that must **enforce** a key, and nothing
@@ -572,14 +596,24 @@ the reason C3.9g1 gives for g2 being one change with g1.
   (`refuseUnknownPolicyKeys`, `project_cmd.go:2823`) and the migration (`refuseMigrationUnknownKeys`,
   `internal/cli/init_policy_migrate.go:578`) — because the operator is the one who can fix a misspelling
   (`internal/projectpolicy/policy.go:261`: "the runner logs them … the CLI refuses them"). **So once a
-  verifier is published, every teammate on an older CLI cannot launch until they upgrade**, and the task's
-  test holds **both** postures rather than the tolerant one alone
-  (`TestVerifierAccountsIsToleratedByTheRunnerAndRefusedByTheCLI`: the runner decodes the node and warns,
-  the launch gate refuses it and names the upgrade).
-- **The key is omitted when the list is empty, and that is what keeps the others whole.** An installation
-  that does not use the reviewer publishes **no member at all**, so its node is byte for byte what it was
-  before the key existed — the rule `review_floor` already follows (`internal/cli/project_cmd.go:797`–`:798`:
-  "A project that sets none publishes no member at all") — and no teammate of it meets the refusal above.
+  verifier is published, every teammate on an older CLI cannot launch until they upgrade.** **What that
+  older reader is, in a test, is said rather than implied**: `knownTopLevelKeys` holds this key today
+  (`internal/projectpolicy/policy.go:269`–`:276`), so no test can reach the older reader by writing a key
+  the package does not model — it decodes the **same fixture node twice**, once under this key set and once
+  under a **copy of the list as it stood before this key**. That is why this task's files include the one
+  change that makes the key set a parameter of `Decode` (`:696`, the loop at `:723` building
+  `UnknownKeys`): `TestVerifierAccountsIsUnknownToAReaderThatPredatesIt` asserts this binary reads the
+  fixture with no `UnknownKeys` at all, while the pre-key reader lists `verifier_accounts` — the exact node
+  every CLI reader refuses (`refuseUnknownPolicyKeys`, the launch gate) and the runner logs. The suffix
+  names no new mechanism: the refusal for a non-empty `UnknownKeys` is already held by each of those
+  readers' own tests.
+- **The key is omitted when the effective list is empty, and that is what keeps the others whole.** An
+  installation that does not use the reviewer publishes **no member at all**, so its node is byte for byte
+  what it was before the key existed — the rule `review_floor` already follows
+  (`internal/cli/project_cmd.go:797`–`:798`: "A project that sets none publishes no member at all") — and no
+  teammate of it meets the refusal above. "Effective" is the rule above: a config that states none takes the
+  node's, so deleting the key from a config does **not** empty the node or the route; an explicit empty list
+  is what does.
   The release's `### For operators` therefore carries one entry, named here so the release cannot ship
   without it: **upgrade every launcher (every machine that runs `fugaro run`) before naming a verifier — an
   older CLI refuses a policy node that carries `verifier_accounts`.**
@@ -592,24 +626,33 @@ the reason C3.9g1 gives for g2 being one change with g1.
 - **`schemas/` gains nothing.** The policy node is not one of the JSON Schemas there (they pin
   `fugaro.yaml` and the project layer, the task, the result, the recipe and the settings), and its members
   are held by `internal/projectpolicy`'s own decode, which is where the key is added.
-- **Files (9):** `internal/localcfg/localcfg.go` (the member and its shape check),
-  `internal/projectpolicy/policy.go` (the key, the member list at `:269`–`276` and its validation),
-  `internal/cli/project_cmd.go` (the node is built here: the struct literal at `:819`, with the copy beside
-  `bitbucket_api_roots` at `:829`), `internal/cli/init_policy_publish.go` (the drift list that names a
-  member the node is missing, `policyConfigDrift`, `:61`), `internal/cli/init_policy_migrate.go` (the
-  migration's own copy, the shape `bitbucketAPIRootsKey` has: the key at `:514`, the copy at `:560` and the
-  list of members it reports as derived at `:499`), `internal/cli/sharedcfg.go` (`sharedForbidden`),
+- **Files (10):** `internal/localcfg/localcfg.go` (the member, its shape check and the one rule both
+  writers apply), `internal/localcfg/localcfg_test.go` (the member's decode and the rule's two cases),
+  `internal/projectpolicy/policy.go` (the key, the member list at `:269`–`276`, its validation, and `Decode`'s
+  key set as a parameter), `internal/projectpolicy/policy_test.go` (the divided test: the fixture under this
+  key set and under the pre-key copy), `internal/cli/project_cmd.go` (the node is built here: the struct
+  literal at `:819`, the copy beside `bitbucket_api_roots` at `:829` and the keep rule beside
+  `keepReviewFloor` at `:815`; the node reads C3.9g2's stage reuses are here too — `readPolicyNode` `:449`,
+  `publishedPolicyOf` `:479`), `internal/cli/init_policy_publish.go` (the drift list that names a member the
+  node is missing, `policyConfigDrift`, `:61`), `internal/cli/init_policy_migrate.go` (the migration's own
+  copy, the shape `bitbucketAPIRootsKey` has: the key at `:514`, the copy at `:560` and the list of members
+  it reports as derived at `:499`), `internal/cli/sharedcfg.go` (`sharedForbidden`),
   `internal/settings/registry.go` (the key's row: without it `TestRegistryCoversEveryConfigField`,
-  `internal/settings/registry_test.go:98`, is red for any new `localcfg.Config` key),
-  `internal/projectpolicy/policy_test.go` and `internal/cli/init_policy_publish_test.go` (the round trip,
-  the two reader postures, the omitted-when-empty node and the copy).
-- **Red step:** the round-trip test fails while the config's member has no node key to land in, the
-  settings registry is red until the key has its row, and the copy test fails while the node is built
-  without it.
-- **Tests:** `GOFLAGS=-p=2 go test ./internal/projectpolicy/ -count=1`; `GOFLAGS=-p=2 go test
+  `internal/settings/registry_test.go:98`, is red for any new `localcfg.Config` key), and
+  `internal/cli/project_policy_test.go` (the node's own tests, where `review_floor`'s are —
+  `TestVerifierAccountsIsPublishedAndKeptWhenTheConfigIsSilent`,
+  `TestVerifierAccountsIsDroppedOnAnExplicitEmptyList`, `TestSharedConfigRefusesTheVerifierList` and the
+  drift that names the member when the node lacks it — so this task opens no test file the floor's own
+  tests do not already use).
+- **Red step:** the round-trip test fails while the config's member has no node key to land in,
+  `TestVerifierAccountsIsKeptWhenTheConfigIsSilent` fails while a silent config publishes a node without
+  it, the settings registry is red until the key has its row, and the drift case fails while a node missing
+  the member is not named.
+- **Tests:** `GOFLAGS=-p=2 go test ./internal/projectpolicy/ ./internal/localcfg/ -count=1` (the node's
+  round trip, the divided older-reader test and the rule's two cases); `GOFLAGS=-p=2 go test
   ./internal/settings/ -count=1` (the registry row, and the test that counts the config's keys); `GOFLAGS=-p=2
-  go test ./internal/cli/ -run 'Policy|Publish|Shared' -count=1` (the node build, the copy, the omitted key
-  and the shared file's refusal).
+  go test ./internal/cli/ -run 'Policy|Publish|Shared' -count=1` (the node build, the keep and clear cases,
+  the drift, the copy, the omitted key and the shared file's refusal).
 
 ## C3.9g2. The `credentials_serve` wiring, the amendment, the docs, and the named live check (D1063, D1070, F2)
 
@@ -624,19 +667,38 @@ C3.9g1's half on the CLI side, and the documents. It lands with C3.9g1, for the 
   they describe the names this command **requires**, which are still the seven `credentials.tf` always sets;
   the comment that says an empty variable is "a deployment that is wrong rather than a deployment with a
   default" (`:277`–`:279`) gains the one sentence it now needs, that the verifier list is the name the
-  service reads as optional and the rest are not. Three tests hold it: `TestCredentialsServeStartsWithoutTheVerifierList`
+  service reads as optional and the rest are not. Three tests hold it:
+  `TestCredentialsServeStartsWithoutTheVerifierList`
   is the new one — the service binds a port with the name absent, and the route answers the class's refusal
   rather than the process failing — `TestCredentialsServeRefusesWithoutItsEnvironment`
   (`internal/cli/credentials_serve_test.go:100`) keeps the refusal for each of the **seven**, and does
   **not** require the new name, and `TestCredentialsServiceEnvIsTheDeploymentsOwn` (`:386`) compares the
   module's `FUGARO_*` names against the **required names plus the optional one**, in both directions.
+- **The update's credentials stage is where the node's list reaches the service, and this is the file that
+  lets g1 have it.** `internal/cli/init_credentials.go`'s `prepare` (`:424`) reads the shared node through
+  the two functions this package already has for it — `readPolicyNode` (`internal/cli/project_cmd.go:449`)
+  and `publishedPolicyOf` (`:479`), both C3.9g3's and **reused unchanged** — takes `verifier_accounts` off
+  the decoded node, and hands it to `Credentials()`. The database client is the stage's own
+  (`budgetDBFor`, the one `requireCredsRules` reads the rules marker with), and the read is **fail-closed**:
+  a node this Fugaro cannot read is refused by `publishedPolicyOf` and the stage stops rather than writing a
+  tfvars from a value it could not read. The stage runs **before** the policy stage
+  (`init_stages.go:168`–`:187`, the credentials append at `:175` and the policy append at `:187`),
+  so what it reads is the node the previous `fugaro update` published — which is exactly the case this rule
+  is for: a second operator's config states no list, and the node is where it is. Two cases of
+  `internal/cli/init_credentials_test.go` hold it, beside
+  `TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService` (`:882`), which is the same shape for the URL:
+  `TestCredentialsServiceKeepsThePublishedVerifierList` (the config is silent, the node carries a list, the
+  tfvars and the plan's env entry carry it) and `TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne`
+  (`verifier_accounts: []` writes no entry, so the variable is null again and the route unreachable).
 - **`fugaro update` owes nothing new**, and the release notes say so rather than leaving it to be inferred:
   no Terraform for the key, no new container, no new grant, and nothing beyond the service's own documented
   `creds set` for the key's bytes (§9 of [spec.md](spec.md)). The variable defaults to null, so an
   installation that never sets it is untouched, and the service reads that name as an **optional** value, so
   the same installation starts with an **empty verifier list** — a route that refuses every caller — rather
   than a process that refuses to start; whoever wants the verify route reachable gets the value from
-  the published policy and runs the one command, which is the HARD RULE's shape.
+  the published policy and runs the one command, which is the HARD RULE's shape. The verifier list is the
+  one variable this stage fills from a **published** value rather than from the config alone, and it does so
+  by the rule g1 and g3 share: a config that states no list keeps the node's.
 - **The live-check register row is not this design's, and the check's file already exists as a stub.**
   `docs/gcp-live-checklist.md` is on the do-not-touch list of the release window in flight (0.15.0's while
   this was written, and 0.16.0's now that D1072 answers the slot), so **this design PR writes no register
@@ -647,21 +709,25 @@ C3.9g1's half on the CLI side, and the documents. It lands with C3.9g1, for the 
   Check 190 (the heading and its scope parentheses, the `NOT RUN` paragraph that carries no steps of its
   own, and the four sections after it) and §8's eleven steps one line each under §8's own numbering — so
   this task adds nothing to that file but the number it takes and the row it puts in the register.
-- **Files (4):** `internal/cli/credentials_serve.go` (the optional read, the config field and the one comment
+- **Files (6):** `internal/cli/credentials_serve.go` (the optional read, the config field and the one comment
   it needs), `internal/cli/credentials_serve_test.go` (the new start test, and the two the change touches),
+  `internal/cli/init_credentials.go` (the published-node read in `prepare` and the call that hands the list
+  to `Credentials()`), `internal/cli/init_credentials_test.go` (the two cases above),
   `docs/credentials-service/implementation-plan.md` (the two edits
   of §"The amendment the implementing pull request carries"), and `docs/c39-review-identity/live-check.md`
   (in this folder already, as the design's **stub** of the register row — its shape and §8's eleven steps
   one line each — which that task fills in with the number it takes at its merge; §8 of [spec.md](spec.md)
   is the check itself).
 - **Red step:** `TestCredentialsServeStartsWithoutTheVerifierList` fails while the name is one the config
-  requires — the process refuses to start with it absent — and `TestCredentialsServiceEnvIsTheDeploymentsOwn`
+  requires — the process refuses to start with it absent —
+  `TestCredentialsServiceKeepsThePublishedVerifierList` fails while the stage writes the tfvars from the
+  config alone, and `TestCredentialsServiceEnvIsTheDeploymentsOwn`
   fails while the module's names and the CLI's two lists disagree. The plan amendment has no red test of its
   own — it is prose in a file whose facts `TestPlanTestListsNamesOnlyTestsThatExist`
   (`internal/cli/docs_credentials_plan_tests_test.go`) parses, and which must stay green; the live check is
   red by being **NOT RUN** until CSR7 and CSR2 exist, which is the state the check itself records.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Backlog' -count=1 -timeout 40m`;
-  `GOFLAGS=-p=2 go test ./internal/cli/ -run 'CredentialsServe|CredentialsServiceEnv' -count=1`; and
+  `GOFLAGS=-p=2 go test ./internal/cli/ -run 'CredentialsServe|CredentialsServiceEnv|CredentialsService' -count=1`; and
   `GOFLAGS=-p=2 go test ./internal/cli/ -run 'PlanTestListsNamesOnlyTestsThatExist|DocsCredentials' -count=1`.
 
 ---
@@ -703,6 +769,8 @@ different reason has taken a wrong turn.
 | `internal/credsvc/bundle.go` | C3.9c, read by C3.9e/C3.9f | c: the kind, the key set, the accessor; the routes only call the accessor |
 | `internal/cli/credentials_serve.go` | C3.9a, C3.9e, C3.9g2 | a: the review set and the repository table; e: the create-only writer's wiring; g2: the verifier list's **optional** read and the config field, outside `credentialsServiceEnvNames`, which stays the seven required names |
 | `internal/cli/creds.go` | C3.9c, C3.9d | c: `creds ls` names the review-signing entry and its kind, and never a value; d: the `--generate` flag, the bytes generated in the process, the two-entry write and `creds set`'s help text. Different subcommands and different regions of the file, so the two edits do not collide — the row is here because a reader checking who owns a change in this file should not have to open both tasks |
+| `internal/cli/init_credentials.go` | C3.9g2, and C3.9g1's value | g2: the read of the published node in `prepare` and the call that hands `verifier_accounts` to `Credentials()`; g1 owns the writer that consumes it. The file is here because the value crosses the two: this is where the node's list becomes the tfvars, so a reader checking who decides the service's verifier list opens both tasks |
+| `internal/localcfg/localcfg.go` | C3.9g3, called by C3.9g1 | g3: the `verifier_accounts` member, its shape check and the one keep rule — this config's list when it states one, the published one otherwise — which g1's `Credentials()` and g3's `buildProjectPolicy` both call, so the rule is stated and tested once rather than twice |
 | `internal/credsvc/*_test.go` | many | each task adds its own file where it can; the four existing files it extends (`auth_test.go`, `sharedjobs_test.go`, `forward_test.go`, `bundle_test.go`) are named in the task |
 
 ## Live checks
@@ -739,4 +807,6 @@ created, enabled or deleted outside the sandbox.
   **one** entry from this work, and only for the installation that names a verifier: **upgrade every
   launcher before naming one** (C3.9g3's skew: an older CLI refuses a policy node carrying
   `verifier_accounts`). An installation that names none takes no step at all — the one variable C3.9g1 adds
-  is null by default, and C3.9g3's key is omitted when the list is empty.
+  is null by default, and C3.9g3's key is omitted when the effective list is empty — where "effective" is
+  the rule both writers apply: a config that states no list keeps the published one, so a list is cleared by
+  writing `verifier_accounts: []`, never by deleting the key.
