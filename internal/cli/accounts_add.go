@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 
@@ -134,17 +135,37 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// token written for it replaces the one in use, and the confirmation says
 	// so. It is read from the config as it was, before the edit above.
 	_, rotation := lc.ClaudeAccounts[name]
+	what := accountsAddWhat(after, name, profile, accountsAddBeyond(cmd.Context(), repos), rotation)
+	command := accountsAddCommand(name, repos, profile)
+	changed := yamledit.Changed(old, next)
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
 		Old:     old,
 		New:     next,
-		What:    accountsAddWhat(after, name, profile, accountsAddBeyond(cmd.Context(), repos), rotation),
+		What:    what,
 		Kind:    settingsDocLocal,
-		Command: accountsAddCommand(name, repos, profile),
+		Command: command,
 		Yes:     o.yes,
 	}); err != nil {
 		return err
+	}
+	// A file that was already what this command would write — a rotation
+	// re-run, the account declared and the profile serving it — returns from
+	// applySettingsEdit before its refusal and before its confirmation, and
+	// both are still owed here: the converge below reads the token from stdin,
+	// stores a new version of it project-wide and clears the account's mark,
+	// which is the write the refusal is about and the change the confirmation
+	// is about. A session writes nothing, --yes included (spec §2.4), and the
+	// marker fence comes first, as it does in applySettingsEdit.
+	if !changed {
+		if marker := agentMarker(os.Getenv); marker != "" {
+			return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
+				sel.Path, marker, what, command)
+		}
+		if err := confirmSettingsWrite(cmd, lc, sel.Path, o.yes, what); err != nil {
+			return err
+		}
 	}
 	if profile == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "no profile serves %s yet: this project's jobs do not select it until one does\n", name)
