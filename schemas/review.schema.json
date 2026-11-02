@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/review.schema.json",
+  "title": "Fugaro independent review artifact (review.json)",
+  "description": "The verdict of one independent review job, written to runs/<repo-slug>/<review-run>/artifacts/review.json with its signature beside it (review.json.sig) and its rendering (review.md) (docs/cloud-senior-review spec §2, D884). It is versioned and self-describing: a reader holding only this object can say which review of which pull request at which commit it is. The reviewer's own answer is the seven fields from verdict down to test_coverage; the runner writes the provenance around them and the signature covers the whole document (D892(a)).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "review_run", "created_at", "repository", "pr", "head_sha", "base", "reviewer", "verdict", "overview", "strengths", "issues", "security", "performance", "test_coverage", "mutation_checks"],
+  "properties": {
+    "schema_version": { "const": 1, "description": "The artifact format's version. A reader that does not know this number refuses the document rather than reading it as an older one, and a change to a field's meaning bumps it: the coordinator compares the review run's identity against what it published, so a document read wrongly is a review credited to the wrong commit." },
+    "review_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$", "description": "The review run's own id, minted by the launcher after the coding run's job ended. It is the nonce the coordinator checks -- a signature lifted from another review carries another id -- and one of the two claims the service frames the signature over." },
+    "created_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$", "description": "When the review was written, RFC 3339 in UTC, by the writer's own clock: a reader holding only this object can place the review in time without the run record travelling with it. The pattern is UTC and not merely an offset, because a reader comparing this against the record's own timestamps must not have to normalise zones it was never told about. It is the writer's claim and is not trusted alone -- the signature binds it with everything else." },
+    "repository": { "type": "string", "minLength": 1, "description": "The run's own slug, spelled the way its path is (runs/<slug>/<review-run>/...), so the coordinator compares like with like rather than a host's spelling against its own." },
+    "pr": { "type": "integer", "minimum": 1, "description": "The pull request this review is about. With repository and head_sha it makes the document a statement about ONE review of ONE pull request at ONE commit, and the verifier's checks compare exactly those." },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$", "description": "The commit the review read, as Git names an object: forty lowercase hex characters, or sixty-four for a SHA-256 repository. A review of an earlier commit does not approve the branch's current one, so the coordinator compares this against the head it holds -- and a reader that took a branch name, an abbreviated commit or a value differing only in case would be comparing two different objects as if they were one. The runner holds it to the same pattern, so an artifact the runner writes is never one this document refuses." },
+    "base": { "type": "string", "description": "The base branch the pull request targets, as the run read it. Provenance for a reader, compared by nothing: `main` is not the same branch in every repository, and the base can move under a review that was honest about the head." },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account", "model"],
+      "description": "Who wrote the review: the account the launcher named (a named Claude OAuth account), the model the review stage ran on, and its level's effort. The same three facts the run record carries for every stage, so a reader can tell a review run at low effort from one at high without reading the job's spec.",
+      "properties": {
+        "account": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "effort": { "type": "string", "minLength": 1, "description": "Absent when the run's level named no effort, which is the model's own default -- the meaning absence already has wherever a Fugaro setting spells an effort (config.LevelSetting's own omitempty, and config.Efforts' own rule that \"absent already means the model's own default\"). An empty string is refused rather than read as one: a claim nobody made is not the same as no claim, and only the second is true here. A present value is one of config.Efforts." }
+      }
+    },
+    "verdict": { "type": "string", "enum": ["ship", "fix first", "reject"], "description": "The review's own three words; a fourth is refused (D884). It is NOT the run record's two-word verdict (ship/changes): the artifact says what a reviewer thought, the record says what the run did about it, and the record's entry for this review carries tier: independent so a reader of the record can tell the two apart." },
+    "overview": { "type": "string", "description": "What the change does, in the reviewer's words, written for someone who has not read the diff." },
+    "strengths": { "type": "array", "items": { "type": "string" }, "description": "What the change does well. It is a list and not a paragraph so a reader can quote one, and it is asked for on purpose: a review that can only find faults is not evidence that the change was read." },
+    "issues": {
+      "type": "array",
+      "description": "What the reviewer asks to be fixed, in the reviewer's order. The vocabulary is the one the in-job review already uses -- severity from that spec, class from the closed set, and the three anchored axes -- so a reader that weighs findings already knows how.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "class", "file", "summary", "fix", "evidence"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["blocker", "major", "minor"] },
+          "class": { "type": "string", "enum": ["correctness", "performance", "security", "data_loss", "maintainability", "cosmetic"] },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1, "description": "A claim about the head the review read, which is why head_sha is recorded beside it: a reader that finds the file moved still knows which commit the line meant. Absent when the finding is not about a line." },
+          "summary": { "type": "string" },
+          "fix": { "type": "string", "description": "What to change. A finding without one is a complaint, and the whole point of this document is that a later run can act on it." },
+          "evidence": { "type": "string", "description": "What the reviewer read, quoted: the diff hunk, the call path, the test it ran. It is what makes the finding checkable by someone who was not there." },
+          "likelihood": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "impact": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "fix_cost": { "type": "integer", "minimum": 1, "maximum": 5 }
+        }
+      }
+    },
+    "security": { "type": "string", "description": "What the reviewer found about secrets, credentials, injection and the rest of the security surface. A section of its own and required even when it says nothing was found: an empty answer is a statement, an absent section is not." },
+    "performance": { "type": "string" },
+    "test_coverage": { "type": "string", "description": "What the change's tests cover and what they do not. Required for the same reason security is: a review that says nothing about tests has not said they are adequate." },
+    "mutation_checks": {
+      "type": "array",
+      "description": "The mutants the runner applied, ran and reverted against the reviewed head (D885, spec §3). Written by the runner and never by the reviewer's prose -- the reviewer is asked for none of these fields -- so a reader knows these are things that were done rather than things that were claimed. [] for a review that ran none, which is every review before that step exists: the field is required so an absent one is a malformed document and not an empty claim.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "test", "applied", "observed", "reverted"],
+        "properties": {
+          "file": { "type": "string" },
+          "test": { "type": "string" },
+          "applied": { "type": "string", "description": "The mutation the runner made, in the runner's words." },
+          "observed": { "enum": ["pass", "fail", "error", "timeout"], "description": "What the test did under the mutant. fail is the good outcome: the mutant was killed. A fifth word is refused for the reason the verdict refuses a fourth -- a reader routes on this word without parsing prose. error and timeout are not fail: a test that broke for its own reasons has shown nothing about the mutant." },
+          "reverted": { "type": "boolean", "description": "Whether the mutation was reverted, as the runner's own statement about what it did to the worktree. It is recorded rather than assumed because a check whose revert failed leaves a dirty tree under everything that follows." }
+        }
+      }
+    }
+  }
+}
