@@ -1507,9 +1507,13 @@ func (c *Config) validate() error {
 	// the named account is admitted for a repository is decided at launch
 	// against the account's own allow_data_to, where the repository is known.
 	// A name this file does not define is refused too (choiceRefProblem): the
-	// key would otherwise name an account no run can use, and a per-stage
-	// override that never applies is the state §11.1 refuses for a stage name
-	// that is not a stage.
+	// key would otherwise name an account no run can use.
+	//
+	// The stage SEGMENT is not validated here: this package holds no closed
+	// vocabulary of run stages, so `stages.<anything>.claude_account` is
+	// accepted whatever the segment is and only the account reference above is
+	// judged. Refusing a segment that names no stage needs that vocabulary to
+	// exist first, and it does not.
 	if c.DefaultClaudeAccount != "" {
 		if msg := c.choiceRefProblem(c.DefaultClaudeAccount); msg != "" {
 			bad("default_claude_account: %s", msg)
