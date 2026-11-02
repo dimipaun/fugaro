@@ -19,7 +19,9 @@
 //     6). That last check is decided from the verified email and never from
 //     the caller's own X-Fugaro-Run-Job header: one service account is
 //     dedicated to one Cloud Run job, so the email is what says which job
-//     called, while the header is text the caller chose;
+//     called, while the header is text the caller chose. The same email
+//     answers the account's class — per-repository, shared or review
+//     (review.go) — which is what the rest of the call branches on;
 //   - the run identity is a Firebase ID token this installation's project
 //     issued, signed by a key Google publishes, for uid r~<slug>~<run>, with
 //     its fx claim still ahead of us (D134);
@@ -180,9 +182,13 @@ type Identity struct {
 	// Job is the Cloud Run job the run reported — the caller's claim, which is
 	// why JobAccount, the verified service account, is the one of the two that
 	// identifies the job — and JobAccount is the account that called: the
-	// audit line's "who" (C1.13).
+	// audit line's "who" (C1.13). JobClass is which kind of job that account
+	// belongs to (review.go), decided from the verified email in verifyJob:
+	// the class the rest of the call branches on, and the one field of this
+	// struct that is not a fact about the run.
 	Job        string
 	JobAccount string
+	JobClass   JobClass
 }
 
 // KeySource returns the RSA public key a token's kid names. A kid that is not
@@ -232,8 +238,9 @@ func (o RTDBOutcomes) OutcomeExists(ctx context.Context, day int64, slug, run st
 // AuthConfig is the service's identity configuration. Everything a check
 // depends on is required: a service that cannot check one of these does not
 // start, because the alternative is a service that admits what it cannot
-// check. SharedJobAccounts is the one set that may be empty, and an empty one
-// is a statement — this installation has no shared project jobs.
+// check. SharedJobAccounts and ReviewJobAccounts are the two sets that may be
+// empty, and an empty one is a statement — this installation has no shared
+// project job, or no review job.
 type AuthConfig struct {
 	// Project is the Fugaro project (fp), e.g. "fugaro".
 	Project string
@@ -285,6 +292,20 @@ type AuthConfig struct {
 	// Constraint 6; a caller whose account is in both this set and
 	// JobAccounts is refused, because the refusal is the safe answer.
 	SharedJobAccounts []string
+	// ReviewJobAccounts are the installation's review-only jobs
+	// (ReviewJobAccountsFor over the published policy's profiles). A caller
+	// whose verified email is one of them is of the review class (review.go):
+	// admitted on the model path for its own account only, where the pairing
+	// resolves which account that is (server.go), and refused everywhere the
+	// class has no route.
+	//
+	// Like SharedJobAccounts it may be empty, and an empty one is a statement
+	// rather than a missing gate: an installation that publishes no profile
+	// for a review job has none. It is decided from the verified email for the
+	// same reason, and a caller whose account is in both this set and
+	// JobAccounts is refused rather than admitted, because the two classes do
+	// not have the same routes.
+	ReviewJobAccounts []ReviewJobAccount
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -297,6 +318,10 @@ type Authenticator struct {
 	// and the spelling is what the identity carries.
 	jobAccounts    map[string]string
 	sharedAccounts map[string]bool
+	// reviewAccounts maps a presented email, folded the same way, to the
+	// review job's row: the class is read from this map and the account name
+	// the pairing uses comes from the same row.
+	reviewAccounts map[string]ReviewJobAccount
 	now            func() time.Time
 }
 
@@ -351,22 +376,44 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		shared[folded] = true
 	}
+	// The review set is read the same way, and it is held to one rule more:
+	// the account name a review call is served by is never empty, because an
+	// empty one is a credential no bundle holds and a pairing that could only
+	// refuse.
+	review := make(map[string]ReviewJobAccount, len(cfg.ReviewJobAccounts))
+	for _, ra := range cfg.ReviewJobAccounts {
+		folded, ok := foldEmail(ra.Email)
+		if !ok {
+			return nil, errors.New("credsvc: a review job service account is not a printable ASCII email address")
+		}
+		if ra.Account == "" {
+			return nil, errors.New("credsvc: a review job account names no Claude account, so no call of it could be served")
+		}
+		if prev, dup := review[folded]; dup {
+			if prev.Account != ra.Account {
+				return nil, errors.New("credsvc: the same review job service account is bound to two Claude accounts")
+			}
+			continue
+		}
+		review[folded] = ra
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Authenticator{cfg: cfg, jobAccounts: accounts, sharedAccounts: shared, now: now}, nil
+	return &Authenticator{cfg: cfg, jobAccounts: accounts, sharedAccounts: shared, reviewAccounts: review, now: now}, nil
 }
 
 // Verify admits a call, or refuses it with ErrUnverifiedJob (the caller is
 // not one of the installation's job service accounts, or is a shared project
 // job's, which Global Constraint 6 refuses whole until C3.9), ErrUnverified
-// (the run identity is not this installation's, is past its fx, or names a run
-// that has ended) or ErrUnavailable (the service could not read the outcome).
-// It never returns a partially verified identity.
+// (the run identity is not this installation's, is past its fx, names a run
+// that has ended, or — for a review caller — is not a review identity) or
+// ErrUnavailable (the service could not read the outcome). It never returns a
+// partially verified identity.
 func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, error) {
 	now := a.now()
-	account, err := a.verifyJob(ctx, req.JobIDToken, now)
+	account, class, err := a.verifyJob(ctx, req.JobIDToken, now)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -395,12 +442,18 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 	if err != nil {
 		return Identity{}, err
 	}
-	id.Job, id.JobAccount = req.Job, account
+	id.Job, id.JobAccount, id.JobClass = req.Job, account, class
+	// The review claim rule (spec §3.3) is NOT asked here. It is the pairing's
+	// first step (pairReview), and that is where it is answered — because a
+	// refusal from this function returns Identity{} and is answered by
+	// refuseIdentity, which writes no audit line, while the area rule holds a
+	// refusal to exactly one line once both identities are verified. Both are
+	// by the time the pairing runs.
 	return id, nil
 }
 
 // verifyJob checks the caller's Google ID token and returns the account that
-// called.
+// called and the class of job it is.
 //
 // Two checks, and the plan asks for both ("checked by Cloud Run IAM **and** by
 // this code"):
@@ -420,29 +473,36 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 //     here too, before that membership check, because the account is the only
 //     part of "which job is this run in" that the caller cannot write (Global
 //     Constraint 6, C3.9).
-func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, error) {
+//
+// The class is answered beside the account, because the class is the same fact
+// read further: the email says which job called, and which kind of job that is
+// decides which pairing the call is bound by (server.go) and which credential
+// it may be served (cascade.go). The one class that is answered with no
+// account is the shared one: its caller is refused whole, and the class is
+// what says the refusal is about the class and not about the account.
+func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, JobClass, error) {
 	head, claims, err := decodeJWT(tok)
 	if err != nil {
-		return "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
+		return "", "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
 	}
 	if alg := claimString(head, "alg"); alg != "RS256" {
-		return "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
+		return "", "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
 	}
 	key, err := a.cfg.JobKeys.Key(ctx, claimString(head, "kid"))
 	if err != nil {
 		if errors.Is(err, ErrUnknownKeyID) {
-			return "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
+			return "", "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
 		}
-		return "", err
+		return "", "", err
 	}
 	if err := verifySignature(tok, key); err != nil {
-		return "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
+		return "", "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
 	}
 	if aud := claimString(claims, "aud"); aud != a.cfg.Audience {
-		return "", fmt.Errorf("%w: the caller's ID token is for another audience", ErrUnverifiedJob)
+		return "", "", fmt.Errorf("%w: the caller's ID token is for another audience", ErrUnverifiedJob)
 	}
 	if iss := claimString(claims, "iss"); iss != "https://accounts.google.com" && iss != "accounts.google.com" {
-		return "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
+		return "", "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
 	}
 	email := claimString(claims, "email")
 	// The email is folded to lower case *as ASCII* before it is matched, and an
@@ -455,7 +515,7 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 	// nothing a real caller presents is lost by the rule.
 	folded, ok := foldEmail(email)
 	if !ok {
-		return "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
+		return "", "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
 	}
 	// The shared-job gate of Global Constraint 6 (C3.9) comes first, and it is
 	// decided from this verified email and never from the caller's own
@@ -470,33 +530,59 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 		// The reason is named and the account is not repeated: it is the
 		// caller's own claim set, and the package doc's no-echo rule is that no
 		// refusal repeats what a caller presented.
-		return "", fmt.Errorf("%w: the caller is a shared project job's service account, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverifiedJob)
+		return "", ClassShared, fmt.Errorf("%w: the caller is a shared project job's service account, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverifiedJob)
+	}
+	// The review class is read before the per-repository table, and an account
+	// a deployment's input puts in both is refused rather than admitted: the
+	// two classes do not have the same routes — a review caller is offered one
+	// account's model credential and nothing else — and the wider class is the
+	// one the lookup below would answer with, so the narrower one has to be
+	// asked first.
+	if ra, review := a.reviewAccounts[folded]; review {
+		if _, alsoJob := a.jobAccounts[folded]; alsoJob {
+			return "", "", fmt.Errorf("%w: the caller's account is both a review job's and a per-repository job's, and the two classes do not have the same routes", ErrUnverifiedJob)
+		}
+		if err := checkCallerToken(claims, now); err != nil {
+			return "", "", err
+		}
+		return ra.Email, ClassReview, nil
 	}
 	account, ok := a.jobAccounts[folded]
 	if !ok {
-		return "", fmt.Errorf("%w: the caller is not one of the installation's job service accounts", ErrUnverifiedJob)
+		return "", "", fmt.Errorf("%w: the caller is not one of the installation's job service accounts", ErrUnverifiedJob)
 	}
-	if verified, ok := claims["email_verified"].(bool); !ok || !verified {
-		return "", fmt.Errorf("%w: the caller's email is not verified", ErrUnverifiedJob)
-	}
-	if exp, ok := claimInt(claims, "exp"); !ok || !now.Before(time.Unix(exp, 0)) {
-		return "", fmt.Errorf("%w: the caller's ID token has expired", ErrUnverifiedJob)
-	}
-	// The token's own validity window, checked as verifyRun checks the run
-	// identity's: a token issued in the future, or one that is not valid yet,
-	// is not one this service admits (review nit). Google's ID tokens carry an
-	// iat; a nbf is checked when it is there.
-	if iat, ok := claimInt(claims, "iat"); ok && time.Unix(iat, 0).After(now.Add(clockSkew)) {
-		return "", fmt.Errorf("%w: the caller's ID token is issued in the future", ErrUnverifiedJob)
-	}
-	if nbf, ok := claimInt(claims, "nbf"); ok && time.Unix(nbf, 0).After(now.Add(clockSkew)) {
-		return "", fmt.Errorf("%w: the caller's ID token is not valid yet", ErrUnverifiedJob)
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", "", err
 	}
 	// The account this returns is the configured spelling, not the claim's:
 	// the two are the same address in whatever case the token carries, and the
 	// one this service writes to its audit line (C1.13) is the one an operator
 	// configured and can search for (review nit).
-	return account, nil
+	return account, ClassRepository, nil
+}
+
+// checkCallerToken is the rest of the caller's ID token's checks, and they are
+// the same four for every class of caller: the address it names is verified,
+// the token has not expired, and it is neither issued in the future nor
+// carried before it is valid.
+//
+// The last two are the run identity's own window checks (verifyRun): Google's
+// ID tokens carry an iat, and a nbf is checked when it is there, because a
+// token this service cannot yet honour is not one it admits (review nit).
+func checkCallerToken(claims map[string]any, now time.Time) error {
+	if verified, ok := claims["email_verified"].(bool); !ok || !verified {
+		return fmt.Errorf("%w: the caller's email is not verified", ErrUnverifiedJob)
+	}
+	if exp, ok := claimInt(claims, "exp"); !ok || !now.Before(time.Unix(exp, 0)) {
+		return fmt.Errorf("%w: the caller's ID token has expired", ErrUnverifiedJob)
+	}
+	if iat, ok := claimInt(claims, "iat"); ok && time.Unix(iat, 0).After(now.Add(clockSkew)) {
+		return fmt.Errorf("%w: the caller's ID token is issued in the future", ErrUnverifiedJob)
+	}
+	if nbf, ok := claimInt(claims, "nbf"); ok && time.Unix(nbf, 0).After(now.Add(clockSkew)) {
+		return fmt.Errorf("%w: the caller's ID token is not valid yet", ErrUnverifiedJob)
+	}
+	return nil
 }
 
 // foldEmail folds an email address to lower case as ASCII, reporting false for

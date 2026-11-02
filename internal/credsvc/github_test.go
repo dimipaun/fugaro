@@ -1226,7 +1226,7 @@ func TestTheAppKeyIsNeverACascadeCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the test's own bundle document is not one the loader accepts: %v", err)
 	}
-	cands, _, err := s.server.candidates(context.Background(), s.slug, testRepo, b)
+	cands, _, err := s.server.candidates(context.Background(), Identity{Slug: s.slug, JobClass: ClassRepository}, testRepo, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)
 	}

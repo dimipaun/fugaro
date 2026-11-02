@@ -62,6 +62,8 @@ import type { TextClass } from '../../shared/sanitize'
 import { BUSY_SLOT_CLASS } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
 import type {
+  CoordinatorIntent,
+  CoordinatorIntentsView,
   CoordinatorRecord,
   CoordinatorRepoView,
   CoordinatorStatusView,
@@ -495,6 +497,94 @@ export const COORDINATOR_DESCRIPTION_SHAPE: SkeletonShape = Object.freeze({
 })
 
 // ---------------------------------------------------------------------------
+// The read-only transcript pane (K5).
+// ---------------------------------------------------------------------------
+
+/**
+ * COORDINATOR_TRANSCRIPT_CLASS is the pane's own section, drawn last in the
+ * frame, and COORDINATOR_TRANSCRIPT_HOST_CLASS the host the entry fills it
+ * through: the declarations, the pane's own questions and nothing else. The pane
+ * is a **drawing and not a door** (D827): the terminal that would take a line
+ * from the operator waits for the coordinator's front door and its own security
+ * review, and what ships first is the half that needs nothing new on the cloud
+ * side -- what the fleet's writers have declared, and the stored view's answers
+ * to three questions this console composes itself.
+ */
+export const COORDINATOR_TRANSCRIPT_CLASS = 'coordinator-transcript'
+export const COORDINATOR_TRANSCRIPT_HOST_CLASS = 'coordinator-transcript-host'
+
+/** COORDINATOR_TRANSCRIPT_WORD is the pane's own heading, and
+ * COORDINATOR_TRANSCRIPT_MISSING_WORD the sentence under it: what this page does
+ * not hold and **where the decision that would build it sits** -- the terminal's,
+ * whose input box is held (D820) until the coordinator's front door and an
+ * independent security review, which is why no control here sends anything
+ * (D827). Both are the console's own words, and the sentence is drawn whether
+ * the pane's read answered or not -- it is a fact about the front door, not
+ * about the store. */
+export const COORDINATOR_TRANSCRIPT_WORD = 'transcript — read only'
+export const COORDINATOR_TRANSCRIPT_MISSING_WORD =
+  'no input is built: the coordinator’s front door is the terminal’s to build (D820)'
+
+/** COORDINATOR_TRANSCRIPT_BUSY is what the pane's own mark says while
+ * `coordinator intents --all --json` is out. It names the declarations and not
+ * the questions: the questions are answered off the stored view the body already
+ * read, and they are drawn while this read is still coming. */
+export const COORDINATOR_TRANSCRIPT_BUSY = 'Reading the declared intents…'
+
+/** COORDINATOR_TRANSCRIPT_REPO_CLASS introduces one repository's declarations,
+ * COORDINATOR_TRANSCRIPT_INTENT_CLASS is one declaration, and
+ * COORDINATOR_TRANSCRIPT_DECLARATION_CLASS is the `declared_by` value inside it.
+ * The declaration is drawn as a **declaration** and never as an identity: the
+ * introducing word is the console's own, and the value is what the declaring side
+ * wrote about itself -- nothing verifies it and nothing may admit anything by it
+ * (reconciliation finding #11). */
+export const COORDINATOR_TRANSCRIPT_REPO_CLASS = 'coordinator-transcript-repo'
+export const COORDINATOR_TRANSCRIPT_INTENT_CLASS = 'coordinator-transcript-intent'
+export const COORDINATOR_TRANSCRIPT_DECLARATION_CLASS = 'coordinator-transcript-declaration'
+export const COORDINATOR_TRANSCRIPT_AT_CLASS = 'coordinator-transcript-at'
+export const COORDINATOR_TRANSCRIPT_BRANCH_CLASS = 'coordinator-transcript-branch'
+export const COORDINATOR_TRANSCRIPT_RELEASE_CLASS = 'coordinator-transcript-release'
+export const COORDINATOR_TRANSCRIPT_FILE_CLASS = 'coordinator-transcript-file'
+export const COORDINATOR_TRANSCRIPT_SERVICE_CLASS = 'coordinator-transcript-service'
+
+/** COORDINATOR_TRANSCRIPT_QUESTION_CLASS is one of the pane's fixed questions
+ * with its answers under it, COORDINATOR_TRANSCRIPT_QUESTION_WORD_CLASS the
+ * question itself -- the console's own words, never a document's --
+ * COORDINATOR_TRANSCRIPT_ANSWER_CLASS one repository's answer and
+ * COORDINATOR_TRANSCRIPT_ANSWER_REPO_CLASS the repository it is about. */
+export const COORDINATOR_TRANSCRIPT_QUESTION_CLASS = 'coordinator-transcript-question'
+export const COORDINATOR_TRANSCRIPT_QUESTION_WORD_CLASS = 'coordinator-transcript-question-word'
+export const COORDINATOR_TRANSCRIPT_ANSWER_CLASS = 'coordinator-transcript-answer'
+export const COORDINATOR_TRANSCRIPT_ANSWER_REPO_CLASS = 'coordinator-transcript-answer-repo'
+
+/** COORDINATOR_TRANSCRIPT_NONE_CLASS is the console's own sentence under a
+ * question the stored view answers with nothing. It is drawn only over a stored
+ * view that answered: a view nobody has read yet draws neither an answer nor this
+ * sentence, because "nothing to report" is a claim about a document the console
+ * has in hand. */
+export const COORDINATOR_TRANSCRIPT_NONE_CLASS = 'coordinator-transcript-none'
+export const COORDINATOR_TRANSCRIPT_NONE_WORD = 'the stored view answers this with nothing'
+
+/** CoordinatorTranscriptQuestion is one of the three questions the pane asks the
+ * stored view, by the reading it is answered from: the records in flight, the
+ * collisions, and the repositories the sweep has not reconciled. */
+export type CoordinatorTranscriptQuestion = 'inFlight' | 'collisions' | 'stale'
+
+/** COORDINATOR_TRANSCRIPT_QUESTIONS is the whole of what the pane asks, in the
+ * order it asks it: the three facts the page already holds a document for, and
+ * the reason this pane needs no service at all. Each is the console's own
+ * sentence -- a question is not a value any document carries -- and each is
+ * answered per repository, so a reader meets the repository before the figure. */
+export const COORDINATOR_TRANSCRIPT_QUESTIONS: readonly {
+  readonly id: CoordinatorTranscriptQuestion
+  readonly word: string
+}[] = Object.freeze([
+  { id: 'inFlight', word: 'what is in flight?' },
+  { id: 'collisions', word: 'what collides?' },
+  { id: 'stale', word: 'which repositories has the sweep not reconciled?' },
+])
+
+// ---------------------------------------------------------------------------
 // The elements.
 // ---------------------------------------------------------------------------
 
@@ -894,6 +984,10 @@ export interface CoordinatorModel {
   readonly blind: CoordinatorBlindSpot | null
   readonly totals: CoordinatorTotals | null
   readonly repos: readonly CoordinatorRepoPanel[] | null
+  /** the declared intents (K5), and `null` is the pane's own read not having
+   * answered -- which is drawn as no intent line at all rather than as a fleet
+   * that has declared nothing */
+  readonly intents: CoordinatorIntentsView | null
 }
 
 /**
@@ -910,6 +1004,7 @@ export interface CoordinatorInputs {
   readonly caps: SpendCaps | null
   readonly checkout: boolean
   readonly capsHidden: boolean
+  readonly intents: CoordinatorIntentsView | null
 }
 
 /** objectAt is a value that is a JSON object, or null. */
@@ -1483,6 +1578,7 @@ export function buildCoordinatorModel(inputs: CoordinatorInputs): CoordinatorMod
             cap: caps?.global?.dailyCap ?? null,
           },
     repos: document === null ? null : document.repos.map((repo) => repoPanel(repo)),
+    intents: inputs.intents,
   }
 }
 
@@ -2078,6 +2174,17 @@ export interface DrawnCoordinatorJobs {
   readonly controls: ScreenElement
 }
 
+/** DrawnCoordinatorTranscript is the pane the entry fills: the section the busy
+ * mark's `aria-busy` is put on, the host the declarations and the questions are
+ * drawn into, and the slot the mark goes in -- which the host holds, so a repaint
+ * that clears the host to its slot never takes the mark of a read in flight down
+ * with it. */
+export interface DrawnCoordinatorTranscript {
+  readonly section: ScreenElement
+  readonly host: ScreenElement
+  readonly slot: ScreenElement
+}
+
 function runCell(parent: ScreenElement, factory: ScreenFactory, run: CoordinatorRunPanel): void {
   const row = cell(parent, factory, 'li', 'coordinator-run')
   textCell(row, factory, 'span', run.id, 'runId', 'runs[].id', 'coordinator-run-id')
@@ -2409,6 +2516,10 @@ export interface DrawnCoordinatorFrame {
    * reason: the model is what a read answered with, and this section's read has
    * not been made. */
   readonly jobs: DrawnCoordinatorJobs
+  /** the read-only transcript pane (K5), drawn last: its own heading and the
+   * sentence about the front door are the frame's, and the declarations and the
+   * questions are filled into `host` by the entry as the reads behind them land */
+  readonly transcript: DrawnCoordinatorTranscript
 }
 
 /**
@@ -2465,7 +2576,32 @@ export function renderCoordinatorFrame(
   }
   const body = cell(root, factory, 'div', COORDINATOR_BODY_CLASS)
   const slot = cell(body, factory, 'div', BUSY_SLOT_CLASS)
-  return { root, body, slot, queue, queueSlot, queueCount, queueEmpty, parts, blindHost, totals, totalsSlot, jobs }
+  // The pane is the frame's last region, under the panels the sketch draws it
+  // under: what it holds is the console's own drawing and the store's
+  // declarations, and nothing on it is a control that sends anything.
+  const transcriptSection = cell(root, factory, 'section', COORDINATOR_TRANSCRIPT_CLASS)
+  literal(cell(transcriptSection, factory, 'p', 'coordinator-transcript-word'), COORDINATOR_TRANSCRIPT_WORD)
+  const transcriptHost = cell(transcriptSection, factory, 'div', COORDINATOR_TRANSCRIPT_HOST_CLASS)
+  const transcriptSlot = cell(transcriptHost, factory, 'div', BUSY_SLOT_CLASS)
+  literal(
+    cell(transcriptSection, factory, 'p', 'coordinator-transcript-missing'),
+    COORDINATOR_TRANSCRIPT_MISSING_WORD,
+  )
+  return {
+    root,
+    body,
+    slot,
+    queue,
+    queueSlot,
+    queueCount,
+    queueEmpty,
+    parts,
+    blindHost,
+    totals,
+    totalsSlot,
+    jobs,
+    transcript: { section: transcriptSection, host: transcriptHost, slot: transcriptSlot },
+  }
 }
 
 /**
@@ -2505,6 +2641,206 @@ export function fillCoordinatorSummary(
   return model.repos.map((panel) => ({ panel, host: repoSummary(host, factory, panel) }))
 }
 
+// ---------------------------------------------------------------------------
+// The read-only transcript pane (K5).
+// ---------------------------------------------------------------------------
+
+/** TranscriptAnswer is what the stored view answers one question with for one
+ * repository: a count off the document, or the sweep's own marker. */
+type TranscriptAnswer =
+  | { readonly kind: 'count'; readonly word: string; readonly reading: Reading }
+  | { readonly kind: 'stale'; readonly since: string; readonly reason: string }
+
+/** transcriptAnswer is that answer, or `null` where the stored view answers
+ * nothing at all.
+ *
+ * **A count of zero is no answer**, which is the whole of the rule for the two
+ * counted questions: the pane names the repositories something is true of, and a
+ * line per repository saying `0` would be a list of the repositories nothing is
+ * happening in. The third question is the sweep's own marker, which the document
+ * either carries or does not. */
+function transcriptAnswer(
+  id: CoordinatorTranscriptQuestion,
+  panel: CoordinatorRepoPanel,
+): TranscriptAnswer | null {
+  if (id === 'stale') {
+    if (panel.stale === null) return null
+    return { kind: 'stale', since: panel.stale.since, reason: panel.stale.reason }
+  }
+  const inFlight = id === 'inFlight'
+  const reading = positive(inFlight ? panel.inFlightCount : panel.collisionCount)
+  if (reading === null) return null
+  return {
+    kind: 'count',
+    word: inFlight ? COORDINATOR_IN_FLIGHT_COUNT_WORD : COORDINATOR_COLLISIONS_WORD,
+    reading,
+  }
+}
+
+/** positive is a count that is worth a line, or `null` for one that is zero or
+ * not known at all. */
+function positive(reading: Reading): Reading | null {
+  if (reading.value === null || reading.value <= 0) return null
+  return reading
+}
+
+/**
+ * fillCoordinatorTranscript draws the pane's two halves into the host the frame
+ * drew: the declarations the store holds, and the console's own three questions
+ * answered off the stored view.
+ *
+ * **The two halves are independent, and they are drawn from two documents.** The
+ * declarations come from `coordinator intents --all --json` and the answers from
+ * the stored view the body already read, so a read that has not answered leaves
+ * its own half empty -- under the section's mark, which says which read the pane
+ * is waiting for -- and a stored view that has not answered draws the questions
+ * with neither an answer nor a sentence in place of one.
+ *
+ * Every document string is drawn through `putText` and every element is made by
+ * this screen: no markup a store wrote is parsed, no attribute is built from one,
+ * and the pane holds no control of any kind (D827). */
+export function fillCoordinatorTranscript(
+  factory: ScreenFactory,
+  model: CoordinatorModel,
+  host: ScreenElement,
+): void {
+  fillDeclaredIntents(factory, model.intents, host)
+  fillTranscriptQuestions(factory, model.repos, host)
+}
+
+/** fillDeclaredIntents draws the store's declarations: one repository line, then
+ * one line per record the store holds for it, in the CLI's own order (newest
+ * first). A store that has answered with nothing draws nothing at all: what the
+ * apparatus declared is what the store holds, and the console has no sentence of
+ * its own to add to an empty one. */
+function fillDeclaredIntents(
+  factory: ScreenFactory,
+  intents: CoordinatorIntentsView | null,
+  host: ScreenElement,
+): void {
+  if (intents === null) return
+  for (const repo of intents.repos) {
+    textCell(host, factory, 'p', repo.repo, 'repository', 'repos[].repo', COORDINATOR_TRANSCRIPT_REPO_CLASS)
+    for (const intent of repo.intents) intentLine(host, factory, intent)
+  }
+}
+
+/**
+ * intentLine draws one declaration: the word that introduces it, then the fields
+ * the record carries, each in the class its wire key declares.
+ *
+ * `declared_by` is drawn **as a declaration**: the introducing word is the
+ * console's own (`COORDINATOR_DECLARED_WORD`), and the value is what the
+ * declaring side wrote about itself -- unverified, and never an identity anything
+ * is admitted by (reconciliation finding #11). The branch, the release, the paths
+ * and the services are all written by whoever can reach the report path, so each
+ * goes through `putText` with its own class, and a path is drawn as the class
+ * replaces it (`<path>`) like every other path on this screen.
+ */
+function intentLine(parent: ScreenElement, factory: ScreenFactory, intent: CoordinatorIntent): void {
+  const line = cell(parent, factory, 'p', COORDINATOR_TRANSCRIPT_INTENT_CLASS)
+  literal(cell(line, factory, 'span', 'coordinator-transcript-declared-word'), COORDINATOR_DECLARED_WORD)
+  textCell(
+    line,
+    factory,
+    'span',
+    intent.declaredBy,
+    'label',
+    'intents[].declared_by',
+    COORDINATOR_TRANSCRIPT_DECLARATION_CLASS,
+  )
+  textCell(line, factory, 'span', intent.at, 'sentence', 'intents[].at', COORDINATOR_TRANSCRIPT_AT_CLASS)
+  if (intent.branch !== '') {
+    textCell(
+      line,
+      factory,
+      'span',
+      intent.branch,
+      'branch',
+      'intents[].branch',
+      COORDINATOR_TRANSCRIPT_BRANCH_CLASS,
+    )
+  }
+  if (intent.release !== '') {
+    textCell(
+      line,
+      factory,
+      'span',
+      intent.release,
+      'label',
+      'intents[].release',
+      COORDINATOR_TRANSCRIPT_RELEASE_CLASS,
+    )
+  }
+  for (const path of intent.files) {
+    textCell(line, factory, 'span', path, 'path', 'intents[].files', COORDINATOR_TRANSCRIPT_FILE_CLASS)
+  }
+  for (const service of intent.services) {
+    textCell(
+      line,
+      factory,
+      'span',
+      service,
+      'label',
+      'intents[].services',
+      COORDINATOR_TRANSCRIPT_SERVICE_CLASS,
+    )
+  }
+}
+
+/** fillTranscriptQuestions draws the three questions the console composes itself,
+ * each with one answer per repository the stored view answers it for, or the
+ * console's own sentence where the view answers it with nothing.
+ *
+ * The question is drawn whether the stored view answered or not -- it is the
+ * console's word and needs no document -- and the answers wait for the document:
+ * a stored view that has not answered draws neither an answer nor the sentence
+ * for a missing one, because "nothing to report" is a claim about a document the
+ * console has in hand. */
+function fillTranscriptQuestions(
+  factory: ScreenFactory,
+  repos: readonly CoordinatorRepoPanel[] | null,
+  host: ScreenElement,
+): void {
+  for (const question of COORDINATOR_TRANSCRIPT_QUESTIONS) {
+    const block = cell(host, factory, 'div', COORDINATOR_TRANSCRIPT_QUESTION_CLASS)
+    literal(cell(block, factory, 'p', COORDINATOR_TRANSCRIPT_QUESTION_WORD_CLASS), question.word)
+    let answered = false
+    for (const panel of repos ?? []) {
+      const answer = transcriptAnswer(question.id, panel)
+      if (answer === null) continue
+      answered = true
+      transcriptAnswerLine(block, factory, panel.repo, answer)
+    }
+    // The sentence for a question the view answers with nothing is drawn only
+    // over a view that answered: `repos === null` is the read still out, and the
+    // console may not call a fleet quiet before it has read one.
+    if (repos !== null && !answered) {
+      literal(cell(block, factory, 'p', COORDINATOR_TRANSCRIPT_NONE_CLASS), COORDINATOR_TRANSCRIPT_NONE_WORD)
+    }
+  }
+}
+
+/** transcriptAnswerLine draws one repository's own answer: the repository, then
+ * the fact -- a count through the screen's own count cell, or the sweep's marker
+ * drawn exactly as the store wrote it. */
+function transcriptAnswerLine(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  repo: string,
+  answer: TranscriptAnswer,
+): void {
+  const line = cell(parent, factory, 'p', COORDINATOR_TRANSCRIPT_ANSWER_CLASS)
+  textCell(line, factory, 'span', repo, 'repository', 'repos[].repo', COORDINATOR_TRANSCRIPT_ANSWER_REPO_CLASS)
+  if (answer.kind === 'stale') {
+    literal(cell(line, factory, 'span', 'coordinator-transcript-stale-word'), COORDINATOR_STALE_WORD)
+    textCell(line, factory, 'span', answer.since, 'sentence', 'stale.since', 'coordinator-transcript-stale-since')
+    textCell(line, factory, 'span', answer.reason, 'sentence', 'stale.reason', 'coordinator-transcript-stale-reason')
+    return
+  }
+  numberCell(line, factory, answer.word, answer.reading, 'count')
+}
+
 /**
  * renderCoordinator draws the whole screen at once: the frame, the queue, the
  * blind-spot line, the fleet's totals, the job list's own resting state, the
@@ -2538,5 +2874,6 @@ export function renderCoordinator(
   for (const detail of fillCoordinatorSummary(factory, model, frame.body)) {
     repoDetail(detail.host, factory, detail.panel)
   }
+  fillCoordinatorTranscript(factory, model, frame.transcript.host)
   return frame.root
 }

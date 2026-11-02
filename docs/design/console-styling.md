@@ -1380,19 +1380,35 @@ only ever says what it was told.
 | `coordinator-jobs-empty` | `p` | the console's sentence for a window that holds no run: the only thing this list says in its own words |
 | `coordinator-jobs-note` | `p` | the note drawn **instead of** the list for a CLI older than `RUNS_LIST_PAGE_CLI_FLOOR`, where no control is drawn beside it at all |
 | `coordinator-jobs-floor-word`, `coordinator-jobs-floor-version` | `span`s in that note | the console's sentence naming the version the paged read needs, and the handshake's own version line drawn as text |
+| `section.coordinator-transcript` | the transcript pane's section | console 0.119.0's K5: what the fleet's orchestrators have declared, and the stored view's answers to three questions the console composes itself, drawn on the frame the other three sections take. It is **read only** and holds no input control of any kind (D827) |
+| `coordinator-transcript-host` | `div` | the host the entry fills: the stamp the declarations were read at, a refused read's own sentence, the declarations and the questions, in that order. It holds no state of its own — the section's mark is what says a read is still out |
+| `coordinator-transcript-word` | `p` | the pane's own heading, `transcript — read only` |
+| `coordinator-transcript-missing` | `p` | the console's sentence for what this page does not hold — no input is built, and the front door is the terminal's to build (D820) — naming where that decision is |
+| `coordinator-transcript-repo` | `p` | one repository's own line, above the declarations the store holds for it |
+| `coordinator-transcript-intent` | `p` | one stored declaration: the introducing word, the declaring side, the writer's clock and what was declared about, each drawn only when the record carries one |
+| `coordinator-transcript-declared-word` | `span` | the introducing words, `declared by` |
+| `coordinator-transcript-declaration` | `span` | the `declared_by` value **as a declaration**: unverified, and never an identity anything is admitted by (reconciliation finding #11) |
+| `coordinator-transcript-at` | `span` | the record's own `at`, which is the **writer's** clock and not this console's — no age is derived from it anywhere |
+| `coordinator-transcript-branch`, `coordinator-transcript-release`, `coordinator-transcript-file`, `coordinator-transcript-service` | `span`s in that line | the branch, the release, the changed paths (each drawn as the `path` class replaces it) and the services a declaration names |
+| `coordinator-transcript-question` | `div` | one of the three questions the console composes itself, with the answers drawn under it |
+| `coordinator-transcript-question-word` | `p` | the question's own words — the console's, and drawn whether the stored view answered or not |
+| `coordinator-transcript-answer` | `p` | one repository's answer to that question |
+| `coordinator-transcript-answer-repo` | `span` | the repository the answer is about |
+| `coordinator-transcript-none` | `p` | the console's sentence for a question the stored view answers with nothing, drawn only over a view that answered at all |
+| `coordinator-transcript-stale-word`, `coordinator-transcript-stale-since`, `coordinator-transcript-stale-reason` | `span`s in an answer | the sweep's marker under the question about repositories the sweep has not reconciled, drawn exactly as the store wrote it |
 
 **This screen emits no `data-*` of its own, so every rule for it is written against a
 class.** It holds no control, no state variant and no selection — the one attribute it
 stamps is the `data-theme` every screen's root carries — and a rule that wanted a `data-*`
-here would be inventing the state it keyed on. Twenty-two of the hooks above are selected
-**without a tag**, in four groups. The first four are the screen's own `listCell` and
+here would be inventing the state it keyed on. Thirty-six of the hooks above are selected
+**without a tag**, in five groups. The first four are the screen's own `listCell` and
 `countCell` parameters (`coordinator-file`, `coordinator-service` and `coordinator-more`) and
 `coordinator-count-alert`, which the strip's call to `numberCell` passes the same way: the
 scan that pairs a selector with the tag the renderer draws cannot read a class that arrives
 through a parameter, and a bare class selector is the shape `degraded-num` already has. The
 next four are K1's own (`coordinator-queue`, `coordinator-totals`,
 `coordinator-queue-head` and `coordinator-queue-jobs`), and the reason is the same one step
-along: the screen draws its two sections, the queue's head and the queue's jobs control
+along: the screen draws the queue and the totals, the queue's head and the queue's jobs control
 through exported constants (`COORDINATOR_QUEUE_CLASS` and its neighbours), which that scan
 reads as a parameter too, so `section.coordinator-queue` would be refused as a tag nothing
 draws. **K4's nine are the third group**, and they split the same two ways: the job list's
@@ -1405,9 +1421,17 @@ this screen's own, no rule competes for them and the tag would buy no specificit
 ground `coordinator-count-alert` stands on. **K3's five are the fourth group**, and all five
 are the constant's case: the disclosure, the block, its lines, its `Show all` control and its
 empty sentence are all drawn through exported constants (`COORDINATOR_DESCRIPTION_*_CLASS`),
-because the entry is what wires the press and reads the block back by class.
+because the entry is what wires the press and reads the block back by class. **K5's fourteen
+are the fifth group**, and they split the same two ways the first four do: the pane's section,
+the host the entry fills, its repository line, its declaration line, the declaration's own
+value and the writer's clock, its branch, release, paths and services, its questions, the
+question's words, its answers and its own sentence for a question the view answers with
+nothing are all drawn through exported constants (`COORDINATOR_TRANSCRIPT_CLASS` and its
+neighbours). The four hooks that block selects **with** their tag are the ones the screen
+draws with a literal class name — the heading, the sentence under it, the introducing words
+and the sweep's marker.
 
-**Nineteen hooks the stylesheet does not select**, and §2's rule read the other way:
+**Twenty-two hooks the stylesheet does not select**, and §2's rule read the other way:
 `coordinator-count-records`, `coordinator-count-inflight`, `coordinator-count-collisions`,
 `coordinator-omitted-records` and `coordinator-omitted-collisions` say *which* count each
 cell is, and the rules that lay the counts out and colour the sentence that introduces them
@@ -1420,6 +1444,10 @@ filled into, `coordinator-blind-host` is the host the blind-spot line is drawn i
 head's two cells carries, and `coordinator-jobs-floor-word` and `coordinator-jobs-floor-version`
 are the two spans inside the note a CLI below the floor draws — the rules that lay the cells out
 and tone the note are written on the cell, on the reading inside it and on the note itself.
+K5's three join them: `coordinator-transcript-answer-repo` names the repository an answer is
+about, and `coordinator-transcript-stale-since` and `coordinator-transcript-stale-reason` are
+the two spans beside the sweep's marker — the rules that lay the answers out and tone them are
+written on the answer line and on the block that holds the question.
 They are the screen's own bookkeeping, and a rule that wants one adds it to the table above
 first.
 
