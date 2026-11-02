@@ -390,6 +390,18 @@ func TestPinWarningsCoverALevelModel(t *testing.T) {
 	if got := paths(PinWarnings(c, placeholderPrices())); got != "agent.models.coder,agent.models.background" {
 		t.Errorf("a level model that is a pin warned under %q", got)
 	}
+	// Two levels that name one model of their own get one warning each, under
+	// their own key: a warning is about a place in the file, as the coder's and
+	// the background's two warnings for one model have always been.
+	d := pinnedAgent()
+	d.Levels = ReviewLevels{L1: &LevelSetting{Model: catModel}, L3: &LevelSetting{Model: catModel}}
+	ws = PinWarnings(d, mustTable(t, providers(nil), nil, fixtureCatalog("2026-10-14")))
+	if got := paths(ws); got != "agent.levels.l1.model,agent.levels.l3.model" {
+		t.Fatalf("two levels on one model warned under %q: %v", got, ws)
+	}
+	if !strings.Contains(ws[0].Message, "level l1") || !strings.Contains(ws[1].Message, "level l3") {
+		t.Errorf("the two warnings do not name their level: %v", ws)
+	}
 }
 
 func TestUnverifiedPriceWarns(t *testing.T) {
