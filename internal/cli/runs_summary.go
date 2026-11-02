@@ -81,7 +81,9 @@ type summaryRepo struct {
 	Repo string `json:"repo"`
 	// Runs counts the runs of the window. States counts them by how they
 	// ended, so a run the sources have not settled yet is in Runs and in no
-	// state: Runs is at least the sum of States.
+	// state: Runs is at least the sum of States. Neither is ever negative: a
+	// source figure below zero is not a count and is added as nothing, so the
+	// document the console reads carries the figure the table prints.
 	Runs   int64            `json:"runs"`
 	States map[string]int64 `json:"states"`
 	// SpentMicros is the model money the caps count, NotionalMicros the part
@@ -97,7 +99,8 @@ type summaryRepo struct {
 	ComputeRuns   int64  `json:"compute_runs"`
 }
 
-// summaryTotals is the same figures over every repository of the window.
+// summaryTotals is the same figures over every repository of the window. Its
+// counts are derived the same way and are never negative either.
 type summaryTotals struct {
 	Runs           int64            `json:"runs"`
 	States         map[string]int64 `json:"states"`
@@ -432,7 +435,10 @@ func summaryDocument(project string, from, to int64, read summaryRead) summaryDo
 		}
 		a.runs += max(r.Runs, 0)
 		for k, n := range r.Outcomes {
-			a.states[summaryState(k)] += n
+			// A count below zero is not a count -- a window's nodes can
+			// disagree -- so it counts as nothing, as the money is added
+			// (summaryAdd) and as the database's rollup clamps its counters.
+			a.states[summaryState(k)] += max(n, 0)
 		}
 		a.spent, a.notional = summaryAdd(a.spent, r.SpentMicros), summaryAdd(a.notional, r.NotionalMicros)
 		if r.ComputeEstimatedRuns > 0 {
@@ -460,7 +466,7 @@ func summaryDocument(project string, from, to int64, read summaryRead) summaryDo
 		doc.Repositories = append(doc.Repositories, repo)
 		total.runs += a.runs
 		for s, n := range a.states {
-			total.states[s] += n
+			total.states[s] += max(n, 0)
 		}
 		total.spent, total.notional = summaryAdd(total.spent, a.spent), summaryAdd(total.notional, a.notional)
 		total.compute, total.computeRuns = summaryAdd(total.compute, a.compute), total.computeRuns+a.computeRuns

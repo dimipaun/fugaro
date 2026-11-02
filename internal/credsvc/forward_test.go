@@ -337,10 +337,10 @@ func TestForwardRefusesARunTokenOfAnotherRepository(t *testing.T) {
 // TestServiceHasNoAdminRoutes: D143's "no admin surface" is kept by there being
 // nothing to reach rather than by a check inside a handler. Every path but the
 // ones the service serves is a 404 — including the ones an operator's CLI uses,
-// which is why those live in internal/cli and not here — and the sign route is
-// held to it the same way: the path is in the set only as the exact string it
-// is, so a trailing slash, a subpath and another method are all nothing to
-// reach.
+// which is why those live in internal/cli and not here — and the two review
+// routes are held to it the same way: a path is in the set only as the exact
+// string it is, so a trailing slash, a subpath and another method are all
+// nothing to reach.
 func TestServiceHasNoAdminRoutes(t *testing.T) {
 	paths := []struct{ method, path string }{
 		{http.MethodPost, "/admin/kill"},
@@ -358,6 +358,9 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 		{http.MethodGet, SignPath},
 		{http.MethodPost, SignPath + "/"},
 		{http.MethodPost, SignPath + "/x"},
+		{http.MethodGet, VerifyPath},
+		{http.MethodPost, VerifyPath + "/"},
+		{http.MethodPost, VerifyPath + "/x"},
 	}
 	for _, tc := range paths {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {

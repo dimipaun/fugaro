@@ -127,6 +127,7 @@ import {
   STAMP_AT_CLASS,
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
+  STAMP_REFRESH_LABEL,
 } from '../../src/renderer/section'
 import {
   COORDINATOR_SHAPE,
@@ -5355,6 +5356,98 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(busyLabels(document)).toEqual([])
   })
 
+  it('reads the declarations again from the pane’s own Refresh, and keeps them under the mark', async () => {
+    // `reReadIntents` is the pane's own press, and it is not the tab's Refresh:
+    // the questions under the declarations are the stored view's and are read by
+    // that view's own control, so this one reads `coordinator intents` and
+    // nothing else -- one read, of the same kind the tab made on entry.
+    const first = holding()
+    const again = holding()
+    const asked: unknown[] = []
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: (args) => {
+        asked.push(args)
+        return asked.length === 1 ? first.reply() : again.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    first.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    const pane = classed(panelOf(document), COORDINATOR_TRANSCRIPT_CLASS)[0]
+    if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+
+    const refresh = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the pane drew no refresh control')
+    refresh.click()
+    expect(asked, 'the pane’s own Refresh read something other than the declarations').toHaveLength(2)
+    // The press is answered where it happened: the mark goes up over the pane
+    // whose read it is, and the declarations the last answer drew stay under it
+    // rather than blanking.
+    expect(busyLabels(document)).toContain(COORDINATOR_TRANSCRIPT_BUSY)
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+
+    again.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('drops the pane’s clock when its own read is refused, and keeps the one press', async () => {
+    // K5's follow-up, on the #1581 review. The declarations are dropped the
+    // moment a read is refused -- a refusal is the whole of what the pane has to
+    // say -- and the clock the stamp carried was the **previous** success's, so a
+    // pane that drew it beside the sentence would be dating the CLI's refusal
+    // with a read that has nothing to do with it. The time goes, and the pane's
+    // one press stays: without it the operator's doubt has nowhere to go.
+    const first = holding()
+    const refused = holding()
+    const asked: unknown[] = []
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: (args) => {
+        asked.push(args)
+        return asked.length === 1 ? first.reply() : refused.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    first.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    const pane = classed(panelOf(document), COORDINATOR_TRANSCRIPT_CLASS)[0]
+    if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+
+    const refresh = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the pane drew no refresh control')
+    refresh.click()
+    // While the read is out the declarations on screen are still the ones that
+    // read answered, and the clock beside them is still theirs.
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+    refused.release({ ok: false, reason: INTENTS_REFUSAL })
+    await flush()
+
+    expect(classed(pane, 'unavailable-operation')[0]?.textContent).toBe('coordinator.intents')
+    expect(holdsText(pane, INTENTS_REFUSAL)).toBe(true)
+    expect(
+      classed(pane, STAMP_AT_CLASS),
+      'a refused read dated itself with the previous success’s clock',
+    ).toEqual([])
+    const left = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (left === undefined) throw new Error('the refused pane drew no press at all')
+    expect(left.textContent).toBe(STAMP_REFRESH_LABEL)
+    expect(busyLabels(document)).toEqual([])
+  })
+
   it('spawns no runs ls for the job list until Load jobs is pressed, and pages from the last row it drew', async () => {
     // The jobs rule, twice over (rule 5 of §6.2's opening). **No `runs ls` of
     // this tab's own goes out on entry**: the job list is a section of its own
@@ -5597,13 +5690,66 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const refusals = classed(panelOf(document), 'unavailable-operation')
     expect(refusals.map((node) => node.textContent)).toContain('runs.list')
     expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
-    // No control beside it: a button that asks again for a read just refused
-    // offers the same failure.
+    // Neither paging control is offered again -- `Load jobs` asked for a first
+    // page and `Older 50` for a page under a window nothing landed -- and the
+    // press the section holds instead is the stamp's own line in the head, which
+    // is drawn with no `as of` beside it because no page was ever read (the case
+    // below).
     expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
     expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
     expect(busyLabels(document)).toEqual([])
     // The queue's own read is a different one and its parts are still drawn.
     expect(classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS).length).toBeGreaterThan(0)
+  })
+
+  it('reads the window again from the head’s own line when the first page was refused', async () => {
+    // K4's follow-up. A refused **first** page draws the sentence where the rows
+    // would be, and the head's stamp is drawn with the figures of a page that
+    // landed -- so with no page ever landed there is no head, and a section that
+    // stopped there would hold the CLI's sentence and **no press at all**: the
+    // operator's own doubt would have nowhere to go. The line drawn instead is
+    // the stamp's, with its one control and no time, because the console has read
+    // no page to put a clock on.
+    const asked: Record<string, unknown>[] = []
+    const retry = holding()
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? { ok: false, reason: RUNS_REFUSAL } : retry.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+
+    const jobsHead = classed(panelOf(document), COORDINATOR_JOBS_HEAD_CLASS)[0]
+    if (jobsHead === undefined) throw new Error('the job list drew no head')
+    expect(classed(jobsHead, STAMP_AT_CLASS), 'a refused first page claimed a time').toEqual([])
+    const refresh = classed(jobsHead, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the refused list drew no press at all')
+    expect(refresh.textContent).toBe(STAMP_REFRESH_LABEL)
+
+    // The press is the first page's own read and not a second kind of it: no
+    // cursor, because no row was drawn to page from.
+    refresh.click()
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toEqual({ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE })
+    expect(busyLabels(document)).toContain(COORDINATOR_JOBS_BUSY)
+
+    retry.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    // The refusal went with the list the press dropped, the page's rows are
+    // drawn, and the head now carries the clock of the read that answered.
+    expect(classed(panelOf(document), 'unavailable-operation')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(1)
+    expect(textIn(jobsHead, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
   })
 
   it('draws the console’s own sentence, naming the version, for a CLI older than the paged read', async () => {

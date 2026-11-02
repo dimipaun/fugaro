@@ -109,13 +109,22 @@ const (
 	// line carries the key's name and no tier, and a tier on it is refused
 	// (checked) rather than recorded. See credentialWithoutTier.
 	PurposeReviewSign = "review_sign"
+	// PurposeReviewVerify is the answer a verifier is given about a verdict's
+	// signature (C3.9f). The credential's name is the same account's
+	// review-signing key: it is the key the answer was COMPUTED with, even
+	// though the caller supplied no credential at all. Like a sign's it has no
+	// tier (see credentialWithoutTier), and its line is the one line of this
+	// service that carries neither a run nor a job — a verifier holds no run
+	// identity and is not a job of this installation, so the act is the
+	// purpose, the credential and the status (spec §5.5).
+	PurposeReviewVerify = "review_verify"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
 // for.
 func ValidPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign:
+	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify:
 		return true
 	}
 	return false
@@ -123,17 +132,27 @@ func ValidPurpose(purpose string) bool {
 
 // credentialWithoutTier reports whether a purpose's credential is one the
 // cascade never had: the App key a mint signs a JWT with, and the review-signing
-// key a sign line names. Neither is a model credential, neither is spent on a
-// call, and neither therefore has a tier — so a line of one of these purposes
-// names a credential and NO tier, and a tier on it is a tier this service never
-// assigned.
+// key a sign line or a verify line names. None is a model credential, none is
+// spent on a call, and none therefore has a tier — so a line of one of these
+// purposes names a credential and NO tier, and a tier on it is a tier this
+// service never assigned.
 //
 // It is one function because the two rules that read it (the tier refusal and
 // the both-or-neither rule, checked) have to agree about who the exemption
 // covers: a purpose added to one and not the other would be a line that is
 // refused for a credential it correctly carries.
 func credentialWithoutTier(purpose string) bool {
-	return purpose == PurposeMint || purpose == PurposeReviewSign
+	return purpose == PurposeMint || purpose == PurposeReviewSign || purpose == PurposeReviewVerify
+}
+
+// verifierPurpose reports whether a line records a VERIFIER's act rather than a
+// run's: the one purpose whose caller holds no run identity and is not a job of
+// this installation. Two of checked's field-set rules are relaxed for it and
+// for no other purpose — Caller without Job, and a StatusOK line with no Run
+// and no Job — so they are read off this one function rather than two spellings
+// of the purpose's name, for the reason credentialWithoutTier is one function.
+func verifierPurpose(purpose string) bool {
+	return purpose == PurposeReviewVerify
 }
 
 // StatusOK is the one status that is not a refusal: a credential answered —
@@ -191,7 +210,9 @@ type AuditEvent struct {
 	// is the service account the service verified (Identity.JobAccount, in the
 	// installation's own spelling): "which job called" is the account's answer
 	// and not the header's (auth.go's verifyJob), and the two are recorded
-	// together because the identity is what carries them.
+	// together because the identity is what carries them — except on a
+	// verifier's line, which is the one line whose caller is not a job of this
+	// installation and therefore carries no job.
 	Job    string
 	Caller string
 	// Credential is the credential's NAME, never its value, and Tier is the
@@ -199,15 +220,15 @@ type AuditEvent struct {
 	// all, the rule SetCredentialHeaders and CredentialHeaders already share: a
 	// line that named one without the other would be a line this service
 	// cannot write, and a reader that guessed at the missing half would be
-	// reading an answer the service did not give. A mint is the one event the
-	// pair does not hold for, because the credential it names is the App key
-	// and the App key is not a model credential: PurposeMint carries a
-	// credential and no tier, and a tier on a mint is refused rather than
-	// recorded.
+	// reading an answer the service did not give. The purposes whose credential
+	// has no tier are the ones the pair does not hold for — a mint (the App
+	// key), a sign and a verify (the review-signing key), none of which is a
+	// model credential: each carries a credential and no tier, and a tier on
+	// one of them is refused rather than recorded. See credentialWithoutTier.
 	Credential string
 	Tier       string
 	// Purpose is what the credential was issued for (PurposeForward,
-	// PurposeProbe or PurposeMint).
+	// PurposeProbe, PurposeMint, PurposeReviewSign or PurposeReviewVerify).
 	Purpose string
 	// Status is what happened: StatusOK, or the refusal's status.
 	Status string
@@ -457,7 +478,12 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"job", refusalMalformed}
 	case ev.Caller != "" && !validAccount(ev.Caller):
 		return AuditEvent{}, auditRefusal{"caller", refusalMalformed}
-	case (ev.Job == "") != (ev.Caller == ""):
+	case (ev.Job == "") != (ev.Caller == "") && !verifierPurpose(ev.Purpose):
+		// The identity carries both, so a line that names one names the other.
+		// A verifier is the exception and the only one: it is not a run in a
+		// job of this installation at all, so its line carries its verified
+		// email as the caller and no job — and a job-purpose line that dropped
+		// its job is still refused here.
 		return AuditEvent{}, auditRefusal{"job", refusalMissing}
 	case ev.Credential != "" && !ValidCredentialName(ev.Credential):
 		return AuditEvent{}, auditRefusal{"credential", refusalMalformed}
@@ -481,14 +507,21 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"tier", refusalUnknown}
 	}
 	// A line that says a credential was used names the whole act; a refusal
-	// carries only what was known when it was refused.
+	// carries only what was known when it was refused. A verifier's act is the
+	// second exception and the only other one: it holds no run identity and is
+	// not a job of this installation, so its OK line states the purpose and the
+	// credential the answer was computed with and no run and no job. A run's
+	// line — a sign's, a mint's, a model call's — is unchanged, and the run
+	// identity's own rule (a Run with no Repository is refused above) is
+	// untouched.
 	if ev.Status == StatusOK {
+		verify := verifierPurpose(ev.Purpose)
 		switch {
 		case ev.Purpose == "":
 			return AuditEvent{}, auditRefusal{"purpose", refusalMissing}
-		case ev.Run == "":
+		case ev.Run == "" && !verify:
 			return AuditEvent{}, auditRefusal{"run", refusalMissing}
-		case ev.Job == "":
+		case ev.Job == "" && !verify:
 			return AuditEvent{}, auditRefusal{"job", refusalMissing}
 		case ev.Credential == "":
 			return AuditEvent{}, auditRefusal{"credential", refusalMissing}
