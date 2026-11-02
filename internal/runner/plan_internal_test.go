@@ -315,6 +315,11 @@ func TestPlanAdversarialRounds(t *testing.T) {
 	}
 }
 
+// TestCheckPlan pins the two things the run's levels require of its plan: no
+// plan skips the senior review, and no plan drops a step a resolved level
+// needs. planOf walks planRecipe's steps itself, so this guard is a guard
+// rather than the rule — the comparison is what keeps the two from drifting
+// apart, and the plan is what runs.
 func TestCheckPlan(t *testing.T) {
 	plain := parseRecipe(t, "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: {}\n")
 	both := planLevels(true, true, false)
@@ -322,18 +327,22 @@ func TestCheckPlan(t *testing.T) {
 	if err := checkPlan(plain, both, ok); err != nil {
 		t.Fatal(err)
 	}
-	// A plan that would silently drop a step the run's levels require is
-	// refused: the launcher's gates promised the level and the run would never
-	// hold it. The steps have to be the required ones, in their order.
+	// No plan skips the senior review: a run whose levels hold one and whose
+	// plan does not carry it would end with nothing deciding readiness.
 	for _, bad := range [][]planStep{
 		nil,
 		{{Kind: recipe.StepFirstLine, Rounds: 2}},
 		{{Kind: recipe.StepReview, Rounds: 1}, {Kind: recipe.StepFirstLine, Rounds: 1}},
-		{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepAdversarial, Rounds: 1}},
 	} {
 		if err := checkPlan(plain, both, bad); err == nil || !strings.Contains(err.Error(), "skip") {
-			t.Errorf("checkPlan(%v) = %v, want the dropped step refused", bad, err)
+			t.Errorf("checkPlan(%v) = %v, want the review step's absence refused", bad, err)
 		}
+	}
+	// A plan that would drop any other step the levels require is refused the
+	// same way: the launcher's gates promised the level and the run would never
+	// hold it. The steps have to be the required ones, in their order.
+	if err := checkPlan(plain, both, []planStep{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepAdversarial, Rounds: 1}}); err == nil || !strings.Contains(err.Error(), "skip") {
+		t.Errorf("checkPlan(a step the levels do not require) = %v, want it refused", err)
 	}
 	// The plan's last step running no rounds is the same drop one step later:
 	// the step is in the plan and never runs.
@@ -357,13 +366,15 @@ func TestCheckPlan(t *testing.T) {
 	if err := checkPlan(level3, withL3, plan3); err != nil {
 		t.Fatal(err)
 	}
-	// The same recipe without level 3's step is a plan that drops it.
-	if err := checkPlan(level3, withL3, ok); err == nil || !strings.Contains(err.Error(), "skip") {
-		t.Errorf("checkPlan(level 3 dropped) = %v, want it refused", err)
-	}
-	// And the review step is never skipped: a plan that dropped it for the
-	// adversarial step is refused for the same reason.
-	if err := checkPlan(level3, withL3, []planStep{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepAdversarial, Rounds: 5}}); err == nil {
-		t.Error("a plan with no review step was accepted")
+	// The same recipe without level 3's step is a plan that drops it, and a
+	// plan that dropped the review step for the adversarial one is refused for
+	// the same reason.
+	for _, bad := range [][]planStep{
+		ok,
+		{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepAdversarial, Rounds: 5}},
+	} {
+		if err := checkPlan(level3, withL3, bad); err == nil || !strings.Contains(err.Error(), "skip") {
+			t.Errorf("checkPlan(%v) = %v, want the dropped step refused", bad, err)
+		}
 	}
 }

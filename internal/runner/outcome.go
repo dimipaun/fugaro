@@ -89,7 +89,7 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 // apart is the whole point of the rule — the level approved an earlier commit
 // than the one shipped — and a reader has to be able to see which.
 func heldBackReason(rs runstore.ReviewSummary) string {
-	reason := fmt.Sprintf("review level %s last shipped nothing: round %d left %s", reviewLevelOf(rs), rs.Round, rs.Verdict)
+	reason := fmt.Sprintf("review %s last shipped nothing: round %d left %s", levelNames[reviewLevelOf(rs)], rs.Round, rs.Verdict)
 	if rs.Head != "" {
 		reason += fmt.Sprintf(" on %s", shortSHA(rs.Head))
 	}

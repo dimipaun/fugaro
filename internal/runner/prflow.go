@@ -508,12 +508,19 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 var levelNames = map[policy.Level]string{policy.LevelL1: "level 1", policy.LevelL2: "level 2", policy.LevelL3: "level 3"}
 
 // levelsPart is the section's line per review level the run held: the level,
-// its last round's verdict and the head that round approved (D727). It exists
-// beside reviewsPart, which reports the last round of all, because the levels
-// can approve different commits: after an adversarial rejection the cheap loop
-// runs and level 2 is never reviewed again, so a run that ships carries a level
-// 2 verdict about an earlier head than the one it ships. A reader of the pull
-// request has to be able to see that.
+// its last round's verdict, the head that round approved and the focus the
+// level was asked to look at (D727, L4.2). It exists beside reviewsPart, which
+// reports the last round of all, because the levels can approve different
+// commits: after an adversarial rejection the cheap loop runs and level 2 is
+// never reviewed again, so a run that ships carries a level 2 verdict about an
+// earlier head than the one it ships. A reader of the pull request has to be
+// able to see that.
+//
+// The focus is the same sanitiser's business as the verdict beside it, and the
+// two agree on every value that can reach here: the resolver refuses a focus
+// carrying a control, a bidi or a zero-width character at every layer that may
+// write one (config.LevelSetting.validate), so there is nothing left for
+// safetext to escape that inlineText does not already handle.
 //
 // "" for a run that resolved no levels (levelsResolved) and for one whose
 // levels left no round at all: reviewsPart's own line is then the whole
@@ -534,6 +541,9 @@ func (r *run) levelsPart() string {
 		line := fmt.Sprintf("%s: %s in round %d", levelNames[l], inlineText(rs.Verdict), rs.Round)
 		if rs.Head != "" {
 			line += fmt.Sprintf(" on `%s`", shortSHA(rs.Head))
+		}
+		if f := inlineText(r.levelFocus(l)); f != "" {
+			line += fmt.Sprintf(" (focus: %s)", f)
 		}
 		lines = append(lines, line)
 	}
