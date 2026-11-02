@@ -337,7 +337,13 @@ type Authenticator struct {
 	// review job's row: the class is read from this map and the account name
 	// the pairing uses comes from the same row.
 	reviewAccounts map[string]ReviewJobAccount
-	now            func() time.Time
+	// verifierAccounts maps a presented email, folded the same way, to the
+	// configured spelling of that verifier: the list the verify route's caller
+	// class is (C3.9f). It is read by VerifyVerifier and by nothing else — the
+	// route is answered ahead of the shared parse, so no branch of Verify
+	// consults it.
+	verifierAccounts map[string]string
+	now              func() time.Time
 }
 
 // NewAuthenticator validates the configuration and returns the verifier.
@@ -412,11 +418,31 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		review[folded] = ra
 	}
+	// The verifier list is the fourth set and the only one that is not a job
+	// set: its entries are bare addresses, matched by the same fold, and a
+	// duplicate is the same address twice and not an error — nothing is bound
+	// to a verifier the way a job account is bound to a repository, so two
+	// spellings of one address admit the same caller either way.
+	verifiers := make(map[string]string, len(cfg.VerifierAccounts))
+	for _, email := range cfg.VerifierAccounts {
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a verifier account is not a printable ASCII email address")
+		}
+		verifiers[folded] = email
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Authenticator{cfg: cfg, jobAccounts: accounts, sharedAccounts: shared, reviewAccounts: review, now: now}, nil
+	return &Authenticator{
+		cfg:              cfg,
+		jobAccounts:      accounts,
+		sharedAccounts:   shared,
+		reviewAccounts:   review,
+		verifierAccounts: verifiers,
+		now:              now,
+	}, nil
 }
 
 // Verify admits a call, or refuses it with ErrUnverifiedJob (the caller is
@@ -496,41 +522,9 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 // account is the shared one: its caller is refused whole, and the class is
 // what says the refusal is about the class and not about the account.
 func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, JobClass, error) {
-	head, claims, err := decodeJWT(tok)
+	claims, folded, err := a.callerClaims(ctx, tok)
 	if err != nil {
-		return "", "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
-	}
-	if alg := claimString(head, "alg"); alg != "RS256" {
-		return "", "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
-	}
-	key, err := a.cfg.JobKeys.Key(ctx, claimString(head, "kid"))
-	if err != nil {
-		if errors.Is(err, ErrUnknownKeyID) {
-			return "", "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
-		}
 		return "", "", err
-	}
-	if err := verifySignature(tok, key); err != nil {
-		return "", "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
-	}
-	if aud := claimString(claims, "aud"); aud != a.cfg.Audience {
-		return "", "", fmt.Errorf("%w: the caller's ID token is for another audience", ErrUnverifiedJob)
-	}
-	if iss := claimString(claims, "iss"); iss != "https://accounts.google.com" && iss != "accounts.google.com" {
-		return "", "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
-	}
-	email := claimString(claims, "email")
-	// The email is folded to lower case *as ASCII* before it is matched, and an
-	// address that is not printable ASCII is refused rather than folded
-	// (review nit). strings.ToLower is Unicode-aware, so it folds characters
-	// that merely look like the ones a service account's address is made of —
-	// U+212A KELVIN SIGN lowercases to 'k', U+0130 to 'i' — and a claim whose
-	// spelling the issuer let the caller choose would then be matched against
-	// an account it is not. Every Google service account address is ASCII, so
-	// nothing a real caller presents is lost by the rule.
-	folded, ok := foldEmail(email)
-	if !ok {
-		return "", "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
 	}
 	// The shared-job gate of Global Constraint 6 (C3.9) comes first, and it is
 	// decided from this verified email and never from the caller's own
@@ -574,6 +568,105 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 	// one this service writes to its audit line (C1.13) is the one an operator
 	// configured and can search for (review nit).
 	return account, ClassRepository, nil
+}
+
+// callerClaims verifies the caller's Google ID token as far as its identity and
+// returns the claim set and the email folded to ASCII lower case. It is the
+// WHOLE of what every class of caller shares: the signature against Google's own
+// certificates, this service's audience, Google as the issuer, and an email
+// claim that is one an account of this installation could be spelled with. Which
+// set that folded address is then looked up in — the job accounts, the review
+// jobs, the shared jobs, or the verifier list — is the caller's class's own
+// answer, and it is the only place the classes differ.
+//
+// It is written once so that the verifier branch (VerifyVerifier) is the same
+// token check as a job token and not a second spelling of it (D1068): a rule
+// added to one and not the other would be a caller of one class checking
+// something the other does not.
+//
+// The email is folded to lower case *as ASCII* before it is matched, and an
+// address that is not printable ASCII is refused rather than folded
+// (review nit). strings.ToLower is Unicode-aware, so it folds characters that
+// merely look like the ones a service account's address is made of — U+212A
+// KELVIN SIGN lowercases to 'k', U+0130 to 'i' — and a claim whose spelling the
+// issuer let the caller choose would then be matched against an account it is
+// not. Every Google service account address is ASCII, so nothing a real caller
+// presents is lost by the rule.
+func (a *Authenticator) callerClaims(ctx context.Context, tok string) (map[string]any, string, error) {
+	head, claims, err := decodeJWT(tok)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
+	}
+	if alg := claimString(head, "alg"); alg != "RS256" {
+		return nil, "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
+	}
+	key, err := a.cfg.JobKeys.Key(ctx, claimString(head, "kid"))
+	if err != nil {
+		if errors.Is(err, ErrUnknownKeyID) {
+			return nil, "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
+		}
+		return nil, "", err
+	}
+	if err := verifySignature(tok, key); err != nil {
+		return nil, "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
+	}
+	if aud := claimString(claims, "aud"); aud != a.cfg.Audience {
+		return nil, "", fmt.Errorf("%w: the caller's ID token is for another audience", ErrUnverifiedJob)
+	}
+	if iss := claimString(claims, "iss"); iss != "https://accounts.google.com" && iss != "accounts.google.com" {
+		return nil, "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
+	}
+	folded, ok := foldEmail(claimString(claims, "email"))
+	if !ok {
+		return nil, "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
+	}
+	return claims, folded, nil
+}
+
+// VerifyVerifier admits the caller of the verify route, or refuses it with
+// ErrUnverifiedJob (the caller is not one of the installation's verifiers) or
+// ErrUnavailable (the key set could not be read). It answers the configured
+// spelling of the address that matched, which is what the audit line carries, or
+// the empty string with an error — never a partially verified caller.
+//
+// The check is verifyJob's token check MINUS one gate and against one other
+// list (D1068, spec §5.4), and the two differences are stated rather than
+// implied:
+//
+//   - the folded address is matched against AuthConfig.VerifierAccounts rather
+//     than against the installation's job accounts, because a verifier is not
+//     one of them;
+//   - the shared-job gate does not apply, because a verifier is not a job of
+//     this installation's job set AT ALL — not a per-repository one and not a
+//     shared project one. An address that is both a shared job's account and a
+//     verifier is therefore admitted here, and that is the class's own answer
+//     and not an oversight: the gate refuses a run that would be launched as an
+//     account the phase-3 rules do not yet cover, and a verifier launches
+//     nothing.
+//
+// Which set a caller is looked up in is what makes it a class, so this is a
+// branch beside verifyJob and not a second verifier: the signature, the
+// audience, the issuer and the fold above are shared code. This is also why it
+// takes the caller's token directly rather than a Request: the verify path is
+// answered ahead of RequestFromHTTP (server.go), so a Request is the one thing
+// its caller cannot build.
+func (a *Authenticator) VerifyVerifier(ctx context.Context, tok string) (string, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	account, ok := a.verifierAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address: it is the caller's
+		// own claim set, and the package doc's no-echo rule is that no refusal
+		// repeats what a caller presented.
+		return "", fmt.Errorf("%w: the caller is not one of this installation's verifiers, so it may not ask about a verdict", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", err
+	}
+	return account, nil
 }
 
 // checkCallerToken is the rest of the caller's ID token's checks, and they are
