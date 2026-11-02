@@ -31,11 +31,12 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
+import { CONSOLE_OPERATIONS, validateArguments } from '../../src/main/ipc'
 import { SPAWN_COMMANDS, argvFor, assertSpawnSurface } from '../../src/main/spawn'
 import type { SpawnCommand } from '../../src/main/spawn'
 import { PULL_REQUEST_PROVIDERS, pullRequestUrl } from '../../src/main/window'
 import { putText } from '../../src/renderer/app'
+import { asciiLower } from '../../src/renderer/screens/coordinator'
 import { capsOf } from '../../src/renderer/screens/spend'
 import {
   COORDINATOR_BLIND_STALE_WORD,
@@ -1475,11 +1476,14 @@ describe('the numbers that open a pull request (K2)', () => {
       ['a repository with a space', 'owner/repo a'],
       ['a repository with a query', 'owner/repo?x=1'],
       ['a repository with no owner', 'owner'],
+      ['a mixed-case repository (main takes lowercase only)', 'Owner/Repo-A'],
     ]
     for (const [because, repo] of table) {
       const node = drawsQueue({ view: decodes(aStore([aRecord({})], { provider: 'github', repo })) })
       const drawnAsButton = one(node, 'coordinator-record-label').tag === 'button'
-      const mainWouldOpen = pullRequestUrl('github', repo, 1458) !== null
+      const mainWouldOpen =
+        validateArguments('link.openPullRequest', { provider: 'github', repo: asciiLower(repo), number: 1458 }).ok &&
+        pullRequestUrl('github', asciiLower(repo), 1458) !== null
       const rowCanDraw = sanitizeText(repo, 'repository', 'repos[].repo').ok
       expect(drawnAsButton, `${because}: ${String(mainWouldOpen)} and ${String(rowCanDraw)}`).toBe(
         mainWouldOpen && rowCanDraw,

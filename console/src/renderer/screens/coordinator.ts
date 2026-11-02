@@ -748,6 +748,22 @@ export const PULL_PROVIDERS: readonly string[] = Object.freeze(['github', 'bitbu
 const PULL_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**
+ * asciiLower folds A–Z and nothing else, which is the fold the CLI compares
+ * repository names with (`task.ASCIILower`, behind `CanonicalRepo`).
+ * `toLowerCase` is not it: it turns a Kelvin sign into an ASCII "k" and "İ" into
+ * "i" plus a combining dot, so a console that folded with it would call two
+ * repositories the same that Fugaro keeps apart.
+ */
+export function asciiLower(text: string): string {
+  let folded = ''
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    folded += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : text[index]
+  }
+  return folded
+}
+
+/**
  * pullLink is the triple a number is opened with, or `null` when this console
  * will not build one -- and a `null` is drawn as text, never as a button that
  * would do nothing.
@@ -767,7 +783,7 @@ function pullLink(provider: string, repo: string, number: number): CoordinatorPu
   if (!PULL_REPO.test(repo)) return null
   if (!Number.isSafeInteger(number) || number < 1) return null
   if (!sanitizeText(repo, 'repository', 'repos[].repo').ok) return null
-  return { provider, repo, number }
+  return { provider, repo: asciiLower(repo), number }
 }
 
 /** pullName is the button's accessible name: the verb, the number as the row

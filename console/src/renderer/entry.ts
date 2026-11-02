@@ -126,6 +126,7 @@ import {
   fillCoordinatorHead,
   fillCoordinatorQueuePart,
   fillCoordinatorSummary,
+  asciiLower,
   fillCoordinatorTotals,
   queueRuns,
   renderCoordinatorFrame,
@@ -551,22 +552,6 @@ function valueOf(surface: DomSurface, element: SkewElement): string {
  * because a drawing cannot carry one. */
 function setValueOf(surface: DomSurface, element: SkewElement, value: string): void {
   ;(surface.nodeOf(element) as unknown as { value: string }).value = value
-}
-
-/**
- * asciiLower folds A–Z and nothing else, which is the fold the CLI compares
- * repository names with (`task.ASCIILower`, behind `CanonicalRepo`).
- * `toLowerCase` is not it: it turns a Kelvin sign into an ASCII "k" and "İ" into
- * "i" plus a combining dot, so a console that folded with it would call two
- * repositories the same that Fugaro keeps apart.
- */
-function asciiLower(text: string): string {
-  let folded = ''
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index)
-    folded += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : text[index]
-  }
-  return folded
 }
 
 /** ownerNameOf is the `owner/name` part of one installation repository identity.

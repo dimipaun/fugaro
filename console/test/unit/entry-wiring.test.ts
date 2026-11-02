@@ -5185,7 +5185,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
         // Spelled as an escape rather than as the character: U+212A is a `k` to
         // the eye as well as to `toLowerCase`, and a case about a fold that must
         // not happen is one whose input a reader has to be able to check.
-        listRuns: () => ({ ok: true, data: { document: { runs: [{ ...QUEUE_RUN, repo: 'owner/Key' }] } } }),
+        listRuns: () => ({ ok: true, data: { document: { runs: [{ ...QUEUE_RUN, repo: 'owner/\u212Aey' }] } } }),
         planStatus: () => planStatusReply(QUEUE_PLAN),
         showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
       },
