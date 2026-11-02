@@ -3037,6 +3037,16 @@ func TestValidateLevelsRefusesProviderEffort(t *testing.T) {
 	if got.Valid || len(got.Problems) != 1 || got.Problems[0].Path != "agent.levels" || !strings.Contains(got.Problems[0].Message, "D725") {
 		t.Fatalf("json = %+v, want one problem at agent.levels naming D725", got)
 	}
+	// What is refused is the effort on a provider route, not the effort
+	// itself: D725 accepts it for a Claude model, where the stage applies it
+	// (L4.3, agent.EffortVars), so the same file with a Claude reviewer is
+	// valid. Without this half a change that refused every agent.levels
+	// effort would leave the test above passing.
+	claude := budgetProject(t, budget, strings.Replace(coder, "deepseek/deepseek-v4.1-flash", "claude-sonnet-5-5", 1))
+	out, _, err = execute(t, "validate", claude)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a Claude reviewer with an effort is valid: %v (%q)", err, out)
+	}
 }
 
 // TestReviewFloorUnpublishableWarns: the owner's review-level floor lives in
