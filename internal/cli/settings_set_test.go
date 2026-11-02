@@ -612,9 +612,9 @@ func settingsRefusalHint(t *testing.T, err error) string {
 	return hint
 }
 
-// settingsRefusedNames is the keys a refusal's hint named, in the order it
+// settingsHintNames is the keys a refusal's hint named, in the order it
 // printed them.
-func settingsRefusedNames(hint string) []string {
+func settingsHintNames(hint string) []string {
 	out := []string{}
 	for _, name := range strings.Split(hint, ", ") {
 		if name = strings.TrimSpace(name); name != "" {
@@ -628,18 +628,20 @@ func settingsRefusedNames(hint string) []string {
 // registry rows this command refuses although the read prints them — budget.mode
 // and budget.per_day_usd are other writers' keys, and every endpoints.* name is
 // the installation's own plumbing — and the rows the registry marks Sensitive,
-// whose value the diff a write shows would print.
+// whose value the diff a write shows would print. A name is matched whole, the
+// way the hint prints it, so a key that merely contains a refused one is not
+// read as it.
 func settingsHintNeverNames(t *testing.T, hint string) {
 	t.Helper()
-	refused := []string{"budget.per_day_usd", "budget.mode"}
+	refused := map[string]bool{"budget.per_day_usd": true, "budget.mode": true}
 	for _, row := range settings.Rows() {
 		if strings.HasPrefix(row.Key, "endpoints.") || row.Sensitive {
-			refused = append(refused, row.Key)
+			refused[row.Key] = true
 		}
 	}
-	for _, key := range refused {
-		if strings.Contains(hint, key) {
-			t.Errorf("the hint names %s, which this command refuses:\n%s", key, hint)
+	for _, name := range settingsHintNames(hint) {
+		if refused[name] {
+			t.Errorf("the hint names %s, which this command refuses:\n%s", name, hint)
 		}
 	}
 }
@@ -708,7 +710,7 @@ func TestSettingsSetUnknownKeyHintNamesOnlyRowsTheWriteAccepts(t *testing.T) {
 	}
 	hint := settingsRefusalHint(t, err)
 	settingsHintNeverNames(t, hint)
-	named := settingsRefusedNames(hint)
+	named := settingsHintNames(hint)
 	if len(named) == 0 {
 		t.Fatalf("the refusal named no key at all: %v", err)
 	}
@@ -735,7 +737,7 @@ func TestSettingsSetAddHintNamesOnlyListKeysTheWriteAccepts(t *testing.T) {
 	}
 	hint := settingsRefusalHint(t, err)
 	settingsHintNeverNames(t, hint)
-	named := settingsRefusedNames(hint)
+	named := settingsHintNames(hint)
 	if len(named) == 0 {
 		t.Fatalf("the refusal named no key at all: %v", err)
 	}
