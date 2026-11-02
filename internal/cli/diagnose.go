@@ -48,8 +48,10 @@ const (
 	// and as many again on the adversarial one, 77 at most under
 	// config.MaxFirstLineRounds and recipe.MaxReviewRounds -- so it guards
 	// against the record a hand can edit and never against the loop. A list
-	// longer than this prints the first diagnoseReviews rounds and says how
-	// many it left out.
+	// longer than this prints the first diagnoseReviews rounds and then the
+	// line "… at most 96 review rounds are printed", which says the list is
+	// cut without claiming how many rounds it left out: the count is not one
+	// the reader of a cut list can know.
 	diagnoseReviews = 96
 )
 

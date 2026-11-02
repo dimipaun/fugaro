@@ -1657,6 +1657,41 @@ func TestShortGitHead(t *testing.T) {
 	}
 }
 
+// TestDiagnoseSaysWhenTheReviewListIsCut: a record with more rounds than the
+// document prints says so in one line, and the line claims only what a cut
+// list leaves knowable — that it is at most that many. The wording is pinned
+// here because console/docs/json-contract.md's `reviews` row quotes it: the
+// row said the line named how many rounds it left out, which no list can say
+// after the cut.
+func TestDiagnoseSaysWhenTheReviewListIsCut(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000031-abcd"
+	reviews := make([]runstore.ReviewSummary, diagnoseReviews)
+	for i := range reviews {
+		reviews[i] = runstore.ReviewSummary{Round: i + 1, Tier: runstore.TierSenior, Verdict: "ship"}
+	}
+	seedReviewersRun(t, f, id, reviews)
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("  … at most %d review rounds are printed\n", diagnoseReviews)
+	if !strings.Contains(human, want) {
+		t.Errorf("a cut review list does not print %q:\n%s", want, human)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := doc["reviews"].([]any); len(entries) != diagnoseReviews {
+		t.Errorf("reviews holds %d entries, want the diagnoseReviews = %d the block prints", len(entries), diagnoseReviews)
+	}
+}
+
 // seedReviewersRun stores a finished run under id whose record carries the
 // given review rounds and nothing else the diagnosis reads.
 func seedReviewersRun(t *testing.T, f *cloudFixture, id string, reviews []runstore.ReviewSummary) {
