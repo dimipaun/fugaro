@@ -47,16 +47,20 @@ deleting it:
    it read, after the project's name is typed at a real terminal (or `--yes`
    where a confirmation is enough for the operator; a run that is still in
    flight stops the write unless `--yes` is passed, exactly as `publish
-   --delete` does with it). The one write `--yes` never confirms is the one
-   that leaves the node **looser** than the node it replaces — a ceiling raised
-   or removed, a wider `budget.allowed_models` — because that is the node every
-   run of the project is admitted by: the stage asks for the project's name
-   typed at a real terminal, names the member that loosens, and refuses a script
-   or a coding agent's session with the command to run at a terminal instead
-   (`fugaro update`). The comparison `settings set` makes decides it, so a
-   ceiling raised is asked about the same way whichever of the two doors writes
-   it. A publish that tightens a ceiling, or that writes a node already carrying
-   what the config states, asks exactly the confirmation it always asked.
+   --delete` does with it). The one write `fugaro update`'s `--yes` never
+   confirms is the one that leaves the node **looser** than the node it replaces
+   — a ceiling raised or removed, a wider `budget.allowed_models` — because that
+   is the node every run of the project is admitted by: the stage asks for the
+   project's name typed at a real terminal, names the member that loosens, and
+   refuses a script or a coding agent's session with the command to run at a
+   terminal instead (`fugaro update`). The comparison `settings set` makes
+   decides it, so a ceiling raised is asked about the same way whichever of the
+   two doors writes it — and `settings set|unset` themselves take `--yes` for
+   that widening outside a coding agent's session, the owner's ruling of
+   2026-11-01 (D1107, docs/console-settings-edit/spec.md): this command is the
+   one that still refuses it. A publish that tightens a ceiling, or that writes
+   a node already carrying what the config states, asks exactly the confirmation
+   it always asked.
 
 ## Who publishes the node
 

@@ -358,7 +358,14 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	// script (or agent session) has just passed --yes and been refused.
 	if loosening := m.loosening(); len(loosening) > 0 {
 		why := m.looseningWhy(loosening)
-		fmt.Fprintf(w, "%s\n", why)
+		// The sentence is said once. A session with no terminal is refused with
+		// it inside the error (confirmTypedStrict), and a door that reported
+		// that error next to the sentence it already printed said the same
+		// thing twice; the person at a terminal reads it here and only here,
+		// because the prompt below names the step and never the widening.
+		if stdinIsTerminal(cmd.InOrStdin()) {
+			fmt.Fprintf(w, "%s\n", why)
+		}
 		if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
 			return err
 		}

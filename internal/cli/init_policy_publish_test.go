@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -129,14 +130,21 @@ func blockBudgetConfig(t *testing.T, f *projectFixture) {
 	})
 }
 
-// nodeCeiling is the per-run ceiling the published node carries. The database
-// hands numbers back as json.Number when the write came over HTTP and as
-// float64 when the fake was seeded directly, and both shapes are read here.
+// nodeCeiling is the per-run ceiling the published node carries.
 func nodeCeiling(t *testing.T, f *projectFixture) float64 {
 	t.Helper()
-	n, ok := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	return ceilingOn(t, f.db)
+}
+
+// ceilingOn is nodeCeiling for a database held without a fixture — the upgrade
+// door's tests hold the fake itself. The database hands numbers back as
+// json.Number when the write came over HTTP and as float64 when the fake was
+// seeded directly, and both shapes are read here.
+func ceilingOn(t *testing.T, db *gcpfake.RTDB) float64 {
+	t.Helper()
+	n, ok := db.Value(projectpolicy.PathShared()).(map[string]any)
 	if !ok {
-		t.Fatalf("the node at %s is %T (%v)", projectpolicy.PathShared(), f.db.Value(projectpolicy.PathShared()), f.db.Value(projectpolicy.PathShared()))
+		t.Fatalf("the node at %s is %T (%v)", projectpolicy.PathShared(), db.Value(projectpolicy.PathShared()), db.Value(projectpolicy.PathShared()))
 	}
 	b, ok := n["budget"].(map[string]any)
 	if !ok {
@@ -1122,6 +1130,70 @@ func typedRig(t *testing.T, f *projectFixture) *migrationRig {
 	return h
 }
 
+// TestPolicyLooseningCoversEveryCeiling is the comparison itself, member by
+// member. Each kind of ceiling is one member and each way of loosening one is a
+// case, so a member dropped from the list and a direction the comparison stops
+// seeing fail here rather than in a scenario that only ever raises one number.
+//
+// The direction is the point in both halves. 0 is the value that sets no cap at
+// all, so a ceiling taken to 0 loosens whatever it replaces and a cap put back
+// over 0 tightens; a model list is widened by growing and never by the same
+// members in another order; and the same node loosens nothing. The whole entry
+// is asserted, not just the key, because the removal case is a member whose new
+// value the node states nothing for — a spelling nothing else in the node
+// carries.
+func TestPolicyLooseningCoversEveryCeiling(t *testing.T) {
+	node := func(mode string, usd float64, tokens int64, models ...string) *projectpolicy.Policy {
+		return &projectpolicy.Policy{Budget: projectpolicy.Budget{
+			Mode: mode, PerRunUSD: usd, MaxRunTokens: tokens, AllowedModels: models,
+		}}
+	}
+	for _, tc := range []struct {
+		name     string
+		old, new *projectpolicy.Policy
+		want     []string
+	}{
+		{"a weaker mode", node("enforce", 5, 100, "m"), node("observe", 5, 100, "m"),
+			[]string{"budget.mode enforce -> observe"}},
+		{"the mode removed", node("enforce", 5, 100, "m"), node("", 5, 100, "m"),
+			[]string{"budget.mode enforce -> (removed)"}},
+		{"the mode raised to enforce, which tightens", node("observe", 5, 100, "m"), node("enforce", 5, 100, "m"), nil},
+		{"the per-run ceiling raised", node("enforce", 5, 100, "m"), node("enforce", 7, 100, "m"),
+			[]string{"budget.per_run_usd 5 -> 7"}},
+		{"the per-run ceiling taken to 0, which is no cap at all", node("enforce", 5, 100, "m"), node("enforce", 0, 100, "m"),
+			[]string{"budget.per_run_usd 5 -> 0"}},
+		{"a cap put back over 0, which tightens", node("enforce", 0, 100, "m"), node("enforce", 3, 100, "m"), nil},
+		{"a token ceiling raised", node("enforce", 5, 100, "m"), node("enforce", 5, 200, "m"),
+			[]string{"budget.max_run_tokens 100 -> 200"}},
+		{"a token ceiling taken to 0", node("enforce", 5, 100, "m"), node("enforce", 5, 0, "m"),
+			[]string{"budget.max_run_tokens 100 -> 0"}},
+		{"a wider model list", node("enforce", 5, 100, "a"), node("enforce", 5, 100, "a", "b"),
+			[]string{"budget.allowed_models a -> a, b"}},
+		{"the model list emptied", node("enforce", 5, 100, "a", "b"), node("enforce", 5, 100),
+			[]string{"budget.allowed_models a, b -> (removed)"}},
+		{"the same models in another order, which is no widening", node("enforce", 5, 100, "a", "b"), node("enforce", 5, 100, "b", "a"), nil},
+		{"a narrower model list, which tightens", node("enforce", 5, 100, "a", "b"), node("enforce", 5, 100, "a"), nil},
+		{"the node unchanged", node("enforce", 5, 100, "a"), node("enforce", 5, 100, "a"), nil},
+		{"every ceiling at once", node("enforce", 5, 100, "a"), node("observe", 0, 0),
+			[]string{
+				"budget.mode enforce -> observe",
+				"budget.per_run_usd 5 -> 0",
+				"budget.max_run_tokens 100 -> 0",
+				"budget.allowed_models a -> (removed)",
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, c := range policyLoosening(tc.old, tc.new) {
+				got = append(got, c.Member+" "+c.Was+" -> "+c.Now)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("the publish loosens %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestUpdatePublishLooserNodeNeedsTheTypedName: D846 reaches the second door
 // that writes a ceiling. The node is published at 5 and the local config states
 // 7, so this publish raises what every run of the project is admitted by —
@@ -1241,5 +1313,54 @@ func TestUpdatePublishUnchangedNodeAsksNothingNew(t *testing.T) {
 	}
 	if got := nodeCeiling(t, f); got != 5 {
 		t.Errorf("the node's ceiling is %v, want the untouched 5", got)
+	}
+}
+
+// TestUpgradePublishLooserNodeRefusesYesAlone: the other door that writes a
+// ceiling is `fugaro upgrade`'s policy step, and it runs the same confirmation.
+// --yes is the flag the whole upgrade is run with, so this is where a loosening
+// publish would be confirmed by it and nowhere else — the step refuses, names
+// the member that loosens and the command that reaches the same publish at a
+// terminal, and leaves the node where it was.
+func TestUpgradePublishLooserNodeRefusesYesAlone(t *testing.T) {
+	noTerminal(t)
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	r := upgradeRigWithGitHubAppID(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMode, budget.ModeEnforce)
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	// The local project config states a per-run ceiling above the published
+	// one, and the node is already at this version under deployed rules: the
+	// whole of this run's write would be the loosening publish.
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 7, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
+		"version": projectpolicy.Version,
+		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
+	}))
+
+	got, out := runUpgradePolicyStep(t, r.root)
+	if got.state != stepFailed || got.code != ExitUserError {
+		t.Fatalf("--yes alone on the upgrade door is %s (exit %d): %s\n%s", got.state, got.code, got.reason, out)
+	}
+	for _, want := range []string{"budget.per_run_usd", "5", "7", "fugaro update", "needs a real terminal"} {
+		if !strings.Contains(got.reason, want) {
+			t.Errorf("the refusal does not say %q: %s", want, got.reason)
+		}
+	}
+	// The sentence is said once: what the step printed and the reason the
+	// command reports are one block to the person reading them, and a block
+	// that repeats the sentence reads as two findings.
+	if n := strings.Count(out+got.reason, "does not stand in"); n != 1 {
+		t.Errorf("the loosening sentence appears %d times in what the upgrade prints, want once:\n%s%s", n, out, got.reason)
+	}
+	if got := ceilingOn(t, db); got != 5 {
+		t.Errorf("the node's ceiling is %v, want the published 5: the upgrade step wrote the loosening", got)
 	}
 }
