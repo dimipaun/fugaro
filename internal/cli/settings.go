@@ -32,19 +32,23 @@ type settingsOptions struct {
 }
 
 // settingsAimFlags registers the two flags every command of the settings family
-// takes to say which installation it acts on. They mean what they mean on every
-// other command that resolves a project (desktop-console.md §3.4 rule 3), and
-// they are localcfg.Select's own steps 1 and 2, so --config wins over --project
-// and the two that disagree are refused rather than resolved. Without them the
-// resolution is the ambient one — $FUGARO_PROJECT, $FUGARO_CONFIG, and the only
-// project config — which is what a console's child does not have (F12): on a
-// machine with two installations every unaimed argv it could spawn is refused,
-// and on a machine with one the read silently answers for whichever that is.
+// takes to say which installation it acts on. They are localcfg.Select's steps 1
+// and 2, with the spelling and the precedence every other command that resolves
+// a project gives them (desktop-console.md §3.4 rule 3): --config wins over
+// --project, and the two that disagree are refused naming both. Without them the
+// resolution is the ambient one — $FUGARO_PROJECT, $FUGARO_CONFIG and the only
+// project config — which is exactly what a console's child does not have (F12):
+// on a machine with two installations every unaimed argv it could spawn is
+// refused, and on a machine with one the read silently answers for whichever
+// that is.
 //
-// The default a --project without one of these resolves to names no checkout:
-// unlike every other command with these flags, settings reads and writes the
-// installation's own files, and resolving a checkout here would make the
-// command that answers outside a checkout refuse inside one.
+// The checkout stays out of the selection, though the implementation plan lists
+// it beside these two fields. Settings reads and writes the installation's own
+// files and answers outside a checkout; a Checkout in the SelectInput would put
+// the command at step 3, ahead of $FUGARO_CONFIG and $FUGARO_PROJECT, so it
+// would select the working directory's project instead and refuse in any
+// checkout whose fugaro.yaml has no `project:` — a change to the unaimed read,
+// which TestSettingsAimDoesNotChangeTheUnaimedRead forbids.
 func settingsAimFlags(cmd *cobra.Command, project, config *string) {
 	f := cmd.Flags()
 	f.StringVar(project, "project", "", "the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config)")
