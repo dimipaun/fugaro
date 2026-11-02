@@ -163,9 +163,10 @@ would refuse, so it is refused here instead.
 --generate writes a review-signing key and takes no value of its own
 (--generate=anything is a malformed flag): a review-signing key is an HMAC key
 with no upstream to paste one from, so this process draws ` + strconv.Itoa(credsvc.ReviewSigningKeyBytes) + ` bytes from
-crypto/rand and writes them into the bundle. It is refused for every other
-NAME, the review-signing names are the only ones it takes, and it never writes
-a NAME that is the rotation window's own entry — asked to, it refuses.
+crypto/rand and writes them into the bundle. Every other NAME is refused: an
+account's review-signing names are the only ones it takes, and the rotation
+window's own entry is not one of them — asked to write it, the command refuses,
+because it writes the current entry and derives the window's from it.
 
 Two runs ROTATE the key. The first writes a fresh value where the entry was;
 the second writes a fresh one again and carries the value it replaced, byte for
