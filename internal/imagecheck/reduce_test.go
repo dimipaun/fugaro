@@ -631,6 +631,16 @@ func TestReduceYarnBerryPatch(t *testing.T) {
 	// there is no patch at all to read it through.
 	refused(t, "yarn.lock", "\"typescript@npm:https://evil.example/x.tgz\":\n  version: 5.4.5\n"+
 		"  resolution: \"typescript@npm:https://evil.example/x.tgz\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	// A header and a resolution line are two places a source is stated, and each
+	// is read on its own: an entry whose header states the URL and whose
+	// resolution line states the range is refused by the header's check, and one
+	// whose header states the range and whose resolution line states the URL is
+	// refused by the resolution's. A test that put the URL in both would pass
+	// with either check gone, each covering for the other.
+	refused(t, "yarn.lock", "\"typescript@npm:https://evil.example/x.tgz\":\n  version: 5.4.5\n"+
+		"  resolution: \"typescript@npm:5.4.5\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", "\"typescript@npm:^5.4.0\":\n  version: 5.4.5\n"+
+		"  resolution: \"typescript@npm:https://evil.example/x.tgz\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
 	// A Yarn 3 descriptor writes the range the repository asked for where Yarn 4
 	// writes the resolved locator, so its inner range holds no `npm%3A` scheme
 	// and the version the entry resolved to is not in the descriptor: the entry
