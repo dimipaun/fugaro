@@ -348,6 +348,41 @@ func TestUnpricedModelRefused(t *testing.T) {
 	}
 }
 
+// TestPinWarningsCoverALevelModel: a review level's own model is a model the
+// run charges (L3.1, agent.levels.lN.model), so the pins' warnings are its
+// too — the placeholder price an unverified row carries and the catalog row a
+// stale catalog forced to the dearest end — each under the key the owner wrote
+// and each naming the level, which is all a surface that shows a warning
+// without its path (diagnose, the runner's log line) has to go on.
+func TestPinWarningsCoverALevelModel(t *testing.T) {
+	a := pinnedAgent()
+	a.Levels = ReviewLevels{L3: &LevelSetting{Model: "deepseek/deepseek-v4-flash"}}
+	ws := PinWarnings(a, placeholderPrices())
+	if got := paths(ws); got != "agent.levels.l3.model" {
+		t.Fatalf("an unverified level model warned under %q: %v", got, ws)
+	}
+	if ws[0].Code != CodeUnverifiedPrice || !strings.Contains(ws[0].Message, "level l3") || !strings.Contains(ws[0].Message, "unverified") {
+		t.Errorf("the level model's warning: %+v", ws[0])
+	}
+	// A level left on its role's model has nothing of its own to warn about,
+	// and a level model the table prices cleanly warns of nothing at all.
+	b := pinnedAgent()
+	b.Levels = ReviewLevels{L1: &LevelSetting{Model: "claude-haiku-4-5"}, L3: &LevelSetting{Effort: "high"}}
+	if ws := PinWarnings(b, pricing.Embedded()); len(ws) != 0 {
+		t.Errorf("a priced level model, and a level with no model of its own: %v", ws)
+	}
+	// The stale-catalog warning reaches a level model too.
+	b = pinnedAgent()
+	b.Levels = ReviewLevels{L2: &LevelSetting{Model: catModel}}
+	ws = PinWarnings(b, mustTable(t, providers(nil), nil, fixtureCatalog("2026-03-01")))
+	if got := paths(ws); got != "agent.levels.l2.model" {
+		t.Fatalf("a stale level model warned under %q: %v", got, ws)
+	}
+	if ws[0].Code != CodeCatalogPrice || !strings.Contains(ws[0].Message, "stale") || !strings.Contains(ws[0].Message, "level l2") {
+		t.Errorf("the stale level model's warning: %+v", ws[0])
+	}
+}
+
 func TestUnverifiedPriceWarns(t *testing.T) {
 	// The placeholder row a provider model used to get from the embedded
 	// table (the built-in catalog prices provider models now): built here so
