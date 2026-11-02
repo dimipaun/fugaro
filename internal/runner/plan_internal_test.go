@@ -15,6 +15,19 @@ import (
 // that sets none must be told apart from one that sets zero.
 func intp(n int) *int { return &n }
 
+// planLevels is the resolved levels a plan test hands planOf: the levels the
+// test wants to run and nothing else — no model, no effort, no focus, and no
+// insertion, since a level whose recipe carries its step is never inserted.
+// Which levels a real run resolves is config.ResolveLevels' answer, pinned in
+// internal/config; planOf's own business is what the levels do to the plan.
+func planLevels(l1, l2, l3 bool) config.Levels {
+	return config.Levels{
+		L1: config.ResolvedLevel{On: l1},
+		L2: config.ResolvedLevel{On: l2},
+		L3: config.ResolvedLevel{On: l3},
+	}
+}
+
 // TestPlanRoundsFollowTheMode: with no number set anywhere — no task
 // override, no recipe max_rounds, no agent.* from the repository or the
 // project layer — each mode's own row supplies both loops (the owner's ruling
@@ -37,10 +50,9 @@ func TestPlanRoundsFollowTheMode(t *testing.T) {
 		{rigor.Hotfix, 1, 1},
 	} {
 		t.Run(string(tc.mode), func(t *testing.T) {
-			// derived is false: the first_line step runs whatever
-			// agent.first_line_review says, which is the case this test is
-			// about.
-			got := planOf(knobs, false, config.Agent{}, nil, nil, tc.mode)
+			// Both levels on: the case this test is about is the rounds, and
+			// a level that does not run has no rounds at all.
+			got := planOf(knobs, planLevels(true, true, false), config.Agent{}, nil, tc.mode)
 			want := []planStep{
 				{Kind: recipe.StepFirstLine, Rounds: tc.in, Precedence: 0},
 				{Kind: recipe.StepReview, Rounds: tc.senior, Precedence: 0, FirstRounds: tc.in},
@@ -77,7 +89,7 @@ func TestPlanRoundsPrecedence(t *testing.T) {
 		{name: "the override leaves the first line to the mode", rcp: knobs, override: intp(2), mode: rigor.Startup, wantIn: 2, wantSen: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := planOf(tc.rcp, false, tc.a, nil, tc.override, tc.mode)
+			got := planOf(tc.rcp, planLevels(true, true, false), tc.a, tc.override, tc.mode)
 			if len(got) != 2 {
 				t.Fatalf("plan = %+v; want both steps", got)
 			}
@@ -102,7 +114,7 @@ func TestPlanRoundsPrecedence(t *testing.T) {
 func TestPlanRoundsClampToTheRecipeBounds(t *testing.T) {
 	knobs := parseRecipe(t, "version: 1\nname: knobs\nsteps:\n  - first_line: {}\n  - review: {}\n")
 	a := config.Agent{FirstLineRounds: recipe.MaxFirstLineRounds + 4, ReviewRounds: recipe.MaxReviewRounds + 3}
-	got := planOf(knobs, false, a, nil, intp(recipe.MaxReviewRounds+5), rigor.Critical)
+	got := planOf(knobs, planLevels(true, true, false), a, intp(recipe.MaxReviewRounds+5), rigor.Critical)
 	if got[0].Rounds != recipe.MaxFirstLineRounds {
 		t.Errorf("first-line rounds = %d; want the recipe's bound %d", got[0].Rounds, recipe.MaxFirstLineRounds)
 	}
@@ -143,7 +155,7 @@ func TestPlanReviewRoundsFollowTheReachedMode(t *testing.T) {
 // refuses.
 func TestPlanUnconfiguredRepositoryTakesTheModesRounds(t *testing.T) {
 	knobs := parseRecipe(t, "version: 1\nname: knobs\nsteps:\n  - first_line: {}\n  - review: {}\n")
-	got := planOf(knobs, false, config.Agent{}, nil, nil, rigor.Default)
+	got := planOf(knobs, planLevels(true, true, false), config.Agent{}, nil, rigor.Default)
 	want := []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 3, Precedence: 0},
 		{Kind: recipe.StepReview, Rounds: 3, Precedence: 0, FirstRounds: 3},
@@ -176,29 +188,58 @@ func parseRecipe(t *testing.T, text string) *recipe.Recipe {
 	return r
 }
 
-func TestPlanDefaultFollowsAgent(t *testing.T) {
-	// Critical, whose ceiling is the whole scale: the case is about F6's own
-	// precedence, so the mode's ceiling must not bite (T3.2).
+// TestPlanStepsFollowTheLevels: the plan carries a review step exactly for the
+// levels that run — a level that is off has its step dropped (L2.1's O7), and a
+// level that is on and whose recipe has no step for it is inserted in the
+// level's fixed place: level 1 before the review step, level 3 after it with
+// bounce: first_line. Which levels a run resolves is config.ResolveLevels'
+// answer (the catalog default's own first_line rule among them); what the plan
+// does with them is here.
+func TestPlanStepsFollowTheLevels(t *testing.T) {
 	def := catalogRecipe(t, recipe.DefaultName)
-	a := config.Agent{ReviewRounds: 4, FirstLineReview: config.FirstLineOff, FirstLineRounds: 2}
-	if got := planOf(def, true, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 4, Precedence: 4}}) {
-		t.Fatalf("off: %v", got)
+	a := config.Agent{ReviewRounds: 4, FirstLineRounds: 2}
+	// Level 1 off: the catalog default's first_line step goes with it, and the
+	// review step's own rounds are the ones a layer set.
+	if got := planOf(def, planLevels(false, true, false), a, nil, rigor.Critical); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 4, Precedence: 4}}) {
+		t.Fatalf("level 1 off: %v", got)
 	}
-	a.FirstLineReview = config.FirstLineOn
-	if got := planOf(def, true, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
+	if got := planOf(def, planLevels(true, true, false), a, nil, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
 	}) {
-		t.Fatalf("on: %v", got)
+		t.Fatalf("level 1 on: %v", got)
 	}
-	// Not derived (a project or repository recipe named default): its
-	// first_line step always runs.
-	a.FirstLineReview = config.FirstLineOff
-	if got := planOf(def, false, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
+	// Level 3 on with no step for it: the plan gains one after the review, and
+	// it bounces to the cheap loop the first_line step leaves (O7).
+	withL3 := []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
-	}) {
-		t.Fatalf("not derived: %v", got)
+		{Kind: recipe.StepAdversarial, Rounds: rigor.AdversarialDefault(rigor.Critical), Bounce: true, FirstRounds: 2},
+	}
+	if got := planOf(def, config.Levels{
+		L1: config.ResolvedLevel{On: true},
+		L2: config.ResolvedLevel{On: true},
+		L3: config.ResolvedLevel{On: true, Inserted: true},
+	}, a, nil, rigor.Critical); !slices.Equal(got, withL3) {
+		t.Fatalf("level 3 inserted: %v, want %v", got, withL3)
+	}
+	// Level 3 on with no first line under it: the bounce has nothing to bounce
+	// to, so the step carries no first-line rounds and behaves as a plain
+	// review (planStep.FirstRounds).
+	noCheap := planOf(def, config.Levels{
+		L2: config.ResolvedLevel{On: true},
+		L3: config.ResolvedLevel{On: true, Inserted: true},
+	}, a, nil, rigor.Critical)
+	if n := len(noCheap); n != 2 || noCheap[1].Kind != recipe.StepAdversarial || noCheap[1].FirstRounds != 0 {
+		t.Fatalf("level 3 with no first line: %v", noCheap)
+	}
+	// A recipe that is not the loop is taken as written: a mode: review
+	// recipe's one review step is planned whatever its own level's row says,
+	// because there is nowhere for a level to join and dropping it would leave
+	// the plan with no review at all.
+	reviewOnly := parseRecipe(t, "version: 1\nname: review-only\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n")
+	if got := planOf(reviewOnly, config.Levels{}, a, nil, rigor.Critical); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 1, Precedence: 1}}) {
+		t.Fatalf("mode: review: %v", got)
 	}
 }
 
@@ -208,9 +249,10 @@ func TestPlanPrecedence(t *testing.T) {
 	// (G6), so this is no longer a catalog lookup.
 	cheap := parseRecipe(t, "version: 1\nname: cheap-loop-senior\nsteps:\n  - first_line: { max_rounds: 2 }\n  - review: { max_rounds: 1 }\n")
 	a := config.Agent{ReviewRounds: 5, FirstLineReview: config.FirstLineOff, FirstLineRounds: 3}
-	// The recipe's own values win over agent.*, and first_line_review: off
-	// does not switch off a recipe's first_line step.
-	if got := planOf(cheap, false, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{
+	// The recipe's own values win over agent.*, and a recipe's first_line step
+	// is planned for the level that runs it: first_line_review is the
+	// resolver's answer for a level 1 nothing else names, not a step's.
+	if got := planOf(cheap, planLevels(true, true, false), a, nil, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 1, Precedence: 1, FirstRounds: 2},
 	}) {
@@ -218,14 +260,14 @@ func TestPlanPrecedence(t *testing.T) {
 	}
 	// The task's override wins over both.
 	seven := 7
-	if got := planOf(cheap, false, a, nil, &seven, rigor.Critical); !slices.Equal(got, []planStep{
+	if got := planOf(cheap, planLevels(true, true, false), a, &seven, rigor.Critical); !slices.Equal(got, []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 7, Precedence: 7, FirstRounds: 2},
 	}) {
 		t.Fatalf("override: %v", got)
 	}
 	solo := parseRecipe(t, "version: 1\nname: claude-solo\nroles:\n  reviewer: coder\nsteps:\n  - review: { max_rounds: 1 }\n")
-	if got := planOf(solo, false, a, nil, nil, rigor.Critical); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 1, Precedence: 1}}) {
+	if got := planOf(solo, planLevels(false, true, false), a, nil, rigor.Critical); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 1, Precedence: 1}}) {
 		t.Fatalf("solo: %v", got)
 	}
 }
@@ -236,7 +278,7 @@ func TestPlanPrecedence(t *testing.T) {
 func TestPlanBounceCarriesFirstRounds(t *testing.T) {
 	bouncy := parseRecipe(t, "version: 1\nname: bouncy\nsteps:\n  - first_line: { max_rounds: 2 }\n  - review: { bounce: first_line, max_rounds: 3 }\n")
 	a := config.Agent{ReviewRounds: 5, FirstLineRounds: 1}
-	got := planOf(bouncy, false, a, nil, nil, rigor.Critical)
+	got := planOf(bouncy, planLevels(true, true, false), a, nil, rigor.Critical)
 	want := []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 3, Precedence: 3, Bounce: true, FirstRounds: 2},
@@ -246,27 +288,82 @@ func TestPlanBounceCarriesFirstRounds(t *testing.T) {
 	}
 }
 
+// TestPlanAdversarialRounds: the adversarial step's rounds are its own knob
+// and the mode's own adversarial default (rigor.AdversarialDefault), never the
+// senior review's number: a mode's row is two numbers and only one of them is
+// the senior review's (the owner's ruling of 2026-10-31, which answers O3).
+func TestPlanAdversarialRounds(t *testing.T) {
+	level3 := parseRecipe(t, "version: 1\nname: level3\nsteps:\n  - review: {}\n  - adversarial: {}\n")
+	got := planOf(level3, planLevels(false, true, true), config.Agent{}, nil, rigor.Critical)
+	if n := len(got); n != 2 || got[1].Kind != recipe.StepAdversarial {
+		t.Fatalf("plan = %+v", got)
+	}
+	if got[1].Rounds != rigor.AdversarialDefault(rigor.Critical) || got[1].Precedence != 0 {
+		t.Fatalf("adversarial rounds = %d (precedence %d); want the mode's %d, with nothing above it having set one",
+			got[1].Rounds, got[1].Precedence, rigor.AdversarialDefault(rigor.Critical))
+	}
+	// A number a layer set is the step's, and the mode's row then supplies
+	// nothing — so the step does not read the senior review's knob.
+	pinned := parseRecipe(t, "version: 1\nname: pinned\nsteps:\n  - review: {}\n  - adversarial: { max_rounds: 2 }\n")
+	a := config.Agent{ReviewRounds: 4, AdversarialRounds: 3}
+	if got := planOf(pinned, planLevels(false, true, true), a, nil, rigor.Critical); got[1].Rounds != 2 || got[1].Precedence != 2 {
+		t.Fatalf("recipe over agent: %+v", got)
+	}
+	plain := parseRecipe(t, "version: 1\nname: plain3\nsteps:\n  - review: {}\n  - adversarial: {}\n")
+	if got := planOf(plain, planLevels(false, true, true), a, nil, rigor.Critical); got[1].Rounds != 3 || got[1].Precedence != 3 {
+		t.Fatalf("agent.adversarial_rounds: %+v", got)
+	}
+}
+
 func TestCheckPlan(t *testing.T) {
 	plain := parseRecipe(t, "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: {}\n")
+	both := planLevels(true, true, false)
 	ok := []planStep{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepReview, Rounds: 1}}
-	if err := checkPlan(plain, ok); err != nil {
+	if err := checkPlan(plain, both, ok); err != nil {
 		t.Fatal(err)
 	}
+	// A plan that would silently drop a step the run's levels require is
+	// refused: the launcher's gates promised the level and the run would never
+	// hold it. The steps have to be the required ones, in their order.
 	for _, bad := range [][]planStep{
 		nil,
 		{{Kind: recipe.StepFirstLine, Rounds: 2}},
 		{{Kind: recipe.StepReview, Rounds: 1}, {Kind: recipe.StepFirstLine, Rounds: 1}},
-		{{Kind: recipe.StepReview, Rounds: 0}},
+		{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepAdversarial, Rounds: 1}},
 	} {
-		if err := checkPlan(plain, bad); err == nil || !strings.Contains(err.Error(), "no trailing review step") {
-			t.Errorf("checkPlan(%v) = %v", bad, err)
+		if err := checkPlan(plain, both, bad); err == nil || !strings.Contains(err.Error(), "skip") {
+			t.Errorf("checkPlan(%v) = %v, want the dropped step refused", bad, err)
 		}
 	}
-	// A recipe carrying review level 3 is refused rather than planned without
-	// it: planOf has no arm for the step, so the ordinary plan below would run
-	// and the pull request would open with level 3 never run.
+	// The plan's last step running no rounds is the same drop one step later:
+	// the step is in the plan and never runs.
+	if err := checkPlan(plain, both, []planStep{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepReview}}); err == nil {
+		t.Error("a trailing review step with no rounds was planned")
+	}
+	// A run whose levels leave no review step at all decides nothing, so the
+	// plan is refused whatever it holds.
+	if err := checkPlan(plain, config.Levels{}, nil); err == nil || !strings.Contains(err.Error(), "no review step at all") {
+		t.Errorf("checkPlan(all levels off) = %v, want it refused", err)
+	}
+	// The plan follows the levels rather than the recipe: level 3 on is the
+	// adversarial step, planned after the review and required there.
 	level3 := parseRecipe(t, "version: 1\nname: level3\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: {}\n")
-	if err := checkPlan(level3, ok); err == nil || !strings.Contains(err.Error(), "adversarial step is not run") {
-		t.Errorf("checkPlan(level 3) = %v, want the step refused", err)
+	withL3 := planLevels(true, true, true)
+	plan3 := []planStep{
+		{Kind: recipe.StepFirstLine, Rounds: 2},
+		{Kind: recipe.StepReview, Rounds: 1},
+		{Kind: recipe.StepAdversarial, Rounds: 5},
+	}
+	if err := checkPlan(level3, withL3, plan3); err != nil {
+		t.Fatal(err)
+	}
+	// The same recipe without level 3's step is a plan that drops it.
+	if err := checkPlan(level3, withL3, ok); err == nil || !strings.Contains(err.Error(), "skip") {
+		t.Errorf("checkPlan(level 3 dropped) = %v, want it refused", err)
+	}
+	// And the review step is never skipped: a plan that dropped it for the
+	// adversarial step is refused for the same reason.
+	if err := checkPlan(level3, withL3, []planStep{{Kind: recipe.StepFirstLine, Rounds: 2}, {Kind: recipe.StepAdversarial, Rounds: 5}}); err == nil {
+		t.Error("a plan with no review step was accepted")
 	}
 }

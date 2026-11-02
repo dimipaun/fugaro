@@ -366,17 +366,11 @@ func reviewStageOf(stage string) (reviewStage, bool) {
 	return reviewStage{}, false
 }
 
-// stageRole is the role slot a stage pins. It is config.StageRole plus the
-// adversarial stage: that function answers the coder's role for a stage name
-// it does not know, and level 3 is a review — the reviewer's slot, its output
-// limit and its role's model. L4.2 teaches config.StageRole the new stage, and
-// until then TestStageRoleAgreesWithConfig pins the two answers together for
-// the stages both know, so the disagreement is this one line and not a second
-// ladder.
+// stageRole is the role slot a stage pins: config.StageRole, which now knows
+// the adversarial stage too, so level 3 takes the reviewer's slot — its output
+// limit and its role's model — through the one ladder rather than a second
+// answer beside it (TestStageRoleAgreesWithConfig).
 func stageRole(stage string) config.Role {
-	if stage == stageAdversarial {
-		return config.RoleReviewer
-	}
 	return config.StageRole(stage)
 }
 

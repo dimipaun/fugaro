@@ -195,6 +195,15 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// decision that *is* read off a pin, through Agent.FirstLineOn — is
 	// derived by the caller after this returns, so it sees the pins the
 	// switch produced rather than the ones it replaced.
+	// The run's review levels are resolved here, after the merge and before the
+	// switch: the floor is the merged policy's (G1) and the allow-list is the
+	// ceiling's, and the models a level names have to be in the run's own
+	// configuration before applyRouting rewrites the pins (L4.5). The plan,
+	// which is built from the levels this writes, is derived by the caller
+	// after this returns, for the same reason the switch is applied here.
+	if err := r.resolveLevels(); err != nil {
+		return err
+	}
 	if err := r.applyRouting(pp, found); err != nil {
 		return err
 	}

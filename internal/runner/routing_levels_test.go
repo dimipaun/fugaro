@@ -198,13 +198,13 @@ func TestRoutingRoutesALevelsOwnModel(t *testing.T) {
 	}
 }
 
-// TestStageRoleAgreesWithConfig: the runner's own answer for the stages
-// config.StageRole knows is that function's, and the adversarial stage — the
-// one it does not know — is the reviewer's, because level 3 is a review. A
-// stage whose role disagreed with its pins would take its output limit and its
-// model from two different answers.
+// TestStageRoleAgreesWithConfig: the runner's answer for a stage is
+// config.StageRole's, the adversarial stage included — that function knows it
+// since L4.2 — because level 3 is a review. A stage whose role disagreed with
+// its pins would take its output limit and its model from two different
+// answers.
 func TestStageRoleAgreesWithConfig(t *testing.T) {
-	for _, stage := range []string{"review_first", "review", "implement", "fix", "plan"} {
+	for _, stage := range []string{"review_first", "review", "implement", "fix", "plan", stageAdversarial} {
 		if got, want := stageRole(stage), config.StageRole(stage); got != want {
 			t.Errorf("stageRole(%q) = %q, config.StageRole says %q", stage, got, want)
 		}
