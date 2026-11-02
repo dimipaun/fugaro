@@ -2018,6 +2018,92 @@ document rather than fill it in.
 `--pr` (the pull request number), `--json`, and the cloud flags `--project`,
 `--config`, `--gcp-project` and `--region`.
 
+### 6.16 `fugaro coordinator intents --all --json` (coordinator v2 C4)
+
+**Command:** `ee/coordinator/cli/coordinator_intents.go` `newCoordinatorIntentsCmd` /
+`runCoordinatorIntents`. **Document:** `coordinator.ProjectIntents` with `--all`
+and `coordinator.RepoIntents` without it (`ee/coordinator/state.go`), printed by
+`writeCoordinatorJSON` — the same indented shape as every other read in this set
+(§9.2). The read behind it is `Store.ReadRepoIntents`, beside
+`Store.ReadRepoView`.
+
+**Why it is a read of its own.** The declarations live in the coordinator's own
+subtree, one document per report under `coordinator/repos/<slug>/intents/<id>`
+(D195): the report path writes them (P4) and the sweep reads them to compute a
+view (P5). §6.13's stored view carries what the declarations **mean** for a
+collision — a record's branch, release, files and services — and never a
+declaration itself, so a screen that draws the transcript of who declared what,
+and when, reads here. This is the only command that prints them.
+
+**The document is a list of repositories, each with a list of records.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repos` | array | never | never | one `RepoIntents` per selected repository, in the order `coordinatorRepos` produced them (sorted by the local config's keys, so the same config gives the same document). **It is never `[]` here**: `--all` on a config that lists no repository is **refused** ("the local config lists no repository: add one to its repos"), so that caller gets an error and a non-zero exit rather than a document. Without `--all` the document is the single `RepoIntents` object and there is no wrapper |
+| `repo` | string | never | never | the repository the caller asked about, `owner/name`, echoed: the node's key is a slug (a hash of the provider and the name), so the node carries no name to read back |
+| `provider` | string | never | never | the git provider kind the caller resolved for this repository, one of `config.Providers`' two words, or `""` when the caller had none to give. It is **the caller's answer and not the node's**, exactly as §6.13's `provider` is |
+| `intents` | array | never | never | every record the node holds, **newest first by the record's own `at`**, and by `id` where two agree. **`[]` is the ordinary answer**: a repository the coordinator holds no records for has declared nothing, which is a fact and not a gap. It is never a missing key — a screen tells "no records" from a document older than the field by the key's presence |
+
+| Key (one record) | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the node's key, `coordinator.IntentID` of the declaration beside it: a hash of what the caller declared, and never a person. It is the id a screen addresses a record by, and **no name, account or identity may be derived from it** |
+| `declared_by` | string | never | never | **a declaration and never an identity.** It is the string the reporter's own machine said about itself when it wrote the record (`localcfg.Config.Me`: the local config's `user`, else `git config user.email`, spelled by that caller), carried as data. A renderer sanitises it (`safetext`) before it reaches a line or a cell, and **nothing may authorise, admit or attribute anything by it** |
+| `at` | string | never | never | an RFC 3339 instant in UTC: when the caller declared it, stamped by the **writer's own clock** (`Reporter.Now`), and never the read's. It is not part of `id`: two reports of one declaration are one record whatever the clock says |
+| `branch` | string | **yes** | never | the branch the caller is about to work on. **Absent** when it declared none (`omitempty`), which is not an empty branch: a screen tells the two apart by the key's presence |
+| `release` | string | **yes** | never | the target release the caller declared. **Absent** when it declared none — and it is **not** derived here from the branch, which is §6.13's `release` field's job in the view and a claim this read does not make |
+| `files` | array | never | never | the paths the caller is about to touch, sorted and deduplicated by the writer (`Intents.Normalise`). `[]` is "declares none" and never a null. Every entry is **untrusted text of the same kind as `declared_by`**: a path-shaped string a renderer draws as data, never resolves, opens or runs |
+| `services` | array | never | never | the services, the same way and with the same rule |
+
+**Every string in a record is another writer's, and it is carried as data.**
+`declared_by`, `branch`, `release` and every entry of `files` and `services` were
+written by whoever ran the report, on a machine this read has never seen: they
+are **displayed**, and nothing in them is a link, a path a screen follows, a
+command or a decision (design §5.1 rule 2). The document carries them whole; the
+renderer sanitises and clips each one before it reaches a line or a cell
+(`safetext`, `fcli.ClipRunes`), which is what the CLI's own table does.
+
+**No records is a fact, and the read failed is not.** A repository the store
+holds nothing for prints `"intents": []`, and the command exits **0**: the
+coordinator is off on most installations, and a screen that had to know which
+before it picked an argv would be the one place that has to. A read the database
+**refused** (a caller whose credential is not a database reader) is the other
+answer: the command prints **no document at all**, exits **1**, and the sentence
+on stderr names `roles/firebasedatabase.viewer`, the IAM role launchers and
+operators hold. A record that does not decode — or carries a field this build
+does not know — is refused the same way rather than read as a repository that
+declared nothing.
+
+**The read holds no key of any host's.** It is §6.13's own read
+(`status --from-store`, D364): the client is the caller's own credential on the
+project's `budget.rtdb_url`, which is the database the coordinator's subtree
+lives in, and what admits it is `roles/firebasedatabase.viewer`. **No host is
+opened, no App ID, no App key and no Bitbucket credential is read**, and it
+works with `FUGARO_CREDENTIALS_SERVICE_URL` set, where the project-wide read
+refuses. A project with no `budget.rtdb_url` is refused **naming
+`fugaro update --firebase-project`**, exit **1**, like every other read of the
+database. **Exit codes: 1 for a refusal of the caller's own environment or argv,
+and no other code: this read never reaches a host.**
+
+**The console's half of this section is not built yet.** Coordinator v2's C4 is
+landing as two changes, as C3 did: this section documents the CLI's document and
+the row the console will spawn — `coordinator intents --all --json`, with no
+argument a renderer can influence — and the operation's own name, schema entry
+and decoder land in the console in the second change. Until then the console
+does not spawn this command, and no `coordinator.intents` operation exists to
+reach.
+
+**Version skew.** Every field is additive. A CLI older than this command has no
+such read at all, and the console shows the section as unavailable (§1) rather
+than an error loop. A record's field added later is one an older console does
+not draw; a console that requires one must refuse the document rather than fill
+it in.
+
+**Flags** (`newCoordinatorIntentsCmd`): `--all` (every repository the local
+config lists), `--repo` (one repository, `owner/name`; refused together with
+`--all`), `--since` (the window, measured against each record's own `at`; `0` for
+all), `--json`, and the cloud flags `--project`, `--config`, `--gcp-project` and
+`--region`.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
