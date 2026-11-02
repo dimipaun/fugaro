@@ -60,6 +60,7 @@ import type { Reading, Unit } from '../../shared/availability'
 import { nameableText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import { BUSY_SLOT_CLASS } from '../section'
+import type { SkeletonBlock, SkeletonShape } from '../skeleton'
 import type {
   CoordinatorRecord,
   CoordinatorRepoView,
@@ -331,6 +332,104 @@ export const COORDINATOR_BLIND_HOST_CLASS = 'coordinator-blind-host'
  * the part it fills, the way the launch control's own button does for its form. */
 export const COORDINATOR_QUEUE_JOBS_CLASS = 'coordinator-queue-jobs'
 
+/**
+ * COORDINATOR_JOBS_CLASS is the job list's own section, a sibling of the queue
+ * and the fleet strip: the section the operator asks for, and the one section of
+ * this screen that is **not** part of the tab's first paint.
+ *
+ * The queue answers "what is waiting for a person" and holds at most the two
+ * dozen items the console can draw at once; the job list is the other question
+ * -- every run the window holds, newest first -- and it is read, paged and
+ * expanded on demand (D818, rule 5 of §6.2's opening). Keeping it a section of
+ * its own is what makes its own read, its own mark and its own refusal possible:
+ * a list that failed to read must not take the queue down with it, and a section
+ * the operator never asked for must not be a section that was read.
+ */
+export const COORDINATOR_JOBS_CLASS = 'coordinator-jobs'
+
+/** COORDINATOR_JOBS_HEAD_CLASS carries the window's own figures, and
+ * COORDINATOR_JOBS_LIST_CLASS and COORDINATOR_JOBS_CONTROLS_CLASS are the two
+ * hosts the paged rows and the section's controls are filled into. The three are
+ * hosts rather than content for the queue's reason: the head is written once,
+ * from the first page's `totals`, and the rows are appended to, so a page that
+ * lands never redraws -- and never collapses -- the rows already read. */
+export const COORDINATOR_JOBS_HEAD_CLASS = 'coordinator-jobs-head'
+export const COORDINATOR_JOBS_LIST_CLASS = 'coordinator-jobs-list'
+export const COORDINATOR_JOBS_CONTROLS_CLASS = 'coordinator-jobs-controls'
+
+/** COORDINATOR_JOBS_WINDOW_WORD introduces the head's two figures and says what
+ * they are figures **of**: the window the read was made over, and not the rows
+ * under them. The distinction is the whole of why they are drawn from
+ * `totals` -- a screen that summed the page would draw the page's count under a
+ * word that claims the window. */
+export const COORDINATOR_JOBS_WINDOW_WORD = 'the window holds'
+
+/** COORDINATOR_JOBS_RUNS_WORD and COORDINATOR_JOBS_SPENT_WORD are the head's two
+ * cells, in the order they are drawn: how many runs the window holds, and what
+ * they cost. Both come off the **first page's** `totals` (`runview.Totals`), and
+ * the runs figure is the window's own count -- the CLI sums the window it read,
+ * not the page it printed. */
+export const COORDINATOR_JOBS_RUNS_WORD = 'runs'
+export const COORDINATOR_JOBS_SPENT_WORD = 'spent'
+
+/** COORDINATOR_JOBS_LOAD_WORD is the control that asks for the list at all, and
+ * COORDINATOR_JOBS_OLDER_WORD the control that asks for the page after it. The
+ * first is drawn until the operator presses it; the second only while the page
+ * last read filled every row it asked for, because that is the only state in
+ * which the console knows there may be more. */
+export const COORDINATOR_JOBS_LOAD_WORD = 'Load jobs'
+export const COORDINATOR_JOBS_OLDER_WORD = 'Older 50'
+
+/** COORDINATOR_JOBS_EMPTY_WORD is the console's own sentence for a window the
+ * read answered with no run at all. It is drawn only over a page that was read,
+ * and never while one is in flight. */
+export const COORDINATOR_JOBS_EMPTY_WORD = 'the window holds no run'
+
+/** COORDINATOR_JOBS_BUSY is what the section's own mark says while its read is
+ * out. It names the list and not the page, because the operator is waiting for
+ * the first page of it either way. */
+export const COORDINATOR_JOBS_BUSY = 'Reading the job list…'
+
+/** COORDINATOR_JOBS_LOAD_CLASS and COORDINATOR_JOBS_OLDER_CLASS are the two
+ * controls' hooks, and COORDINATOR_JOB_DETAIL_CLASS is the body one row expands:
+ * hidden until the press, and drawn with the row rather than on it. */
+export const COORDINATOR_JOBS_LOAD_CLASS = 'coordinator-jobs-load'
+export const COORDINATOR_JOBS_OLDER_CLASS = 'coordinator-jobs-older'
+export const COORDINATOR_JOB_DETAIL_CLASS = 'coordinator-job-detail'
+
+/** COORDINATOR_JOBS_PAGE is the page the section asks for, and `--limit`'s value:
+ * fifty rows. It is deliberately **not** `COORDINATOR_LIST_CAP`: that cap is
+ * what this screen may draw at once, and it is twenty. Fifty is the page the
+ * console asks the CLI for, and it is drawn in full -- the cap exists to keep a
+ * single screen's drawing bounded, and a page the operator asked for row by row
+ * is the one list on this screen that is not a summary of something else. It is
+ * well under `RUNS_LIST_MAX_LIMIT` (`src/main/ipc.ts`, 200), which is the
+ * surface's ceiling rather than this screen's choice. */
+export const COORDINATOR_JOBS_PAGE = 50
+
+/** COORDINATOR_JOBS_FLOOR_WORD introduces the console's sentence for a CLI that
+ * is too old to page: `runs ls --limit` cut after the sort and `--after` are
+ * both #1545's, and a 0.15.x CLI either refuses `--after` outright or sums the
+ * page it printed. A screen that asked anyway would draw the page's figures
+ * under the word "the window" -- the one wrong number this section could draw --
+ * so the section draws the sentence and spawns nothing.
+ *
+ * **Its trailing space is the sentence's own.** The version follows it in a span
+ * of its own, and two inline spans are concatenated with nothing between them:
+ * without the space the paragraph reads "this CLI is0.15.3". */
+export const COORDINATOR_JOBS_FLOOR_WORD = 'the job list needs fugaro 0.16.0 and this CLI is '
+
+/** COORDINATOR_JOBS_SHAPE is the section's own skeleton, worn while the first
+ * page is out: the head's line and the rows under it. It is declared here rather
+ * than in `skeleton.ts` because the job list is **not** one of the sections the
+ * tab's first paint marks -- nothing is in flight for it until the operator
+ * presses the control -- so it is not one of `SKELETON_SHAPES.coordinator`'s,
+ * which is the list of the sections a tab's entry reads. */
+export const COORDINATOR_JOBS_SHAPE: SkeletonShape = Object.freeze({
+  section: 'jobs',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row']),
+})
+
 // ---------------------------------------------------------------------------
 // The elements.
 // ---------------------------------------------------------------------------
@@ -589,6 +688,56 @@ export interface CoordinatorRunRow {
   readonly halted: boolean
 }
 
+/**
+ * CoordinatorJobRow is one row of the job list, off `runview.Row`'s own fields
+ * and nothing else: the collapsed row draws the id, the repository, the status
+ * and the title, and the expanded body draws the rest -- which is what
+ * "expandable" buys, and why the reader keeps fields no collapsed row draws.
+ *
+ * Every string here is a document's, so every one of them is drawn through
+ * `putText` in the class its wire key declares: a job's title and reason are
+ * written by whoever wrote the task, a repository is a repository, and a branch
+ * is a branch. `cost` is a reading and not a number, so a row whose cost the
+ * document did not carry draws nothing rather than `$0.00`.
+ */
+export interface CoordinatorJobRow {
+  readonly run: string
+  readonly repo: string
+  readonly status: string
+  readonly stage: string
+  readonly outcome: string
+  readonly title: string
+  readonly branch: string
+  readonly reason: string
+  readonly created: string
+  readonly planTask: string
+  readonly launchedBy: string
+  readonly pr: number | null
+  readonly cost: Reading | null
+  readonly changed: readonly string[]
+  readonly changedTotal: number | null
+  readonly changedTruncated: boolean
+}
+
+/** CoordinatorJobsWindow is the head's two figures, and they are **the window's**
+ * -- the first page's own `totals`, summed by the CLI over everything it read
+ * rather than over the rows it printed. Both are readings, so neither can reach
+ * the screen as a bare number, and both are absent together: a head with one
+ * figure and not the other would be claiming half a window. */
+export interface CoordinatorJobsWindow {
+  readonly runs: Reading
+  readonly spent: Reading
+}
+
+/** CoordinatorJobs is one page of the job list: the rows this page printed, the
+ * window's figures off its `totals`, and the cursor the page after it is asked
+ * with (the last row's own id, and `''` when the page named none). */
+export interface CoordinatorJobs {
+  readonly rows: readonly CoordinatorJobRow[]
+  readonly window: CoordinatorJobsWindow | null
+  readonly cursor: string
+}
+
 /** CoordinatorBlindSpot is the line under the queue: the console's own words for
  * what it cannot reach, and the two counts, each a reading so neither can be
  * drawn as a bare figure (D813). */
@@ -703,6 +852,83 @@ export function queueRuns(document: unknown): readonly CoordinatorRunRow[] {
     })
   }
   return waiting
+}
+
+/**
+ * jobsDocument reads one page of `runs ls --json --since 24h --limit=50` into the
+ * console's own shape: the rows, the window's own `totals`, and the cursor the
+ * next page is asked with.
+ *
+ * **It is the second reader of the same document** and it reads it differently
+ * from `queueRuns`, on purpose. The queue asks "which of these is waiting for a
+ * person" and drops everything else; the job list asks "what does this page
+ * hold" and keeps every row the CLI printed, in the CLI's order. The two are
+ * different questions about one document, which is why the queue's reader is not
+ * widened to answer both: a queue that stopped dropping succeeded runs would
+ * draw a hundred jobs nobody is waiting on.
+ *
+ * The cursor is **the last row's own id**, which is what `--after` takes: the CLI
+ * pages on `run`/`run_id`, so the console reads the id back out of the row it
+ * drew rather than computing one. A page whose last row names no id has no
+ * cursor, and the Older control is not offered for it -- paging without one would
+ * ask for the same page again.
+ *
+ * `totals` are the window's, not the page's: since #1545 the CLI cuts what it
+ * prints and sums what it read, so `runs` here may be far above the rows beside
+ * it. That is the figure the head draws, and the one a screen that summed its own
+ * rows would get wrong.
+ */
+export function jobsDocument(document: unknown): CoordinatorJobs {
+  const root = objectAt(document)
+  const raw = root?.['runs']
+  const rows: CoordinatorJobRow[] = []
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      const record = objectAt(entry)
+      if (record === null) continue
+      const run = textAt(record['run']) ?? textAt(record['run_id']) ?? ''
+      // A row that names no run is dropped for the queue's reason: there is no id
+      // to draw, to expand or to page from.
+      if (run === '') continue
+      const files = objectAt(record['changed_files'])
+      const changed = files?.['paths']
+      const cost = objectAt(record['cost'])?.['total_usd']
+      rows.push({
+        run,
+        repo: textAt(record['repo']) ?? '',
+        status: textAt(record['status']) ?? '',
+        stage: textAt(record['stage']) ?? '',
+        outcome: textAt(record['outcome']) ?? '',
+        title: textAt(record['title']) ?? '',
+        branch: textAt(record['branch']) ?? '',
+        reason: textAt(record['reason']) ?? '',
+        created: textAt(record['created']) ?? '',
+        planTask: textAt(record['plan_task']) ?? '',
+        launchedBy: textAt(record['launched_by']) ?? '',
+        pr: typeof record['pr'] === 'number' ? record['pr'] : null,
+        cost: typeof cost === 'number' && Number.isFinite(cost) ? measured(cost) : null,
+        // `changed_files` is `runstore.ChangedFiles`, already bounded by the
+        // store: what the row draws is the set it was given, and the figure
+        // beside it is the document's own `total` -- a count this screen
+        // computed would be a second opinion about how many paths a run changed.
+        changed: Array.isArray(changed)
+          ? changed.filter((one): one is string => typeof one === 'string')
+          : [],
+        changedTotal:
+          files !== null && typeof files['total'] === 'number' ? files['total'] : null,
+        changedTruncated: files !== null && files['truncated'] === true,
+      })
+    }
+  }
+  const totals = objectAt(root?.['totals'])
+  const runs = totals === null ? null : totals['runs']
+  const spent = totals === null ? null : totals['total_usd']
+  const window =
+    typeof runs === 'number' && Number.isFinite(runs) && typeof spent === 'number' && Number.isFinite(spent)
+      ? { runs: measured(runs), spent: measured(spent) }
+      : null
+  const last = rows[rows.length - 1]
+  return { rows, window, cursor: last === undefined ? '' : last.run }
 }
 
 /**
@@ -1527,6 +1753,193 @@ export function fillCoordinatorTotals(
   }
 }
 
+/**
+ * coordinatorJobsControl is the section's own control, in one of its two words:
+ * the button that asks for the list at all, and the button that asks for the page
+ * after it. Both carry `aria-expanded="false"`, the way the queue's jobs control
+ * and the launch control do, and it is the same state for both: the thing the
+ * press asks for is **not on screen when the control is** -- `Load jobs` is gone
+ * the moment the first page lands, and `Older 50` is the press for a page that has
+ * not been asked for yet.
+ *
+ * They are buttons and never anchors, and neither carries a value from a
+ * document: the cursor the Older control pages with is held by the entry as the
+ * last row it drew, so nothing a document wrote reaches an attribute.
+ */
+export function coordinatorLoadJobsControl(factory: ScreenFactory): ScreenElement {
+  return jobsControl(factory, COORDINATOR_JOBS_LOAD_CLASS, COORDINATOR_JOBS_LOAD_WORD)
+}
+
+/** coordinatorOlderJobsControl is the other one: the press that asks for the page
+ * after the one on screen, with `--after` the last row the console drew. */
+export function coordinatorOlderJobsControl(factory: ScreenFactory): ScreenElement {
+  return jobsControl(factory, COORDINATOR_JOBS_OLDER_CLASS, COORDINATOR_JOBS_OLDER_WORD)
+}
+
+function jobsControl(factory: ScreenFactory, className: string, label: string): ScreenElement {
+  const button = make(factory, 'button', className)
+  button.setAttribute('type', 'button')
+  button.setAttribute('aria-expanded', 'false')
+  literal(button, label)
+  return button
+}
+
+/**
+ * fillCoordinatorJobsHead draws the window's two figures. It is drawn from the
+ * **first** page's `totals` and written once, which is why it is a function of
+ * the page rather than of a count the entry keeps: the figure belongs to the
+ * read, and a head rewritten on every page would be a second chance to draw the
+ * page's number under a word that says the window.
+ *
+ * Nothing is drawn when the document carried no `totals`: a window the console
+ * has not read is not a window of zero runs.
+ */
+export function fillCoordinatorJobsHead(
+  factory: ScreenFactory,
+  window: CoordinatorJobsWindow | null,
+  head: ScreenElement,
+): void {
+  if (window === null) return
+  literal(cell(head, factory, 'span', 'coordinator-jobs-window-word'), COORDINATOR_JOBS_WINDOW_WORD)
+  numberCell(head, factory, COORDINATOR_JOBS_RUNS_WORD, window.runs, 'count', 'coordinator-jobs-window-runs')
+  numberCell(head, factory, COORDINATOR_JOBS_SPENT_WORD, window.spent, 'usd', 'coordinator-jobs-window-spent')
+}
+
+/**
+ * jobCell draws one row: the collapsed line -- the run's id, the repository, the
+ * status and the untrusted title -- and, under it, the body the operator expands.
+ *
+ * **The body is drawn here and hidden, rather than drawn on the press.** Every
+ * string in it is a document's, so drawing it late would be a second place this
+ * screen reads a document -- and the row's own press would then be a rendering
+ * that could fail. It is `hidden` until the press, which is also what makes the
+ * expanded state a fact about the element a test can read.
+ *
+ * The row draws **no button that opens anything**: the job list is a list, and
+ * the console's one write is the launch confirmation (rule 11). A run's id is
+ * text here, exactly as it is in the queue.
+ *
+ * The head itself is a **real `button`**, and not a `div` carrying `role`: it
+ * is the disclosure the row's press opens, and a `div` would need a `tabindex`
+ * and a key handler of its own before Enter and Space did what a click does --
+ * a control that looks pressable to a mouse and is not to a keyboard. The
+ * reset in `base.css` is what makes a button with a line of spans in it read
+ * as the line does.
+ */
+function jobCell(parent: ScreenElement, factory: ScreenFactory, row: CoordinatorJobRow): ScreenElement {
+  const item = cell(parent, factory, 'li', 'coordinator-job')
+  const head = cell(item, factory, 'button', 'coordinator-job-head')
+  head.setAttribute('type', 'button')
+  textCell(head, factory, 'span', row.run, 'runId', 'runs[].run_id', 'coordinator-job-id')
+  if (row.repo !== '') {
+    textCell(head, factory, 'span', row.repo, 'repository', 'runs[].repo', 'coordinator-job-repo')
+  }
+  if (row.status !== '') {
+    textCell(head, factory, 'span', row.status, 'label', 'runs[].status', 'coordinator-job-status')
+  }
+  if (row.outcome !== '') {
+    textCell(head, factory, 'span', row.outcome, 'label', 'runs[].outcome', 'coordinator-job-outcome')
+  }
+  if (row.title !== '') {
+    textCell(head, factory, 'span', row.title, 'sentence', 'runs[].title', 'coordinator-job-title')
+  }
+  const body = cell(item, factory, 'div', COORDINATOR_JOB_DETAIL_CLASS)
+  body.setAttribute('hidden', '')
+  if (row.stage !== '') {
+    textCell(body, factory, 'span', row.stage, 'label', 'runs[].stage', 'coordinator-job-stage')
+  }
+  if (row.branch !== '') {
+    textCell(body, factory, 'span', row.branch, 'branch', 'runs[].branch', 'coordinator-job-branch')
+  }
+  if (row.planTask !== '') {
+    textCell(body, factory, 'span', row.planTask, 'label', 'runs[].plan_task', 'coordinator-job-plan')
+  }
+  if (row.launchedBy !== '') {
+    // The declaration and not an identity, drawn in the person class its wire key
+    // declares -- the same rule the queue's runs follow.
+    textCell(body, factory, 'span', row.launchedBy, 'person', 'runs[].launched_by', 'coordinator-job-by')
+  }
+  if (row.created !== '') {
+    textCell(body, factory, 'span', row.created, 'sentence', 'runs[].created', 'coordinator-job-created')
+  }
+  if (row.pr !== null) {
+    textCell(body, factory, 'span', String(row.pr), 'label', 'runs[].pr', 'coordinator-job-pr')
+  }
+  if (row.cost !== null) {
+    numberCell(body, factory, COORDINATOR_JOBS_SPENT_WORD, row.cost, 'usd', 'coordinator-job-cost')
+  }
+  if (row.reason !== '') {
+    textCell(body, factory, 'span', row.reason, 'sentence', 'runs[].reason', 'coordinator-job-reason')
+  }
+  if (row.changed.length > 0 || row.changedTruncated) {
+    const paths = row.changed.slice(0, COORDINATOR_LIST_CAP)
+    for (const path of paths) {
+      textCell(body, factory, 'span', path, 'path', 'changed_files.paths', 'coordinator-job-file')
+    }
+    // The count left off is the set's own `total`, which the store wrote: the
+    // screen does not count a set it did not read. `truncated` without a total
+    // draws the console's word for a short set and no figure at all.
+    const dropped = row.changedTotal === null ? null : Math.max(0, row.changedTotal - paths.length)
+    if (dropped !== null && dropped > 0) {
+      countCell(body, factory, measured(dropped), 'coordinator-job-more')
+    } else if (row.changedTruncated) {
+      literal(cell(body, factory, 'span', 'coordinator-job-short'), COORDINATOR_TRUNCATED_WORD)
+    }
+  }
+  return item
+}
+
+/**
+ * fillCoordinatorJobs appends one page's rows to the list. **It appends and never
+ * replaces**, which is what keeps a row the operator expanded open when the page
+ * after it lands: the rows already drawn are the operator's own view, and the
+ * press that asked for more is answered under them.
+ */
+export function fillCoordinatorJobs(
+  factory: ScreenFactory,
+  rows: readonly CoordinatorJobRow[],
+  list: ScreenElement,
+): readonly ScreenElement[] {
+  return rows.map((row) => jobCell(list, factory, row))
+}
+
+/**
+ * fillCoordinatorJobsEmpty draws the console's sentence for a window that holds
+ * no run. It is the only thing the list ever says in its own words: every other
+ * word in this section is a document's or a control's.
+ */
+export function fillCoordinatorJobsEmpty(factory: ScreenFactory, list: ScreenElement): void {
+  literal(cell(list, factory, 'p', 'coordinator-jobs-empty'), COORDINATOR_JOBS_EMPTY_WORD)
+}
+
+/**
+ * coordinatorJobsFloorNote draws the console's sentence for a CLI that is too old
+ * to page, and names the version the CLI is. The version line is **main's**, read
+ * by the handshake, and it is drawn through `putText` in the class a version is:
+ * it is text wherever it came from, and a hostile version line is a version line
+ * drawn as text rather than an element or an attribute.
+ */
+export function coordinatorJobsFloorNote(
+  factory: ScreenFactory,
+  version: string,
+): ScreenElement {
+  const note = make(factory, 'p', 'coordinator-jobs-note')
+  literal(cell(note, factory, 'span', 'coordinator-jobs-floor-word'), COORDINATOR_JOBS_FLOOR_WORD)
+  textCell(note, factory, 'span', version, 'label', 'cliVersion', 'coordinator-jobs-floor-version')
+  return note
+}
+
+/** DrawnCoordinatorJobs is the job list's own section: the section the entry
+ * marks, the head the window's figures are written into, the slot its busy mark
+ * goes in, and the two hosts the rows and the controls are filled into. */
+export interface DrawnCoordinatorJobs {
+  readonly section: ScreenElement
+  readonly head: ScreenElement
+  readonly slot: ScreenElement
+  readonly list: ScreenElement
+  readonly controls: ScreenElement
+}
+
 function runCell(parent: ScreenElement, factory: ScreenFactory, run: CoordinatorRunPanel): void {
   const row = cell(parent, factory, 'li', 'coordinator-run')
   textCell(row, factory, 'span', run.id, 'runId', 'runs[].id', 'coordinator-run-id')
@@ -1757,6 +2170,12 @@ export interface DrawnCoordinatorFrame {
   readonly blindHost: ScreenElement
   readonly totals: ScreenElement
   readonly totalsSlot: ScreenElement
+  /** the job list's section (K4): drawn empty in the frame, because nothing is
+   * read for it until the operator presses its control, and filled by the entry
+   * from then on. It is a section of the frame and not of the model for that
+   * reason: the model is what a read answered with, and this section's read has
+   * not been made. */
+  readonly jobs: DrawnCoordinatorJobs
 }
 
 /**
@@ -1799,9 +2218,21 @@ export function renderCoordinatorFrame(
   const blindHost = cell(queue, factory, 'div', COORDINATOR_BLIND_HOST_CLASS)
   const totals = cell(root, factory, 'section', COORDINATOR_TOTALS_CLASS)
   const totalsSlot = cell(totals, factory, 'div', BUSY_SLOT_CLASS)
+  const jobsSection = cell(root, factory, 'section', COORDINATOR_JOBS_CLASS)
+  const jobsHead = cell(jobsSection, factory, 'div', COORDINATOR_JOBS_HEAD_CLASS)
+  const jobsSlot = cell(jobsHead, factory, 'div', BUSY_SLOT_CLASS)
+  const jobsList = cell(jobsSection, factory, 'div', COORDINATOR_JOBS_LIST_CLASS)
+  const jobsControls = cell(jobsSection, factory, 'div', COORDINATOR_JOBS_CONTROLS_CLASS)
+  const jobs: DrawnCoordinatorJobs = {
+    section: jobsSection,
+    head: jobsHead,
+    slot: jobsSlot,
+    list: jobsList,
+    controls: jobsControls,
+  }
   const body = cell(root, factory, 'div', COORDINATOR_BODY_CLASS)
   const slot = cell(body, factory, 'div', BUSY_SLOT_CLASS)
-  return { root, body, slot, queue, queueSlot, queueCount, queueEmpty, parts, blindHost, totals, totalsSlot }
+  return { root, body, slot, queue, queueSlot, queueCount, queueEmpty, parts, blindHost, totals, totalsSlot, jobs }
 }
 
 /**
@@ -1843,8 +2274,8 @@ export function fillCoordinatorSummary(
 
 /**
  * renderCoordinator draws the whole screen at once: the frame, the queue, the
- * blind-spot line, the fleet's totals, the summary and every repository's
- * detail.
+ * blind-spot line, the fleet's totals, the job list's own resting state, the
+ * summary and every repository's detail.
  *
  * It is what a caller that has every document in hand draws -- the goldens'
  * mount, and the cases that assert on the tree -- and the entry does **not** use
@@ -1865,6 +2296,12 @@ export function renderCoordinator(
   }
   fillCoordinatorBlind(factory, model, frame.blindHost)
   fillCoordinatorTotals(factory, model, frame.totals)
+  // The job list is drawn in the state a caller that holds every *other*
+  // document is in: the jobs are the one read rule 5 keeps out of a first
+  // paint, so what stands in the section is the control that asks for them --
+  // the same shape the queue's own jobs part draws for the same reason. The
+  // entry fills the section itself when an operator presses it.
+  frame.jobs.controls.append(coordinatorLoadJobsControl(factory))
   for (const detail of fillCoordinatorSummary(factory, model, frame.body)) {
     repoDetail(detail.host, factory, detail.panel)
   }

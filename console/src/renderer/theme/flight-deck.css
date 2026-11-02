@@ -3720,11 +3720,12 @@ span.coordinator-unread-retry {
  * for the same reason.
  * ------------------------------------------------------------------------- */
 
-/* The two sections take the frame the redesign gives a panel
+/* The screen's three sections take the frame the redesign gives a panel
  * (`section.coordinator-repo`): the same ground, the same hairline and the same
  * radius, because they are the same kind of block on the same screen. */
 .coordinator-queue,
-.coordinator-totals {
+.coordinator-totals,
+.coordinator-jobs {
   margin-bottom: var(--section-gap);
   padding: var(--panel-pad);
   background: var(--surface);
@@ -3952,6 +3953,220 @@ span.coordinator-blind-word {
  * reading stay on one line above it. */
 .coordinator-totals .console-busy-slot {
   flex-basis: 100%;
+}
+
+/* ---- The job list (console 0.119.0, K4) ---------------------------------- */
+
+/* The screen's third section: the runs of the last day, read when the operator
+ * asks for them and never with the page. It is drawn the way the other two are
+ * -- a panel, a head line, the rows, the one control the section offers at that
+ * moment -- and the two rules below are why its figures and its rows read as two
+ * different things.
+ *
+ * **The head is the window and the list is the page, and neither is a count of
+ * the other.** The head carries the first page's own `totals`, which the CLI
+ * summed over everything it read (C2, #1545: `--limit` cuts what it prints and
+ * sums what it read), so the two figures above the rows are deliberately not a
+ * count of the rows under them. Nothing here recomputes either from the other.
+ *
+ * **The row's expansion is an attribute and not a rule of this block.** The head
+ * is a real `button` (`coordinator-job-head`), the body under it is `hidden`
+ * until that button's press, and the reset's own `[hidden]` rule is what takes
+ * the body away: a block that wrote a `display` for the body would be a second
+ * answer to the same question, and the one that lost would be the accessibility
+ * tree's.
+ *
+ * **Nine of the hooks this section draws name no tag, and K1's five are written
+ * that way for the same reason.** The section, its head, its list and its controls
+ * are drawn through exported constants (`COORDINATOR_JOBS_CLASS` and its
+ * neighbours), and `coordinator-jobs-load`, `coordinator-jobs-older`,
+ * `coordinator-job-detail`, `coordinator-job-cost` and `coordinator-job-more`
+ * arrive through `jobsControl`'s own `className` parameter and the `...classes`
+ * two of the screen's cells take: the scan that pairs a selector with the tag the
+ * renderer draws reads both as a parameter, and a rule spelled
+ * `section.coordinator-jobs` would be refused as a tag nothing draws. The
+ * section's own rule is written in the panel list above, with the other
+ * sections', so the other eight hooks' rules are the tagless ones in this block.
+ * The class names are this screen's own and no rule competes for them, so the
+ * tag would buy no specificity; `coordinator-count-alert` is written the same
+ * way, and so are the body's own cost cell and the note a cut list leaves
+ * (`jobCell` passes both through a helper's `...classes`).
+ * ------------------------------------------------------------------------- */
+
+/* The head line: the window's own word and its two figures, and the slot the
+ * section's mark is put in. It folds rather than shrinking a figure, like every
+ * other row on this screen. */
+.coordinator-jobs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+/* The mark takes a line of its own, so the two figures it is standing in for
+ * stay on one line above it -- the same shape the fleet's strip gives its own. */
+.coordinator-jobs-head .console-busy-slot {
+  flex-basis: 100%;
+}
+
+span.coordinator-jobs-window-word {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* The rows: one job each, a button's line and the body that line opens, with the
+ * hairline between two rows that the queue's items already draw. The list is a
+ * host and holds no state of its own. */
+.coordinator-jobs-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li.coordinator-job {
+  display: flex;
+  flex-direction: column;
+  border-bottom: var(--rule-width) solid var(--line-subtle);
+}
+
+/* The row's own line, and the control that opens the body: a button, so it takes
+ * the reset's own `cursor: pointer` and the one focus ring every control here
+ * takes, and this rule only gives it the row's shape -- full width, the line's
+ * rhythm, and the row's own height as its hit area. */
+button.coordinator-job-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  width: 100%;
+  min-height: var(--row-height);
+  padding: var(--space-2xs) 0;
+}
+
+/* The two states that say the line can be opened, in the one channel the queue's
+ * subject buttons use for the same reason: this row draws no border and no
+ * background of its own, so the underline is what tells a reader the line is the
+ * control -- and it is drawn for the keyboard's focus as well as for the pointer,
+ * because a ring on the whole row is a weaker signal than the text that moves. */
+button.coordinator-job-head:hover,
+button.coordinator-job-head:focus-visible {
+  text-decoration: underline;
+}
+
+/* The run's id, in the mono every key on this screen is drawn in. */
+span.coordinator-job-id {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+}
+
+/* Where the job ran, what the CLI called its outcome and the stage it stopped
+ * at: the small mono the queue's scope line already uses. */
+span.coordinator-job-repo,
+span.coordinator-job-status,
+span.coordinator-job-outcome,
+span.coordinator-job-stage {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* The untrusted title whoever wrote the task wrote, and the branch, the plan
+ * task and the launch declaration beside it in the body. */
+span.coordinator-job-title {
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+/* The body: the row's remaining facts, one line that folds, in the tone the
+ * head's small cells use. */
+.coordinator-job-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  padding-bottom: var(--space-2xs);
+}
+
+span.coordinator-job-branch,
+span.coordinator-job-plan,
+span.coordinator-job-by,
+span.coordinator-job-created,
+span.coordinator-job-pr,
+span.coordinator-job-reason,
+span.coordinator-job-file,
+span.coordinator-job-short {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* What the read cost and how many changed paths were left off it: the figure
+ * keeps the screen's own reading style (`coordinator-count`'s cell, which is the
+ * number hook of section 2.10), and the count of what a cut list left is the
+ * quiet sentence `coordinator-more` already draws in the collision rows. */
+.coordinator-job-cost {
+  color: var(--text-3);
+}
+
+.coordinator-job-more {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* The section's controls: the press that asks for the list and the press that
+ * asks for the page after it, in the shape the queue's own jobs button has --
+ * the same hit area, hairline and hover, because they are the same kind of
+ * control on the same screen. */
+.coordinator-jobs-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.coordinator-jobs-load,
+.coordinator-jobs-older {
+  min-height: var(--hit-min);
+  padding: 0 var(--space-md);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+/* Hover and the keyboard's focus are one declaration, in the shape K1's subject
+ * buttons take: both are the same state -- "this can be pressed" -- and the
+ * keyboard is never given less of it than the pointer. The ring the reset draws
+ * is the other half, and this is the half that survives a forced-colors
+ * stylesheet. */
+.coordinator-jobs-load:hover,
+.coordinator-jobs-load:focus-visible,
+.coordinator-jobs-older:hover,
+.coordinator-jobs-older:focus-visible {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* The two sentences the list says in its own words: a window that holds no run,
+ * and a CLI older than the release the paged read needs. Both are the console's
+ * own prose about its own gap, so they take the quiet tone the queue's note
+ * does. */
+p.coordinator-jobs-empty,
+p.coordinator-jobs-note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
 }
 
 /* ---- A section's skeleton (console 0.116.1) ------------------------------ */
