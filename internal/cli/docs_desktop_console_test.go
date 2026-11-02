@@ -402,6 +402,16 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(summaryDoc{}),
 		reflect.TypeOf(summaryRepo{}),
 		reflect.TypeOf(summaryTotals{}),
+		// §6.18, the offline models read (CLI 0.16.0): its own document and the
+		// four shapes under it, plus the price catalog a catalog-priced row
+		// carries -- `budget prices --json`'s own row shape, which this
+		// document names here rather than in a section of its own.
+		reflect.TypeOf(modelsLsDoc{}),
+		reflect.TypeOf(modelsCatalog{}),
+		reflect.TypeOf(modelsRoute{}),
+		reflect.TypeOf(modelsModel{}),
+		reflect.TypeOf(modelsRepo{}),
+		reflect.TypeOf(priceCatalog{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -624,6 +634,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// §6.17, the same three shapes as the test above (CLI 0.16.0).
 		reflect.TypeOf(summaryDoc{}), reflect.TypeOf(summaryRepo{}),
 		reflect.TypeOf(summaryTotals{}),
+		// §6.18, the same six shapes as the test above (CLI 0.16.0).
+		reflect.TypeOf(modelsLsDoc{}), reflect.TypeOf(modelsCatalog{}),
+		reflect.TypeOf(modelsRoute{}), reflect.TypeOf(modelsModel{}),
+		reflect.TypeOf(modelsRepo{}), reflect.TypeOf(priceCatalog{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -935,6 +949,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// document describes its flags, so they are checked against this
 	// constructor like any other command's.
 	"runs summary": newRunsSummaryCmd,
+	// §6.18 documents the offline models read (CLI 0.16.0), and the console
+	// spawns it since 0.119.0, as §5.1 rule 6's `models ls --json` row (the
+	// read-only models panel, the owner's ruling of 2026-11-02). The document
+	// describes its flags, so they are checked against this constructor like
+	// any other command's.
+	"models ls": newModelsLsCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
