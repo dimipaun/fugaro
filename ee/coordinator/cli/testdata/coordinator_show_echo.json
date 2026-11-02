@@ -1,0 +1,11 @@
+[
+  {"method": "GET", "path": "/repos/acme/app/installation", "status": 200,
+   "response": {"id": 777, "app_id": 12345, "target_type": "Organization"}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens",
+   "request": {"repositories": ["app"], "permissions": {"metadata": "read", "pull_requests": "read"}},
+   "status": 201,
+   "response": {"token": "ghs_fixture/read_only", "expires_at": "2099-01-01T00:00:00Z", "repository_selection": "selected"}},
+  {"method": "GET", "path": "/repos/acme/app/pulls/1458", "auth": "Bearer ghs_fixture/read_only", "status": 500,
+   "response": {"message": "Internal Server Error (Authorization: token ghs_fixture/read_only)"}},
+  {"method": "DELETE", "path": "/installation/token", "auth": "Bearer ghs_fixture/read_only", "status": 204}
+]

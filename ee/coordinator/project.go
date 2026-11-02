@@ -31,6 +31,14 @@ import (
 // gitprov has no call for today, reconciliation finding #10).
 type Reader interface {
 	PullRequests(ctx context.Context, kind, repo string, numbers []int) ([]PullRequest, error)
+	// PullRequest reads one pull request whole, for the caller that needs the
+	// description the view drops (PRDocument, D816). It is a second method and
+	// not a wider PullRequests, because the two answer different questions:
+	// the view is a join over many pull requests and keeps none of their
+	// bodies, and a read that carried one would put unbounded text written by
+	// whoever opened the pull request into the document every reader of the
+	// view fetches.
+	PullRequest(ctx context.Context, kind, repo string, number int) (PRDocument, error)
 }
 
 // ErrBitbucket is the project-wide read's refusal of a Bitbucket repository
@@ -202,6 +210,51 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 		return nil, partial
 	}
 	return out, nil
+}
+
+// PullRequest reads one pull request as the host has it, whole, through the
+// same credential and the same rules as PullRequests: the coordinator's own
+// read-only installation token for the repository, minted once and cached for
+// its life, and a failure whose text goes through Redact with the values its
+// Opener held and the token this reader minted.
+//
+// The refusal of a kind this read does not serve comes first, before anything
+// is minted or opened (ErrBitbucket): a repository on a host the coordinator
+// cannot read is refused the same way whether one pull request or a whole view
+// was asked for, and the refusal is about what the project holds rather than
+// about what is in it.
+//
+// A pull request the host does not have is the host's own failure, and it
+// travels as one: what it carries is the provider's error, redacted, and the
+// caller classifies it exactly as it classifies the same failure from
+// PullRequests. Nothing here turns it into an empty document, which would say
+// a pull request exists with no description.
+func (p *Project) PullRequest(ctx context.Context, kind, repo string, number int) (PRDocument, error) {
+	if err := supported(kind); err != nil {
+		return PRDocument{}, err
+	}
+	mustRedact(p.Redact)
+	prov, secrets, err := p.Open(ctx, repo, p.sourceFor(repo))
+	if err != nil {
+		return PRDocument{}, redactedError{err: err, text: p.Redact(err.Error(), secrets)}
+	}
+	info, err := prov.PullRequest(ctx, number)
+	if err != nil {
+		secrets = append(secrets, p.minted(repo)...)
+		return PRDocument{}, redactedError{err: err,
+			text: fmt.Sprintf("reading pull request %d of %s: %s", number, repo, p.Redact(err.Error(), secrets))}
+	}
+	return PRDocument{
+		Number: info.Number,
+		URL:    info.URL,
+		Title:  info.Title,
+		Body:   info.Body,
+		State:  string(info.State),
+		Draft:  info.Draft,
+		Branch: info.SourceBranch,
+		Base:   info.Base,
+		Author: info.AuthorID,
+	}, nil
 }
 
 // PartialError is PullRequests' failure once the provider was opened: the

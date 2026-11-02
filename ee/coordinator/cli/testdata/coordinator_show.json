@@ -1,0 +1,11 @@
+[
+  {"method": "GET", "path": "/repos/acme/app/installation", "status": 200,
+   "response": {"id": 777, "app_id": 12345, "target_type": "Organization"}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens",
+   "request": {"repositories": ["app"], "permissions": {"metadata": "read", "pull_requests": "read"}},
+   "status": 201,
+   "response": {"token": "ghs_fixture/read_only", "expires_at": "2099-01-01T00:00:00Z", "repository_selection": "selected"}},
+  {"method": "GET", "path": "/repos/acme/app/pulls/1458", "auth": "Bearer ghs_fixture/read_only", "status": 200,
+   "response": {"number": 1458, "state": "open", "merged": false, "draft": true, "html_url": "https://github.com/acme/app/pull/1458", "node_id": "PR_kwDOA1458", "title": "Add search", "body": "Adds a search box to the header.\n\nCloses #1200.", "user": {"login": "person-1", "id": 1001, "type": "User"}, "head": {"ref": "topic/search", "sha": "0123456789abcdef0123456789abcdef01234567", "repo": {"full_name": "acme/app"}}, "base": {"ref": "main"}}},
+  {"method": "DELETE", "path": "/installation/token", "auth": "Bearer ghs_fixture/read_only", "status": 204}
+]

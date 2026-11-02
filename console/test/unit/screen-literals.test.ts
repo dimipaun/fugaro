@@ -662,6 +662,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         'a `CoordinatorTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderCoordinator` draws the whole screen by calling it (console 0.117.0)',
     },
+    'pullName(label, link.repo)': {
+      within: 'pullButton',
+      reason:
+        'a pull request number\'s accessible name (K2b), and the same kind of value as `graph.ts`\'s `cardLabel`: the console\'s own verb, the repository that passed `pullLink` (main\'s own `PULL_REQUEST_REPO_RE` **and** the `repository` text class the cell beside it draws), and the label the row draws. The label is not a second conversion of a document string: `pullButton` is only reached with a link, and `pullLink` builds one only from a record that carries a whole positive `pr.number` -- which is exactly the case `recordLabel` answers `#<n>` for, so no run id, title or branch ever reaches the name. It is a name and not a drawing: it is never painted, and what a reader who cannot see the row hears is the number and where it lives',
+    },
   },
   'reading.ts': {
     theme: { within: 'renderReading', reason: 'a `SkewTheme`, the closed two-word theme union' },

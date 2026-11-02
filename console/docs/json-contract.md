@@ -1898,6 +1898,95 @@ partial set of facts. A replayed answer — a second click on the window's own
 button, or a re-sent call — is the app's own in-memory record of the first
 `launchResult` and reaches no child at all (design §5.1 rule 11).
 
+### 6.15 `fugaro coordinator show --repo <owner/name> --pr <n> --json` (coordinator v2 C3)
+
+**Command:** `ee/coordinator/cli/coordinator_show.go` `newCoordinatorShowCmd` /
+`runCoordinatorShow`. **Document:** `coordinator.PRDocument`
+(`ee/coordinator/view.go`), printed by `writeCoordinatorJSON` — the same
+indented-object shape as every other read in this set (§9.2). The read behind it
+is `Project.PullRequest` (`ee/coordinator/project.go`), beside the view's own
+`Project.PullRequests`.
+
+**Why it is a read of its own.** The stored view (§6.13) carries no body, by
+design: a body is unbounded text written by whoever opened the pull request, and
+one per record would ride in the document every reader of the view fetches
+(reconciliation F3, D816's (a)). The shape that carries one is therefore a read
+of one pull request, and the console's row that draws a description reads here.
+The document is **one flat object**, never wrapped: there is one pull request in
+it and no list to enumerate.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `number` | number | never | never | the pull request's own number, as the host gave it. It is a number to **show**: no screen builds a link from it (design §5.1 rule 2) |
+| `url` | string | **yes** | **yes** | the host's own address for it. **Carried as data and never drawn**: not as text, and never as a link (design §5.1 rule 2), because it is a hostile field like any other. Absent when the host answered none, which is a real answer and not a gap |
+| `title` | string | **yes** | **yes** | **untrusted text written by whoever opened the pull request.** Carried as data and never a decision: a renderer sanitises it before it reaches a line or a cell (`safetext`) |
+| `body` | string | **yes** | **yes** | the description the host holds, **as the host holds it** — untrusted text of the same kind as `title` and the reason this read exists. It is the one field here that is many lines: a renderer sanitises it as a block (`safetext.MultiLine`) and never parses it, and **nothing in it is a link, a path, a command or a decision**. `""` is the host answering with an empty description, which is not the same as the key being absent |
+| `state` | string | **yes** | **yes** | the host's own word (`"open"`, `"merged"`, `"closed"`), never a derivation from the runs behind the pull request. It is **not** normalised into a boolean and not mapped onto §6.13's `state`, which the view computes over many records |
+| `draft` | bool | **yes** | **yes** | whether the host says the pull request is a draft. The adapter answers the same way where the host has no real drafts, so the field is the host's answer as the CLI reads the host |
+| `branch` | string | **yes** | **yes** | the source branch the host reports |
+| `base` | string | **yes** | **yes** | the branch it targets **now**, which a retargeted pull request makes different from the one it was opened against. It is the host's current answer and not a record of the launch |
+| `author` | string | **yes** | **yes** | the host's own **account id** for whoever opened it — GitHub's numeric user id, Bitbucket's `account_id`. It is an account id and never a display name, it is a **string even where it is numeric**, and **nothing may authorise or admit anything by it**. A screen that wants a name resolves it itself or draws the id |
+
+**Every field is the host's own answer and nothing is derived from it.** A field
+the host did not answer is **absent** rather than empty or guessed: the document
+says what the host said, and a screen tells "the host said nothing" from "the
+host said an empty string" by the key's presence, not by its value. **There is no
+update stamp**: `updated` is not carried, because the CLI's own pull-request read
+(`gitprov.PRInfo`) has no such field to carry — the document stops where the
+host's answer the CLI holds stops, and a timestamp invented here would be a
+figure no command emitted.
+
+**A pull request the host does not have is a refusal, not an empty document.**
+The command prints **no document at all** and exits non-zero with the host's own
+status in the sentence on stderr (a 404 for a number the repository has no pull
+request for): the failure is the host's, so the exit code is **2**. An empty
+document would draw a pull request with no description, which is a different
+fact from "the host has no such pull request", and a screen that rendered one
+would be showing work that does not exist.
+
+**The credential is the coordinator's own, and it is read-only.** The read goes
+through the same path as §6.13's project-wide read (`coordinatorReader`): one
+GitHub App installation token per repository, minted from the installation's App
+with the coordinator's named permission set — **metadata read and pull requests
+read, no `write` of any kind** (Q3 answered (A)) — cached for the token's life
+and revoked when the command is done. There is no second credential path, and
+**no credential of the host's reaches the document, an error or a log line**;
+the provider's own error text is redacted with the values the read held before it
+is reported.
+
+**The refusals.** With `FUGARO_CREDENTIALS_SERVICE_URL` set, the installation's
+credentials service holds the App's key and this command holds none, so it
+refuses **naming the service** and exits **1** before it reads the App's ID or
+key, opens a provider or mints anything (reconciliation F9). A repository on a
+host this read does not serve is refused the way the project-wide view refuses
+it — **Bitbucket, whose credential is one repository's access token and cannot
+be widened to a project** (reconciliation Q12 (A), finding #30) — and the
+sentence names the reason rather than the repository; that is also exit **1**.
+A `--repo` that is not `owner/name` or a `--pr` that is not a pull request number
+is refused before any read is made, exit **1**. **Exit codes: 1 for a refusal of
+the caller's own environment or argv, 2 for a failure of the host.**
+
+**The provider is the repository's own**, resolved the way §6.13's `provider`
+field is (C1): the local config's entry for the repository, else its checkout's
+`fugaro.yaml`. A screen that has just drawn a `provider` from §6.13 and asks for
+a description here is asking the same question of the same resolution.
+
+**The console's row is a later task.** This section is the CLI's half of
+coordinator v2 C3: the spawn row, the operation and the decoder are C3c and are
+**not** in this document's scope, so nothing here authorises a spawn — §5.1's
+table and the allow-lists are where a row is admitted, and they are unchanged by
+this section.
+
+**Version skew.** Every field is additive. A CLI older than this command has no
+such read at all, and the console shows the section as unavailable (the
+availability rule, §1) rather than an error loop. A field added later is a field
+an older console does not draw; a console that requires one must refuse the
+document rather than fill it in.
+
+**Flags** (`newCoordinatorShowCmd`): `--repo` (the repository, `owner/name`),
+`--pr` (the pull request number), `--json`, and the cloud flags `--project`,
+`--config`, `--gcp-project` and `--region`.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -230,15 +232,20 @@ func (r *run) checkoutReviewHeads(ctx context.Context) error {
 // .claude-plugin directory (plugin.json can declare the identical hooks,
 // MCP servers and commands a .claude/ tree can — this repo's own
 // plugin/.claude-plugin/plugin.json is that same mechanism), and so is a
-// stray .mcp.json or CLAUDE.local.md anywhere in the tree. SECURITY.md
-// already names skills, settings and subagents together for this
+// stray .mcp.json, CLAUDE.local.md or CLAUDE.md anywhere in the tree.
+// SECURITY.md already names skills, settings and subagents together for this
 // identical untrusted-checkout threat model (there, a follow-up's
 // agent-written branch).
 //
-// CLAUDE.md is the one file left, everywhere it appears: it is untrusted
-// prompt text the model merely reads, never configuration Claude Code
-// runs, and review mode's prompt already treats the whole checkout that
-// way (SECURITY.md, docs/recipes.md §3).
+// CLAUDE.md was the one file left, everywhere it appears, on the reasoning
+// that it is untrusted prompt text the model merely reads rather than
+// configuration Claude Code runs. D894(a) rejects that reasoning: it is
+// still instructions the session loads — the head's CLAUDE.md can tell the
+// reviewer to ship — so it is removed like the rest, at every depth. It
+// stays visible as the diff content it is, in the input the runner builds
+// for the prompt (reviewinput.go, a git-level diff of the range, which no
+// deletion from the working tree changes), and the reviewer is given the
+// base branch's own copy in its place (O6, baseInstructions).
 //
 // The walk is Lstat-based throughout (fs.DirEntry's type comes from the
 // directory read itself, never a follow) and never descends into a
@@ -273,13 +280,138 @@ func stripClaudeConfig(dir string) error {
 			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
-		case (name == "CLAUDE.local.md" || name == ".mcp.json") && !d.IsDir():
+		case (name == "CLAUDE.md" || name == "CLAUDE.local.md" || name == ".mcp.json") && !d.IsDir():
 			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// baseInstructions reads the base branch's CLAUDE.md and .claude/rules out of
+// rev's tree: what the reviewer is given in place of the reviewed head's own
+// instructions (O6, D894(a)). The rules are the repository root's
+// .claude/rules/ alone — that directory is where a repository's path-scoped
+// rules live, and a nested pkg/.claude/rules/ is not one of them — while a
+// CLAUDE.md is read wherever it sits, since Claude Code loads a nested one for
+// the directory it is working in, so the base's own nesting is part of what it
+// tells the reviewer. readBaseFile reads each one from the base ref, never
+// from the head and never out of the head's .git, and a base that has none
+// gives the reviewer none: the head's copy is not a fallback.
+//
+// A tree that cannot be listed, or a file that cannot be read, is a warning
+// and no instructions, the same way reviewInputBlock treats an input it
+// cannot build. The reviewer is then given no repository instructions at
+// all, which is the safe half of the two: the head's own are the ones it
+// must never be given.
+//
+// How much of all this reaches the prompt is prompts.go's business: the files
+// are read whole here and clipped there (maxBaseInstructionBytes).
+func (r *run) baseInstructions(ctx context.Context, rev string) []baseInstruction {
+	if r.repo == nil || rev == "" {
+		return nil
+	}
+	out, err := sessionGit(ctx, r.repo, "ls-tree", "-r", "-z", "--name-only", "--end-of-options", rev)
+	if err != nil {
+		r.d.Log.Warn("the base branch's instructions could not be listed; the reviewer gets none",
+			"err", r.redact(err.Error()))
+		return nil
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if path.Base(p) == "CLAUDE.md" || strings.HasPrefix(p, ".claude/rules/") {
+			paths = append(paths, p)
+		}
+	}
+	// The repository's own CLAUDE.md first, its path-scoped rules after:
+	// ls-tree's order is the tree's, which would put .claude/rules ahead of
+	// the file that says what the repository is.
+	slices.SortStableFunc(paths, func(a, b string) int {
+		return strings.Compare(instructionRank(a), instructionRank(b))
+	})
+	var files []baseInstruction
+	for _, p := range paths {
+		text, err := r.readBaseFile(ctx, rev, p)
+		if err != nil {
+			r.d.Log.Warn("a file of the base branch's instructions could not be read; the reviewer gets none of it",
+				"path", p, "err", r.redact(err.Error()))
+			continue
+		}
+		files = append(files, baseInstruction{Path: p, Text: text})
+	}
+	return files
+}
+
+// instructionRank orders a base branch's instruction files for the prompt:
+// the files Claude Code would load first come first, and within each kind the
+// tree's own path order decides.
+func instructionRank(p string) string {
+	switch {
+	case path.Base(p) == "CLAUDE.md":
+		return "0" + p
+	case strings.HasPrefix(p, ".claude/rules/"):
+		return "1" + p
+	}
+	return "2" + p
+}
+
+// useReviewHome points the run's agent environment at the fresh home a review
+// stage's session runs with (D894(a), agent.ReviewHome): the image's own home
+// is Claude Code's user level, so a settings file baked into the image would
+// otherwise contribute a rule to a session that reads a pull request's own
+// head. It is called once, before the review stage, and every other stage of
+// a run keeps the home it has.
+//
+// The toolchain's own locations go back to the paths they had before the swap
+// (reviewToolchainVars), which is what keeps the reviewer able to build and
+// test: a fresh home with no mise data in it is a fresh home where the `go`
+// and `node` shims fail.
+func (r *run) useReviewHome() error {
+	home, err := agent.ReviewHome(r.d.StateDir)
+	if err != nil {
+		return err
+	}
+	vars := reviewToolchainVars(r.parentEnv()["HOME"])
+	vars["HOME"] = home
+	r.env = gitops.WithVars(r.env, vars)
+	return nil
+}
+
+// reviewToolchainVars are the locations the toolchains resolve through HOME,
+// each at the path it had before the review stage's home was swapped: the
+// image's mise setup reads its config, its data and its cache through it
+// (images/derived/Dockerfile.tmpl installs the repository's runtimes into
+// ~/.local/share/mise, with ~/.cache/mise as the download cache and
+// ~/.config/mise/config.toml as the global config image.tools writes), and
+// Go and npm keep their caches under it too. Without these the shims are on
+// PATH but find nothing, and the reviewer cannot build or test the change it
+// is reading — measured in the job image: `HOME=$(mktemp -d) mise which go`
+// answers "go is not a mise bin", and the same command with MISE_DATA_DIR
+// set answers the installed path.
+//
+// home is the runner's own environment's HOME — the image's, or the
+// operator's — and never anything read from the checkout: a path taken from
+// the reviewed head would be the head configuring the session again, one
+// level down. The other locations the image sets are already absolute
+// (COREPACK_HOME, PLAYWRIGHT_BROWSERS_PATH, images/base/Dockerfile's ENV), so
+// they do not move with HOME and are left as they are.
+func reviewToolchainVars(home string) map[string]string {
+	if home == "" {
+		// Nothing to resolve against: the variables would name paths under
+		// a home this run does not know.
+		return map[string]string{}
+	}
+	return map[string]string{
+		"MISE_DATA_DIR":           filepath.Join(home, ".local", "share", "mise"),
+		"MISE_CONFIG_DIR":         filepath.Join(home, ".config", "mise"),
+		"MISE_GLOBAL_CONFIG_FILE": filepath.Join(home, ".config", "mise", "config.toml"),
+		"MISE_CACHE_DIR":          filepath.Join(home, ".cache", "mise"),
+		"GOCACHE":                 filepath.Join(home, ".cache", "go-build"),
+		"GOPATH":                  filepath.Join(home, "go"),
+		"GOMODCACHE":              filepath.Join(home, "go", "pkg", "mod"),
+		"npm_config_cache":        filepath.Join(home, ".npm"),
+	}
 }
 
 // reviewModePrompt is the review stage's prompt: ReviewPrompt for a single
@@ -298,13 +430,14 @@ func stripClaudeConfig(dir string) error {
 // that argument is what makes ReviewPrompt/PickPrompt fall through to the
 // promptFile branch instead of the leading-slash one.
 func (r *run) reviewModePrompt(ctx context.Context) string {
+	rev := r.reviewRev(ctx)
 	var p string
 	if len(r.reviewHeads) == 1 {
 		// The base the reviewed pull request targets now, read from the
 		// provider at bootstrap (checkReviewPRs), never the run's own --ref
 		// assumed to be it: a pull request retargeted at an integration
 		// branch must be reviewed against that branch (diffbase.go).
-		p = ReviewPrompt("", r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
+		p = ReviewPrompt("", r.reviewFile, rev, r.reviewDiffSize(ctx), r.baseUnreadable())
 	} else {
 		nums := make([]int, len(r.reviewHeads))
 		dirs := make([]string, len(r.reviewHeads))
@@ -313,6 +446,7 @@ func (r *run) reviewModePrompt(ctx context.Context) string {
 		}
 		p = PickPrompt("", r.reviewFile, nums, dirs)
 	}
+	p += "\n\n" + baseInstructionsBlock(rev, len(r.reviewHeads) > 1, r.baseInstructions(ctx, rev))
 	if task := strings.TrimSpace(r.spec.Task); task != "" {
 		p += "\n\nAdditional instructions from the launcher:\n\n" + task
 	}
@@ -431,6 +565,14 @@ func (r *run) reviewMode(ctx context.Context) {
 		r.failReviewInfra(ctx, err)
 		return
 	}
+	// The session runs with a home of its own, made before the stage's
+	// settings and environment are built: the image's home is Claude Code's
+	// user level, and a settings file baked into it would configure a session
+	// that reads the reviewed head (D894(a), agent.ReviewHome).
+	if err := r.useReviewHome(); err != nil {
+		r.failReviewInfra(ctx, err)
+		return
+	}
 	// The built input is the reviewed pull request's own diff, read from the
 	// checkout reviewMode's line above put its head in (reviewinput.go). A
 	// pick run gets none: its attempts are worktrees beside the main
@@ -441,7 +583,13 @@ func (r *run) reviewMode(ctx context.Context) {
 	if len(r.reviewHeads) == 1 {
 		prompt = r.reviewPromptWithInput(ctx, prompt)
 	}
-	req := agent.Request{Prompt: prompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+	req := agent.Request{Prompt: prompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema,
+		// The two flags that keep the reviewed head's own configuration out
+		// of the session, which the managed file cannot do on its own
+		// (D894(a)): setting-source selection is a flag and not a settings
+		// key, and a project-scoped MCP server loads under `claude -p`
+		// whether or not a settings file asks for it.
+		SettingSources: agent.ReviewSettingSources, StrictMCPConfig: true}
 	res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 	r.countTokens(res)
 	if !ok {
