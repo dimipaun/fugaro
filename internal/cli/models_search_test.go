@@ -123,6 +123,20 @@ func TestModelsSearchRefusesAPriceTableItCannotBuild(t *testing.T) {
 	}
 }
 
+// TestModelsSearchEscapesItsCells: a route name is a cell of the hit table,
+// and a tab in it would open a column of its own and shift every column after
+// it. The value is a repo's pin, so it is escaped rather than trusted
+// (cellOneLine; TestModelsLsEscapesTableCells covers the same for `models ls`,
+// whose writer the config also keeps tabs out of).
+func TestModelsSearchEscapesItsCells(t *testing.T) {
+	if got := routeCell("vendor/tab\tbed"); got != "vendor/tab?bed" {
+		t.Errorf("a tab in a route name is not escaped: %q", got)
+	}
+	if got := routeCell(""); got != "no route" {
+		t.Errorf("a model no route serves reads %q", got)
+	}
+}
+
 // TestModelsSearchIsOffline: the search reads this binary's own tables and the
 // selected project config, and reaches nothing (D788). With no PATH there is no
 // git and no gcloud to run, and it still answers.

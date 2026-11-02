@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -302,6 +303,118 @@ func TestModelsLsSaysWhyAnUnpricedModelHasNoPrice(t *testing.T) {
 		return
 	}
 	t.Errorf("the document has no row for vendor/model-x:\n%s", raw)
+}
+
+// TestModelsLsEscapesTableCells: every value of these four tables is a cell,
+// not a line. oneLine keeps a literal tab — right for a whole line, where a tab
+// is only whitespace — and a tab written into a tabwriter row opens a column of
+// its own, so a value carrying one would shift every column after it. The
+// writer escapes them (cellOneLine, safetext.TableCell), and a bidi override or
+// an ANSI sequence is escaped there too rather than reaching the terminal.
+//
+// The columns are the assertion that matters: the row with the tab has to put
+// its SOURCE cell where the row without one puts it. A writer that went back to
+// oneLine splits the ID into two cells and moves it.
+func TestModelsLsEscapesTableCells(t *testing.T) {
+	const tab = "vendor/tab\tbed"
+	const bidi = "vendor/bidi\u202ebed"
+	const ansi = "vendor/ansi\x1b[31mbed"
+
+	doc := modelsLsDoc{
+		Version: modelsLsDocVersion,
+		Project: "aurora",
+		Routes: []modelsRoute{{
+			Name: tab, Host: bidi, Models: []string{ansi},
+			AllowDataTo: []string{tab}, Note: bidi,
+		}},
+		Models: []modelsModel{
+			{ID: "vendor/plain", Route: "openrouter", Source: modelsSourceNone, Refused: "no price", AllowedTo: []string{"owner/repo-a"}},
+			{ID: tab, Route: bidi, Source: modelsSourceNone, Refused: ansi, AllowedTo: []string{tab}},
+		},
+		Repos: []modelsRepo{{Name: tab, State: bidi, Coder: ansi, Problems: []string{tab}}},
+	}
+	var out, errOut bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	if err := writeModelsLs(cmd, nil, doc); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+
+	models := modelsSection(t, text, "MODELS")
+	plain, tabbed := "", ""
+	for _, l := range strings.Split(models, "\n") {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(l), "vendor/plain "):
+			plain = l
+		case strings.HasPrefix(strings.TrimSpace(l), "vendor/tab"):
+			tabbed = l
+		}
+	}
+	if plain == "" || tabbed == "" {
+		t.Fatalf("the MODELS section does not carry both rows:\n%s", models)
+	}
+	if a, b := strings.Index(plain, modelsSourceNone), strings.Index(tabbed, modelsSourceNone); a != b {
+		t.Errorf("a tab in a model ID shifted the row's columns: SOURCE at %d and %d\n%s", a, b, models)
+	}
+	for _, section := range []string{"ROUTES", "MODELS", "ALLOW-LISTS", "USAGE"} {
+		body := modelsSection(t, text, section)
+		for _, raw := range []string{"\u202e", "\x1b"} {
+			if strings.Contains(body, raw) {
+				t.Errorf("the %s section carries a raw %q:\n%s", section, raw, body)
+			}
+		}
+	}
+	// What a cell shows instead: the tab and the bidi override are marked, so
+	// the reader sees that something was there, while the whole ANSI sequence
+	// is dropped (safetext skips it: an ESC[31m left in would colour the rest
+	// of the table).
+	for _, want := range []string{"vendor/tab?bed", "vendor/bidi?bed", "vendor/ansibed"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the escaped value %q is not in the read:\n%s", want, text)
+		}
+	}
+}
+
+// TestModelsLsSanitisesAPin: a repository's own pin reaches three cells of this
+// read — the MODELS and ALLOW-LISTS rows it adds, and the USAGE row's CODER —
+// and a pin is a string the repository writes. A bidi override or an ANSI
+// sequence in it is escaped rather than printed: an ESC[31m would colour the
+// rest of the table and a U+202E would let the ID read backwards.
+//
+// Mutation (run, restored): print the model ID raw at the MODELS and
+// ALLOW-LISTS rows (drop oneLine/cellOneLine) and this fails on the raw
+// characters.
+func TestModelsLsSanitisesAPin(t *testing.T) {
+	home := modelsFixture(t)
+	pin := `coder: "vendor/mo\u202edel\x1b[31m"`
+	modelsCheckout(t, home, "owner/repo-a", strings.Replace(modelsRepoYAML, "coder: deepseek/deepseek-v4-flash", pin, 1))
+
+	out, _, err := execute(t, "models", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, raw := range []string{"\u202e", "\x1b"} {
+		if strings.Contains(out, raw) {
+			t.Errorf("the read prints a raw %q from a repository's pin:\n%q", raw, out)
+		}
+	}
+	if !strings.Contains(out, "vendor/mo?del") {
+		t.Errorf("the pin is not in the read at all:\n%s", out)
+	}
+	models := modelsSection(t, out, "MODELS")
+	if !strings.Contains(models, "vendor/mo?del") {
+		t.Errorf("the MODELS section does not carry the pin's row:\n%s", models)
+	}
+	allow := modelsSection(t, out, "ALLOW-LISTS")
+	if !strings.Contains(allow, "vendor/mo?del") {
+		t.Errorf("the ALLOW-LISTS section does not carry the pin's row:\n%s", allow)
+	}
+	usage := modelsSection(t, out, "USAGE")
+	if !strings.Contains(usage, "vendor/mo?del") {
+		t.Errorf("the USAGE section does not carry the pin:\n%s", usage)
+	}
 }
 
 // TestModelsLsJSONMatchesSchema validates the document the command writes

@@ -478,8 +478,8 @@ func writeModelsLs(cmd *cobra.Command, lc *localcfg.Config, doc modelsLsDoc) err
 		if r.OpenToAll {
 			allow = "every repository"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Name), oneLine(r.Host),
-			oneLine(routeModelsCell(r)), feeCell(r.FeePct), oneLine(allow), oneLine(r.Note))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", cellOneLine(r.Name), cellOneLine(r.Host),
+			cellOneLine(routeModelsCell(r)), feeCell(r.FeePct), cellOneLine(allow), cellOneLine(r.Note))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -505,8 +505,8 @@ func writeModelsLs(cmd *cobra.Command, lc *localcfg.Config, doc modelsLsDoc) err
 		if m.Refused != "" {
 			notes = m.Refused
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(m.ID), oneLine(route), m.Source,
-			priceCell(m.InputPerM, m.Source), priceCell(m.OutputPerM, m.Source), oneLine(notes))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", cellOneLine(m.ID), cellOneLine(route), m.Source,
+			priceCell(m.InputPerM, m.Source), priceCell(m.OutputPerM, m.Source), cellOneLine(notes))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -524,7 +524,7 @@ func writeModelsLs(cmd *cobra.Command, lc *localcfg.Config, doc modelsLsDoc) err
 				allow = "every repository"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\n", oneLine(m.ID), oneLine(allow))
+		fmt.Fprintf(tw, "%s\t%s\n", cellOneLine(m.ID), cellOneLine(allow))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -539,8 +539,8 @@ func writeModelsLs(cmd *cobra.Command, lc *localcfg.Config, doc modelsLsDoc) err
 		if r.BackgroundEffective != "" {
 			background = r.BackgroundEffective
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Name), cell(r.Coder), cell(r.Reviewer),
-			cell(background), oneLine(r.State), oneLine(strings.Join(r.Problems, "; ")))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", cellOneLine(r.Name), cell(r.Coder), cell(r.Reviewer),
+			cell(background), cellOneLine(r.State), cellOneLine(strings.Join(r.Problems, "; ")))
 	}
 	return tw.Flush()
 }
@@ -574,10 +574,12 @@ func priceCell(perM float64, source string) string {
 	return fmt.Sprintf("$%g", perM)
 }
 
-// cell is a usage cell that may be empty, which prints as a dash.
+// cell is a usage cell that may be empty, which prints as a dash. Like every
+// other value written into a tabwriter row here it is a cell, not a line
+// (cellOneLine): a tab inside a pin would otherwise move the columns after it.
 func cell(s string) string {
 	if s == "" {
 		return "—"
 	}
-	return oneLine(s)
+	return cellOneLine(s)
 }

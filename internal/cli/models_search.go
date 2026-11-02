@@ -76,7 +76,7 @@ func runModelsSearch(cmd *cobra.Command, o *modelsSearchOptions, text string) er
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "MODEL\tSOURCE\tTIER\tINPUT/M\tOUTPUT/M\tENDPOINTS\tROUTE\tNOTES")
 	for _, r := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.ID), r.Source, dash(r.Tier),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", cellOneLine(r.ID), r.Source, dash(r.Tier),
 			r.Input, r.Output, dash(r.Endpoints), routeCell(r.Route), modelsLimits(r))
 	}
 	return tw.Flush()
@@ -216,7 +216,7 @@ func routeCell(route string) string {
 	if route == "" {
 		return "no route"
 	}
-	return oneLine(route)
+	return cellOneLine(route)
 }
 
 // priceUSD is one price, US dollars per million tokens.
