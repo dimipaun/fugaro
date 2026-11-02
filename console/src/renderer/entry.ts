@@ -4709,10 +4709,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let jobsAttempts = 0
     let jobsToken = 0
     /** jobsSentence is the section's own refusal, for this visit and no longer:
-     * the sentence is drawn where the rows would be, and the controls are not
-     * drawn beside it -- a control that asks again for a read the CLI has just
-     * refused would be a button offering the same failure. */
+     * the sentence is drawn beside the rows already read, and the controls are
+     * not drawn beside it -- a control that asks again for a read the CLI has
+     * just refused would be a button offering the same failure. */
     let jobsSentence: string | null = null
+    /** jobsRefusalDrawn is whether that sentence is on screen. The refusal is
+     * appended like a row rather than painted over the list, so it is drawn once
+     * per refusal: the list is a host the entry appends to, and a second paint of
+     * the same refusal would be a second sentence. It is cleared with the list. */
+    let jobsRefusalDrawn = false
     /** jobsTooOld is whether the CLI in use is older than the release the paged
      * read needs (`runsListPageSupported`), and it is asked **before** either
      * word goes out: a 0.15.x CLI refuses `--after` outright and sums `--limit`'s
@@ -5000,9 +5005,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * the ask has been made, `Older 50` while the page last read filled every row
      * it asked for, and neither once that page came back short -- the only state
      * in which the console knows the window ends where the drawing does. A refused
-     * read draws the CLI's own sentence in the rows' place and no control at all,
-     * because a button that asks again for a read just refused offers the same
-     * failure; an installation whose CLI is older than the paged read draws the
+     * read draws the CLI's own sentence under the rows already read and no control
+     * at all, because a button that asks again for a read just refused offers the
+     * same failure; an installation whose CLI is older than the paged read draws the
      * console's own sentence naming the version it needs, and spawns nothing.
      */
     const paintJobs = (): void => {
@@ -5017,8 +5022,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         return
       }
       if (jobsSentence !== null) {
-        list.replaceChildren()
-        appendTo(section.list, refusedScreen(factory, 'runs.list', jobsSentence, theme))
+        // **The refusal stands beside the kept rows, not in their place.** The
+        // page the operator asked for was refused; the page they were reading was
+        // not, and a list taken down to say so would take their own reading of it
+        // -- the rows they had expanded -- down with the sentence. It is the only
+        // press left after a refusal that reads again (the head's own refresh),
+        // and that one drops the list and this with it.
+        if (!jobsRefusalDrawn) {
+          appendTo(section.list, refusedScreen(factory, 'runs.list', jobsSentence, theme))
+          jobsRefusalDrawn = true
+        }
         return
       }
       if (!jobsHeadDrawn && jobsListed.window !== null) {
@@ -5090,6 +5103,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       jobsHeadDrawn = false
       jobsStamped = false
       jobsSentence = null
+      jobsRefusalDrawn = false
       lastFullPage = false
       askForJobPage(null)
     }
