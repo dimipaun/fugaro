@@ -260,3 +260,27 @@ func TestRoutingApplyLevelsDefaultsTheRunsOwnInputs(t *testing.T) {
 		})
 	}
 }
+
+// TestRoutingRefusesAProviderLevelModelWithAnEffort: D725 — a provider stage
+// runs with thinking off (MAX_THINKING_TOKENS=0), so an effort set for a model
+// a route serves would look applied and do nothing, and the resolver refuses
+// it rather than sending it. The config tests pin the rule; this one pins that
+// a run reaches it, over the routes the run carries rather than the ones the
+// caller passes: a caller that forgot to pass them would resolve the level
+// with the effort the owner asked for.
+func TestRoutingRefusesAProviderLevelModelWithAnEffort(t *testing.T) {
+	const coder, reviewer, adversarial = "claude-sonnet-5-5", "claude-opus-5", "deepseek/deepseek-v4-pro"
+	r := levelsRun(config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: coder, Reviewer: reviewer}}, levelRoutes())
+	_, _, err := r.applyLevels(config.LevelInputs{
+		Mode: rigor.Critical,
+		Task: &config.ReviewLevels{L3: &config.LevelSetting{Model: adversarial, Effort: "high"}},
+	})
+	if err == nil {
+		t.Fatalf("level 3's model %s is served by a provider and its effort was accepted", adversarial)
+	}
+	for _, want := range []string{"l3.effort", "MAX_THINKING_TOKENS=0", "D725"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal is %q, want it to say %q", err, want)
+		}
+	}
+}
