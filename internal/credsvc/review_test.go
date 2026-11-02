@@ -12,8 +12,10 @@ package credsvc
 // The service accounts here are names and never tokens.
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 )
 
 const (
@@ -423,42 +426,66 @@ func TestReviewIdentityWithAnEmptyPRListIsRefused(t *testing.T) {
 // before anything fills the review set).
 //
 // The caller here is otherwise perfectly good: its two identities are whole,
-// the pairing admits it, and the bundle holds the App key a mint would be
-// issued from — so the only thing that can refuse it is the class. Left
-// unguarded it would be handed a token carrying github.RunTokenPermissions
-// over the run identity's repository, which is the WRITE set of the very
-// repository the review is about: the review job mounts no repository and
-// holds no installation token of its own (O1), and this endpoint is where that
-// would be undone.
-func TestReviewCallerIsRefusedTheMint(t *testing.T) {
+// the pairing admits it, and the bundle holds the App key a mint is issued
+// from — so the class is the only thing that can decide what it is served. The
+// set it must NEVER be served is github.RunTokenPermissions, the WRITE set of
+// the very repository the review is about: the review job mounts no repository
+// and holds no installation token of its own (O1), and this endpoint is where
+// that would be undone.
+func TestReviewMintServesTheReadOnlySetForTheRunsRepository(t *testing.T) {
 	s, gh := reviewMintSvc(t)
 	resp, body := s.mintTokens(t, mintBody(testAppID), s.reviewRunToken(), s.reviewJobToken(), s.job)
-	if resp.StatusCode != StatusUnverified {
-		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the review caller was answered %d, want 200: %s", resp.StatusCode, body)
 	}
-	got := refusal(t, resp.StatusCode, body)
-	if got.Error != ErrorUnverifiedRunIdentity {
-		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+	ans := mintAnswer(t, body)
+	if ans.Token != gh.token || !ans.ExpiresAt.Equal(ghExpiry) {
+		t.Errorf("the answer = %+v, want the fake's token expiring %s", ans, ghExpiry)
 	}
-	var ans MintResponse
-	if err := decodeStrict(body, &ans); err == nil {
-		t.Errorf("the refusal carries a mint's answer: %+v", ans)
+	// The repository the token is FOR is the pairing's (D1066, D893 (c)): the
+	// caller has no field to name one in, and the answer's own field is what
+	// tells the run which repository its token reaches.
+	if ans.Repository != testRepo {
+		t.Errorf("the answer's repository is %q, want the run identity's own %q", ans.Repository, testRepo)
 	}
-	if n := gh.count(); n != 0 {
-		t.Errorf("GitHub saw %d requests, want none: no installation token was asked for", n)
+	lookup, mint := gh.both(t)
+	if want := "/repos/" + testRepoPath + "/installation"; lookup.path != want {
+		t.Errorf("the installation lookup was %s, want the run identity's own repository", lookup.path)
 	}
-	if n := s.src.readCount(); n != 0 {
-		t.Errorf("the bundle was read %d times, want none: the class is refused before it", n)
+	var sent struct {
+		Repositories []string          `json:"repositories"`
+		Permissions  map[string]string `json:"permissions"`
 	}
+	if err := json.Unmarshal([]byte(mint.body), &sent); err != nil {
+		t.Fatalf("the mint's body is not the JSON this test reads: %v (%s)", err, mint.body)
+	}
+	if maps.Equal(sent.Permissions, github.RunTokenPermissions()) {
+		t.Errorf("the review's mint asked GitHub for the run's own set %v: that is the push and the pull request the reviewing run must not be able to make, and D883 exists to remove exactly this exposure", sent.Permissions)
+	}
+	if want := github.ReviewTokenPermissions(); !maps.Equal(sent.Permissions, want) {
+		t.Errorf("the review's mint asked GitHub for %v, want CSR1's read-only set %v", sent.Permissions, want)
+	}
+	if len(sent.Repositories) != 1 || sent.Repositories[0] != "aurora" {
+		t.Errorf("the mint asked for repositories %v, want the run identity's own alone", sent.Repositories)
+	}
+	// One line per act, the mint's own purpose, the App key's name and no
+	// value: the issuance a review run's token is (C1.13, D1065).
 	lines := mintAuditLines(t, s)
 	if len(lines) != 1 {
-		t.Fatalf("the refused mint wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+		t.Fatalf("the review's mint wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
 	}
-	if got := lines[0]["purpose"]; got != PurposeMint {
-		t.Errorf("the refusal's line records purpose %v, want %q: the act the run asked for", got, PurposeMint)
-	}
-	if got := lines[0]["credential"]; got != config.GitHubAppKeySecret {
-		t.Errorf("the refusal's line names credential %v, want the App key's name %q", got, config.GitHubAppKeySecret)
+	for field, want := range map[string]any{
+		"purpose":    PurposeMint,
+		"credential": config.GitHubAppKeySecret,
+		"status":     StatusOK,
+		"run":        s.run,
+		"repository": s.slug,
+		"caller":     testReviewSA,
+		"tier":       "",
+	} {
+		if got := lines[0][field]; got != want {
+			t.Errorf("the line records %s = %v, want %q", field, got, want)
+		}
 	}
 }
 
