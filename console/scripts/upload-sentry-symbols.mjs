@@ -51,15 +51,13 @@
 // holds too -- every event carries that release (`crash-electron.ts` stamps it
 // with the app's own version, the spelling this script uploads under) and keeps
 // the debug image a symbolicator looks up (`crash.ts` reduces `debug_meta.images`
-// to an id and an app-relative code file). **What nothing produces yet is the
-// image itself**: the pinned SDK fills `debug_meta` from
-// `globalThis._sentryDebugIds`, which the `@sentry/*` bundler shims write into a
-// *bundle*, and this console's main process is unbundled `tsc` output -- so an
-// event carries the release and no image, and a later task that gives the main
-// process a debug-id runtime is what closes the last step. The native debug
-// files are not that step: they would be read by a minidump's frames, and this
-// console installs no minidump integration -- it sends stack frames, not process
-// memory.
+// to an id and an app-relative code file). The image itself comes from the
+// `inject` mode: it prepends a runtime snippet to every `.js` file, which writes
+// the file's debug id into `globalThis._sentryDebugIds` keyed by the stack
+// that loads it, and the pinned SDK reads that global when it prepares an
+// event. The native debug files are not that step: they would be read by a
+// minidump's frames, and this console installs no minidump integration -- it
+// sends stack frames, not process memory.
 //
 // **The two halves are keyed differently.** The source maps go up under the
 // console's version -- that is what the two `sourcemaps` commands take the

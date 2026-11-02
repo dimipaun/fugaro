@@ -1211,12 +1211,10 @@ from, and the project can resolve that image:
   `code_file` (cut at the app root exactly as a frame's file is), drops every
   other field an image arrived with, and **refuses** an image whose id or path
   fails its shape rather than sending it;
-- **and the one that does not**: nothing populates
-  `globalThis._sentryDebugIds`, which is where the pinned SDK reads an event's
-  images from, and the console's main process is unbundled `tsc` output — the
-  shims that write that global are bundler plugins. So an event arrives with its
-  release and **no image**, and what closes the last step is a later task that
-  gives the main process a debug-id runtime. The native debug files are not that
+- **and the image itself**: the `inject` step prepends a runtime snippet to
+  every `.js` file of the main process, which writes that file's debug id into
+  `globalThis._sentryDebugIds`, where the pinned SDK reads an event's images
+  from, and `build.files` packs those files. The native debug files are not that
   step: they would be read by a minidump's frames, and this console installs no
   minidump integration — it sends stack frames, not process memory.
 
