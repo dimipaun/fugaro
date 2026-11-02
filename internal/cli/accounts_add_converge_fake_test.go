@@ -75,6 +75,14 @@ type addRig struct {
 // gs:// one reaches storage.googleapis.com and fails there.
 func newAddRig(t *testing.T) *addRig {
 	t.Helper()
+	return newAddRigWith(t, addRigLocal)
+}
+
+// newAddRigWith is newAddRig over a caller's own local config: the fixtures that
+// are about the local-config half of the command write their own file, and the
+// command converges on the file it wrote whatever it holds.
+func newAddRigWith(t *testing.T, local string) *addRig {
+	t.Helper()
 	noAgentSession(t)
 	r := &addRig{initRig: newInitRig(t), db: gcpfake.NewRTDB(t), fs: gcpfake.NewFirestore(t)}
 	f, err := os.ReadFile(r.cfg)
@@ -89,15 +97,30 @@ func newAddRig(t *testing.T) *addRig {
 	// it are the rig's own and this fixture writes its own.
 	endpoints, _, _ = strings.Cut(endpoints, "\n")
 	bucket := filepath.Join(r.dir, "runs")
-	cfg := addRigLocal +
+	cfg := local +
 		"bucket_url: file://" + bucket + "\n" +
 		"budget: { mode: enforce, per_run_usd: 5, firebase_project: " + initProject + ", rtdb_url: " + r.db.URL + " }\n" +
 		"endpoints: " + strings.Replace(endpoints, "no_auth: true }", "firestore: "+r.fs.URL+", no_auth: true }", 1)
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The mark, the database's project and the bucket's marker are the ones the
+	// config just written names, read out of it rather than assumed: the command
+	// refuses a project whose marker says another GCP project, and a fixture
+	// that hard-coded the rig's own would refuse the fixtures whose file is
+	// their own.
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The occurrence the installation reads before it applies anything, for a
+	// fixture whose own file names a project the rig was not built around.
+	if lc.GCPProject != initProject {
+		r.crm.AddProject(lc.GCPProject, initProjectNumber)
+		r.gcs.AddProject(lc.GCPProject, initProjectNumber)
+	}
 	r.db.Set(budget.PathMark, auroraMark())
-	r.db.Set(budget.PathProject, initProjectName)
+	r.db.Set(budget.PathProject, lc.Name)
 	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	// The node an installation that has run `fugaro setup` holds: the publish
 	// half of the Policy stage is a MIGRATION of a node that is there — with no
@@ -106,7 +129,7 @@ func newAddRig(t *testing.T) *addRig {
 	// is the node's (a publish never re-adds or drops a name), and everything
 	// else the converge puts there is derived from the local config it writes.
 	r.db.Set(projectpolicy.PathShared(), addPolicyNode())
-	r.writeMarker(t, bucket, initProjectName, initProject)
+	r.writeMarker(t, bucket, lc.Name, lc.GCPProject)
 	return r
 }
 
@@ -210,6 +233,27 @@ func (r *addRig) projectJobs(t *testing.T) map[string]infra.ProjectJob {
 		t.Fatal(err)
 	}
 	return doc.ProjectJobs
+}
+
+// secretWrites is the Secret Manager fake's own record of the writes a command
+// made: the IDs it created a secret under, and the IDs it added a version to,
+// in order. It is the fake's callbacks rather than a parse of the request log,
+// so what a test asserts about "which secret did this land under" cannot drift
+// with a URL shape.
+type secretWrites struct {
+	created []string
+	added   []string
+}
+
+// secretWrites arms the fake and returns the record. A write that never opened
+// a connection (a refusal that happens before the value is read) leaves both
+// lists empty, which is the negative half of the same assertion.
+func (r *addRig) secretWrites(t *testing.T) *secretWrites {
+	t.Helper()
+	w := &secretWrites{}
+	r.sm.OnCreate = func(id string) { w.created = append(w.created, id) }
+	r.sm.OnAddVersion = func(id string) { w.added = append(w.added, id) }
+	return w
 }
 
 // markState is one account's credential mark as the database holds it, read
