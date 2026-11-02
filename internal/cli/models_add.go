@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -56,6 +57,9 @@ func newModelsAddCmd() *cobra.Command {
 
 func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 	if err := modelsPriceFlags(o); err != nil {
+		return err
+	}
+	if err := modelsPriceRange(o); err != nil {
 		return err
 	}
 	sel, lc, err := modelsLocalFile()
@@ -151,6 +155,35 @@ func modelsPriceFlags(o *modelsAddOptions) error {
 		missing = "--price-in"
 	}
 	return userErr("%s without %s: write both rates (dollars per million tokens), or neither and let the built-in catalog price the model", flagSpelling(o), missing)
+}
+
+// modelsPriceRange refuses a rate the price table cannot carry, before the file
+// is built: every rate is dollars per million tokens and must be more than 0 and
+// at most pricing.MaxPerM (pricing.Rates.Validate), and a rate outside that is
+// refused by the read-back too — with the loader's words about a file the owner
+// never wrote, which is the wrong place to learn that a model billed at nothing
+// is not a price a budget can count.
+func modelsPriceRange(o *modelsAddOptions) error {
+	for _, f := range []struct {
+		flag  string
+		value float64
+		set   bool
+	}{
+		{"--price-in", o.priceIn, o.priceInSet},
+		{"--price-out", o.priceOut, o.priceOutSet},
+	} {
+		if !f.set || modelsRateCarries(f.value) {
+			continue
+		}
+		return userErr("%s %s: a rate is US dollars per million tokens and must be more than 0 and at most %d, so a model billed at nothing — or at more than any provider charges — is not a price this config carries. Name the rate the provider charges", f.flag, modelsPriceText(f.value), pricing.MaxPerM)
+	}
+	return nil
+}
+
+// modelsRateCarries reports whether one rate is one pricing.Rates.Validate
+// accepts for input_per_m and output_per_m.
+func modelsRateCarries(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v > 0 && v <= pricing.MaxPerM
 }
 
 // flagSpelling is the flag the owner did pass, for the message above.

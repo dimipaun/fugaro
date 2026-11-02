@@ -128,6 +128,41 @@ func TestModelsAddAppendsTheExactIDNeverAPattern(t *testing.T) {
 	}
 }
 
+// TestModelsAddRefusesARateTheBudgetCannotCount: a rate the price table cannot
+// carry is refused by the flag that named it. A model written at 0 would run at
+// no cost and one at a negative rate would credit the run, so pricing.Rates.
+// Validate accepts only more than 0 and at most pricing.MaxPerM — said here as
+// the flag's own refusal rather than as the loader's sentence about a file the
+// owner never wrote (the read-back holds that second wall).
+func TestModelsAddRefusesARateTheBudgetCannotCount(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		in, out  string
+		wantFlag string
+	}{
+		{"zero input", "0", "2", "--price-in"},
+		{"zero output", "2", "0", "--price-out"},
+		{"negative output", "2", "-1.5", "--price-out"},
+		{"more than any provider charges", "1001", "2", "--price-in"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, path := modelsWriteHome(t)
+			before := readFileString(t, path)
+
+			out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", c.in, "--price-out", c.out, "--yes")
+			if err == nil {
+				t.Fatalf("the rate %s/%s was accepted:\n%s", c.in, c.out, out)
+			}
+			if !strings.Contains(err.Error(), c.wantFlag) || !strings.Contains(err.Error(), "more than 0") {
+				t.Errorf("the refusal does not name the flag %s and the rule: %v", c.wantFlag, err)
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused price wrote the file:\n%s", got)
+			}
+		})
+	}
+}
+
 // TestModelsAddLeavesAClaimingRouteUnchanged: a route that already claims the
 // ID — by the exact entry or by a pattern — is not touched, and the command
 // says which claim covers the model (D785).
