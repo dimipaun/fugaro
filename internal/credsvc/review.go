@@ -224,21 +224,21 @@ func ReviewOf(id Identity) error {
 // answer.
 //
 // A repository caller keeps the run's own set untouched (F5), and a review
-// caller is served CSR1's read-only set —
-// github.ReviewTokenPermissions, the spelling internal/gitprov/github exports
-// for it and not a second one written here. The set a run's token carries is
-// the WRITE set of the repository the review is about — the push and the pull
-// request it opens — while a review job mounts no repository and holds no
-// installation token of its own (O1), so serving the run's set here would hand
-// back the one reach the review-only variant exists to not have.
+// caller is served CSR1's read-only set — github.ReviewTokenPermissions, the
+// spelling internal/gitprov/github exports for it and not a second one written
+// here. What a run's token carries is the WRITE set of the repository the
+// review is about (the push and the pull request it opens), while a review job
+// mounts no repository and holds no installation token of its own (O1), so
+// serving the run's set here would hand back the one reach the review-only
+// variant exists to not have.
 //
-// The claim rule is asked here as well as at the pairing, and it is the same
-// rule read for the mint's second question. Left to the class alone, this
-// function would answer a review-class identity of any other shape with the
-// run's WRITE set — the shape is what tells a review from a coding run launched
-// into the review job — so it is refused here too rather than downgraded, and
-// a class this service does not mint for is refused with them rather than
-// served the run's set by default.
+// The claim rule is read here as well as at the pairing, and it is the same
+// rule read for this function's question. The class alone would be enough while
+// the pairing stands in front of the mint, and it is not enough to state what
+// this function promises: a review-class identity of any other shape is a
+// coding run launched into the review job, and it is refused here rather than
+// served the run's WRITE set. A class this service does not mint for is refused
+// with it, rather than served the run's set by falling through.
 func mintPermissions(id Identity) (map[string]string, error) {
 	switch id.JobClass {
 	case ClassRepository:

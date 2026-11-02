@@ -245,12 +245,13 @@ func appKey(b *Bundle) (*rsa.PrivateKey, error) {
 // state_unavailable: it is a fact about the run identity, and it is answered —
 // and recorded — with the pairing's own vocabulary.
 func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, ja JobAccount) {
-	// The set comes first, and it is the class's (mintPermissions, D1065). Its
-	// refusal is the pairing's own, because it is the pairing's question about
-	// the run identity asked for this endpoint's second one: a review-class
-	// caller the claim rule refuses is refused here too rather than served the
-	// run's write set (refusePairing answers it with the vocabulary a pairing
-	// refusal already carries, so a run needs no new case).
+	// The set is chosen first because it is a fact about the identity and not
+	// about the request: a class this endpoint does not mint for, and a
+	// review-class caller the claim rule refuses, are answered before the body
+	// is read and long before the bundle is. The refusal goes through
+	// refusePairing — it is the pairing's question about the run identity, asked
+	// for this endpoint's second decision (D1065) — so it carries the vocabulary
+	// a pairing refusal already carries and no run needs a new case.
 	perms, err := mintPermissions(id)
 	if err != nil {
 		s.refusePairing(ctx, w, id, PurposeMint, config.GitHubAppKeySecret, err)
