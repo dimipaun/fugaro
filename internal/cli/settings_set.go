@@ -81,8 +81,10 @@ var settingsGenericKeys = map[string]bool{
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
-// whole. A prefix covers the block's scalars and string lists; a key with a
-// varying segment is still refused below, so no entry here can reach a map.
+// whole. A prefix covers the block's scalars and string lists: no entry here
+// carries a varying segment, and settingsWriteLookup reaches a wildcard
+// registry row only for a spelling settingsGenericKeys names, so a prefix is
+// never the reason a map entry resolves.
 // `credentials.` and `clone_urls.` are §4.4's own names for the blocks §5.6's
 // family adds: they are listed now so the generic path does not refuse a name
 // the spec hands it once that family lands.
@@ -268,11 +270,22 @@ func settingsWriteRow(key string) (settings.Row, error) {
 // `stages.review.claude_account` is the key a person writes. The row keeps the
 // key as written, because that is the path the edit lands on, and the registry
 // spelling is what the allowlist and the row's own sentences name.
+//
+// Only a wildcard row settingsGenericKeys carries by name is matched, which is
+// how `stages.*.claude_account` is reachable at all. The registry's other
+// wildcard rows — the project layer's `workflows.*.*`, the project family's
+// `repos.*.*`, the models family's `providers.*.*` and the accounts family's
+// `claude_accounts.*.allow_data_to` — are other paths' keys: matching one would
+// hand back a row this command does not write, and the refusal a person gets
+// should be the one about the name, not a row that was never theirs.
 func settingsWriteLookup(key string) (settings.Row, string, bool) {
 	if row, found := settings.Lookup(key); found {
 		return row, key, true
 	}
 	for _, r := range settings.Rows() {
+		if !settingsGenericKeys[r.Key] {
+			continue
+		}
 		if !settingsPatternMatch(r.Key, key) {
 			continue
 		}
@@ -285,7 +298,9 @@ func settingsWriteLookup(key string) (settings.Row, string, bool) {
 
 // settingsPatternMatch reports whether key is a spelling of the registry key
 // pattern: the same number of dotted segments, equal where the pattern names
-// one, and non-empty where it writes *.
+// one, and non-empty where it writes *. It answers the spelling and nothing
+// else: which patterns may be matched at all is settingsWriteLookup's, and
+// that is where the generic allowlist is asked.
 func settingsPatternMatch(pattern, key string) bool {
 	p, k := strings.Split(pattern, "."), strings.Split(key, ".")
 	if len(p) != len(k) {
