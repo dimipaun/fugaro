@@ -546,6 +546,64 @@ func TestLevelsAdversarialEffortOnAClaudeStageOnly(t *testing.T) {
 	})
 }
 
+// TestLevelsRecordNoEffortWhenTheStageIsOnAProviderRoute: a level that names a
+// reasoning effort records it only when that effort reached the stage. A stage
+// on a provider route raises no thinking at all (G5, D725) — its pins carry the
+// route's variables, not the effort — so EffortVars answers nothing for it and
+// the round records the empty effort, the same statement the stage's own
+// environment makes, while the model it did run on is still the level's own.
+//
+// The route here is the *background* model's, which is what makes the case
+// reachable at all: a level whose own model a provider serves and which names an
+// effort is refused at bootstrap (config's D725 check), but a level on a Claude
+// model in a run whose background model the route serves is an ordinary
+// configuration, and its stage is on the route like any other (stagePins). This
+// is the whole reason reviewFacts asks EffortVars instead of printing the
+// level's effort back: without the route check the record would claim a
+// reasoning level the provider's calls never ran at.
+func TestLevelsRecordNoEffortWhenTheStageIsOnAProviderRoute(t *testing.T) {
+	const effort = "high"
+	cfg := gwConfig(t, "  first_line_review: on\n  recipe: levels\n  adversarial_rounds: 2\n"+
+		"  levels:\n    l2: {model: "+opus+"}\n    l3: {effort: "+effort+"}\n")
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: critical\nagent:\n", 1)
+	// The same configuration TestLevelsRecordTheReviewersModelAndEffort runs,
+	// but for one line: the background model is the provider's, so every stage
+	// of the run is on the route. That pair is the case — one line apart, the
+	// level's own effort is recorded or is not.
+	cfg = strings.Replace(cfg, "background: "+haiku, "background: "+deepseek, 1)
+	if !strings.Contains(cfg, "background: "+deepseek) {
+		t.Fatal("the fixture has no background model to put on the route")
+	}
+	// enforce, not observe: a provider's calls are real dollars, so the run
+	// refuses to make them with a cap that only watches (checkProviderModels).
+	g := newGWFiles(t, cfg, "enforce", "50", levelsFiles)
+	// The owner's provider claims deepseek/*, which is the background's model.
+	wireProviders(t, g, nil, "acme/app")
+	rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	// Level 2 names a model of its own and no effort, so what it records about
+	// the route is the model it ran on and not an effort.
+	if senior := lastTier(t, rec, runstore.TierSenior); senior.Model != opus || senior.Effort != "" {
+		t.Errorf("the senior review recorded model %q, effort %q, want %q and none", senior.Model, senior.Effort, opus)
+	}
+	adv := lastTier(t, rec, runstore.TierAdversarial)
+	if adv.Model != sonnet {
+		t.Errorf("the adversarial review recorded model %q, want the reviewer slot's %q", adv.Model, sonnet)
+	}
+	if adv.Effort != "" {
+		t.Errorf("the adversarial review recorded effort %q, want none: the level named %q and the stage's route runs with thinking off", adv.Effort, effort)
+	}
+	// The line the pull request carries says the same: the model, no effort at
+	// all, and the head the round read.
+	body := onlyPR(t, g.provider).Body
+	want := "adversarial review: ship in round " + strconv.Itoa(adv.Round) + " (model " + sonnet + ", at " + adv.Head[:7] + ")"
+	if !strings.Contains(body, want) {
+		t.Errorf("the pull request does not say %q:\n%s", want, body)
+	}
+}
+
 // TestLevelsRecordTheReviewersModelAndEffort: each review round's summary keeps
 // what reviewed it — the model the stage was pinned to and the reasoning effort
 // that reached it (CLI 0.16.0) — beside the head it read, and the pull request's
