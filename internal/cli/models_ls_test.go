@@ -498,10 +498,13 @@ func TestModelsLsJSONMatchesSchema(t *testing.T) {
 }
 
 // TestModelsLsIsOffline: the read reaches nothing — no bucket, no database, no
-// host. With no PATH at all there is no gcloud and no git to run, and the read
-// still answers from the files this machine holds (spec §2, D788).
+// host (spec §2, D788). An empty PATH is not enough to say so: it stops gcloud
+// and git, and not a Go SDK client, so the fakes the project config points at
+// are installed and counted. A read that went to Cloud Run, Cloud Logging or
+// the budget database is red here.
 func TestModelsLsIsOffline(t *testing.T) {
-	modelsFixture(t)
+	f := newLaunchBudget(t, "observe")
+	f.appendConfig(t, modelsOfflineExtra)
 	t.Setenv("PATH", t.TempDir())
 
 	out, _, err := execute(t, "models", "ls")
@@ -511,10 +514,41 @@ func TestModelsLsIsOffline(t *testing.T) {
 	if !strings.Contains(out, "openrouter") {
 		t.Errorf("the offline read does not show the route table:\n%s", out)
 	}
+	if n := len(f.run.Requests()) + len(f.logging.Requests()) + len(f.db.Requests()); n != 0 {
+		t.Errorf("models ls made %d cloud call(s), want none: the read is the project config and this binary's own tables", n)
+	}
 	if _, _, err := execute(t, "models", "ls", "--cloud", "gcp"); err == nil {
 		t.Error("models ls takes --cloud: the read has no cloud path to select")
 	}
+
+	// The control: `budget show` reads the same fixture's database, so the
+	// count above is measuring calls and not a fake nothing can reach.
+	before := len(f.db.Requests())
+	if _, _, err := execute(t, "budget", "show"); err != nil {
+		t.Fatalf("the control run (budget show) failed: %v", err)
+	}
+	if len(f.db.Requests()) == before {
+		t.Fatal("budget show read no database either, so the count above proves nothing")
+	}
 }
+
+// modelsOfflineExtra is what the offline tests append to the cloud fixture's
+// project config: a provider route and one override, so the read has routes, a
+// catalog row and a local row to show while the fixture's fake endpoints sit
+// there reachable.
+const modelsOfflineExtra = `
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+model_prices:
+  vendor/model-y:
+    input_per_m: 1
+    output_per_m: 2
+`
 
 // modelsSection is one section of the text read: the lines between its header
 // and the next one, so an assertion about the routes cannot be satisfied by a
@@ -556,4 +590,3 @@ func selectedModelsConfig(t *testing.T) *localcfg.Config {
 	}
 	return lc
 }
-

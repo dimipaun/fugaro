@@ -163,10 +163,13 @@ func TestModelsSearchEscapesItsCells(t *testing.T) {
 }
 
 // TestModelsSearchIsOffline: the search reads this binary's own tables and the
-// selected project config, and reaches nothing (D788). With no PATH there is no
-// git and no gcloud to run, and it still answers.
+// selected project config, and reaches nothing (D788). An empty PATH is not
+// enough to say so — it stops git and gcloud, and not a Go SDK client — so the
+// fakes the project config points at are installed and counted: a search that
+// went to Cloud Run, Cloud Logging or the budget database is red here.
 func TestModelsSearchIsOffline(t *testing.T) {
-	modelsFixture(t)
+	f := newLaunchBudget(t, "observe")
+	f.appendConfig(t, modelsOfflineExtra)
 	t.Setenv("PATH", t.TempDir())
 
 	out, _, err := execute(t, "models", "search", "deepseek")
@@ -175,6 +178,9 @@ func TestModelsSearchIsOffline(t *testing.T) {
 	}
 	if !strings.Contains(out, "deepseek/deepseek-v4-flash") {
 		t.Errorf("the offline search does not find a catalog row:\n%s", out)
+	}
+	if n := len(f.run.Requests()) + len(f.logging.Requests()) + len(f.db.Requests()); n != 0 {
+		t.Errorf("models search made %d cloud call(s), want none: the search is this binary's own tables and the project config", n)
 	}
 	if _, _, err := execute(t, "models", "search", "deepseek", "--cloud", "gcp"); err == nil {
 		t.Error("models search takes --cloud: the search has no cloud path to select")
