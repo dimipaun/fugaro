@@ -21,8 +21,9 @@
     "typecheck": "tsc --noEmit",
     "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
     "screenshots": "npm run build && tsc -p tsconfig.screenshots.json && node .screenshots/tools/screenshots/capture.js",
-    "package": "npm run build && electron-builder --mac --universal --publish never",
+    "package": "npm run build && npm run symbols:inject && electron-builder --mac --universal --publish never",
     "package:targets": "electron-builder --mac --universal --publish never",
+    "symbols:inject": "node scripts/upload-sentry-symbols.mjs inject",
     "package:linux": "electron-builder --linux --publish never"
   },
   "build": {

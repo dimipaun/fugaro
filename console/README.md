@@ -243,7 +243,14 @@ the checkbox shows the value in force rather than the one the click asked for.
 §7.4). A report holds the **exception's type and the frames it was thrown
 from** — each an app-relative file with its function name, its line, its column
 and its `in_app` flag — and
-**no message, no path, no user name, no environment and no host name**. Nothing
+**no message, no path, no user name, no environment and no host name**. It also
+names the console's own version as its **`release`** and carries the build's
+**debug images** — an image type, a debug id and an app-relative code file each
+(owner's ruling of 2026-11-02: a stack a maintainer cannot symbolicate is not
+readable, and these are the build's own identifiers rather than anything about
+the machine). A debug image's file is cut at the app root exactly as a frame's
+is, an image whose id or path fails its shape is **refused rather than sent**,
+and every other field an image arrived with is dropped. Nothing
 else is attached: no session, no breadcrumb, no minidump (`defaultIntegrations:
 false` installs none of the SDK's own, and two are named by hand below), no
 renderer event, no preload and no IPC channel; and a report that cannot be sent
@@ -278,21 +285,35 @@ answered with `null`, which leaves `crashReporting` unset and the app on its
 ready path. A crash reporter that took the console down with it would be the
 worst trade this feature could make.
 
-### The symbols, uploaded after a build and dormant until they are asked for
+### The symbols, stamped before the pack and uploaded after it
 
-`sentry-cli`'s debug files and the main process's source maps are what turn a
-scrubbed frame into a name and a line, and `scripts/upload-sentry-symbols.mjs`
-uploads them for a packaged build (`debug-files upload`, then `sourcemaps
-inject` and `sourcemaps upload`) to the `fugaro`/`fugaro-console` project in the
-EU region. Only the two `sourcemaps` commands carry the console version: a
-native debug file is matched by the debug id inside it, so `debug-files upload`
-takes the bundle and no release at all. It is **dormant by
-default**: with `SENTRY_AUTH_TOKEN` unset or empty it prints one constant line
-(`Sentry symbol upload skipped: no auth token configured`) and exits 0 without
-invoking the CLI at all: a checkout, a fork's CI and a release before the secret
-exists upload nothing and fail nothing, and nothing in this repository — not
-`npm run build`, not `npm run package` — runs the script except the staged
-release step and a person. The token is
+The main process's source maps and the packaged app's native debug files are
+what turn a scrubbed frame back into a name and a line, and
+`scripts/upload-sentry-symbols.mjs` is the one script that handles both — in
+**two runs, with the pack between them**. The first is `node
+scripts/upload-sentry-symbols.mjs inject` (`npm run symbols:inject`, which `npm
+run package` runs between its own build and its packer): it rewrites each file
+of `console/dist/main` and the map beside it with a **debug id**, and that is
+the only order that works — a build after it throws the ids away, and a pack
+before it ships files that carry none, which is why the release job packs with
+`npm run package:targets` and never `npm run package` after the stamp. The
+second run, with no argument, comes after the pack: `debug-files upload` for the
+packaged app's native debug files, then `sourcemaps upload` for the main
+process's JavaScript and the maps beside them, to the `fugaro`/`fugaro-console`
+project in the EU region. Only the two `sourcemaps` commands carry the console
+version — the string every event now names as its `release` — because a native
+debug file is matched by the debug id inside it, so `debug-files upload` takes
+the bundle and no release at all. The upload reads the maps out of
+`console/dist/main`, the tree the stamp wrote: source maps are deliberately
+**not inside the app** (`build.files` carries `dist/main/**/*.js` and no
+`.map`, which `test/unit/build-files.test.ts` pins). Both runs are **dormant by
+default**: with `SENTRY_AUTH_TOKEN` unset or empty either one prints one constant
+line (`Sentry symbol upload skipped: no auth token configured`) and exits 0
+without invoking the CLI at all, so a checkout, a fork's CI and a release before
+the secret exists stamp nothing and upload nothing and fail nothing. `npm run
+package` runs the **stamp** between its own build and its packer, and needs no
+token for it; the **upload** is the staged release step's, or a person's by
+hand. The token is
 **never read, printed, logged or passed on an argv**: it reaches `sentry-cli`
 through the inherited environment and nowhere else, and the `sentry-cli` package
 is a **devDependency** — it is not a runtime dependency and `build.files` does
@@ -301,11 +322,13 @@ of its own**: the pinned `@sentry/cli` ships its binary as a per-platform
 optional dependency (`@sentry/cli-darwin` on the release runner), which its own
 launcher resolves at run time, so the job's `npm ci --ignore-scripts` — whose
 skipped postinstall is a download for platforms that package no binary — still
-leaves a `sentry-cli` that runs. The release workflow's step
-for it is staged in `docs/pending-workflows/console-release-symbols.yml`, which
-is the owner's to copy in over the staged `console-release.yml` and into
-`.github/workflows/` (the file's header carries the three commands); until the
-repository secret exists the step is a no-op.
+leaves a `sentry-cli` that runs. The release workflow's **two steps** for it —
+the build-and-stamp step before the packer, and the upload after the artifacts
+have been verified — are staged in
+`docs/pending-workflows/console-release-symbols.yml`, which is the owner's to
+copy in over the staged `console-release.yml` and into `.github/workflows/`
+(the file's header carries the order and the one changed pack line); until the
+repository secret exists both steps are no-ops.
 
 ## The hardened window (Task 1.1)
 

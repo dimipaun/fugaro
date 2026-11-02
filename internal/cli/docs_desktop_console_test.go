@@ -2998,18 +2998,30 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		return consoleStepNamed(t, job, "release", name)
 	}
 
-	// **Secrets are in exactly one step's `env:`** of the release job, each
-	// bound to its own name; the publish job holds none, and `GH_TOKEN` is in
-	// exactly two steps: the release gate (read-only token, check-runs) and the
-	// publish job's release step.
+	// **The Apple secrets are in exactly one step's `env:`** of the release job,
+	// each bound to its own name; the publish job holds none, and `GH_TOKEN` is
+	// in exactly two steps: the release gate (read-only token, check-runs) and
+	// the publish job's release step.
+	//
+	// The staged symbol change (2026-11-01, re-cut 2026-11-02) adds the one
+	// *other* secret this file may name, `SENTRY_AUTH_TOKEN`, in two steps of its
+	// own -- never in the signing step, which is the point of splitting them: the
+	// stamping step holds it before the key material exists and the upload step
+	// after the signing step has removed it. The state is read off the text
+	// rather than off a file's existence, because this test reads
+	// console-release.yml both before that copy-in and after it.
+	symbolsApplied := strings.Contains(text, consoleReleaseSymbolsSecret)
+	isSymbolsStep := func(name string) bool {
+		return name == consoleReleaseSymbolsStep || name == consoleReleaseSymbolsStampStep
+	}
 	signIdx, sign := stepNamed(consoleReleaseSigningStep)
 	gateIdx, gate := stepNamed("The tag is strict, on main, and its checks passed")
 	_, publish := consoleStepNamed(t, pub, "publish", consoleReleasePublishStep)
 	for _, j := range jobs {
 		for i, step := range j.job.Steps {
 			for name, value := range step.Env {
-				if strings.Contains(value, "secrets.") && !(j.name == "release" && i == signIdx) {
-					t.Errorf("%s's step %q reads %s from a secret: secrets are in exactly one step's env, %q", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
+				if strings.Contains(value, "secrets.") && !(j.name == "release" && (i == signIdx || (symbolsApplied && isSymbolsStep(step.Name)))) {
+					t.Errorf("%s's step %q reads %s from a secret: the Apple material is in exactly one step's env, %q, and the symbol change's own token in the two steps it adds -- nowhere else", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
 				}
 				if strings.Contains(value, "github.token") || name == "GH_TOKEN" || name == "GITHUB_TOKEN" {
 					// The gate step is the one that runs the gate, whichever job
@@ -3055,8 +3067,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 		refs++
 	}
-	if refs != len(consoleReleaseSecrets) {
-		t.Errorf("%s has %d secret references, want exactly %d (one each, in the signing step)", consoleReleaseWorkflowPath, refs, len(consoleReleaseSecrets))
+	wantRefs := len(consoleReleaseSecrets)
+	if symbolsApplied {
+		wantRefs += consoleReleaseSymbolsTokenRefs
+	}
+	if refs != wantRefs {
+		t.Errorf("%s has %d secret references, want exactly %d (one each in the signing step, plus the symbol change's token in the two steps it adds)", consoleReleaseWorkflowPath, refs, wantRefs)
 	}
 
 	// **The order: on main, a strict tag, the gate, then every install and
@@ -3258,9 +3274,31 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 	}
 
+	// **The bundle-only pack reads two ways, and both are right.** It is
+	// `npm run package -- --dir` while the symbol change is staged, and
+	// `npm run package:targets -- --dir` once that change's copy-in has landed,
+	// because it runs the build and the debug-id stamp in a step of its own
+	// before this one -- a `npm run package` here would rebuild `dist/main` and
+	// throw the ids away. Either spelling is the pinned local packer, the bundle
+	// alone, the tag's version and the packer's own notarisation off, which is
+	// what the checks below hold every pack line to.
+	bundlePackLine := func() int {
+		t.Helper()
+		for _, want := range []string{
+			`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`,
+			`npm run package:targets -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`,
+		} {
+			if i := consoleLineIndex(lines, want, false); i >= 0 {
+				return i
+			}
+		}
+		t.Errorf("%s's signing step does not pack the bundle alone, in either spelling (%q or its `package:targets` form)", consoleReleaseWorkflowPath, `npm run package -- --dir`)
+		return -1
+	}
+
 	// The team, on the certificate, before packing; the signature after.
 	teamBefore := at(`*"($APPLE_TEAM_ID)\""*) ;;`, false)
-	pack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
+	pack := bundlePackLine()
 	if teamBefore < 0 || pack < 0 || teamBefore > pack {
 		t.Errorf("%s's signing step does not check the certificate's team before packing", consoleReleaseWorkflowPath)
 	}
@@ -3294,7 +3332,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// path. `npm run package:targets` is the same packer without the build
 	// (mutation: this line back to plain `npm run package --`, which the
 	// exact-line lookup below misses -- the first pack's line is not it).
-	bundlePack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
+	bundlePack := bundlePackLine()
 	appScript := at(`scripts/notarize-and-staple.sh app "$APP"`, false)
 	targetsPack := at(`npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
 	if bundlePack < 0 || appScript < 0 || targetsPack < 0 || !(bundlePack < appScript && appScript < targetsPack) {
@@ -3358,8 +3396,23 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's verification step does not run %q", consoleReleaseWorkflowPath, want)
 		}
 	}
-	if verifyIdx+1 >= len(job.Steps) || !strings.Contains(job.Steps[verifyIdx+1].Uses, "actions/upload-artifact@") ||
-		job.Steps[verifyIdx+1].With["name"] != "console-release-assets" || job.Steps[verifyIdx+1].With["if-no-files-found"] != "error" {
+	// The verified assets go up as the console-release-assets artifact **right
+	// after verifying them** -- the symbol change's upload step is the one thing
+	// allowed in between, since it files the maps the stamp left in `dist/main`
+	// and has to run while the runner still holds them. Nothing else may come
+	// between the verification and the upload: an artifact is the record of a
+	// run that passed.
+	assetsIdx := -1
+	for i := verifyIdx + 1; i < len(job.Steps); i++ {
+		if strings.Contains(job.Steps[i].Uses, "actions/upload-artifact@") {
+			assetsIdx = i
+			break
+		}
+		if !(symbolsApplied && job.Steps[i].Name == consoleReleaseSymbolsStep) {
+			break
+		}
+	}
+	if assetsIdx < 0 || job.Steps[assetsIdx].With["name"] != "console-release-assets" || job.Steps[assetsIdx].With["if-no-files-found"] != "error" {
 		t.Errorf("%s does not upload the verified assets as the console-release-assets artifact right after verifying them", consoleReleaseWorkflowPath)
 	}
 
@@ -7748,25 +7801,44 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 	}
 }
 
-// consoleReleaseSymbolsStep is the step the symbol-upload supersession adds to
-// the macOS `release` job, by name, and consoleReleaseSymbolsScript is what that
-// step runs -- the script whose own unit test pins the three `sentry-cli`
-// commands it makes, their arguments, and that the token never reaches an argv.
+// consoleReleaseSymbolsStep is the upload step the symbols supersession adds to
+// the macOS `release` job, by name; consoleReleaseSymbolsBuildStep and
+// consoleReleaseSymbolsStampStep are the two it adds *before the signing step*,
+// which build the app with no secret in the step's environment and then stamp
+// the built main process with its debug id; and consoleReleaseSymbolsScript is
+// what every one of them runs -- the script whose own unit test pins the
+// `sentry-cli` commands each run makes, their arguments, and that the token never
+// reaches an argv.
 const (
-	consoleReleaseSymbolsStep   = "Upload the crash reporter's symbols, when a token is configured"
-	consoleReleaseSymbolsScript = "node scripts/upload-sentry-symbols.mjs"
+	consoleReleaseSymbolsStep      = "Upload the crash reporter's symbols, when a token is configured"
+	consoleReleaseSymbolsBuildStep = "Build the app the stamp and the pack both read"
+	consoleReleaseSymbolsStampStep = "Stamp the built main process with its debug id"
+	consoleReleaseSymbolsScript    = "node scripts/upload-sentry-symbols.mjs"
 )
 
-// consoleReleaseSymbolsSecret is the repository secret the step reads -- the
+// consoleReleaseSymbolsInject is the mode the stamping step passes the script,
+// as its own line: the run that rewrites `dist/main` before the packer copies
+// it, and the whole reason the stamp cannot move after the pack.
+const consoleReleaseSymbolsInject = "node scripts/upload-sentry-symbols.mjs inject"
+
+// consoleReleaseSymbolsSecret is the repository secret the two steps read -- the
 // console-release environment's seventh, beside the six the signing step reads
 // -- and consoleReleaseSymbolsRefCount is how many `secrets.NAME` references the
-// file carries: one more than the file it supersedes (whose own seven include
-// the one the header's rule about them is written with), and the whole of the
-// difference between them.
+// file carries: two more than the file it supersedes (whose own seven include
+// the one the header's rule about them is written with), because the change
+// reaches the token in two steps that must never hold it beside an Apple secret
+// -- the stamping step before the key material exists, the upload step after the
+// signing step has removed it.
 const (
 	consoleReleaseSymbolsSecret   = "SENTRY_AUTH_TOKEN"
-	consoleReleaseSymbolsRefCount = 8
+	consoleReleaseSymbolsRefCount = 9
 )
+
+// consoleReleaseSymbolsTokenRefs is how many times the file names
+// `secrets.SENTRY_AUTH_TOKEN` itself: once in each of the two steps' `env:`, and
+// nowhere else -- the count is a pin rather than a floor, because a third
+// mention is a third place a later change could put the token on a command line.
+const consoleReleaseSymbolsTokenRefs = 2
 
 // consoleSymbolsText is the console signing workflow's text as this tree holds
 // the symbol-upload change: the staged supersession while it is staged, and
@@ -7783,16 +7855,21 @@ func consoleSymbolsText(t *testing.T) (string, string) {
 	return file, path
 }
 
-// TestDocsConsoleReleaseSymbolsIsStagedAndPinned holds the staged symbol upload
-// to what it claims to be (the owner's ruling of 2026-11-01; design section
-// 7.4): one step in the macOS `release` job, after the artifacts have been
-// verified and before they leave the job, running
-// `console/scripts/upload-sentry-symbols.mjs` with **the file's second secret in
-// its environment and nowhere else** -- the token is never an operand of
+// TestDocsConsoleReleaseSymbolsIsStagedAndPinned holds the staged symbol change
+// to what it claims to be (the owner's rulings of 2026-11-01 and 2026-11-02;
+// design section 7.4): **two steps** in the macOS `release` job -- one before the
+// signing step that builds the app and stamps the built main process with its
+// debug id, one after the artifacts have been verified and before they leave the
+// job that uploads the symbols -- and **one changed pack line**, the signing
+// step's first pack switching to `npm run package:targets -- --dir` so that
+// nothing rebuilds over the stamp. Both steps run
+// `console/scripts/upload-sentry-symbols.mjs`, with **the file's second secret in
+// their environment and nowhere else** -- the token is never an operand of
 // anything, because an argv is readable by every process of the same user on the
-// runner. Everything that makes the file safe to run is what runs today: the
-// pins, the trigger, the permissions, the protected environment and the six
-// secrets the signing step already reads.
+// runner, and neither step holds it beside an Apple secret. Everything that makes
+// the file safe to run is what runs today: the pins, the trigger, the
+// permissions, the protected environment and the six secrets the signing step
+// already reads.
 //
 // It reads the file the way this family reads a supersede file: from
 // docs/pending-workflows/console-release-symbols.yml while it is staged, and
@@ -7828,11 +7905,63 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 	if got, want := step.Env[consoleReleaseSymbolsSecret], "${{ secrets."+consoleReleaseSymbolsSecret+" }}"; got != want {
 		t.Errorf("%s's %q step's %s is %q, want %q", path, consoleReleaseSymbolsStep, consoleReleaseSymbolsSecret, got, want)
 	}
-	if got := strings.Count(text, "secrets."+consoleReleaseSymbolsSecret); got != 1 {
-		t.Errorf("%s names secrets.%s %d times: the token belongs to one step, and a second mention is a second place a change can put it on a command line", path, consoleReleaseSymbolsSecret, got)
+	if got := strings.Count(text, "secrets."+consoleReleaseSymbolsSecret); got != consoleReleaseSymbolsTokenRefs {
+		t.Errorf("%s names secrets.%s %d times, want %d (the two steps that stamp and upload): the token belongs to those two steps and to no other, and a further mention is a further place a change can put it on a command line", path, consoleReleaseSymbolsSecret, got, consoleReleaseSymbolsTokenRefs)
 	}
 	if got := len(consoleSecretRefRE.FindAllString(text, -1)); got != consoleReleaseSymbolsRefCount {
-		t.Errorf("%s names %d secrets, want %d: the console-release environment's six plus this change's one, and a secret this file does not need is a secret the release job can read for no reason", path, got, consoleReleaseSymbolsRefCount)
+		t.Errorf("%s names %d secrets, want %d: the console-release environment's six, this change's one reached in two steps, and the header's own rule about them written with one -- a secret this file does not need is a secret the release job can read for no reason", path, got, consoleReleaseSymbolsRefCount)
+	}
+
+	// **The build and the stamp, and the order they make.** The two steps the
+	// change adds before the signing step write the debug id into the files the
+	// packer copies into the archive, and they sit before the step that holds the
+	// signing material for the secret's reason: the token must not sit beside an
+	// Apple secret, and a build inside the signing step would be a build inside
+	// the step that holds the keychain.
+	//
+	// **They are two steps and not one, and the split is the token's.** `npm run
+	// build` runs the repository's toolchain and its dependencies' install scripts,
+	// and a step's `env:` is inherited by every process the step starts -- so the
+	// build's step carries no `env:` at all and the token is in the inject's step
+	// alone. A one-step file would put the token in the environment of a build,
+	// which is the shape this pair exists to refuse; the clause below holds the
+	// build's `env:` to nothing, and the file-wide env clause above holds every
+	// *other* step of the job to reading no secret.
+	buildIndex, build := consoleStepNamed(t, release, "release", consoleReleaseSymbolsBuildStep)
+	stampIndex, stamp := consoleStepNamed(t, release, "release", consoleReleaseSymbolsStampStep)
+	if stampIndex >= index {
+		t.Errorf("%s runs %q at step %d and the symbol upload at step %d: the stamp comes before the pack and the upload after it, and a file that put the stamp last would stamp a tree nobody packs", path, consoleReleaseSymbolsStampStep, stampIndex, index)
+	}
+	if buildIndex >= stampIndex {
+		t.Errorf("%s runs %q at step %d and %q at step %d: the inject rewrites the files `npm run build` has just written, so a stamp before the build is a build that throws the ids away", path, consoleReleaseSymbolsBuildStep, buildIndex, consoleReleaseSymbolsStampStep, stampIndex)
+	}
+	signIndex, _ := consoleStepNamed(t, release, "release", consoleReleaseSigningStep)
+	if stampIndex >= signIndex {
+		t.Errorf("%s runs %q at step %d, at or after the signing step %d: the pack is the signing step's, so the stamp has to be written before it -- and the stamping step is the one place the token can be reached without an Apple secret beside it", path, consoleReleaseSymbolsStampStep, stampIndex, signIndex)
+	}
+	for _, one := range []struct {
+		name string
+		step consoleReleaseStep
+		run  string
+	}{
+		{consoleReleaseSymbolsBuildStep, build, "npm run build"},
+		{consoleReleaseSymbolsStampStep, stamp, consoleReleaseSymbolsInject},
+	} {
+		if one.step.WorkingDirectory != "console" {
+			t.Errorf("%s's %q step runs in %q, not `console`: the script and `dist/main` are both resolved from there", path, one.name, one.step.WorkingDirectory)
+		}
+		if !slices.Contains(consoleRunLines(one.step.Run), one.run) {
+			t.Errorf("%s's %q step does not run %q: the build writes `dist/main` and the inject run stamps it, in that order, and a step that runs neither would leave the app without the ids", path, one.name, one.run)
+		}
+	}
+	if got := len(build.Env); got != 0 {
+		t.Errorf("%s's %q step names %d environment variables (%v), want none: it runs the repository's build tooling and its dependencies' install scripts, which a step's environment is inherited by -- the token belongs to the step that runs the inject, and to no other step of this job", path, consoleReleaseSymbolsBuildStep, got, build.Env)
+	}
+	if got := len(stamp.Env); got != 1 || stamp.Env[consoleReleaseSymbolsSecret] != "${{ secrets."+consoleReleaseSymbolsSecret+" }}" {
+		t.Errorf("%s's %q step's env is %v, want the token alone: it is the step before the key material exists, and no Apple secret may sit beside it", path, consoleReleaseSymbolsStampStep, stamp.Env)
+	}
+	if got := len(consoleRunLines(stamp.Run)); got != 2 {
+		t.Errorf("%s's %q step runs %d lines, want the fail-closed shell and the inject alone: the build is the step before it, which is what keeps the token out of a build's environment", path, consoleReleaseSymbolsStampStep, got)
 	}
 
 	// Where the step is: the app's debug files and its source maps have to
@@ -7860,8 +7989,8 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 		return
 	}
 	// The both-states half: while it is staged it has to be a change to the file
-	// it supersedes, and a change to nothing else -- the one secret reference
-	// aside, which is the change.
+	// it supersedes, and a change to nothing else -- the two token references
+	// aside, which are the change.
 	base, basePath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
 	if text == base {
 		t.Errorf("%s is byte-identical to %s: then it is not a change, and its copy-in commands are instructions to do nothing", consoleReleaseSymbolsWorkflowPath, basePath)
@@ -7869,14 +7998,32 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 	}
 	got := strings.ReplaceAll(consoleOtherwiseIdentical(t, text), "secrets."+consoleReleaseSymbolsSecret+"\n", "")
 	if want := consoleOtherwiseIdentical(t, base); got != want {
-		t.Errorf("%s and %s differ outside the symbol step: the action pins, the trigger, the permissions, every job's environment and every other `secrets.` reference have to be identical, because this change adds an upload and touches nothing that decides who may run it or what it may read.\nsymbols:\n%s\n%s:\n%s", consoleReleaseSymbolsWorkflowPath, basePath, got, basePath, want)
+		t.Errorf("%s and %s differ outside the symbol steps: the action pins, the trigger, the permissions, every job's environment and every other `secrets.` reference have to be identical, because this change adds two steps and a pack line and touches nothing that decides who may run it or what it may read.\nsymbols:\n%s\n%s:\n%s", consoleReleaseSymbolsWorkflowPath, basePath, got, basePath, want)
+	}
+	// The lines the superseded file carries and this one does not: the pack line
+	// the stamp makes untenable -- the signing step's first pack, which would
+	// rebuild over the debug ids -- and otherwise nothing but header, which the
+	// loop above skips. It is named rather than allowed in general: any *other*
+	// dropped line is a line of the pipeline the change silently took away.
+	const rebuiltPack = `npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`
+	namesRebuiltPack := false
+	for _, line := range strings.Split(base, "\n") {
+		if strings.TrimSpace(line) == rebuiltPack {
+			namesRebuiltPack = true
+		}
+	}
+	if !namesRebuiltPack {
+		t.Errorf("%s no longer carries %q: that is the line this change's exception is written for, and an exception that names nothing would let a real dropped line through", basePath, rebuiltPack)
+	}
+	if strings.Contains(text, rebuiltPack) {
+		t.Errorf("%s still carries %q: the signing step's first pack would rebuild `dist/main` and throw away the debug ids the stamping step wrote, which is the whole of the change", consoleReleaseSymbolsWorkflowPath, rebuiltPack)
 	}
 	for _, line := range consoleLinesDropped(base, text) {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || trimmed == rebuiltPack {
 			continue
 		}
-		t.Errorf("%s drops %q, which %s carries: the symbol change adds one step and a paragraph of header, and rewrites nothing else", consoleReleaseSymbolsWorkflowPath, trimmed, basePath)
+		t.Errorf("%s drops %q, which %s carries: the symbol change adds two steps, one changed pack line and a paragraph of header, and rewrites nothing else", consoleReleaseSymbolsWorkflowPath, trimmed, basePath)
 	}
 }
 
