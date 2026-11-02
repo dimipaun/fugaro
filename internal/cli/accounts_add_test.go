@@ -217,7 +217,7 @@ func TestAccountsAddConfirmsTheWideningItMakes(t *testing.T) {
 		for _, want := range []string{
 			"claude_accounts.team-a.allow_data_to",
 			"profiles.standard.claude_accounts",
-			"a launcher that may start a run on acme/app can have that run print team-a's token",
+			"; a launcher that may start a run on acme/app can have that run print team-a's token",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("the confirmation does not print %q:\n%s", want, out)

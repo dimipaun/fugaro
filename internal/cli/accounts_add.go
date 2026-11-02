@@ -310,7 +310,7 @@ func accountsAddWhat(name string, allow []string, profile string, beyond []strin
 		what += fmt.Sprintf("; profile profiles.%s.claude_accounts += %s", pluginwire.Printable(profile), pluginwire.Printable(name))
 	}
 	if len(beyond) > 0 {
-		what += fmt.Sprintf("; allow a launcher that may start a run on %s can have that run print %s's token", strings.Join(beyond, ", "), pluginwire.Printable(name))
+		what += fmt.Sprintf("; a launcher that may start a run on %s can have that run print %s's token", strings.Join(beyond, ", "), pluginwire.Printable(name))
 	}
 	return what
 }
