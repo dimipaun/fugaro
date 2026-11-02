@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-seven names
+ * is not a name and a method is still a compile error, and the twenty-eight names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -181,6 +181,19 @@ export const BRIDGE_VERSION = 1
  * row, `--all --json`, so no word of it is caller-influenced -- and like the
  * project view above it, its child mints nothing of the host's: the
  * declarations are the caller's own database node.
+ *
+ * **Console 0.119.0 added the twenty-eighth** (`runs.summary` / `summaryRuns`,
+ * the jobs-free totals read -- `fugaro runs summary --json`, the CLI half of
+ * which is B4, #1580) and left the other twenty-seven exactly where they were.
+ * It sits directly under `runs.stats`, the other read of the runs family that
+ * answers from the budget rather than from a run record. Its method is the
+ * plainest case of rule 5's shape after the declarations read: the operation
+ * declares **one optional window** and nothing else, so no other word of the
+ * argv is caller-influenced -- and the window is the console's own closed set
+ * (`src/main/ipc.ts`'s `SUMMARY_SINCE_WINDOWS`), which is why a renderer cannot
+ * ask this read for the whole history under another spelling of `--since`.
+ * **No screen calls it yet**: the tabs that will are drawn by a later task, and
+ * this row is the main process's half of the read.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -188,6 +201,16 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['spend.report', 'runReport'],
   ['runs.list', 'listRuns'],
   ['runs.stats', 'statsRuns'],
+  // The jobs-free totals read (console 0.119.0, B4's console half): `fugaro
+  // runs summary --json`, the window's runs counted by repository and by state
+  // and what they spent, read from the budget database and the spend history
+  // alone -- so no run object and no bucket listing is behind it. One row here
+  // for the reason every other row is one: the read is a command of its own,
+  // and a method that took the operation as an argument is the shape rule 5
+  // forbids. Its one argument is the window, from the closed set
+  // `src/main/ipc.ts` declares; a caller that sends none gets the command's own
+  // default.
+  ['runs.summary', 'summaryRuns'],
   ['plan.status', 'planStatus'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
@@ -262,7 +285,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-seven string literals, not `string`. It is the type of the `operations` list
+ * twenty-eight string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -382,9 +405,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-seven *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-eight *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-seven properties as properties rather than as an index
+ * object literal those twenty-eight properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -413,7 +436,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-seven methods.
+ * twenty-eight methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,
