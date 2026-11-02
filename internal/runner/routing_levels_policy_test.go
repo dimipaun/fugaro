@@ -1,0 +1,76 @@
+package runner_test
+
+import (
+	"strings"
+	"testing"
+)
+
+// levelPinned is gwConfig with one review level's own model set and the
+// coder, the reviewer and the background left on Claude's own models: the
+// level's model is then the only provider-served model in the run, so a
+// refusal that names it can only be about the level and not about a pin.
+func levelPinned(t *testing.T, level, model string) string {
+	t.Helper()
+	return gwConfig(t, "  levels: { "+level+": { model: "+model+" } }\n")
+}
+
+// TestLevelModelAllowDataToRefused pins the data-policy half of L4.5's fix
+// round: a review level's own model is a pin of the stage it runs in, and the
+// owner's data policy judges the pins, so a provider whose allow_data_to does
+// not name the repository may not serve a level either. A level 3 model reads
+// the repository's code as surely as the coder's does, and the check that
+// stops the coder's model is the one that has to stop it. The refusal names
+// the key the owner wrote the model under, not the role slot the check read
+// it from, because that key is the line to change.
+//
+// Both slots are covered: level 1 sits in the coder's stage and level 3 in the
+// reviewer's, and a level judged in the wrong slot would be refused only by
+// accident of which pins the run happens to share with it.
+func TestLevelModelAllowDataToRefused(t *testing.T) {
+	t.Run("a level in the reviewer's slot", func(t *testing.T) {
+		g := providerGW(t, levelPinned(t, "l3", deepseek), "acme/other")
+		refusedBeforeAnyCall(t, g, "allow_data_to", "agent.levels.l3.model", deepseek, "acme/app")
+	})
+	t.Run("a level in the coder's slot", func(t *testing.T) {
+		g := providerGW(t, levelPinned(t, "l1", deepseek), "acme/other")
+		refusedBeforeAnyCall(t, g, "allow_data_to", "agent.levels.l1.model", deepseek, "acme/app")
+	})
+}
+
+// TestLevelModelProviderAuthRefused: a level's model a provider serves needs
+// agent.auth: api-key exactly as a pin does. An oauth token is a Claude
+// subscription credential and is never sent to another provider, whichever
+// stage would have sent it.
+func TestLevelModelProviderAuthRefused(t *testing.T) {
+	cfg := strings.Replace(levelPinned(t, "l3", deepseek), "auth: api-key", "auth: oauth", 1)
+	if cfg == levelPinned(t, "l3", deepseek) {
+		t.Fatal("the fixture has no auth line")
+	}
+	g := providerGW(t, cfg, "acme/app")
+	refusedBeforeAnyCall(t, g, "agent.levels.l3.model", deepseek, "never sent to another provider", "agent.auth: api-key")
+}
+
+// TestLevelModelProviderGatewayRefused: observe never refuses a call and a
+// provider's calls are real dollars, so a level's provider model needs
+// budget.mode enforce like any other routed model. The pins here are Claude's
+// own, so the level's model is the only provider-served model in the run and
+// the refusal this run reports is about the level.
+//
+// The runner reports this refusal by its message alone (checkProviderModels
+// returns ps[0].Message), so the level's key is not in it — the model is,
+// which is what makes the case about the level. The key is asserted where the
+// problem is built, in the allow_data_to and auth cases above.
+func TestLevelModelProviderGatewayRefused(t *testing.T) {
+	g := providerRun(t, levelPinned(t, "l3", deepseek), "observe", "50", nil, "acme/app")
+	refusedBeforeAnyCall(t, g, deepseek, "observe never refuses a call", "budget.mode enforce")
+}
+
+// TestLevelModelAliasRefused: CheckPins is the rule that a run under a budget
+// names model IDs and never aliases, so the price it charges is the price in
+// the table. A level's own model is judged by it too, and an alias is the
+// case only that check catches: a Claude alias carries no "/" and no provider
+// claims it, so the provider checks pass it through by design.
+func TestLevelModelAliasRefused(t *testing.T) {
+	g := providerGW(t, levelPinned(t, "l3", "opus"), "acme/app")
+	refusedBeforeAnyCall(t, g, "agent.levels.l3.model", "opus is an alias")
+}
