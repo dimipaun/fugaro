@@ -1622,14 +1622,38 @@ NAME is a credential the service can issue, in the document's own spelling:
   anthropic-api-key                the project's Anthropic API key (tier B)
   github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
   bitbucket-token                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
+  claude-oauth-token--review-signing  the default account's review-signing key (no tier: the service's sign
+                                     route computes a MAC with it; written by --generate below)
+  claude-oauth-token-<account>--review-signing     a named account's review-signing key (no tier, and --generate's NAME too)
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro creds set claude-oauth-token < token-file), or, when stdin is a terminal, paste it
 at a hidden prompt. It is never taken from an argument, a flag or the
-environment, and never printed. One trailing newline (\n or \r\n) is dropped,
-and the command says so. A value must be 4 bytes to 8192, on one line, with
+environment, and never printed. --generate changes WHERE the bytes come from
+and nothing else: they are drawn in this process, and they are never printed
+either. One trailing newline (\n or \r\n) is dropped, and the command says so.
+A value must be 4 bytes to 8192, on one line, with
 no whitespace at either end; a longer value is a document the service's loader
 would refuse, so it is refused here instead.
+
+--generate writes a review-signing key and takes no value of its own
+(--generate=anything is a malformed flag): a review-signing key is an HMAC key
+with no upstream to paste one from, so this process draws 32 bytes from
+crypto/rand and writes them into the bundle. Every other NAME is refused: an
+account's review-signing names are the only ones it takes, and the rotation
+window's own entry is not one of them — asked to write it, the command refuses,
+because it writes the current entry and derives the window's from it.
+
+Two runs ROTATE the key. The first writes a fresh value where the entry was;
+the second writes a fresh one again and carries the value it replaced, byte for
+byte, under the same name with -previous appended. The service signs with
+the current entry and verifies against the current and the previous one, and
+against nothing older, so there is no instant in which it holds neither.
+
+Two consecutive generates REVOKE the key that was current before the first of
+them: the second run's window holds the first run's key, and the original is in
+neither entry, so a signature made with it stops verifying. It is not escrowed
+and it is not re-signable, and the honest remedy is a re-review of the head.
 
 github-app-key is the ONE multi-line entry: it is an RSA private key in a PEM,
 so it has to come in on stdin, from the key file the App's page downloads
@@ -1677,6 +1701,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `--generate` | bool | `false` | no | generate a fresh review-signing key instead of reading a value (the review-signing names only) |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
