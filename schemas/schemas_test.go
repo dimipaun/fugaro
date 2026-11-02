@@ -4708,9 +4708,20 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := slices.Sorted(maps.Keys(written))
+	// Every key the struct marshals is declared, and all of them are required
+	// but the one a run can honestly have nothing to say about: the reviewer's
+	// effort is absent when the run's level named none (the model's own
+	// default), which is the meaning absence already has wherever a Fugaro
+	// setting spells one.
+	optional := []string{"effort"}
+	props := nodeOf(t, doc, "properties")
+	if got := slices.Sorted(maps.Keys(props)); !slices.Equal(got, want) {
+		t.Errorf("review.schema.json declares %v, want %v (every key runner.ReviewArtifact marshals)", got, want)
+	}
 	required := stringsOf(t, doc, "required")
-	if got := slices.Sorted(slices.Values(required)); !slices.Equal(got, want) {
-		t.Errorf("review.schema.json requires %v, want %v (every key runner.ReviewArtifact marshals)", got, want)
+	rest := slices.DeleteFunc(slices.Clone(want), func(k string) bool { return slices.Contains(optional, k) })
+	if got := slices.Sorted(slices.Values(required)); !slices.Equal(got, rest) {
+		t.Errorf("review.schema.json requires %v, want %v (every key runner.ReviewArtifact marshals, bar %v, which a review with no effort set leaves out)", got, rest, optional)
 	}
 
 	// The reviewer's half, rule for rule. Descriptions are dropped first: the
@@ -4724,7 +4735,6 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		t.Fatalf("runner.ReviewArtifactSchema carries %v: this test compares its required list, its properties and additionalProperties, and would read any other rule as agreement", got)
 	}
 	asked := stringsOf(t, ask, "required")
-	props := nodeOf(t, doc, "properties")
 	askProps := nodeOf(t, ask, "properties")
 	if got, gotOK := ask["additionalProperties"].(bool); !gotOK || got {
 		t.Errorf("runner.ReviewArtifactSchema's additionalProperties = %v, want false like the document's", ask["additionalProperties"])
@@ -4756,6 +4766,21 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	// What the document adds over the call, as a reader feels it: an unknown
 	// field and a timestamp in an offset the coordinator would have to
 	// normalise are both refusals.
+	// The reviewer's effort is the one field a run can leave out, and leaving
+	// it out is not a refusal: its absence is the model's own default. An
+	// empty string is a claim nobody made, so the schema refuses it rather
+	// than reading the two as one.
+	if !bytes.Contains(data, []byte(`"effort":"high"`)) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	unset, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data,
+		[]byte(`"effort":"high",`), []byte(``), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(unset); err != nil {
+		t.Errorf("review.schema.json refuses an artifact whose reviewer carries no effort, which is what a run whose level named none writes: %v", err)
+	}
 	for _, tc := range []struct {
 		name string
 		from string
@@ -4763,6 +4788,7 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	}{
 		{"an unknown field", `"base":"main"`, `"base":"main","extra":1`},
 		{"a local timestamp", `"created_at":"2026-11-02T09:30:00Z"`, `"created_at":"2026-11-02T10:30:00+01:00"`},
+		{"an empty effort", `"effort":"high"`, `"effort":""`},
 	} {
 		if !bytes.Contains(data, []byte(tc.from)) {
 			t.Fatalf("%s: fixture lacks the literal this test replaces: %s", tc.name, data)

@@ -17,12 +17,12 @@
     "reviewer": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["account", "model", "effort"],
+      "required": ["account", "model"],
       "description": "Who wrote the review: the account the launcher named (a named Claude OAuth account), the model the review stage ran on, and its level's effort. The same three facts the run record carries for every stage, so a reader can tell a review run at low effort from one at high without reading the job's spec.",
       "properties": {
-        "account": { "type": "string" },
-        "model": { "type": "string" },
-        "effort": { "type": "string" }
+        "account": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "effort": { "type": "string", "minLength": 1, "description": "Absent when the run's level named no effort, which is the model's own default -- the meaning absence already has wherever a Fugaro setting spells an effort (config.LevelSetting's own omitempty, and config.Efforts' own rule that \"absent already means the model's own default\"). An empty string is refused rather than read as one: a claim nobody made is not the same as no claim, and only the second is true here. A present value is one of config.Efforts." }
       }
     },
     "verdict": { "type": "string", "enum": ["ship", "fix first", "reject"], "description": "The review's own three words; a fourth is refused (D884). It is NOT the run record's two-word verdict (ship/changes): the artifact says what a reviewer thought, the record says what the run did about it, and the record's entry for this review carries tier: independent so a reader of the record can tell the two apart." },

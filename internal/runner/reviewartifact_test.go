@@ -40,6 +40,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -905,5 +906,149 @@ func TestVerifyRefusesAReplayedArtifact(t *testing.T) {
 		if _, err := VerifyReviewArtifact(ctx, cdata, csig, reviewWant(), svc.verifier()); err == nil {
 			t.Errorf("an artifact of another repository or pull request verified: %+v", art)
 		}
+	}
+}
+
+// The artifact's brief asks for the artifact's own severity vocabulary, never
+// the in-run one: the artifact's reader is strict about severity
+// (ReviewArtifactSchema closes it at three words), so a job asked for the
+// in-run five would answer "high" and have its whole review refused by the
+// shape it was asked for. The axes are the same for both, because they are
+// D1's anchored scale and the artifact carries them unchanged.
+func TestArtifactPromptNamesTheArtifactsOwnSeverity(t *testing.T) {
+	p := reviewArtifactPrompt("", "", "origin/main", DiffSize{}, false)
+	if !strings.Contains(p, artifactSeverity) {
+		t.Errorf("the artifact's brief does not ask for the artifact's severity vocabulary (%s):\n%s", artifactSeverity, p)
+	}
+	for _, label := range promptScoringLabels {
+		// "blocker" is the one word both vocabularies have; the other four are
+		// the in-run reader's own and are what the artifact's schema refuses.
+		if label == "blocker" {
+			continue
+		}
+		if got := countWord(p, label); got != 0 {
+			t.Errorf("the artifact's brief names the in-run label %q %d times, and the artifact's schema refuses it:\n%s", label, got, p)
+		}
+	}
+	for _, label := range []string{"major", "minor"} {
+		if countWord(p, label) == 0 {
+			t.Errorf("the artifact's brief does not name its own label %q:\n%s", label, p)
+		}
+	}
+	for _, ax := range promptScoringAxes {
+		if !strings.Contains(p, ax.axis) {
+			t.Errorf("the artifact's brief does not name the %s axis:\n%s", ax.axis, p)
+		}
+	}
+	for _, c := range rigor.Classes {
+		if countWord(p, string(c)) == 0 {
+			t.Errorf("the artifact's brief does not name the class %q:\n%s", c, p)
+		}
+	}
+	// And the in-run prompts are untouched by that split: the same five labels,
+	// exactly as they always were.
+	for _, q := range []string{
+		ReviewPrompt("", "", "origin/main", DiffSize{}, false),
+		PickPrompt("", "", []int{9}, []string{"/review/9"}),
+	} {
+		if !strings.Contains(q, inRunSeverity) {
+			t.Errorf("an in-run prompt does not carry the in-run severity vocabulary:\n%s", q)
+		}
+	}
+}
+
+// The reviewer's effort is written when the level names one and ABSENT when it
+// does not -- the model's own default, which is what absence means wherever a
+// Fugaro setting spells an effort. An empty string is refused instead of read
+// as the same thing, and a value no run could have set is refused too.
+func TestReviewArtifactEffortIsWrittenOrAbsent(t *testing.T) {
+	r, _ := reviewJobRun(t, func(r *run) {
+		r.levels = config.Levels{L2: config.ResolvedLevel{On: true, Model: "claude-opus-5-5"}}
+	})
+	res := reviewResult(t, reviewAnswerOf("ship", "nothing to flag"))
+	if err := r.writeReviewArtifact(context.Background(), res); err != nil {
+		t.Fatal(err)
+	}
+	data := reviewObject(t, r, ReviewArtifactName)
+	if bytes.Contains(data, []byte(`"effort"`)) {
+		t.Errorf("a run whose level named no effort wrote one anyway: %s", data)
+	}
+	art, err := DecodeReviewArtifact(data)
+	if err != nil {
+		t.Fatalf("an artifact with no effort does not read back: %v", err)
+	}
+	if art.Reviewer.Effort != "" {
+		t.Errorf("the reader made up an effort: %q", art.Reviewer.Effort)
+	}
+	if art.Reviewer.Model != "claude-opus-5-5" || art.Reviewer.Account != "team-a" {
+		t.Errorf("the other two provenance facts did not survive: %+v", art.Reviewer)
+	}
+
+	// The run that does name one still records it, and the reader accepts only
+	// the closed set a run could have sent (config.Efforts).
+	withEffort, _ := reviewJobRun(t, nil)
+	if err := withEffort.writeReviewArtifact(context.Background(), res); err != nil {
+		t.Fatal(err)
+	}
+	named := reviewObject(t, withEffort, ReviewArtifactName)
+	if !bytes.Contains(named, []byte(`"effort":"high"`)) {
+		t.Errorf("a run whose level named high effort wrote something else: %s", named)
+	}
+	sideways := bytes.Replace(named, []byte(`"effort":"high"`), []byte(`"effort":"sideways"`), 1)
+	if _, err := DecodeReviewArtifact(sideways); err == nil {
+		t.Error("the reader accepted an effort no run could have set")
+	}
+}
+
+// A caller's own HTTP client is bounded like the run's own: a service that
+// accepts a sign call and never answers must not hold the run open past the
+// call's own timeout. A bound the caller set is kept.
+func TestReviewSignClientBoundsEveryClient(t *testing.T) {
+	if got := reviewSignClient(&http.Client{}).Timeout; got != reviewSignTimeout {
+		t.Errorf("a caller's client with no timeout was left at %v, want %v", got, reviewSignTimeout)
+	}
+	if got := reviewSignClient(&http.Client{Timeout: time.Minute}).Timeout; got != time.Minute {
+		t.Errorf("a caller's own timeout was overwritten with %v, want the caller's", got)
+	}
+	// The redirect policy is the contract's whatever client arrives: a sign
+	// call is one call to one URL, and a redirect is not followed.
+	for _, c := range []*http.Client{nil, {}, {Timeout: time.Minute}} {
+		got := reviewSignClient(c)
+		if got.Jar != nil {
+			t.Error("the sign client carries a cookie jar")
+		}
+		if got.CheckRedirect == nil {
+			t.Fatal("the sign client follows redirects")
+		}
+		if err := got.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
+			t.Errorf("the sign client's redirect policy answers %v, want http.ErrUseLastResponse", err)
+		}
+	}
+}
+
+// Every string a mutation check carries that came from the worktree is redacted
+// before the digest, exactly as an issue's file is: a test name is provenance
+// text like any other, and the digest is over the redacted bytes.
+func TestReviewArtifactRedactsItsMutationChecks(t *testing.T) {
+	secret := "fixture-mutation-secret-" + strings.ReplaceAll(t.Name(), "/", "-")
+	art := reviewArtifactFixture(t)
+	art.MutationChecks = []ReviewMutationCheck{{
+		File: "internal/" + secret + ".go", Test: "Test" + secret,
+		Applied: "commented out the call to " + secret, Observed: "fail", Reverted: true,
+	}}
+	red := redactReviewArtifact(art, []string{secret})
+	m := red.MutationChecks[0]
+	for _, f := range []struct{ name, value string }{
+		{"file", m.File}, {"test", m.Test}, {"applied", m.Applied},
+	} {
+		if strings.Contains(f.value, secret) {
+			t.Errorf("the mutation check's %s still carries the secret: %q", f.name, f.value)
+		}
+		if !strings.Contains(f.value, "[REDACTED]") {
+			t.Errorf("the mutation check's %s carries no redaction mark: %q", f.name, f.value)
+		}
+	}
+	if m.Observed != "fail" || !m.Reverted {
+		t.Errorf("the redaction changed the check's own statements: %+v", m)
 	}
 }

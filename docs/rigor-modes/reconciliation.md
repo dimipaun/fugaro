@@ -125,6 +125,18 @@ not code. So the brief's four-word ladder is a *proposed* vocabulary, and the
 design has to say where it comes from — it cannot be "kept", because it is not
 there (D2).
 
+One format added since closes it, and the split is deliberate: the independent
+review artifact's `severity` is an `enum` of `blocker`, `major`, `minor`
+(`schemas/review.schema.json`, the CSR3 shape of docs/cloud-senior-review
+spec §3), while the in-run format keeps D2's free-form string. The in-run
+reader must go on reading every verdict a run already wrote, so it cannot
+start refusing words (D2); the artifact is a new format whose reader can be
+strict from its first version, and a job asked for the in-run five labels
+would answer `high` and have its whole review refused by the schema it was
+asked for. That is why the two reviewers get two severity clauses and the same
+three anchored axes (`internal/runner/prompts.go`: `inRunSeverity`,
+`artifactSeverity`, `scoringAxes`).
+
 **C3 — The owner's operating practice is not in `docs/coordinator/`.** The
 brief points at that folder for the merge-then-follow-up rule, the deferred
 ledger and the independent-review requirement. The three sentences are real, and

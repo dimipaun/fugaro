@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -147,7 +148,13 @@ type ReviewMutationCheck struct {
 type ReviewReviewer struct {
 	Account string `json:"account"`
 	Model   string `json:"model"`
-	Effort  string `json:"effort"`
+	// Effort is ABSENT when the run's level named none, which is the model's
+	// own default -- the meaning absence already has everywhere a Fugaro
+	// setting spells an effort (config.LevelSetting's own omitempty, and the
+	// closed set's own doc: "absent already means the model's own default").
+	// An empty string would be a claim nobody made, indistinguishable from
+	// one, which is why this key is written or not written and never "".
+	Effort string `json:"effort,omitempty"`
 }
 
 // ReviewArtifact is the independent review's verdict, versioned and
@@ -412,6 +419,16 @@ func reviewSignClient(c *http.Client) *http.Client {
 	var out http.Client
 	if c != nil {
 		out = *c
+		// A caller that passes its own client is passing its own transport,
+		// and nothing says that client carries a bound: a service that
+		// accepts the call and never answers would hold the run until the
+		// job's own deadline. The run's context is bounded too, so this is
+		// the second of two bounds rather than the only one -- but a client
+		// with no timeout is a hang a slow service can cause and the run
+		// cannot attribute.
+		if out.Timeout <= 0 {
+			out.Timeout = reviewSignTimeout
+		}
 	} else {
 		t := http.DefaultTransport.(*http.Transport).Clone()
 		t.DisableCompression = true
@@ -558,6 +575,14 @@ func DecodeReviewArtifact(data []byte) (ReviewArtifact, error) {
 		if strings.TrimSpace(f.value) == "" {
 			return art, fmt.Errorf("%w: the artifact carries no %s", ErrReviewArtifact, f.name)
 		}
+	}
+	// The effort is the one provenance field a run may honestly have nothing
+	// to say about (the level named none), so its absence is not a refusal --
+	// but a value that is there has to be one the pinned Claude Code accepts,
+	// the same closed set every layer is validated against (config.Efforts,
+	// D725). A reader that took any word would report an effort no run sent.
+	if art.Reviewer.Effort != "" && !config.ValidEffort(art.Reviewer.Effort) {
+		return art, fmt.Errorf("%w: reviewer.effort is %q, and the closed set is %s", ErrReviewArtifact, art.Reviewer.Effort, strings.Join(config.Efforts, ", "))
 	}
 	if art.CreatedAt.IsZero() {
 		return art, fmt.Errorf("%w: the artifact carries no created_at", ErrReviewArtifact)
@@ -922,6 +947,11 @@ func redactReviewArtifact(art ReviewArtifact, secrets []string) ReviewArtifact {
 		art.Issues[i].File = red(art.Issues[i].File)
 	}
 	for i := range art.MutationChecks {
+		// File and Test are the runner's own text about the worktree, the
+		// same kind of string as an issue's file; Observed is a closed
+		// vocabulary and needs no redaction.
+		art.MutationChecks[i].File = red(art.MutationChecks[i].File)
+		art.MutationChecks[i].Test = red(art.MutationChecks[i].Test)
 		art.MutationChecks[i].Applied = red(art.MutationChecks[i].Applied)
 	}
 	return art
