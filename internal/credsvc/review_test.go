@@ -12,6 +12,8 @@ package credsvc
 // The service accounts here are names and never tokens.
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -60,7 +62,9 @@ func newReviewSvc(t *testing.T) *svc {
 		if err != nil {
 			t.Fatalf("the fixture's own verifier configuration is not one NewAuthenticator accepts: %v", err)
 		}
-		cfg.Auth = auth
+		// The fixture's verifier and the server's are the same object, so a
+		// test can call either and be asking the same configuration.
+		cfg.Auth, s.auth = auth, auth
 		cfg.ReviewAccounts = []ReviewJobAccount{row}
 		cfg.Repos = map[string]string{s.slug: testRepo}
 	})
@@ -116,5 +120,231 @@ func TestReviewAccountIsAdmittedOnTheModelPathForItsOwnAccount(t *testing.T) {
 	}
 	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
 		t.Errorf("the admissions read were %v, want just the run identity's repository", got)
+	}
+}
+
+// TestReviewAccountIsRefusedTheModelPathForAnotherAccount: the pairing is the
+// class's, and it admits the caller for its own account only. The repository's
+// published node admits the default account and not the one the review job is
+// of, so the account that serves this call is not the one the pairing resolved
+// — and there is no other account to be served by, which is the whole of what
+// "for its own account only" means on this route.
+func TestReviewAccountIsRefusedTheModelPathForAnotherAccount(t *testing.T) {
+	s := newReviewSvc(t)
+	s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc("default"))
+	resp, body := s.callTokens(t, callBody("review-other-account"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedRunIdentity, got.Message)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none: the caller was refused before a credential was chosen", n)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: the pairing comes first", n)
+	}
+}
+
+// TestReviewCallerOnAnUnpublishedRepositoryIsRefused: the pairing reads what
+// the installation publishes, and a repository the published policy does not
+// admit it refuses rather than guesses (F13). Every step below is a refusal
+// and never a fallback, and the last one is the fail-closed rule the model
+// path already follows: a node that cannot be read is not an empty node.
+func TestReviewCallerOnAnUnpublishedRepositoryIsRefused(t *testing.T) {
+	t.Run("the repository's node is not published", func(t *testing.T) {
+		s := newReviewSvc(t)
+		delete(s.policy.admissions, s.slug)
+		resp, body := s.callTokens(t, callBody("review-unpublished"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none", n)
+		}
+	})
+	t.Run("the project's allow-list does not name the repository", func(t *testing.T) {
+		// The gap `fugaro project repos rm` leaves: the repository's own node
+		// and the account's allow_repos still name it, and the project does
+		// not. Reading the child node alone would keep admitting it.
+		s := newReviewSvc(t)
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocAllowRepos(
+			`["`+testOtherRepo+`"]`,
+			`"default": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]},
+			"`+testAccount+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]}`))
+		resp, body := s.callTokens(t, callBody("review-withdrawn"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none", n)
+		}
+	})
+	t.Run("the repository's node cannot be read", func(t *testing.T) {
+		s := newReviewSvc(t)
+		s.policy.admErr = errors.New("the database refused the read")
+		resp, body := s.callTokens(t, callBody("review-unreadable"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("the answer is %d, want %d: a node that cannot be read is a refusal, not an empty admission: %s", resp.StatusCode, StatusUnavailable, body)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none", n)
+		}
+	})
+}
+
+// TestRepositoryTableResolvesASlugToItsCanonicalName: the table the pairing
+// resolves the run identity's slug through is the per-repository binding table
+// read the other way round, so a service cannot bind an account one way and
+// resolve a slug another. Its keys and values are the two derivations the run
+// identity and the mint already use.
+func TestRepositoryTableResolvesASlugToItsCanonicalName(t *testing.T) {
+	table, err := RepositoryTableFor(testProject, testFirebase, "github", []RepoJob{
+		{Repo: testRepoPath, Workflow: "web"},
+		{Repo: testOtherRepoPath, Workflow: "web"},
+	})
+	if err != nil {
+		t.Fatalf("RepositoryTableFor: %v", err)
+	}
+	want := map[string]string{
+		testSlug(t, testRepoPath):      testRepo,
+		testSlug(t, testOtherRepoPath): testOtherRepo,
+	}
+	if len(table) != len(want) {
+		t.Fatalf("the table holds %d rows, want %d: %v", len(table), len(want), table)
+	}
+	for slug, canonical := range want {
+		if got := table[slug]; got != canonical {
+			t.Errorf("table[%q] = %q, want %q", slug, got, canonical)
+		}
+	}
+}
+
+// TestRepositoryTableRefusesAnUnknownSlug: the table is the only place a slug
+// becomes a repository name, and a slug it does not hold is refused (D1066,
+// F4). The refusal is the pairing's, and it happens before the bundle is read:
+// a canonical name guessed from the slug's own text would be a repository the
+// installation's policy was never asked about.
+func TestRepositoryTableRefusesAnUnknownSlug(t *testing.T) {
+	s := newReviewSvc(t)
+	otherSlug := testSlug(t, testOtherRepoPath)
+	if _, ok := s.server.cfg.Repos[otherSlug]; ok {
+		t.Fatal("the fixture's own table holds the slug this test means to leave out")
+	}
+	resp, body := s.callTokens(t, callBody("review-unknown-slug"),
+		s.reviewRunToken(func(c map[string]any) {
+			c["fs"] = otherSlug
+			c["sub"] = "r~" + otherSlug + "~" + s.run
+			c["user_id"] = c["sub"]
+		}), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none", n)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none", n)
+	}
+}
+
+// TestReviewIdentityRequiresNoBranchAndAtLeastOnePR: the claim rule (spec
+// §3.3) admits exactly the shape a review run has — it pushes nothing and it
+// reviews at least one pull request — and the rule is the review class's: a
+// per-repository caller with neither claim is admitted as it is today (F2).
+func TestReviewIdentityRequiresNoBranchAndAtLeastOnePR(t *testing.T) {
+	s := newReviewSvc(t)
+	id, err := s.verify(s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if err != nil {
+		t.Fatalf("Verify refused a review run: %v", err)
+	}
+	if id.JobClass != ClassReview {
+		t.Errorf("class = %q, want %q", id.JobClass, ClassReview)
+	}
+	if id.JobAccount != testReviewSA {
+		t.Errorf("job account = %q, want %q", id.JobAccount, testReviewSA)
+	}
+	if id.Branch != "" || len(id.PRs) != 1 || id.PRs[0] != 7 {
+		t.Errorf("identity = branch %q, prs %v, want no branch and the one pull request", id.Branch, id.PRs)
+	}
+
+	repo := newSvc(t)
+	other, err := repo.verify(repo.runToken(), repo.jobToken(), repo.job)
+	if err != nil {
+		t.Fatalf("Verify refused a per-repository run with neither claim: %v", err)
+	}
+	if other.JobClass != ClassRepository {
+		t.Errorf("class = %q, want %q", other.JobClass, ClassRepository)
+	}
+}
+
+// TestReviewIdentityWithABranchIsRefused: a coding run launched into the
+// review job is refused, never downgraded to a review. Its identity is a
+// different act — it means to push — and answering it as a review would hand
+// the read-only set to it.
+func TestReviewIdentityWithABranchIsRefused(t *testing.T) {
+	s := newReviewSvc(t)
+	fb := "fugaro/" + s.run
+	_, err := s.verify(s.reviewRunToken(func(c map[string]any) { c["fb"] = fb }), s.reviewJobToken(), s.job)
+	if !errors.Is(err, ErrUnverified) {
+		t.Fatalf("err = %v, want ErrUnverified: a run that pushes is not a review", err)
+	}
+	if !strings.Contains(err.Error(), "branch") {
+		t.Errorf("err = %q, want it to name the claim that failed", err)
+	}
+	if strings.Contains(err.Error(), fb) {
+		t.Errorf("err = %q echoes the branch: an fb is caller text", err)
+	}
+}
+
+// TestReviewIdentityWithAnEmptyPRListIsRefused: an artifact run pushes nothing
+// and writes no pull request either, so the empty fpr is what tells it from a
+// review — and an fpr that is present and empty is a shape the claim reader
+// admits, which is why the rule is checked here and not there.
+func TestReviewIdentityWithAnEmptyPRListIsRefused(t *testing.T) {
+	s := newReviewSvc(t)
+	_, err := s.verify(s.reviewRunToken(func(c map[string]any) { c["fpr"] = []any{} }), s.reviewJobToken(), s.job)
+	if !errors.Is(err, ErrUnverified) {
+		t.Fatalf("err = %v, want ErrUnverified: an artifact run is not a review", err)
+	}
+	if !strings.Contains(err.Error(), "pull request") {
+		t.Errorf("err = %q, want it to name the claim that failed", err)
+	}
+}
+
+// TestSharedJobCallerIsStillRefusedOnEveryRoute: the gate is narrowed by this
+// task and not lifted (F2, Global Constraint 6). A coding shared project job's
+// account is refused on every route the service has — the model path and its
+// token-count sibling, and the mint — with the sentence it is refused with
+// today, and the refusal is the caller's verified email and never the job name
+// it reports.
+func TestSharedJobCallerIsStillRefusedOnEveryRoute(t *testing.T) {
+	for _, path := range []string{MessagesPath, CountTokensPath, MintPath} {
+		t.Run(path, func(t *testing.T) {
+			s := newSvc(t)
+			tok := s.jobToken(func(c map[string]any) { c["email"] = testSharedSA })
+			resp := s.postTokens(t, path, callBody("shared"), s.runToken(), tok, s.job)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("reading the answer: %v", err)
+			}
+			if resp.StatusCode != StatusUnverified {
+				t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnverified)
+			}
+			if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedJobIdentity {
+				t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedJobIdentity, got.Message)
+			}
+			if n := s.up.Count(); n != 0 {
+				t.Errorf("the upstream saw %d requests, want none", n)
+			}
+		})
 	}
 }

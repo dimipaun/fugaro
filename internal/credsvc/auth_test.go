@@ -840,6 +840,69 @@ func TestVerifyRefusesSharedJobRun(t *testing.T) {
 	}
 }
 
+// TestClassIsDecidedFromTheVerifiedEmailNotTheHeader: the class of a caller is
+// the *verified* email's, never X-Fugaro-Run-Job (spec §2.1). One service
+// account is dedicated to one Cloud Run job, so the account is the job; the
+// header is text the caller writes — a launcher may override any environment
+// variable — so a class read off it would be one a caller could choose. Both
+// directions are pinned: the header is recorded on the identity and decides
+// nothing, whichever class presents whichever job name.
+func TestClassIsDecidedFromTheVerifiedEmailNotTheHeader(t *testing.T) {
+	review := func(c *AuthConfig) {
+		c.ReviewJobAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: testAccount}}
+	}
+	reviewer := func(c map[string]any) { c["email"] = testReviewSA }
+	reviewRun := func(c map[string]any) { c["fpr"] = []any{7} }
+	repoJobName := "fugaro-aurora-app-web"
+	reviewJobName := ReviewJobName("standard", "github", testAccount)
+
+	// The review job's account, reporting a per-repository job's name: the
+	// class is still the review one.
+	f := newFixtureWith(t, review)
+	id, err := f.verify(f.runToken(reviewRun), f.jobToken(reviewer), repoJobName)
+	if err != nil {
+		t.Fatalf("Verify refused a review caller reporting another job's name: %v", err)
+	}
+	if id.JobClass != ClassReview {
+		t.Errorf("class = %q, want %q: the header is not the class", id.JobClass, ClassReview)
+	}
+	if id.Job != repoJobName {
+		t.Errorf("job = %q, want the name the caller reported: it is recorded and not decided from", id.Job)
+	}
+	if id.JobAccount != testReviewSA {
+		t.Errorf("job account = %q, want the verified account %q", id.JobAccount, testReviewSA)
+	}
+
+	// And the other way: a per-repository job's account reporting the review
+	// job's own name is still the repository class, and is not held to the
+	// review claim rule.
+	g := newFixtureWith(t, review)
+	id, err = g.verify(g.runToken(), g.jobToken(), reviewJobName)
+	if err != nil {
+		t.Fatalf("Verify refused a repository caller reporting the review job's name: %v", err)
+	}
+	if id.JobClass != ClassRepository {
+		t.Errorf("class = %q, want %q: the header is not the class", id.JobClass, ClassRepository)
+	}
+
+	// A deployment whose input puts one account in both sets is refused rather
+	// than admitted: the two classes do not have the same routes, and the
+	// refusal is the safe answer.
+	t.Run("an account in both sets", func(t *testing.T) {
+		h := newFixtureWith(t, func(c *AuthConfig) {
+			review(c)
+			c.ReviewJobAccounts = []ReviewJobAccount{{Email: testJobSA, Account: testAccount}}
+		})
+		_, err := h.verify(h.runToken(reviewRun), h.jobToken(), h.job)
+		if !errors.Is(err, ErrUnverifiedJob) {
+			t.Fatalf("err = %v, want ErrUnverifiedJob", err)
+		}
+		if !strings.Contains(err.Error(), "both") {
+			t.Errorf("err = %q, want it to say the account is in both sets", err)
+		}
+	})
+}
+
 // The owner's answer of 2026-10-19: the IAM bit says an authorised identity
 // called, the email says which. A token minted for another principal that
 // holds run.invoker on the service is refused.
