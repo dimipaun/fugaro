@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ profiles:
     memory: 8Gi
     timeout_class: 6h
     allow_repos:
-      - owner/repo-a
+      - github/owner/repo-a
 repos:
   owner/repo-a: { provider: github, github_app_id: "12345", workflows: [web] }
 `
@@ -66,6 +67,12 @@ type addRig struct {
 // every writer into it asks for), the published rules generation the policy
 // write is gated on is deployed, and the runs bucket carries the project's
 // marker.
+//
+// The bucket is a file:// one with the marker written into it, which is the
+// shape a rig that runs a command through openCloudFor needs: openCloudFor
+// opens lc.BucketURL() with blobx directly, and TestMain closes the gs:// road
+// (no credentials, dead proxy), so a fixture whose bucket URL is the computed
+// gs:// one reaches storage.googleapis.com and fails there.
 func newAddRig(t *testing.T) *addRig {
 	t.Helper()
 	noAgentSession(t)
@@ -81,16 +88,56 @@ func newAddRig(t *testing.T) *addRig {
 	// The block is one line of the rig's config: the repositories that follow
 	// it are the rig's own and this fixture writes its own.
 	endpoints, _, _ = strings.Cut(endpoints, "\n")
+	bucket := filepath.Join(r.dir, "runs")
 	cfg := addRigLocal +
+		"bucket_url: file://" + bucket + "\n" +
 		"budget: { mode: enforce, per_run_usd: 5, firebase_project: " + initProject + ", rtdb_url: " + r.db.URL + " }\n" +
 		"endpoints: " + strings.Replace(endpoints, "no_auth: true }", "firestore: "+r.fs.URL+", no_auth: true }", 1)
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r.db.Set(budget.PathMark, auroraMark())
+	r.db.Set(budget.PathProject, initProjectName)
 	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	r.markedRuns(t, initProjectName, initProject)
+	// The node an installation that has run `fugaro setup` holds: the publish
+	// half of the Policy stage is a MIGRATION of a node that is there — with no
+	// node the stage has nothing to rewrite and reports Done — so a fixture
+	// that means the converge to reach the node seeds one. Its own allow_repos
+	// is the node's (a publish never re-adds or drops a name), and everything
+	// else the converge puts there is derived from the local config it writes.
+	r.db.Set(projectpolicy.PathShared(), addPolicyNode())
+	r.writeMarker(t, bucket, initProjectName, initProject)
 	return r
+}
+
+// writeMarker writes the project marker the way the installation's Terraform
+// does, into the file:// bucket the fixture's config names: a command opened
+// through openCloudFor reads it before it does anything else.
+func (r *addRig) writeMarker(t *testing.T, bucket, name, gcp string) {
+	t.Helper()
+	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: name, GCPProject: gcp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(bucket, filepath.FromSlash(infra.ProjectMarkerObject))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// addPolicyNode is the published node an installation this fixture stands for
+// already holds: at this Fugaro's version, with the project's own allow_repos
+// and a budget block the local config agrees with, and with no accounts block
+// — the state every installation is in before its first named account.
+func addPolicyNode() map[string]any {
+	return map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/owner/repo-a"},
+	}
 }
 
 // addToken is the value a test writes into the secret: built here rather than

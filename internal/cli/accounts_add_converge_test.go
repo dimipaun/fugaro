@@ -30,11 +30,11 @@ func TestAccountsAddLeavesNothingToRun(t *testing.T) {
 	// repositories its token may be used by, derived from the local config the
 	// command just wrote and published by the Policy stage and no other writer.
 	p := r.policy(t)
+
 	acc, ok := p.Accounts["team-a"]
 	if !ok {
-		t.Fatalf("the published node names no account team-a: accounts = %v", slices.Sorted(maps.Keys(p.Accounts)))
-	}
-	if want := []string{"github/owner/repo-a"}; !slices.Equal(acc.AllowRepos, want) {
+		t.Errorf("the published node names no account team-a: accounts = %v\nthe command printed:\n%s", slices.Sorted(maps.Keys(p.Accounts)), out)
+	} else if want := []string{"github/owner/repo-a"}; !slices.Equal(acc.AllowRepos, want) {
 		t.Errorf("the published accounts.team-a.allow_repos = %v, want %v", acc.AllowRepos, want)
 	}
 	// The profile the command added the name to serves it, which is what makes
