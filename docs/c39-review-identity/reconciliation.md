@@ -167,7 +167,7 @@ they are the fifth bullet:
 - the one bundle container, the one accessor grant and the owner-run write path (Q6; `creds.go`);
 - O4's admissions reader (`server.go:281`);
 - the keyless fetch path and the `Token(ctx, minValid)` refresh contract
-  (`internal/gitprov/github/apptoken.go:381` for `ServiceTokens`, `:438` for its `Token`).
+  (`internal/gitprov/github/apptoken.go:405` for `ServiceTokens`, `:462` for its `Token`).
 
 ## 3. Decisions D1062–D1075
 

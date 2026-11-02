@@ -190,7 +190,7 @@ is handed in at all** ([reconciliation.md](reconciliation.md) §4). There is no 
 no value in an execution object, because there is no hand-in to design: the review job's variant
 carries the installation's `FUGARO_CREDENTIALS_SERVICE_URL` like any other job of an opted-in
 installation, and the keyless path already in the tree does the rest — `internal/gitprov/github`'s
-`ServiceTokens` (`apptoken.go:381`, its doc comment above it) makes one `POST /v1/github/installation-token` that carries
+`ServiceTokens` (`apptoken.go:405`, its doc comment above it) makes one `POST /v1/github/installation-token` that carries
 the App ID and nothing else, and the **service** decides the repository and the permissions.
 
 **Which repository, for a job that serves many — and this is new service work.** Today the mint

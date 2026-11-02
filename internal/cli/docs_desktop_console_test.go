@@ -528,8 +528,9 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 // §6.15 is the coordinator's too — coordinator v2 C3's `coordinator show`, whose
 // document and command are both under ee/ — and it is a heading of its own
 // rather than a part of §6.13 because the two document different reads of
-// different shapes.
-var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "## 4. `fugaro report --json`"}
+// different shapes. §6.16 is coordinator v2 C4's `coordinator intents`, under
+// ee/ for the same reason.
+var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "### 6.16 ", "## 4. `fugaro report --json`"}
 
 // consoleMovedRows are the document's individual lines that name a flag of a
 // moved command without sitting under a moved heading: §8's inventory carries
@@ -1289,6 +1290,54 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		if !never[argv] {
 			t.Errorf("%s: the never table no longer names %q", path, argv)
 		}
+	}
+}
+
+// TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits: the
+// Coordinator tab's twenty-row cut is the console's own because the read it
+// makes passes no --limit, and not because the command has none. C2 put
+// `--limit=N` and `--after=RUN-ID` on §5.1's `runs ls` row and on the cobra
+// command behind it, so the sentence that justified the cut with "this tree's
+// `runs ls` has no `--limit`" is false: a reader who believes it does not know
+// the page exists, and the slice that moves the cut to the command would be
+// written against a document saying it cannot. The claim is in this design
+// document, whose §5.1 row is C2's own; the same words sit in
+// `.claude/rules/console.md`'s rule 5, which no run may edit.
+//
+// Mutation caught: a later edit that puts the old justification back, or a
+// document whose row drops one of the two words while the code keeps it.
+func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	// The command's half, read off newLsCmd rather than a list kept here: the
+	// two words the row admits are the command's, and the cut's justification
+	// is about the command.
+	for _, flag := range []string{"limit", "after"} {
+		if newLsCmd().Flags().Lookup(flag) == nil {
+			t.Errorf("`runs ls` has no --%s, which §5.1's row admits: the two paging words (C2) left the command", flag)
+		}
+	}
+
+	// The document's half, both ways: the row still names the pair, and no
+	// sentence still claims the command lacks one.
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "| `runs ls --json`") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no §5.1 row starting \"| `runs ls --json`\"", path)
+	}
+	for _, want := range []string{"`--limit=N`", "`--after=RUN-ID`"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s no longer names %s on the runs ls row, which is where the console's paging words are declared", path, want)
+		}
+	}
+	if stale := "this tree's `runs ls` has no `--limit`"; strings.Contains(doc, stale) {
+		t.Errorf("%s still says %q: `runs ls` has had --limit and --after since C2, so the twenty is the console's cut because its own read passes neither, not because the command has none", path, stale)
 	}
 }
 
