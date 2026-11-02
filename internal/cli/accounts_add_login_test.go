@@ -172,6 +172,41 @@ func waitTerminal(t *testing.T, tty *ttyFixture, want string) {
 	}
 }
 
+// TestAccountsAddClaudeEscapesThePathInTheStartError: a child that cannot be
+// started is a refusal, and that refusal prints the resolved path twice — once
+// as this command's own copy and once inside the start error's text
+// ("fork/exec /path: permission denied"). The path comes from the machine, so
+// both copies are made safe for a terminal: a path carrying an escape sequence
+// reaches neither the terminal nor an error a script captures raw (spec §6(c)
+// reads in both directions, and §3.1 step 1 is the path this is about).
+func TestAccountsAddClaudeEscapesThePathInTheStartError(t *testing.T) {
+	tty := newTTY(t)
+	unsetClaudeLoginCredentials(t)
+	// A path that is absolute, so Find accepts it, and that cannot be run: the
+	// file does not exist. Its name carries the escape sequence a terminal would
+	// obey if the bytes reached it unescaped.
+	bin := filepath.Join(t.TempDir(), "claude\x1b[31m-not-runnable")
+	old := claudeLookPath
+	claudeLookPath = func(string) (string, error) { return bin, nil }
+	t.Cleanup(func() { claudeLookPath = old })
+
+	done := make(chan error, 1)
+	go func() { done <- runClaudeLogin(tty.tty, tty.tty, tty.tty) }()
+	err := waitLogin(t, done)
+	if err == nil {
+		t.Fatal("a claude that cannot be started is a refusal")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	if strings.Contains(err.Error(), "\x1b") {
+		t.Errorf("the refusal carries the path's escape byte raw: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), `\u001b`) {
+		t.Errorf("the refusal does not carry the resolved path in its escaped form: %q", err.Error())
+	}
+}
+
 // TestAccountsAddClaudeGivesTheLoginTheOwnerTerminal: act one hands the login
 // the owner's own terminal and nothing else. All three of the child's
 // descriptors are that terminal, so what it prints reaches it while it is

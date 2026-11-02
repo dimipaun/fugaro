@@ -87,7 +87,11 @@ func runClaudeLogin(in io.Reader, out, errOut io.Writer) error {
 		return &claudeLoginStatus{err: err}
 	}
 	if err != nil {
-		return userErr("running %s setup-token: %v", pluginwire.Printable(bin), err)
+		// The start error carries the path a second time, inside its own text
+		// ("fork/exec /path: permission denied"), so escaping only the copy named
+		// here would let a path with control characters reach the terminal raw
+		// through the other one.
+		return userErr("running %s setup-token: %s", pluginwire.Printable(bin), pluginwire.Printable(err.Error()))
 	}
 	return nil
 }
