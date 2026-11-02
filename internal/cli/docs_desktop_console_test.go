@@ -1320,8 +1320,18 @@ func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testi
 
 	// The document's half, both ways: the row still names the pair, and no
 	// sentence still claims the command lacks one.
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "| `runs ls --json`") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no §5.1 row starting \"| `runs ls --json`\"", path)
+	}
 	for _, want := range []string{"`--limit=N`", "`--after=RUN-ID`"} {
-		if !strings.Contains(doc, want) {
+		if !strings.Contains(row, want) {
 			t.Errorf("%s no longer names %s on the runs ls row, which is where the console's paging words are declared", path, want)
 		}
 	}
