@@ -109,11 +109,13 @@ func settingsGenericKey(key string) bool {
 
 // settingsWriteOptions are the flags `set` and `unset` share.
 type settingsWriteOptions struct {
-	layer  string
-	repo   string
-	yes    bool
-	add    string
-	remove string
+	project string
+	config  string
+	layer   string
+	repo    string
+	yes     bool
+	add     string
+	remove  string
 }
 
 // settingsDocKind names the document a write lands in: the local project
@@ -159,6 +161,7 @@ nearest registry names.`,
 		},
 	}
 	f := cmd.Flags()
+	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.repo, "repo", "", "read this repository's fugaro.yaml (owner/name)")
 	f.BoolVar(&o.jsonOut, "json", false, "print the versioned document")
 	return cmd
@@ -197,6 +200,7 @@ Every write ends with one line: next: fugaro update.`,
 		},
 	}
 	f := cmd.Flags()
+	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
@@ -230,6 +234,7 @@ Every write ends with one line: next: fugaro update.`,
 		},
 	}
 	f := cmd.Flags()
+	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
@@ -410,8 +415,19 @@ func settingsDefaultLayer(row settings.Row) string {
 
 // settingsSelection selects this machine's project, the way the read does.
 func settingsSelection() (localcfg.Selection, *localcfg.Config, error) {
+	return settingsAimedSelection(settingsWriteOptions{})
+}
+
+// settingsAimedSelection is settingsSelection for the commands that can aim the
+// selection themselves: --config and --project are localcfg.Select's steps 1 and
+// 2, so a write aimed at an installation lands in that installation's file
+// rather than in whichever one the machine's environment would have picked. The
+// families that call settingsSelection (models, accounts) take neither flag and
+// resolve exactly as before.
+func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localcfg.Config, error) {
 	in := localcfg.SelectInput{
-		Project:    os.Getenv("FUGARO_PROJECT"),
+		Config:     o.config,
+		Project:    o.project,
 		EnvProject: os.Getenv("FUGARO_PROJECT"),
 		EnvConfig:  os.Getenv("FUGARO_CONFIG"),
 		Getenv:     os.Getenv,
@@ -904,6 +920,16 @@ func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer s
 	if o.repo != "" {
 		parts = append(parts, "--repo", quoteWord(o.repo))
 	}
+	// The aim travels with the command: a person who runs it at their own
+	// terminal has the same environment as the session that was refused, so
+	// dropping these two would let the edit land in whichever installation
+	// that environment selects rather than the one it was aimed at.
+	if o.project != "" {
+		parts = append(parts, "--project", quoteWord(o.project))
+	}
+	if o.config != "" {
+		parts = append(parts, "--config", quoteWord(o.config))
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -934,7 +960,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err != nil {
 		return err
 	}
-	sel, lc, err := settingsSelection()
+	sel, lc, err := settingsAimedSelection(o)
 	if err != nil {
 		return err
 	}
@@ -1009,7 +1035,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err != nil {
 		return err
 	}
-	sel, lc, err := settingsSelection()
+	sel, lc, err := settingsAimedSelection(o)
 	if err != nil {
 		return err
 	}
