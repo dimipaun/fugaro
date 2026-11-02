@@ -3,6 +3,8 @@ package runner_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // levelPinned is gwConfig with one review level's own model set and the
@@ -63,6 +65,24 @@ func TestLevelModelProviderAuthRefused(t *testing.T) {
 func TestLevelModelProviderGatewayRefused(t *testing.T) {
 	g := providerRun(t, levelPinned(t, "l3", deepseek), "observe", "50", nil, "acme/app")
 	refusedBeforeAnyCall(t, g, deepseek, "observe never refuses a call", "budget.mode enforce")
+}
+
+// TestLevelModelNotInTheAllowListRefused: the owner's allowed_models bounds
+// every model a run may use, and a review level's own model is one of them. A
+// repository that names a level model must not reach one the owner's list
+// leaves off: the list is about which models may run, not about which role
+// slots name them, and a level model is exactly the way round a repository's
+// own file would otherwise reach one.
+//
+// The run's own pins are all on the list (the coder and the reviewer on
+// sonnet, the background on haiku) and the level's model is the only model off
+// it, so the refusal can only be about the level.
+func TestLevelModelNotInTheAllowListRefused(t *testing.T) {
+	cfg := gwConfig(t, "  first_line_review: off\n  levels: { l2: { model: "+opus+" } }\n")
+	g := newGW(t, cfg, "enforce", "50")
+	g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "enforce", runner.MaxRunUSDEnv, "50",
+		runner.AllowedModelsEnv, sonnet+","+haiku)
+	refusedBeforeAnyCall(t, g, "agent.levels.l2.model", opus, "allowed_models from ceiling")
 }
 
 // TestLevelModelAliasRefused: CheckPins is the rule that a run under a budget

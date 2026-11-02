@@ -723,8 +723,13 @@ func (r *run) checkBudget() error {
 	// The allow-list bounds the models whatever the credential or the mode. The
 	// switch and the routes are the run's own: a route ID is admitted only
 	// where the switch routes the model to it, which is the resolution
-	// applyRouting performed a step ago (resolvePolicy).
-	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders()); len(ps) > 0 {
+	// applyRouting performed a step ago (resolvePolicy). A review level's own
+	// model is judged here as the checks above judge it, and for the same
+	// reason: the list bounds the models a run may use, and a level model is a
+	// model the run would use.
+	if ps := r.checkLevels(func(a config.Agent) []config.Problem {
+		return config.CheckAllowed(a, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders())
+	}); len(ps) > 0 {
 		return refusal("the models are not all allowed", ps)
 	}
 	if !r.gatewayOn() {
