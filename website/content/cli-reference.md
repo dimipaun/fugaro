@@ -1304,6 +1304,7 @@ Flags:
 Subcommands:
 
 - `fugaro coordinator report` -- Declare the work you are about to start
+- `fugaro coordinator show` -- Show one pull request as the host has it
 - `fugaro coordinator status` -- Show the work in flight, and where it collides
 
 ## `fugaro coordinator report`
@@ -1353,6 +1354,64 @@ Flags:
 | `--release` | string | "" | no | the target release (default: the one the branch names, e.g. release/v0.11.0) |
 | `--repo` | string | "" | no | the repository this report is about (owner/name; default: the local config's, when it lists one) |
 | `--service` | stringArray | `[]` | no | a service you are about to touch (repeatable) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator show`
+
+Show one pull request as the host has it
+
+One pull request as the host has it, whole: the number, the address, the
+title, the description, the state, the draft flag, the source branch and the
+branch it targets, and the author's account id, each exactly as the host
+answered it.
+
+The description is why this read exists: the stored view carries no body — a
+body is unbounded text written by whoever opened the pull request, and one
+per record would ride in the document every reader of the view fetches — so
+a console that draws one reads it here. It is untrusted text, and a renderer
+sanitises it before it reaches a line or a cell.
+
+The read is the coordinator's own: one installation token for the
+repository, minted from the GitHub App the environment holds and carrying
+the named read-only permission set — pull requests and metadata (Q3 answered
+(A)) — and revoked when the command is done, so the credential lives for the
+read and no longer. No credential of the host's reaches the output.
+With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials
+service holds the App's key and this command holds none, so it refuses
+(exit 1) before it reads the App's ID or key: the service mints a run's
+token, and this read is not a run.
+A repository on a host this read does not serve is refused the way the
+project-wide view refuses it (reconciliation Q12 (A), finding #30): the
+coordinator reads github only, because its bitbucket credential is one
+repository's access token and cannot be widened to a project.
+
+A pull request the host does not have is the host's own failure (exit 2),
+carrying the host's status, and never an empty document: an empty one would
+draw a pull request with no description, which is a different fact.
+Exit codes: 1 for a missing or malformed App credential (or the refusals
+above), 2 for a failure of the host.
+
+With --json the document is printed as it is: number, url, title, body,
+state, draft, branch, base and author, every field the host's own answer and
+absent when it gave none.
+
+Usage: `fugaro coordinator show`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--pr` | int | `0` | no | the pull request number |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository the pull request is in (owner/name) |
 
 Subcommands:
 
