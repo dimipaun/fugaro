@@ -1503,6 +1503,44 @@ func TestCredsSetGenerateWritesALegalBundleKey(t *testing.T) {
 	assertNoValue(t, out+errOut, hex.EncodeToString(key))
 }
 
+// TestCredsSetGenerateWritesTheDefaultAccountsKey: the default account is the
+// spelling the help text lists first and the one most owners use, and it is the
+// one that can go wrong quietly: ReviewSigningKeyAccount answers it as
+// DefaultClaudeAccount, so a window name built from that answer has to come back
+// out as the unsuffixed family's — `…--review-signing-previous` and not
+// `…-default--review-signing-previous`, which is a second account's key that
+// nothing reads and a rotation that never carried anything.
+func TestCredsSetGenerateWritesTheDefaultAccountsKey(t *testing.T) {
+	f := credsFixtureFor(t)
+	name := config.ReviewSigningKeySecret(config.DefaultClaudeAccount)
+	window := config.ReviewSigningKeyPreviousSecret(config.DefaultClaudeAccount)
+	replaced := reviewSigningKeyValue(t, "replaced")
+	f.seed(t, []byte(name+": "+replaced+"\n"))
+
+	if _, errOut, err := executeStdin(t, "", "creds", "set", "--generate", name); err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	b := fixtureBundle(t, f)
+	gotName, key, err := b.ReviewSigningKey(config.DefaultClaudeAccount, false)
+	if err != nil {
+		t.Fatalf("the loader refuses the key this command wrote for the default account: %v", err)
+	}
+	if gotName != name || len(key) != credsvc.ReviewSigningKeyBytes {
+		t.Errorf("the default account's entry is %q with %d bytes, want %q with %d", gotName, len(key), name, credsvc.ReviewSigningKeyBytes)
+	}
+	// The window's entry is read back through the loader rather than compared as
+	// text, so the two spellings are held together by the same function the
+	// service reads the document with.
+	if _, prev, err := b.ReviewSigningKey(config.DefaultClaudeAccount, true); err != nil {
+		t.Fatalf("the loader refuses the window the default account's rotation wrote: %v", err)
+	} else if hex.EncodeToString(prev) != replaced {
+		t.Errorf("the window holds %q, want the value this run replaced", hex.EncodeToString(prev))
+	}
+	if names := b.Names(); !slices.Contains(names, window) {
+		t.Errorf("the document holds %q, want the default account's entry beside its window's %q: a window built from the wrong spelling is a key nothing reads", names, window)
+	}
+}
+
 // TestCredsSetGenerateTwiceRotatesAndKeepsThePreviousEntry is the second red
 // step: the second run carries the value it replaced under the window's name
 // instead of overwriting it, so there is no instant in which the service holds
