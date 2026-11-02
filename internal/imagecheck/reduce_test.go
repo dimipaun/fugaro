@@ -615,6 +615,17 @@ func TestReduceYarnBerryPatch(t *testing.T) {
 	if got := reduced(t, "yarn.lock", resolutionOnly); !slices.Equal(got, []string{patched}) {
 		t.Errorf("a patch named only in the resolution line = %v, want %v", got, []string{patched})
 	}
+	// A resolution line whose descriptor is not a built-in patch is refused for
+	// the same reason, and the header being plain is what makes the line the
+	// only place the patch is stated: a `@patch:` value whose patch the
+	// repository holds the bytes of, one whose inner locator names another
+	// package, and one whose inner range is a URL are each read as a source
+	// rather than as the registry's, and reading any of them as the registry's
+	// would key a set that installs the repository's bytes — or another
+	// package's — under the name and the artifact the header states.
+	refused(t, "yarn.lock", "\"typescript@npm:^5.4.0\":\n  version: 5.4.5\n  resolution: \"typescript@patch:typescript@npm%3A5.4.5#./patches/evil.patch\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", "\"lodash@npm:^1.0.0\":\n  version: 1.0.0\n  resolution: \"lodash@patch:evil-pkg@npm%3A1.0.0#optional!builtin<compat/typescript>\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", "\"typescript@npm:^5.4.0\":\n  version: 5.4.5\n  resolution: \"typescript@patch:typescript@npm%3Ahttps://evil.example/x.tgz#optional!builtin<compat/typescript>\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
 	// A descriptor is `name@patch:…` and the branch above reads that one: a
 	// resolution line written `patch:` with no package name before it is not a
 	// descriptor, and reading it as the registry's keys the entry as the plain
