@@ -91,7 +91,7 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 func heldBackReason(rs runstore.ReviewSummary) string {
 	reason := fmt.Sprintf("review %s last shipped nothing: round %d left %s", levelNames[reviewLevelOf(rs)], rs.Round, rs.Verdict)
 	if rs.Head != "" {
-		reason += fmt.Sprintf(" on %s", shortSHA(rs.Head))
+		reason += fmt.Sprintf(" on %s", shortGitHead(rs.Head))
 	}
 	return reason + ", so the pull request is a draft until every enabled review level ships"
 }

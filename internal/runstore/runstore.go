@@ -159,6 +159,22 @@ type ReviewSummary struct {
 	// recorded none, which is every review written before this field
 	// existed.
 	Head string `json:"head,omitempty"`
+	// Model is the model this round's reviewer ran on: the stage's pinned
+	// model (StageTiming.Model, config.Agent.ModelFor), which is the review
+	// level's own when a layer named it one. It is what a reader needs to
+	// tell which model reviewed the head beside it, as the record states it:
+	// the bytes of an unsigned file, so a hint for a person and never an input
+	// to a decision (the coordinator decides on the signed review artifact,
+	// docs/c39-review-identity). Empty in a round that recorded none, which is
+	// every review written before this field existed.
+	Model string `json:"model,omitempty"`
+	// Effort is the reasoning effort this round's reviewer ran at, and it is
+	// the value that reached the stage rather than the one a layer asked for:
+	// a level with no effort of its own and a stage on a provider route (which
+	// runs with thinking off, G5/D725) both leave it empty, so an empty field
+	// is the same statement the stage's own environment makes. Empty in every
+	// review written before this field existed.
+	Effort string `json:"effort,omitempty"`
 	// Bounce is which cheap loop this review followed, under review:
 	// {bounce: first_line}: 0 for a review before any senior rejection, 1
 	// for the cheap loop after the first one, and so on. Always 0 on a
