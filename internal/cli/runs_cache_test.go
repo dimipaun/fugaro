@@ -64,6 +64,25 @@ type genDriver struct {
 	objects map[string][]byte
 	gens    map[string]int64
 	reads   []string
+	// unlisted are objects the flat listing leaves out while every other
+	// listing still sees them: a run written between the two listings a
+	// window is read with, which only the earlier one names.
+	unlisted map[string]bool
+}
+
+// hideFromIndex makes the flat listing -- the one the cache's generations
+// come from, and the later of the two a window is read with -- leave these
+// objects out, while the delimited listing that finds the run IDs still sees
+// them.
+func (d *genDriver) hideFromIndex(keys ...string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.unlisted == nil {
+		d.unlisted = map[string]bool{}
+	}
+	for _, k := range keys {
+		d.unlisted[k] = true
+	}
 }
 
 func (d *genDriver) ErrorCode(err error) gcerrors.ErrorCode {
@@ -117,6 +136,9 @@ func (d *genDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (*dri
 			}
 			seen[dir] = struct{}{}
 			page.Objects = append(page.Objects, &driver.ListObject{Key: dir, IsDir: true})
+			continue
+		}
+		if d.unlisted[k] {
 			continue
 		}
 		o := &driver.ListObject{Key: k, ModTime: time.Unix(0, d.gens[k]), Size: int64(len(d.objects[k]))}
@@ -249,10 +271,16 @@ func genObjectsOf(t *testing.T, f *cloudFixture) *genDriver {
 	return genObjects(t, b)
 }
 
+// runKey is the object name of one run's one object.
+func runKey(t *testing.T, id, name string) string {
+	t.Helper()
+	return runstore.Open(nil, appSlug, id).Prefix() + name
+}
+
 // resultKey is the object name of one run's result.json.
 func resultKey(t *testing.T, id string) string {
 	t.Helper()
-	return runstore.Open(nil, appSlug, id).Prefix() + "result.json"
+	return runKey(t, id, "result.json")
 }
 
 // TestRunsLsSecondCallReadsOnlyChangedGenerations: a listing of the same
@@ -447,6 +475,43 @@ func TestResolvePRReadsTheBucketNotTheCache(t *testing.T) {
 		if !slices.Contains(read, key) {
 			t.Errorf("resolvePR read %v, want %s from the bucket: a warm cache is not what decides whether a pull request allows a follow-up", read, key)
 		}
+	}
+}
+
+// TestARunTheIndexDidNotSeeIsReadFromTheBucket: the run IDs of a window and
+// the generations the cache answers by come from two listings of the bucket.
+// The flat one is the later of the two, so a bucket that is strongly
+// consistent sees at least what the earlier saw -- but an index that names no
+// object of a run cannot say the run is not there: an unlisted key reads as
+// absent, and the row would be drawn with no task and no record rather than as
+// the run the bucket holds. Such a run is read from the bucket, which is what
+// this pins; the runs the index did name are still served from the cache.
+func TestARunTheIndexDidNotSeeIsReadFromTheBucket(t *testing.T) {
+	ctx := context.Background()
+	f := newCloudFixture(t)
+	d, ids := genRuns(t, 2)
+	env := envOn(t, f, blobx.Wrap(blob.NewBucket(d)))
+	// A run written between the delimited listing that found it and the flat
+	// one the generations come from: the index names no object of it.
+	d.hideFromIndex(runKey(t, ids[1], "task.json"), runKey(t, ids[1], "result.json"))
+	refs := []lsRef{{appSlug, ids[0]}, {appSlug, ids[1]}}
+	readers := lsReaders(ctx, env, true, refs)
+
+	hidden := runstore.Open(env.bucket.Bucket, appSlug, ids[1])
+	if got, err := readers[refs[1]].Read(ctx, hidden, "task.json"); err != nil || got == nil {
+		t.Fatalf("the run the index named nothing of read %q, %v; want its task read from the bucket", got, err)
+	}
+
+	named := runstore.Open(env.bucket.Bucket, appSlug, ids[0])
+	if got, err := readers[refs[0]].Read(ctx, named, "task.json"); err != nil || got == nil {
+		t.Fatalf("the run the index named read %q, %v", got, err)
+	}
+	d.forget()
+	if got, err := readers[refs[0]].Read(ctx, named, "task.json"); err != nil || got == nil {
+		t.Fatalf("the run the index named read %q, %v after its first read", got, err)
+	}
+	if got := d.runReads(); len(got) != 0 {
+		t.Errorf("the run the index named read %v: an unchanged object is answered from the cache", got)
 	}
 }
 

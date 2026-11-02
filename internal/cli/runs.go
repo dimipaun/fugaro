@@ -125,18 +125,18 @@ type lsFilter struct {
 // lsRef names one run a listing means to read.
 type lsRef struct{ slug, id string }
 
-// lsReaders builds the reader of each repository a listing is about to read:
-// one index per repository, from one listing of it, shared by every run of
-// that repository.
+// lsReaders builds the reader of every run a listing is about to read: one
+// index per repository, from one listing of it, and the runs that index can
+// answer for share it.
 //
 // Nothing is built for a listing that asked not to be cached (lsFilter's
 // noCache), and that is how a decision and --no-cache read the bucket
-// exactly as they did before the cache existed: the reader of every
-// repository is then the zero Reader, which reads the bucket. runcache.Open
-// and runcache.List answer nil for a cache the CLI cannot place and for a
-// bucket that reports no generation per object, and a nil cache or a nil
-// index falls back to the same thing.
-func lsReaders(ctx context.Context, env *cloudEnv, cached bool, refs []lsRef) map[string]runcache.Reader {
+// exactly as they did before the cache existed: the reader of every run is
+// then the zero Reader, which reads the bucket. runcache.Open and
+// runcache.List answer nil for a cache the CLI cannot place and for a bucket
+// that reports no generation per object, and a nil cache or a nil index falls
+// back to the same thing.
+func lsReaders(ctx context.Context, env *cloudEnv, cached bool, refs []lsRef) map[lsRef]runcache.Reader {
 	if !cached {
 		return nil
 	}
@@ -153,11 +153,50 @@ func lsReaders(ctx context.Context, env *cloudEnv, cached bool, refs []lsRef) ma
 			oldest[r.slug] = r.id
 		}
 	}
-	readers := make(map[string]runcache.Reader, len(oldest))
+	readers := make(map[lsRef]runcache.Reader, len(refs))
 	for slug, from := range oldest {
-		readers[slug] = runcache.Reader{Cache: c, Index: runcache.List(ctx, env.bucket, slug, from)}
+		index := runcache.List(ctx, env.bucket, slug, from)
+		named := indexRuns(index, slug)
+		for _, r := range refs {
+			if r.slug != slug {
+				continue
+			}
+			// A run the index names not one object of is a run it cannot
+			// answer for (indexRuns): its objects are read from the bucket.
+			if index != nil && !named[r.id] {
+				readers[r] = runcache.Reader{}
+				continue
+			}
+			readers[r] = runcache.Reader{Cache: c, Index: index}
+		}
 	}
 	return readers
+}
+
+// indexRuns is the runs whose prefix the index names at least one object of,
+// by run ID.
+//
+// The run IDs of a window and the generations the cache keys its entries by
+// come from two listings, and a run written between them is named by the
+// earlier one and by no object of the later one. On a bucket that is strongly
+// consistent only one order of the two is possible -- the flat listing is the
+// later, so it sees at least what the delimited listing saw -- but an index
+// that names no object of a run cannot answer for it either way: an unlisted
+// key reads as absent, and the run would be drawn with no task and no record
+// rather than as the run the bucket holds.
+func indexRuns(index map[string]int64, slug string) map[string]bool {
+	named := make(map[string]bool, len(index))
+	prefix := "runs/" + slug + "/"
+	for key := range index {
+		rest, ok := strings.CutPrefix(key, prefix)
+		if !ok {
+			continue
+		}
+		if id, _, ok := strings.Cut(rest, "/"); ok && id != "" {
+			named[id] = true
+		}
+	}
+	return named
 }
 
 // cacheBucketID is what the run cache keys a bucket by: the GCS bucket's
@@ -414,7 +453,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	runs := make([]runObjects, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
-		runs[i], errs[i] = readRunVia(ctx, env, readers[refs[i].slug], refs[i].slug, refs[i].id)
+		runs[i], errs[i] = readRunVia(ctx, env, readers[refs[i]], refs[i].slug, refs[i].id)
 	})
 	if err := errors.Join(errs...); err != nil {
 		return nil, remote(err)
