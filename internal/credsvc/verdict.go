@@ -185,10 +185,15 @@ var errSignedAlready = errors.New("credsvc: this run has already been signed")
 // the write is conditional on it, which is create-only because the ETag that
 // came back is the ABSENT node's — a node created in between carries a
 // different one and this write fails. The pair is the discipline the probe's
-// lease already uses (claimProbe), down to the retry: an ETag the write keeps
-// losing is read again, up to the number of attempts every write under creds/
-// uses, and the loop can then only end two ways — the mark is this call's, or
-// somebody's else's.
+// lease already uses (claimProbe), down to the retry and to its having no pause
+// in it: an ETag the write keeps losing is read again, immediately, up to the
+// number of attempts every conditional write under creds/ uses — creds' own cas
+// loop and claimProbe are the other two, and neither waits between attempts
+// either. The wait would be for a contention that this node cannot have for
+// long: the writer that moved it is another instance taking the SAME run's
+// mark, and the fifth read answers the same refusal a pause would have reached.
+// The loop can then only end two ways — the mark is this call's, or somebody
+// else's.
 //
 // The one-shot property is the whole of what the caller may rely on, and it is
 // why there is no read of the node anywhere else in this service: a reader
@@ -237,9 +242,21 @@ const signUnauditedRefusal = "the service could not record the signature, so it 
 //   - the mark, before the answer, which is what makes the signature the run's
 //     first and only one.
 func (s *Server) sign(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, req Request, purpose string) {
+	ra, account := s.reviewAccount(id.JobAccount)
+	// The credential every line below may name, derived from the VERIFIED
+	// identity and not from the request: it is the entry the account's key
+	// would be at, so a call whose body this contract refuses still records a
+	// sign an operator can account for — the shape a mint's lines already have,
+	// where the App key's name is known before the mint's body is looked at.
+	// A caller whose account is in no row of the review table has no entry to
+	// name, and its lines carry none.
+	credential := ""
+	if account {
+		credential = config.ReviewSigningKeySecret(ra.Account)
+	}
 	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken})
 	if err != nil {
-		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, err.Error())
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable, err.Error())
 		return
 	}
 	signReq, err := readSignRequest(cl.body)
@@ -247,7 +264,7 @@ func (s *Server) sign(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		// The refusal names the field and never what the call sent, and it is
 		// answered before the bundle is read: a request the contract refuses
 		// reads no credential at all.
-		s.refuseCall(ctx, w, id, purpose, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
 		return
 	}
 	if id.JobClass != ClassReview {
@@ -255,8 +272,7 @@ func (s *Server) sign(ctx context.Context, w http.ResponseWriter, r *http.Reques
 			"the sign route is served to a review job's account only")
 		return
 	}
-	ra, ok := s.reviewAccount(id.JobAccount)
-	if !ok {
+	if !account {
 		// Unreachable through ServeHTTP — pairReview refuses a caller whose
 		// account is in no row of the table — and kept because the account
 		// name is what the key's entry is derived from: an account guessed
@@ -265,11 +281,6 @@ func (s *Server) sign(ctx context.Context, w http.ResponseWriter, r *http.Reques
 			"the calling account is not one of this service's review job accounts")
 		return
 	}
-	// The credential a sign line may name, known before the bundle is read for
-	// the same reason a mint's line knows the App key's name: it is the entry
-	// the account's key would be at, and a refusal that named no credential
-	// would be a sign an operator cannot account for.
-	credential := config.ReviewSigningKeySecret(ra.Account)
 	if s.cfg.Signs == nil {
 		// A service that cannot take the mark cannot sign: the one-signature
 		// rule is what the mark is for, and a signature without one would be a

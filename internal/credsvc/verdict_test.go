@@ -361,6 +361,67 @@ func TestSignRouteRefusesAnUnknownFieldAndAnOversizeBody(t *testing.T) {
 	})
 }
 
+// TestSignRefusalsNameTheCredentialTheAccountWouldSignWith: a refusal names
+// what it refused, and for a sign that means the entry the caller's own key
+// would be at. The entry is a fact of the VERIFIED identity and not of the
+// body, so a call whose body this contract refuses still records a sign an
+// operator can account for — the shape a mint's lines already have, where the
+// App key's name is known before the mint's own body is looked at.
+//
+// The exception is the caller whose account is in no row of the review table:
+// it has no entry to name, and its line carries no credential — which is also
+// why the class refusal below it names none.
+func TestSignRefusalsNameTheCredentialTheAccountWouldSignWith(t *testing.T) {
+	name := config.ReviewSigningKeySecret(testReviewAccount)
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"a digest of the wrong shape", signBody("not-a-digest")},
+		{"a field this contract does not know", `{"digest":"` + testDigest(t, "named") + `","run":"r"}`},
+		{"no digest at all", `{}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := signSvc(t)
+			resp, body := s.signCall(t, tc.body)
+			if resp.StatusCode != StatusRequestRefused {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+			}
+			lines := parseAuditLines(t, s.audit.String())
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+			}
+			checkAuditShape(t, lines[0])
+			for field, want := range map[string]string{
+				"credential": name,
+				"purpose":    PurposeReviewSign,
+				"tier":       "",
+				"status":     ErrorRequestRefused,
+				"caller":     testReviewSA,
+			} {
+				if got := lines[0][field]; got != want {
+					t.Errorf("%s = %v, want %q", field, got, want)
+				}
+			}
+		})
+	}
+
+	t.Run("an account with no entry to name", func(t *testing.T) {
+		s := signSvc(t)
+		resp, body := s.signTokens(t, signBody("not-a-digest"), s.runToken(), s.jobToken(), s.job)
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+		}
+		lines := parseAuditLines(t, s.audit.String())
+		if len(lines) != 1 {
+			t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+		}
+		if got := lines[0]["credential"]; got != "" {
+			t.Errorf("credential = %v, want no credential: this account is in no row of the review table", got)
+		}
+	})
+}
+
 // TestSignRouteRefusesARunThatHasEnded: signing is an end-of-run act (F11).
 // checkLive already refuses a run whose write-once outcome is written, and this
 // route does not weaken it: the outcome is planted as the runner writes it, and
@@ -788,6 +849,15 @@ const signChildEnvName = "FUGARO_CREDENTIALS_SERVICE_URL"
 // reads back — its whole environment, and what the route answered it. It writes
 // to stdout rather than through t.Log, because a passing subtest's log is not
 // printed and the parent reads this child's process output.
+//
+// The one address it is handed is the fixture's own httptest server, so the
+// call is hermetic in the sense this repository means: a listener the parent
+// test opened in this process, on loopback, reached by the address the test
+// passed in — no DNS, no name resolution, no cloud, no installation and no
+// account. That is the same server, reached the same way, as every other test
+// in this package, and it is why this is not behind the `live` tag: `live`
+// means what only a real installation can answer, and this case asks what this
+// service's own route answers a process that holds no identity.
 func TestSignRouteChildFromAnExplicitEnvironment(t *testing.T) {
 	args := flag.Args()
 	if len(args) == 0 || args[0] != signRouteChildArg {
@@ -842,9 +912,19 @@ func TestSignRouteIsUnreachableFromTheMutantEnvironment(t *testing.T) {
 		t.Fatalf("this test binary's own path could not be read: %v", err)
 	}
 	cmd := exec.Command(exe, "-test.run=^TestSignRouteChildFromAnExplicitEnvironment$", signRouteChildArg)
-	// The environment is SET to the allow-list rather than inherited: a child
-	// started with a nil environment carries this process's own, which is
-	// exactly the state U7's caveat 1 is about.
+	// The environment is SET to the allow-list rather than inherited, and that
+	// assignment IS the clearing: os/exec hands the child exactly this slice and
+	// nothing else, so the child of `env -i <allow-list>` and the child of this
+	// line are the same child. Leaving it nil is the other state — the child
+	// carries this process's own environment, which is exactly what U7's caveat
+	// 1 is about.
+	//
+	// PATH is deliberately NOT on the list, and the child still starts: the
+	// parent resolves the binary's own path here, and a dynamically linked
+	// binary's loader reads the program's own search path and the system cache,
+	// not PATH or LD_LIBRARY_PATH. Adding PATH would put a variable on the list
+	// the pin then carries for no reason — and the pin's value is that the list
+	// is exactly what this child needs.
 	cmd.Env = allowList
 	out, err := cmd.CombinedOutput()
 	if err != nil {
