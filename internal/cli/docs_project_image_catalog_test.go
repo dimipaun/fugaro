@@ -146,7 +146,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"the EXISTING WORKFLOW-SECRET PATH, and the credentials service is UNCHANGED",
 		"the SHARED registry with the EXISTING retention",
 		"an override and a catalog reference used together are REFUSED, and the error names BOTH keys",
-		"the BUILD TASKS START IN 0.16.0",
+		"the BUILD TASKS START IN 0.17.0",
 		"ANSWERED by the owner, 2026-11-02: VM/Batch only, and there is ONE rule everywhere.",
 		"**D1148** | Should images be rebuilt on a schedule for base-image security updates? (**open question 2**) | **OPEN.** The recommendation: **yes, and the schedule ALREADY EXISTS.**",
 		// The catalog is what a baked image is built from, and it lifts no
@@ -230,8 +230,8 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		// The live check is owner-run and named rather than numbered.
 		"**no agent performs any step of it**",
 		"nine steps",
-		// The release slot: the design in 0.16.0 and the build the owner's.
-		"**The build is 0.16.0 too — the owner moved it earlier**",
+		// The release slot: the design in 0.16.0, the build in 0.17.0 (the owner's cut).
+		"**The build is 0.17.0**",
 		"it carries no code",
 		// The one operator entry, and only for an installation that names one.
 		"upgrade every launcher before publishing a catalog",
@@ -244,8 +244,8 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 	readme := readDoc(t, readmePath)
 	projectImageCatalogMustContain(t, readme, readmePath, "fact", []string{
 		"**Status: design only; nothing here is approved and no code follows from this folder.**",
-		"**Release: 0.16.0, design and build together**",
-		"and both are 0.16.0 — nothing waits for a later release.",
+		"**Release: the design is 0.16.0, the build is 0.17.0**",
+		"then cut 0.16.0's scope and moved it to 0.17.0.",
 		"**Answered by the owner, 2026-11-02** — seven decisions, each as the recommendation:",
 		"**D1140** (catalog definitions live in the published policy node under the key `image_catalog`",
 		"**D1148 stays OPEN**",

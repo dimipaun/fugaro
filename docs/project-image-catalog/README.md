@@ -7,9 +7,9 @@ and plans the build. The spec's own summary: "Job images move from repo-centric 
 project keeps a small, hand-curated catalog of named Docker images. Repos inherit the project default
 or reference a catalog image. Repo-level images stay as an optional override."
 
-**Release: 0.16.0, design and build together** (the owner's answer, 2026-11-02,
-[reconciliation.md](reconciliation.md) D1158): this folder is the design and PIC1–PIC7 are the build,
-and both are 0.16.0 — nothing waits for a later release.
+**Release: the design is 0.16.0, the build is 0.17.0** (the owner's answers, 2026-11-02,
+[reconciliation.md](reconciliation.md) D1158): this folder is the design and PIC1–PIC7 are the build.
+The owner first put the build in 0.16.0, then cut 0.16.0's scope and moved it to 0.17.0.
 
 **Answered by the owner, 2026-11-02** — seven decisions, each as the recommendation:
 **D1140** (catalog definitions live in the published policy node under the key `image_catalog`, copied
@@ -19,7 +19,7 @@ left out of the candidates unless `docker` is needed, and if it is needed Cloud 
 **D1150** (build secrets go through the existing workflow-secret path; the credentials service is
 unchanged), **D1152** (the shared registry, with the existing retention), **D1155** (an override and a
 catalog reference used together are refused, and the error names both keys) and **D1158** (the build
-tasks start in 0.16.0). **D1148 stays OPEN** — this folder's first round marked it answered by
+tasks start in 0.17.0, after the 0.16.0 scope cut). **D1148 stays OPEN** — this folder's first round marked it answered by
 mistake — with its recommendation: reuse the daily image check's `base`/`max-age` triggers. The other
 decisions of D1140–D1159 are **open**: they are this plan's to write and the owner's to answer.
 **Answering a decision is not approving a task**, and **no task here is approved to build until the

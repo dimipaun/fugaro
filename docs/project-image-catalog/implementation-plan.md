@@ -7,7 +7,7 @@ travels in the published policy node under `image_catalog`), **D1146** (a pin ac
 warns), **D1149** (VM/Batch only, and the one Cloud Run rule), **D1150** (the existing workflow-secret
 path; the credentials service unchanged), **D1152** (the shared registry and its retention), **D1155**
 (override plus catalog reference refused, naming both keys) and **D1158** (**the build tasks start in
-0.16.0**). **D1148 stays open** with its recommendation (reuse the daily check's triggers), and so do
+0.17.0**, after the 0.16.0 scope cut). **D1148 stays open** with its recommendation (reuse the daily check's triggers), and so do
 the rest of [reconciliation.md](reconciliation.md) §2: each task below says which decision it waits
 on.
 
@@ -61,7 +61,7 @@ Four things this plan does **not** own, and one it reads.
 | D1145 `image add`/`rm`/`promote`, and the build-step collision | PIC6 | D1155 repo override and `needs:` precedence (**answered**) | PIC1 (the config), PIC5 (the selection) |
 | D1146 the tag-cover algorithm and the refusal (**answered**) | PIC5 | D1156 the new key's skew | PIC2 (the node), PIC6 (the gate) |
 | D1147 promote semantics | PIC6 | D1157 core or `ee/` | every task is core; no task touches `ee/` |
-| D1148 scheduled security rebuilds (**open**, recommendation only) | PIC4 | D1158 the build release (**answered**: 0.16.0) | §"Release slot" |
+| D1148 scheduled security rebuilds (**open**, recommendation only) | PIC4 | D1158 the build release (**answered**: 0.17.0) | §"Release slot" |
 | D1149 the `docker` tag's backend (**answered**) | PIC5 | D1159 (reserved) | — |
 
 ## Where each finding lands
@@ -357,13 +357,14 @@ outside the sandbox.
 
 - **This design** merges whenever the owner answers it: it carries no code, and the owner's ruling puts
   it in **0.16.0** ([spec.md](spec.md) §Owner rulings).
-- **The build is 0.16.0 too — the owner moved it earlier** (**D1158**, **answered 2026-11-02**: the
-  build tasks start in 0.16.0). The design and the build land in the same release, so PIC1–PIC7 are
-  0.16.0 tasks and nothing waits for 0.17.0, which was this folder's first recommendation.
-  0.16.0 is the release [docs/c39-review-identity/](../c39-review-identity/) and
-  [docs/console-settings-edit/](../console-settings-edit/) already fill, so the three share a window and
-  their order inside it is the owner's. The catalog's `image_catalog` key and the shared-image operator
-  steps (C8b/C8c, unscheduled) are **not** in the same window unless the owner puts them there.
+- **The build is 0.17.0** (**D1158**, **answered 2026-11-02**: the owner first put the build tasks in
+  0.16.0, then cut 0.16.0's scope and moved them to 0.17.0, which was this folder's recommendation).
+  PIC1–PIC7 are 0.17.0 tasks and none is launched before the 0.16.0 tag is cut. The release the
+  [docs/c39-review-identity/](../c39-review-identity/) and
+  [docs/console-settings-edit/](../console-settings-edit/) tasks left over from 0.16.0 also move to
+  is 0.17.0, so those three share a window and their order inside it is the owner's. The catalog's
+  `image_catalog` key and the shared-image operator steps (C8b/C8c, unscheduled) are **not** in the same
+  window unless the owner puts them there.
 - **`fugaro update` carries it whole.** An installation converges with the one documented command: the
   image pin moves, the catalog arrives in the code, and the catalog's own definitions are published by
   the same policy stage that publishes `verifier_accounts` — **no second command**, per the HARD RULE.
