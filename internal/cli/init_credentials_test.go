@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // The credentials stage (docs/credentials-service, D146, D147; plan task
@@ -905,6 +906,79 @@ func TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("credentials_service = %s, want it carried forward exactly as %s", got, want)
+	}
+}
+
+// verifierAccountsEnv is the entry the installation module renders for the
+// verifier list, at the key infra.Credentials writes it under. The two rows
+// below are the ones the golden fixture uses, because they are the two shapes
+// a verifier really has: a person's address, and the coordinator's own service
+// account.
+var verifierAccountsEnv = []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
+
+// publishedVerifiersForTest writes a policy node carrying the verifier list at
+// the path the published policy lives at, which is what a previous `fugaro
+// update` left there.
+func publishedVerifiersForTest(t *testing.T, r *imagesRig) {
+	t.Helper()
+	r.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":           projectpolicy.Version,
+		"verifier_accounts": verifierAccountsEnv,
+	})
+}
+
+// TestCredentialsServiceKeepsThePublishedVerifierList: the verifier list is
+// the one value this stage takes from the PUBLISHED node rather than from this
+// machine's configuration (C3.9g2, D1075). A second operator's config states
+// none — it was written before the key existed — and the node is where the
+// owner's list is, so a stage that read the configuration alone would render
+// the service's variable null and empty a verify route another machine set up.
+//
+// The stage runs before the policy stage, so what it reads is the node the
+// PREVIOUS `fugaro update` published: this rig seeds exactly that.
+func TestCredentialsServiceKeepsThePublishedVerifierList(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	publishedVerifiersForTest(t, r)
+	typedThroughYes(t)
+	fakeTerminal(t)
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	svc, _ := r.tfvars(t)["credentials_service"].(map[string]any)
+	got, _ := svc["verifier_accounts"].([]any)
+	if len(got) != len(verifierAccountsEnv) {
+		t.Fatalf("credentials_service.verifier_accounts = %v, want the published node's list %v", svc["verifier_accounts"], verifierAccountsEnv)
+	}
+	for i, want := range verifierAccountsEnv {
+		if got[i] != want {
+			t.Errorf("verifier_accounts[%d] = %v, want %v", i, got[i], want)
+		}
+	}
+}
+
+// TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne: writing an empty
+// list is how the owner clears the route, and it is the only spelling that
+// does — deleting the key keeps the node's list, which the stage above pins.
+// The entry is then absent from the tfvars altogether rather than written as
+// an empty array, so the module's variable is null again and the service
+// starts with the empty verifier list the verify route refuses every caller
+// with (C3.9g1's conditional entry).
+func TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	publishedVerifiersForTest(t, r)
+	r.appendConfig(t, "verifier_accounts: []\n")
+	typedThroughYes(t)
+	fakeTerminal(t)
+	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	svc, _ := r.tfvars(t)["credentials_service"].(map[string]any)
+	if _, ok := svc["verifier_accounts"]; ok {
+		t.Errorf("credentials_service.verifier_accounts = %v on a written empty list, want no entry at all (the module renders the variable only when the field is set)", svc["verifier_accounts"])
 	}
 }
 
