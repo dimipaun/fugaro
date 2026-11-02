@@ -23,11 +23,20 @@ them and renames none of them.
   dependency, and it is another work stream's.
 - **U7, the egress observation** (`docs/cloud-senior-review/`, Check 125 step 6): the owner's live probe that
   a subprocess inside a Cloud Run container cannot reach the network — **the instance metadata server
-  included** — and it is the **hard precondition of C3.9e** (D1074, [spec.md](spec.md) §7). The reader should
-  read the dependency in the direction the ruling wrote it: the sign route is what makes U7 load-bearing,
-  because a review container runs the package's own test code by design (D885) and the metadata server is
-  where a Google ID token for the job's own account comes from. If a child cannot be fenced, **C3.9e does not
-  start**: D891 (a) is amended and the owner is asked again, with no quiet fallback to a weaker denial.
+  included** — and it is the **hard precondition of C3.9e** (D1074, [spec.md](spec.md) §7). **ANSWERED
+  (2026-11-01): both fences — the network namespace and a private `/proc` — are available and hold**, on the
+  sandbox installation the decision names (a real kernel 6.9.12, Cloud Run gen2, uid 1000, no capabilities,
+  `NoNewPrivs` 1). The reader should read the dependency in the direction the ruling wrote it: the sign route
+  is what made U7 load-bearing, because a review container runs the package's own test code by design (D885)
+  and the metadata server is where a Google ID token for the job's own account comes from. The answer's
+  caveats are requirements on the tasks this plan still owes, and three of them bear on C3.9e: a child this
+  route's tests start **must** be started from an explicit environment (`env -i` plus an allow-list), because
+  a namespace does not cover the variables a child is handed at start; **`unshare -rn` removes all
+  networking, loopback included**, so only the tool or test child is fenced and never the agent, whose model
+  calls need the loopback gateway; and the evidence for the private `/proc` is the **visible-PID drop**, not a
+  `$PPID` read, which reads 0 inside the namespace. If a child had not been fenceable, **C3.9e would not
+  start**: D891 (a) is amended and the owner is asked again, with no quiet fallback to a weaker denial — the
+  observation returned, so that branch is not the one taken.
 - **CSR7, the review-only job variant**: its account's ID spelling is CSR7's, and C3.9a computes the service's
   review set **through the same helper the deployer uses for it**
   (`docs/cloud-senior-review/implementation-plan.md` CSR7; [spec.md](spec.md) §2.2). Two requirements this
@@ -54,7 +63,7 @@ them and renames none of them.
 | --- | --- | --- |
 | 0 | C3.9a, C3.9c | nothing (each reads a derivation another work stream owns) |
 | 1 | C3.9b | C3.9a, and **CSR1 merged** (the set it serves) |
-| 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074) |
+| 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074, **ANSWERED 2026-11-01: both fences hold**) |
 | 3 | C3.9f | C3.9a, C3.9c, C3.9e (the frame the verify route recomputes) |
 | 4 | C3.9g1, C3.9g2, C3.9g3 | C3.9e, C3.9f; the three are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1), g3 is g1's source and carries the release's one `### For operators` entry (see C3.9g3), and g2's stage reads the node g3 publishes to fill the variable g1 defines (see the two); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
 
@@ -68,7 +77,7 @@ them and renames none of them.
 | D1065 which token set | C3.9b | D1071 who generates the bytes | C3.9d |
 | D1066 the repository, and the table | C3.9a (the table), C3.9b (the mint's use) | D1072 the release slot | §"Release slot" |
 | D1067 what is signed | C3.9e | D1073 the framed message | C3.9e (built), C3.9f (recomputed) |
-| D1074 one signature per run, and U7 | C3.9e | D1075 the verifier list's value (**answered**: the published policy) | C3.9g3 (the published field and the keep rule), C3.9g1 (the variable, the type and the writer), C3.9g2 (the wiring, and the stage that reads the node) |
+| D1074 one signature per run, and U7 (**U7 answered 2026-11-01**) | C3.9e | D1075 the verifier list's value (**answered**: the published policy) | C3.9g3 (the published field and the keep rule), C3.9g1 (the variable, the type and the writer), C3.9g2 (the wiring, and the stage that reads the node) |
 
 ## Where each finding lands
 
@@ -279,23 +288,34 @@ already exist rather than new ones.
 ## C3.9e. The sign route, the frame and the one-signature mark (D1067, D1073, D1074, F7, F11). **SEC**
 
 **Precondition: U7 has returned, and it must cover the metadata server** (D1074, §7 of [spec.md](spec.md)).
-This task does not start before the owner's live observation says a subprocess inside the review container
-cannot reach the network — the instance metadata server included — because the review container runs the
-package's own test code by design (D885) and the metadata server is where a Google ID token for the job's own
-service account comes from. If a child cannot be fenced, the task stops and the owner is asked again; there
-is no weaker fallback and no `denyWeb`-shaped substitute.
+**It has: ANSWERED (2026-11-01), both fences available and both holding** on the environment the decision
+names — an ordinary coding job on Cloud Run gen2, kernel 6.9.12, uid 1000, no capabilities, `NoNewPrivs` 1;
+the whole observation and its five caveats are `docs/cloud-senior-review/`'s (its U7 row), and this task's
+own reading of them is below. This task does not start before the owner's live observation says a
+subprocess inside the review container cannot reach the network — the instance metadata server included —
+because the review container runs the package's own test code by design (D885) and the metadata server is
+where a Google ID token for the job's own service account comes from. Had a child not been fenceable, the
+task would stop and the owner would be asked again; there is no weaker fallback and no `denyWeb`-shaped
+substitute, and that branch is not the one the observation took.
 
 **The subprocess starts from an explicit environment, and that requirement is this task's** (U7's caveat 1,
 which `docs/cloud-senior-review/` records and #1550 cross-references as a requirement on this task): the
 child the route's own tests start — the mutant subprocess of the mutation check — is started from `env -i`
 plus an allow-list of the variables it needs, so a credential this design keeps out of the review
-container's environment is not inherited by a child either. **Two tasks own the two halves, and the split
-is stated here so neither reads as the other's:** the **route's unreachability from that environment** is
+container's environment is not inherited by a child either; a namespace stops a child reading the *parent's*
+`/proc`, and the variables it was handed at start are the half that fence does not cover. **Two tasks own
+the two halves, and the split is stated here so neither reads as the other's:** the **route's
+unreachability from that environment** is
 this task's, held by `TestSignRouteIsUnreachableFromTheMutantEnvironment` (the live check §8 step 9
 re-observes it), while the **environment's own emptiness** — that the subprocess carries no token in its
 environment at all — is **CSR4b's**, held by `TestMutationSubprocessCarriesNoTokenInItsEnvironment`
 (`docs/cloud-senior-review/implementation-plan.md:511`). This task does not restate CSR4b's pin and does
-not weaken it: it starts its child the way that test does, and asserts what its own route owes.
+not weaken it: it starts its child the way that test does, and asserts what its own route owes. The other
+two caveats this task reads are **`unshare -rn` removes all networking, loopback included** — so the fence
+is the tool or test child's and never the agent's, whose model calls need the loopback gateway, which is why
+this task's test starts its child without the fence — and **the evidence for the private `/proc` is the
+visible-PID drop and not a `$PPID` read** (`$PPID` reads 0 inside the namespace, which is partly an
+artifact), so nothing here rests on that read.
 
 `POST /v1/review/sign` takes a digest and answers the HMAC-SHA-256 of the **framed message** under the
 account's key, lowercase hex, with the algorithm named in the answer. The frame is `v1\n<slug>\n<run>\n<digest>`

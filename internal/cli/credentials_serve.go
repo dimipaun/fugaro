@@ -370,6 +370,12 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		Kills:   credsvc.RTDBKills{DB: db},
 		DB:      db,
 		Probes:  db,
+		// The same client is the create-only write the sign route's
+		// one-signature mark is taken with (C3.9e, D1074): the mark is a node
+		// under creds/ like the probe's lease, read for its ETag and written
+		// back under it, over the service's own identity — which is the only
+		// writer of that subtree (the rules deny every run token it).
+		Signs: db,
 		// Every audited act goes to the process's log, which is the stream
 		// Cloud Logging reads; the one auditor that redacts is built inside
 		// NewServer (NewProbeAuditor arms it with this service's loader).

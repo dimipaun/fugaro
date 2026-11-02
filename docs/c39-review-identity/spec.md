@@ -666,7 +666,7 @@ registered with the service's redaction, §5.6 and D1074).
 | Adversary | What it holds today | What this slice does |
 | --- | --- | --- |
 | the **review run itself** — a container that runs a test from the head under review by design (D885) | its account's **model credential through the service** (it holds no token of its own, ruling O1), and the read-only installation token it fetches | **closed as far as write access goes**: it can obtain only the read-only set, and only for the repository its own identity names. It **cannot** obtain a write token: the mint chooses the set from the verified claims (§4.2), and a coding run's identity is refused. It **cannot** sign twice (§5.6), and it can reach no key: the review-signing key is not in its container, not in its environment and not in the bundle it may read |
-| **a subprocess inside the review container** — the mutation check's mutant, which runs code from the head by design (D885, CSR4b) | whatever the container's own environment holds — and, if the container's egress is not denied, a Google ID token **from the instance metadata server** for the job's own service account | **this is U7, and the sign route is not built before it is answered** (below). Egress denial including the metadata server is a **hard precondition**; the mark of §5.6 bounds what such a subprocess can obtain even then — one signature for the run, never a second |
+| **a subprocess inside the review container** — the mutation check's mutant, which runs code from the head by design (D885, CSR4b) | whatever the container's own environment holds — and, if the container's egress is not denied, a Google ID token **from the instance metadata server** for the job's own service account | **this is U7, ANSWERED (2026-11-01): both fences hold, so the route was built** (below). Egress denial including the metadata server was the **hard precondition**; the mark of §5.6 bounds what such a subprocess can obtain even so — one signature for the run, never a second — and a child started from an explicit environment (`env -i` plus an allow-list, U7's caveat 1) inherits none of the container's |
 | **another run on the same project job set** — the D892 gap: it holds `objectUser` on `runs/`, can list, and can write under a prefix it can see | a shared project job's account | **the verdict is signed, and it holds no key**: a forged or replayed `review.json` has no signature to carry, and the key is not in any container |
 | a caller that can **reach the service's URL** but holds no admitted identity | nothing | refused before a credential is read, as today |
 | the **launcher** | minting authority for run identities, and a share of the installation's own IAM | **unchanged, and stated**: a launcher that can mint an identity for any repository, and deploy a job with an admitted account name, can obtain a read-only token for that repository and sign as that account. This is the same launcher trust the credentials-service plan already records (F29, SECURITY.md) and this slice neither widens nor closes it |
@@ -702,22 +702,38 @@ registered with the service's redaction, §5.6 and D1074).
   Nothing here makes an untrusted diff safe to review: the reviewer is still a program reading a hostile
   diff, which is D885's problem and not a credential's.
 
-**The hard precondition: U7 (D1074).** Everything the sign route does rests on one assumption that this
-design cannot make from the tree, and it is **U7** of `docs/cloud-senior-review/` — the owner's live
-observation, taken before that work stream's mutation check (CSR4b) launches, that **egress can be denied for a
-subprocess inside a Cloud Run container** (Check 125 step 6; no network namespace and no `unshare` in
-generation 2 has been checked at the time of writing). The sign route makes that assumption load-bearing in
-a way CSR4b does not: the review container runs the package's own test code by design (D885), so a subprocess
-that can reach the network at all can reach **the instance metadata server** and mint itself a Google ID
-token for the job's own service account — which is the identity the sign route admits. Therefore:
+**The hard precondition: U7 (D1074) — ANSWERED (2026-11-01), both fences available and both holding.**
+Everything the sign route does rests on one assumption that this design cannot make from the tree, and it is
+**U7** of `docs/cloud-senior-review/` — the owner's live observation, taken before that work stream's
+mutation check (CSR4b) launches, that **egress can be denied for a subprocess inside a Cloud Run container**
+(Check 125 step 6; no network namespace and no `unshare` in generation 2 had been checked at the time of
+writing). The observation has returned: on the sandbox installation the decision names — an ordinary coding
+job on Cloud Run gen2, kernel 6.9.12, uid 1000, no capabilities, `NoNewPrivs` 1 — the child fenced with
+`unshare -rn`, and the same fence under the PID namespace (`unshare -rnpf --mount-proc`), reaches nothing,
+and `unshare -rpf --mount-proc` gives it a `/proc` of its own; the unfenced baseline reached the internet
+**and both metadata addresses**, which is the exposure the fence closes. The whole observation and its five
+caveats are that work stream's (its U7 row); the three this design reads are below. The sign route made that
+assumption load-bearing in a way CSR4b does not: the review container runs the package's own test code by
+design (D885), so a subprocess that can reach the network at all can reach **the instance metadata server**
+and mint itself a Google ID token for the job's own service account — which is the identity the sign route
+admits. Therefore:
 
-- **the sign route is not built before U7 has returned**, and the plan's C3.9e says so in its own
+- **the sign route is not built before U7 has returned** — it has — and the plan's C3.9e says so in its own
   preconditions rather than in a footnote;
 - **the egress denial must cover the metadata server explicitly** — a denial that leaves the metadata
   endpoint reachable leaves the route open, so the observation is about that endpoint and not only about the
   internet at large;
-- **if a child cannot be fenced, the route is not built**: U7's own rule applies unchanged — D891 (a) is
-  amended and the owner is asked again, with no quiet fallback to a weaker denial;
+- **had a child not been fenceable, the route would not have been built**: U7's own rule applies unchanged —
+  D891 (a) is amended and the owner is asked again, with no quiet fallback to a weaker denial. It was
+  fenceable, so that branch was not taken;
+- **a namespace does not cover the variables a child was handed at start** (U7's caveat 1), so a child this
+  route's tests start is started from an explicit environment — `env -i` plus an allow-list — and the test
+  that starts it pins that its environment holds exactly the allow-list;
+- **`unshare -rn` removes all networking, loopback included** (caveat 3), so the fence is the tool or test
+  child's and never the agent's, whose model calls need the loopback gateway — which is why §8 step 9's
+  attempt from inside a mutant subprocess is made by the fenced child and not by the agent's own stage;
+- **the evidence for the private `/proc` is the visible-PID drop, not a `$PPID` read** (caveat 2: `$PPID`
+  reads 0 inside the namespace, which is partly an artifact), so nothing here rests on that read;
 - **the live check tries it**: §8's steps include an attempt to sign from inside a mutant subprocess, and an
   attempt to reach the metadata server from one, both of which must fail. A check that only reads
   configuration would not observe the property that matters;
