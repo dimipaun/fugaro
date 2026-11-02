@@ -1152,3 +1152,53 @@ func TestReviewArtifactRefusesAMalformedHead(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewArtifactRefusesAnOversizeObject: both readers take the object at a
+// bound, and a larger one is refused rather than decoded. The object here is a
+// whole valid artifact whose overview is padding, signed by the service over
+// its exact bytes and matching every one of the verifier's four checks -- so if
+// it were decoded first, both readers would return it as a verdict, and the cap
+// is the only thing that can refuse it. A verdict is a page of prose and a
+// handful of issues; an object past the bound is not a longer review but either
+// a hostile one or one that stopped meaning anything, and a reader that clipped
+// instead of refusing would be reading a review nobody wrote (D886).
+func TestReviewArtifactRefusesAnOversizeObject(t *testing.T) {
+	svc := newReviewService(t)
+	art := reviewArtifactFixture(t)
+	art.Overview = strings.Repeat("x", maxReviewArtifactBytes)
+	data, sig := signedReviewArtifact(t, svc, art)
+	if len(data) <= maxReviewArtifactBytes {
+		t.Fatalf("the fixture is %d bytes and the cap is %d: this test needs an object over the cap", len(data), maxReviewArtifactBytes)
+	}
+	if _, err := DecodeReviewArtifact(data); err == nil {
+		t.Error("the reader decoded an object larger than its cap")
+	} else if !errors.Is(err, ErrReviewArtifact) || !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("the oversize object is not refused as one: %v", err)
+	}
+	if _, err := VerifyReviewArtifact(context.Background(), data, sig, reviewWant(), svc.verifier()); err == nil {
+		t.Error("the verifier accepted an object larger than its cap")
+	} else if !errors.Is(err, ErrReviewArtifact) {
+		t.Errorf("the verifier's oversize refusal is not the reader's: %v", err)
+	}
+	// Exactly at the cap is read: the bound refuses objects larger than itself,
+	// and the padding is one byte of JSON per byte of overview (no escape is in
+	// play), so the object can be landed on the bound exactly.
+	edge := reviewArtifactFixture(t)
+	edge.Overview = strings.Repeat("x", maxReviewArtifactBytes)
+	blob, err := json.Marshal(edge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta := len(blob) - maxReviewArtifactBytes; delta > 0 {
+		edge.Overview = strings.Repeat("x", maxReviewArtifactBytes-delta)
+		if blob, err = json.Marshal(edge); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(blob) != maxReviewArtifactBytes {
+		t.Fatalf("the padding landed on %d bytes, not the cap's %d", len(blob), maxReviewArtifactBytes)
+	}
+	if _, err := DecodeReviewArtifact(blob); err != nil {
+		t.Errorf("the reader refused an object exactly at its cap: %v", err)
+	}
+}

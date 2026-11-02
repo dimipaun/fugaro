@@ -253,6 +253,13 @@ const reviewSignTimeout = 15 * time.Second
 // maxReviewSignAnswerBytes bounds the sign route's answer: two small strings.
 const maxReviewSignAnswerBytes = 4 << 10
 
+// maxReviewArtifactBytes bounds the object both of the artifact's readers take,
+// the same idea as the sign route's answer cap on the larger call: a review is
+// a page of prose and a handful of issues, so an object past 1 MiB is either a
+// hostile one or one that stopped meaning anything. It is a refusal and never a
+// truncation -- a clipped review is a failed one and not a shorter ship (D886).
+const maxReviewArtifactBytes = 1 << 20
+
 // reviewSignAnswer is the sign route's answer (C3.9e's SignResponse). The
 // algorithm is read and checked rather than assumed: a service that answered
 // under a weaker one would be a signature this build must not store.
@@ -494,6 +501,16 @@ type ReviewKeyValue struct {
 	Got   string
 }
 
+// checkReviewArtifactSize holds an object to maxReviewArtifactBytes. Both of
+// the artifact's readers take the same bound, and both refuse past it rather
+// than reading a prefix of it.
+func checkReviewArtifactSize(data []byte) error {
+	if len(data) > maxReviewArtifactBytes {
+		return fmt.Errorf("%w: the object is %d bytes, and this reader reads at most %d", ErrReviewArtifact, len(data), maxReviewArtifactBytes)
+	}
+	return nil
+}
+
 // VerifyReviewArtifact is the verifier's half of D892(a): it reads the
 // artifact, checks the signature BEFORE the verdict is read at all, and then
 // makes the four checks the signature alone does not (spec §6) --
@@ -518,6 +535,13 @@ func VerifyReviewArtifact(ctx context.Context, data []byte, signature string, wa
 	}
 	if v == nil {
 		return art, fmt.Errorf("%w: no credentials service is available to verify with, and a signature nothing checks is no signature", ErrReviewSignature)
+	}
+	// The bound is the readers' shared one, applied here too rather than left to
+	// the call below: both of the entries that take an artifact refuse past it,
+	// so no caller reaches the hashing or the service with an object neither of
+	// them would read.
+	if err := checkReviewArtifactSize(data); err != nil {
+		return ReviewArtifact{}, err
 	}
 	art, err := DecodeReviewArtifact(data)
 	if err != nil {
@@ -568,6 +592,12 @@ func DecodeReviewArtifact(data []byte) (ReviewArtifact, error) {
 	var art ReviewArtifact
 	if len(bytes.TrimSpace(data)) == 0 {
 		return art, fmt.Errorf("%w: the object is empty", ErrReviewArtifact)
+	}
+	// Before anything is parsed: the object's size is a fact about the bytes,
+	// and a reader that decoded first would have built a megabyte of strings
+	// from a document it was always going to refuse.
+	if err := checkReviewArtifactSize(data); err != nil {
+		return art, err
 	}
 	if err := decodeReviewStrict(data, &art); err != nil {
 		return art, fmt.Errorf("%w: %v", ErrReviewArtifact, err)
