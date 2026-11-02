@@ -274,7 +274,8 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 	var designRow string
 	for _, line := range strings.Split(readFileString(t, coordinatorDesignPath), "\n") {
 		if strings.Contains(line, "`coordinator status --from-store --all --json`") ||
-			strings.Contains(line, "`coordinator show --json --repo <owner/name> --pr <n>`") {
+			strings.Contains(line, "`coordinator show --json --repo <owner/name> --pr <n>`") ||
+			strings.Contains(line, "`coordinator intents --all --json`") {
 			designRow += line + "\n"
 		}
 	}
@@ -312,16 +313,17 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 	}
 }
 
-// coordinatorOperations are the console's own names for its two reads of this
+// coordinatorOperations are the console's own names for its three reads of this
 // package's commands (their IPC operations), not symbols of the library: the
 // documents write them in the same `coordinator.`-qualified shape a citation
 // takes, so without this list the check above would read each one as a citation
-// of a symbol ee/coordinator does not declare. Both are written on the design's
-// own §5.1 rows and on `console/docs/json-contract.md` §6.13 and §6.15, one per
-// command, and `console/src/main/ipc.ts` is where each name is declared.
+// of a symbol ee/coordinator does not declare. Each is written on the design's
+// own §5.1 row and on `console/docs/json-contract.md` (§6.13, §6.15 and §6.16),
+// one per command, and `console/src/main/ipc.ts` is where each name is declared.
 var coordinatorOperations = map[string]bool{
-	"coordinator.status": true,
-	"coordinator.show":   true,
+	"coordinator.status":  true,
+	"coordinator.show":    true,
+	"coordinator.intents": true,
 }
 
 // coordinatorDecls appends every top-level name declared by the non-test Go
@@ -612,5 +614,24 @@ func TestConsoleContractNamesOnlyRealIntentsFlags(t *testing.T) {
 	}
 	if named == 0 {
 		t.Fatalf("%s's §6.16 no longer names newCoordinatorIntentsCmd: these checks would pass vacuously", coordinatorContractPath)
+	}
+
+	// §8's inventory row, the console's own account of what it may pass: the
+	// two words its spawn row fixes, and the `--project`/`--config` every cloud
+	// read carries. `--repo` and `--since` are flags of the command that no
+	// console row passes, so the row is not required to name them -- but a flag
+	// it does name and the command does not have is a row promising an argv the
+	// console could not build.
+	row := coordinatorInventoryRow(t, "coordinator intents")
+	for _, want := range []string{"--all", "--json", "--project", "--config"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's §8 row for coordinator intents no longer names %s: %q", coordinatorContractPath, want, row)
+		}
+	}
+	for _, m := range coordinatorFlagRE.FindAllStringSubmatch(row, -1) {
+		name := strings.TrimRight(m[1], "-")
+		if name != "" && !real[name] {
+			t.Errorf("%s's §8 row names --%s, which coordinator intents has no flag for", coordinatorContractPath, name)
+		}
 	}
 }

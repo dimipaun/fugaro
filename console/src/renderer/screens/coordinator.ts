@@ -57,7 +57,7 @@
 
 import { measured } from '../../shared/availability'
 import type { Reading, Unit } from '../../shared/availability'
-import { nameableText, sanitizeText } from '../../shared/sanitize'
+import { maskCredentialBlocks, nameableText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import { BUSY_SLOT_CLASS } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
@@ -430,6 +430,70 @@ export const COORDINATOR_JOBS_SHAPE: SkeletonShape = Object.freeze({
   blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row']),
 })
 
+/** COORDINATOR_DESCRIPTION_CLASS is one record's description block (K3): the
+ * element the disclosure reveals and the description is painted into. It is
+ * drawn with the row and `hidden` until the press, so the press is a toggle and
+ * never a rendering. */
+export const COORDINATOR_DESCRIPTION_CLASS = 'coordinator-description'
+
+/** COORDINATOR_DESCRIPTION_HEAD_CLASS is the record's own disclosure: the button
+ * whose press reveals the block and, the first time only, reads the description.
+ * It is a **separate control from the number** -- the number is K2's Open-PR
+ * button, and a press on it opens a browser rather than a block. */
+export const COORDINATOR_DESCRIPTION_HEAD_CLASS = 'coordinator-description-head'
+
+/** COORDINATOR_DESCRIPTION_LINE_CLASS is one line of the description. The body is
+ * drawn **a line at a time**, and it is why the bound below means anything: the
+ * `sentence` class flattens newlines and cuts one text node at
+ * `MAX_TEXT_LENGTH`, so a body drawn as a single node could neither keep the
+ * author's lines nor ever be shown whole. */
+export const COORDINATOR_DESCRIPTION_LINE_CLASS = 'coordinator-description-line'
+
+/** COORDINATOR_DESCRIPTION_ALL_CLASS is the `Show all` control: the press that
+ * draws the lines the bound held back. It is drawn only when there are any, and
+ * it goes with them -- there is no `Show fewer`, because the bound is the state
+ * the block opens in and not a mode. */
+export const COORDINATOR_DESCRIPTION_ALL_CLASS = 'coordinator-description-all'
+
+/** COORDINATOR_DESCRIPTION_EMPTY_CLASS is the console's own sentence for a pull
+ * request whose description the host answered with nothing: a fact about the
+ * pull request, and not the same as a read that did not answer. */
+export const COORDINATOR_DESCRIPTION_EMPTY_CLASS = 'coordinator-description-empty'
+
+/** COORDINATOR_DESCRIPTION_SHOW_WORD and COORDINATOR_DESCRIPTION_HIDE_WORD are
+ * the disclosure's two labels, and both are the console's own: the entry rewrites
+ * the one for the other on the toggle, and neither is ever a document's text. */
+export const COORDINATOR_DESCRIPTION_SHOW_WORD = 'Show description'
+export const COORDINATOR_DESCRIPTION_HIDE_WORD = 'Hide description'
+
+/** COORDINATOR_DESCRIPTION_ALL_WORD is the second control's one word. */
+export const COORDINATOR_DESCRIPTION_ALL_WORD = 'Show all'
+
+/** COORDINATOR_DESCRIPTION_EMPTY_WORD is what the block says for a description
+ * the host did not write. It is deliberately not `n/a`: the field was answered
+ * and it is empty, which is not the same as a value the console would not draw. */
+export const COORDINATOR_DESCRIPTION_EMPTY_WORD = 'the pull request carries no description'
+
+/** COORDINATOR_DESCRIPTION_BUSY is what the block's own mark says while its read
+ * is out. */
+export const COORDINATOR_DESCRIPTION_BUSY = 'Reading the description…'
+
+/** COORDINATOR_DESCRIPTION_LINES is the block's own bound, in lines: the first
+ * twenty of the body, with `Show all` under them. It is the console's own
+ * number rather than the CLI's -- the read answers with the body whole, and what
+ * to draw of it is a decision this screen makes. */
+export const COORDINATOR_DESCRIPTION_LINES = 20
+
+/** COORDINATOR_DESCRIPTION_SHAPE is the block's skeleton, worn while its read is
+ * out: a line of prose and two under it. It is declared here for the job list's
+ * own reason -- nothing is in flight for a description until the operator
+ * presses its disclosure -- so it is not one of `SKELETON_SHAPES.coordinator`'s,
+ * which is the list of the sections a tab's entry reads. */
+export const COORDINATOR_DESCRIPTION_SHAPE: SkeletonShape = Object.freeze({
+  section: 'description',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'line', 'line']),
+})
+
 // ---------------------------------------------------------------------------
 // The elements.
 // ---------------------------------------------------------------------------
@@ -503,6 +567,45 @@ export interface CoordinatorPullButton {
   readonly link: CoordinatorPullLink
 }
 
+/**
+ * CoordinatorDescriptionRequest is the pair one pull request's description is
+ * read with -- `fugaro coordinator show --repo <owner/name> --pr <n> --json`
+ * (coordinator v2 C3, D816) -- and the whole of what the entry sends for it.
+ *
+ * **It is not `CoordinatorPullLink` and it is deliberately a type of its own.**
+ * A destination needs the provider and this read does not: the CLI resolves the
+ * provider itself, out of the same local config the stored view's own field came
+ * from. Two shapes that mean two different things are two types, so neither can
+ * be handed to the other's caller by mistake.
+ */
+export interface CoordinatorDescriptionRequest {
+  readonly repo: string
+  readonly number: number
+}
+
+/**
+ * CoordinatorDescriptionTarget is one description the detail drew a disclosure
+ * for: the button the entry binds, the block it reveals, the slot the read's own
+ * mark goes in, and the pair the read is made of.
+ *
+ * The four are answered together rather than looked up again by class, for the
+ * reason `CoordinatorPullButton` is: what the entry binds and what the screen
+ * drew cannot come apart.
+ */
+export interface CoordinatorDescriptionTarget {
+  readonly element: ScreenElement
+  readonly block: ScreenElement
+  readonly slot: ScreenElement
+  readonly request: CoordinatorDescriptionRequest
+}
+
+/** DrawnCoordinatorDetail is what one repository's detail drew: the numbers that
+ * are buttons (K2) and the descriptions whose disclosure the entry binds (K3). */
+export interface DrawnCoordinatorDetail {
+  readonly pulls: readonly CoordinatorPullButton[]
+  readonly descriptions: readonly CoordinatorDescriptionTarget[]
+}
+
 /** CoordinatorRecordPanel is one record: a pull request with the runs behind it,
  * or the in-flight runs alone. `label` is the console's own name for the record
  * -- the pull request's number, or the newest run's id -- and `title` is the
@@ -512,10 +615,17 @@ export interface CoordinatorPullButton {
  * `link` is the triple the label opens when the console can form one (K2), and
  * `null` where it cannot: a record with no pull request at all, or one whose
  * repository or provider the console will not build a destination from. A `null`
- * is drawn as text, and a label that is a run's id is never a button. */
+ * is drawn as text, and a label that is a run's id is never a button.
+ *
+ * `description` is the pair that read is made of (K3), and it is **not** `link`
+ * with the provider dropped: a node a CLI older than C1 answered carries no
+ * provider, so `link` is `null` there while the description can still be read.
+ * It is `null` where there is nothing to read: a record with no pull request, or
+ * one whose repository or number the console will not ask the CLI about. */
 export interface CoordinatorRecordPanel {
   readonly label: string
   readonly link: CoordinatorPullLink | null
+  readonly description: CoordinatorDescriptionRequest | null
   readonly title: string
   readonly state: string
   readonly draft: boolean
@@ -1037,11 +1147,39 @@ function cut<T>(items: readonly T[]): { readonly drawn: readonly T[]; readonly d
   }
 }
 
+/**
+ * descriptionRequest is the pair one record's description is read with, or
+ * `null` where the console will not make the read at all.
+ *
+ * **It is not `pullLink`, and the difference is why it exists.** A destination
+ * needs the record's provider, which is C1's field on the node; this read does
+ * not, because `coordinator show` resolves the provider itself out of the same
+ * local config the stored view's own field came from. Gating the block on
+ * `pullLink` would therefore take the description away from every installation
+ * whose CLI is older than C1 -- the very node `PULL_PROVIDERS` cannot place --
+ * and a read that needs no provider has no business asking for one.
+ *
+ * The repository is held to the two things the number beside it is held to:
+ * `PULL_REPO`, main's own pattern for the two segments a repository has (it is
+ * stricter than the IPC schema's `repository` kind, and the strictness is what
+ * keeps a path or a walk from reaching `--repo`), and the `repository` text
+ * class, so the read is never made for a string the reader was not shown.
+ */
+function descriptionRequest(record: CoordinatorRecord, repo: string): CoordinatorDescriptionRequest | null {
+  const pr = record.pr
+  if (pr === null) return null
+  if (!Number.isSafeInteger(pr.number) || pr.number < 1) return null
+  if (!PULL_REPO.test(repo)) return null
+  if (!sanitizeText(repo, 'repository', 'repos[].repo').ok) return null
+  return { repo, number: pr.number }
+}
+
 function recordPanel(record: CoordinatorRecord, provider: string, repo: string): CoordinatorRecordPanel {
   const pr = record.pr
   const runs = cut(record.runs)
   return {
     label: recordLabel(record),
+    description: descriptionRequest(record, repo),
     // The record's own number, and never the label: a label that fell back to a
     // run's id names no pull request, so there is no triple to build and the
     // cell stays text.
@@ -1964,20 +2102,108 @@ function runCell(parent: ScreenElement, factory: ScreenFactory, run: Coordinator
   }
 }
 
+/**
+ * fillCoordinatorDescription draws one pull request's description into the block
+ * the record's disclosure reveals: the body's lines, each through `putText` in
+ * the class its wire key declares (`sentence`, `WIRE_TEXT_CLASSES.body`), and
+ * the `Show all` control when the bound held any back.
+ *
+ * **It is plain text and nothing else.** No markdown is parsed -- the console has
+ * no markdown renderer and adding one would be a parser over untrusted text plus
+ * the link question rule 2 answers with "no" -- no element is built from anything
+ * inside the body, and no address in it becomes a link: the `sentence` class
+ * replaces one with its own marker, and what is left is drawn as characters. The
+ * line element's tag and class are this screen's constants, so nothing the author
+ * wrote reaches a tag, an attribute or a slot.
+ *
+ * **A line at a time, and not one text node.** The class flattens newlines and
+ * cuts a text node at `MAX_TEXT_LENGTH`, so a body drawn whole would lose the
+ * author's lines and could never be shown past 512 characters -- which is what
+ * would make the bound and `Show all` mean nothing. Each line is therefore a text
+ * node of its own, and `showAll` is the block's state rather than the class's.
+ *
+ * **The block is masked before it is split, and that order is the whole of it.**
+ * The class reads one line at a time, and the one redaction that needs a whole
+ * value -- a PEM block, whose body stops at its own BEGIN and END lines -- would
+ * never see one: the markers would be drawn as text and the body left to the
+ * entropy net, which is exactly the leak the review of this block found (a
+ * wrapped body's short last line drawn as key material). `maskCredentialBlocks`
+ * is that masking; what it hands back still carries the author's own newlines,
+ * so the split after it draws the same lines with one value redacted.
+ *
+ * It answers the control it drew, or `null` when there is nothing to show: the
+ * entry binds the press, and the two are answered as a pair for the reason
+ * `fillCoordinatorQueuePart` answers its buttons.
+ */
+export function fillCoordinatorDescription(
+  factory: ScreenFactory,
+  body: string,
+  host: ScreenElement,
+  showAll: boolean,
+): ScreenElement | null {
+  const masked = maskCredentialBlocks(body)
+  if (masked.trim() === '') {
+    // The host answered and wrote nothing. That is a fact about the pull request,
+    // and it is the console's own sentence rather than a blank block -- a block
+    // with nothing in it is what a read that did not answer would look like.
+    literal(cell(host, factory, 'p', COORDINATOR_DESCRIPTION_EMPTY_CLASS), COORDINATOR_DESCRIPTION_EMPTY_WORD)
+    return null
+  }
+  const lines = masked.split(/\r\n|\r|\n/u)
+  for (const line of showAll ? lines : lines.slice(0, COORDINATOR_DESCRIPTION_LINES)) {
+    putText(cell(host, factory, 'div', COORDINATOR_DESCRIPTION_LINE_CLASS), line, 'sentence', 'body')
+  }
+  if (showAll || lines.length <= COORDINATOR_DESCRIPTION_LINES) return null
+  const control = cell(host, factory, 'button', COORDINATOR_DESCRIPTION_ALL_CLASS)
+  control.setAttribute('type', 'button')
+  literal(control, COORDINATOR_DESCRIPTION_ALL_WORD)
+  return control
+}
+
+/** descriptionCell draws one record's description half: the disclosure, and the
+ * block it reveals with the slot the read's own mark goes in.
+ *
+ * The block is drawn with the row and `hidden` until the press, so the press is
+ * a toggle and never a rendering -- the same shape the job list's rows take
+ * (K4). The two are drawn only where the record names a pull request the read can
+ * be made of (`CoordinatorRecordPanel.description`). */
+function descriptionCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  request: CoordinatorDescriptionRequest,
+): CoordinatorDescriptionTarget {
+  const element = cell(parent, factory, 'button', COORDINATOR_DESCRIPTION_HEAD_CLASS)
+  element.setAttribute('type', 'button')
+  element.setAttribute('aria-expanded', 'false')
+  literal(element, COORDINATOR_DESCRIPTION_SHOW_WORD)
+  const block = cell(parent, factory, 'div', COORDINATOR_DESCRIPTION_CLASS)
+  block.setAttribute('hidden', '')
+  const slot = cell(block, factory, 'div', BUSY_SLOT_CLASS)
+  return { element, block, slot, request }
+}
+
+/** DrawnRecord is what one record's row drew: the number that is a button (K2),
+ * or `null`, and the description's disclosure (K3), or `null`. */
+interface DrawnRecord {
+  readonly pull: CoordinatorPullButton | null
+  readonly description: CoordinatorDescriptionTarget | null
+}
+
 /** recordCell draws one pull request as a row: a head line carrying the number,
- * the title and the state of the pull request, and the runs behind it nested
- * under that line. A record with no run keeps the console's own sentence where
- * the list would be, so the row says which of the two it is.
+ * the title and the state of the pull request, the disclosure of its description
+ * under that line, and the runs behind it. A record with no run keeps the
+ * console's own sentence where the list would be, so the row says which of the
+ * two it is.
  *
  * The number is the row's **one** control where the console can form a triple
  * for it (K2), and text where it cannot -- the same rule the queue's subject
- * follows, drawn by the other half of this screen. It answers the pair it drew,
+ * follows, drawn by the other half of this screen. It answers the pairs it drew,
  * for the reason `fillCoordinatorQueuePart` does. */
 function recordCell(
   parent: ScreenElement,
   factory: ScreenFactory,
   record: CoordinatorRecordPanel,
-): CoordinatorPullButton | null {
+): DrawnRecord {
   const row = cell(parent, factory, 'li', 'coordinator-record')
   const head = cell(row, factory, 'div', 'coordinator-record-head')
   // The tag is written out at the call site for `theme-selectors.test.ts`'s
@@ -2012,9 +2238,13 @@ function recordCell(
   const flight = cell(head, factory, 'span', 'coordinator-record-flight')
   if (record.inFlight) literal(flight, COORDINATOR_IN_FLIGHT_WORD)
   else literal(flight, COORDINATOR_FINISHED_WORD)
+  // The description sits between the head and the runs: it is the pull request's
+  // own text, and the runs are what the fleet did about it.
+  const description =
+    record.description === null ? null : descriptionCell(row, factory, record.description)
   if (record.runs.length === 0) {
     literal(cell(row, factory, 'span', 'coordinator-record-noruns'), COORDINATOR_NO_RUNS_WORD)
-    return pull
+    return { pull, description }
   }
   const runs = cell(row, factory, 'ul', 'coordinator-runs')
   for (const run of record.runs) runCell(runs, factory, run)
@@ -2023,7 +2253,7 @@ function recordCell(
     // `countCell` makes: the figure is a reading like every other here.
     putReading(cell(runs, factory, 'li', 'coordinator-more'), measured(record.runsDropped), 'count')
   }
-  return pull
+  return { pull, description }
 }
 
 function collisionCell(parent: ScreenElement, factory: ScreenFactory, collision: CoordinatorCollisionPanel): void {
@@ -2115,19 +2345,22 @@ function repoSummary(
  * could not read. It is a drawing of its own so the entry can make it in a chunk
  * of its own (`entry.ts`), after the summary is on screen.
  *
- * It answers the numbers it drew as buttons, in the order it drew them, for the
+ * It answers the controls it drew -- the numbers that are buttons, in the order
+ * it drew them, and the descriptions whose disclosure the entry binds -- for the
  * reason `fillCoordinatorQueuePart` does. */
 export function repoDetail(
   parent: ScreenElement,
   factory: ScreenFactory,
   panel: CoordinatorRepoPanel,
-): readonly CoordinatorPullButton[] {
+): DrawnCoordinatorDetail {
   const pulls: CoordinatorPullButton[] = []
+  const descriptions: CoordinatorDescriptionTarget[] = []
   if (panel.records.length > 0) {
     const records = cell(parent, factory, 'ul', 'coordinator-records')
     for (const record of panel.records) {
-      const pull = recordCell(records, factory, record)
-      if (pull !== null) pulls.push(pull)
+      const drawn = recordCell(records, factory, record)
+      if (drawn.pull !== null) pulls.push(drawn.pull)
+      if (drawn.description !== null) descriptions.push(drawn.description)
     }
   }
   if (panel.collisions.length > 0) {
@@ -2138,7 +2371,7 @@ export function repoDetail(
     const unread = cell(parent, factory, 'ul', 'coordinator-unreads')
     for (const entry of panel.unread) unreadCell(unread, factory, entry)
   }
-  return pulls
+  return { pulls, descriptions }
 }
 
 /** CoordinatorDetail is one repository's detail: the panel to draw and the host

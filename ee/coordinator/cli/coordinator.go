@@ -570,9 +570,9 @@ type coordinatorOptions struct {
 	fromStore bool
 }
 
-// NewCoordinatorCmd is the coordinator's command tree: report, sweep, status
-// and show. Exported because ee/register is what adds it to the released tree
-// (design docs/design/ee-boundary-moves.md §5.1).
+// NewCoordinatorCmd is the coordinator's command tree: report, sweep, status,
+// show and intents. Exported because ee/register is what adds it to the
+// released tree (design docs/design/ee-boundary-moves.md §5.1).
 func NewCoordinatorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "coordinator",

@@ -3555,6 +3555,76 @@ span.coordinator-record-noruns {
   font-size: var(--text-xs);
 }
 
+/* The pull request's own description and the control that opens it (K3). The
+ * disclosure sits between the record's head row and the runs because that is
+ * where the description does, and it is drawn as one quiet line of the record
+ * rather than as a boxed control: the underline on hover and on the keyboard's
+ * focus is what says the line can be pressed, which is the channel the job
+ * list's own row takes for the same reason.
+ *
+ * **Every hook here is selected without a tag.** The five classes arrive through
+ * exported constants (`COORDINATOR_DESCRIPTION_*_CLASS`), and the scan that pairs
+ * a selector with the tag the renderer draws reads a constant as a parameter --
+ * so `button.coordinator-description-head` would be refused as a tag nothing
+ * draws. The names are this screen's own and no rule competes for them, so the
+ * tag would buy no specificity: the ground `coordinator-count-alert` and K4's
+ * own nine stand on. */
+.coordinator-description-head {
+  display: block;
+  width: 100%;
+  min-height: var(--row-height);
+  padding: var(--space-2xs) 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.coordinator-description-head:hover,
+.coordinator-description-head:focus-visible {
+  text-decoration: underline;
+}
+
+/* The block the description is drawn into: indented behind a hairline, the shape
+ * a nested panel takes everywhere in this console (section 3.8). Its being away
+ * until the disclosure is pressed is the `hidden` attribute and the reset's own
+ * rule for it, never a `display` written here -- a second answer to the same
+ * question is a second answer the accessibility tree loses to. */
+.coordinator-description {
+  margin: 0 0 var(--space-2xs);
+  padding-left: var(--space-sm);
+  border-left: var(--rule-width) solid var(--line-subtle);
+}
+
+/* One line of the description, drawn as the host wrote it: no markdown is
+ * rendered out of it, no line is joined to its neighbour and nothing in it
+ * becomes an element of its own (K3). */
+.coordinator-description-line {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+/* `Show all`: the one control a clipped description offers, in the console's own
+ * words and carrying nothing of the document. */
+.coordinator-description-all {
+  display: block;
+  margin-top: var(--space-2xs);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.coordinator-description-all:hover,
+.coordinator-description-all:focus-visible {
+  text-decoration: underline;
+}
+
+/* A pull request that carries no description at all: the console's own sentence
+ * rather than a block of nothing. */
+.coordinator-description-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
 ul.coordinator-runs {
   display: flex;
   flex-direction: column;
