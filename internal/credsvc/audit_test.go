@@ -699,3 +699,152 @@ func TestAuditOnRefusal(t *testing.T) {
 		}
 	})
 }
+
+// TestVerifyLineCarriesACredentialAndNoTier: the verify purpose is the third
+// case of the shape the mint and the sign purposes already are (audit.go's
+// credentialWithoutTier). The key a verify line names is the key the answer was
+// COMPUTED with — the same review-signing key a sign line names — and it is not
+// a model credential of the cascade, so it has no tier: the line carries the
+// name and no tier, and a tier on the verify line is still refused, because a
+// reader would take it for a tier this service assigned.
+//
+// The rule it moves is read beside a case that still holds: a JOB purpose
+// naming a credential without one is refused exactly as it was.
+func TestVerifyLineCarriesACredentialAndNoTier(t *testing.T) {
+	name := config.ReviewSigningKeySecret(testReviewAccount)
+
+	a, buf := newAudit(t)
+	if err := a.Write(context.Background(), AuditEvent{Credential: name, Purpose: PurposeReviewVerify, Status: StatusOK}); err != nil {
+		t.Fatalf("Write(verify): %v", err)
+	}
+	line := auditLines(t, buf)[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]string{
+		"credential": name,
+		"purpose":    PurposeReviewVerify,
+		"tier":       "",
+		"status":     StatusOK,
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the verify line: %s = %v, want %q", field, got, want)
+		}
+	}
+
+	t.Run("a tier on the verify line is refused", func(t *testing.T) {
+		a, buf := newAudit(t)
+		err := a.Write(context.Background(), AuditEvent{Credential: name, Tier: TierA, Purpose: PurposeReviewVerify, Status: StatusOK})
+		if err == nil {
+			t.Fatal("Write accepted a tier on the verify line")
+		}
+		if lines := auditLines(t, buf); lines[0]["field"] != "tier" {
+			t.Errorf("the refusal names field %v, want the tier", lines[0]["field"])
+		}
+	})
+
+	t.Run("a job purpose still refuses a credential with no tier", func(t *testing.T) {
+		a, buf := newAudit(t)
+		err := a.Write(context.Background(), AuditEvent{Job: "fugaro-aurora-app", Caller: testJobSA, Credential: name, Purpose: PurposeForward, Status: StatusOK})
+		if err == nil {
+			t.Fatal("Write accepted a forwarded call's credential with no tier")
+		}
+		if lines := auditLines(t, buf); lines[0]["field"] != "credential" {
+			t.Errorf("the refusal names field %v, want the credential", lines[0]["field"])
+		}
+	})
+}
+
+// TestVerifyLineCarriesTheCallerWithoutAJob: the field set's "job and caller
+// together" rule carries the caller alone for the verify purpose, and for that
+// purpose only. A verifier is not a run in a job of this installation and
+// reports no Identity.Job at all — the field would be a job this service never
+// placed the caller in — so the line's who is its verified email and nothing
+// else.
+//
+// The case beside it is what keeps the relaxation from spreading: a JOB
+// purpose's line that dropped its job is still refused, which is the rule as it
+// was written.
+func TestVerifyLineCarriesTheCallerWithoutAJob(t *testing.T) {
+	a, buf := newAudit(t)
+	if err := a.Write(context.Background(), AuditEvent{Caller: testVerifierSA, Purpose: PurposeReviewVerify, Status: StatusOK, Credential: config.ReviewSigningKeySecret(testReviewAccount)}); err != nil {
+		t.Fatalf("Write(verify): %v", err)
+	}
+	line := auditLines(t, buf)[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]string{
+		"run":        "",
+		"repository": "",
+		"job":        "",
+		"caller":     testVerifierSA,
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the verify line: %s = %v, want %q", field, got, want)
+		}
+	}
+
+	t.Run("a job purpose still needs its job beside its caller", func(t *testing.T) {
+		a, buf := newAudit(t)
+		err := a.Write(context.Background(), AuditEvent{Caller: testJobSA, Purpose: PurposeForward, Status: StatusOK})
+		if err == nil {
+			t.Fatal("Write accepted a forwarded call's caller with no job")
+		}
+		if lines := auditLines(t, buf); lines[0]["field"] != "job" {
+			t.Errorf("the refusal names field %v, want the job", lines[0]["field"])
+		}
+	})
+}
+
+// TestVerifyAnswerIsAuditedWithoutARunOrAJob: the second relaxation, and the
+// one that makes a verifier's act recordable at all. A StatusOK line names the
+// whole act for every other purpose — the run and its repository, the job and
+// the account, the credential and its tier — and a verifier has neither a run
+// identity nor a job, so its OK line states the purpose, the credential and the
+// status. The run identity's own rule is untouched: a Run with no Repository is
+// refused here exactly as it was.
+func TestVerifyAnswerIsAuditedWithoutARunOrAJob(t *testing.T) {
+	a, buf := newAudit(t)
+	err := a.Write(context.Background(), AuditEvent{
+		Caller:     testVerifierSA,
+		Credential: config.ReviewSigningKeySecret(testReviewAccount),
+		Purpose:    PurposeReviewVerify,
+		Status:     StatusOK,
+	})
+	if err != nil {
+		t.Fatalf("Write(verify answer): %v", err)
+	}
+	checkAuditShape(t, auditLines(t, buf)[0])
+
+	t.Run("a job purpose's OK line still names its run and its job", func(t *testing.T) {
+		a, buf := newAudit(t)
+		err := a.Write(context.Background(), AuditEvent{
+			Job:        "fugaro-aurora-app",
+			Caller:     testJobSA,
+			Credential: auditName,
+			Tier:       TierA,
+			Purpose:    PurposeForward,
+			Status:     StatusOK,
+		})
+		if err == nil {
+			t.Fatal("Write accepted a forwarded call's answer with no run")
+		}
+		if lines := auditLines(t, buf); lines[0]["field"] != "run" {
+			t.Errorf("the refusal names field %v, want the run", lines[0]["field"])
+		}
+	})
+
+	t.Run("a run with no repository is still refused", func(t *testing.T) {
+		a, buf := newAudit(t)
+		err := a.Write(context.Background(), AuditEvent{
+			Caller:     testVerifierSA,
+			Run:        "20261102-113644-d8b5",
+			Credential: config.ReviewSigningKeySecret(testReviewAccount),
+			Purpose:    PurposeReviewVerify,
+			Status:     StatusOK,
+		})
+		if err == nil {
+			t.Fatal("Write accepted a run with no repository")
+		}
+		if lines := auditLines(t, buf); lines[0]["field"] != "run" {
+			t.Errorf("the refusal names field %v, want the run", lines[0]["field"])
+		}
+	})
+}
