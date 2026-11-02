@@ -224,6 +224,26 @@ type Config struct {
 	// are launched as it. It is the table the run-to-job binding is checked
 	// against (N1), so an empty one refuses every call.
 	JobAccounts []JobAccount
+	// ReviewAccounts are the installation's review jobs (C3.9a): the same rows
+	// AuthConfig.ReviewJobAccounts holds, and the reason they are here as well
+	// is that the pairing needs the account NAME — the name the published
+	// admissions speak — where the verifier needs the class. A caller the
+	// verifier answered as a review one whose email is not in this table is
+	// refused (pairReview): the two lists are configured together, so a
+	// disagreement is a deployment that cannot serve the class at all.
+	//
+	// It may be empty, and an empty one is the same statement an empty
+	// SharedJobAccounts makes: this installation has no review job, so no
+	// caller of that class exists.
+	ReviewAccounts []ReviewJobAccount
+	// Repos is the installation's repository table (RepositoryTableFor): the
+	// slug a run identity carries to the canonical repository name the
+	// published policy speaks. It is what pairs a review caller with a run,
+	// because a review job's account names no repository (review.go), and it
+	// is deliberately the same derivation the per-repository accounts are
+	// bound by rather than a second spelling of it. A slug it does not hold is
+	// refused, never guessed (D1066).
+	Repos map[string]string
 	// Client is the HTTP client the upstream call is made with. nil is a client
 	// with the service's own bounds. Either way it is put through
 	// upstreamClient, so the client that carries a credential never follows a
@@ -309,11 +329,16 @@ func (k RTDBKills) Stop(ctx context.Context, slug string) (bool, string, error) 
 
 // Server is the credentials service: one http.Handler.
 type Server struct {
-	cfg   Config
-	log   *slog.Logger
-	now   func() time.Time
-	jobs  map[string]JobAccount
-	audit *Auditor
+	cfg  Config
+	log  *slog.Logger
+	now  func() time.Time
+	jobs map[string]JobAccount
+	// review is Config.ReviewAccounts by folded email: the same lookup the
+	// verifier makes (NewAuthenticator folds the same way), held here because
+	// the pairing and the cascade's offering rule both need the account name
+	// rather than the class.
+	review map[string]ReviewJobAccount
+	audit  *Auditor
 }
 
 // NewServer validates cfg and returns the service.
@@ -357,6 +382,14 @@ func NewServer(cfg Config) (*Server, error) {
 	if len(cfg.JobAccounts) == 0 {
 		return nil, errors.New("credsvc: the service has no job accounts, so it can bind no run to a repository")
 	}
+	if len(cfg.ReviewAccounts) > 0 && len(cfg.Repos) == 0 {
+		// The review class's pairing is the account's admission to the
+		// repository the run identity names, and the table is the only thing
+		// that can name it: a service with review accounts and no table would
+		// answer every review call with a refusal, which is fail-closed but is
+		// not the service the deployment configured.
+		return nil, errors.New("credsvc: the service has review job accounts and no repository table, so it can pair no review call with a run")
+	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
@@ -375,7 +408,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), audit: audit}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), audit: audit}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -384,6 +417,28 @@ func NewServer(cfg Config) (*Server, error) {
 			return nil, errors.New("credsvc: the same job account is bound to two repositories")
 		}
 		s.jobs[ja.Email] = ja
+	}
+	for _, ra := range cfg.ReviewAccounts {
+		if ra.Email == "" || ra.Account == "" {
+			return nil, errors.New("credsvc: a review job account with no email or no Claude account binds nothing")
+		}
+		// Keyed by the folded email, exactly as the verifier keys its own
+		// review table: the account Verify answers with is the CONFIGURED
+		// spelling of the email it matched, so a deployment whose two lists
+		// spell the same address in different cases would have the verifier
+		// admit a caller this table could not look up — a miss on case alone,
+		// and a pairing refused for a reason no operator could see.
+		folded, ok := foldEmail(ra.Email)
+		if !ok {
+			return nil, errors.New("credsvc: a review job service account is not a printable ASCII email address")
+		}
+		if prev, dup := s.review[folded]; dup {
+			if prev.Account != ra.Account {
+				return nil, errors.New("credsvc: the same review job account is bound to two Claude accounts")
+			}
+			continue
+		}
+		s.review[folded] = ra
 	}
 	return s, nil
 }
@@ -473,21 +528,52 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// name for it, not a value read out of a bundle, which is why the mint
 	// itself (auditMint, refuseMint) takes both from the same rule.
 	purpose, credential := routeAct(r.URL.Path)
-	ja, bound := s.jobs[id.JobAccount]
-	if !bound || ja.Slug != id.Slug {
-		// Review finding N1: the two identities a call carries are verified
-		// separately and nothing in C1.10 pairs them, so the pairing is an
-		// admission question and it is asked here. A run identity is honoured
-		// only by the job whose repository it belongs to, which is what stops
-		// an admitted job account from presenting a run token of another
-		// repository. The refusal is recorded like the ones below it: the
-		// identity Verify returned is whole, so the line names the run, the
-		// repository the run belongs to, the job and the account — and the
-		// route's credential and no other, which for a model call is none (the
-		// bundle has not been read) and for a mint is the App key's name.
-		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
-			"the run identity is not a run of the calling job's repository")
-		return
+	// The pairing, which is where the two classes differ (spec §3.2), and the
+	// canonical repository every check below is made against.
+	//
+	// A per-repository job's account names a repository, so the pairing is one
+	// comparison: a run identity is honoured only by the job whose repository
+	// it belongs to, which is what stops an admitted job account from
+	// presenting a run token of another repository (review finding N1). A
+	// review job's account names none, so that comparison cannot be made and
+	// must not be replaced by "trust the run token": the repository is the run
+	// identity's own slug, resolved through the installation's table and
+	// admitted to by the calling account (pairReview). Either way the call
+	// below reads the repository from the pairing and not from the job
+	// account, because a review caller has no job account to read it from.
+	var (
+		ja        JobAccount
+		canonical string
+	)
+	switch id.JobClass {
+	case ClassReview:
+		repo, err := s.pairReview(ctx, id)
+		if err != nil {
+			s.refusePairing(ctx, w, id, purpose, credential, err)
+			return
+		}
+		canonical = repo
+		// What the mint is handed in place of a job account: the same account,
+		// the run identity's slug and the repository the pairing resolved. The
+		// mint's own shape is unchanged — C3.9b is the task that chooses its
+		// permission set from the class — and what it is scoped to is already
+		// the pairing's answer here.
+		ja = JobAccount{Email: id.JobAccount, Slug: id.Slug, Repo: canonical}
+	default:
+		bound := false
+		ja, bound = s.jobs[id.JobAccount]
+		if !bound || ja.Slug != id.Slug {
+			// The refusal is recorded like the ones below it: the identity
+			// Verify returned is whole, so the line names the run, the
+			// repository the run belongs to, the job and the account — and the
+			// route's credential and no other, which for a model call is none
+			// (the bundle has not been read) and for a mint is the App key's
+			// name.
+			s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
+				"the run identity is not a run of the calling job's repository")
+			return
+		}
+		canonical = ja.Repo
 	}
 	on, which, err := s.cfg.Kills.Stop(ctx, id.Slug)
 	if err != nil {
@@ -515,6 +601,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// bundle itself, because the App key is in it, and it reads no policy
 		// and consults no cascade: an installation token is not a model
 		// credential and no tier or admission has anything to say about it.
+		//
+		// The review class is the exception, and it is refused here rather than
+		// deeper in: a mint carries github.RunTokenPermissions over the run
+		// identity's repository — the WRITE set of the very repository the
+		// review is about — while a review job mounts no repository and holds
+		// no installation token of its own (O1), so this endpoint is where that
+		// would be undone. The guard only narrows what is admitted: C3.9b
+		// replaces it with CSR1's read-only set, and C3.9b must land before
+		// anything fills the review set.
+		if id.JobClass == ClassReview {
+			s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
+				"a review job's account may not mint an installation token")
+			return
+		}
 		s.mint(ctx, w, r, id, ja)
 		return
 	}
@@ -578,7 +678,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
-	cands, notAdmitted, err := s.candidates(ctx, id.Slug, ja.Repo, b)
+	cands, notAdmitted, err := s.candidates(ctx, id, canonical, b)
 	if err != nil {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return

@@ -24,10 +24,12 @@ package credsvc_test
 // name, and the fixture holds no token.
 
 import (
+	"cmp"
 	"slices"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -157,6 +159,153 @@ func TestSharedJobAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Fatalf("the fixture's own axis is not the one it means to test: got %v, want %v", got, want)
+	}
+}
+
+// sharedJobsNoProfileLocalConfig is an installation that publishes no profile:
+// `fugaro update` deploys no project job for it and the policy node it
+// publishes carries no profile. Both sides of the review set are empty for it,
+// which is what makes the class inert until someone asks for a review job.
+func sharedJobsNoProfileLocalConfig() string {
+	return `version: 1
+name: aurora
+gcp_project: ` + sharedJobsGCPProject + `
+region: us-east5
+runs_bucket: ` + sharedJobsBucket + `
+registry: us-east5-docker.pkg.dev/` + sharedJobsGCPProject + `/fugaro
+build: { service_account: fugaro-build@` + sharedJobsGCPProject + `.iam.gserviceaccount.com }
+user: test@example.com
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456789" }
+registry_host: us-east5-docker.pkg.dev/` + sharedJobsGCPProject + `
+base_images: {base: us-east5-docker.pkg.dev/` + sharedJobsGCPProject + `/fugaro-base/fugaro-base:dev-0123abc}
+`
+}
+
+// sharedJobsPolicyDocNoProfiles is the policy node of the same installation:
+// the profiles block left out, which is the shape Decode accepts of an
+// installation that has never published one.
+func sharedJobsPolicyDocNoProfiles() string {
+	return `{
+		"version": 4,
+		"budget": {"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": ["github/acme/webapp"],
+		"accounts": {
+			"acme-personal": {"allow_repos": ["github/acme/webapp"]},
+			"acme-shared": {"allow_repos": ["github/acme/webapp"]}
+		},
+		"credentials": {"fallback": "auto"}
+	}`
+}
+
+// deployedReviewJobAccounts is the set of review-variant service account emails
+// the fixture's installation implies, read off the coding jobs
+// `internal/infra/projectjobs.go` builds: one review job per (profile,
+// provider, account) it deploys a coding job for, derived through the one
+// spelling the service and the deployer share
+// (credsvc.ReviewServiceAccountID). CSR7 is the task that deploys the variant
+// itself, so the deployer's own triples are what this reads rather than a
+// second job set.
+func deployedReviewJobAccounts(t *testing.T, localConfig string) []string {
+	t.Helper()
+	lc, err := localcfg.Parse([]byte(localConfig))
+	if err != nil {
+		t.Fatalf("the test's own local config is not one the deployer parses: %v", err)
+	}
+	jobs, err := infra.ProjectJobs(lc, sharedJobsBucket, false)
+	if err != nil {
+		t.Fatalf("the deployer refused the test's own installation: %v", err)
+	}
+	out := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		account := j.Account
+		if account == "" {
+			account = config.DefaultClaudeAccount
+		}
+		out = append(out, serviceAccountEmailForTest(credsvc.ReviewServiceAccountID(j.Profile, j.Provider, account)))
+	}
+	slices.Sort(out)
+	return out
+}
+
+// reviewJobEmails is the service's own answer as plain emails, which is what
+// the deployer's side of this test speaks.
+func reviewJobEmails(accounts []credsvc.ReviewJobAccount) []string {
+	out := make([]string, 0, len(accounts))
+	for _, ra := range accounts {
+		out = append(out, ra.Email)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestReviewAccountsAreTheNamesProjectJobsDeploys is spec §2.2's claim, checked
+// the way the shared set's is: one installation built twice, from the local
+// config `fugaro update` deploys from and from the policy node `fugaro project
+// policy publish` publishes, and the two answers required to be the same set.
+// A service that spelled the review variant its own way would admit an account
+// nobody deployed — or, worse, refuse the one that exists.
+func TestReviewAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
+	deployed := deployedReviewJobAccounts(t, sharedJobsLocalConfig())
+	p, found, err := projectpolicy.Decode([]byte(sharedJobsPolicyDoc()))
+	if err != nil {
+		t.Fatalf("the test's own policy document is not one Decode accepts: %v", err)
+	}
+	if !found {
+		t.Fatal("the test's own policy document decoded as absent")
+	}
+	got := credsvc.ReviewJobAccountsFor(p, sharedJobsGCPProject)
+	if emails := reviewJobEmails(got); !slices.Equal(emails, deployed) {
+		t.Fatalf("ReviewJobAccountsFor = %v, want the review variants of the accounts the deployer created, %v", emails, deployed)
+	}
+	// The fixture is only a test of anything if the axis it covers is more than
+	// one account, and if the no-account job of a profile that lists no
+	// default account is spelled the way the published admissions spell the
+	// default account rather than as the empty string the axis produces.
+	want := []credsvc.ReviewJobAccount{
+		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", config.DefaultClaudeAccount)), Account: config.DefaultClaudeAccount},
+		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", "acme-personal")), Account: "acme-personal"},
+		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", "acme-shared")), Account: "acme-shared"},
+	}
+	slices.SortFunc(want, func(a, b credsvc.ReviewJobAccount) int { return cmp.Compare(a.Email, b.Email) })
+	if !slices.Equal(got, want) {
+		t.Fatalf("the fixture's own axis is not the one it means to test: got %v, want %v", got, want)
+	}
+
+	// An installation with no review job: no profile on either side, and so an
+	// empty set from both (§2.2's fail-closed shape). It is the deployment that
+	// has never asked for a review job, and the class is inert for it.
+	none, noneFound, err := projectpolicy.Decode([]byte(sharedJobsPolicyDocNoProfiles()))
+	if err != nil || !noneFound {
+		t.Fatalf("the test's own profile-less policy document is not one Decode accepts: %v", err)
+	}
+	if deployed := deployedReviewJobAccounts(t, sharedJobsNoProfileLocalConfig()); len(deployed) != 0 {
+		t.Errorf("the deployer built review jobs for an installation with no profile: %v", deployed)
+	}
+	if got := credsvc.ReviewJobAccountsFor(none, sharedJobsGCPProject); len(got) != 0 {
+		t.Errorf("ReviewJobAccountsFor = %v, want none: the policy publishes no profile", got)
+	}
+}
+
+// TestSharedAndReviewSetsAreDisjoint: an account in both sets is refused
+// everywhere (verifyJob), so the review job could never mint and the class
+// would be dead on every route. The two sets are disjoint by construction —
+// the variant's ID is derived over a different account segment — and this is
+// what holds that.
+func TestSharedAndReviewSetsAreDisjoint(t *testing.T) {
+	p, found, err := projectpolicy.Decode([]byte(sharedJobsPolicyDoc()))
+	if err != nil || !found {
+		t.Fatalf("the test's own policy document is not one Decode accepts: %v", err)
+	}
+	shared := credsvc.SharedJobAccountsFor(p, sharedJobsGCPProject)
+	review := reviewJobEmails(credsvc.ReviewJobAccountsFor(p, sharedJobsGCPProject))
+	if len(shared) == 0 || len(review) == 0 {
+		t.Fatalf("the fixture admits nobody to one of the two classes: shared %v, review %v", shared, review)
+	}
+	for _, email := range review {
+		if slices.Contains(shared, email) {
+			t.Errorf("the account %q is in both the shared and the review set, and a caller in both is refused everywhere", email)
+		}
 	}
 }
 

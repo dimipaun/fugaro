@@ -55,6 +55,7 @@ import {
   COORDINATOR_DESCRIPTION_LINE_CLASS,
   COORDINATOR_DESCRIPTION_SHOW_WORD,
   COORDINATOR_COLLISIONS_WORD,
+  COORDINATOR_DECLARED_WORD,
   COORDINATOR_DRAFT_WORD,
   COORDINATOR_IN_FLIGHT_COUNT_WORD,
   COORDINATOR_IN_FLIGHT_WORD,
@@ -97,6 +98,8 @@ import {
   COORDINATOR_TOTAL_IN_FLIGHT_WORD,
   COORDINATOR_TOTAL_PLANS_WORD,
   COORDINATOR_TOTAL_REPOS_WORD,
+  COORDINATOR_TRANSCRIPT_MISSING_WORD,
+  COORDINATOR_TRANSCRIPT_WORD,
   COORDINATOR_UNREAD_WORD,
   PULL_PROVIDERS,
   QUEUE_SOURCES,
@@ -124,8 +127,8 @@ import type {
 import { BUSY_SLOT_CLASS } from '../../src/renderer/section'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { PATH_PLACEHOLDER, TOKEN_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
-import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
-import type { CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
+import { decodeCoordinatorIntents, decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
+import type { CoordinatorIntentsView, CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
 
 // ---------------------------------------------------------------------------
@@ -566,6 +569,10 @@ function queueInputs(inputs: Partial<CoordinatorInputs>): CoordinatorInputs {
     caps: capsOf(aBudget({})),
     checkout: true,
     capsHidden: false,
+    // `null` is the pane's own read not having answered (K5), which is the
+    // state every case that is not about the pane is in: a document here would
+    // draw intent lines under assertions that are about the queue or a record.
+    intents: null,
     ...inputs,
   }
 }
@@ -1941,6 +1948,201 @@ describe('the fleet totals and the blind spots (K1)', () => {
     // It is a line under the queue and it is not a queue item.
     expect(all(blind, 'coordinator-queue-item')).toEqual([])
     expect(all(node, 'coordinator-queue-item')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The read-only transcript pane (K5).
+// ---------------------------------------------------------------------------
+
+/** anIntent is one stored declaration, in the shape `coordinator intents
+ * --all --json` prints it. */
+function anIntent(options: {
+  readonly id?: string
+  readonly declaredBy?: string
+  readonly at?: string
+  readonly branch?: string
+  readonly release?: string
+  readonly files?: readonly string[]
+  readonly services?: readonly string[]
+}): unknown {
+  return {
+    id: options.id ?? 'a'.repeat(32),
+    declared_by: options.declaredBy ?? 'person-1',
+    at: options.at ?? '2026-11-02T08:00:00Z',
+    branch: options.branch ?? 'feat/a-thing',
+    release: options.release ?? '0.119.0',
+    files: options.files ?? ['console/src/renderer/screens/coordinator.ts'],
+    services: options.services ?? [],
+  }
+}
+
+/** anIntentsDocument is the whole `--all` document: one entry per repository,
+ * in the order the CLI printed them. */
+function anIntentsDocument(
+  repos: readonly { readonly repo: string; readonly intents: readonly unknown[] }[],
+): unknown {
+  return {
+    repos: repos.map((repo) => ({ repo: repo.repo, provider: 'github', intents: repo.intents })),
+  }
+}
+
+/** intentsOf decodes a document that must decode, or the failure is the
+ * decoder's own sentence rather than an assertion three lines later. */
+function intentsOf(raw: unknown): CoordinatorIntentsView {
+  const result = decodeCoordinatorIntents(raw)
+  if (!result.ok) throw new Error(result.skew.because)
+  return result.value
+}
+
+/** drawsPane draws the screen with the intents document in hand, as the entry
+ * does when the pane's own read lands. */
+function drawsPane(inputs: Partial<CoordinatorInputs>): ScreenElement {
+  return renderCoordinator(factory, buildCoordinatorModel(queueInputs(inputs)), 'dark')
+}
+
+describe('the read-only transcript pane (K5)', () => {
+  const DECLARED = anIntentsDocument([
+    { repo: 'owner/repo-a', intents: [anIntent({ declaredBy: 'person-1', files: ['a/b.ts', 'c/d.ts'] })] },
+    { repo: 'owner/repo-b', intents: [anIntent({ declaredBy: 'person-2', services: ['api'], branch: '', release: '0.118.0' })] },
+  ])
+
+  it('draws the declared intents, one line per record, under the repository they were declared for', () => {
+    const node = drawsPane({ intents: intentsOf(DECLARED) })
+    const pane = one(node, 'coordinator-transcript')
+    const [first, second] = all(pane, 'coordinator-transcript-intent')
+    if (first === undefined || second === undefined) throw new Error('the pane drew fewer than two intent lines')
+    expect(all(pane, 'coordinator-transcript-repo').map((each) => each.textContent)).toEqual([
+      'owner/repo-a',
+      'owner/repo-b',
+    ])
+    expect(textOf(first, 'coordinator-transcript-declaration')).toBe('person-1')
+    expect(said(first)).toContain('2026-11-02T08:00:00Z')
+    expect(said(first)).toContain('feat/a-thing')
+    // A path is a path: the console draws none at all, and the pane is not an
+    // exception to that rule (sanitize.ts's `path` class replaces it with the
+    // placeholder wherever it is drawn).
+    expect(said(first)).toContain(PATH_PLACEHOLDER)
+    expect(textOf(second, 'coordinator-transcript-declaration')).toBe('person-2')
+    expect(said(second)).toContain('api')
+    expect(said(second)).toContain('0.118.0')
+  })
+
+  it('draws declared_by as a declaration and never as an identity', () => {
+    // The one field of this document that is not a fact (finding #11): the word
+    // that introduces it is the console's own, it is the same word the runs
+    // behind a record are drawn with, and nothing on the pane presents the
+    // value as anything the console verified.
+    const node = drawsPane({ intents: intentsOf(DECLARED) })
+    const line = all(node, 'coordinator-transcript-intent')[0]
+    if (line === undefined) throw new Error('the pane drew no intent')
+    const texts = walk(line)
+      .map((each) => each.textContent)
+      .filter((text): text is string => text !== null && text !== '')
+    expect(texts[0]).toBe(COORDINATOR_DECLARED_WORD)
+    expect(textOf(line, 'coordinator-transcript-declaration')).toBe('person-1')
+  })
+
+  it('answers its own three questions off the stored view, in the console’s own words', () => {
+    const node = drawsPane({ view: decodes(aStore([aRecord({ inFlight: true })])) })
+    const questions = all(node, 'coordinator-transcript-question')
+    expect(questions.map((each) => textOf(each, 'coordinator-transcript-question-word'))).toEqual([
+      'what is in flight?',
+      'what collides?',
+      'which repositories has the sweep not reconciled?',
+    ])
+    // The in-flight answer is the repository and the reading off the stored
+    // document, through the screen's own count cell -- never a figure the pane
+    // counted for itself and never a sentence it composed around one.
+    const answers = all(node, 'coordinator-transcript-answer')
+    expect(answers.map((each) => textOf(each, 'coordinator-transcript-answer-repo'))).toEqual(['owner/repo-a'])
+    const answer = answers[0]
+    if (answer === undefined) throw new Error('the pane answered the in-flight question with nothing')
+    expect(figureOf(answer, 'coordinator-count')).toEqual([COORDINATOR_IN_FLIGHT_COUNT_WORD, '1'])
+  })
+
+  it('answers with the console’s own sentence where a question has no answer at all', () => {
+    const node = drawsPane({ view: decodes(aStore([])) })
+    const questions = all(node, 'coordinator-transcript-question')
+    expect(questions).toHaveLength(3)
+    for (const question of questions) {
+      expect(all(question, 'coordinator-transcript-answer')).toEqual([])
+    }
+    expect(all(node, 'coordinator-transcript-none')).toHaveLength(3)
+  })
+
+  it('holds no input, no textarea and nothing contenteditable, and no control that sends text', () => {
+    // The security claim of the read-only state (D827): the pane is a drawing
+    // and not a door. The tag scan is the whole of it -- an `input` the screen
+    // built would be a field a person could type a command line into, and no
+    // assertion about its value would make it less of one.
+    const node = drawsPane({ intents: intentsOf(DECLARED) })
+    const tags = walk(one(node, 'coordinator-transcript')).map((each) => each.tag.toLowerCase())
+    expect(tags).not.toContain('input')
+    expect(tags).not.toContain('textarea')
+    expect(tags).not.toContain('select')
+    for (const element of walk(one(node, 'coordinator-transcript'))) {
+      expect(element.getAttribute('contenteditable'), `${element.tag} is editable`).toBeNull()
+      expect(element.getAttribute('role')).toBeNull()
+    }
+  })
+
+  it('draws every intent line through putText, whatever the store holds', () => {
+    // The store carries text anybody who can reach the report path wrote, so
+    // each cell is held to `putText`'s own refusal the way the screen's other
+    // wire cells are: a value the class refuses is drawn as the console's
+    // placeholder rather than as itself, and an instruction found in one is
+    // never an element, an attribute or a link.
+    const hostile = '<script>alert(1)</script>'
+    const node = drawsPane({
+      intents: intentsOf(
+        anIntentsDocument([
+          {
+            repo: 'owner/repo-a',
+            intents: [anIntent({ declaredBy: hostile, branch: hostile, files: [hostile], services: [hostile] })],
+          },
+        ]),
+      ),
+    })
+    expect(walk(one(node, 'coordinator-transcript')).map((each) => each.tag.toLowerCase())).not.toContain('script')
+    expect(one(node, 'coordinator-transcript-declaration').getAttribute('href')).toBeNull()
+  })
+
+  it('builds no link and no destination out of anything the store wrote', () => {
+    const node = drawsPane({ intents: intentsOf(DECLARED) })
+    const pane = one(node, 'coordinator-transcript')
+    for (const element of walk(pane)) {
+      expect(element.getAttribute('href'), `${element.tag} carries a destination`).toBeNull()
+      expect(element.tag.toLowerCase()).not.toBe('a')
+    }
+  })
+
+  it('says what is missing under it, and that the decision is the terminal’s', () => {
+    const node = drawsPane({ intents: intentsOf(DECLARED) })
+    const pane = one(node, 'coordinator-transcript')
+    expect(textOf(pane, 'coordinator-transcript-missing')).toBe(COORDINATOR_TRANSCRIPT_MISSING_WORD)
+    // The sentence names the decision that has not been taken, and it is drawn
+    // under the pane rather than over it: what the pane holds is what the store
+    // holds, and the sentence is about the thing that is not built.
+    expect(said(pane).indexOf(COORDINATOR_TRANSCRIPT_MISSING_WORD)).toBeGreaterThan(
+      said(pane).indexOf(COORDINATOR_TRANSCRIPT_WORD),
+    )
+  })
+
+  it('is the screen’s last region, under the panels the sketch draws it under', () => {
+    const node = drawsPane({ intents: intentsOf(DECLARED) })
+    const regions = (node as FakeScreen).childNodes().map((each) => (each as FakeScreen).classes[0])
+    expect(regions[regions.length - 1]).toBe('coordinator-transcript')
+  })
+
+  it('draws no intent line at all while the read has not answered', () => {
+    // `null` is the read still out: an installation with nothing declared and
+    // one nobody has read yet are two states, and a pane that drew the second
+    // as the first would claim a quiet fleet it never looked at.
+    const node = drawsPane({ intents: null })
+    const pane = one(node, 'coordinator-transcript')
+    expect(all(pane, 'coordinator-transcript-intent')).toEqual([])
+    expect(all(pane, 'coordinator-transcript-declaration')).toEqual([])
   })
 })
 
