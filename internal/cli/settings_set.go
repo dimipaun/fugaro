@@ -644,6 +644,12 @@ func settingsModeRank(mode string) int {
 // the effective caps the same way, for the same reason.
 func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) string {
 	effective := settingsEffectiveCeiling(ctx, row)
+	if effective == "" {
+		// No layer resolves a value, so what a run gets is the key's own
+		// built-in default: a number for the agent block's spend cap, and
+		// nothing to compare against for every other ceiling key.
+		effective = settingsCeilingBuiltIn(row.Key)
+	}
 	switch {
 	case raw == "":
 		// The file holds no ceiling of its own: the layer below is the whole
@@ -658,6 +664,30 @@ func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) stri
 	default:
 		return raw
 	}
+}
+
+// settingsCeilingBuiltIn is what a run gets for an agent cap no layer resolves a
+// value for. `agent.max_budget_usd`'s default is a number and not a state: a
+// repository that writes no budget of its own starts under
+// config.DefaultMaxBudgetUSD, which applyDefaults applies and the registry's row
+// for the key reads. A base of "" read a write over that default as a first
+// write and skipped the typed name a raise asks for, so an agent session could
+// name its own spend cap far above the one it started under, from a file it may
+// edit anyway (F2).
+//
+// Every other ceiling key answers "" there, and that is not the same blind spot.
+// `agent.max_run_tokens`'s unset means the deployed ceiling, which this binary
+// holds nowhere as a value, so there is no number to compare against; a
+// `budget.*` or `governance.*` key no layer sets has no cap to raise, and the
+// two writes that take a cap away — 0 and `unset` — are typed on their own. The
+// project layer spells the same agent cap one block deeper (SD14), which is the
+// `defaults.` prefix and the same number.
+func settingsCeilingBuiltIn(key string) string {
+	key = strings.TrimPrefix(key, "layer.")
+	if strings.TrimPrefix(key, "defaults.") == "agent.max_budget_usd" {
+		return strconv.Itoa(config.DefaultMaxBudgetUSD)
+	}
+	return ""
 }
 
 // settingsEffectiveCeiling is the value a run gets for row from the read's own

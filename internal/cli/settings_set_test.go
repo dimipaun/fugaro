@@ -1389,6 +1389,85 @@ func TestSettingsSetAgentBudgetLowerIsNotTyped(t *testing.T) {
 	}
 }
 
+// TestSettingsSetAgentBudgetRaiseFromTheBuiltInDefaultIsTyped: a repository that
+// writes no budget of its own does not start without one — the agent block's
+// built-in default is config.DefaultMaxBudgetUSD, and it is a ceiling of the
+// same kind as a number written in a file. Raising what no layer has written
+// yet is therefore the widening D846 types, and the read answering "" for a key
+// whose winning layer is the default is what used to let it through as a first
+// write: an agent could name its own spend cap 40 times the one it started
+// under, from a file it may edit anyway. The layer's own spelling of the same
+// cap is filed under the same default.
+func TestSettingsSetAgentBudgetRaiseFromTheBuiltInDefaultIsTyped(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "1000", "--layer", "repo")
+	if err == nil {
+		t.Fatal("a budget raised from the built-in default was written with no terminal and no --yes")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	// The layer file's own defaults are the same cap, and a layer file that
+	// carries none is under the same built-in one.
+	settingsWriteLayerFile(t, "")
+	noTerminal(t)
+	_, _, err = execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "1000", "--layer", "project")
+	if err == nil {
+		t.Fatal("a layer default raised from the built-in default was written with no terminal and no --yes")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+
+	// Lowering below the built-in default takes spend away, so it stays the
+	// ordinary write: a terminal answering y is enough, where the typed form
+	// refuses a y that is not the project's name. The base is the default and
+	// not "", or every first write would read as a raise.
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "y\n", "settings", "set", "agent.max_budget_usd", "10", "--layer", "repo"); err != nil {
+		t.Fatalf("a budget lowered below the built-in default is the ordinary write: %v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "max_budget_usd: 10") {
+		t.Errorf("fugaro.yaml does not carry the lowered budget:\n%s", got)
+	}
+}
+
+// TestSettingsSetAgentBudgetRaiseFromTheDefaultRefusedInAnAgentSession: the
+// built-in default is a ceiling too, so the raise the test above refuses for a
+// session with no terminal is refused in a coding agent's session outright —
+// --yes included, which is where the widening would otherwise land without
+// anyone having read it.
+func TestSettingsSetAgentBudgetRaiseFromTheDefaultRefusedInAnAgentSession(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "1000", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("a budget raised from the built-in default was written in a coding agent's session")
+	}
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the variable to unset: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro settings set") {
+		t.Errorf("the refusal does not print the command to run at a terminal: %v", err)
+	}
+	if !strings.Contains(out, path) {
+		t.Errorf("the refusal does not name the file it refused to write:\n%s", out)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the file changed in a coding agent's session")
+	}
+}
+
 // TestSettingsSetWritesMode0600AndLeavesNoTemporaryBehind: the new file is the
 // old file's permissions and the rename is atomic, so no half-written document
 // and no temporary is ever visible beside it (spec §4.2 step 5).
