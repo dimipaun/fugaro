@@ -2850,6 +2850,34 @@ func (r *run) levelFocus(level policy.Level) string {
 	return resolvedLevel(r.levels, level).Focus
 }
 
+// reviewEffort is a review stage's reasoning effort as the level answers it and
+// as it reaches the stage: the level's own effort and EffortVars' variables for
+// the stage's route, the two answers a reader of it needs. The effort is "" and
+// the variables are nil for a stage that is not a review one, for a level with
+// no effort of its own, and for a provider route, whose calls run with thinking
+// off (G5, D725) -- an empty effort is then the same statement the stage's own
+// environment makes.
+//
+// It exists so the one rule is spelled once: reviewFacts records the effort that
+// reached the stage and applyStageEffort merges the variables into the stage's
+// pins, and both have to ask the same question of the level, the pins and the
+// route.
+func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
+	s, ok := reviewStageOf(stage)
+	if !ok {
+		return "", nil, nil
+	}
+	effort := resolvedLevel(r.levels, s.level).Effort
+	if effort == "" {
+		return "", nil, nil
+	}
+	vars, err := agent.EffortVars(effort, r.stageOnProviderRoute(r.stageModel(stage), r.backgroundModel()))
+	if err != nil || len(vars) == 0 {
+		return "", nil, err
+	}
+	return effort, vars, nil
+}
+
 // reviewFacts is what a review round's summary records beside its verdict: the
 // model the stage was pinned to and the reasoning effort it ran at
 // (runstore.ReviewSummary.Model, .Effort). The two are read off the stage's own
@@ -2863,19 +2891,11 @@ func (r *run) levelFocus(level policy.Level) string {
 // environment makes. Nothing is answered for a stage that is not a review one.
 func (r *run) reviewFacts(stage string) (model, effort string) {
 	model = r.stageModel(stage)
-	s, ok := reviewStageOf(stage)
-	if !ok {
+	effort, _, err := r.reviewEffort(stage)
+	if err != nil {
 		return model, ""
 	}
-	want := resolvedLevel(r.levels, s.level).Effort
-	if want == "" {
-		return model, ""
-	}
-	vars, err := agent.EffortVars(want, r.stageOnProviderRoute(model, r.backgroundModel()))
-	if err != nil || len(vars) == 0 {
-		return model, ""
-	}
-	return model, want
+	return model, effort
 }
 
 // applyStageEffort merges the review level's own reasoning effort into the
@@ -2887,15 +2907,7 @@ func (r *run) reviewFacts(stage string) (model, effort string) {
 // review, for a level with no effort, or for a provider route, whose calls run
 // with thinking off (G5, D725).
 func (r *run) applyStageEffort(stage string, pins map[string]string) (map[string]string, error) {
-	s, ok := reviewStageOf(stage)
-	if !ok {
-		return pins, nil
-	}
-	effort := resolvedLevel(r.levels, s.level).Effort
-	if effort == "" {
-		return pins, nil
-	}
-	vars, err := agent.EffortVars(effort, r.stageOnProviderRoute(r.stageModel(stage), r.backgroundModel()))
+	_, vars, err := r.reviewEffort(stage)
 	if err != nil {
 		return pins, err
 	}
