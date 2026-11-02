@@ -183,3 +183,47 @@ func modelsWriteLocalConfig(t *testing.T, path string) *localcfg.Config {
 	}
 	return lc
 }
+
+// TestModelsCommandsPrintAHostileIDEscaped: a model ID is text from a command
+// line or a branch, and the terminal must not obey it. Every models write
+// prints the ID it was given — in a refusal, in the sentence a no-op ends with,
+// in a diff — and none of those prints it raw: the control byte and the newline
+// come out as "?" (safetext.OneLine), so a session cannot be steered by a model
+// name. A backtick is not a terminal control and is printed as itself; it is
+// CodeSpan, which quotes IDs into markdown reports, that escapes it.
+func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
+	home, _ := modelsWriteHome(t)
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "", ""))
+	hostile := "vendor/model-\x1b[31mred\nline`whoami`"
+
+	for _, c := range []struct {
+		what string
+		args []string
+		// refused is whether the command refuses the ID outright (add and use
+		// read it as a model ID a launch may pin; rm only looks for it in the
+		// file's own lists and finds nothing).
+		refused bool
+	}{
+		{"add", []string{"models", "add", hostile, "--price-in", "1", "--price-out", "2", "--yes"}, true},
+		{"use", []string{"models", "use", "owner/repo-a", "coder", hostile, "--yes"}, true},
+		{"rm", []string{"models", "rm", hostile, "--yes"}, false},
+	} {
+		out, errOut, err := execute(t, c.args...)
+		if c.refused == (err == nil) {
+			t.Fatalf("%s: err = %v\n%s", c.what, err, out)
+		}
+		for _, printed := range []string{out, errOut} {
+			if strings.ContainsRune(printed, 0x1b) {
+				t.Errorf("%s printed the escape byte raw:\n%s", c.what, printed)
+			}
+			if strings.Contains(printed, "\nline") {
+				t.Errorf("%s let the ID open a line of its own:\n%s", c.what, printed)
+			}
+		}
+		// The escaping happened rather than the text being dropped: the no-op
+		// sentence still names the model the owner asked about.
+		if c.what == "rm" && (!strings.Contains(out, "vendor/model-") || !strings.Contains(out, "?line")) {
+			t.Errorf("rm dropped the model ID instead of escaping it:\n%s", out)
+		}
+	}
+}
