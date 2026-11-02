@@ -587,6 +587,7 @@ func NewCoordinatorCmd() *cobra.Command {
 	cmd.AddCommand(newCoordinatorReportCmd())
 	cmd.AddCommand(newCoordinatorSweepCmd())
 	cmd.AddCommand(newCoordinatorShowCmd())
+	cmd.AddCommand(newCoordinatorIntentsCmd())
 	return cmd
 }
 
