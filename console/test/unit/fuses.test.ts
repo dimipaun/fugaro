@@ -882,8 +882,17 @@ describe('the packaging configuration the fuses belong to', () => {
     // and the script runs its local binary. `npx` would resolve a tree outside
     // the lockfile, with install scripts, in the shell the signing secrets are
     // exported into.
+    //
+    // `symbols:inject` sits between the build and the packer, and that is the
+    // order the whole symbolication rests on: the script rewrites `dist/main`
+    // with a debug id, so the packer has to copy the files the build just wrote
+    // *after* the stamp and never a rebuild of them. `package:targets` is the
+    // same packer without the build, and it is what the release job packs with
+    // (docs/pending-workflows/console-release-symbols.yml).
     const script = manifest.scripts.package ?? ''
-    expect(script).toBe('npm run build && electron-builder --mac --universal --publish never')
+    expect(script).toBe(
+      'npm run build && npm run symbols:inject && electron-builder --mac --universal --publish never',
+    )
     expect(script).not.toMatch(/\bnpx\b/)
     expect(script).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
     expect(script).not.toMatch(/electron-builder@/)

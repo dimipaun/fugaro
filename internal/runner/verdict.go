@@ -12,6 +12,14 @@ import (
 // read only for a pick run (reviewmode.go): the pull request number to
 // keep, among the ones the prompt listed.
 //
+// It is NOT the independent review job's schema: that job's result is the
+// artifact (reviewartifact.go, review.schema.json), whose own three-word
+// verdict this reader refuses and whose reader would refuse this pair. A
+// review stage's request carries one of the two and never both
+// (reviewStageSchema, D890/F23), and this one is every review stage the
+// coding run runs -- its own in-loop rounds and `fugaro run --pr N --recipe
+// review-only` alike.
+//
 // A finding's score is three anchored 1–5 axes and a class (D1, D3). All four
 // are optional, so a verdict written before them still validates and still
 // parses, and severity stays the free-form label it is (D2).

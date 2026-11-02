@@ -3948,11 +3948,13 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--all-repos` | bool | `false` | no | read every repository this machine remembers |
 | `--changed` | bool | `false` | no | show only the rows a layer decides |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--grep` | string | "" | no | show only the rows whose key or a rendered column matches this regexp |
 | `-h`, `--help` | bool | `false` | no | help for settings |
 | `--json` | bool | `false` | no | print the versioned document |
 | `--layer` | stringSlice | `[]` | no | read only these layers (default, project, profile, repo, flag, local, shared, policy, caps, env) |
 | `--offline` | bool | `false` | no | read the offline layers only |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
 | `--why` | bool | `false` | no | show the winning level for each key |
 
@@ -3978,8 +3980,10 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for get |
 | `--json` | bool | `false` | no | print the versioned document |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
 
 Subcommands:
@@ -4019,8 +4023,10 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
@@ -4051,8 +4057,10 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
 
