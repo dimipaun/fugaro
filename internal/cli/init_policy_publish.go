@@ -91,6 +91,39 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 			add("review_floor", floor, p.ReviewFloor, false)
 		}
 	}
+	// The members a publish DERIVES from the local config are compared too, by
+	// their own derivation: the accounts block, which is the operator's
+	// claude_accounts.<name>.allow_data_to qualified with the provider of the
+	// profile that names the account (D3), and each profile's list of the
+	// accounts it serves. Without them a config edit that only declares an
+	// account is a config the node never learns: the account keys are looked up
+	// per named account here and the naming profile beside them, so a profile
+	// that gains a name moves this member and nothing else.
+	//
+	// The comparison is the derivation and never the profiles block as a whole,
+	// because the rest of a profile is the node's own — `fugaro project repos
+	// add` writes its allow_repos — and a publish that fired on those would
+	// rewrite the node on every run of the project without ever closing the gap
+	// it fired on.
+	profiles := policyProfiles(lc)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	if err != nil {
+		// The config names an account that cannot be published at all (one no
+		// field defines, an empty allow_data_to, a pattern where an exact
+		// repository is required). There is no pair of documents to compare
+		// then, and the entry stands for the member: it sends the run to the
+		// publisher, whose own refusal names the file and the entry to fix.
+		out = append(out, policyDrift{Member: "accounts"})
+		return out
+	}
+	add("accounts", accounts, p.Accounts, false)
+	for _, name := range slices.Sorted(maps.Keys(profiles)) {
+		var served []string
+		if np, ok := p.Profiles[name]; ok {
+			served = np.ClaudeAccounts
+		}
+		add("profiles."+name+".claude_accounts", profiles[name].ClaudeAccounts, served, false)
+	}
 	return out
 }
 

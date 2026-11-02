@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -148,9 +149,9 @@ func TestAnEntryOfAnotherBucketIsNotAnswered(t *testing.T) {
 // file below is a perfectly good entry -- one object, under every cap, with
 // trailing space after it, which json.Unmarshal ignores -- in a file larger
 // than any entry can be. What refuses it is the file's size alone, so the
-// refusal costs no read of a file that could be arbitrarily large; the
-// object inside a file that is read is measured again
-// (TestAnEntryPastTheReadCapIsNotServed).
+// refusal costs no read of a file that could be arbitrarily large
+// (TestAnOversizeEntryIsRefusedBeforeItIsRead); the object inside a file that
+// is read is measured again (TestAnEntryPastTheReadCapIsNotServed).
 func TestAnOversizedFileIsRefusedWithoutBeingRead(t *testing.T) {
 	c, _ := testCache(t, t.TempDir(), "aurora", "fugaro-runs")
 	name := "runs/app/20261018-090000-0000/result.json"
@@ -176,6 +177,77 @@ func TestAnOversizedFileIsRefusedWithoutBeingRead(t *testing.T) {
 	}
 	if got, ok := c.Get(name, 3); !ok || !bytes.Contains(got, []byte("owner/repo-a")) {
 		t.Errorf("the unpadded entry answered %q, %v", got, ok)
+	}
+}
+
+// TestAnOversizeEntryIsRefusedBeforeItIsRead: the size that refuses an entry
+// past the cap is the one the filesystem reports, taken before the file is,
+// and what that refusal must not cost is the read. The read of a file that can
+// be arbitrarily large is what the cap keeps out of the operator's memory, and
+// an entry read first and refused afterwards costs that read whatever Get then
+// answers.
+//
+// That a read happened is not visible in the answer -- a miss is what both the
+// size refusal and a failed read return -- so the read is made observable here
+// by what it costs, which is the entry whole. The file below is maxEntry times
+// thirty-two, a hole stretched past what any entry can be, which costs the
+// disk nothing and which one read into memory pays for whole. The control that
+// comes first is what makes that cost a measurement: it reads a copy of the
+// entry the way Get reads one, and a machine or a Go where the read of an
+// entry allocates nothing fails there rather than passing here in silence.
+func TestAnOversizeEntryIsRefusedBeforeItIsRead(t *testing.T) {
+	c, _ := testCache(t, t.TempDir(), "aurora", "fugaro-runs")
+	name := "runs/app/20261018-090000-0000/result.json"
+	c.Put(name, 3, []byte(`{"version":1,"repo":"owner/repo-a"}`))
+	whole, err := os.ReadFile(c.path(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oversize := int64(maxEntry) * 32
+	if err := os.Truncate(c.path(name), oversize); err != nil {
+		t.Fatal(err)
+	}
+	// The copy the control reads: the entry's own bytes, stretched by the same
+	// hole, at a path no cache ever looks at.
+	copied := filepath.Join(t.TempDir(), "entry.json")
+	if err := os.WriteFile(copied, whole, filePerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(copied, oversize); err != nil {
+		t.Fatal(err)
+	}
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	read, err := os.ReadFile(copied)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(read)) != oversize {
+		t.Fatalf("the control read %d bytes of the %d-byte entry", len(read), oversize)
+	}
+	if cost := int64(after.TotalAlloc - before.TotalAlloc); cost < oversize/2 {
+		t.Fatalf("reading the %d-byte entry allocated %d bytes: a read of an entry has to be visible in what the process allocates, and a read this test cannot see is an order it cannot pin", oversize, cost)
+	}
+
+	runtime.ReadMemStats(&before)
+	got, ok := c.Get(name, 3)
+	runtime.ReadMemStats(&after)
+	if ok {
+		t.Errorf("a file of %d bytes answered %q: an entry past what any entry can be is refused on its size", oversize, got)
+	}
+	if cost := int64(after.TotalAlloc - before.TotalAlloc); cost > maxEntry {
+		t.Errorf("refusing the %d-byte entry allocated %d bytes, over the %d one entry is allowed to be: the size is refused before the file is read, and the read of it costs the file whole", oversize, cost, maxEntry)
+	}
+
+	// The bytes inside are the entry they always were: what refused the file
+	// above is its size and nothing about what it holds.
+	if err := os.Truncate(c.path(name), int64(len(whole))); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := c.Get(name, 3); !ok || !bytes.Contains(got, []byte("owner/repo-a")) {
+		t.Errorf("the entry without the hole answered %q, %v", got, ok)
 	}
 }
 
