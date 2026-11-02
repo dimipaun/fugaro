@@ -41,13 +41,20 @@
 //
 // `beforeSend` is the scrubber, and it is the whole of the payload rule: what
 // leaves this process is exactly the event `scrubCrashEvent` returns, which is
-// two things and no more. The **report** is the exception's type and its frames
-// -- function, file, line, column, `in_app`. The **metadata** beside it is what
-// `ScrubbedCrashEvent` declares: `event_id`, `timestamp`, `platform`, `level`
-// and `release`. A reader checking the payload rule should read that interface
-// rather than this paragraph, and it is the complete list: nothing else on the
-// SDK's event survives the scrubber, and no breadcrumb, user, request, context or
-// extra is among them.
+// three things and no more. The **report** is the exception's type and its frames
+// -- function, file, line, column, `in_app`. The **debug images** beside it are
+// what a symbolicator looks a frame up by: the build's id, an image type and an
+// app-relative file, with everything else an image carried dropped (the owner's
+// ruling of 2026-11-02). The **metadata** is what `ScrubbedCrashEvent` declares:
+// `event_id`, `timestamp`, `platform`, `level` and `release`. A reader checking
+// the payload rule should read that interface rather than this paragraph, and it
+// is the complete list: nothing else on the SDK's event survives the scrubber,
+// and no breadcrumb, user, request, context or extra is among them.
+//
+// `release` is the app's own version rather than the SDK's `name@version` default,
+// and the reason is symbolication rather than taste: the source maps are uploaded
+// under exactly this string, so a release the lookup does not name is a lookup
+// that finds nothing (see the option below).
 //
 // **The DSN is one public constant, not a secret and not a build input.** It is
 // `./crash-dsn`'s `CONSOLE_CRASH_DSN`, embedded by the owner's ruling of
@@ -68,7 +75,7 @@
 // never built. A frame's name and line still reach the processor; only the
 // archive-relative file is lost.
 
-import { utilityProcess } from 'electron'
+import { app, utilityProcess } from 'electron'
 
 import {
   close as closeClient,
@@ -148,8 +155,9 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * its name. `index.ts` asks the same question (`optedIn === true`) before it
  * decides to load this module at all.
  *
- * The options are `CRASH_CLIENT_OPTIONS` corrected against 8.2.0, plus the four
- * this file owns: the DSN, `NO_IPC`, the non-offline transport, and `beforeSend`.
+ * The options are `CRASH_CLIENT_OPTIONS` corrected against 8.2.0, plus the five
+ * this file owns: the DSN, the release, `NO_IPC`, the non-offline transport, and
+ * `beforeSend`.
  * `scrubCrashEvent` is handed the event the SDK built and returns the event that
  * goes on the wire, through `toSdkEvent` above -- the one assertion in this
  * wiring, and the one place a reader auditing the hand-off should look.
@@ -201,6 +209,18 @@ export function startCrashReporting(input: CrashReportingInput): CrashReportingH
   const options: ElectronMainOptions = {
     ...CRASH_CLIENT_OPTIONS,
     dsn: input.dsn ?? CONSOLE_CRASH_DSN,
+    // **The release is the app's own version, and it is what makes a stack
+    // readable** (the owner's ruling of 2026-11-02: crash symbolication has to
+    // work). A symbolicated frame needs the uploaded source maps filed under the
+    // release the event names, and `scripts/upload-sentry-symbols.mjs` files them
+    // under `console/package.json`'s version -- the same string, because
+    // electron-builder stamps `extraMetadata.version` from the tag and the release
+    // job refuses a tag whose X.Y.Z is not that file's. So the event asks the app
+    // for its version rather than letting the SDK default to `name@version`: that
+    // default carries an `@`, which `RELEASE_RE` in `./crash` refuses, and a
+    // refusal there is not a wrong release but *no* release -- every frame of the
+    // report would then be looked up under nothing.
+    release: app.getVersion(),
     ipcMode: NO_IPC,
     transport: makeElectronTransport,
     beforeSend: (event) => toSdkEvent(event, input.appRoot),
