@@ -1562,6 +1562,90 @@ func TestDiagnoseToleratedJSONFields(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsTheReviewersModelEffortAndHead: the Reviews block names what
+// reviewed each round — the model, the reasoning effort and the commit it read
+// (CLI 0.16.0) — and --json carries the same three on the entry, with the three
+// keys absent from a round that recorded none. The omission is the record's own:
+// a console reads the keys it has rather than an empty claim, and a record
+// written before the fields existed reads exactly as it always did.
+func TestDiagnosePrintsTheReviewersModelEffortAndHead(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000030-abcd"
+	head := strings.Repeat("a", 64)
+	seedReviewersRun(t, f, id, []runstore.ReviewSummary{
+		{Round: 1, Tier: runstore.TierFirst, Verdict: "ship", Head: head, Model: "deepseek/deepseek-v4-flash"},
+		{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 2, Head: head, Model: "claude-opus-5-5", Effort: "high"},
+		{Round: 3, Tier: runstore.TierAdversarial, Verdict: "none"},
+	})
+	human, errOut, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatalf("diagnose: %v\n%s", err, errOut)
+	}
+	for _, want := range []string{
+		"\nReviews\n",
+		"  round 1 first: ship, 0 findings (model deepseek/deepseek-v4-flash, at " + head[:12] + ")\n",
+		"  round 2 senior: changes, 2 findings (model claude-opus-5-5, effort high, at " + head[:12] + ")\n",
+		"  round 3 adversarial: no verdict, 0 findings\n",
+	} {
+		if !strings.Contains(human, want) {
+			t.Errorf("diagnose does not print %q:\n%s", want, human)
+		}
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	entries, _ := doc["reviews"].([]any)
+	if len(entries) != 3 {
+		t.Fatalf("reviews = %v, want three entries", doc["reviews"])
+	}
+	senior, _ := entries[1].(map[string]any)
+	if got := keysOfDoc(senior); !slices.Equal(got, []string{"effort", "findings", "head", "model", "round", "tier", "verdict"}) {
+		t.Errorf("a review entry's keys = %v, want the seven the round recorded", got)
+	}
+	for _, want := range []struct {
+		key  string
+		got  any
+		want any
+	}{
+		{"model", senior["model"], "claude-opus-5-5"},
+		{"effort", senior["effort"], "high"},
+		{"head", senior["head"], head},
+	} {
+		if want.got != want.want {
+			t.Errorf("reviews[1].%s = %v, want %v", want.key, want.got, want.want)
+		}
+	}
+	// The round that recorded none of the three carries none of the three
+	// keys, rather than three empty strings.
+	plain, _ := entries[2].(map[string]any)
+	if got := keysOfDoc(plain); !slices.Equal(got, []string{"findings", "round", "tier", "verdict"}) {
+		t.Errorf("a review entry that recorded no model, effort or head has keys %v", got)
+	}
+}
+
+// seedReviewersRun stores a finished run under id whose record carries the
+// given review rounds and nothing else the diagnosis reads.
+func seedReviewersRun(t *testing.T, f *cloudFixture, id string, reviews []runstore.ReviewSummary) {
+	t.Helper()
+	seedSpec(t, f, firstRunSpec(id), false)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	cost := runstore.NewCost(1.25, 0, runstore.BasisAPIList)
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+		Reason: "tests failing on the final commit", CostUSD: 1.25, Cost: &cost,
+		Reviews: reviews}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestDiagnoseUnscoredFindingIsUnchanged: a transcript from before the score
 // existed renders exactly as it did — the same row, and no score line and no
 // score key anywhere — so an old run stays readable.

@@ -545,3 +545,54 @@ func TestLevelsAdversarialEffortOnAClaudeStageOnly(t *testing.T) {
 		}
 	})
 }
+
+// TestLevelsRecordTheReviewersModelAndEffort: each review round's summary keeps
+// what reviewed it — the model the stage was pinned to and the reasoning effort
+// that reached it (CLI 0.16.0) — beside the head it read, and the pull request's
+// review line prints the three. The two are read off the stage's own pins, so a
+// level with a model of its own records that one, a level that names no effort
+// records none, and the effort a level names on a Claude stage is the value the
+// stage's environment carries.
+func TestLevelsRecordTheReviewersModelAndEffort(t *testing.T) {
+	const effort = "high"
+	cfg := gwConfig(t, "  first_line_review: on\n  recipe: levels\n  adversarial_rounds: 2\n"+
+		"  levels:\n    l2: {model: "+opus+"}\n    l3: {effort: "+effort+"}\n")
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: critical\nagent:\n", 1)
+	g := newGWFiles(t, cfg, "observe", "50", levelsFiles)
+	rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	first, senior, adv := lastTier(t, rec, runstore.TierFirst), lastTier(t, rec, runstore.TierSenior), lastTier(t, rec, runstore.TierAdversarial)
+	for _, tc := range []struct {
+		who    string
+		got    runstore.ReviewSummary
+		model  string
+		effort string
+	}{
+		// Level 1 runs the coder's model through the coder's slot, and names
+		// no effort of its own.
+		{"first-line", first, sonnet, ""},
+		// Level 2 names a model of its own and no effort.
+		{"senior", senior, opus, ""},
+		// Level 3 takes the reviewer's slot and the level's effort.
+		{"adversarial", adv, sonnet, effort},
+	} {
+		if tc.got.Model != tc.model || tc.got.Effort != tc.effort {
+			t.Errorf("the %s review recorded model %q, effort %q, want %q and %q", tc.who, tc.got.Model, tc.got.Effort, tc.model, tc.effort)
+		}
+		if tc.got.Head == "" {
+			t.Errorf("the %s review recorded no head, so this case cannot say which commit it read", tc.who)
+		}
+	}
+	if first.Head != senior.Head || senior.Head != adv.Head {
+		t.Fatalf("nothing moved the branch between the three rounds, yet they read %q, %q and %q", first.Head, senior.Head, adv.Head)
+	}
+	// The plan's last round is level 3's, so its facts are the ones the pull
+	// request's review line carries.
+	body := onlyPR(t, g.provider).Body
+	want := "adversarial review: ship in round " + strconv.Itoa(adv.Round) + " (model " + sonnet + ", effort " + effort + ", at " + adv.Head[:7] + ")"
+	if !strings.Contains(body, want) {
+		t.Errorf("the pull request does not say %q:\n%s", want, body)
+	}
+}

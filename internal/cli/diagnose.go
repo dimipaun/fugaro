@@ -43,6 +43,14 @@ const (
 	// unattributed entry miss row.cost.model_usd by the rounds it dropped. It
 	// guards against the record a hand can edit, not against the loop.
 	diagnoseStages = 128
+	// diagnoseReviews bounds the review rounds a diagnosis prints. It sits
+	// above the loop's own maximum -- F + R*(1+F) rounds on the senior level
+	// and as many again on the adversarial one, 77 at most under
+	// config.MaxFirstLineRounds and recipe.MaxReviewRounds -- so it guards
+	// against the record a hand can edit and never against the loop. A list
+	// longer than this prints the first diagnoseReviews rounds and says how
+	// many it left out.
+	diagnoseReviews = 96
 )
 
 // Diagnosis is what diagnose gathers about one run. Every string in it
@@ -92,6 +100,16 @@ type Diagnosis struct {
 	// sum(stages[].model_usd) + model_by["unattributed"] ==
 	// row.cost.model_usd.
 	Stages []runstore.StageTiming `json:"stages,omitempty"`
+	// Reviews is the record's review rounds (runstore.ReviewSummary): the
+	// round, the tier, the verdict and the findings count, and what reviewed
+	// the round -- the model, the reasoning effort and the commit it read
+	// (CLI 0.16.0), which is the pair a reader needs to tell which model
+	// reviewed which head. In the record's own order, bounded at
+	// diagnoseReviews (the bound the record's own writer does not have) and
+	// with every string redacted, Model and Effort included: they are the
+	// record's bytes, which a hand can edit. Absent when the record has no
+	// reviews, and when there is no record at all.
+	Reviews []runstore.ReviewSummary `json:"reviews,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
 	// what the run charged the provider routes' calls -- the table's price
 	// with the fee, or the report where it floors an unpriced tier's charge.
@@ -232,6 +250,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Reviews = reviewsOf(rec.Reviews, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
 		for i := range d.Verify {
@@ -300,6 +319,63 @@ func stageTimingsOf(stages []runstore.StageTiming, red func(string) string) []ru
 		}
 		s.Name, s.Model = red(s.Name), red(s.Model)
 		out = append(out, s)
+	}
+	return out
+}
+
+// reviewLine is one review round as the diagnosis's Reviews block prints it:
+// the round, the tier that ran it, its verdict and its findings count, and what
+// reviewed it -- the model, the effort and the commit it read (CLI 0.16.0).
+// Each of the three is printed only when the round recorded it, so a record
+// written before the fields existed reads exactly as it always did.
+//
+// The verdict is the record's own word, but "none" is the one a reviewer's
+// missing answer is recorded as (seniorLoop, adversarialLoop), and printing it
+// as a verdict a reader could act on would be claiming an answer no model gave.
+func reviewLine(r runstore.ReviewSummary) string {
+	who := runstore.TierSenior
+	switch r.Tier {
+	case runstore.TierFirst, runstore.TierAdversarial:
+		who = r.Tier
+	}
+	verdict := r.Verdict
+	if verdict == "none" {
+		verdict = "no verdict"
+	}
+	line := fmt.Sprintf("round %d %s: %s, %s", r.Round, who, verdict, runner.Plural(r.Findings, "finding"))
+	parts := make([]string, 0, 3)
+	if r.Model != "" {
+		parts = append(parts, "model "+r.Model)
+	}
+	if r.Effort != "" {
+		parts = append(parts, "effort "+r.Effort)
+	}
+	if r.Head != "" {
+		parts = append(parts, "at "+shortSHA(r.Head))
+	}
+	if len(parts) > 0 {
+		line += " (" + strings.Join(parts, ", ") + ")"
+	}
+	return line
+}
+
+// reviewsOf is the record's review rounds for the document: the record's own
+// order, bounded at diagnoseReviews, and redacted like every other string here
+// -- Model and Effort included, because the record is an object a hand can
+// edit and neither is a value a reader may trust to be the runner's own
+// vocabulary. nil for a record with none, so the key is absent rather than an
+// empty list.
+func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runstore.ReviewSummary {
+	if len(reviews) == 0 {
+		return nil
+	}
+	out := make([]runstore.ReviewSummary, 0, min(len(reviews), diagnoseReviews))
+	for _, r := range reviews {
+		if len(out) == diagnoseReviews {
+			break
+		}
+		r.Model, r.Effort, r.Head = red(r.Model), red(r.Effort), red(r.Head)
+		out = append(out, r)
 	}
 	return out
 }
@@ -728,6 +804,18 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		}
 		for _, n := range d.Flaky {
 			fmt.Fprintf(&b, "  flaky:  %s\n", oneLine(n))
+		}
+	}
+	if len(d.Reviews) > 0 {
+		fmt.Fprintf(&b, "\nReviews\n")
+		for _, rv := range d.Reviews {
+			fmt.Fprintf(&b, "  %s\n", oneLine(reviewLine(rv)))
+		}
+		// The list is bounded at diagnoseReviews, which sits above the loop's
+		// own maximum: a list that reaches the bound is cut, and saying so is
+		// the difference between a short list and a complete one (F19).
+		if len(d.Reviews) == diagnoseReviews {
+			fmt.Fprintf(&b, "  … at most %d review rounds are printed\n", diagnoseReviews)
 		}
 	}
 	if len(d.Findings) > 0 {
