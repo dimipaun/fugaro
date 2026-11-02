@@ -2364,7 +2364,7 @@ export function coordinatorJobsFloorNote(
 ): ScreenElement {
   return floorNote(
     factory,
-    'coordinator-jobs-note',
+    make(factory, 'p', 'coordinator-jobs-note'),
     'coordinator-jobs-floor-word',
     'coordinator-jobs-floor-version',
     COORDINATOR_JOBS_FLOOR_WORD,
@@ -2384,12 +2384,11 @@ export type CoordinatorWindowNote =
  * shape: the console's word, and -- for a CLI below the floor -- the version
  * line main's handshake read, through `putText` in the class a version is. */
 export function coordinatorWindowNote(factory: ScreenFactory, note: CoordinatorWindowNote): ScreenElement {
-  if (note.kind === 'hidden') {
-    return literal(make(factory, 'p', 'coordinator-window-note'), COORDINATOR_WINDOW_HIDDEN_WORD)
-  }
+  const element = make(factory, 'p', 'coordinator-window-note')
+  if (note.kind === 'hidden') return literal(element, COORDINATOR_WINDOW_HIDDEN_WORD)
   return floorNote(
     factory,
-    'coordinator-window-note',
+    element,
     'coordinator-window-floor-word',
     'coordinator-window-floor-version',
     COORDINATOR_WINDOW_FLOOR_WORD,
@@ -2397,20 +2396,25 @@ export function coordinatorWindowNote(factory: ScreenFactory, note: CoordinatorW
   )
 }
 
-/** floorNote is the one shape both floor sentences are drawn in: a paragraph,
- * the console's own word in a span, and the CLI's version line in a span after
- * it. The version is main's, read by the handshake, and it goes through `putText`
- * for the reason every document string does: a hostile version line is a version
- * line drawn as text rather than an element or an attribute. */
+/** floorNote is the one shape both floor sentences are drawn in: the paragraph
+ * the caller made, the console's own word in a span, and the CLI's version line
+ * in a span after it. The version is main's, read by the handshake, and it goes
+ * through `putText` for the reason every document string does: a hostile version
+ * line is a version line drawn as text rather than an element or an attribute.
+ *
+ * The paragraph is the caller's, and it is made there rather than here, because
+ * the tag-and-class pair a note is drawn as belongs at its call site:
+ * `theme-selectors.test.ts` reads the renderer for those pairs and refuses a
+ * rule that qualifies a hook with a tag nothing draws, so a helper that spelled
+ * the tag itself would leave both rules unverifiable. */
 function floorNote(
   factory: ScreenFactory,
-  noteClass: string,
+  note: ScreenElement,
   wordClass: string,
   versionClass: string,
   word: string,
   version: string,
 ): ScreenElement {
-  const note = make(factory, 'p', noteClass)
   literal(cell(note, factory, 'span', wordClass), word)
   textCell(note, factory, 'span', version, 'label', 'cliVersion', versionClass)
   return note

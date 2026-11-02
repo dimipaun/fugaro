@@ -277,11 +277,12 @@ export const RUNS_SUMMARY_CLI_FLOOR = '0.16.0'
  * jobs-free totals read, by comparing it against `RUNS_SUMMARY_CLI_FLOOR` at the
  * patch level.
  *
- * **No caller asks it yet.** The caller is the totals section the Project,
- * Coordinator and Spend tabs are built from in `src/renderer/entry.ts`, and that
- * section is the task after this one: no spawn passes `runs summary` today, so
- * this predicate is the rule that task asks rather than a comparison it writes
- * itself.
+ * **Its caller is the Coordinator's fleet strip.** `showCoordinator` in
+ * `src/renderer/entry.ts` asks it before the window's read goes out, below the
+ * floor the strip draws the console's own sentence naming the version it needs
+ * and spawns nothing -- the same shape `runsListPageSupported`'s job list has
+ * one panel lower. It is asked once per visit, with the tab's other gates, so no
+ * `runs summary` this console makes is made against a CLI that cannot answer it.
  */
 export function runsSummarySupported(version: string): boolean {
   return meetsCliFloor(version, RUNS_SUMMARY_CLI_FLOOR)
