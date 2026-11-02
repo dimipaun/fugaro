@@ -9,8 +9,10 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -284,6 +286,148 @@ func TestRecipesSkewRefusesRepositoryAdversarialOnOldImage(t *testing.T) {
 	}
 	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &bytes.Buffer{}); err != nil {
 		t.Fatalf("a repository recipe with no adversarial step, clone: %v", err)
+	}
+}
+
+// TestRecipesSkewRefusesReviewLevelsOnOldImage: a launch that asks for review
+// levels needs a job image whose runner acts on them (L1.2, reviewLevelsSince,
+// 0.16.0). 0.15.0 decodes the task's review_levels and agent.levels and acts
+// on neither, so a launch it accepted would run with the block dropped in
+// silence — no `none`, no level's own model or effort — and the run would be
+// the very one the launcher asked not to have. A base image that is not a
+// release cannot be dated, so it only warns, and an image at the release or
+// later is not gated at all.
+func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		ReviewLevels: &config.ReviewLevels{L2: &config.LevelSetting{Off: true}}}
+	ask := reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil)
+	if want := "the task's review_levels (l2.none)"; ask != want {
+		t.Fatalf("ask = %q, want %q", ask, want)
+	}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", ask, &warn)
+		return warn.String(), err
+	}
+	// 0.15.0 is the release the field and the keys shipped in, and still
+	// drops every one of them: the gate is 0.16.0, the release L4.2 acts on
+	// levels in.
+	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.14.0", "ghcr.io/dimipaun/fugaro-base:0.15.0"} {
+		warn, err := check(baseRef)
+		if err == nil || !strings.Contains(err.Error(), "needs a job image whose runner knows the review levels (review_levels, agent.levels) (fugaro 0.16.0 or later)") || ExitCode(err) != ExitUserError {
+			t.Fatalf("%s: warn = %q, err = %v", baseRef, warn, err)
+		}
+		if warn != "" {
+			t.Errorf("%s: warning %q, want none", baseRef, warn)
+		}
+	}
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.16.0"); err != nil {
+		t.Fatalf("0.16.0: warn = %q, err = %v", warn, err)
+	}
+	warn, err := check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The same launch on a checkout: clone workflow, whose job has no derived
+	// image and so no build record: the gate raises checkCloneImageSince's
+	// threshold on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.15.0"}
+	var cloneWarn bytes.Buffer
+	err = checkCloneReviewLevelsImage(&lc, spec, ask, &cloneWarn)
+	if err == nil || !strings.Contains(err.Error(), "fugaro 0.16.0 or later") || !strings.Contains(err.Error(), "release 0.15.0") || ExitCode(err) != ExitUserError {
+		t.Fatalf("clone 0.15.0: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.16.0"
+	if err := checkCloneReviewLevelsImage(&lc, spec, ask, &bytes.Buffer{}); err != nil {
+		t.Fatalf("clone 0.16.0: %v", err)
+	}
+	// A launch that asks for no levels at all is never gated, whatever its
+	// image is: an empty block says nothing about any level
+	// (config.writesLevel), and neither does a task with no block.
+	if ask := reviewLevelsAsk(config.Levels{}, &config.ReviewLevels{L2: &config.LevelSetting{}}, nil, nil); ask != "" {
+		t.Errorf("an empty block asked %q, want nothing", ask)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	if err := checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", "", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a launch that asks nothing: %v", err)
+	}
+	// The configuration's own block asks too: agent.levels is a key only a
+	// runner that acts on levels reads, and 0.15.0 accepts the file and
+	// ignores what it says.
+	cfg := &config.Config{}
+	cfg.Agent.Levels.L1 = &config.LevelSetting{Model: "deepseek/deepseek-v4-pro"}
+	if ask := reviewLevelsAsk(config.Levels{}, nil, cfg, nil); ask != "fugaro.yaml's agent.levels (l1.model)" {
+		t.Errorf("agent.levels.l1.model asked %q", ask)
+	}
+	// The owner's floor is the third: it is read from the owner-only policy
+	// node (D722, G1) by a runner at reviewLevelsSince or later alone.
+	if ask := reviewLevelsAsk(config.Levels{}, nil, nil, []policy.Level{policy.LevelL2}); ask != "the owner's review-level floor" {
+		t.Errorf("the owner's floor asked %q", ask)
+	}
+}
+
+// TestRecipesSkewRefusesResolvedL3OnOldImage: the gate judges the run the
+// launch resolves, not only the task field. At critical the mode's own row
+// turns level 3 on with nothing in the task and nothing in fugaro.yaml
+// (L2.2), and the run inserts a first-line step in a recipe that carries none
+// (O7) — neither reaches the task as a field, and a 0.15.0 runner would run
+// the loop without them, refusing no recipe over a step it never reaches.
+func TestRecipesSkewRefusesResolvedL3OnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	cfg := &config.Config{}
+	levels, _, err := config.ResolveLevels(config.LevelInputs{Config: cfg, Mode: rigor.Critical})
+	if err != nil {
+		t.Fatalf("resolving a critical run's levels: %v", err)
+	}
+	if !levels.L3.On {
+		t.Fatal("critical resolved without level 3")
+	}
+	ask := reviewLevelsAsk(levels, spec.ReviewLevels, cfg, nil)
+	if want := "review level 3 (its adversarial step)"; ask != want {
+		t.Fatalf("ask = %q, want %q", ask, want)
+	}
+	// The task field alone would have missed it: this launch carries no
+	// block, and the run's own mode is what asks for the level.
+	if only := reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil); only != "" {
+		t.Fatalf("the task field alone asked %q, want nothing", only)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	var warn bytes.Buffer
+	err = checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", ask, &warn)
+	if err == nil || !strings.Contains(err.Error(), "review level 3 (its adversarial step) needs a job image whose runner knows the review levels (review_levels, agent.levels) (fugaro 0.16.0 or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: warn = %q, err = %v", warn.String(), err)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	if err := checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", ask, &bytes.Buffer{}); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+	// A level the run inserts is the other thing no flag carries: a loop
+	// recipe with no first-line step of its own, with the first-line review
+	// on (O7, D723).
+	rcp, ps := recipe.Parse([]byte("version: 1\nname: mine\nsteps:\n  - review: {}\n"))
+	if len(ps) > 0 {
+		t.Fatalf("parsing the recipe: %v", ps)
+	}
+	loop := &config.Config{}
+	loop.Agent.FirstLineReview = "on"
+	levels, _, err = config.ResolveLevels(config.LevelInputs{Config: loop, Mode: rigor.Startup, Recipe: rcp})
+	if err != nil {
+		t.Fatalf("resolving a startup run's levels: %v", err)
+	}
+	if !levels.L1.Inserted {
+		t.Fatal("a recipe with no first-line step resolved without an inserted level 1")
+	}
+	if ask := reviewLevelsAsk(levels, nil, loop, nil); ask != "review level 1 (a first-line step the run inserts)" {
+		t.Errorf("an inserted level 1 asked %q", ask)
 	}
 }
 

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -179,5 +181,57 @@ func TestRunReviewModeRefusesLeftoverAllowForks(t *testing.T) {
 	writeBuildRecord(t, f, other, "svc", release070)
 	if _, _, err := execute(t, "run", "--recipe", "review-only", "--pr", "7", "--run-id", "20261007-100000-abcd"); err == nil {
 		t.Fatal("want an error for the removed review.allow_forks key, got none")
+	}
+}
+
+// TestRunReviewLevelsFlagWritesTaskField: --review-levels decodes the
+// document it names strictly into the block the task stores (L1.2, D724), so
+// the levels a launcher asks for reach the run as the one field the resolver
+// reads. The image is at the release that acts on levels (reviewLevelsSince),
+// because a launch that asks for them on an older one is refused — which is
+// TestRecipesSkewRefusesReviewLevelsOnOldImage's.
+func TestRunReviewLevelsFlagWritesTaskField(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	dir := t.TempDir()
+	good := filepath.Join(dir, "levels.yaml")
+	if err := os.WriteFile(good, []byte("l2:\n  model: deepseek/deepseek-v4-pro\n  effort: high\n  focus: the diff's error handling\nl3:\n  none: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--review-levels", good, "do the thing"); err != nil {
+		t.Fatal(err)
+	}
+	spec := readSpec(t, f, "20261007-100000-abcd")
+	if spec.ReviewLevels == nil || spec.ReviewLevels.L2 == nil || spec.ReviewLevels.L3 == nil || spec.ReviewLevels.L1 != nil {
+		t.Fatalf("review_levels = %+v, want l2 and l3 and no l1", spec.ReviewLevels)
+	}
+	if l2 := spec.ReviewLevels.L2; l2.Model != "deepseek/deepseek-v4-pro" || l2.Effort != "high" || l2.Focus != "the diff's error handling" || l2.Off {
+		t.Errorf("review_levels.l2 = %+v", l2)
+	}
+	if l3 := spec.ReviewLevels.L3; !l3.Off || l3.Model != "" || l3.Effort != "" || l3.Focus != "" {
+		t.Errorf("review_levels.l3 = %+v, want none: true alone", l3)
+	}
+	// A launch without the flag writes no field at all: the run resolves its
+	// levels from its own configuration, as it did before the flag existed.
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abce", "do the thing"); err != nil {
+		t.Fatal(err)
+	}
+	if spec := readSpec(t, f, "20261007-100000-abce"); spec.ReviewLevels != nil {
+		t.Fatalf("review_levels = %+v, want none without the flag", spec.ReviewLevels)
+	}
+	// A document this launcher refuses is refused before any cloud call: an
+	// effort outside the closed set is the launcher's mistake, and a runner
+	// would never refuse it (L1.1).
+	bad := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(bad, []byte("l2:\n  effort: veryhigh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.run.Executions())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcf", "--review-levels", bad, "do the thing")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "effort") {
+		t.Fatalf("err = %v, want a refused effort", err)
+	}
+	if n := len(f.run.Executions()); n != before {
+		t.Fatalf("the refused launch started %d executions, want the %d it ran before", n, before)
 	}
 }
