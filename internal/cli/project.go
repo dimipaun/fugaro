@@ -277,13 +277,18 @@ var consoleReadPaths = map[string]bool{
 	"fugaro report":      true,
 	"fugaro runs ls":     true,
 	"fugaro runs stats":  true,
-	"fugaro diagnose":    true,
-	"fugaro logs":        true,
-	"fugaro secrets ls":  true,
-	"fugaro accounts ls": true,
-	"fugaro version":     true,
-	"fugaro doctor":      true,
-	"fugaro config list": true,
+	// The jobs-free totals read (console 0.119.0, B4/#1580): it counts the
+	// budget database's day nodes and the spend history's daily documents and
+	// opens no run at all, and it is a cloud read like the rest, so it goes
+	// through the resolver every cloud command does and has to be here.
+	"fugaro runs summary": true,
+	"fugaro diagnose":     true,
+	"fugaro logs":         true,
+	"fugaro secrets ls":   true,
+	"fugaro accounts ls":  true,
+	"fugaro version":      true,
+	"fugaro doctor":       true,
+	"fugaro config list":  true,
 	// plan status resolves the checkout (it is a cloud read of the checkout's
 	// own repository's runs) and writes nothing, the remembered checkouts
 	// included.

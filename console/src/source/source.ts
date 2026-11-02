@@ -193,6 +193,18 @@ export interface FugaroSource {
    */
   statsRuns(args: ValidatedArguments): Promise<Snapshot>
   /**
+   * summaryRuns is the jobs-free totals read (`runs summary --json`, console
+   * 0.119.0, B4's console half): the window's runs counted by repository and by
+   * state, and what they spent. It is the one read here whose document is
+   * answered **from the budget database's day counters and the spend history's
+   * daily documents alone** -- no run object is read and no bucket is listed --
+   * which is why a screen can paint its totals first and why the operation's
+   * schema admits only the console's own closed set of windows
+   * (`src/main/ipc.ts`). Its two money figures are separate facts and are never
+   * summed (`src/shared/schema.ts`'s `RunsSummaryFigures`).
+   */
+  summaryRuns(args: ValidatedArguments): Promise<Snapshot>
+  /**
    * planStatus is the plan graph joined to the runs working on it
    * (`plan status --json`, GV2.1). It is the one read whose *directory* is part
    * of the question: the CLI resolves `docs/` from the process's working
@@ -417,6 +429,7 @@ export function handlersFor(
     'spend.report': (args) => source.runReport(args),
     'runs.list': (args) => source.listRuns(args),
     'runs.stats': (args) => source.statsRuns(args),
+    'runs.summary': (args) => source.summaryRuns(args),
     'plan.status': (args) => source.planStatus(args),
     'coordinator.status': (args) => source.coordinatorStatus(args),
     'coordinator.show': (args) => source.coordinatorShow(args),
