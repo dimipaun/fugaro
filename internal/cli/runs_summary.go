@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -433,9 +434,9 @@ func summaryDocument(project string, from, to int64, read summaryRead) summaryDo
 		for k, n := range r.Outcomes {
 			a.states[summaryState(k)] += n
 		}
-		a.spent, a.notional = a.spent+max(r.SpentMicros, 0), a.notional+max(r.NotionalMicros, 0)
+		a.spent, a.notional = summaryAdd(a.spent, r.SpentMicros), summaryAdd(a.notional, r.NotionalMicros)
 		if r.ComputeEstimatedRuns > 0 {
-			a.compute, a.computeRuns = a.compute+max(r.ComputeMicros, 0), a.computeRuns+r.ComputeEstimatedRuns
+			a.compute, a.computeRuns = summaryAdd(a.compute, r.ComputeMicros), a.computeRuns+r.ComputeEstimatedRuns
 		}
 	}
 	doc := summaryDoc{
@@ -461,8 +462,8 @@ func summaryDocument(project string, from, to int64, read summaryRead) summaryDo
 		for s, n := range a.states {
 			total.states[s] += n
 		}
-		total.spent, total.notional = total.spent+a.spent, total.notional+a.notional
-		total.compute, total.computeRuns = total.compute+a.compute, total.computeRuns+a.computeRuns
+		total.spent, total.notional = summaryAdd(total.spent, a.spent), summaryAdd(total.notional, a.notional)
+		total.compute, total.computeRuns = summaryAdd(total.compute, a.compute), total.computeRuns+a.computeRuns
 	}
 	doc.Totals = summaryTotals{Runs: total.runs, States: total.states,
 		SpentMicros: int64(total.spent), NotionalMicros: int64(total.notional),
@@ -471,6 +472,24 @@ func summaryDocument(project string, from, to int64, read summaryRead) summaryDo
 		doc.DaysUnknown = append(doc.DaysUnknown, budget.DayDate(d))
 	}
 	return doc
+}
+
+// summaryAdd adds two micro-dollar figures: a negative figure counts as
+// nothing, and a sum past the largest figure the integer holds saturates there
+// rather than wrapping into a negative one a reader would take for a real
+// figure. The budget database's own rollup sums its counters the same way
+// (budget's satAdd).
+func summaryAdd(a, b budget.Micros) budget.Micros {
+	if a < 0 {
+		a = 0
+	}
+	if b < 0 {
+		b = 0
+	}
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 // summaryCompute is a row's compute figure: null when the row has runs and no
