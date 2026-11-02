@@ -6,6 +6,15 @@ lock, in `internal/imagecheck` — and C8b and C8c are not.** *The status as fir
 (`implementation-plan.md`) asks for; **C8** builds it, and this file is meant to be concrete enough
 that C8 needs no further design. Core MIT: nothing in this design is `ee/` behaviour.
 
+**Relationship to the project image catalog (owner's ruling, 2026-11-02): CATALOG FIRST.** The
+hand-curated project image catalog ([docs/project-image-catalog/](../project-image-catalog/)) is now
+the default way a repository's image is defined. This design — dependency-set sharing, **D617–D622** —
+stays a **later option and is NOT cancelled**: C8a's code (`internal/imagecheck`'s key, superset and
+lock) stays in the tree and is not touched by the catalog work, and C8b/C8c stay unscheduled. The two
+are composable rather than rivals: a catalog entry's `source: dockerfile` is just a definition, so an
+entry may later be keyed by a resolved dependency set. See the catalog's
+[reconciliation.md](../project-image-catalog/reconciliation.md) **D1141**.
+
 The decisions are settled. **D617**: the published policy is the intent and the lock lives in the
 runs bucket beside `builds/`. **D618 as answered** (the owner chose *against* the recommendation):
 images are shared between repositories whose resolved dependency set is identical, scoped to exactly
