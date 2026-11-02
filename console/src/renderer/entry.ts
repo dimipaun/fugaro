@@ -5019,7 +5019,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         coordinatorQueueRead.settle(queueToken)
         surface.nodeOf(drawn.queueSlot).replaceChildren()
       }
-      if (!summaryOut) {
+      // The window's host is settled only by a visit that read it: below the
+      // floor and in the reduced mode no mark was ever made on it, and the strip
+      // does not keep the host either.
+      if (windowRead && !summaryOut) {
         coordinatorWindowRead.settle(summaryToken)
         surface.nodeOf(drawn.windowSlot).replaceChildren()
       }
@@ -5558,21 +5561,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     /** paintTotals fills the fleet's strip: the window off `runs summary`, then
      * the figures off the stored view and the plan read, and the money off
-     * `budget show`. **Both slots stay**, because they are where the two reads'
-     * own marks go, and the two regions are drawn in the order the strip reads:
-     * the fleet over a window first, the fleet as the sweep last found it under
-     * it.
+     * `budget show`. **Both slots stay** while the visit reads the window,
+     * because they are where the two reads' own marks go, and the two regions are
+     * drawn in the order the strip reads: the fleet over a window first, the
+     * fleet as the sweep last found it under it.
      *
      * The window is drawn only when this visit reads it: below the command's
      * floor the strip draws the console's own sentence naming the version it
      * needs, and in the reduced mode the sentence for a read the surface
-     * withholds -- neither is a read, so neither has a mark. */
+     * withholds -- neither is a read, so neither has a mark, and the host its
+     * mark would have gone on is not kept either: a slot is a flex item of the
+     * strip, and one that no read can ever fill is a line the strip holds open
+     * for nothing. */
     const paintTotals = (): void => {
       const drawn = mount(false)
-      surface.nodeOf(drawn.totals).replaceChildren(
-        surface.nodeOf(drawn.windowSlot),
-        surface.nodeOf(drawn.totalsSlot),
-      )
+      const kept = windowRead
+        ? [surface.nodeOf(drawn.windowSlot), surface.nodeOf(drawn.totalsSlot)]
+        : [surface.nodeOf(drawn.totalsSlot)]
+      surface.nodeOf(drawn.totals).replaceChildren(...kept)
       if (windowHidden) {
         appendTo(drawn.totals, coordinatorWindowNote(factory, { kind: 'hidden' }))
       } else if (windowTooOld) {

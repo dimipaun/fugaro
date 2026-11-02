@@ -704,8 +704,12 @@ test.describe('the Coordinator view in the dashboard', () => {
     await expect(totals.locator('span.coordinator-window-runs')).toHaveCount(0)
     await expect(totals.locator('span.coordinator-window-spent')).toHaveCount(0)
     await expect(totals.locator('.unavailable-operation')).toHaveCount(0)
-    await expect(totals.locator('.console-busy-slot')).toHaveCount(2)
-    await expect(totals.locator('.console-busy-slot[aria-busy="true"]')).toHaveCount(0)
+    // **And the strip's second busy host is not there either.** A slot is a flex
+    // item of the strip, and the window's can never be filled on this visit: a
+    // console that kept it would hold a line open for a read it will not make.
+    // The K1 documents' own slot stays -- its read is out and then answered.
+    await expect(totals.locator('div.console-busy-slot')).toHaveCount(1)
+    await expect(totals.locator('div.console-busy-slot[aria-busy="true"]')).toHaveCount(0)
   })
 
   test('says which CLI the job list needs, and spawns no read for one older than that', async () => {

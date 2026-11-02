@@ -159,6 +159,7 @@ import {
   COORDINATOR_WINDOW_BUSY,
   COORDINATOR_WINDOW_FLOOR_WORD,
   COORDINATOR_WINDOW_RUNS_WORD,
+  COORDINATOR_WINDOW_SLOT_CLASS,
   COORDINATOR_WINDOW_SUCCEEDED_WORD,
   COORDINATOR_TRANSCRIPT_CLASS,
   COORDINATOR_TRANSCRIPT_WORD,
@@ -5395,8 +5396,10 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       COORDINATOR_BUSY,
       COORDINATOR_TRANSCRIPT_BUSY,
     ])
-    // A read that has not answered draws no window, and no zero in its place.
+    // A read that has not answered draws no window, and no zero in its place --
+    // and the host its mark goes on is in the strip, because this visit reads it.
     expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
+    expect(classed(panelOf(document), COORDINATOR_WINDOW_SLOT_CLASS).length).toBe(1)
 
     window.release({ ok: true, data: { document: aWindow({ runs: 9, succeeded: 6, failed: 2 }) } })
     await flush()
@@ -5434,6 +5437,10 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // read that was never made, and no mark left up for one either.
     expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
     expect(busyLabels(document)).not.toContain(COORDINATOR_WINDOW_BUSY)
+    // The host the window's mark would have gone on is not kept either: a slot
+    // is a flex item of the strip, and one no read on this visit can fill is a
+    // line held open for nothing.
+    expect(classed(panelOf(document), COORDINATOR_WINDOW_SLOT_CLASS)).toEqual([])
     // ...and the strip's own six figures are untouched by it: two reads of one
     // panel, and only one of them is below its floor.
     expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
@@ -5463,6 +5470,34 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // The window is gone rather than stale, and the strip's own figures are not
     // taken down for a read that is not theirs.
     expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
+  it('treats a window read that fails to answer at all as a refusal, and takes its mark down', async () => {
+    // `readBridgeFrom` answers `null` for a read that failed to answer -- a
+    // member that threw, or a promise that rejected, which is what `invoke` does
+    // on a channel with nothing behind it -- so a rejection reaching the entry is
+    // a bridge built by something other than that function. Left uncaught it
+    // takes the visit's `summaryOut` with it: the strip would wear the window's
+    // mark for the rest of the visit with no read left to answer it, which is a
+    // section that never settles rather than one that refused.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      summaryRuns: () => Promise.reject(new Error('the channel is gone')),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    // The read is drawn as the refusal a reply nobody could read gets: its own
+    // command named, and the mark down.
+    expect(classed(panelOf(document), 'unavailable-operation').map((node) => node.textContent)).toContain(
+      'runs.summary',
+    )
+    expect(busyLabels(document)).not.toContain(COORDINATOR_WINDOW_BUSY)
+    // ...and the strip's own figures are not taken down for a read that is not
+    // theirs.
     expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
   })
 
