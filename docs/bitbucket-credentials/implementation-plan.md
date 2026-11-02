@@ -992,7 +992,7 @@ retargeted ones: BB4 is the read mint's front door and everything Bitbucket-faci
 
 **Must be sequential, and why:**
 
-- T1.1 → BB5 share the coordinator command's file.
+- T1.1 → BB4 → BB5 share the coordinator command's file.
 - T1.1 → BB2 share the generated `website/content/cli-reference.md`.
 - Check 145 (BB3) comes before the read mint (BB4).
 - BB4 → BB5 share the read mint's route and the service's admission.
@@ -1021,9 +1021,9 @@ changes.
 | `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_bitbucket_security_test.go` | T2.11 (L4) |
 | `console/**`, `console/docs/json-contract.md`, `docs/design/desktop-console.md` | T1.2 (L1) |
 
-BB4 and BB5 both write the credentials service's admission and its read-mint route, and they are at
-different levels, so the file is not contended — but BB5's diff is small only because BB4's is
-there, and a reviewer should read them in order.
+BB4 and BB5 both write the credentials service's admission, its read-mint route and the coordinator
+command, and they are at different levels, so neither file is contended — but BB5's diff is small
+only because BB4's is there, and a reviewer should read them in order.
 
 **Kept for when S3 returns (parked, not scheduled).** These are the edges written for direct
 minting, with the S2 numbers they name left as they were written:
