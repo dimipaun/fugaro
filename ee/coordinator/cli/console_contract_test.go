@@ -231,7 +231,7 @@ func TestConsoleContractNamesOnlyRealCoordinatorFlags(t *testing.T) {
 	// §8's inventory row, the one the core's own test skips: the console may
 	// spawn this command with --project and --config like every other read, and
 	// the row is where that is written.
-	row := coordinatorInventoryRow(t)
+	row := coordinatorInventoryRow(t, "coordinator status")
 	for _, want := range []string{"--from-store", "--project", "--config"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("%s's §8 row for coordinator status no longer names %s: %q", coordinatorContractPath, want, row)
@@ -245,16 +245,16 @@ func TestConsoleContractNamesOnlyRealCoordinatorFlags(t *testing.T) {
 	}
 }
 
-// coordinatorInventoryRow is §8's flag-inventory row for this command: the
-// document's own account of what the console may pass it.
-func coordinatorInventoryRow(t *testing.T) string {
+// coordinatorInventoryRow is §8's flag-inventory row for one of this package's
+// two commands: the document's own account of what the console may pass it.
+func coordinatorInventoryRow(t *testing.T, command string) string {
 	t.Helper()
 	for _, line := range strings.Split(readFileString(t, coordinatorContractPath), "\n") {
-		if strings.HasPrefix(line, "| `coordinator status`") {
+		if strings.HasPrefix(line, "| `"+command+"`") {
 			return line
 		}
 	}
-	t.Fatalf("%s's flag inventory has no `coordinator status` row: the console spawns it, and §8 is where its flags are stated", coordinatorContractPath)
+	t.Fatalf("%s's flag inventory has no `%s` row: the console spawns it, and §8 is where its flags are stated", coordinatorContractPath, command)
 	return ""
 }
 
@@ -273,7 +273,8 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 
 	var designRow string
 	for _, line := range strings.Split(readFileString(t, coordinatorDesignPath), "\n") {
-		if strings.Contains(line, "`coordinator status --from-store --all --json`") {
+		if strings.Contains(line, "`coordinator status --from-store --all --json`") ||
+			strings.Contains(line, "`coordinator show --json --repo <owner/name> --pr <n>`") {
 			designRow += line + "\n"
 		}
 	}
@@ -476,5 +477,23 @@ func TestConsoleContractNamesOnlyRealShowFlags(t *testing.T) {
 	}
 	if named == 0 {
 		t.Fatalf("%s's §6.15 no longer names newCoordinatorShowCmd: these checks would pass vacuously", coordinatorContractPath)
+	}
+
+	// §8's inventory row, as §6.13's check reads its own: the console may spawn
+	// this command too (coordinator v2 C3's console half wrote the row), and the
+	// two flags it fixes are the operation's arguments -- so the row names them
+	// and the cloud group's two, and every flag it does name is one the command
+	// has.
+	row := coordinatorInventoryRow(t, "coordinator show")
+	for _, want := range []string{"--repo", "--pr", "--project", "--config"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's §8 row for coordinator show no longer names %s: %q", coordinatorContractPath, want, row)
+		}
+	}
+	for _, m := range coordinatorFlagRE.FindAllStringSubmatch(row, -1) {
+		name := strings.TrimRight(m[1], "-")
+		if name != "" && !real[name] {
+			t.Errorf("%s's §8 row names --%s, which coordinator show has no flag for", coordinatorContractPath, name)
+		}
 	}
 }

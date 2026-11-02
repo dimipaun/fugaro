@@ -36,6 +36,7 @@ import { describe, expect, it } from 'vitest'
 import { UNAVAILABLE_MARK, formatReading, readNumber, unavailable } from '../../src/shared/availability'
 import {
   COORDINATOR_COLLISION_KEYS,
+  COORDINATOR_PR_DOCUMENT_KEYS,
   COORDINATOR_PR_KEYS,
   COORDINATOR_RECORD_KEYS,
   COORDINATOR_REPO_KEYS,
@@ -63,13 +64,14 @@ import {
   NON_TEXT_STRING_KEYS,
   WIRE_TEXT_CLASSES,
   decodeCoordinatorStatus,
+  decodeCoordinatorPullRequest,
   decodeDocument,
   decodePlanStatus,
   decodeSnapshot,
   knownTopLevelKeys,
   wireTextClass,
 } from '../../src/shared/schema'
-import type { CoordinatorStatusView, PlanState, PlanStatusView } from '../../src/shared/schema'
+import type { CoordinatorPullRequestDocument, CoordinatorStatusView, PlanState, PlanStatusView } from '../../src/shared/schema'
 import type { LiveDocument } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
 import { loadFixture } from '../../src/source/fixture'
@@ -1843,6 +1845,15 @@ describe('the coordinator’s stored project view (T1.2)', () => {
         COORDINATOR_COLLISION_KEYS,
         'collisions[]',
       ],
+      // The pull request document (coordinator v2 C3): `coordinator show`'s
+      // shape, in the same file as the view's reduced record of the same thing
+      // and deliberately not the same struct -- the difference between the two
+      // is `body`, which the view drops by design (D816).
+      [
+        structTags(COORDINATOR_VIEW_SOURCE, 'PRDocument', 'ee/coordinator/view.go'),
+        COORDINATOR_PR_DOCUMENT_KEYS,
+        'the pull request document',
+      ],
       [
         structTags(COORDINATOR_SWEEP_SOURCE, 'Unread', 'ee/coordinator/sweep.go'),
         COORDINATOR_UNREAD_KEYS,
@@ -1874,5 +1885,120 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     const run = record.runs[0]
     if (run === undefined) throw new Error('the document lost its only run')
     expect(Object.keys(run).sort()).toEqual([...COORDINATOR_RUN_KEYS].sort())
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The pull request document (coordinator v2 C3).
+// ---------------------------------------------------------------------------
+
+/**
+ * PULL_REQUEST is `fugaro coordinator show --repo owner/repo-a --pr 1458
+ * --json`, as the CLI prints it (`ee/coordinator/view.go`, `PRDocument`): one
+ * flat object, and every field the host answered.
+ *
+ * `body` is the field this read exists for and the one this file is careful
+ * about. It is many lines, written by whoever opened the pull request, and the
+ * decoder's whole job with it is to carry it: nothing here parses it, and
+ * nothing here turns it into a link, a path or a decision.
+ */
+const PULL_REQUEST = {
+  number: 1458,
+  url: 'https://example.invalid/owner/repo-a/pull/1458',
+  title: 'a title someone wrote',
+  body: 'the description, as the host holds it\n\nwith a second paragraph, and a line that looks like --json and like <b>markup</b>',
+  state: 'open',
+  draft: false,
+  branch: 'feat/a-thing',
+  base: 'main',
+  author: '4242',
+}
+
+describe('the pull request document (coordinator v2 C3)', () => {
+  /** decoded is a document that must decode, or the test fails with the
+   * refusal's own sentence rather than on an assertion three lines later. */
+  function decoded(raw: unknown): CoordinatorPullRequestDocument {
+    const result = decodeCoordinatorPullRequest(raw)
+    if (!result.ok) throw new Error(result.skew.because)
+    return result.value
+  }
+
+  /** refusal is the refusal of a document that must be refused. */
+  function refusal(raw: unknown): { field: string; name: string } {
+    const result = decodeCoordinatorPullRequest(raw)
+    if (result.ok) throw new Error('expected a refusal')
+    return result.skew.refusal
+  }
+
+  it('carries the whole document, the description included, and derives nothing', () => {
+    const pull = decoded(PULL_REQUEST)
+    expect(pull.number).toBe(1458)
+    expect(pull.title).toBe('a title someone wrote')
+    expect(pull.url).toBe('https://example.invalid/owner/repo-a/pull/1458')
+    expect(pull.state).toBe('open')
+    expect(pull.draft).toBe(false)
+    expect(pull.branch).toBe('feat/a-thing')
+    expect(pull.base).toBe('main')
+    // The author is the host's own account id, carried as the **string** it is
+    // even where it is numeric: it is an id to show and never an identity
+    // anything is admitted by (`console/docs/json-contract.md` §6.15).
+    expect(pull.author).toBe('4242')
+    // The body, byte for byte: many lines, and nothing in it interpreted.
+    expect(pull.body).toBe(PULL_REQUEST.body)
+    expect(pull.body.split('\n')).toHaveLength(3)
+    expect(pull.body).toContain('--json')
+    // The other half of the key-list pin in the stored view's case below: this
+    // document carries every key of the shape, in the spelling the wire uses,
+    // and the Go struct is read for the same list.
+    expect(Object.keys(PULL_REQUEST).sort()).toEqual([...COORDINATOR_PR_DOCUMENT_KEYS].sort())
+  })
+
+  it('reads a field the host did not answer as absent, and a draft as the flag it is', () => {
+    // Every field but `number` is `omitempty` on the Go struct, so a host that
+    // answered none of them prints `{"number":7}` -- and that is a document this
+    // console draws rather than one it refuses: the keys are absent, not
+    // unknown.
+    const bare = decoded({ number: 7 })
+    expect(bare.number).toBe(7)
+    expect(bare.body).toBe('')
+    expect(bare.title).toBe('')
+    expect(bare.url).toBe('')
+    expect(bare.state).toBe('')
+    expect(bare.branch).toBe('')
+    expect(bare.base).toBe('')
+    expect(bare.author).toBe('')
+    // `draft` absent is false, which is the CLI's own `omitempty` and not a
+    // claim about the pull request beyond "the host did not say it was one".
+    expect(bare.draft).toBe(false)
+    // A `null` reads as absent too, which is what the contract table says for
+    // every optional field here.
+    expect(decoded({ number: 7, body: null, draft: null }).body).toBe('')
+    expect(decoded({ number: 7, draft: null }).draft).toBe(false)
+    // ...and a draft the host did answer is true, so the flag is read rather
+    // than fixed.
+    expect(decoded({ ...PULL_REQUEST, draft: true }).draft).toBe(true)
+  })
+
+  it('ignores a key no field of the document is, and refuses the number it needs', () => {
+    // The rule every document here is held to: a key this console has no field
+    // for is a field a newer CLI added, and it does not reach a screen.
+    ignoring(PULL_REQUEST, { ...PULL_REQUEST, colour: 'red' }, (raw) => decodeCoordinatorPullRequest(raw))
+    // `number` is the one key the document must carry, and the one that must be
+    // a whole number: it is structure rather than a reading, so an absent or
+    // fractional one is a document this console cannot draw.
+    expect(refusal({ title: 'no number' })).toMatchObject({ name: 'missing', field: 'number' })
+    expect(refusal({ number: '1458' })).toMatchObject({ name: 'not-a-number', field: 'number' })
+    expect(refusal({ number: 1.5 })).toMatchObject({ name: 'not-a-number', field: 'number' })
+    // A string field of the wrong type is refused by name rather than read as
+    // nothing, which is what keeps a number in `body` from reaching a screen.
+    expect(refusal({ number: 7, body: 42 })).toMatchObject({ name: 'not-a-string', field: 'body' })
+    expect(refusal({ number: 7, draft: 'yes' })).toMatchObject({ name: 'not-a-boolean', field: 'draft' })
+    // An object that is not one at all is refused before anything is read off
+    // it, and the stored view's document is refused by this door for the key it
+    // lacks: the two shapes share the name `number` on a nested object and no
+    // top-level key at all, so neither admits the other's.
+    expect(decodeCoordinatorPullRequest([]).ok).toBe(false)
+    expect(decodeCoordinatorPullRequest(null).ok).toBe(false)
+    expect(decodeCoordinatorPullRequest({ repos: [] }).ok).toBe(false)
   })
 })

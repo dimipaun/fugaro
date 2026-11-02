@@ -1017,6 +1017,45 @@ export const CONSOLE_OPERATIONS = [
     summary: 'every repository of the installation, from the coordinator’s stored view',
     args: [],
   },
+  // The pull request read (coordinator v2 C3, D816): `fugaro coordinator show
+  // --repo <owner/name> --pr <n> --json`, one pull request as the host has it
+  // **with its description**, which the stored view above drops by design (a
+  // body is unbounded text written by whoever opened the pull request, and one
+  // per record would ride in the document every reader of the view fetches).
+  //
+  // **It is the second operation here whose child mints a credential of the
+  // host's**, and the first whose child may not write anything at all: the read
+  // goes through the coordinator's own GitHub App installation token, minted
+  // with the named read-only permission set (metadata read and pull requests
+  // read, no `write` of any kind, `github.CoordinatorTokenPermissions`) and
+  // revoked when the command is done. That is why the two arguments below are
+  // the whole of what a renderer can influence about this argv: there is no key
+  // for a token, a host, a path, an endpoint or a flag, and the row in
+  // `src/main/spawn.ts` declares the same two keys and no other word. Under
+  // `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses -- the service holds
+  // the App's key and this read is not a run -- which the screen draws as its
+  // own refusal.
+  {
+    name: 'coordinator.show',
+    method: 'coordinatorShow',
+    command: 'coordinator show',
+    flags: ['--json'],
+    summary: 'one pull request as the host has it, the description included',
+    args: [
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: true,
+        why: 'the repository the pull request is in, as the CLI’s own canonical `owner/name`. The read resolves the repository’s provider from it (the local config’s entry, else the checkout’s `fugaro.yaml`) and mints the installation token for it, so it is the one word that decides whose credential is used — and it is a repository, never a host, a URL or a path.',
+      },
+      {
+        key: 'pr',
+        kind: 'pullRequest',
+        required: true,
+        why: 'the pull request number, a positive integer, which the CLI’s `IntVar --pr` reads as digits. A pull request the host does not have is the host’s own failure and reaches the screen as a refusal, never as an empty document.',
+      },
+    ],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */

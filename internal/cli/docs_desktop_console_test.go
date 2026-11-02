@@ -533,10 +533,11 @@ var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "## 4. `fugaro rep
 
 // consoleMovedRows are the document's individual lines that name a flag of a
 // moved command without sitting under a moved heading: §8's inventory carries
-// one row per command the console may spawn, and the coordinator's and the
-// report's rows state their flags there. Like consoleMovedSections, the moved
+// one row per command the console may spawn, and the coordinator's two rows
+// (the project view's `coordinator status` and C3's `coordinator show`) and the
+// report's row state their flags there. Like consoleMovedSections, the moved
 // packages check the same lines against the tagged tree.
-var consoleMovedRows = []string{"| `coordinator status`", "| `report`"}
+var consoleMovedRows = []string{"| `coordinator status`", "| `coordinator show`", "| `report`"}
 
 // inMovedSection answers whether heading opens one of consoleMovedSections.
 func inMovedSection(heading string) bool {
@@ -1233,6 +1234,13 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// it prints the view the sweep stored -- and `--all` is every
 		// repository the installation's config lists.
 		"coordinator status --from-store --all --json",
+		// The pull request read (coordinator v2 C3, the `coordinator.show`
+		// operation): one pull request as the host has it, the description
+		// included. `--repo` and `--pr` are arguments the operation's own schema
+		// fills (both required, `src/main/ipc.ts`), so the table spells them in
+		// the order the console emits them -- the row's fixed words, then the
+		// arguments -- and this list spells that back.
+		"coordinator show --json --repo <owner/name> --pr <n>",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's one write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1323,13 +1331,14 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Fifteen commands: the twelve dashboard reads (logs has two argvs), the
+	// Sixteen commands: the twelve dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
-	// T1.2) and the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 15 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 15 (logs has two argvs)", path, argvs, len(allowed))
+	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
+	// --pr <n>` (coordinator v2 C3) and the launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 16 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 16 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown

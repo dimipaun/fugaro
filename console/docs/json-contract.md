@@ -1971,11 +1971,19 @@ field is (C1): the local config's entry for the repository, else its checkout's
 `fugaro.yaml`. A screen that has just drawn a `provider` from §6.13 and asks for
 a description here is asking the same question of the same resolution.
 
-**The console's row is a later task.** This section is the CLI's half of
-coordinator v2 C3: the spawn row, the operation and the decoder are C3c and are
-**not** in this document's scope, so nothing here authorises a spawn — §5.1's
-table and the allow-lists are where a row is admitted, and they are unchanged by
-this section.
+**The console's row is built on this section.** It is coordinator v2 C3's console
+half: the design's §5.1 table carries `coordinator show --json --repo <owner/name>
+--pr <n>` as the `coordinator.show` / `coordinatorShow` operation
+(`console/src/main/ipc.ts`), whose two arguments are the `repository` and
+`pullRequest` kinds and are both required — the argv above is the whole of what a
+renderer can influence about the child, and there is no key of that schema for a
+token, a host, a path or a flag. The decoder written against the table above is
+`decodeCoordinatorPullRequest` (`console/src/shared/schema.ts`): `number` is the
+one key the document must carry and the one that must be a whole number, the
+other eight are carried as the host's own text (or, for `draft`, its flag), an
+absent or `null` key reads as absent rather than as a value, and a key none of
+the nine is does not reach a screen. A screen that draws a description reads
+this operation and treats `body` as the untrusted block it is.
 
 **Version skew.** Every field is additive. A CLI older than this command has no
 such read at all, and the console shows the section as unavailable (the
@@ -2048,6 +2056,7 @@ and **not** off this document or the design:
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
+| `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The one row here whose child mints a credential of the host's** — the coordinator's own read-only installation token, revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the

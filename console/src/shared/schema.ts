@@ -1774,6 +1774,26 @@ export const COORDINATOR_PR_KEYS: readonly string[] = Object.freeze([
   'state',
 ])
 
+/** COORDINATOR_PR_DOCUMENT_KEYS is `coordinator show --json`'s own shape
+ * (`ee/coordinator/view.go`, `PRDocument`; coordinator v2 C3, D816), in the
+ * struct's declaration order. It is a second list rather than a widening of
+ * `COORDINATOR_PR_KEYS` because it is a second shape: the view's reduced record
+ * and the read that carries the description are two documents, and the whole
+ * difference between them is `body` (the view drops it by design, F3). A key
+ * one struct gains without the other is a failing test rather than an unread
+ * field. */
+export const COORDINATOR_PR_DOCUMENT_KEYS: readonly string[] = Object.freeze([
+  'number',
+  'url',
+  'title',
+  'body',
+  'state',
+  'draft',
+  'branch',
+  'base',
+  'author',
+])
+
 export const COORDINATOR_COLLISION_KEYS: readonly string[] = Object.freeze(['a', 'b', 'files', 'services'])
 
 export const COORDINATOR_UNREAD_KEYS: readonly string[] = Object.freeze([
@@ -1785,6 +1805,34 @@ export const COORDINATOR_UNREAD_KEYS: readonly string[] = Object.freeze([
 ])
 
 export const COORDINATOR_STALE_KEYS: readonly string[] = Object.freeze(['since', 'reason'])
+
+/** CoordinatorPullRequestDocument is one pull request as the host has it,
+ * whole: what `fugaro coordinator show --repo owner/name --pr N --json` prints
+ * (coordinator v2 C3, D816; `console/docs/json-contract.md` §6.15).
+ *
+ * **`body` is why the document exists** and the one field of the nine that is
+ * many lines. It is untrusted text written by whoever opened the pull request
+ * — like `title` — and it is carried whole and never parsed: nothing in it is
+ * a link, a path, a command or a decision, and a renderer puts it through
+ * `safetext.MultiLine` before it reaches a line or a cell. `url` is carried as
+ * data and, like the view's own, is **not drawn at all** (design §5.1 rule 2).
+ *
+ * Every field but `number` is `omitempty` on the Go struct, so a field the host
+ * did not answer arrives absent and reads as the empty string (or, for `draft`,
+ * as false) — the CLI's own "there was nothing to say", never a gap this screen
+ * has to draw as unknown. `number` is the one key the document must carry.
+ */
+export interface CoordinatorPullRequestDocument {
+  readonly number: number
+  readonly url: string
+  readonly title: string
+  readonly body: string
+  readonly state: string
+  readonly draft: boolean
+  readonly branch: string
+  readonly base: string
+  readonly author: string
+}
 
 /** CoordinatorPullRequest is one pull request as the host last showed it.
  * `title` is untrusted text written by whoever opened it, and `url` is carried
@@ -2080,4 +2128,47 @@ export function decodeCoordinatorStatus(
   where = 'the coordinator status document',
 ): Decoded<CoordinatorStatusView> {
   return at(where, () => coordinatorStatusAt(objectAt(raw, 'the document', where), where))
+}
+
+function coordinatorPullRequestAt(raw: Record<string, unknown>, where: string): CoordinatorPullRequestDocument {
+  return {
+    // `number` is the one key of this document that is **structure rather than
+    // a quantity**: it is the pull request the read was for, so an absent or
+    // fractional one is a document this console cannot draw rather than a
+    // figure it withholds (`intAt`).
+    number: intAt(required(raw, 'number', '', where), 'number', where),
+    url: optionalText(raw, 'url', '', where),
+    title: optionalText(raw, 'title', '', where),
+    body: optionalText(raw, 'body', '', where),
+    state: optionalText(raw, 'state', '', where),
+    // `draft` is the host's own flag, and absent is false, which is what the
+    // CLI's `omitempty` means -- never a claim that the host said it was not a
+    // draft.
+    draft: optionalBool(raw, 'draft', '', where),
+    branch: optionalText(raw, 'branch', '', where),
+    base: optionalText(raw, 'base', '', where),
+    author: optionalText(raw, 'author', '', where),
+  }
+}
+
+/**
+ * decodeCoordinatorPullRequest admits `coordinator show --json` and nothing
+ * else: one flat object, the pull request the read asked for (coordinator v2
+ * C3, D816; `console/docs/json-contract.md` §6.15). It is a door of its own for
+ * `decodeCoordinatorStatus`'s reason — the two documents share no key, so
+ * neither is read as the other — and it is flat rather than wrapped because
+ * there is one pull request in it and no list to enumerate.
+ *
+ * A field the host did not answer is absent, and absent reads as the empty
+ * string (or, for `draft`, as false) rather than as a refusal: the CLI's
+ * `omitempty` is its own "there was nothing to say", and a screen tells the two
+ * apart by the key's presence rather than by its value. Nothing here is a
+ * reading — the one number of the document is its own identity — so no key goes
+ * through `readingOf`.
+ */
+export function decodeCoordinatorPullRequest(
+  raw: unknown,
+  where = 'the coordinator pull request document',
+): Decoded<CoordinatorPullRequestDocument> {
+  return at(where, () => coordinatorPullRequestAt(objectAt(raw, 'the document', where), where))
 }

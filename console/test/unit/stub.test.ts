@@ -48,6 +48,10 @@ describe('the stub’s command keys', () => {
       'doctor',
       'config list',
       'coordinator status',
+      // Coordinator v2 C3's `coordinator.show` / `coordinatorShow`: the pull
+      // request read next to the project view's, and the second row here whose
+      // child mints a credential of the host's.
+      'coordinator show',
       'run',
     ])
     // The console's one spawn table, which since the owner's design ruling of

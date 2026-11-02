@@ -223,6 +223,18 @@ export interface FugaroSource {
    * `--from-store` would be a host call this console has no credential for.
    */
   coordinatorStatus(args: ValidatedArguments): Promise<Snapshot>
+  /** coordinatorShow is one pull request as the host has it, the description
+   * included (`coordinator show --json --repo <owner/name> --pr <n>`,
+   * coordinator v2 C3, D816; `console/docs/json-contract.md` §6.15). The two
+   * arguments are the operation's own and both required, and an implementation
+   * must add no word of its own to that argv: this is the read whose child
+   * mints a credential of the host's -- the coordinator's own read-only
+   * installation token -- so what it is asked and nothing else is what it may
+   * send. It has no precondition of its own beyond the two arguments: the CLI
+   * resolves the repository's provider itself and the credential with it, and
+   * under `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses rather than
+   * reading. */
+  coordinatorShow(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -393,6 +405,7 @@ export function handlersFor(
     'runs.stats': (args) => source.statsRuns(args),
     'plan.status': (args) => source.planStatus(args),
     'coordinator.status': (args) => source.coordinatorStatus(args),
+    'coordinator.show': (args) => source.coordinatorShow(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,

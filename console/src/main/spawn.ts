@@ -795,6 +795,32 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The pull request read (coordinator v2 C3, D816): `coordinator show --repo
+    // <owner/name> --pr <n> --json`, one pull request as the host has it, the
+    // description included. The two arguments are the operation's own and both
+    // required (`src/main/ipc.ts`): the repository as the CLI's canonical
+    // `owner/name` and the number as the digits `IntVar --pr` reads, which is
+    // what the `pullRequest` kind is for.
+    //
+    // **This is the row whose child mints a credential of the host's** -- the
+    // coordinator's own read-only GitHub App installation token -- so what the
+    // table lets this argv carry is the whole security question, and the answer
+    // is the two arguments and nothing else: no `--token`, no `--host`, no
+    // `--url`, no `--dir` and no positional word. `--json` is the only flag the
+    // row fixes, and every other word it could emit is refused by
+    // `assertArgvFlags` unless it is on `SPAWN_FLAGS` and off `NEVER_REACHABLE`.
+    // It takes `--project`/`--config` like every other read (rule 3): the CLI
+    // resolves the repository's provider the way the project view does.
+    operation: 'coordinator.show',
+    words: ['coordinator', 'show', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'repo', flag: '--repo', kind: 'value' },
+      { key: 'pr', flag: '--pr', kind: 'pullRequest' },
+    ],
+    dirFlag: false,
+  },
+  {
     // **The launch, and the console's only write** (design §5.1 rule 11, D22).
     // The row is rule 11's argv word for word: `run --task-file - --json
     // --run-id <id> --repo <owner/name> [--title=<T>] [--plan-task=<P>]
