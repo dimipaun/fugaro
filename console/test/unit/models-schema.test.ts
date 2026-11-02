@@ -197,6 +197,20 @@ describe('the models list document (§6.18)', () => {
     expect(view.repositories[1]?.coder).toBe('')
   })
 
+  it('carries the catalog block, present, field for field', () => {
+    // The block itself, not only the rows under it: a present `catalog` is the
+    // one place this document states where its catalog-priced prices came from,
+    // so every member is asserted here rather than read through an `?.`.
+    const { catalog } = decoded(modelsDocument())
+    expect(catalog).not.toBeNull()
+    expect(catalog).toEqual({
+      source: 'https://example.invalid/catalog.json',
+      checkedAt: '2026-10-01',
+      ageDays: 32,
+      stale: true,
+    })
+  })
+
   it('leaves an absent price absent, so a model nothing prices is never free', () => {
     // The contract's own words for these two keys: "absent on a row whose price
     // is zero or unknown: a consumer reads `source` before it reads a price".
@@ -216,6 +230,43 @@ describe('the models list document (§6.18)', () => {
     // adds nothing to a charge charges nothing -- a fact, not an unknown.
     expect(view.routes[0]?.feePct).toBe(0)
     expect(view.routes[1]?.feePct).toBe(5)
+    // A `0` written into that key is the same fact as its absence, and an
+    // explicit `null` is neither: it is a shape the contract never emits, so it
+    // is refused rather than folded into the default.
+    expect(decoded(replacing(['routes', '1', 'route_fee_pct'], 0)).routes[1]?.feePct).toBe(0)
+    const nullFee = refusalOf(replacing(['routes', '1', 'route_fee_pct'], null))
+    expect(nullFee.field).toBe('routes[1].route_fee_pct')
+    expect(nullFee.name).toBe('not-a-number')
+  })
+
+  it('reads a catalog-priced row without its own provenance block', () => {
+    // `catalog` on a model row is `omitempty` too, and the row it is absent from
+    // is still a row: the price and the source stay, and a screen draws the
+    // price without the spread it cannot state.
+    const view = decoded(without(['models', '0', 'catalog']))
+    const row = view.models[0]
+    expect(row?.catalog).toBeNull()
+    expect(row?.inputPerM).toBe(0.28)
+    expect(row?.source).toBe('catalog')
+    expect(row?.id).toBe('vendor/model-a')
+  })
+
+  it('reads a zero-endpoint catalog row rather than refusing the document', () => {
+    // The published schema bounds `endpoints` at one and the catalog loader
+    // refuses a zero, so a zero should not arrive -- but it is a figure a screen
+    // draws as written, and refusing it would take the whole panel down over a
+    // number nothing is computed from. `zdr_endpoints` is the count that may be
+    // zero legitimately, and it is read the same way.
+    const view = decoded(replacing(['models', '0', 'catalog', 'endpoints'], 0))
+    expect(view.models[0]?.catalog?.endpoints).toBe(0)
+    expect(view.models[0]?.catalog?.tierInputMaxPerM).toBe(0.4)
+    const zeroZdr = decoded(replacing(['models', '0', 'catalog', 'zdr_endpoints'], 0))
+    expect(zeroZdr.models[0]?.catalog?.zdrEndpoints).toBe(0)
+    for (const key of ['endpoints', 'zdr_endpoints'] as const) {
+      const negative = refusalOf(replacing(['models', '0', 'catalog', key], -1))
+      expect(negative.field, key).toBe(`models[0].catalog.${key}`)
+      expect(negative.name, key).toBe('not-a-number')
+    }
   })
 
   it('reads a document with no project, no catalog and no problems at all', () => {
@@ -293,7 +344,7 @@ describe('the models list document (§6.18)', () => {
       [['models', '0', 'allowed_to'], ['acme/widgets', 7], 'models[0].allowed_to[1]', 'not-a-string'],
       [['models', '1', 'input_per_m'], 'free', 'models[1].input_per_m', 'not-a-number'],
       [['models', '1', 'output_per_m'], -1, 'models[1].output_per_m', 'not-a-number'],
-      [['models', '0', 'catalog', 'endpoints'], 0, 'models[0].catalog.endpoints', 'not-a-number'],
+      [['models', '0', 'catalog', 'endpoints'], -1, 'models[0].catalog.endpoints', 'not-a-number'],
       [['models', '0', 'catalog', 'zdr_endpoints'], -1, 'models[0].catalog.zdr_endpoints', 'not-a-number'],
       [
         ['models', '0', 'catalog', 'tier_output_max_per_m'],
@@ -384,6 +435,27 @@ describe('the models list document (§6.18)', () => {
       expect(NON_TEXT_STRING_KEYS, key).toContain(key)
       expect(WIRE_TEXT_CLASSES[key], key).toBeUndefined()
     }
+  })
+
+  it('classifies `source` once, for the two different values it carries', () => {
+    // **The document's one key collision, written down where a reader of the
+    // classification will meet it.** `source` is a model row's price origin -- a
+    // word from a closed CLI enum (`catalog`, `local`, `embedded`, `none`) --
+    // and it is also a URL on the catalog block and inside a catalog-priced
+    // row's provenance. `WIRE_TEXT_CLASSES` holds one row per key, so the class
+    // has to serve both, and `label` is the one that is safe in that direction:
+    // an enum word passes through untouched, and a URL under the same key is
+    // replaced by the placeholder rather than drawn as a link.
+    expect(WIRE_TEXT_CLASSES['source']).toBe('label')
+    expect(sanitizeText('catalog', 'label', 'source')).toEqual({ ok: true, text: 'catalog', flags: [] })
+    expect(sanitizeText('https://example.invalid/catalog.json', 'label', 'source')).toEqual({
+      ok: true,
+      text: '[redacted-url]',
+      flags: ['replaced-url'],
+    })
+    // And a model row's own `source` decodes as the enum word it is: the class
+    // is the drawing rule, not a rewrite of the value.
+    expect(decoded(modelsDocument()).models[0]?.source).toBe('catalog')
   })
 })
 

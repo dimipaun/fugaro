@@ -2306,7 +2306,7 @@ lives only there reads as `main` here.
 | `base_url` | string | **yes** | never | the entry's own base URL; the Anthropic API's own on the direct route. **It is untrusted text**, a URL somebody's config names: a screen draws it as text and never as a link |
 | `host` | string | **yes** | never | the host of `base_url` (`hostOf`), or the URL itself when it parses to no host, so a base URL that names none is shown as written rather than blanked. It is what a reader recognises the route by |
 | `models` | array of string | never | never | the exact model IDs the route claims, in the entry's order; the direct route's are the embedded table's keys, sorted. A claimed ID may be a prefix pattern (`claude-*`), which is the entry's own spelling and is drawn as text |
-| `route_fee_pct` | number | **yes** | never | what is added to every charge on the route, in percent (`float64`). **Absent when the route charges none**, and a consumer reads that as `0`: a route that adds nothing charges nothing, which is a fact rather than an unknown — unlike a model's price below, where the same absence is an unknown |
+| `route_fee_pct` | number | **yes** | never | what is added to every charge on the route, in percent (`float64`, `omitempty`). **Absent when the route charges none**, and a consumer reads that as `0`: a route that adds nothing charges nothing, which is a fact rather than an unknown — unlike a model's price below, where the same absence is an unknown. **A `null` is not this key's shape**: absence is the CLI's only spelling of "no fee", so a consumer refuses an explicit `null` rather than folding it into the same `0`, which would hide a shape change behind the one default this document has |
 | `allow_data_to` | array of string | never | never | the repositories whose code may be sent here, as written, or `["*"]` for a route open to every repository. `[]` when the route names none and is not open |
 | `open_to_every_repo` | bool | never | never | the entry's own switch. On the direct route it is `true`: no `allow_data_to` governs a call to Anthropic, whose credential the owner stores for the project rather than per repository |
 | `note` | string | **yes** | never | what the entry's own keys do not say: `require_zdr: ...` on a ZDR entry, or `routing.claude.via: ...` on the direct route when the project routes a Claude ID elsewhere. It is untrusted text |
@@ -2333,7 +2333,7 @@ provenance reads both:
 | --- | --- | --- | --- | --- |
 | `tier` | string | never | never | `zdr` or `all`: the tier the price was taken from |
 | `bound` | string | never | never | the end of that tier's range charged, `min` (the cheapest) or `max` (the dearest — whether `price_policy` asked for it or the catalog is stale) |
-| `endpoints` | int | never | never | how many endpoints the model is served by |
+| `endpoints` | int | never | never | how many endpoints the model is served by. The published schema bounds this at `1` and the catalog loader refuses a zero, so a zero should not arrive; a consumer reads it with a floor of zero all the same, because the figure is drawn as written and refusing it would take the whole read down over a number nothing is computed from |
 | `zdr_endpoints` | int | never | never | how many of them are ZDR-eligible (the `zdr` tier's own count) |
 | `source` | string | never | never | the catalog URL the price came from |
 | `checked_at` | string | never | never | the date the catalog was last checked, `YYYY-MM-DD` |

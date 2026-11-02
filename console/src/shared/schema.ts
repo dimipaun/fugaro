@@ -2798,11 +2798,21 @@ function modelsMoneyAt(raw: unknown, field: string, where: string): number {
 
 /** modelsFeeAt is `route_fee_pct`, the one number of the document that is
  * **`0` when it is absent**: the contract leaves the key out "when the route
- * charges none", and a route that adds nothing to a charge is a route whose fee
- * is zero -- unlike a price, where absent means the figure is unknown. */
+ * charges none" (`omitempty` on a `float64`, so a route that charges nothing
+ * writes no key), and a route that adds nothing to a charge is a route whose fee
+ * is zero -- unlike a price, where absent means the figure is unknown.
+ *
+ * **An explicit `null` is refused, and that is the point of not reusing
+ * `modelsPriceAt` here.** Absence is the CLI's only spelling of "no fee"; a
+ * `null` is a key somebody wrote, which the contract never emits, so reading it
+ * as `0` would hide a shape change behind the one default this document has --
+ * and this default is safe only while absence and zero mean the same thing. */
 function modelsFeeAt(raw: Record<string, unknown>, key: string, field: string, where: string): number {
-  const value = modelsPriceAt(raw, key, field, where)
-  return value === null ? 0 : value
+  const at = field === '' ? key : `${field}.${key}`
+  const value = raw[key]
+  if (value === undefined) return 0
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return refuse('not-a-number', at, where)
+  return value
 }
 
 /** modelsCatalogAt decodes the document's catalog provenance block. Its
@@ -2827,7 +2837,14 @@ function modelsPriceCatalogAt(raw: unknown, field: string, where: string): Model
   return {
     tier: stringAt(required(catalog, 'tier', field, where), `${field}.tier`, where),
     bound: stringAt(required(catalog, 'bound', field, where), `${field}.bound`, where),
-    endpoints: modelsCountAt(required(catalog, 'endpoints', field, where), `${field}.endpoints`, where, 1),
+    // `endpoints` is the one count here that the document's own published
+    // schema bounds above zero (`minimum: 1`) and the catalog loader refuses at
+    // zero (`internal/pricing/catalog`). It is read with the floor of zero all
+    // the same: this figure is drawn as written and nothing on a screen is
+    // computed from it, so a `0` from a CLI whose catalog dropped the bound is a
+    // row a screen can show -- while refusing it would take the whole panel
+    // down, routes, models and usage included, over one number nobody draws.
+    endpoints: modelsCountAt(required(catalog, 'endpoints', field, where), `${field}.endpoints`, where),
     zdrEndpoints: modelsCountAt(
       required(catalog, 'zdr_endpoints', field, where),
       `${field}.zdr_endpoints`,
