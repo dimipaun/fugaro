@@ -34,6 +34,7 @@ import (
 type accountsAddOptions struct {
 	repos   string
 	profile string
+	claude  bool
 	yes     bool
 }
 
@@ -62,6 +63,14 @@ checkout's repository root are converged — the same stages fugaro update runs,
 invoked here rather than forked. It ends on the line that says what is left,
 which is a fugaro run and never an update.
 
+--claude runs Anthropic's own claude setup-token on your own terminal first,
+so the login is the one you would have run yourself: it gets your stdin, stdout
+and stderr, and fugaro reads none of what it prints. The token is then read at
+the hidden prompt below, exactly as it is without the flag — that prompt is the
+only source of the value, so a login you cancelled or that failed costs one
+paste rather than the command. A login that failed stores nothing and still
+leaves you the prompt.
+
 Run it at your own terminal: this file decides where a credential may be sent,
 so a coding agent's session is refused, --yes included.`,
 		Args: cobra.ExactArgs(1),
@@ -72,6 +81,7 @@ so a coding agent's session is refused, --yes included.`,
 	f := cmd.Flags()
 	f.StringVar(&o.repos, "repos", "", "the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin)")
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
+	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
@@ -136,8 +146,20 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// so. It is read from the config as it was, before the edit above.
 	_, rotation := lc.ClaudeAccounts[name]
 	what := accountsAddWhat(after, name, profile, accountsAddBeyond(cmd.Context(), repos), rotation)
-	command := accountsAddCommand(name, repos, profile)
+	command := accountsAddCommand(name, repos, profile, o.claude)
 	changed := yamledit.Changed(old, next)
+
+	// §3's act one, and the order is the point of it: the login runs before the
+	// diff and before anything is written, so every refusal it can make — a
+	// coding agent's session, a terminal that is not there, a claude fugaro will
+	// not run — leaves the file exactly as it was. The token itself is read
+	// later, at the hidden prompt the converge's store performs, which is the
+	// only path a value takes.
+	if o.claude {
+		if err := accountsAddClaudeLogin(cmd, sel.Path, what, command); err != nil {
+			return err
+		}
+	}
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
@@ -408,9 +430,15 @@ func accountsAddPublishedRepos(lc *localcfg.Config, name string) ([]string, bool
 
 // accountsAddCommand is the command a refusal in a coding agent's session
 // prints for the person to run at their own terminal: this same edit, spelled
-// whole, because nothing they type here is remembered.
-func accountsAddCommand(name string, repos []string, profile string) string {
+// whole, because nothing they type here is remembered. It carries --claude when
+// the run that was refused asked for it: the login is half of what that run
+// would have done, and a command without the flag would send the person to a
+// different one.
+func accountsAddCommand(name string, repos []string, profile string, claude bool) string {
 	parts := []string{"fugaro", "accounts", "add", quoteWord(name), "--repos", quoteWord(strings.Join(repos, ","))}
+	if claude {
+		parts = append(parts, "--claude")
+	}
 	if profile != "" {
 		parts = append(parts, "--profile", quoteWord(profile))
 	}
