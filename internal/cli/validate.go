@@ -22,6 +22,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -570,6 +572,116 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			projectpolicy.PathShared())})
 	}
 	return problems
+}
+
+// reviewLevelProblems is `fugaro validate`'s half of the review-level
+// resolution (L3.2, G2): the refusals that would stop a run of this file, and
+// the warnings such a run goes on with.
+//
+// The levels are resolved the way a launch resolves them (L3.2's other half,
+// launchReviewLevelsAsk): the mode this file's own rigor: block resolves, the
+// owner's floor for that mode, the recipe this checkout can read, and the
+// claims the installation's routes make — so a file that would be refused at
+// the launcher is refused here, where the author still is, and one that only
+// warns warns here. Both surfaces call config.ResolveLevels (L3.1), which the
+// run's own bootstrap calls a third time (L4.2), so the three cannot disagree
+// about a level.
+//
+// The run's allowed_models is not handed to the resolver. A level's model is
+// judged against that list by the run's own gate, over the routes the run
+// carries (runner's checkBudget, checkLevels): a list handed to the resolver
+// is a membership test that knows no routes, and would refuse an ID this
+// repository's runs may well use. A model this command lets through is refused
+// there; a refusal invented here would be the worse of the two mistakes.
+//
+// The task's review_levels block is a launcher's field and this command has
+// no task: the file itself is what validate judges.
+func reviewLevelProblems(root string, cfg *config.Config, lc *localcfg.Config, lcErr error, claimed map[string]config.ModelProvider) (problems, warnings []config.Problem) {
+	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{}).Mode
+	// The floor lives in the owner-only policy node and is published from this
+	// file's own project config (L1.4): a config selected for another project
+	// holds another installation's floor.
+	var floor []policy.Level
+	if lcErr == nil && lc != nil && lc.Name == cfg.Project {
+		if f, err := lc.ReviewFloorPolicy(); err == nil {
+			floor = f[mode]
+		}
+	}
+	rcp := localRecipe(root, cfg)
+	_, warns, err := config.ResolveLevels(config.LevelInputs{
+		Config: cfg, Mode: mode, Floor: floor, Recipe: rcp,
+		CatalogDefault: catalogDefaultRecipe(root, rcp),
+		Providers:      claimed,
+	})
+	for _, w := range warns {
+		warnings = append(warnings, config.Problem{Path: "agent.levels", Message: w.String()})
+	}
+	for _, e := range splitRefusals(err) {
+		problems = append(problems, config.Problem{Path: "agent.levels", Message: e.Error()})
+	}
+	return problems, warnings
+}
+
+// catalogDefaultRecipe is whether rcp is the catalog's own `default`, the one
+// recipe whose first-line step runs only when agent.first_line_review turns it
+// on (docs/recipes.md §2, config.LevelInputs.CatalogDefault). localRecipe
+// reads the repository's file first and the catalog second, so the recipe is
+// the catalog's exactly when no file of that name is in this checkout. A
+// directory that is no checkout has no repository layer to read.
+func catalogDefaultRecipe(root string, rcp *recipe.Recipe) bool {
+	if rcp == nil || rcp.Name != recipe.DefaultName {
+		return false
+	}
+	if root == "" {
+		return true
+	}
+	_, found, err := recipe.ReadRepoFile(root, recipe.DefaultName)
+	return err == nil && !found
+}
+
+// splitRefusals is the refusals a resolver error carries, one per problem
+// line: config.ResolveLevels answers with errors.Join, whose own message is
+// the sentences run together, and a validate problem is a line of its own.
+func splitRefusals(err error) []error {
+	if err == nil {
+		return nil
+	}
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		return j.Unwrap()
+	}
+	return []error{err}
+}
+
+// reviewFloorUnpublishable warns when the owner's own file sets a review-level
+// floor this installation could not publish (L1.4, G1). The floor is the one
+// thing about review levels no repository can write: it lives in the
+// owner-only policy node, and `fugaro project policy publish` is what puts it
+// there. A publish needs a budget.mode for the node's budget block and the
+// project's Realtime Database to write the node into, so a file without them
+// can publish no floor at all — and its runs then resolve their levels from
+// the rigor defaults alone, which is less review than the operator wrote and
+// asked for.
+//
+// It is a warning and not a problem: the file is a configuration this CLI
+// accepts, and what has to move is the installation. The two halves are named
+// apart, because they are two different commands' worth of work.
+func reviewFloorUnpublishable(lc *localcfg.Config) []config.Problem {
+	if lc == nil || len(lc.ReviewFloor) == 0 {
+		return nil
+	}
+	var missing []string
+	if lc.Budget == nil || lc.Budget.Mode == "" {
+		missing = append(missing, "no budget.mode (a published policy's budget block must name one: off, observe or enforce)")
+	}
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		missing = append(missing, "no database (the policy node is written into the project's Realtime Database, which fugaro update --firebase-project sets)")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return []config.Problem{{Path: "review_floor", Message: fmt.Sprintf(
+		"sets a floor this installation can publish nowhere, because its project config has %s: until it can, every run resolves its levels from the rigor defaults alone and the floor never reaches a run. Fix those in %s and run fugaro project policy publish",
+		strings.Join(missing, " and "), lc.Name)}}
 }
 
 // claudePin is one of the run's three pins whose model is a canonical Claude
@@ -1771,6 +1883,14 @@ func newValidateCmd() *cobra.Command {
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
 				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc, lcErr, offline)...)
+				// The review levels this file's runs would resolve (L3.2). The
+				// resolver reads the file's own agent.levels, agent.models and
+				// rigor:, so it is judged on the file as it is, and the recipe
+				// role aliasing config.ResolveLevels applies itself: ecfg is
+				// for the checks that judge the pins the run's roles leave.
+				rlp, rlw := reviewLevelProblems(filepath.Dir(path), cfg, lc, lcErr, claimed)
+				problems, warnings = append(problems, rlp...), append(warnings, rlw...)
+				warnings = append(warnings, reviewFloorUnpublishable(lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {
