@@ -1231,11 +1231,22 @@ func TestSettingsSetTrustedAddIsTyped(t *testing.T) {
 	}
 
 	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo"); err != nil {
+	out, _, err := executeStdin(t, "aurora\n", "settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo")
+	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "100000002") {
 		t.Errorf("fugaro.yaml does not carry the added account:\n%s", got)
+	}
+	// The prompt says what this edit does: it adds an account to a list, and a
+	// sentence about turning a key on names neither. The confirmation shows it
+	// before the prompt, so it is there whether the person types the name or
+	// the write is refused.
+	if !strings.Contains(out, "this widens who is trusted") {
+		t.Errorf("the confirmation does not say what adding a name widens:\n%s", out)
+	}
+	if strings.Contains(out, "this turns a followup key on") {
+		t.Errorf("adding a name is confirmed with the sentence for turning a key on:\n%s", out)
 	}
 
 	// Taking a name off the list narrows who can steer the run, so it is the

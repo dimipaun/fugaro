@@ -789,6 +789,7 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 	key := row.Key
 	ceilingWhy := "this raises a limit: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, or --yes outside a coding agent's session"
 	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	followupAddWhy := "this widens who is trusted: a run then acts on comments from an account it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
 	if settingsCeilingKey(key) {
 		switch mode {
 		case "unset":
@@ -812,8 +813,11 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 			// holds the repository's credentials, which is the same widening as
 			// turning one of these keys on: `--add` is the typed direction on
 			// this block and `--remove` the tightening one, which has no case
-			// here for the reason a ceiling's own remove has none.
-			return true, followupWhy
+			// here for the reason a ceiling's own remove has none. It carries
+			// its own sentence all the same: the person reading the prompt is
+			// adding an account to a list, and a sentence about a key being
+			// turned on names neither the list nor the account.
+			return true, followupAddWhy
 		}
 	}
 	// A row's own sensitive direction: turning the key on is the act D846
