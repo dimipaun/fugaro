@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1423,6 +1424,30 @@ func TestVerifyComparesTheSignatureInConstantTime(t *testing.T) {
 	}
 }
 
+// TestVerifyDefaultComparisonIsHMACEqual is the other half of F7's rule, and
+// the half the test above cannot hold. That test wraps the variable and
+// delegates to hmac.Equal, so what it pins is that the route REACHES the
+// comparison and hands it two equal-length MACs; it says nothing about what the
+// variable is when nothing wraps it — a default of `bytes.Equal` would satisfy
+// it in full.
+//
+// The pin is the two functions' code pointers rather than the route's
+// behaviour, because the two candidates are behaviourally indistinguishable:
+// what F7 forbids is a comparison that stops at the first differing byte, which
+// is a property of how LONG the comparison takes, and bytes.Equal answers every
+// input hmac.Equal answers with the same result — a length mismatch, nil beside
+// empty, and two MACs that differ in their first byte included. So no call can
+// tell them apart, and comparing the functions themselves is the only way a
+// test can hold "the default IS crypto/hmac's Equal".
+//
+// The two tests are the pin together: this one fails if the default stops being
+// hmac.Equal, and the one above fails if the route stops reaching it.
+func TestVerifyDefaultComparisonIsHMACEqual(t *testing.T) {
+	if got, want := reflect.ValueOf(verifyEqual).Pointer(), reflect.ValueOf(hmac.Equal).Pointer(); got != want {
+		t.Errorf("verifyEqual's default is the function at %#x, want crypto/hmac's Equal at %#x: the route's own comparison is the one F7 names, never a second spelling of it", got, want)
+	}
+}
+
 // TestVerifyRouteRefusesACallerOutsideTheVerifierList: the list is the ROUTE's
 // admission and not the installation's job set. An address that is one of the
 // installation's job service accounts — even one whose review class is
@@ -1728,6 +1753,79 @@ func TestVerifyRouteRefusesWhenThePreviousEntryIsUnusable(t *testing.T) {
 	live := signWith(t, reviewKeyBytes(t, "current"), s.slug, s.run, digest)
 	resp, body = s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, live))
 	verifyValid(t, resp, body, true)
+}
+
+// TestVerifyRouteRefusesAnUnusableCurrentKeyBesideAValidPreviousOne: §6.4's
+// fail-closed rule against the other half of the rotation window, and the one
+// case where the honest answer and the safe answer pull apart. The pair's live
+// entry is not a key and its previous entry IS one, and the signature the call
+// carries is one this account genuinely made — under that previous key. So the
+// service could recompute a MAC that matches, and every reason to ask it to
+// (the artifact is really this account's) is present.
+//
+// It refuses all the same, because the live entry is unreadable: whether that
+// signature is the one the retired key made a moment ago or a MAC computed by
+// an attacker who read it, the service cannot tell, and it is a service that
+// signs with the live entry. A `valid:true` here would let a document the
+// operator broke — a truncated value, a value pasted into the wrong entry —
+// become an attestation, which is exactly the hole §5.3 and §6.4 close: a
+// coordinator reads the bit alone as "ship the verdict", so the refusal is the
+// only answer that cannot be misread as yes.
+//
+// The three things asserted are the shape of that refusal: the status a
+// coordinator halts on, a body that carries no bit to misread, and exactly one
+// audit line — the count every refusal on this route owes once the caller is
+// verified. The line is also read for what it must not carry: the previous
+// key's bytes are a live secret of this account, and a line written while
+// refusing a call that presented a signature made under them is exactly where
+// they would leak.
+func TestVerifyRouteRefusesAnUnusableCurrentKeyBesideAValidPreviousOne(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA}, func(s *svc, _ *Config) {
+		// The live entry holds a value that is not a 32-byte hex key; the
+		// previous one is the fixture's own usable key.
+		s.src.docs = [][]byte{[]byte("claude-oauth-token-alice: " + fakeCred(t, "alice") + "\n" +
+			config.ReviewSigningKeySecret(testReviewAccount) + ": zz\n" +
+			config.ReviewSigningKeyPreviousSecret(testReviewAccount) + ": " + reviewKey(t, "previous") + "\n")}
+	})
+	digest := testDigest(t, "unusable-current")
+	signature := signWith(t, reviewKeyBytes(t, "previous"), s.slug, s.run, digest)
+
+	resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, signature))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if got := refusal(t, resp.StatusCode, body); got.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+	}
+	if strings.Contains(string(body), "valid") {
+		t.Errorf("an unusable live entry was answered with the bit: %s", body)
+	}
+
+	lines := parseAuditLines(t, s.audit.String())
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	if got := line["status"]; got != ErrorStateUnavailable {
+		t.Errorf("the line's status is %v, want %q", got, ErrorStateUnavailable)
+	}
+	if got := line["caller"]; got != testVerifierSA {
+		t.Errorf("the line's caller is %v, want %q", got, testVerifierSA)
+	}
+	if got := line["credential"]; got != "" {
+		t.Errorf("the line names credential %v, want none: no entry was chosen", got)
+	}
+	raw := s.audit.String()
+	for what, value := range map[string]string{
+		"the previous key's bytes": reviewKey(t, "previous"),
+		"the signature":            signature,
+		"the account's token":      fakeCred(t, "alice"),
+	} {
+		if strings.Contains(raw, value) {
+			t.Errorf("the audit line carries %s: %s", what, raw)
+		}
+	}
 }
 
 // TestVerifyRouteAnswersOneBitAndNoStoreWhicheverEntryVerified: the answer's
