@@ -5535,10 +5535,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * declarations themselves and the three questions the console asks the stored
      * view.
      *
-     * The host is emptied to its slot and never to nothing (`clearSection`),
-     * because the mark of a read in flight belongs in that slot and a repaint
-     * that took the slot with it would take the mark too -- a read under way
-     * would then look like a pane that had answered with nothing.
+     * The host is reduced to its own slot and **the slot is left as it is**
+     * (`paintTotals`'s rule): the mark of a read in flight lives in that slot, so
+     * a repaint that emptied it would take the mark down and leave a pane waiting
+     * with nothing to say it was.
      *
      * **The stamp is the clock what is on screen was read at** -- this read's,
      * drawn with the declarations it belongs to -- and its Refresh is the one
@@ -5549,7 +5549,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const paintTranscript = (): void => {
       const drawn = mount(false)
       const section = drawn.transcript
-      clearSection(section.host, section.slot)
+      surface.nodeOf(section.host).replaceChildren(surface.nodeOf(section.slot))
       if (intentsAt !== 0) {
         const stamp = renderStamp(factory, intentsAt)
         appendTo(section.host, stamp.root)
@@ -5561,17 +5561,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         appendTo(section.host, refusedScreen(factory, 'coordinator.intents', intentsSentence, theme))
       }
       fillCoordinatorTranscript(factory, model(), section.host)
-      // A repaint made while this read is still out -- another section's landing
-      // repaints the pane too -- has just taken the mark out of the slot with
-      // everything else, so it goes back up over what was drawn.
-      if (intentsOut) {
-        coordinatorTranscriptRead.mark(
-          intentsToken,
-          section.section,
-          section.slot,
-          COORDINATOR_TRANSCRIPT_BUSY,
-        )
-      }
     }
 
     /**
@@ -5592,6 +5581,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       intentsOut = true
       intentsToken = coordinatorTranscriptRead.start()
       paintTranscript()
+      // The press is answered where it happened: the mark goes up beside what is
+      // already drawn, which is the one read of this screen whose mark is not put
+      // up by `start` (`askForJobs`'s rule for the other).
+      markPending(false)
       void loadIntents(intentsAttempt)
     }
 

@@ -5316,6 +5316,14 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(classed(panelOf(document), 'coordinator-transcript-intent')).toEqual([])
     expect(classed(panelOf(document), 'coordinator-transcript-repo')).toEqual([])
     expect(holdsText(panelOf(document), COORDINATOR_TRANSCRIPT_WORD)).toBe(true)
+    // And the pane still says it is reading: every other section's landing
+    // repaints the pane, and a repaint that took the mark down with the drawing
+    // would leave a read in flight looking like a pane that had answered with
+    // nothing.
+    expect(
+      busyLabels(document),
+      'another section’s landing took the pane’s mark down',
+    ).toContain(COORDINATOR_TRANSCRIPT_BUSY)
 
     intents.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
     await flush()
@@ -5535,10 +5543,14 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     buttonFor(document, 'coordinator').click()
     await flush()
 
-    // Nothing has been read, so there is nothing to stamp: the line says when a
-    // page was read, and a section nothing answered draws neither it nor a
-    // figure.
-    expect(classed(panelOf(document), STAMP_AT_CLASS)).toEqual([])
+    // Nothing has been read of the window, so the head has nothing to stamp: the
+    // line says when a page was read, and a section nothing answered draws
+    // neither it nor a figure. The stamp is read inside the head and not across
+    // the panel, because the transcript pane below it holds a clock of its own
+    // (K5), which is that read's and not this one's.
+    const jobsHead = classed(panelOf(document), COORDINATOR_JOBS_HEAD_CLASS)[0]
+    if (jobsHead === undefined) throw new Error('the job list drew no head')
+    expect(classed(jobsHead, STAMP_AT_CLASS)).toEqual([])
 
     buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
     first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
