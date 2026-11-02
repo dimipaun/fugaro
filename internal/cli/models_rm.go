@@ -68,7 +68,6 @@ func runModelsRm(cmd *cobra.Command, id string, o *modelsRmOptions) error {
 		return err
 	}
 
-	modelsRmWarn(cmd, lc, id)
 	what := fmt.Sprintf("remove %s from the project config", id)
 	if claim.route != "" {
 		what += fmt.Sprintf(" (route %s claims it no longer)", claim.route)
@@ -76,6 +75,11 @@ func runModelsRm(cmd *cobra.Command, id string, o *modelsRmOptions) error {
 	if err := modelsEditLocal(cmd, lc, sel, old, next, what, "fugaro models rm "+id, o.yes); err != nil {
 		return err
 	}
+	// The warning is about the break this removal makes, so it follows the write:
+	// a refused one — a coding agent's session, a file the edit cannot splice —
+	// left every pin where it was, and a warning would send the owner to repair
+	// a break nothing caused.
+	modelsRmWarn(cmd, lc, id)
 	out := cmd.OutOrStdout()
 	if yamledit.Changed(old, next) && claim.by != "" {
 		fmt.Fprintf(out, "%s is still claimed by %s on route %s: a pattern is not this command's to remove\n", oneLine(id), oneLine(claim.by), oneLine(claim.route))

@@ -155,8 +155,45 @@ func TestModelsRmRefusesInAnAgentSession(t *testing.T) {
 	if !strings.Contains(out, "+ ") && !strings.Contains(out, "- ") {
 		t.Errorf("the refusal prints no diff:\n%s", out)
 	}
+	if strings.Contains(out, "warning:") {
+		t.Errorf("the refusal warns about a removal that did not happen:\n%s", out)
+	}
 	if got := readFileString(t, path); got != before {
 		t.Errorf("the refused write changed the file:\n%s", got)
+	}
+}
+
+// TestModelsRmWarnsOnlyOfARemovalThatLanded: the warning describes what the
+// removal breaks — a repository's next run has no provider for the model — so
+// it is the write's own output and not the command's. A refused write (a coding
+// agent's session here, D789) leaves every pin where it was, and a warning
+// about it would tell the owner to repair a break nothing caused.
+func TestModelsRmWarnsOnlyOfARemovalThatLanded(t *testing.T) {
+	home, path := modelsWriteHome(t)
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", ""))
+
+	t.Setenv("CLAUDECODE", "1")
+	refused, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	if err == nil {
+		t.Fatal("a models write ran in a coding agent's session")
+	}
+	if strings.Contains(refused, "warning:") {
+		t.Errorf("the refused write warned about a removal that did not happen:\n%s", refused)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "vendor/model-x") {
+		t.Fatalf("the refused write removed the model anyway:\n%s", got)
+	}
+
+	// The same command at the owner's own terminal does warn: the pin above is
+	// exactly what the warning is for, so its absence in the refusal is the
+	// order and not a fixture with nothing to say.
+	t.Setenv("CLAUDECODE", "")
+	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "warning:") || !strings.Contains(out, "owner/repo-a") {
+		t.Errorf("the removal that landed printed no warning:\n%s", out)
 	}
 }
 
