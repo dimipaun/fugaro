@@ -1571,7 +1571,9 @@ func TestDiagnoseToleratedJSONFields(t *testing.T) {
 func TestDiagnosePrintsTheReviewersModelEffortAndHead(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20260101-000030-abcd"
-	head := strings.Repeat("a", 64)
+	// A git head as the runner records one: 40 lowercase hex characters, the
+	// SHA-1 a `git rev-parse` answers.
+	head := strings.Repeat("a", 40)
 	seedReviewersRun(t, f, id, []runstore.ReviewSummary{
 		{Round: 1, Tier: runstore.TierFirst, Verdict: "ship", Head: head, Model: "deepseek/deepseek-v4-flash"},
 		{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 2, Head: head, Model: "claude-opus-5-5", Effort: "high"},
@@ -1583,8 +1585,8 @@ func TestDiagnosePrintsTheReviewersModelEffortAndHead(t *testing.T) {
 	}
 	for _, want := range []string{
 		"\nReviews\n",
-		"  round 1 first: ship, 0 findings (model deepseek/deepseek-v4-flash, at " + head[:12] + ")\n",
-		"  round 2 senior: changes, 2 findings (model claude-opus-5-5, effort high, at " + head[:12] + ")\n",
+		"  round 1 first: ship, 0 findings (model deepseek/deepseek-v4-flash, at " + head[:7] + ")\n",
+		"  round 2 senior: changes, 2 findings (model claude-opus-5-5, effort high, at " + head[:7] + ")\n",
 		"  round 3 adversarial: no verdict, 0 findings\n",
 	} {
 		if !strings.Contains(human, want) {
@@ -1625,6 +1627,33 @@ func TestDiagnosePrintsTheReviewersModelEffortAndHead(t *testing.T) {
 	plain, _ := entries[2].(map[string]any)
 	if got := keysOfDoc(plain); !slices.Equal(got, []string{"findings", "round", "tier", "verdict"}) {
 		t.Errorf("a review entry that recorded no model, effort or head has keys %v", got)
+	}
+}
+
+// TestShortGitHead: the Reviews block shortens a head the way git abbreviates
+// one — 7 characters of a SHA-1 object id, 12 of a SHA-256 — and answers
+// "(invalid)" for anything that is not an object id, so a record a hand edited
+// cannot put a slice of arbitrary text where a head goes.
+func TestShortGitHead(t *testing.T) {
+	sha1, sha256 := strings.Repeat("a1", 20), strings.Repeat("f0", 32)
+	if got := shortGitHead(sha1); got != "a1a1a1a" {
+		t.Errorf("shortGitHead(sha1) = %q, want its first 7 characters", got)
+	}
+	if got := shortGitHead(sha256); got != "f0f0f0f0f0f0" {
+		t.Errorf("shortGitHead(sha256) = %q, want its first 12 characters", got)
+	}
+	for _, bad := range []string{
+		"",
+		strings.Repeat("a", 39),
+		strings.Repeat("a", 41),
+		strings.Repeat("A", 40),
+		strings.Repeat("g", 40),
+		"HEAD",
+		strings.Repeat("é", 20),
+	} {
+		if got := shortGitHead(bad); got != "(invalid)" {
+			t.Errorf("shortGitHead(%q) = %q, want (invalid)", bad, got)
+		}
 	}
 }
 

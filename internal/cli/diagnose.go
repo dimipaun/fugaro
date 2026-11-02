@@ -323,6 +323,42 @@ func stageTimingsOf(stages []runstore.StageTiming, red func(string) string) []ru
 	return out
 }
 
+// validGitHead reports whether s is a git object id: 40 lowercase hex
+// characters, the SHA-1 a `git rev-parse` writes, or 64, the SHA-256 of a
+// repository created with --object-format=sha256. It is validSHA256's guard
+// with a second length, and it exists for the same reason (runs.go): the
+// record is launcher-writable and json.Unmarshal never checks it against the
+// schema, so a shortener must reject anything else before slicing, or a
+// multibyte rune cut mid-byte would corrupt the terminal output.
+func validGitHead(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// shortGitHead shortens a git head for display: 7 characters of a SHA-1 object
+// id and 12 of a SHA-256 one, git's own abbreviated length for each. It is not
+// shortSHA (runs.go), which shortens a sha256 digest a record states -- an
+// artifact's or a layer's -- and answers "(invalid)" for a 40-hex git head,
+// which is every head a run records. Anything that is not an object id shows
+// as "(invalid)" rather than as a slice of text that is not a head.
+func shortGitHead(s string) string {
+	if !validGitHead(s) {
+		return "(invalid)"
+	}
+	if len(s) == 40 {
+		return s[:7]
+	}
+	return s[:12]
+}
+
 // reviewLine is one review round as the diagnosis's Reviews block prints it:
 // the round, the tier that ran it, its verdict and its findings count, and what
 // reviewed it -- the model, the effort and the commit it read (CLI 0.16.0).
@@ -351,7 +387,7 @@ func reviewLine(r runstore.ReviewSummary) string {
 		parts = append(parts, "effort "+r.Effort)
 	}
 	if r.Head != "" {
-		parts = append(parts, "at "+shortSHA(r.Head))
+		parts = append(parts, "at "+shortGitHead(r.Head))
 	}
 	if len(parts) > 0 {
 		line += " (" + strings.Join(parts, ", ") + ")"
