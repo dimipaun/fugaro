@@ -1,15 +1,14 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -565,6 +564,41 @@ func TestSettingsGetRefusesAnUnknownKeyWithTheNearest(t *testing.T) {
 	}
 }
 
+// TestSettingsSetUnknownKeyHintNamesOnlyKeysItCouldWrite: the refusal's nearest
+// names come from the keys `set` writes, not from the whole registry. Two rows
+// the read prints — budget.per_day_usd and budget.mode — are refused by name
+// here, and a hint that answered a misspelling of one with it would send the
+// person from this refusal to the next one.
+func TestSettingsSetUnknownKeyHintNamesOnlyKeysItCouldWrite(t *testing.T) {
+	settingsWriteHome(t)
+	for _, c := range []struct{ key, want string }{
+		// The misspelling of a refused key is answered with a key this command
+		// writes, which is the nearest of those.
+		{"budget.per_day_uds", "budget.per_run_usd"},
+		{"budget.per_dy_usd", "budget.per_run_usd"},
+		{"budget.mod", ""},
+	} {
+		t.Run(c.key, func(t *testing.T) {
+			_, _, err := execute(t, "settings", "set", c.key, "1", "--layer", "local", "--yes")
+			if err == nil {
+				t.Fatalf("settings set wrote the unknown key %s", c.key)
+			}
+			_, hint, ok := strings.Cut(err.Error(), "the nearest are ")
+			if !ok {
+				t.Fatalf("the refusal names no nearest keys: %v", err)
+			}
+			for _, refused := range []string{"budget.mode", "budget.per_day_usd"} {
+				if strings.Contains(hint, refused) {
+					t.Errorf("the hint names %s, which this command refuses:\n%s", refused, hint)
+				}
+			}
+			if c.want != "" && !strings.Contains(hint, c.want) {
+				t.Errorf("the hint does not name %s:\n%s", c.want, hint)
+			}
+		})
+	}
+}
+
 // settingsWriteLayerFile writes the local project layer file the way
 // `fugaro update` seeds it: the anchors its own loader requires, plus whatever
 // the caller adds.
@@ -680,45 +714,26 @@ func TestSettingsSetRefusesASensitiveKeyAndNeverPrintsItsValue(t *testing.T) {
 	}
 }
 
-// TestSettingsCeilingKeyCoversGovernanceAndTheLayerPrefix: D846's prefix test
-// is `budget.*` and `governance.*`, and the project layer's own block is the
-// same setting under the `layer.` prefix (SD14), so the typed name guards it
-// too.
-func TestSettingsCeilingKeyCoversGovernanceAndTheLayerPrefix(t *testing.T) {
+// TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings: D846's prefix test
+// is `budget.*` and `governance.*`, the agent block's two caps are the same
+// boundary under their own names, and the project layer is the same setting
+// under the `layer.` prefix (SD14) — its own block and its `defaults.` block,
+// which is the cap every repository the layer templates runs with.
+func TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings(t *testing.T) {
 	for _, key := range []string{
-		"budget.per_run_usd", "budget.mode", "budget.allowed_models",
+		"budget.per_run_usd", "budget.allowed_models",
 		"governance.review_ratio", "governance.stage_budget",
 		"layer.governance.review_ratio",
+		"agent.max_budget_usd", "agent.max_run_tokens",
+		"layer.defaults.agent.max_budget_usd",
 	} {
 		if !settingsCeilingKey(key) {
 			t.Errorf("settingsCeilingKey(%q) = false, and D846 makes it a ceiling", key)
 		}
 	}
-	for _, key := range []string{"git.base_branch", "agent.max_run_tokens", "followup.allow_public", "layer.defaults.git.provider"} {
+	for _, key := range []string{"git.base_branch", "agent.review_rounds", "followup.allow_public", "layer.defaults.git.provider"} {
 		if settingsCeilingKey(key) {
 			t.Errorf("settingsCeilingKey(%q) = true, and it is no ceiling", key)
-		}
-	}
-}
-
-// TestSettingsLoosensRanksABudgetMode: budget.mode is a ceiling whose values
-// are ordered, not compared as numbers: enforce is the tightest, then observe,
-// then off, and only a write that moves down the order is a loosening
-// (policy.Merge's order).
-func TestSettingsLoosensRanksABudgetMode(t *testing.T) {
-	cases := []struct {
-		old, new string
-		want     bool
-	}{
-		{"enforce", "observe", true},
-		{"enforce", "off", true},
-		{"observe", "enforce", false},
-		{"observe", "off", true},
-		{"enforce", "enforce", false},
-	}
-	for _, tc := range cases {
-		if got := settingsLoosens("budget.mode", tc.old, tc.new); got != tc.want {
-			t.Errorf("settingsLoosens(budget.mode, %q, %q) = %v, want %v", tc.old, tc.new, got, tc.want)
 		}
 	}
 }
@@ -1169,6 +1184,187 @@ func TestSettingsSetTurningAFollowupKeyOnAsksForTheTypedProjectName(t *testing.T
 	}
 }
 
+// TestSettingsSetTrustedAddIsTyped: a name added to followup.trusted widens who
+// can steer a run that holds the repository's credentials, so `--add` on this
+// key is the widening D846 types and not the harmless direction `--add` is on a
+// list that narrows something. `--remove` takes someone off the list, which is
+// the tightening half, and keeps the ordinary confirmation.
+func TestSettingsSetTrustedAddIsTyped(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("followup:\n  trusted:\n    - \"100000001\"\n"))
+	before := readFileString(t, path)
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo")
+	if err == nil {
+		t.Fatal("an account added to followup.trusted with no terminal and no --yes was written")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "100000002") {
+		t.Errorf("fugaro.yaml does not carry the added account:\n%s", got)
+	}
+
+	// Taking a name off the list narrows who can steer the run, so it is the
+	// ordinary y/N write: a terminal answering y is enough, where the typed
+	// form would refuse a y that is not the project's name.
+	if out, _, err := executeStdin(t, "y\n", "settings", "set", "followup.trusted", "--remove", "100000001", "--layer", "repo"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); strings.Contains(got, "100000001") {
+		t.Errorf("fugaro.yaml still carries the removed account:\n%s", got)
+	}
+}
+
+// TestSettingsSetAgentBudgetRaiseIsTyped: agent.max_budget_usd is a stage's own
+// spend cap, so raising it is the widening D846 types — the file it would edit
+// decides what every run this branch starts may spend — and the comparison is
+// against what a run gets today, not against the file's own text: the project
+// layer's defaults and the layer file itself are ceilings of the same kind one
+// door along.
+func TestSettingsSetAgentBudgetRaiseIsTyped(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("agent:\n  max_budget_usd: 30\n"))
+	before := readFileString(t, path)
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "40", "--layer", "repo")
+	if err == nil {
+		t.Fatal("a raised agent budget was written with no terminal and no --yes")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "agent.max_budget_usd", "40", "--layer", "repo"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "max_budget_usd: 40") {
+		t.Errorf("fugaro.yaml does not carry the raised budget:\n%s", got)
+	}
+
+	// The project layer's own defaults are the same cap for every repository
+	// the layer templates, and the layer file holds one: raising it is typed.
+	settingsWriteLayerFile(t, "defaults:\n  agent:\n    max_budget_usd: 30\n")
+	noTerminal(t)
+	_, _, err = execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "40", "--layer", "project")
+	if err == nil {
+		t.Fatal("a raised layer default for the agent budget was written with no terminal and no --yes")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+
+	// And what a run gets is the resolved value, not the file being edited: a
+	// repository's file that writes no cap of its own is typed too when the
+	// layer below already holds one.
+	settingsWriteCheckout(t, settingsRepoYAML(""))
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "aurora-gcp",
+		Bucket:     "fugaro-runs-aurora-gcp",
+		CheckedAt:  time.Now(),
+		YAML:       "version: 1\nproject: aurora\ngcp_project: aurora-gcp\ndefaults:\n  agent:\n    max_budget_usd: 30\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	noTerminal(t)
+	_, _, err = execute(t, "settings", "set", "agent.max_budget_usd", "40", "--layer", "repo")
+	if err == nil {
+		t.Fatal("a budget that raises what a run gets was written with no terminal and no --yes")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+}
+
+// TestSettingsSetAgentTokensZeroIsTyped: agent.max_run_tokens is a whole run's
+// token ceiling, and 0 is not a small cap but no cap at all (`config.Agent`:
+// "0 is none"), so writing it is the act `unset` is under another name — the
+// typed form whatever it replaces, a file that holds no cap yet included.
+func TestSettingsSetAgentTokensZeroIsTyped(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("agent:\n  max_run_tokens: 300000\n"))
+	before := readFileString(t, path)
+	noTerminal(t)
+	_, _, err := execute(t, "settings", "set", "agent.max_run_tokens", "0", "--layer", "repo")
+	if err == nil {
+		t.Fatal("a token cap was removed with no terminal and no --yes")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	_, _, err = execute(t, "settings", "unset", "agent.max_run_tokens", "--layer", "repo")
+	if err == nil {
+		t.Fatal("a token cap was unset with no terminal and no --yes")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("a refused write changed fugaro.yaml")
+	}
+
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "agent.max_run_tokens", "0", "--layer", "repo"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "max_run_tokens: 0") {
+		t.Errorf("fugaro.yaml does not carry the removed cap:\n%s", got)
+	}
+
+	// A file that holds no cap at all is the same act: no cap is the loosest a
+	// ceiling can be written, so a first write of 0 is typed as well.
+	fresh := settingsWriteCheckout(t, settingsRepoYAML(""))
+	beforeFresh := readFileString(t, fresh)
+	noTerminal(t)
+	_, _, err = execute(t, "settings", "set", "agent.max_run_tokens", "0", "--layer", "repo")
+	if err == nil {
+		t.Fatal("a first write of 0 was written with no terminal and no --yes")
+	}
+	if !strings.Contains(err.Error(), "typed confirmation") {
+		t.Errorf("the refusal does not name the typed form: %v", err)
+	}
+	if readFileString(t, fresh) != beforeFresh {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+}
+
+// TestSettingsSetAgentBudgetLowerIsNotTyped: lowering an agent spend cap takes
+// spend away, so it is the ordinary write — a terminal answering y is enough,
+// where the typed form refuses a y that is not the project's name. It is the
+// other half of the ruling that makes a raise the typed form: the comparison is
+// a comparison and not "always typed".
+func TestSettingsSetAgentBudgetLowerIsNotTyped(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("agent:\n  max_budget_usd: 30\n"))
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "y\n", "settings", "set", "agent.max_budget_usd", "20", "--layer", "repo"); err != nil {
+		t.Fatalf("a lowered agent budget is the ordinary write: %v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "max_budget_usd: 20") {
+		t.Errorf("fugaro.yaml does not carry the lowered budget:\n%s", got)
+	}
+
+	// The project layer's own defaults are the same cap, and lowering one is
+	// the ordinary write there too.
+	settingsWriteLayerFile(t, "defaults:\n  agent:\n    max_budget_usd: 30\n")
+	noTerminal(t)
+	if out, _, err := execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "20", "--layer", "project", "--yes"); err != nil {
+		t.Fatalf("a lowered layer default is the ordinary write: %v\n%s", err, out)
+	}
+}
+
 // TestSettingsSetWritesMode0600AndLeavesNoTemporaryBehind: the new file is the
 // old file's permissions and the rename is atomic, so no half-written document
 // and no temporary is ever visible beside it (spec §4.2 step 5).
@@ -1295,31 +1491,6 @@ func TestSettingsCeilingBaseIsNeverLooserThanTheFile(t *testing.T) {
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 40") {
 		t.Errorf("fugaro.yaml does not carry the tightened cap:\n%s", got)
-	}
-}
-
-// TestSettingsCeilingBaseReadsAModeNoLayerSetsAsObserve: `budget.mode`'s
-// registry row is unset("observe"), so a run whose key no layer sets runs as
-// observe — and a write of `off` over it lowers what that run gets. A base of
-// "" read such a write as a first write and skipped the typed name, although
-// observe -> off is exactly the loosening D846 types (F2).
-func TestSettingsCeilingBaseReadsAModeNoLayerSetsAsObserve(t *testing.T) {
-	settingsWriteHome(t)
-	settingsWriteCheckout(t, settingsRepoYAML(""))
-	row, ok := settings.Lookup("budget.mode")
-	if !ok {
-		t.Fatal("the registry holds no budget.mode row")
-	}
-
-	base := settingsCeilingBase(context.Background(), row, "")
-	if base != config.BudgetObserve {
-		t.Fatalf("the base for a mode no layer sets is %q, want %q", base, config.BudgetObserve)
-	}
-	if !settingsLoosens(row.Key, base, "off") {
-		t.Error("off over a mode no layer sets is not read as a loosening")
-	}
-	if settingsLoosens(row.Key, base, "enforce") {
-		t.Error("enforce over a mode no layer sets is read as a loosening")
 	}
 }
 

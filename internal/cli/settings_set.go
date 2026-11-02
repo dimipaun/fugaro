@@ -247,7 +247,7 @@ func settingsWriteRow(key string) (settings.Row, error) {
 	row, registry, ok := settingsWriteLookup(key)
 	if !ok {
 		return settings.Row{}, userErr("%s: no setting has that name; the nearest are %s",
-			key, strings.Join(nearestSettings(key, settings.Rows()), ", "))
+			key, strings.Join(nearestSettings(key, settingsWriteHintRows()), ", "))
 	}
 	if row.Sensitive {
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
@@ -317,6 +317,24 @@ func settingsPatternMatch(pattern, key string) bool {
 		}
 	}
 	return true
+}
+
+// settingsWriteHintRows are the registry rows a write's unknown-key refusal may
+// name as its nearest. The read's own hint names every row, which is right
+// there: a read covers the whole registry. A write covers the allowlist, so a
+// hint drawn from the whole registry sends a person from one refusal to the
+// next — `budget.per_day_usd` and `budget.mode` are rows the read prints and
+// the write refuses by name, and answering a misspelling of one with it is a
+// name this command was never able to write.
+func settingsWriteHintRows() []settings.Row {
+	rows := settings.Rows()
+	out := make([]settings.Row, 0, len(rows))
+	for _, row := range rows {
+		if settingsGenericKey(row.Key) {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 // settingsDefaultLayer is the target of a write that names no --layer: the
@@ -556,15 +574,30 @@ func settingsListGoneOrEmpty(data []byte, path []string) bool {
 	return ok && len(s) == 0
 }
 
-// settingsCeilingKey is the prefix test D846 names: budget.* and governance.*
-// are the keys whose loosening crosses the boundary the typed name guards.
+// settingsCeilingAgentKeys are the agent block's own caps. D846's prefix test
+// reaches budget.* and governance.*, and these two are ceilings of the same
+// kind under a third name: agent.max_budget_usd is one stage's spend cap and
+// agent.max_run_tokens a whole run's token cap, so raising either crosses the
+// boundary the typed name guards exactly as raising budget.per_run_usd does.
+var settingsCeilingAgentKeys = []string{"agent.max_budget_usd", "agent.max_run_tokens"}
+
+// settingsCeilingKey is the test D846 names: budget.* and governance.* are the
+// keys whose loosening crosses the boundary the typed name guards, and the
+// agent block's caps are the same boundary under their own names.
+//
 // The project layer's own block is the same setting under the `layer.` prefix
 // (SD14), so `layer.governance.review_ratio` is typed exactly as
-// `governance.review_ratio` is: the file it would edit decides the ceiling of
-// every run the project's branches start, which is the fact D846 guards.
+// `governance.review_ratio` is, and the layer's `defaults.` block is that
+// setting one word deeper: `layer.defaults.agent.max_budget_usd` is the cap
+// every repository the layer templates runs with. All of them are the same
+// fact — the file it would edit decides the ceiling of every run the project's
+// branches start — which is what D846 guards.
 func settingsCeilingKey(key string) bool {
 	key = strings.TrimPrefix(key, "layer.")
-	return strings.HasPrefix(key, "budget.") || strings.HasPrefix(key, "governance.")
+	if strings.HasPrefix(key, "budget.") || strings.HasPrefix(key, "governance.") {
+		return true
+	}
+	return slices.Contains(settingsCeilingAgentKeys, strings.TrimPrefix(key, "defaults."))
 }
 
 // settingsTrue is the value a followup key is turned on with: a YAML boolean
@@ -575,19 +608,6 @@ func settingsCeilingKey(key string) bool {
 func settingsTrue(value string) bool {
 	var b bool
 	return yaml.Unmarshal([]byte(value), &b) == nil && b
-}
-
-// settingsModeRank orders budget.mode's values loosest first, so a write that
-// lowers the rank is a loosening (policy.Merge's order: enforce > observe > off).
-func settingsModeRank(mode string) int {
-	switch mode {
-	case "enforce":
-		return 2
-	case "observe":
-		return 1
-	default:
-		return 0
-	}
 }
 
 // settingsCeilingBase is the value a ceiling write is compared against (D846):
@@ -606,16 +626,6 @@ func settingsModeRank(mode string) int {
 // the effective caps the same way, for the same reason.
 func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) string {
 	effective := settingsEffectiveCeiling(ctx, row)
-	if effective == "" {
-		// No layer resolves a value, so what a run gets is the key's own
-		// default. For a cap that is no cap — a state, not a value to compare
-		// against — but `budget.mode`'s default is a decision: its registry row
-		// is unset("observe"), and the mode an unset key runs with is observe
-		// (config.BudgetObserve). A base of "" made a write of `off` read as a
-		// first write and skip the typed name although it takes the run from
-		// observe to off, which is the loosening D846 types (F2).
-		effective = settingsCeilingDefault(row)
-	}
 	switch {
 	case raw == "":
 		// The file holds no ceiling of its own: the layer below is the whole
@@ -658,30 +668,11 @@ func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 	return ""
 }
 
-// settingsCeilingDefault is what a run gets for a ceiling key no layer sets,
-// for the one key whose default is a value rather than "no cap". `budget.mode`
-// is the exception: its registry row is unset("observe"), so a run with the key
-// set nowhere runs as observe (config.BudgetObserve, policy.ModeObserve), and a
-// write of `off` over it lowers the mode a run gets. Every other ceiling key's
-// unset means the cap is absent — a state, not a value — so the answer is "".
-func settingsCeilingDefault(row settings.Row) string {
-	if row.Key == "budget.mode" {
-		return config.BudgetObserve
-	}
-	return ""
-}
-
 // settingsLoosens reports whether newValue is looser than oldValue for a
-// ceiling key: a larger cap, a cap removed, a weaker mode, or a wider model
-// list. A key no layer sets has nothing to loosen, so a first write of a cap
-// is never the typed form — a first write of 0 is, because 0 is not a cap.
+// ceiling key: a larger cap, a cap removed, or a wider model list. A key no
+// layer sets has nothing to loosen, so a first write of a cap is never the
+// typed form — a first write of 0 is, because 0 is not a cap.
 func settingsLoosens(key, oldValue, newValue string) bool {
-	if key == "budget.mode" {
-		if oldValue == "" {
-			return false
-		}
-		return settingsModeRank(newValue) < settingsModeRank(oldValue)
-	}
 	if key == "budget.allowed_models" {
 		if oldValue == "" {
 			return false
@@ -754,8 +745,20 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 			}
 		}
 	}
-	if strings.HasPrefix(key, "followup.") && mode == "set" && settingsTrue(newValue) {
-		return true, followupWhy
+	if strings.HasPrefix(key, "followup.") {
+		switch mode {
+		case "set":
+			if settingsTrue(newValue) {
+				return true, followupWhy
+			}
+		case "add":
+			// A name added to a followup list widens who can steer a run that
+			// holds the repository's credentials, which is the same widening as
+			// turning one of these keys on: `--add` is the typed direction on
+			// this block and `--remove` the tightening one, which has no case
+			// here for the reason a ceiling's own remove has none.
+			return true, followupWhy
+		}
 	}
 	// A row's own sensitive direction: turning the key on is the act D846
 	// reserves, and the row carries the sentence saying why.
