@@ -25,6 +25,19 @@ func TestArgs(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("Args = %q\nwant   %q", got, want)
 	}
+	// A coding run's stage carries neither of the review stage's flags: its
+	// argv is exactly what it was (D894(a)).
+	for _, flag := range []string{"--setting-sources", "--strict-mcp-config"} {
+		if slices.Contains(got, flag) {
+			t.Errorf("a stage that asked for no posture carries %s: %q", flag, got)
+		}
+	}
+	review := Args(Request{SessionID: "s1", SettingSources: ReviewSettingSources, StrictMCPConfig: true})
+	wantReview := []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
+		"--session-id", "s1", "--setting-sources", "user", "--strict-mcp-config"}
+	if !slices.Equal(review, wantReview) {
+		t.Fatalf("review Args = %q\nwant         %q", review, wantReview)
+	}
 	resumed := Args(Request{SessionID: "s1", Resume: true})
 	if !slices.Contains(resumed, "--resume") || slices.Contains(resumed, "--session-id") {
 		t.Fatalf("resume args = %q", resumed)

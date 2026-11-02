@@ -322,3 +322,120 @@ func TestRoutingKeysAnyProviderSwitchAndAllProxy(t *testing.T) {
 		}
 	}
 }
+
+// reviewPostureKeys are the keys of the review stage's launch posture
+// (D894(a)). A coding run's stages carry none of them: the promise is that a
+// coding run's own review rounds keep byte-for-byte the file they had.
+var reviewPostureKeys = []string{"disableAllHooks", "allowManagedHooksOnly", "allowManagedMcpServersOnly", "allowedMcpServers"}
+
+// TestWriteReviewManagedSettings: the review stage's file turns hooks off
+// except the managed ones (and the managed file declares none), and allows
+// MCP servers from the managed file alone — of which there are none, the
+// allow-list being empty. Everything else about the file is unchanged: the
+// gateway's env and the stage's deny rules are there as they are for any
+// stage.
+//
+// The two keys this file used to carry and must never carry again are
+// asserted absent by name: settingSources is not a settings key at all
+// (setting-source selection is --setting-sources, which the stage's argv
+// passes, and TestArgs pins it), and enableAllProjectMcpServers blocks
+// nothing under `claude -p`, where a project-scoped MCP server loads without
+// asking.
+//
+// Mutation (write the ordinary file for a review stage): every posture
+// assertion fails. Mutation (drop one key from reviewPosture): the assertion
+// for that key fails. Mutation (put either dead key back): the absent-key
+// assertion fails. Mutation (make WriteManagedSettings call reviewPosture
+// too): the coding-run assertion fails.
+func TestWriteReviewManagedSettings(t *testing.T) {
+	dir := t.TempDir()
+	review := filepath.Join(dir, "review.json")
+	if err := WriteReviewManagedSettings(review, map[string]string{"A": "1"}, DenyRules(true, true)); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(review)
+	var got struct {
+		Env                        map[string]string
+		Permissions                struct{ Deny []string }
+		DisableAllHooks            *bool
+		AllowManagedHooksOnly      *bool
+		AllowManagedMcpServersOnly *bool
+		AllowedMcpServers          *[]string
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.DisableAllHooks == nil || !*got.DisableAllHooks {
+		t.Errorf("hooks are not disabled: %s", data)
+	}
+	if got.AllowManagedHooksOnly == nil || !*got.AllowManagedHooksOnly {
+		t.Errorf("hooks are not restricted to the managed file's: %s", data)
+	}
+	if got.AllowManagedMcpServersOnly == nil || !*got.AllowManagedMcpServersOnly {
+		t.Errorf("MCP servers are not restricted to the managed file's: %s", data)
+	}
+	if got.AllowedMcpServers == nil {
+		t.Errorf("the MCP allow-list is absent, which is not an empty allow-list: %s", data)
+	} else if len(*got.AllowedMcpServers) != 0 {
+		t.Errorf("the MCP allow-list is not empty: %s", data)
+	}
+	for _, dead := range []string{`"settingSources"`, `"enableAllProjectMcpServers"`} {
+		if strings.Contains(string(data), dead) {
+			t.Errorf("the review stage's settings carry %s, which enforces nothing: %s", dead, data)
+		}
+	}
+	if got.Env["A"] != "1" || !slices.Contains(got.Permissions.Deny, "Read(**/*.png)") {
+		t.Errorf("the review posture cost the file its env or deny rules: %s", data)
+	}
+
+	coding := filepath.Join(dir, "coding.json")
+	if err := WriteManagedSettings(coding, map[string]string{"A": "1"}, DenyRules(true, true)); err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := os.ReadFile(coding)
+	for _, key := range reviewPostureKeys {
+		if strings.Contains(string(plain), key) {
+			t.Errorf("a coding run's stage carries %q: %s", key, plain)
+		}
+	}
+}
+
+// TestReviewHome: the review stage's HOME is a directory of its own under the
+// run's state directory, empty, and closed to everyone but its owner — the
+// user level of Claude Code's settings, which the image's own home would
+// otherwise fill.
+//
+// Mutation (return the state directory itself, or the image's home): the
+// distinctness assertion fails. Mutation (leave the mode at 0755): the mode
+// assertion fails. Mutation (write anything into it): the emptiness assertion
+// fails.
+func TestReviewHome(t *testing.T) {
+	state := t.TempDir()
+	if err := os.WriteFile(filepath.Join(state, "task.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	home, err := ReviewHome(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if home == state || filepath.Dir(home) != state {
+		t.Fatalf("home = %s, want a directory under %s", home, state)
+	}
+	fi, err := os.Stat(home)
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("home = %s: %v", home, err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Errorf("mode = %v, want 0700", fi.Mode().Perm())
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the review stage's home holds %v", entries)
+	}
+	if again, err := ReviewHome(state); err != nil || again != home {
+		t.Errorf("a second call = %s, %v, want %s", again, err, home)
+	}
+}

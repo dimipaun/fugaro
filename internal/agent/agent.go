@@ -23,10 +23,23 @@ type Request struct {
 	Model              string
 	MaxBudgetUSD       float64
 	JSONSchema         string // optional structured-output schema
-	Dir                string
-	Env                []string
-	Transcript         io.Writer // receives the raw stream-json lines
-	Stderr             io.Writer
+	// SettingSources, when non-empty, is passed as --setting-sources: the
+	// settings levels Claude Code loads for this session. A review-mode
+	// stage passes ReviewSettingSources, the user level alone, so the
+	// reviewed checkout's own project and local settings never load. It is
+	// the flag and not a settings key: setting-source selection has no
+	// managed-settings form at all.
+	SettingSources []string
+	// StrictMCPConfig passes --strict-mcp-config: only servers named by
+	// --mcp-config are used and every other MCP configuration is ignored. A
+	// review-mode stage sets it and passes no --mcp-config at all, so the
+	// reviewed checkout's .mcp.json (and any MCP server a settings file
+	// declares) loads nothing.
+	StrictMCPConfig bool
+	Dir             string
+	Env             []string
+	Transcript      io.Writer // receives the raw stream-json lines
+	Stderr          io.Writer
 }
 
 // Result is what the agent's final result event reported.
@@ -104,6 +117,12 @@ func Args(req Request) []string {
 	}
 	if req.JSONSchema != "" {
 		args = append(args, "--json-schema", req.JSONSchema)
+	}
+	if len(req.SettingSources) > 0 {
+		args = append(args, "--setting-sources", strings.Join(req.SettingSources, ","))
+	}
+	if req.StrictMCPConfig {
+		args = append(args, "--strict-mcp-config")
 	}
 	return args
 }
