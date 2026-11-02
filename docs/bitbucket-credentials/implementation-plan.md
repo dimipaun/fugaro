@@ -402,9 +402,13 @@ T2.3's coordinator-account half returns in BB5.
     `bitbucket.ServiceReadTokens`, the new client half, instead of refusing with
     `coordinator.ErrBitbucket`. The GitHub path is unchanged, and the read refuses
     `FUGARO_BITBUCKET_API_URL` (G10).
-  - The command needs the service's URL: `FUGARO_CREDENTIALS_SERVICE_URL`, which the published
-    shared config carries to a person's machine. With no service, Bitbucket is refused exactly as on
-    `main` (G8).
+  - The command needs the service's URL, and it gets **a variable of its own**:
+    `FUGARO_BITBUCKET_READ_SERVICE_URL`, which the published shared config carries to a person's
+    machine and which only the Bitbucket opener reads. Not `FUGARO_CREDENTIALS_SERVICE_URL`: that
+    one makes `coordinatorAppCredential` refuse, so setting it on a person's machine would turn
+    their **GitHub** read off as well (F2, F23 — the same reason the coordinator job gets
+    `FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL` rather than the general one). With no variable,
+    Bitbucket is refused exactly as on `main`, and GitHub is untouched (G8).
   - **The stop switch:** take the read consumer out of the bundle. The person class is honoured only
     while the bundle holds one.
 - **Files:**
@@ -445,6 +449,8 @@ T2.3's coordinator-account half returns in BB5.
     before the branch audits the consumer kind, never the App key's name;
   - `TestCoordinatorShowBitbucketThroughService`;
   - `TestCoordinatorShowGitHubUnchanged`;
+  - `TestCoordinatorShowGitHubUnchangedWithReadServiceURL`: the person's new variable does not turn
+    their GitHub read off, which is the whole reason it is not `FUGARO_CREDENTIALS_SERVICE_URL`;
   - `TestServicePathRefusesAPIRootOverride`;
   - `TestServiceReadTokensRedacted`.
 - **Command:** `go test ./internal/credsvc -run 'PersonCaller|ReadMint|RunIdentityRefusedOnRead' -count=1 && go test ./internal/gitprov/bitbucket -run ServiceRead -count=1 && GOFLAGS=-p=2 go test ./ee/coordinator/... -count=1 -timeout 40m`.
@@ -473,8 +479,10 @@ T2.10 (Check 146). It comes after BB4 because it reuses the read mint BB4 builds
     `FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL` is set (F23: the coordinator job gets that
     variable, not `FUGARO_CREDENTIALS_SERVICE_URL`).
   - A person's local `coordinator status` for a Bitbucket repository reads it through the read mint
-    (the person class), and **a repository in another workspace is refused, with a named reason**
-    (B5, G11). Without the service, its refusal still points at `--from-store`, the stored view.
+    (the person class) under `FUGARO_BITBUCKET_READ_SERVICE_URL`, the person's own variable from
+    BB4, and **a repository in another workspace is refused, with a named reason** (B5, G11).
+    Without that variable, its refusal still points at `--from-store`, the stored view, and its
+    GitHub read is untouched.
   - It refuses `FUGARO_BITBUCKET_API_URL` on that path (G10).
   - The GitHub sweep is untouched (G8, F23).
   - Without the variable, Bitbucket repositories stay `StaleUnsupported`.
@@ -1019,7 +1027,9 @@ These go in the `### For operators` section of the release notes, in the PR that
   - Never write a `bitbucket-run-consumer` entry by hand. That kind is unknown until S3 returns.
     The loader refuses the whole bundle on it, and every model call and every GitHub mint halts.
 - **BB4**, per person: `fugaro update` in the checkout, so the person's CLI is a version that
-  knows `POST /v1/bitbucket/read-token`. The service refuses an older CLI by name.
+  knows `POST /v1/bitbucket/read-token` and reads `FUGARO_BITBUCKET_READ_SERVICE_URL`. The service
+  refuses an older CLI by name. The variable itself reaches them through the published shared
+  config, so the installation publishes it once and no person sets anything.
 - **Parked with S3. These are not release actions until S3 returns.**
 - **T3.0 and T3.2**, per repository:
   - First rebuild the repository's image, so that its runner knows the service path.
