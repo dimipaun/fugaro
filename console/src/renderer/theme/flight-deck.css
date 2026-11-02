@@ -3976,12 +3976,17 @@ span.coordinator-blind-word {
  * answer to the same question, and the one that lost would be the accessibility
  * tree's.
  *
- * **Nine rules below name no tag, and K1's five are written that way for the
- * same reason.** The section, its head, its list and its controls are drawn
- * through exported constants (`COORDINATOR_JOBS_CLASS` and its neighbours), and
- * the two controls through `jobsControl`'s own `className` parameter, which the
- * selector scan reads as a parameter and cannot pair with a tag -- so a rule
- * spelled `section.coordinator-jobs` would be refused as a tag nothing draws.
+ * **Nine of the hooks this section draws name no tag, and K1's five are written
+ * that way for the same reason.** The section, its head, its list and its controls
+ * are drawn through exported constants (`COORDINATOR_JOBS_CLASS` and its
+ * neighbours), and `coordinator-jobs-load`, `coordinator-jobs-older`,
+ * `coordinator-job-detail`, `coordinator-job-cost` and `coordinator-job-more`
+ * arrive through `jobsControl`'s own `className` parameter and the `...classes`
+ * two of the screen's cells take: the scan that pairs a selector with the tag the
+ * renderer draws reads both as a parameter, and a rule spelled
+ * `section.coordinator-jobs` would be refused as a tag nothing draws. The
+ * section's own rule is written in the panel list above, with the other
+ * sections', so the other eight hooks' rules are the tagless ones in this block.
  * The class names are this screen's own and no rule competes for them, so the
  * tag would buy no specificity; `coordinator-count-alert` is written the same
  * way, and so are the body's own cost cell and the note a cut list leaves
@@ -4040,6 +4045,16 @@ button.coordinator-job-head {
   width: 100%;
   min-height: var(--row-height);
   padding: var(--space-2xs) 0;
+}
+
+/* The two states that say the line can be opened, in the one channel the queue's
+ * subject buttons use for the same reason: this row draws no border and no
+ * background of its own, so the underline is what tells a reader the line is the
+ * control -- and it is drawn for the keyboard's focus as well as for the pointer,
+ * because a ring on the whole row is a weaker signal than the text that moves. */
+button.coordinator-job-head:hover,
+button.coordinator-job-head:focus-visible {
+  text-decoration: underline;
 }
 
 /* The run's id, in the mono every key on this screen is drawn in. */
@@ -4130,8 +4145,15 @@ span.coordinator-job-short {
     border-color var(--duration-fast) var(--ease-out);
 }
 
+/* Hover and the keyboard's focus are one declaration, in the shape K1's subject
+ * buttons take: both are the same state -- "this can be pressed" -- and the
+ * keyboard is never given less of it than the pointer. The ring the reset draws
+ * is the other half, and this is the half that survives a forced-colors
+ * stylesheet. */
 .coordinator-jobs-load:hover,
-.coordinator-jobs-older:hover {
+.coordinator-jobs-load:focus-visible,
+.coordinator-jobs-older:hover,
+.coordinator-jobs-older:focus-visible {
   border-color: var(--line-strong);
   color: var(--text);
 }

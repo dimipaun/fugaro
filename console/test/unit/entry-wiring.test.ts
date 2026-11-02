@@ -149,6 +149,7 @@ import {
   COORDINATOR_SOURCE_LINE,
   COORDINATOR_TOTALS_BUSY,
   COORDINATOR_JOBS_BUSY,
+  COORDINATOR_JOBS_CLASS,
   COORDINATOR_JOBS_EMPTY_WORD,
   COORDINATOR_JOBS_FLOOR_WORD,
   COORDINATOR_JOBS_HEAD_CLASS,
@@ -4808,6 +4809,11 @@ function jobsBridge(
 const LS_ROW_A = '20261101-090000-aa01'
 const LS_LAST_ID = '20261101-090000-zz50'
 
+/** HOSTILE_CLI_VERSION is a handshake version line that carries markup: the
+ * console draws it as the text it is, and this is the string a case reads back
+ * out of the drawing rather than the element it names. */
+const HOSTILE_CLI_VERSION = '0.15.3<img src=x onerror=alert(1)>'
+
 /** lsRow is one `runs ls --json` row of the job list: a run the CLI printed. */
 function lsRow(run: string): Readonly<Record<string, unknown>> {
   return {
@@ -5350,6 +5356,32 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
     expect(classed(panelOf(document), 'coordinator-job')).toEqual([])
     expect(calls.slice(before).filter((call) => call.name === 'listRuns')).toEqual([])
+
+    // The version line is **main's own answer** and it is text wherever it came
+    // from. `coordinator.test.ts` makes that claim about the note itself; this is
+    // the handshake's string through the whole round trip -- the bridge's answer,
+    // the entry's decode and the drawing -- so a version line carrying markup is
+    // the characters on the screen and no element of the tag it names, and the
+    // floor is read the same way for it as for a well-formed one.
+    const hostile = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      HOSTILE_CLI_VERSION,
+    )
+    const planted = await boot(hostile.bridge, new FakeDocument())
+    buttonFor(planted, 'coordinator').click()
+    await flush()
+    const section = classed(panelOf(planted), COORDINATOR_JOBS_CLASS)[0]
+    if (section === undefined) throw new Error('the job list drew no section')
+    expect(textIn(section, 'coordinator-jobs-floor-version')).toBe(HOSTILE_CLI_VERSION)
+    expect(
+      everyNode(section).map((node) => node.tagName).filter((tag) => tag === 'IMG'),
+      'the version line was drawn as an element',
+    ).toEqual([])
+    expect(classed(section, 'coordinator-jobs-load')).toEqual([])
 
     // At the floor the section is the one it is built to be: a control, a read on
     // the press, and the window's figures when it answers.
