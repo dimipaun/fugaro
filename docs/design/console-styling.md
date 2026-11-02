@@ -1408,7 +1408,7 @@ scan that pairs a selector with the tag the renderer draws cannot read a class t
 through a parameter, and a bare class selector is the shape `degraded-num` already has. The
 next four are K1's own (`coordinator-queue`, `coordinator-totals`,
 `coordinator-queue-head` and `coordinator-queue-jobs`), and the reason is the same one step
-along: the screen draws its two sections, the queue's head and the queue's jobs control
+along: the screen draws the queue and the totals, the queue's head and the queue's jobs control
 through exported constants (`COORDINATOR_QUEUE_CLASS` and its neighbours), which that scan
 reads as a parameter too, so `section.coordinator-queue` would be refused as a tag nothing
 draws. **K4's nine are the third group**, and they split the same two ways: the job list's

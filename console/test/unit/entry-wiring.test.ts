@@ -218,8 +218,8 @@ const READ_METHODS = [
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the nine reads, each answering what the case told it to and appending its
- * own call to `calls`. */
+ * and the twelve reads (`READ_METHODS`), each answering what the case told it to
+ * and appending its own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
   readonly calls: readonly { readonly name: string; readonly args: unknown }[]
@@ -5302,7 +5302,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     buttonFor(document, 'coordinator').click()
     expect(
       calls.slice(before).map((call) => call.name),
-      'the pane’s read is not one of the reads the tab makes on entry',
+      'the pane’s own read did not go out with the tab’s other reads',
     ).toContain('coordinatorIntents')
     expect(busyLabels(document)).toContain(COORDINATOR_TRANSCRIPT_BUSY)
     await flush()

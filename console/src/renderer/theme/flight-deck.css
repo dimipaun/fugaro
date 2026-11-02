@@ -3780,7 +3780,7 @@ span.coordinator-unread-retry {
  * only a reader who sees colour can read, so there is none.
  *
  * **Five rules below name no tag, and the renderer is why.** The screen draws
- * its two sections, the queue's head and the queue's jobs button through
+ * its four sections, the queue's head and the queue's jobs button through
  * exported constants
  * (`COORDINATOR_QUEUE_CLASS` and its neighbours), which the selector scan reads
  * as a parameter and cannot pair with a tag, so a rule spelled
