@@ -183,6 +183,11 @@ no weaker gate. A new stage registered in `initStages` is **not** part of this t
 
 ## A3 — `--claude`
 
+**Done.** The flag, the two acts and the handover between them are in the tree: `accounts add --claude`
+runs A0's login on the owner's own terminal, the hidden prompt is the only token path (D862 (a)), a
+login that exited non-zero leaves the prompt rather than failing the command (§3.3), and a coding
+agent's session is refused before the login starts (D868, the owner's ruling of 2026-11-01).
+
 **SEC.** Goal: spec §3. Act one is A0's runner; this task is the flag, act two, and the handover
 between them. `--claude` runs the login (A0) on the owner's own terminal and then reads the token at
 the **hidden prompt** — the `readHidden` path §2.2 step 3 already uses — and keeps nothing from the
