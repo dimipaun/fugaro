@@ -245,11 +245,23 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Interfaces:** consumes L3.1. Today a stage pins one of two role slots plus the background model (`pinSlots`). This task routes an L1 or L3 model that differs from the coder's and the reviewer's: the stage's pins, its provider route (`agent.ProviderRouteVars` when a provider claims the model), and the gateway's allowed set for the run, which must name every level's model.
 - **Tests:** `TestRoutingL1ModelDistinctFromCoder`, `TestRoutingL3ProviderModelGetsRouteVars`, `TestRoutingRefusesLevelModelOutsideAllowedModels`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'TestRouting' -count=1 -timeout 30m`.
-- **First commit:** records U5: whether in-job review Q9's gate (a Claude reviewer in a job waits for the credentials service) still binds under `auth: api-key` with both keys, read from `internal/runner/routing.go` and `docs/multi-model.md`. If it binds, a Claude model at L2 or L3 is refused next to a provider coder until the credentials service lands, and `ResolveLevels` (L3.1) says so.
+- **First commit:** records U5: whether in-job review Q9's gate (a Claude reviewer in a job waits for the credentials service) still binds under `auth: api-key` with both keys, read from `internal/runner/routing.go` and `docs/multi-model.md`. If it binds, a Claude model at L2 or L3 is refused next to a provider coder until the credentials service lands, and `ResolveLevels` (L3.1) says so. **It does not bind:** with `api-key` the job mounts `anthropic-api-key` for a Claude **pin** no route serves (`config.AnthropicKeyNeeded` is exactly that rule, over the coder, the reviewer and the background: a level's own model is L4.5b), the gateway attaches that key to a direct call, and Q9's wait was for the cascade's own subscription token, so L4.5 adds no refusal to `ResolveLevels` (reconciliation §5, U5).
 - **Depends on:** L3.1.
 - **Red step:** an L1 model different from the coder's runs on the coder's pin.
 - **Reviewer:** opus + mandatory independent review (the gateway's allowed models).
 - **Commit:** `runner: route each review level's own model`.
+- **Done (PR "runner: route each review level's own model").** Red first: `TestRoutingL1ModelDistinctFromCoder` failed with `review_first CLAUDE_CODE_SUBAGENT_MODEL = "claude-sonnet-5-5", want the level's own model "deepseek/deepseek-v4-pro"` — level 1 is the coder's stage, and it was given the coder's model. `stageModel` answers with the level's own model where a layer named one, and the three consumers that have to agree read it: the stage's pins (`stagePins`, which is what adds `agent.ProviderRouteVars` for a provider-claimed level model), the gateway's set for the stage (`stageSpec`, the same model as the pins or every call of the stage is refused as not pinned), and the routing switch (`pinSlots` carries each level's model as a pin of its own, so `applyRouting` moves a level model the switch names to the route's ID). `applyLevels` is the seam L4.2 calls with its inputs: it resolves through `config.ResolveLevels` (L3.1) and writes every level that runs into the run's own configuration, and a refused resolution — a level model outside the run's `allowed_models` — writes nothing, so no stage is pinned with it. `stageRole` is `config.StageRole` plus `adversarial`, which L4.2 teaches that function. U5 is recorded above: the credentials-service gate does not bind under `auth: api-key`, so `ResolveLevels` gained no refusal. L4.2 still wires it in: it calls `applyLevels` — the stage request's own model (`runner.go`'s `stageOnce`) reads `stageModel` here already.
+
+#### L4.5b `NeedsAnthropicKey` reads a level's own model
+
+- **Files:** `internal/config/providers.go`, `internal/config/needs_anthropic_key_test.go`.
+- **Interfaces:** consumes L3.1. `NeedsAnthropicKey` judges the run's coder, the reviewer and the background and no other model, so a run whose every pin a provider may serve and whose L2 or L3 model is a Claude one asks for no key at all: `fugaro update --repo` never prompts, and the runtime drops the mount where the secret has no enabled version, so the level's call is refused at run time with the refusal's own advice (`fugaro secrets set anthropic-api-key`) instead of the key being there. Fail-safe, and still the wrong answer: the owner has a key for exactly this call and the run does not ask for it. The rule reads each enabled level's own model as well, the models `stageModel` runs (`internal/runner/routing.go`, L4.5), so a level model no allowed provider serves needs the key. It changes no wire format: the answer only decides that prompt and that mount, both of which already follow the rule.
+- **Tests:** `TestNeedsAnthropicKeyReadsALevelModel`, `TestNeedsAnthropicKeyLevelModelServedByAProvider`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/config -run 'NeedsAnthropicKey|AnthropicKeyNeeded' -count=1`.
+- **Depends on:** L3.1.
+- **Red step:** a run with a Claude level-2 model and every pin on a provider asks for no key.
+- **Reviewer:** opus (the rule decides a mount, not a refusal).
+- **Commit:** `config: the Anthropic key rule reads a level's own model`.
 
 #### L4.4 `budget preview` counts level 3
 
@@ -543,6 +555,7 @@ among a task's internal dependencies):
 - L1.1, L1.3, L1.4, L2.2 → L3.1
 - L3.1, L1.2, L5.2 → L3.2
 - L3.1 → L4.5
+- L3.1 → L4.5b
 - L1.1, L2.1, L3.1, L4.1, L4.3, L4.5 [#1369] → L4.2
 - L1.3, L2.1 → L4.4
 - L4.2, L3.2, J1.1, T1.1 → L5.1
@@ -571,7 +584,7 @@ among a task's internal dependencies):
 | 1 | L1.1, T1.1, V1.2 |
 | 2 | L1.2, L1.3, L4.3, T1.2, T3.1 |
 | 3 | L3.1, L4.4, B1.1, J1.3, T1.3, T3.2 |
-| 4 | L3.2, L4.5, B1.4, J1.2, T2.1 |
+| 4 | L3.2, L4.5, L4.5b, B1.4, J1.2, T2.1 |
 | 5 | L4.2, T2.2 |
 | 6 | L5.1, B1.2, V1.3, X1 |
 | 7 | B1.3, X2 |
@@ -587,7 +600,7 @@ A3.3 and A5.x. Slices G and V are off the critical path. The console's T2.1 wait
 - L1.3 after L1.1: the same `config.LevelSetting` type and closed effort set.
 - L3.1 after L1.1, L1.3, L1.4 and L2.2: it consumes the settings and the defaults, and applies the floor.
 - L3.2 after L5.2: this repository's own configuration must pass the check L3.2 ships.
-- L4.5 and L4.2 after L3.1: they consume the resolved levels, and L4.2 routes through L4.5.
+- L4.5, L4.5b and L4.2 after L3.1: they consume the resolved levels, and L4.2 routes through L4.5.
 - T1.1 after L1.4, then T1.2, then J1.3 and T1.3: the same `localcfg.go`, `project_cmd.go` and contract; T1.3 allow-lists what T1.2 prints.
 - B1.1 after L1.1, L4.1 and L1.2: the same files.
 - T2.1 after T1.3 and T3.1: the argv it calls, and the same privacy page and test.
