@@ -2327,7 +2327,8 @@ run "credentials_service_on" {
         repo     = "acme/webapp"
         workflow = "web"
       }]
-      url = "https://fugaro-credentials-123456789012.us-east5.run.app"
+      verifier_accounts = ["person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"]
+      url               = "https://fugaro-credentials-123456789012.us-east5.run.app"
     }
   }
 
@@ -2458,13 +2459,16 @@ run "credentials_service_on" {
     google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports[0].container_port == 8080)
     error_message = "an image whose release serves h2c must have its container port named h2c and numbered 8080: the name is what makes the front end speak HTTP/2 to this process"
   }
-  # The environment is the seven names C1.14's `fugaro credentials serve`
-  # reads and internal/infra/tf's credentialsServiceEnv allows, and it is held
-  # as an exact map: an eighth entry, a missing one, a name the process does
-  # not read, or a value that is not the installation's own fails here. What
-  # the service does with a value (a database URL that is not the Firebase
-  # project's, an audience that is not a URL, a job table that binds nothing)
-  # is refused by the process itself, by name, and is C1.14's tests.
+  # The environment is the names C1.14's `fugaro credentials serve` reads and
+  # internal/infra/tf's credentialsServiceEnv allows, and it is held as an
+  # exact map: an extra entry, a missing one, a name the process does not
+  # read, or a value that is not the installation's own fails here. This run
+  # names a verifier, so it carries the eighth name; the run below, which
+  # names none, is where the seven are held. What the service does with a
+  # value (a database URL that is not the Firebase project's, an audience that
+  # is not a URL, a job table that binds nothing, a verifier list that is not
+  # a list of addresses) is refused by the process itself, by name, and is
+  # C1.14's tests.
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
@@ -2476,8 +2480,9 @@ run "credentials_service_on" {
       FUGARO_FIREBASE_PROJECT        = "aurora-fp"
       FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-credentials-123456789012.us-east5.run.app"
       FUGARO_JOB_ACCOUNTS            = "[{\"provider\":\"github\",\"repo\":\"acme/webapp\",\"workflow\":\"web\"}]"
+      FUGARO_VERIFIER_ACCOUNTS       = "[\"person-1@example.com\",\"fugaro-coordinator@proj-1234.iam.gserviceaccount.com\"]"
     })
-    error_message = "the container's environment is the seven names the service reads and nothing else: no secret ID, no credential value, and no eighth entry"
+    error_message = "the container's environment is the names the service reads and nothing else: no secret ID, no credential value, and no entry beyond the ones the module sets for this run"
   }
   # The service's own URL is the audience its callers' ID tokens are minted
   # for, and it is the one entry the module cannot fill on the apply that

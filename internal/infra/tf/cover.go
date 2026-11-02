@@ -782,17 +782,20 @@ var knownCommands = [][2][]string{
 // service's container sets (installation/credentials.tf): the project it
 // serves, the project it reads the bundle in, the region, the database and
 // Firebase project it reads runs from, its own URL (the audience its callers'
-// ID tokens are minted for) and the installation's per-repository jobs as a
-// JSON array of {provider, repo, workflow} triples — no secret ID and no
-// secret value, because the loader derives the container from the project
-// name and reads it as the service's own account, and the job accounts are
-// derived from the triples rather than carried. The case below is an
-// allowlist of these, so an environment that hands this process anything else
-// is not covered; TestAllowedTypesCoverTheModules keeps the two lists in step.
+// ID tokens are minted for), the installation's per-repository jobs as a
+// JSON array of {provider, repo, workflow} triples, and — only on an
+// installation that names a verifier — the addresses that may ask the verify
+// route. No secret ID and no secret value, because the loader derives the
+// container from the project name and reads it as the service's own account,
+// and the job accounts are derived from the triples rather than carried. The
+// case below is an allowlist of these, so an environment that hands this
+// process anything else is not covered; TestAllowedTypesCoverTheModules keeps
+// the two lists in step.
 var credentialsServiceEnv = []string{
 	"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION",
 	"FUGARO_RTDB_URL", "FUGARO_FIREBASE_PROJECT",
 	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
+	"FUGARO_VERIFIER_ACCOUNTS",
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;

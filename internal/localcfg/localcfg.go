@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -201,6 +202,22 @@ type Config struct {
 	// refused by the publish that builds the node, before anything is written,
 	// with a sentence naming the entry.
 	BitbucketAPIRoots []string `yaml:"bitbucket_api_roots,omitempty"`
+	// VerifierAccounts are the identities that may ask the installation's
+	// credentials service whether a verdict's signature is its own (C3.9g3,
+	// D1068, D1075): the coordinator's own account once it exists, and the
+	// owner's for a manual check. Each entry is a bare address — the `email`
+	// claim a Google ID token carries — and never the user:/serviceAccount:
+	// member spelling the launcher and operator lists are written with, which
+	// is what the shape check below refuses.
+	//
+	// It travels to the policy node, the way bitbucket_api_roots does and for
+	// the same reason: the node is written only by the owner and the runner
+	// fails closed on it, while the shared config in the runs bucket is
+	// writable by any launcher — and a launcher who could write this list could
+	// admit its own address to the verify route, so Shared nils it and
+	// ParseShared refuses the key. Only the owner sets it, here, never in
+	// fugaro.yaml.
+	VerifierAccounts []string `yaml:"verifier_accounts,omitempty"`
 	// Profiles are the project's job profiles (design
 	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
 	// deployed as, and what a repository's workflow selects with job_profile.
@@ -1343,6 +1360,25 @@ func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
 	return policy.ParseFloor(c.ReviewFloor)
 }
 
+// VerifierAccountsEffective is the one keep rule both writers of the verifier
+// list apply (C3.9g3, D1075): this file's list when it states one — a written
+// empty list included, which is how the route is turned off on purpose — and
+// the published node's otherwise.
+//
+// It is stated here, beside the field, because the two writers are in two
+// packages: the publisher that builds the policy node (`fugaro project policy
+// publish`, and the migration beside it) and C3.9g1's writer, which hands the
+// list to the service's own variable and would otherwise render that variable
+// null from a config that merely predates the key. Either, on its own, would
+// empty a verify route another machine set up, from a machine whose file says
+// nothing about the list at all.
+func (c *Config) VerifierAccountsEffective(published []string) []string {
+	if c.VerifierAccounts != nil {
+		return c.VerifierAccounts
+	}
+	return published
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -1630,6 +1666,15 @@ func (c *Config) validate() error {
 	// review less than the owner asked for, and nothing downstream can tell a
 	// misspelt mode from one the owner meant to leave alone.
 	if _, err := c.ReviewFloorPolicy(); err != nil {
+		bad("%v", err)
+	}
+	// The verifier list is held to the node's own rule here (C3.9g3), the way
+	// the floor is: the list is copied into the policy node, and an entry the
+	// service could never match — an IAM member spelling rather than the bare
+	// address an ID token's email claim carries — would be a list the operator
+	// believes names a verifier and that admits nobody. The publish holds the
+	// node to the same function, so the file and the node cannot disagree.
+	if err := projectpolicy.ValidVerifierAccounts(c.VerifierAccounts); err != nil {
 		bad("%v", err)
 	}
 	for repo, r := range c.Repos {
