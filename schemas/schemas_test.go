@@ -992,12 +992,15 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 func TestTierAdversarialInSchema(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	head := strings.Repeat("a", 40)
+	// The reviewer's model, in the shape the runner pins one: an ID a provider
+	// or Anthropic serves, never a name a person reads (CLI 0.16.0).
+	reviewModel := "claude-opus-5-5"
 	rec := runstore.Record{
 		Version: 1, RunID: "20261030-120000-abcd", Status: runstore.StatusSucceeded,
 		Stage: "review",
 		Reviews: []runstore.ReviewSummary{
 			{Round: 3, Tier: runstore.TierFirst, Verdict: "ship", Bounce: 1},
-			{Round: 3, Tier: runstore.TierSenior, Verdict: "ship", Head: head},
+			{Round: 3, Tier: runstore.TierSenior, Verdict: "ship", Head: head, Model: reviewModel, Effort: "high"},
 			{Round: 3, Tier: runstore.TierAdversarial, Verdict: "ship", Head: head},
 		},
 	}
@@ -1051,11 +1054,37 @@ func TestTierAdversarialInSchema(t *testing.T) {
 	if headField.Type != "string" || headField.MinLength != 1 {
 		t.Errorf("result.schema.json reviews head = %+v, want a string bounded at minLength 1 like the schema's other commit fields", headField)
 	}
+	// The reviewer's own two fields (CLI 0.16.0) are strings bounded like the
+	// head beside them: an empty one would be a review that named no model or
+	// no effort, which is the absent field, not an empty string.
+	for _, name := range []string{"model", "effort"} {
+		var field struct {
+			Type      string `json:"type"`
+			MinLength int    `json:"minLength"`
+		}
+		if err := json.Unmarshal(reviews.Items.Properties[name], &field); err != nil {
+			t.Fatalf("result.schema.json reviews %s: %v", name, err)
+		}
+		if field.Type != "string" || field.MinLength != 1 {
+			t.Errorf("result.schema.json reviews %s = %+v, want a string bounded at minLength 1 like the head beside it", name, field)
+		}
+	}
+	modelLit := []byte(`"model":"` + reviewModel + `"`)
+	if !bytes.Contains(data, modelLit) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, modelLit, []byte(`"model":""`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts an empty review model")
+	}
 	lit := []byte(`"head":"` + head + `"`)
 	if !bytes.Contains(data, lit) {
 		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
 	}
-	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, lit, []byte(`"head":""`), 1)))
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, lit, []byte(`"head":""`), 1)))
 	if err != nil {
 		t.Fatal(err)
 	}

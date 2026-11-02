@@ -581,6 +581,68 @@ func TestRecordPushedHead(t *testing.T) {
 	}
 }
 
+// TestReviewSummaryRecordsModelEffortAndHead: a review entry carries what
+// reviewed it — the model the stage was pinned to and the reasoning effort it
+// ran at — beside the commit it read, so a reader of the record can tell which
+// model reviewed which head (CLI 0.16.0, docs/c39-review-identity). A round
+// that recorded neither stays without them, so both are omitted rather than
+// written empty, and a record written before the two fields existed still
+// decodes.
+func TestReviewSummaryRecordsModelEffortAndHead(t *testing.T) {
+	s := newStore(t)
+	head := "0123456789abcdef0123456789abcdef01234567"
+	if err := s.WriteRecord(ctx, &Record{Version: 1, RunID: runID, Status: StatusSucceeded, StartedAt: time.Now().UTC(),
+		Reviews: []ReviewSummary{
+			{Round: 1, Tier: TierSenior, Verdict: "ship", Model: "claude-opus-5-5", Effort: "high", Head: head},
+			{Round: 2, Tier: TierAdversarial, Verdict: "changes", Findings: 1, Model: "claude-sonnet-5"},
+			{Round: 3, Tier: TierFirst, Verdict: "ship"},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Reviews) != 3 {
+		t.Fatalf("ReadRecord reviews = %+v, want 3", got.Reviews)
+	}
+	first := got.Reviews[0]
+	if first.Model != "claude-opus-5-5" || first.Effort != "high" || first.Head != head {
+		t.Fatalf("senior review = %+v, want model %q, effort %q and head %q", first, "claude-opus-5-5", "high", head)
+	}
+	if second := got.Reviews[1]; second.Model != "claude-sonnet-5" || second.Effort != "" {
+		t.Fatalf("adversarial review = %+v, want model %q and no effort: the level named none", second, "claude-sonnet-5")
+	}
+	if third := got.Reviews[2]; third.Model != "" || third.Effort != "" || third.Head != "" {
+		t.Fatalf("first-line review = %+v, want no model, effort or head", third)
+	}
+
+	// Both are omitted when absent, so a round that recorded neither is
+	// byte-identical to one written before the fields existed.
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID,
+		Reviews: []ReviewSummary{{Round: 1, Tier: TierSenior, Verdict: "ship"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"model":`) || strings.Contains(string(data), `"effort":`) {
+		t.Fatalf("an empty model or effort encoded: %s", data)
+	}
+
+	// A record written before the two fields existed still parses, with its
+	// reviews intact.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z","reviews":[{"round":1,"tier":"senior","verdict":"ship","findings":0,"head":"` + head + `"}]}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || len(got.Reviews) != 1 {
+		t.Fatalf("old record reviews = %+v, %v", got.Reviews, err)
+	}
+	if r := got.Reviews[0]; r.Model != "" || r.Effort != "" || r.Head != head {
+		t.Fatalf("old record review = %+v, want no model and no effort, and the head it carried", r)
+	}
+}
+
 // TestReviewSummaryHeadRoundTrip: the commit a review read survives the trip
 // beside its verdict — the levels of one round can approve different heads,
 // which is what the PR body reports and what the record has to carry

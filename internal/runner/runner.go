@@ -2698,7 +2698,8 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		if !parsed {
 			r.lastSenior = seniorRound{Round: round}
-			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head})
+			model, effort := r.reviewFacts("review")
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort})
 			r.save(ctx)
 			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
 			return false
@@ -2707,7 +2708,8 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		// table reads the findings' scores, which the summary does not carry
 		// (outcome.go, T3.1).
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head})
+		model, effort := r.reviewFacts("review")
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
 			return false
@@ -2761,13 +2763,15 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			// off the round the bounce before it left behind (seniorLoop does
 			// the same).
 			r.lastSenior = seniorRound{Round: round}
-			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head})
+			model, effort := r.reviewFacts(stageAdversarial)
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head, Model: model, Effort: effort})
 			r.save(ctx)
 			r.d.Log.Warn("the adversarial review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
 			return false
 		}
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head})
+		model, effort := r.reviewFacts(stageAdversarial)
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
 			return false
@@ -2844,6 +2848,34 @@ func (r *run) reviewedHead(ctx context.Context) string {
 // instructions to the reviewer (L4.2).
 func (r *run) levelFocus(level policy.Level) string {
 	return resolvedLevel(r.levels, level).Focus
+}
+
+// reviewFacts is what a review round's summary records beside its verdict: the
+// model the stage was pinned to and the reasoning effort it ran at
+// (runstore.ReviewSummary.Model, .Effort). The two are read off the stage's own
+// pins — the same answers stageTiming and applyStageEffort take — so the record
+// names the model that reviewed the head beside it and not a second spelling of
+// the run's configuration.
+//
+// The effort is the value that reached the stage rather than the one a layer
+// asked for: EffortVars drops a provider route's, whose calls run with thinking
+// off (G5, D725), so an empty effort is the same statement the stage's own
+// environment makes. Nothing is answered for a stage that is not a review one.
+func (r *run) reviewFacts(stage string) (model, effort string) {
+	model = r.stageModel(stage)
+	s, ok := reviewStageOf(stage)
+	if !ok {
+		return model, ""
+	}
+	want := resolvedLevel(r.levels, s.level).Effort
+	if want == "" {
+		return model, ""
+	}
+	vars, err := agent.EffortVars(want, r.stageOnProviderRoute(model, r.backgroundModel()))
+	if err != nil || len(vars) == 0 {
+		return model, ""
+	}
+	return model, want
 }
 
 // applyStageEffort merges the review level's own reasoning effort into the
@@ -2974,7 +3006,8 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
 		r.noteReviewSession(req, res)
 		r.countTokens(res)
-		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Bounce: r.bounce}
+		model, effort := r.reviewFacts("review_first")
+		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: model, Effort: effort, Bounce: r.bounce}
 		var v Verdict
 		switch skipped := (skippedError{}); {
 		case errors.As(err, &skipped):

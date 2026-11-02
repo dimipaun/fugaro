@@ -471,7 +471,9 @@ func verifyPart(records []verify.Record) string {
 // advises, the senior review decides and level 3 decides over both (D723). pol
 // is the mode's findings policy for the round the line reports (finalSection);
 // a round the mode let through names each finding it tolerated beside the count
-// (T3.3).
+// (T3.3). The line ends with what reviewed the round — its model, its effort
+// and the commit it read (reviewFactsPart, CLI 0.16.0) — so a reader of the
+// pull request can tell which model shipped which head.
 func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	if len(rs) == 0 {
 		return ""
@@ -488,18 +490,51 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	}
 	switch last.Verdict {
 	case "ship":
-		return fmt.Sprintf("%sreview: ship in round %d", who, last.Round)
+		return fmt.Sprintf("%sreview: ship in round %d%s", who, last.Round, reviewFactsPart(last))
 	case "none":
 		if last.Tier == runstore.TierFirst {
-			return fmt.Sprintf("first-line review round %d: skipped, no verdict", last.Round)
+			return fmt.Sprintf("first-line review round %d: skipped, no verdict%s", last.Round, reviewFactsPart(last))
 		}
 		// An outer round is never skipped: this is one whose answer carried no
 		// parseable verdict, retried once and then left the run with no verdict
 		// at all (seniorLoop, adversarialLoop), and the line is the reason Decide
 		// gave for keeping the pull request a draft.
-		return fmt.Sprintf("%sreview round %d returned no parseable verdict after a retry", who, last.Round)
+		return fmt.Sprintf("%sreview round %d returned no parseable verdict after a retry%s", who, last.Round, reviewFactsPart(last))
 	}
-	return fmt.Sprintf("%sreview round %d: %s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last))
+	return fmt.Sprintf("%sreview round %d: %s%s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last), reviewFactsPart(last))
+}
+
+// reviewFactsPart is what reviewed the round the section's line reports — the
+// model it ran on, the reasoning effort it ran at and the commit it read — as
+// the parenthetical the line carries (CLI 0.16.0): "senior review: ship in
+// round 1 (model X, effort Y, at abc1234)". Each part is written only when the
+// round recorded it, so a record written before the fields existed, a level
+// that named no effort and a run with no head to read all leave the
+// parenthetical out rather than printing an empty claim, and "" is what every
+// line of a record that carries none ends with.
+//
+// It is appended last on every line, tolerated part included, so the verdict,
+// the count and the policy that let a round through read as one clause and the
+// reviewer's own facts stand apart from them.
+//
+// The model and the effort are the runner's own vocabulary, but they are the
+// record's bytes: a hand can edit result.json, so both go through inlineText
+// like every other string the section prints.
+func reviewFactsPart(last runstore.ReviewSummary) string {
+	parts := make([]string, 0, 3)
+	if m := inlineText(last.Model); m != "" {
+		parts = append(parts, "model "+m)
+	}
+	if e := inlineText(last.Effort); e != "" {
+		parts = append(parts, "effort "+e)
+	}
+	if last.Head != "" {
+		parts = append(parts, "at "+shortSHA(last.Head))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 // levelNames are the levels as the section's own line names them, in the order
