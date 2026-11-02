@@ -227,10 +227,11 @@ export interface FugaroSource {
    * included (`coordinator show --json --repo <owner/name> --pr <n>`,
    * coordinator v2 C3, D816; `console/docs/json-contract.md` §6.15). The two
    * arguments are the operation's own and both required, and an implementation
-   * must add no word of its own to that argv: this is the read whose child
-   * mints a credential of the host's -- the coordinator's own read-only
-   * installation token -- so what it is asked and nothing else is what it may
-   * send. It has no precondition of its own beyond the two arguments: the CLI
+   * must add no word of its own to that argv: this is the second read whose
+   * child mints a credential of the host's: `run.launch` is the first, and its
+   * child is a run whose token can write. This one's is the coordinator's own
+   * read-only installation token -- so what it is asked and nothing else is what
+   * it may send. It has no precondition of its own beyond the two arguments: the CLI
    * resolves the repository's provider itself and the credential with it, and
    * under `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses rather than
    * reading. */

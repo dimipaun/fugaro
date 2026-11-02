@@ -50,7 +50,7 @@ describe('the stub’s command keys', () => {
       'coordinator status',
       // Coordinator v2 C3's `coordinator.show` / `coordinatorShow`: the pull
       // request read next to the project view's, and the second row here whose
-      // child mints a credential of the host's.
+      // child mints a credential of the host's (`run`'s below is the first).
       'coordinator show',
       'run',
     ])

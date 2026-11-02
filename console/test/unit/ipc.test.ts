@@ -603,9 +603,10 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'coordinator status', kind: 'allowed', where: 'ee/coordinator/cli/coordinator.go:565' },
   // Coordinator v2 C3: the pull request read, next to the stored view's. It is
   // `allowed` and not `unused` because the surface drives it -- and it is the
-  // one command here that mints a credential of the host's, which is exactly
-  // why its argv is pinned (the repository, the number and `--json`, and no
-  // token field anywhere).
+  // second command here whose child mints a credential of the host's (`run`'s
+  // below is the first, and its run's token can write), which is exactly why its
+  // argv is pinned (the repository, the number and `--json`, and no token field
+  // anywhere).
   { command: 'coordinator show', kind: 'allowed', where: 'ee/coordinator/cli/coordinator_show.go:46' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
@@ -2039,8 +2040,9 @@ describe('the spend read’s arguments', () => {
  * (`coordinator.show` / `coordinatorShow`: one pull request as the host has it,
  * the description included, which the stored view drops by design -- D816) and
  * left the other twenty-five exactly where they were. It is the second
- * operation here that mints a credential of the host's, and the only one whose
- * credential is read-only by construction; it is next to `coordinator.status`
+ * operation here whose child mints a credential of the host's (`run.launch`
+ * below is the first), and the only one whose credential is read-only by
+ * construction; it is next to `coordinator.status`
  * in this list because the two are the same subject asked two ways.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [

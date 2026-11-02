@@ -501,9 +501,11 @@ export class CliSource implements FugaroSource {
   /** coordinatorShow reads `coordinator show --json --repo <owner/name> --pr
    * <n>`: one pull request as the host has it, the description included (C3,
    * D816). It is the second read here whose child mints a credential of the
-   * host's -- the coordinator's own read-only installation token, which the CLI
-   * resolves from the repository's provider, exactly as it does for the stored
-   * view above -- and no credential of the host's passes through this process:
+   * host's: `run.launch` is the first, and its child is a run whose token can
+   * write. This one's is the coordinator's own read-only installation token,
+   * which the CLI resolves from the repository's provider, exactly as it does
+   * for the stored view above -- and no credential of the host's passes through
+   * this process:
    * the argv carries the repository and the number, and the reply carries the
    * host's own document. */
   coordinatorShow(args: ValidatedArguments): Promise<Snapshot> {

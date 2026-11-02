@@ -1024,8 +1024,12 @@ export const CONSOLE_OPERATIONS = [
   // per record would ride in the document every reader of the view fetches).
   //
   // **It is the second operation here whose child mints a credential of the
-  // host's**, and the set that credential carries is the read-only one: pull
-  // requests read and metadata read, no `write` of any kind
+  // host's.** The first is `run.launch` above, and the two are not alike: a
+  // launched run holds the App's private key and mints installation tokens that
+  // carry `contents: write` and `pull_requests: write`, because it pushes and
+  // opens the pull request (`internal/gitprov/github/apptoken.go`), while the set
+  // this operation's child mints is the read-only one: pull requests read and
+  // metadata read, no `write` of any kind
   // (`github.CoordinatorTokenPermissions`), minted for the one repository and
   // revoked when the command is done. That is why the two arguments below are
   // the whole of what a renderer can influence about this argv: there is no key

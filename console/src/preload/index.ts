@@ -167,8 +167,11 @@ export const BRIDGE_VERSION = 1
  * included -- D816) and left the other twenty-five exactly where they were. It
  * sits directly under `coordinator.status` because the two are the same subject
  * asked two ways, and it is the second row here whose child mints a credential
- * of the host's -- the coordinator's own read-only installation token, which is
- * what its two arguments and no third key are for (`src/main/ipc.ts`).
+ * of the host's: the first is `run.launch`, the launch at the end of this list,
+ * whose child is a run that holds the App's private key and pushes and opens the
+ * pull request with a token carrying `contents: write`. This row's is the
+ * coordinator's own read-only installation token, which is what its two
+ * arguments and no third key are for (`src/main/ipc.ts`).
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -222,11 +225,11 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // here for the same reason as every other: the two arguments are the
   // operation's own closed schema (`src/main/ipc.ts`), and a method that took
   // the operation as an argument is the shape rule 5 forbids. **It is the second
-  // row whose
-  // child mints a credential of the host's** -- the coordinator's own read-only
-  // installation token -- so its two arguments are the whole of what a renderer
-  // can influence about the argv, and no credential of the host's reaches this
-  // surface, the reply or a log line.
+  // row whose child mints a credential of the host's**, after `run.launch` at
+  // the end of this list -- the coordinator's own read-only installation token,
+  // against a launched run's write set -- so its two arguments are the whole of
+  // what a renderer can influence about the argv, and no credential of the host's
+  // reaches this surface, the reply or a log line.
   ['coordinator.show', 'coordinatorShow'],
   // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
   // rule 11, D22). One row, like every other: the five fields are the
