@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -1465,6 +1466,58 @@ func TestSettingsSetAgentBudgetRaiseFromTheDefaultRefusedInAnAgentSession(t *tes
 	}
 	if readFileString(t, path) != before {
 		t.Error("the file changed in a coding agent's session")
+	}
+}
+
+// TestSettingsSetTheNewTypedRowsAreRefusedInAnAgentSession: the fence SD9 puts
+// around a coding agent's session belongs to the file, not to the edit — it
+// comes before the confirmation, and --yes never lifts it. A row added to the
+// typed directions is one more edit that fence has to hold, and the loop is over
+// agentenv.Markers itself rather than a copy, so a marker the tree adds is one
+// these rows are held to. Every case names a repository's own file, the one a
+// session may otherwise edit: without the typed form each of them would land.
+func TestSettingsSetTheNewTypedRowsAreRefusedInAnAgentSession(t *testing.T) {
+	settingsWriteHome(t)
+	trusted := "followup:\n  trusted:\n    - \"100000001\"\n"
+	tokens := "agent:\n  max_run_tokens: 300000\n"
+	for _, marker := range agentenv.Markers {
+		t.Run(marker, func(t *testing.T) {
+			for _, c := range []struct {
+				name string
+				args []string
+				yaml string
+			}{
+				{"a name added to followup.trusted", []string{"settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo", "--yes"}, trusted},
+				{"an agent budget raised", []string{"settings", "set", "agent.max_budget_usd", "1000", "--layer", "repo", "--yes"}, ""},
+				{"an agent token cap taken to 0", []string{"settings", "set", "agent.max_run_tokens", "0", "--layer", "repo", "--yes"}, tokens},
+				{"an agent token cap unset", []string{"settings", "unset", "agent.max_run_tokens", "--layer", "repo", "--yes"}, tokens},
+			} {
+				t.Run(c.name, func(t *testing.T) {
+					path := settingsWriteCheckout(t, settingsRepoYAML(c.yaml))
+					before := readFileString(t, path)
+					t.Setenv(marker, "1")
+
+					out, _, err := execute(t, c.args...)
+					if err == nil {
+						t.Fatal("the write landed in a coding agent's session")
+					}
+					if !strings.Contains(err.Error(), marker) {
+						t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
+					}
+					if !strings.Contains(err.Error(), "nothing was written") {
+						t.Errorf("the refusal does not say nothing was written: %v", err)
+					}
+					// The removal spells its diff with a - line and the writes
+					// with a + one, so the test looks for either.
+					if !strings.Contains(out, path) || (!strings.Contains(out, "  + ") && !strings.Contains(out, "  - ")) {
+						t.Errorf("the refusal does not print the file and the diff:\n%s", out)
+					}
+					if readFileString(t, path) != before {
+						t.Error("the file changed in a coding agent's session")
+					}
+				})
+			}
+		})
 	}
 }
 
