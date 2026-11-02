@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/coordpath"
@@ -171,6 +172,84 @@ type StoredProjectView struct {
 // nothing in it, and an unknown field is a refusal too: this is the strict
 // decoding the tree's other wire formats keep, and a document this reader
 // cannot read is one it must not pass off as empty.
+// IntentRecord is one intent as the tree holds it: the declaration the report
+// path wrote (P4), and the ID it is stored under.
+//
+// The ID is carried rather than derived from the declaration beside it. The
+// node's key is what the record IS — two reports of one declaration are one
+// document whatever their clocks say (IntentID) — so a reader that recomputed
+// it would print a key of its own instead of the node's, and a node written by
+// a build whose ID rule differed would read back as a document that does not
+// exist.
+type IntentRecord struct {
+	ID string `json:"id"`
+	Intent
+}
+
+// RepoIntents is one repository's intent records, newest first: the
+// declarations its callers have reported and still stand, which is what the
+// project view is computed from.
+type RepoIntents struct {
+	// Repo is the repository the caller asked about, "owner/name", as the
+	// caller spelled it: the node's key is a slug, so the node carries no name
+	// to read back.
+	Repo string `json:"repo"`
+	// Provider is the git provider kind the caller resolved, and "" when the
+	// caller had none to give. It is the caller's answer and not the node's,
+	// exactly as RepoView.Provider is.
+	Provider string `json:"provider"`
+	// Intents is every record the node holds, newest first by the record's own
+	// clock (Intent.At, the declaration's and not the read's) and by ID where
+	// two agree. It is an empty list for a repository with no records — never
+	// a null: "declared nothing" is an answer, and a missing list is a reader
+	// that cannot tell it from a document older than the field.
+	Intents []IntentRecord `json:"intents"`
+}
+
+// ProjectIntents is every repository's intent records, in the order the caller
+// read them. Like ProjectView it compares nothing across repositories.
+type ProjectIntents struct {
+	Repos []RepoIntents `json:"repos"`
+}
+
+// ReadRepoIntents reads repo's intent records from slug's node, newest first.
+//
+// It is the read the console's transcript pane is built on, and the person's
+// own: the records live in the database the project already pays for, so what
+// admits it is the same IAM read RepoView's is (roles/firebasedatabase.viewer)
+// and this holds no credential of any host's.
+//
+// A node that does not decode — or carries a field this build does not know —
+// is refused rather than shown as a repository that declared nothing, which is
+// the same strictness ReadRepoView keeps and for the same reason. An absent
+// node is not a refusal: it is the answer "no records".
+func (s *Store) ReadRepoIntents(ctx context.Context, slug, repo string) (RepoIntents, error) {
+	out := RepoIntents{Repo: repo, Intents: []IntentRecord{}}
+	var node map[string]json.RawMessage
+	if _, found, err := s.Read(ctx, PathIntents(slug), &node); err != nil {
+		return RepoIntents{}, err
+	} else if found {
+		for id, raw := range node {
+			var in Intent
+			if err := strictDecode(raw, &in); err != nil {
+				return RepoIntents{}, fmt.Errorf("coordinator: reading /%s: %w", PathIntent(slug, id), err)
+			}
+			out.Intents = append(out.Intents, IntentRecord{ID: id, Intent: in})
+		}
+	}
+	// Newest first, the ID breaking a tie: two declarations made in the same
+	// second are ordered by a key of their own text rather than by whatever
+	// order the tree handed them over, so two reads of one node agree — which
+	// is the same reason the sweep prunes in this order, reversed.
+	slices.SortFunc(out.Intents, func(a, b IntentRecord) int {
+		if c := b.At.Compare(a.At); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out, nil
+}
+
 func (s *Store) ReadRepoView(ctx context.Context, slug, repo string) (RepoView, error) {
 	out := RepoView{Repo: repo}
 	var raw json.RawMessage
