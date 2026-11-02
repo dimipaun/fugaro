@@ -440,11 +440,54 @@ func inlineText(s string) string {
 	return out
 }
 
+// shortSHA shortens a digest the harness's own records state -- a verify
+// record's HeadSHA -- to seven characters. It checks nothing about the text: a
+// verify record may carry a placeholder rather than a commit ("abc" is what this
+// package's own fixtures write), so this is a cut and not an abbreviation of an
+// object id. A head a run records goes through shortGitHead instead.
 func shortSHA(sha string) string {
 	if len(sha) > 7 {
 		return sha[:7]
 	}
 	return sha
+}
+
+// validGitHead reports whether s is a git object id: 40 lowercase hex
+// characters, the SHA-1 a `git rev-parse` writes, or 64, the SHA-256 of a
+// repository created with --object-format=sha256.
+func validGitHead(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// shortGitHead shortens a head a record states for the section: 7 characters of
+// a SHA-1 object id and 12 of a SHA-256 one, git's own abbreviated length for
+// each, and "(invalid)" for anything that is not an object id.
+//
+// It rejects rather than cuts because the section is Markdown in a pull request
+// body and the record is launcher-writable: a hand can put a backtick, a line
+// break or a whole forged status marker in Head or PushedHead, and seven bytes
+// of that would land in the body. A head that is not an object id is one no run
+// can have written, so the section says so instead of printing it — the answer
+// diagnose gives a record's head too (internal/cli/diagnose.go's shortGitHead,
+// which this cannot share: the CLI's diagnosis and the runner's section read the
+// same record field from two packages, neither of which imports the other).
+func shortGitHead(s string) string {
+	if !validGitHead(s) {
+		return "(invalid)"
+	}
+	if len(s) == 40 {
+		return s[:7]
+	}
+	return s[:12]
 }
 
 // verifyPart is the section's account of the latest test record.
@@ -519,7 +562,8 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 //
 // The model and the effort are the runner's own vocabulary, but they are the
 // record's bytes: a hand can edit result.json, so both go through inlineText
-// like every other string the section prints.
+// like every other string the section prints. The head is the record's bytes
+// too, and shortGitHead is what keeps it to an object id.
 func reviewFactsPart(last runstore.ReviewSummary) string {
 	parts := make([]string, 0, 3)
 	if m := inlineText(last.Model); m != "" {
@@ -529,7 +573,7 @@ func reviewFactsPart(last runstore.ReviewSummary) string {
 		parts = append(parts, "effort "+e)
 	}
 	if last.Head != "" {
-		parts = append(parts, "at "+shortSHA(last.Head))
+		parts = append(parts, "at "+shortGitHead(last.Head))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -580,7 +624,7 @@ func (r *run) levelsPart() string {
 		}
 		line := fmt.Sprintf("%s: %s in round %d", levelNames[l], inlineText(rs.Verdict), rs.Round)
 		if rs.Head != "" {
-			line += fmt.Sprintf(" on `%s`", shortSHA(rs.Head))
+			line += fmt.Sprintf(" on `%s`", shortGitHead(rs.Head))
 		}
 		if l == policy.LevelL3 {
 			if f := inlineText(r.levelFocus(l)); f != "" {
@@ -792,9 +836,9 @@ func (r *run) pushedPart(records []verify.Record) string {
 		return ""
 	}
 	if pushedVerified(records, sha) {
-		return fmt.Sprintf("branch at `%s`: verified", shortSHA(sha))
+		return fmt.Sprintf("branch at `%s`: verified", shortGitHead(sha))
 	}
-	return fmt.Sprintf("branch at `%s`: not verified", shortSHA(sha))
+	return fmt.Sprintf("branch at `%s`: not verified", shortGitHead(sha))
 }
 
 // finalSection is the section when the run ended: outcome, reason, tests,

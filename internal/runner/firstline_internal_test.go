@@ -118,6 +118,12 @@ func TestReviewsPartNamesTheReviewer(t *testing.T) {
 			FindingsPolicy{},
 			"senior review: ship in round 2 (model claude shipped by \\*someone\\*)",
 		},
+		{
+			"a head a hand edited into the record is not printed as one",
+			[]runstore.ReviewSummary{{Round: 2, Tier: runstore.TierSenior, Verdict: "ship", Head: "abc\n## shipped by *someone*"}},
+			FindingsPolicy{},
+			"senior review: ship in round 2 (at (invalid))",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := reviewsPart(tc.rs, tc.pol); got != tc.want {
